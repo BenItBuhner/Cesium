@@ -22,7 +22,7 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
     {
       name: "spawn_agent",
       description:
-        "Spawn a collaborative subagent thread addressed by a canonical path (e.g. /root/explore_auth). Returns immediately; the child runs in the background. Use wait_agent to poll for mailbox updates, followup_task to assign more work, and send_message to queue context without starting a turn.",
+        "Spawn a collaborative subagent thread addressed by a canonical path (e.g. /root/explore_auth). Returns immediately; the child runs in the background. Use wait_agent to poll for mailbox updates, followup_task to assign more work, and send_message to queue context without starting a turn. Children are equally capable agents sharing your workspace tools (read_file, grep, write_file, edit_file, terminal, call_mcp_tool, browser_*) plus the collaboration tools, and can spawn their own sub-agents up to the configured spawn depth. Screenshots and demo recordings they capture are saved under artifacts/browser/.",
       parameters: {
         type: "object",
         properties: {
@@ -45,8 +45,8 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
           },
           fork_turns: {
             type: "string",
-            description:
-              'Context inheritance: "none" (fresh child, default for Cesium), "all" (inherit recent parent history), or a positive integer string for partial fork.',
+      description:
+        'Context inheritance: "all" (full-history fork, default — Codex MultiAgentV2 parity), "none" (fresh child), or a positive integer string for a partial fork of the most recent turns.',
           },
         },
         required: ["task_name", "message"],
@@ -168,6 +168,8 @@ export function createSubagentsV2Module(limits: CesiumHarnessLimits): CesiumFeat
       "Subagents V2 is active. Prefer spawn_agent + wait_agent + followup_task for parallel collaborative work. " +
       "Spawn returns immediately; poll with wait_agent using short timeouts when you can keep working. " +
       "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2. " +
+      "Children are equally capable agents: they share your workspace tool surface (files, terminal, MCP, browser) and all agents share the same filesystem and working directory, so edits by one agent are immediately visible to the others. " +
+      "Children can test sites, take screenshots, and record demo videos (saved under artifacts/browser/); have them report artifact file paths in their summaries, then verify with read_file (images attach for vision models). " +
       "When parallel workstreams must touch files, give each its own worktree branch (`create_worktree`), point the work at that path, then merge verified branches back and clean up.",
   };
 }

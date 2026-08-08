@@ -36,11 +36,12 @@ import {
 } from "../global-settings-store.js";
 import {
   callMcpTool,
+  callMcpToolRich,
   refreshWorkspaceMcpMirror,
 } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
-import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
+import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
@@ -177,8 +178,16 @@ import {
   harnessFeatureReminder,
   isSubagentsV2ToolName,
   SubagentsV2Runtime,
+  type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
+import {
+  createSubagentToolset,
+  runSubagentToolLoop,
+  subagentToolDefinitions,
+  subagentToolsetGuidance,
+  type CesiumSubagentToolset,
+} from "./cesium/subagent-toolset.js";
 import {
   cesiumEnvironmentChangeNotice,
   cesiumRelocationChangeNotice,
@@ -324,6 +333,19 @@ const USER_REFUSED_TOOL_CALL_RESULT =
   "The user refused this tool call. Continue in a different fashion that is either less intrusive or destructive.";
 const CESIUM_STREAM_CHUNK_FLUSH_MS = 120;
 const CESIUM_STREAM_CHUNK_MIN_CHARS = 512;
+const MAX_READ_IMAGE_BYTES = 4 * 1024 * 1024;
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+function imageMimeTypeForPath(filePath: string): string | null {
+  const extension = path.extname(filePath).toLowerCase();
+  return IMAGE_MIME_BY_EXTENSION[extension] ?? null;
+}
 
 export type CesiumAssistantStreamSink = {
   pushText: (text: string) => Promise<void>;
@@ -431,6 +453,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /** Tool-call titles refined during execution (e.g. "Write x" → "Create x" once we know the file is new). */
   private refinedToolTitles = new Map<string, string>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
+  /** Images produced by tool calls (browser screenshots, image reads) awaiting attachment to the model turn. */
+  private pendingToolImages: Array<{ mimeType: string; data: string; source: string }> = [];
+  /** Whether the model running the current turn advertises image support. */
+  private turnSupportsImages = false;
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
@@ -807,6 +833,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const catalog = await getCesiumModelCatalog();
       const catalogEntry = findCesiumModelCatalogEntry(modelId, catalog);
       const modelSupportsImages = catalogEntry?.supportsImages === true;
+      this.turnSupportsImages = modelSupportsImages;
+      this.pendingToolImages = [];
       const historyImageCount = history.reduce(
         (count, message) => count + (message.images?.length ?? 0),
         0
@@ -911,6 +939,23 @@ class CesiumSessionHandle implements AgentSessionHandle {
             name: request.name,
             content: normalizedToolResult.content,
           });
+          if (this.pendingToolImages.length > 0) {
+            // Vision attachments cannot ride on tool-role messages in the
+            // OpenAI-compatible protocol, so surface them as a follow-up user
+            // message right after the tool result that produced them.
+            const images = this.pendingToolImages.splice(0, 4);
+            toolResultMessages.push({
+              role: "user",
+              content: `[Attached ${images.length} image(s) captured by ${images
+                .map((image) => image.source)
+                .join(", ")} for your review.]`,
+              images: images.map((image) => ({
+                mimeType: image.mimeType,
+                data: image.data,
+              })),
+            });
+            this.pendingToolImages = [];
+          }
           completedToolCallCount += 1;
           if (completedToolCallCount % 8 === 0) {
             await this.emitConversationStatus(
@@ -1375,9 +1420,129 @@ class CesiumSessionHandle implements AgentSessionHandle {
           );
         },
         isCancelled: () => this.cancelled || this.disposed,
+        toolsetForAgent: (agentPath) => this.buildSubagentToolset(agentPath),
       });
     }
     return this.subagentsV2;
+  }
+
+  /**
+   * Tool surface for spawned subagents. Codex MultiAgentV2 parity: children
+   * share the parent's workspace tools (files, terminal, MCP, browser) and —
+   * for V2 collaborative children — the collaboration tools themselves, with
+   * spawn depth enforced by the runtime. Every gated call flows through the
+   * same mode policy and permission cascade as the parent agent.
+   *
+   * `agentPath` is the child's canonical path for V2 children, or null for
+   * the legacy single-shot `subagent` tool (no collaboration surface).
+   */
+  private buildSubagentToolset(agentPath: string | null): CesiumSubagentToolset {
+    const includeCollaboration = agentPath != null && this.harness.subagentsVersion === 2;
+    const definitions = subagentToolDefinitions({
+      hostTools: this.harness.tools,
+      includeCollaboration,
+    });
+    return createSubagentToolset({
+      definitions,
+      execute: (name, args) => this.executeSubagentTool(agentPath, name, args, definitions),
+    });
+  }
+
+  private async executeSubagentTool(
+    agentPath: string | null,
+    name: string,
+    args: Record<string, unknown>,
+    definitions: CesiumToolDefinition[]
+  ): Promise<string> {
+    const callerPath = agentPath ?? "/root (ephemeral subagent)";
+    const isBrowserTool = name.startsWith("browser_");
+    // Direct browser tools are policy/permission-equivalent to calling the
+    // built-in browser MCP server through call_mcp_tool.
+    const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
+    const policy = resolveCesiumModeToolPolicy({
+      mode: this.currentMode(),
+      toolName: policyToolName,
+    });
+    if (!policy.allowed) {
+      throw new Error(policy.reason ?? `Tool ${name} is blocked in the active mode.`);
+    }
+    const permissionCategory = isBrowserTool
+      ? resolveCesiumToolPermissionCategory(this.harness.tools, "call_mcp_tool")
+      : resolveCesiumToolPermissionCategory(definitions, name);
+    if (permissionCategory) {
+      const permissionArgs = isBrowserTool
+        ? { serverId: BROWSER_MCP_SERVER_ID, toolName: name, arguments: args }
+        : permissionCategory === "mcpCall"
+          ? (() => {
+              const normalized = normalizeCallMcpToolArgs(args);
+              return {
+                serverId: normalized.serverId,
+                toolName: normalized.toolName,
+                arguments: normalized.arguments,
+              };
+            })()
+          : args;
+      const title = `Subagent ${callerPath} · ${toolTitle(
+        isBrowserTool ? "call_mcp_tool" : name,
+        isBrowserTool ? { serverId: BROWSER_MCP_SERVER_ID, toolName: name } : args
+      )}`;
+      await this.requirePermission({
+        toolCallId: randomUUID(),
+        title,
+        detail: this.buildPermissionDetail(permissionCategory, permissionArgs),
+        permission: permissionCategory,
+        toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
+        toolLabel: title,
+      });
+    }
+    if (isBrowserTool) {
+      return await callBuiltInBrowserTool({
+        workspaceId: this.callbacks.workspace.id,
+        workspaceRoot: this.callbacks.workspace.root,
+        toolName: name,
+        arguments: args,
+      });
+    }
+    switch (name) {
+      case "read_file":
+        return await this.toolReadFile(args);
+      case "grep":
+        return await this.toolGrep(args);
+      case "write_file":
+        return await this.toolWriteFile(args, randomUUID());
+      case "edit_file":
+        return await this.toolEditFile(args, randomUUID(), toolTitle(name, args));
+      case "terminal":
+        return await this.toolTerminal(args);
+      case "wait":
+        return await this.toolWait(args);
+      case "call_mcp_tool":
+        return await this.toolCallMcp(args, randomUUID(), toolTitle(name, args));
+      default:
+        break;
+    }
+    if (agentPath != null && this.harness.subagentsVersion === 2) {
+      const runtime = this.ensureSubagentsV2();
+      switch (name) {
+        case "spawn_agent":
+          return await runtime.spawnAgent(args, agentPath);
+        case "send_message":
+          return await runtime.sendMessage(args, agentPath);
+        case "followup_task":
+          return await runtime.followupTask(args, agentPath);
+        case "wait_agent":
+          return await runtime.waitAgent(args, agentPath);
+        case "interrupt_agent":
+          return await runtime.interruptAgent(args, agentPath);
+        case "list_agents":
+          return JSON.stringify(runtime.listAgents(asString(args.path_prefix)));
+        case "read_subagent_transcript":
+          return await runtime.readTranscript(args, agentPath);
+        default:
+          break;
+      }
+    }
+    throw new Error(`Tool ${name} is not available to subagents.`);
   }
 
   private async executeSubagentsV2Tool(
@@ -1993,6 +2158,22 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const inputPath = asString(args.path);
     if (!inputPath) throw new Error("read_file.path is required.");
     const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath);
+    const imageMime = imageMimeTypeForPath(resolved);
+    if (imageMime) {
+      const buffer = await fs.readFile(resolved);
+      if (buffer.length > MAX_READ_IMAGE_BYTES) {
+        return `${inputPath} is a ${imageMime} image of ${buffer.length} bytes, which exceeds the ${MAX_READ_IMAGE_BYTES}-byte attachment limit.`;
+      }
+      if (!this.turnSupportsImages) {
+        return `${inputPath} is a ${imageMime} image (${buffer.length} bytes). The current model does not advertise image support, so the pixels cannot be attached; switch to a vision model such as kimi-k3 to view it.`;
+      }
+      this.pendingToolImages.push({
+        mimeType: imageMime,
+        data: buffer.toString("base64"),
+        source: `read_file(${inputPath})`,
+      });
+      return `${inputPath} is a ${imageMime} image (${buffer.length} bytes). The image is attached to this turn for your review.`;
+    }
     const raw = await fs.readFile(resolved, "utf8");
     const lines = raw.split(/\r?\n/);
     const offset = Math.max(1, Math.floor(asNumber(args.offset) ?? 1));
@@ -2753,13 +2934,23 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
       throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
-    return await callMcpTool({
+    const rich = await callMcpToolRich({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,
       serverId,
       toolName,
       arguments: toolArgs,
     });
+    if (rich.images?.length && this.turnSupportsImages) {
+      for (const image of rich.images.slice(0, 4)) {
+        this.pendingToolImages.push({
+          mimeType: image.mimeType,
+          data: image.data,
+          source: `${serverId}/${toolName}`,
+        });
+      }
+    }
+    return rich.text;
   }
 
   private async toolRefreshMcpServers(): Promise<string> {
@@ -3790,21 +3981,46 @@ class CesiumSessionHandle implements AgentSessionHandle {
             ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
             : undefined,
       });
-      const result = await runAdapter({
-        apiKind: auth.apiKind,
-        apiKey: auth.apiKey,
-        baseUrl: auth.baseUrl,
-        providerId: auth.providerId,
-        modelId,
+      const toolset = this.buildSubagentToolset(null);
+      const toolGuidance = subagentToolsetGuidance(toolset);
+      const result = await runSubagentToolLoop({
+        adapter: {
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          modelId,
+        },
         messages: [
-          { role: "system", content: `${CESIUM_SYSTEM_PROMPT}\n\nYou are a child subagent. Do not spawn additional subagents.` },
+          {
+            role: "system",
+            content:
+              `${CESIUM_SYSTEM_PROMPT}\n\nYou are a child subagent. Do not spawn additional subagents.` +
+              (toolGuidance ? `\n\n${toolGuidance}` : ""),
+          },
           { role: "user", content: instructions },
         ],
+        toolset,
+        isAborted: () => this.cancelled || this.disposed,
+        onToolCall: async (event) => {
+          transcript.push({
+            seq: transcript.length + 1,
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            createdAt: Date.now(),
+            kind: "tool_call",
+            toolCallId: event.toolCallId,
+            title: event.name,
+            toolKind: "mcp",
+            status: event.ok ? "completed" : "failed",
+            detail: event.result.slice(0, 600),
+          });
+        },
       });
       resultText =
         result.text.trim() ||
-        (result.toolRequests.length > 0
-          ? `Subagent requested unsupported child tools: ${result.toolRequests.map((tool) => tool.name).join(", ")}`
+        (result.toolCallCount > 0
+          ? `Subagent made ${result.toolCallCount} tool call(s) but returned no final text.`
           : "Subagent completed without visible text.");
     } catch (error) {
       status = "failed";

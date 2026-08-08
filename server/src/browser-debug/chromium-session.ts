@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
@@ -17,11 +16,11 @@ export type ChromiumTarget = {
 export type DebugSessionRecord = {
   id: string;
   workspaceId: string;
-  browser: Browser;
+  /** Browser handle when available (persistent contexts may not expose one). */
+  browser: Browser | null;
   context: BrowserContext;
   page: Page;
   cdp: CDPSession;
-  chromiumChild: ChildProcess;
   userDataDir: string;
   debugPort: number;
   /** Target id of the page we navigated — used to build the DevTools frontend URL. */
@@ -79,12 +78,6 @@ async function loadPlaywright(): Promise<typeof import("playwright")> {
   }
 }
 
-type ChromiumProcess = {
-  child: ChildProcess;
-  debugPort: number;
-  userDataDir: string;
-};
-
 type RenderScreenshotSession = {
   key: string;
   context: BrowserContext;
@@ -102,80 +95,29 @@ export type RenderedElementScreenshotInput = {
 };
 
 /**
- * Spawn Chromium manually with `--remote-debugging-port=0` and read the chosen
- * port out of stderr. We launch it ourselves instead of going through Playwright's
- * `launch()` so that Chromium's built-in DevTools HTTP server (the one that serves
- * `/devtools/inspector.html` and `ws://host/devtools/page/<id>`) is reachable for us
- * to proxy — Playwright's default pipe transport hides that.
+ * Read the DevTools HTTP port Chromium chose for `--remote-debugging-port=0`.
+ * Chromium writes it to `DevToolsActivePort` inside the user data dir. We keep
+ * the HTTP endpoint alongside Playwright's pipe transport so the DevTools
+ * frontend (`/devtools/inspector.html`, `ws://host/devtools/page/<id>`) stays
+ * proxyable — and the pipe transport is what keeps Playwright working under
+ * Bun, where its `connectOverCDP` websocket client hangs.
  */
-async function spawnChromium(pw: typeof import("playwright")): Promise<ChromiumProcess> {
-  const executablePath = pw.chromium.executablePath();
-  if (!executablePath) {
-    throw new Error("Playwright Chromium is not installed. Run: cd server && npx playwright install chromium");
-  }
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "cesium-cdp-"));
-
-  const child = spawn(
-    executablePath,
-    [
-      "--remote-debugging-port=0",
-      `--user-data-dir=${userDataDir}`,
-      "--remote-allow-origins=*",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--headless=new",
-      "--disable-gpu",
-      "--hide-scrollbars",
-      "--mute-audio",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-default-apps",
-      "--disable-extensions",
-      "--disable-popup-blocking",
-      "about:blank",
-    ],
-    {
-      env: {
-        ...process.env,
-        OPENCURSOR_PROCESS_NAME: "Cesium Browser - Headless Chromium",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-      detached: false,
-      argv0: "Cesium Browser - Headless Chromium",
-    }
-  );
-
-  child.stdout?.on("data", () => undefined);
-
-  const debugPort = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error("Timed out waiting for Chromium remote debugging port"));
-    }, CHROMIUM_START_TIMEOUT_MS);
-
-    let stderrBuf = "";
-    const onStderr = (chunk: Buffer) => {
-      stderrBuf += chunk.toString("utf8");
-      const match = stderrBuf.match(/DevTools listening on ws:\/\/[^:\s]+:(\d+)\//);
-      if (match && match[1]) {
-        clearTimeout(timer);
-        child.stderr?.off("data", onStderr);
-        resolve(Number.parseInt(match[1], 10));
+async function readDevToolsActivePort(userDataDir: string): Promise<number> {
+  const portFilePath = path.join(userDataDir, "DevToolsActivePort");
+  const deadline = Date.now() + CHROMIUM_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const raw = await readFile(portFilePath, "utf8");
+      const port = Number.parseInt(raw.split("\n")[0] ?? "", 10);
+      if (Number.isFinite(port) && port > 0) {
+        return port;
       }
-    };
-    child.stderr?.on("data", onStderr);
-    child.once("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Chromium exited before reporting a debug port (code ${code ?? "?"})`));
-    });
-  });
-
-  return { child, debugPort, userDataDir };
+    } catch {
+      // not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Timed out waiting for Chromium remote debugging port");
 }
 
 async function fetchChromiumTargets(debugPort: number): Promise<ChromiumTarget[]> {
@@ -519,19 +461,36 @@ export async function createDebugSession(
   }
 
   const pw = await loadPlaywright();
-  let child: ChildProcess | null = null;
+  let context: BrowserContext | null = null;
   let userDataDir: string | null = null;
   try {
-    const launched = await spawnChromium(pw);
-    child = launched.child;
-    userDataDir = launched.userDataDir;
-    const { debugPort } = launched;
-
-    const browser = await pw.chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
-    const existingContexts = browser.contexts();
-    const context = existingContexts[0] ?? (await browser.newContext());
-    const existingPages = context.pages();
-    const page = existingPages[0] ?? (await context.newPage());
+    userDataDir = await mkdtemp(path.join(tmpdir(), "cesium-cdp-"));
+    // Pipe transport (Playwright default) + a real DevTools HTTP port for the
+    // inspector proxy. Manual spawn + connectOverCDP is not used because the
+    // websocket client path hangs under the Bun runtime.
+    context = await pw.chromium.launchPersistentContext(userDataDir, {
+      headless: true,
+      env: {
+        ...process.env,
+        OPENCURSOR_PROCESS_NAME: "Cesium Browser - Headless Chromium",
+      },
+      args: [
+        "--remote-debugging-port=0",
+        "--remote-allow-origins=*",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--mute-audio",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-default-apps",
+        "--disable-extensions",
+        "--disable-popup-blocking",
+      ],
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
 
     const cdp = await context.newCDPSession(page);
     await cdp.send("Runtime.enable");
@@ -544,6 +503,7 @@ export async function createDebugSession(
         /* surfaced in DevTools console */
       });
 
+    const debugPort = await readDevToolsActivePort(userDataDir);
     const targets = await fetchChromiumTargets(debugPort);
     const pageTarget = targets.find((t) => t.type === "page") ?? targets[0];
     if (!pageTarget) {
@@ -554,11 +514,10 @@ export async function createDebugSession(
     const rec: DebugSessionRecord = {
       id,
       workspaceId,
-      browser,
+      browser: context.browser(),
       context,
       page,
       cdp,
-      chromiumChild: child,
       userDataDir,
       debugPort,
       targetId: pageTarget.id,
@@ -571,12 +530,8 @@ export async function createDebugSession(
     sessions.set(id, rec);
     return rec;
   } catch (err) {
-    if (child) {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
+    if (context) {
+      await context.close().catch(() => undefined);
     }
     if (userDataDir) {
       await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
@@ -780,7 +735,77 @@ export async function snapshotDebugSession(sessionId: string): Promise<{
   return { ...dom, accessibilityText };
 }
 
+export type DebugSessionScreencastFrame = {
+  /** Base64 PNG frame data (no data: prefix). */
+  data: string;
+  /** Wall-clock capture time in ms. */
+  ts: number;
+};
+
+type ScreencastState = {
+  handler: (params: { data: string; sessionId: number }) => void;
+};
+
+const screencastStates = new Map<string, ScreencastState>();
+
+/**
+ * Start a CDP screencast on a debug session. Frames are delivered to `onFrame`
+ * as base64 PNG payloads until `stopDebugSessionScreencast` is called. Only one
+ * screencast per session is allowed.
+ */
+export async function startDebugSessionScreencast(
+  sessionId: string,
+  options: { maxWidth?: number; maxHeight?: number; everyNthFrame?: number },
+  onFrame: (frame: DebugSessionScreencastFrame) => void
+): Promise<boolean> {
+  const rec = sessions.get(sessionId);
+  if (!rec) return false;
+  if (screencastStates.has(sessionId)) {
+    throw new Error("A screencast is already running for this browser session.");
+  }
+  const handler = (params: { data: string; sessionId: number }) => {
+    try {
+      onFrame({ data: params.data, ts: Date.now() });
+    } finally {
+      rec.cdp
+        .send("Page.screencastFrameAck", { sessionId: params.sessionId })
+        .catch(() => undefined);
+    }
+  };
+  rec.cdp.on("Page.screencastFrame", handler);
+  screencastStates.set(sessionId, { handler });
+  try {
+    await rec.cdp.send("Page.startScreencast", {
+      format: "png",
+      maxWidth: sanitizeViewport(options.maxWidth ?? 1440, 1440),
+      maxHeight: sanitizeViewport(options.maxHeight ?? 900, 900),
+      everyNthFrame: Math.max(1, Math.min(Math.floor(options.everyNthFrame ?? 1), 10)),
+    });
+  } catch (error) {
+    rec.cdp.off("Page.screencastFrame", handler);
+    screencastStates.delete(sessionId);
+    throw error;
+  }
+  return true;
+}
+
+export async function stopDebugSessionScreencast(sessionId: string): Promise<void> {
+  const rec = sessions.get(sessionId);
+  const state = screencastStates.get(sessionId);
+  screencastStates.delete(sessionId);
+  if (!rec || !state) return;
+  rec.cdp.off("Page.screencastFrame", state.handler);
+  await rec.cdp.send("Page.stopScreencast").catch(() => undefined);
+}
+
+export function isDebugSessionScreencasting(sessionId: string): boolean {
+  return screencastStates.has(sessionId);
+}
+
 export async function destroyDebugSession(sessionId: string): Promise<void> {
+  if (screencastStates.has(sessionId)) {
+    await stopDebugSessionScreencast(sessionId).catch(() => undefined);
+  }
   const rec = sessions.get(sessionId);
   if (!rec) {
     return;
@@ -792,12 +817,7 @@ export async function destroyDebugSession(sessionId: string): Promise<void> {
     /* ignore */
   }
   try {
-    await rec.browser.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    rec.chromiumChild.kill("SIGKILL");
+    await rec.browser?.close();
   } catch {
     /* ignore */
   }
@@ -813,11 +833,11 @@ export function listDebugSessions(): DebugSessionRecord[] {
   return [...sessions.values()];
 }
 
-/** Best-effort cleanup on process shutdown — kill every Chromium we spawned. */
+/** Best-effort cleanup on process shutdown — close every Chromium we launched. */
 function cleanupAllSessions(): void {
   for (const rec of sessions.values()) {
     try {
-      rec.chromiumChild.kill("SIGKILL");
+      void rec.context.close();
     } catch {
       /* ignore */
     }

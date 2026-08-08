@@ -49,6 +49,8 @@ type BunServeOptions = {
   port: number;
   hostname: string;
   maxRequestBodySize: number;
+  /** Seconds a request may stay idle. Browser-control tool calls (cold Chromium launches, demo recordings) exceed Bun's 10s default. */
+  idleTimeout: number;
   fetch(request: Request, server: BunServer): Response | Promise<Response | undefined> | undefined;
   websocket: {
     open(ws: BunServerWebSocket): void;
@@ -149,6 +151,8 @@ export function startBunServer(): void {
     maxRequestBodySize:
       Number.parseInt(process.env.BUN_MAX_REQUEST_BODY_SIZE ?? "", 10) ||
       1024 * 1024 * 200,
+    idleTimeout:
+      Number.parseInt(process.env.BUN_HTTP_IDLE_TIMEOUT_SECONDS ?? "", 10) || 120,
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       if (url.pathname === "/ws/fs") {

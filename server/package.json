@@ -45,6 +45,7 @@
     "@cesium/core": "file:../packages/core",
     "@cursor/sdk": "1.0.17",
     "@earendil-works/pi-coding-agent": "^0.75.5",
+    "@hono/mcp": "^0.3.1",
     "@hono/node-server": "^1.19.6",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cesium": "file:..",

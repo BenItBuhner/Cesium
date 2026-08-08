@@ -41,6 +41,12 @@ export type CesiumHarnessLimits = {
   waitAgentMaxTimeoutMs: number;
   /** Max concurrent live V2 subagent threads in one session. Default: 8. */
   maxConcurrentSubagents: number;
+  /**
+   * Max spawn depth for nested V2 subagents (Codex `agents.max_depth` parity).
+   * Depth 1 means only the root agent can spawn; higher values let children
+   * spawn their own sub-agents. Default: 1.
+   */
+  maxSpawnDepth: number;
 };
 
 export type CesiumHarnessSettings = {
