@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Gauge, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   fetchUsageOverview,
   type ProviderUsageReport,
@@ -308,6 +308,8 @@ type TimeSeriesChartProps = {
   height?: number;
   /** Fixed y max (e.g. 100 for percent charts); otherwise derived. */
   yMax?: number;
+  /** Series color; defaults to the accent token. */
+  color?: string;
   formatValue: (value: number) => string;
   formatTime: (ts: number) => string;
   /** Extra tooltip lines below the headline value. */
@@ -325,6 +327,7 @@ function TimeSeriesChart({
   kind,
   height = 168,
   yMax,
+  color = "var(--accent-strong)",
   formatValue,
   formatTime,
   tooltipExtra,
@@ -462,7 +465,7 @@ function TimeSeriesChart({
                     width={barWidth}
                     height={d.value > 0 ? Math.max(h, 2) : 1}
                     rx={1.5}
-                    fill={d.value > 0 ? "var(--accent-strong)" : "var(--border-subtle)"}
+                    fill={d.value > 0 ? color : "var(--border-subtle)"}
                     opacity={hoverIndex === null || hoverIndex === i ? 0.92 : 0.45}
                   />
                 );
@@ -471,11 +474,11 @@ function TimeSeriesChart({
 
           {kind === "area" && areaPath.line ? (
             <>
-              <path d={areaPath.area} fill="var(--accent-strong)" opacity={0.1} />
+              <path d={areaPath.area} fill={color} opacity={0.1} />
               <path
                 d={areaPath.line}
                 fill="none"
-                stroke="var(--accent-strong)"
+                stroke={color}
                 strokeWidth={1.6}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -527,7 +530,7 @@ function TimeSeriesChart({
                       cx={hoverX}
                       cy={yForValue(hovered.value)}
                       r={3.2}
-                      fill="var(--accent-strong)"
+                      fill={color}
                       stroke="var(--bg-panel)"
                       strokeWidth={1.5}
                     />
@@ -681,7 +684,7 @@ function LimitWindowPanel({
 
   const projectionText = useMemo(() => {
     if (!projection || projection.slopePerHour <= 0) {
-      return chartData.length > 1 ? "No meaningful burn right now." : null;
+      return null;
     }
     if (isPercent) {
       const hitAt = projection.hitAt(100);
@@ -698,41 +701,43 @@ function LimitWindowPanel({
       return `${pace} — on pace for ≈${formatTokens(projection.projected)} tokens by reset (${formatClock(resetsAtMs)}).`;
     }
     return `${pace} over the current window.`;
-  }, [chartData.length, isPercent, projection, resetsAtMs]);
+  }, [isPercent, projection, resetsAtMs]);
+
+  // The chart *is* the meter: one prominent pressure-colored readout in the
+  // header, one chart below — never both a bar and a graph of the same value.
+  const windowTokens = !isPercent ? (chartData[chartData.length - 1]?.value ?? 0) : 0;
+  const chartColor = isPercent
+    ? meterColor(limitWindow.usedPercent ?? 0)
+    : "var(--accent-strong)";
 
   return (
-    <div className="flex flex-col gap-[8px]">
+    <div className="flex flex-col gap-[4px]">
       <div className="flex flex-wrap items-baseline justify-between gap-[8px]">
         <span className="font-sans text-[12px] font-medium text-[var(--text-primary)]">
           {limitWindow.label}
         </span>
-        <span className="font-sans text-[11px] tabular-nums text-[var(--text-secondary)]">
-          {limitWindow.usedPercent !== null
-            ? `${formatPercent(limitWindow.usedPercent)} used`
-            : null}
-          {limitWindow.usedPercent !== null && resetsAtMs !== null ? " · " : null}
-          {resetsAtMs !== null ? `resets in ${formatCountdown(resetsAtMs, nowMs)}` : null}
+        <span className="flex items-baseline gap-[8px]">
+          <span
+            className="font-sans text-[16px] font-semibold tabular-nums tracking-tight"
+            style={{ color: isPercent ? chartColor : "var(--text-primary)" }}
+          >
+            {isPercent ? formatPercent(limitWindow.usedPercent!) : formatTokens(windowTokens)}
+          </span>
+          {resetsAtMs !== null ? (
+            <span className="font-sans text-[11px] tabular-nums text-[var(--text-disabled)]">
+              resets in {formatCountdown(resetsAtMs, nowMs)}
+            </span>
+          ) : null}
         </span>
       </div>
-
-      {limitWindow.usedPercent !== null ? (
-        <div className="h-[6px] w-full overflow-hidden rounded-full bg-[var(--border-subtle)]">
-          <div
-            className="h-full rounded-full transition-[width]"
-            style={{
-              width: `${Math.max(1, Math.min(100, limitWindow.usedPercent))}%`,
-              backgroundColor: meterColor(limitWindow.usedPercent),
-            }}
-          />
-        </div>
-      ) : null}
 
       {chartData.length > 1 ? (
         <TimeSeriesChart
           data={chartData}
           kind="area"
-          height={124}
+          height={120}
           yMax={isPercent ? 100 : undefined}
+          color={chartColor}
           formatValue={(v) => (isPercent ? formatPercent(v) : formatTokens(v))}
           formatTime={(ts) =>
             (windowMs ?? 0) <= DAY_MS ? formatClock(ts) : `${formatDateShort(ts)} ${formatClock(ts)}`
@@ -743,18 +748,11 @@ function LimitWindowPanel({
         />
       ) : null}
 
-      <div className="flex flex-wrap items-baseline justify-between gap-[8px]">
-        {limitWindow.detail ? (
-          <p className="font-sans text-[11px] text-[var(--text-secondary)]">{limitWindow.detail}</p>
-        ) : (
-          <span />
-        )}
-        {projectionText ? (
-          <p className="font-sans text-[11px] italic text-[var(--text-disabled)]">
-            {projectionText}
-          </p>
-        ) : null}
-      </div>
+      {projectionText ? (
+        <p className="text-right font-sans text-[11px] text-[var(--text-disabled)]">
+          {projectionText}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -923,33 +921,25 @@ function ProviderDetail({
 
   return (
     <>
-      {/* meta strip */}
-      <div className="mb-[16px] flex flex-wrap items-center gap-x-[14px] gap-y-[6px]">
-        {report.plan ? <span className={tagClass}>{report.plan} plan</span> : null}
-        <span className={tagClass}>{report.vendor}</span>
-        {report.estimated ? (
-          <span className={tagClass} title="Token counts are estimated (chars/4), not provider-reported.">
-            estimated
-          </span>
-        ) : null}
-        <span className="font-sans text-[11px] text-[var(--text-disabled)]">
-          {report.totals.sessions} sessions
-          {report.lastActivityAt
-            ? ` · last activity ${formatRelativeTime(report.lastActivityAt, nowMs)}`
-            : ""}
-        </span>
-        {report.storageRoot ? (
-          <span
-            className="min-w-0 max-w-[46%] truncate font-mono text-[10px] text-[var(--text-disabled)]"
-            title={report.storageRoot}
-          >
-            {report.storageRoot}
-          </span>
-        ) : null}
-      </div>
+      <p
+        className="mb-[14px] font-sans text-[11px] text-[var(--text-disabled)]"
+        title={report.storageRoot ?? undefined}
+      >
+        {[
+          report.vendor,
+          report.plan ? `${report.plan} plan` : null,
+          `${report.totals.sessions} sessions`,
+          report.lastActivityAt
+            ? `active ${formatRelativeTime(report.lastActivityAt, nowMs)}`
+            : null,
+          report.estimated ? "estimated counts (chars/4)" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      </p>
 
       {report.limitWindows.length > 0 ? (
-        <SettingsSection title="Subscription limits">
+        <SettingsSection title="Limits">
           {report.limitWindows.map((limitWindow, index) => (
             <SettingsBlock
               key={limitWindow.id}
@@ -1046,11 +1036,11 @@ function ProviderDetail({
                 : effectiveMetric === "requests"
                   ? "requests"
                   : "spent"}{" "}
-              in the last {range}
+              · {range}
             </span>
             <span className="font-sans text-[11px] tabular-nums text-[var(--text-disabled)]">
-              pace: {formatTokens(pace.lastHour)} tok last hour · {formatTokens(pace.last24h)} last
-              24h · ≈{formatTokens(pace.perDay)}/day
+              {formatTokens(pace.lastHour)} tok/h now · {formatTokens(pace.last24h)} / 24h · ≈
+              {formatTokens(pace.perDay)} / day
             </span>
           </div>
         </SettingsBlock>
@@ -1144,80 +1134,76 @@ export function UsageSettingsPanel() {
     <>
       <PageIntro title="Usage" />
       <div
-        className="mb-[14px] flex flex-wrap items-center justify-between gap-[10px]"
-        data-settings-search-id="usage-controls"
+        className="mb-[18px] flex flex-wrap items-center justify-between gap-x-[12px] gap-y-[8px]"
+        data-settings-search-id="usage-tabs"
       >
-        <p className="min-w-0 flex-1 font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-          Live subscription meters, burn-rate projections, and token analytics across every
-          coding-agent harness on this machine — read locally from each CLI&apos;s own session
-          data. Nothing leaves your device.
-        </p>
-        <div className="flex shrink-0 items-center gap-[10px]">
+        {active.length > 0 ? (
+          <div role="tablist" aria-label="Harness" className="flex flex-wrap gap-[6px]">
+            {[{ id: "overview", label: "Overview", hot: null as number | null }]
+              .concat(
+                active.map((provider) => ({
+                  id: provider.id,
+                  label: PROVIDER_SHORT_LABELS[provider.id] ?? provider.label,
+                  hot: hotPercent(provider),
+                }))
+              )
+              .map((tab) => {
+                const selected = selectedTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setSelectedTab(tab.id)}
+                    className={`${chipBase} inline-flex items-center gap-[7px] px-[13px] py-[7px] text-[12.5px] ${
+                      selected ? chipSelected : chipIdle
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.hot !== null ? (
+                      <span
+                        className="size-[6px] rounded-full"
+                        style={{
+                          backgroundColor: selected ? "var(--bg-main)" : meterColor(tab.hot),
+                          opacity: selected ? 0.85 : 1,
+                        }}
+                        title={`Hottest limit window: ${formatPercent(tab.hot)} used`}
+                        aria-hidden
+                      />
+                    ) : null}
+                  </button>
+                );
+              })}
+          </div>
+        ) : (
+          <span />
+        )}
+        <div
+          className="flex shrink-0 items-center gap-[8px]"
+          data-settings-search-id="usage-controls"
+        >
           {overview ? (
             <span className="font-sans text-[11px] text-[var(--text-disabled)]">
-              updated {formatRelativeTime(overview.generatedAt, nowMs)} · polls every 60s
+              updated {formatRelativeTime(overview.generatedAt, nowMs)}
             </span>
           ) : null}
           <button
             type="button"
-            className={`${chipBase} ${chipIdle} inline-flex items-center gap-[6px]`}
+            className={`${chipBase} ${chipIdle} inline-flex items-center px-[7px] py-[6px]`}
             onClick={() => void load(false)}
             disabled={loading}
+            title="Refresh now (auto-refreshes every 60s)"
+            aria-label="Refresh usage data"
           >
             <RefreshCw
               className={`size-[13px] ${loading ? "animate-spin" : ""}`}
               strokeWidth={1.5}
               aria-hidden
             />
-            Refresh
           </button>
         </div>
       </div>
-
-      {/* harness selector */}
-      {active.length > 0 ? (
-        <div
-          role="tablist"
-          aria-label="Harness"
-          className="mb-[18px] flex flex-wrap gap-[6px]"
-          data-settings-search-id="usage-tabs"
-        >
-          {[{ id: "overview", label: "Overview", hot: null as number | null }].concat(
-            active.map((provider) => ({
-              id: provider.id,
-              label: PROVIDER_SHORT_LABELS[provider.id] ?? provider.label,
-              hot: hotPercent(provider),
-            }))
-          ).map((tab) => {
-            const selected = selectedTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => setSelectedTab(tab.id)}
-                className={`${chipBase} inline-flex items-center gap-[7px] px-[13px] py-[7px] text-[12.5px] ${
-                  selected ? chipSelected : chipIdle
-                }`}
-              >
-                {tab.label}
-                {tab.hot !== null ? (
-                  <span
-                    className="size-[6px] rounded-full"
-                    style={{
-                      backgroundColor: selected ? "var(--bg-main)" : meterColor(tab.hot),
-                      opacity: selected ? 0.85 : 1,
-                    }}
-                    title={`Hottest limit window: ${formatPercent(tab.hot)} used`}
-                    aria-hidden
-                  />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
 
       {error ? (
         <SettingsSection bordered={false}>
@@ -1241,21 +1227,17 @@ export function UsageSettingsPanel() {
             className="mb-[18px] grid grid-cols-2 gap-[10px] lg:grid-cols-4"
             data-settings-search-id="usage-summary"
           >
-            <SummaryStat label="Total tokens" value={formatTokens(summary.tokens)} hint="last 30 days" />
-            <SummaryStat
-              label="Requests"
-              value={summary.requests.toLocaleString()}
-              hint="assistant turns"
-            />
+            <SummaryStat label="Tokens" value={formatTokens(summary.tokens)} hint="30d" />
+            <SummaryStat label="Requests" value={summary.requests.toLocaleString()} hint="30d" />
             <SummaryStat
               label="Known spend"
               value={summary.cost !== null ? formatCost(summary.cost) : "—"}
-              hint="where harnesses record cost"
+              hint="30d"
             />
             <SummaryStat
-              label="Harnesses tracked"
-              value={String(summary.tracked)}
-              hint={`${active.length} detected on disk`}
+              label="Harnesses"
+              value={`${summary.tracked}/${active.length}`}
+              hint="active / detected"
             />
           </div>
 
@@ -1304,13 +1286,6 @@ export function UsageSettingsPanel() {
         </>
       ) : null}
 
-      {overview ? (
-        <p className="mb-[20px] flex items-center gap-[6px] font-sans text-[11px] text-[var(--text-disabled)]">
-          <Gauge className="size-[12px]" strokeWidth={1.5} aria-hidden />
-          Auto-refreshes every 60s · hover any chart for exact values · counts marked
-          “estimated” use a chars/4 heuristic.
-        </p>
-      ) : null}
     </>
   );
 }
