@@ -364,13 +364,14 @@ html.dark .landing-shot-dark {
   left: 0;
   right: 0;
   bottom: 0;
-  top: -56px;
+  top: -64px;
   pointer-events: none;
   background: linear-gradient(
     to top,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 88%, transparent) 0%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 62%, transparent) 42%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 28%, transparent) 72%,
+    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 96%, transparent) 0%,
+    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 82%, transparent) 30%,
+    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 46%, transparent) 62%,
+    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 16%, transparent) 84%,
     transparent 100%
   );
 }

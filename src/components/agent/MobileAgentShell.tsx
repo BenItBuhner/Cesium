@@ -443,15 +443,24 @@ export function MobileAgentShell({
           gesture.rejected = true;
           return;
         }
+        const motion =
+          action === "open-right" ? rightMotionRef.current : leftMotionRef.current;
+        if (!motion) {
+          gesture.rejected = true;
+          return;
+        }
+        // Enter drag mode before mounting: the mount-management effect bails
+        // on `dragging`, otherwise it would see "rail closed, motion at rest"
+        // and unmount the drawer inside the same flush.
+        motion.beginDrag();
         if (action === "open-left" && !leftMountedRef.current) {
           // The drawer must exist before the first drag frame lands on it.
           flushSync(() => setLeftMounted(true));
         }
-        const motion =
-          action === "open-right" ? rightMotionRef.current : leftMotionRef.current;
         const drawerEl =
           action === "open-right" ? rightPaneRef.current : leftDrawerRef.current;
-        if (!motion || !drawerEl) {
+        if (!drawerEl) {
+          motion.cancel();
           gesture.rejected = true;
           return;
         }
@@ -459,7 +468,6 @@ export function MobileAgentShell({
         gesture.action = action;
         gesture.baseProgress = motion.progress;
         gesture.drawerWidth = Math.max(1, drawerEl.getBoundingClientRect().width);
-        motion.beginDrag();
       }
 
       if (!gesture.engaged || !gesture.action) {
@@ -514,13 +522,21 @@ export function MobileAgentShell({
       motion.springTo(open ? 1 : 0, progressVelocity);
     };
 
+    // The tracked finger has lifted when it is absent from `touches`; some
+    // environments do not reliably list it in `changedTouches`, so check the
+    // live touch list instead of the delta list.
+    const trackedTouchStillDown = (event: TouchEvent, id: number): boolean => {
+      for (let i = 0; i < event.touches.length; i += 1) {
+        if (event.touches[i].identifier === id) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     const onTouchEnd = (event: TouchEvent) => {
       const gesture = gestureRef.current;
-      if (!gesture) {
-        return;
-      }
-      const touch = findTouch(event, gesture.touchId);
-      if (!touch) {
+      if (!gesture || trackedTouchStillDown(event, gesture.touchId)) {
         return;
       }
       gestureRef.current = null;
@@ -529,11 +545,7 @@ export function MobileAgentShell({
 
     const onTouchCancel = (event: TouchEvent) => {
       const gesture = gestureRef.current;
-      if (!gesture) {
-        return;
-      }
-      const touch = findTouch(event, gesture.touchId);
-      if (!touch) {
+      if (!gesture || trackedTouchStillDown(event, gesture.touchId)) {
         return;
       }
       gestureRef.current = null;
@@ -553,7 +565,10 @@ export function MobileAgentShell({
   }, [setRailOpen, setRightOpen]);
 
   return (
-    <div ref={shellRef} className="absolute inset-0">
+    // `overflow-clip` (not `hidden`): the parked right pane translated +100%
+    // would otherwise create horizontal scrollable overflow that focus/scroll
+    // heuristics can drag the whole shell sideways into.
+    <div ref={shellRef} className="absolute inset-0 overflow-clip">
       {children}
 
       {leftMounted ? (
@@ -566,6 +581,7 @@ export function MobileAgentShell({
           />
           <div
             ref={leftDrawerRef}
+            data-mobile-drawer="left"
             className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[0_0_40px_rgba(0,0,0,0.35)]"
             style={{
               width: `${railWidth}px`,
@@ -580,6 +596,7 @@ export function MobileAgentShell({
 
       <div
         ref={rightPaneRef}
+        data-mobile-drawer="right"
         className="absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
         style={{
           width: rightPaneWidthCss,
