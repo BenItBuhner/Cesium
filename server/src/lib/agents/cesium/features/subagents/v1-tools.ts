@@ -6,7 +6,7 @@ export const SUBAGENTS_V1_TOOLS: CesiumToolDefinition[] = [
   {
     name: "subagent",
     description:
-      "Start an ephemeral in-session research subagent (not a kanban child agent). Stores a transcript card keyed by subagentId for read_subagent_transcript.",
+      "Start an ephemeral in-session research subagent (not a kanban child agent). The child can drive the built-in browser (browser_* tools) to test sites, capture screenshots, and record demo videos saved under artifacts/browser/. Stores a transcript card keyed by subagentId for read_subagent_transcript.",
     parameters: {
       type: "object",
       properties: {

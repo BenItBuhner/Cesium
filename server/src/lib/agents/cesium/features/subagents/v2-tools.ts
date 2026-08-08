@@ -22,7 +22,7 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
     {
       name: "spawn_agent",
       description:
-        "Spawn a collaborative subagent thread addressed by a canonical path (e.g. /root/explore_auth). Returns immediately; the child runs in the background. Use wait_agent to poll for mailbox updates, followup_task to assign more work, and send_message to queue context without starting a turn.",
+        "Spawn a collaborative subagent thread addressed by a canonical path (e.g. /root/explore_auth). Returns immediately; the child runs in the background. Use wait_agent to poll for mailbox updates, followup_task to assign more work, and send_message to queue context without starting a turn. Children can drive the built-in browser (browser_* tools) to test sites, capture screenshots, and record demo videos saved under artifacts/browser/ — ideal for delegating product testing and demo capture.",
       parameters: {
         type: "object",
         properties: {
@@ -168,6 +168,7 @@ export function createSubagentsV2Module(limits: CesiumHarnessLimits): CesiumFeat
       "Subagents V2 is active. Prefer spawn_agent + wait_agent + followup_task for parallel collaborative work. " +
       "Spawn returns immediately; poll with wait_agent using short timeouts when you can keep working. " +
       "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2. " +
+      "Children can use the built-in browser tools to test sites, take screenshots, and record demo videos (saved under artifacts/browser/); have them report artifact file paths in their summaries, then verify with read_file (images attach for vision models). " +
       "When parallel workstreams must touch files, give each its own worktree branch (`create_worktree`), point the work at that path, then merge verified branches back and clean up.",
   };
 }

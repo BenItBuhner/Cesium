@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { AgentStoredEvent } from "../../../types.js";
 import type { CesiumProviderKind } from "../../../../cesium-agent-settings.js";
 import { resolveCesiumAuth } from "../../../../cesium-agent-settings.js";
-import { runAdapter } from "../../cesium-model-adapters.js";
 import { CESIUM_SYSTEM_PROMPT } from "../../cesium-prompt.js";
+import {
+  runSubagentToolLoop,
+  subagentToolsetGuidance,
+  type CesiumSubagentToolset,
+} from "../../subagent-toolset.js";
 import { asString } from "../../cesium-coerce.js";
 import { asNumber } from "../../../json-coerce.js";
 import type { CesiumHistoryMessage } from "../../cesium-types.js";
@@ -76,6 +80,8 @@ export type SubagentsV2RuntimeOptions = {
   appendEvents: AppendEvents;
   getParentHistory?: () => Promise<CesiumHistoryMessage[]>;
   isCancelled?: () => boolean;
+  /** Restricted tool surface (browser control) available to child agents. */
+  toolset?: CesiumSubagentToolset | null;
 };
 
 function providerPart(modelId: string): string {
@@ -541,6 +547,8 @@ export class SubagentsV2Runtime {
         configuredApiKind:
           subagentProviderId === "openai" ? this.options.defaultApiKind : undefined,
       });
+      const toolset = this.options.toolset ?? null;
+      const toolGuidance = subagentToolsetGuidance(toolset);
       const messages: CesiumHistoryMessage[] = [
         {
           role: "system",
@@ -548,21 +556,38 @@ export class SubagentsV2Runtime {
             `${CESIUM_SYSTEM_PROMPT}\n\n` +
             `You are collaborative subagent ${agent.path} (${agent.title}). ` +
             "Complete the assigned task. Do not spawn additional subagents. " +
-            "Reply with a clear final summary of findings or work completed.",
+            "Reply with a clear final summary of findings or work completed." +
+            (toolGuidance ? `\n\n${toolGuidance}` : ""),
         },
         ...agent.forkHistory.filter((message) => message.role !== "system"),
         { role: "user", content: taskText },
       ];
-      const result = await runAdapter({
-        apiKind: auth.apiKind,
-        apiKey: auth.apiKey,
-        baseUrl: auth.baseUrl,
-        providerId: auth.providerId,
-        modelId: agent.modelId,
+      const result = await runSubagentToolLoop({
+        adapter: {
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          modelId: agent.modelId,
+        },
         messages,
-        // Explicit empty array: adapters omit tools from the provider payload.
-        // Leaving tools undefined would fall back to the full default tool surface.
-        tools: [],
+        toolset,
+        isAborted: () =>
+          agent.abortController.signal.aborted || this.options.isCancelled?.() === true,
+        onToolCall: async (event) => {
+          agent.transcript.push({
+            seq: agent.transcript.length + 1,
+            eventId: randomUUID(),
+            conversationId: this.options.conversationId,
+            createdAt: Date.now(),
+            kind: "tool_call",
+            toolCallId: event.toolCallId,
+            title: `${event.name}`,
+            toolKind: "mcp",
+            status: event.ok ? "completed" : "failed",
+            detail: event.result.slice(0, 600),
+          });
+        },
       });
       if (agent.abortController.signal.aborted) {
         agent.status = { kind: "interrupted" };
@@ -571,8 +596,8 @@ export class SubagentsV2Runtime {
       }
       const resultText =
         result.text.trim() ||
-        (result.toolRequests.length > 0
-          ? `Subagent requested unsupported child tools: ${result.toolRequests.map((tool) => tool.name).join(", ")}`
+        (result.toolCallCount > 0
+          ? `Subagent made ${result.toolCallCount} tool call(s) but returned no final text.`
           : "Subagent completed without visible text.");
       agent.transcript.push({
         seq: agent.transcript.length + 1,
