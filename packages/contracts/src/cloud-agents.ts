@@ -1,4 +1,3 @@
-/** Public Cloud Agent contracts are shared by server, SDK, and application clients. */
 export {
   CLOUD_AGENT_PROVIDER_IDS,
   isCloudAgentProviderId,
@@ -16,4 +15,4 @@ export {
   type CloudAgentTaskSource,
   type CloudAgentTaskStatus,
   type CloudAgentTaskTimelineEntry,
-} from "@cesium/contracts/cloud-agents";
+} from "./types.js";

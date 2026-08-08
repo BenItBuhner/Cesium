@@ -1,13 +1,13 @@
 import {
   CLOUD_AGENT_PROVIDER_IDS,
   isCloudAgentProviderId,
-  type AgentBackendId,
   type CloudAgentExecutionMode,
   type CloudAgentMediaRef,
   type CloudAgentProviderId,
   type CloudAgentRoutingRule,
   type CloudAgentTaskSource,
-} from "@cesium/contracts";
+} from "@cesium/contracts/cloud-agents";
+import type { AgentBackendId } from "../agents/types.js";
 
 export {
   CLOUD_AGENT_PROVIDER_IDS,
@@ -25,7 +25,7 @@ export {
   type CloudAgentTaskSource,
   type CloudAgentTaskStatus,
   type CloudAgentTaskTimelineEntry,
-} from "@cesium/contracts";
+} from "@cesium/contracts/cloud-agents";
 
 /** Stored connection with secrets. Never leaves the server unredacted. */
 export type CloudAgentConnection = {

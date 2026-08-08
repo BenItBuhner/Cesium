@@ -128,4 +128,55 @@ describe("standalone Cesium SDK", () => {
     assert.equal(updated.etag, "\"8\"");
     assert.equal(new Headers(requests[1]?.headers).get("if-match"), "\"7\"");
   });
+
+  test("unwraps workspace resource response envelopes", async () => {
+    const board = {
+      schemaVersion: 1,
+      id: "board-1",
+      workspaceId: "workspace-1",
+      title: "SDK board",
+      description: "",
+      headConversationId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      archivedAt: null,
+      settings: {
+        allowedBackendIds: [],
+        defaultChildBackendId: null,
+        defaultModelByBackend: {},
+        maxConcurrentIssues: null,
+        maxConcurrentAgents: null,
+        userQuestionTimeoutMs: 60_000,
+        mcpEnabled: true,
+      },
+    };
+    const snapshot = { board, issues: [], assignments: [], events: [] };
+    const client = new CesiumClient({
+      baseUrl: "https://cesium.example",
+      fetch: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/git/status")) {
+          return json({
+            workspace: { id: "workspace-1" },
+            status: {
+              isGitRepo: true,
+              root: "/workspace",
+              branches: [],
+              worktrees: [],
+            },
+          });
+        }
+        return json({ snapshot });
+      },
+    });
+    const workspace = client.workspace("workspace-1");
+
+    const status = await workspace.git.status();
+    const created = await workspace.orchestration.createBoard({
+      title: "SDK board",
+    });
+
+    assert.equal(status.isGitRepo, true);
+    assert.equal(created.board.id, "board-1");
+  });
 });

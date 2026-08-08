@@ -3,7 +3,7 @@ import {
   CESIUM_CAPABILITIES,
   CESIUM_PROTOCOL_VERSION,
   type CesiumServerMetadata,
-} from "@cesium/contracts";
+} from "@cesium/contracts/meta";
 
 export const metaRoutes = new Hono();
 

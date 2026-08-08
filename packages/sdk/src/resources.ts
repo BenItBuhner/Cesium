@@ -35,7 +35,6 @@ import {
   type CloudAgentTaskStatus,
   type FileNode,
   type GitWorkspaceStatus,
-  type GitWorktreeInfo,
   type GitWorktreeSetupResult,
   type McpConnectionStatus,
   type McpPresetDefinition,
@@ -182,7 +181,12 @@ export class WorkspacesResource {
   > {
     return this.transport.request("workspaces.open", "/api/workspaces/open", {
       method: "POST",
-      json: input,
+      json: {
+        workspaceId: input.workspaceId,
+        root: input.root,
+        name: input.name,
+        trackRecent: input.trackRecent,
+      },
       signal: input.signal,
     });
   }
@@ -200,7 +204,12 @@ export class WorkspacesResource {
   > {
     return this.transport.request("workspaces.create", "/api/workspaces/create", {
       method: "POST",
-      json: input,
+      json: {
+        name: input.name,
+        parentPath: input.parentPath,
+        directoryName: input.directoryName,
+        setDefault: input.setDefault,
+      },
       signal: input.signal,
     });
   }
@@ -215,14 +224,13 @@ export class WorkspacesResource {
 
   async remove(
     workspaceId: string,
-    options?: { deleteFiles?: boolean; signal?: AbortSignal }
+    options?: { signal?: AbortSignal }
   ): Promise<WorkspacesResponse> {
     return this.transport.request(
       "workspaces.remove",
       `/api/workspaces/${id(workspaceId)}`,
       {
         method: "DELETE",
-        query: { deleteFiles: options?.deleteFiles },
         signal: options?.signal,
       }
     );
@@ -416,8 +424,8 @@ export class GitResource {
     private readonly workspaceId: string
   ) {}
 
-  status(options?: { signal?: AbortSignal }): Promise<GitWorkspaceStatus> {
-    return this.transport.request(
+  async status(options?: { signal?: AbortSignal }): Promise<GitWorkspaceStatus> {
+    const result = await this.transport.request<{ status: GitWorkspaceStatus }>(
       "workspaces.git.status",
       `/api/workspaces/${id(this.workspaceId)}/git/status`,
       {
@@ -425,35 +433,46 @@ export class GitResource {
         signal: options?.signal,
       }
     );
+    return result.status;
   }
 
-  initialize(options?: {
-    defaultBranch?: string;
+  async initialize(options?: {
     signal?: AbortSignal;
-  }): Promise<{ status: GitWorkspaceStatus }> {
-    return this.transport.request(
+  }): Promise<GitWorkspaceStatus> {
+    const result = await this.transport.request<{ status: GitWorkspaceStatus }>(
       "workspaces.git.init",
       `/api/workspaces/${id(this.workspaceId)}/git/init`,
       {
         method: "POST",
         workspaceId: this.workspaceId,
-        json: { defaultBranch: options?.defaultBranch },
+        json: {},
         signal: options?.signal,
       }
     );
+    return result.status;
   }
 
   switchBranch(
     branch: string,
-    options?: { create?: boolean; signal?: AbortSignal }
-  ): Promise<{ status: GitWorkspaceStatus }> {
+    options?: { signal?: AbortSignal }
+  ): Promise<{
+    status: GitWorkspaceStatus;
+    workspace?: WorkspaceRecord;
+    openedWorkspace?: WorkspaceRecord;
+    checkedOutWorktree?: {
+      path: string;
+      branch: string | null;
+      workspaceId?: string;
+      workspaceName?: string;
+    };
+  }> {
     return this.transport.request(
       "workspaces.git.switch",
       `/api/workspaces/${id(this.workspaceId)}/git/switch`,
       {
         method: "POST",
         workspaceId: this.workspaceId,
-        json: { branch, create: options?.create },
+        json: { branch },
         signal: options?.signal,
       }
     );
@@ -461,12 +480,21 @@ export class GitResource {
 
   createWorktree(input: {
     branch: string;
-    path?: string;
-    createBranch?: boolean;
+    baseBranch?: string;
+    newBranch?: boolean;
+    targetPath?: string;
+    runSetup?: boolean;
+    name?: string;
     signal?: AbortSignal;
   }): Promise<{
-    worktree: GitWorktreeInfo;
-    workspace?: WorkspaceRecord;
+    ok: true;
+    workspace: WorkspaceRecord;
+    workspaces: WorkspaceRecord[];
+    worktree: {
+      path: string;
+      branch: string;
+      existing: boolean;
+    };
     setup?: GitWorktreeSetupResult;
   }> {
     return this.transport.request(
@@ -475,7 +503,14 @@ export class GitResource {
       {
         method: "POST",
         workspaceId: this.workspaceId,
-        json: input,
+        json: {
+          branch: input.branch,
+          baseBranch: input.baseBranch,
+          newBranch: input.newBranch,
+          targetPath: input.targetPath,
+          runSetup: input.runSetup,
+          name: input.name,
+        },
         signal: input.signal,
       }
     );
@@ -484,7 +519,7 @@ export class GitResource {
   removeWorktree(
     path: string,
     options?: { force?: boolean; signal?: AbortSignal }
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; workspaces: WorkspaceRecord[] }> {
     return this.transport.request(
       "workspaces.git.worktrees.remove",
       `/api/workspaces/${id(this.workspaceId)}/git/worktrees`,
@@ -850,8 +885,8 @@ export class OrchestrationResource {
   async createBoard(input?: {
     title?: string;
     description?: string;
-  }): Promise<OrchestrationBoardRecord> {
-    const result = await this.transport.request<{ board: OrchestrationBoardRecord }>(
+  }): Promise<OrchestrationBoardSnapshot> {
+    const result = await this.transport.request<{ snapshot: OrchestrationBoardSnapshot }>(
       "orchestration.boards.create",
       "/api/orchestration/boards",
       {
@@ -860,18 +895,19 @@ export class OrchestrationResource {
         json: input ?? {},
       }
     );
-    return result.board;
+    return result.snapshot;
   }
 
-  getBoard(boardId: string): Promise<OrchestrationBoardSnapshot> {
-    return this.transport.request(
+  async getBoard(boardId: string): Promise<OrchestrationBoardSnapshot> {
+    const result = await this.transport.request<{ snapshot: OrchestrationBoardSnapshot }>(
       "orchestration.boards.get",
       `/api/orchestration/boards/${id(boardId)}`,
       { workspaceId: this.workspaceId }
     );
+    return result.snapshot;
   }
 
-  updateBoard(
+  async updateBoard(
     boardId: string,
     patch: {
       title?: string;
@@ -879,7 +915,7 @@ export class OrchestrationResource {
       archived?: boolean;
     }
   ): Promise<OrchestrationBoardSnapshot> {
-    return this.transport.request(
+    const result = await this.transport.request<{ snapshot: OrchestrationBoardSnapshot }>(
       "orchestration.boards.update",
       `/api/orchestration/boards/${id(boardId)}`,
       {
@@ -888,6 +924,7 @@ export class OrchestrationResource {
         json: patch,
       }
     );
+    return result.snapshot;
   }
 
   async removeBoard(boardId: string): Promise<void> {
@@ -901,7 +938,7 @@ export class OrchestrationResource {
     );
   }
 
-  createIssue(
+  async createIssue(
     boardId: string,
     input: {
       title: string;
@@ -912,7 +949,7 @@ export class OrchestrationResource {
       dependencyIssueIds?: string[];
     }
   ): Promise<OrchestrationBoardSnapshot> {
-    return this.transport.request(
+    const result = await this.transport.request<{ snapshot: OrchestrationBoardSnapshot }>(
       "orchestration.issues.create",
       `/api/orchestration/boards/${id(boardId)}/issues`,
       {
@@ -921,6 +958,7 @@ export class OrchestrationResource {
         json: input,
       }
     );
+    return result.snapshot;
   }
 }
 

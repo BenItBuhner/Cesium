@@ -13,6 +13,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./cloud-agents": {
+      "types": "./dist/cloud-agents.d.ts",
+      "import": "./dist/cloud-agents.js"
+    },
+    "./meta": {
+      "types": "./dist/meta.d.ts",
+      "import": "./dist/meta.js"
     }
   },
   "scripts": {

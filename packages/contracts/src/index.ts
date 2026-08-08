@@ -29,10 +29,3 @@ export type {
   WorkspaceInfo,
   WorkspaceRecord,
 } from "@cesium/core";
-
-export type {
-  McpConnectionStatus,
-  McpPresetDefinition,
-  McpServerConfig,
-  McpServerPublic,
-} from "@cesium/core/mcp";

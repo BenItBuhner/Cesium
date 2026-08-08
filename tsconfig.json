@@ -22,6 +22,7 @@
       "@/*": ["./src/*"],
       "@cesium/core": ["./packages/core/src/index.ts"],
       "@cesium/contracts": ["./packages/contracts/src/index.ts"],
+      "@cesium/contracts/*": ["./packages/contracts/src/*.ts"],
       "@cesium/sdk": ["./packages/sdk/src/index.ts"],
       "@cesium/client": ["./packages/client/src/index.ts"],
       "@cesium/client/react": ["./packages/client/src/react.ts"],
