@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - "Agent attention" high-importance notification channel: agents alert (heads-up/sound) exactly when they start needing input (permission/question) and when a watched run completes, fails, or is cancelled; routine progress updates stay silent on the low-importance runs channel. Interventions and completions also bypass a run's dismissed state.
 - Completion/failure notifications now persist until dismissed instead of auto-cancelling ~15 s after the run ends.
 
+### Fixed
+
+- Voice orb is no longer always visible on Android. The packaged workbench now includes the Settings → General → Voice opt-in gate (`showVoiceOrb`, default off), so the floating mic stays hidden until the user enables it.
+
 ## [0.3.1] - 2026-07-30
 
 ### Fixed
