@@ -1,39 +1,23 @@
 "use client";
 
 import { clientKeyValueStore } from "@cesium/client";
+import { getCloudMode } from "./cloud-flags";
 
 /**
- * Cloud Context environment detection.
+ * Cloud Context environment detection (client side).
  *
- * Three modes, chosen purely from build-time env so every platform can dial
- * in its own posture (Electron ships with cloud disabled by default; a hosted
- * web deployment ships Clerk + Convex):
- *
- * - "disabled": no `NEXT_PUBLIC_CONVEX_URL`. Fully local-first, zero cloud.
- * - "device":   Convex configured, Clerk not. Identity is a per-browser
- *               device key honored only by deployments that opt in with
- *               `CESIUM_ALLOW_DEVICE_KEYS=1` (local dev / self-hosted).
- * - "clerk":    Convex + Clerk. Production path — sign in anywhere, your
- *               servers/preferences/conversations follow you.
+ * Mode resolution and the master `NEXT_PUBLIC_CESIUM_CLOUD` switch live in
+ * `cloud-flags.ts` (pure, importable from the Next proxy boundary and tests);
+ * this module re-exports them and adds the browser-only device identity.
  */
-export type CloudMode = "disabled" | "device" | "clerk";
-
-export function getConvexUrl(): string | null {
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
-  return url ? url : null;
-}
-
-export function getClerkPublishableKey(): string | null {
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
-  return key ? key : null;
-}
-
-export function getCloudMode(): CloudMode {
-  if (!getConvexUrl()) {
-    return "disabled";
-  }
-  return getClerkPublishableKey() ? "clerk" : "device";
-}
+export {
+  getClerkPublishableKey,
+  getCloudMode,
+  getConvexUrl,
+  isCloudExplicitlyDisabled,
+  isSignInRequired,
+  type CloudMode,
+} from "./cloud-flags";
 
 export const CLOUD_DEVICE_KEY_STORAGE_KEY = "cesium-cloud-device-key";
 
