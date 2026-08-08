@@ -10,19 +10,21 @@ process.env.OPENCURSOR_DATA_DIR = path.join(
   `cesium-quick-actions-test-${Date.now()}-${randomUUID().slice(0, 8)}`
 );
 
-import {
+// Static imports would hoist above the env assignment and resolve DATA_DIR to
+// the real profile directory; import after the env is set instead.
+const {
   findEffectiveQuickAction,
   normalizeQuickActionDefinition,
   normalizeQuickActionsConfig,
   QUICK_ACTION_PRESETS,
   resolveEffectiveQuickActions,
-} from "@cesium/core/quick-actions";
-import {
+} = await import("@cesium/core/quick-actions");
+const {
   getQuickActionsConfig,
   removeCustomQuickAction,
   setQuickActionPresetStates,
   upsertCustomQuickAction,
-} from "../src/lib/quick-actions-store.js";
+} = await import("../src/lib/quick-actions-store.js");
 
 after(async () => {
   await fs.rm(process.env.OPENCURSOR_DATA_DIR!, { recursive: true, force: true });

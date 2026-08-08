@@ -11,12 +11,12 @@ process.env.OPENCURSOR_DATA_DIR = path.join(
   `cesium-insights-test-${Date.now()}-${randomUUID().slice(0, 8)}`
 );
 
-import {
-  getWorkspaceInsights,
-  parseGitNumstat,
-  parseGitPorcelainStatus,
-} from "../src/lib/workspace-insights.js";
-import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
+// Static imports would hoist above the env assignment and resolve DATA_DIR to
+// the real profile directory; import after the env is set instead.
+const { getWorkspaceInsights, parseGitNumstat, parseGitPorcelainStatus } = await import(
+  "../src/lib/workspace-insights.js"
+);
+type WorkspaceRecord = import("../src/lib/workspace-registry.js").WorkspaceRecord;
 
 describe("parseGitPorcelainStatus", () => {
   test("parses branch header with ahead/behind and upstream", () => {
