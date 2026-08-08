@@ -7,6 +7,8 @@ import {
   normalizeComposerStatusBarVisibility,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
+  resolveComposerStatusBarVisibilityForConversation,
+  withComposerStatusBarVisibility,
 } from "../src/lib/composer-status-bar.ts";
 import {
   createDefaultWorkspaceSession,
@@ -105,6 +107,69 @@ describe("composer status bar helpers", () => {
 
   test("formatContextUsagePair renders pair label", () => {
     assert.equal(formatContextUsagePair(166800, 200000), "~167K / 200K Tokens");
+  });
+});
+
+describe("per-conversation composer status bar visibility", () => {
+  const hidden = { repo: false, branch: false, goal: false, context: false };
+
+  test("conversation state wins over the last-used default", () => {
+    const scope = {
+      composerStatusBarVisibility: { repo: false, branch: true, goal: true, context: true },
+      composerStatusBarVisibilityByConversationId: { "conv-a": hidden },
+    };
+    assert.deepEqual(resolveComposerStatusBarVisibilityForConversation(scope, "conv-a"), hidden);
+    // New conversations inherit the last-used default.
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new").repo,
+      false
+    );
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new").branch,
+      true
+    );
+  });
+
+  test("toggling writes both the conversation entry and the new-chat default", () => {
+    const start = {
+      composerStatusBarVisibility: {
+        repo: true,
+        branch: true,
+        goal: true,
+        context: true,
+      },
+      composerStatusBarVisibilityByConversationId: {},
+    };
+    const afterA = withComposerStatusBarVisibility(start, "conv-a", {
+      repo: true,
+      branch: false,
+      goal: true,
+      context: true,
+    });
+    assert.equal(afterA.composerStatusBarVisibility?.branch, false);
+    assert.equal(
+      afterA.composerStatusBarVisibilityByConversationId?.["conv-a"]?.branch,
+      false
+    );
+    // conv-a keeps its own state even after another conversation changes the default.
+    const afterB = withComposerStatusBarVisibility(afterA, "conv-b", {
+      repo: false,
+      branch: true,
+      goal: true,
+      context: true,
+    });
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-a").branch,
+      false
+    );
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-a").repo,
+      true
+    );
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-c").repo,
+      false
+    );
   });
 });
 
