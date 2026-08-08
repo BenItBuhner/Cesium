@@ -3,6 +3,7 @@ import type { LiveUpdatePayload, LiveUpdateStatus } from "../services/liveUpdate
 
 type CesiumLiveUpdatesModule = {
   startOrUpdate(payload: LiveUpdatePayload): Promise<LiveUpdateStatus>;
+  stopRun(runKey: string): Promise<void>;
   stop(): Promise<void>;
   getPromotionStatus(): Promise<LiveUpdateStatus>;
   getDeliveryPreference(): Promise<LiveUpdateStatus["deliveryPreference"]>;
@@ -25,6 +26,16 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
       return fallbackStatus();
     }
     return nativeModule.startOrUpdate(payload);
+  },
+  async stopRun(runKey) {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return;
+    }
+    // Older native builds predate per-run teardown; treat as best effort.
+    if (typeof nativeModule.stopRun !== "function") {
+      return;
+    }
+    await nativeModule.stopRun(runKey);
   },
   async stop() {
     if (Platform.OS !== "android" || !nativeModule) {

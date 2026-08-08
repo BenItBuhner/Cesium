@@ -21,7 +21,15 @@ export type LiveUpdatePayload = {
   ongoing?: boolean;
   cancellable?: boolean;
   promote?: boolean;
+  /**
+   * True exactly when this update should make noise: an agent started
+   * needing input (permission/question) or a run reached a terminal state.
+   * Routine progress updates stay silent.
+   */
+  alert?: boolean;
 };
+
+export type LiveUpdateDeliveryPreference = "live" | "basic" | "off";
 
 export type LiveUpdateStatus = {
   sdkInt: number;
@@ -29,5 +37,5 @@ export type LiveUpdateStatus = {
   canPostPromotedNotifications: boolean;
   notificationPermissionGranted: boolean;
   suppressedByDismissal: boolean;
-  deliveryPreference: "nowbar" | "live" | "off";
+  deliveryPreference: LiveUpdateDeliveryPreference;
 };
