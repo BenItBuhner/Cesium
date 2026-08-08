@@ -1,8 +1,12 @@
 {
-  "name": "@cesium/client",
+  "name": "@cesium/sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Universal TypeScript SDK for Cesium servers",
   "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -10,9 +14,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/react.js"
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
     }
   },
   "scripts": {
@@ -20,16 +24,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cesium/contracts": "file:../contracts",
-    "@cesium/core": "file:../core",
-    "@cesium/design": "file:../design"
-  },
-  "peerDependencies": {
-    "react": ">=19"
+    "@cesium/contracts": "0.1.0",
+    "@cesium/core": "0.1.0"
   },
   "devDependencies": {
     "@cesium/config": "file:../config",
-    "@types/react": "^19",
     "typescript": "^5"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
 }

@@ -21,6 +21,8 @@ export default defineConfig({
       "next/link": r("./src/next-shims/link.tsx"),
       "next/navigation": r("./src/next-shims/navigation.tsx"),
       "@cesium/core": r("../../packages/core/src/index.ts"),
+      "@cesium/contracts": r("../../packages/contracts/src/index.ts"),
+      "@cesium/sdk": r("../../packages/sdk/src/index.ts"),
       "@cesium/client/react": r("../../packages/client/src/react.ts"),
       "@cesium/client": r("../../packages/client/src/index.ts"),
       "@cesium/design": r("../../packages/design/src/index.ts"),

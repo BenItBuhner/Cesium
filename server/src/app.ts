@@ -21,6 +21,7 @@ import { orchestrationRoutes } from "./routes/orchestration.js";
 import { cloudAgentRoutes } from "./routes/cloud-agents.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { publicAccessRoutes } from "./routes/public-access.js";
+import { metaRoutes } from "./routes/meta.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
@@ -96,6 +97,8 @@ export function createCesiumApp(): Hono {
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: [
         "Content-Type",
+        "If-Match",
+        "If-None-Match",
         "x-opencursor-workspace-id",
         SESSION_TOKEN_HEADER,
       ],
@@ -109,6 +112,8 @@ export function createCesiumApp(): Hono {
         "retry-after",
         "server-timing",
         "x-opencursor-perf-ms",
+        "x-cesium-protocol-version",
+        "etag",
       ],
     })
   );
@@ -136,6 +141,7 @@ export function createCesiumApp(): Hono {
   app.get("/health", (c) =>
     c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
   );
+  app.route("/", metaRoutes);
   app.route("/", authRoutes);
   app.route("/", publicAccessRoutes);
   app.route("/", mcpRoutes);
