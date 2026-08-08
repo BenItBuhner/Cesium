@@ -7,6 +7,7 @@ import {
 } from "../lib/agents/providers.js";
 import { getCesiumAgentSettings } from "../lib/cesium-agent-settings.js";
 import {
+  buildInstallCommand,
   getInstallSpecForBackend,
   isInstallSupportedOnThisHost,
 } from "../lib/agents/install/cli-install-registry.js";
@@ -91,9 +92,10 @@ agentInstallRoutes.post("/api/agents/backends/:backendId/install", async (c) => 
       const emit = (payload: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
       };
-      emit({ type: "log", line: `$ ${spec.summary}` });
+      const invocation = buildInstallCommand(spec);
+      emit({ type: "log", line: `$ ${invocation.command} ${invocation.args.join(" ")}` });
 
-      const child = spawn(spec.command, spec.args, {
+      const child = spawn(invocation.command, invocation.args, {
         stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
         shell: process.platform === "win32",

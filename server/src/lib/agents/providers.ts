@@ -28,6 +28,7 @@ import {
   hasClaudeCodeSdkProxyConfig,
 } from "../claude-code-sdk-credentials.js";
 import { AcpSessionHandle } from "./acp/acp-session.js";
+import { resolveCesiumToolBin } from "./install/cli-install-registry.js";
 import { resolveOpenCodeV2CommandPath } from "./opencode-v2-process.js";
 
 type AcpRuntimeSpec = CliRuntimeSpec;
@@ -313,6 +314,11 @@ function resolveOpenCodeCliRuntime(): CliRuntimeSpec | null {
     return buildInvocation(pathHit, []);
   }
 
+  const cesiumTool = resolveCesiumToolBin("opencode");
+  if (cesiumTool) {
+    return buildInvocation(cesiumTool, []);
+  }
+
   const bundled = resolveOpenCodeBundledBinary();
   if (bundled) {
     return buildInvocation(bundled, []);
@@ -341,7 +347,12 @@ function resolveCodexCliRuntime(): CliRuntimeSpec | null {
       ? ["codex.exe", "codex.cmd", "codex.bat", "codex"]
       : ["codex"]
   );
-  return pathHit ? buildInvocation(pathHit, []) : null;
+  if (pathHit) {
+    return buildInvocation(pathHit, []);
+  }
+
+  const cesiumTool = resolveCesiumToolBin("codex");
+  return cesiumTool ? buildInvocation(cesiumTool, []) : null;
 }
 
 function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {

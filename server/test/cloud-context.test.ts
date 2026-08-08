@@ -28,7 +28,14 @@ const [
   { exportConversationSnapshot, materializeCloudSnapshot },
   sessionStore,
   { ensureWorkspaceRegistered },
-  { CLI_INSTALL_SPECS, getInstallSpecForBackend, isInstallSupportedOnThisHost },
+  {
+    CLI_INSTALL_SPECS,
+    buildInstallCommand,
+    getCesiumToolsDir,
+    getInstallSpecForBackend,
+    isInstallSupportedOnThisHost,
+    resolveCesiumToolBin,
+  },
   { AGENT_BACKENDS, refreshAgentBackendRuntimes },
 ] = await Promise.all([
   import("../src/lib/agents/cloud-snapshot.js"),
@@ -258,19 +265,45 @@ test("oversized transcripts are truncated from the oldest events", async () => {
 });
 
 test("install registry only exposes vetted argv installers", () => {
-  assert.ok(CLI_INSTALL_SPECS.length >= 3);
+  assert.ok(CLI_INSTALL_SPECS.length >= 2);
   for (const spec of CLI_INSTALL_SPECS) {
     assert.ok(spec.backendId in AGENT_BACKENDS, `unknown backend ${spec.backendId}`);
     assert.ok(spec.platforms.length > 0);
-    // No shell strings — plain argv with a known package manager.
-    assert.equal(spec.command, "npm");
-    assert.equal(spec.args[0], "install");
-    assert.equal(spec.args[1], "-g");
+    // No shell strings — plain argv with a known package manager, and never
+    // the ambient global prefix (bun/desktop servers have no reliable one).
+    const invocation = buildInstallCommand(spec);
+    assert.ok(invocation.command === "npm" || invocation.command === "npm.cmd");
+    assert.equal(invocation.args[0], "install");
+    const prefixIndex = invocation.args.indexOf("--prefix");
+    assert.ok(prefixIndex > 0);
+    assert.equal(invocation.args[prefixIndex + 1], getCesiumToolsDir());
+    assert.equal(invocation.args[invocation.args.length - 1], spec.packageName);
+    assert.ok(!invocation.args.includes("-g"));
   }
   assert.equal(getInstallSpecForBackend("codex-app-server")?.binName, "codex");
   assert.equal(getInstallSpecForBackend("cesium-agent"), null);
+  // Claude Code SDK authenticates with an API key — no CLI installer.
+  assert.equal(getInstallSpecForBackend("claude-code-sdk"), null);
   const codexSpec = getInstallSpecForBackend("codex-app-server");
   assert.ok(codexSpec && isInstallSupportedOnThisHost(codexSpec));
+});
+
+test("tools-dir installs are picked up by runtime refresh", async () => {
+  const binDir = path.join(getCesiumToolsDir(), "node_modules", ".bin");
+  await fs.mkdir(binDir, { recursive: true });
+  const fakeOpencode = path.join(binDir, "opencode");
+  await fs.writeFile(fakeOpencode, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  try {
+    assert.equal(resolveCesiumToolBin("opencode"), fakeOpencode);
+    refreshAgentBackendRuntimes();
+    assert.equal(AGENT_BACKENDS["opencode-server"].available, true);
+    assert.ok(
+      AGENT_BACKENDS["opencode-server"].commandPreview?.includes("opencode")
+    );
+  } finally {
+    await fs.rm(fakeOpencode, { force: true });
+    refreshAgentBackendRuntimes();
+  }
 });
 
 test("refreshAgentBackendRuntimes flips availability when a CLI appears", async () => {
