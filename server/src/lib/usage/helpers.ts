@@ -3,9 +3,13 @@ import type {
   ProviderUsageReport,
   UsageDailyBucket,
   UsageModelBreakdown,
+  UsageSeriesPoint,
   UsageTokenTotals,
   UsageTotals,
 } from "./types.js";
+
+/** Series bucket width: 30 minutes gives 5h-window charts real resolution. */
+export const SERIES_BUCKET_MS = 30 * 60 * 1000;
 
 export function emptyTokenTotals(): UsageTokenTotals {
   return {
@@ -40,6 +44,7 @@ export function dayKey(epochMs: number): string {
  */
 export class UsageAggregator {
   private readonly byDay = new Map<string, UsageDailyBucket>();
+  private readonly byBucket = new Map<number, UsageSeriesPoint>();
   private readonly byModel = new Map<string, UsageModelBreakdown>();
   readonly totals: UsageTotals = emptyTotals();
   lastActivityMs: number | null = null;
@@ -99,6 +104,20 @@ export class UsageAggregator {
       day.costUsd = (day.costUsd ?? 0) + cost;
     }
 
+    const bucketTs = Math.floor(epochMs / SERIES_BUCKET_MS) * SERIES_BUCKET_MS;
+    let bucket = this.byBucket.get(bucketTs);
+    if (!bucket) {
+      bucket = { ts: bucketTs, ...emptyTokenTotals(), costUsd: null, requests: 0 };
+      this.byBucket.set(bucketTs, bucket);
+    }
+    apply(bucket);
+    if (countRequest) {
+      bucket.requests += 1;
+    }
+    if (cost !== undefined && Number.isFinite(cost)) {
+      bucket.costUsd = (bucket.costUsd ?? 0) + cost;
+    }
+
     const modelKey = model || "unknown";
     let modelRow = this.byModel.get(modelKey);
     if (!modelRow) {
@@ -122,6 +141,7 @@ export class UsageAggregator {
   finish(): {
     totals: UsageTotals;
     days: UsageDailyBucket[];
+    series: UsageSeriesPoint[];
     models: UsageModelBreakdown[];
     lastActivityAt: string | null;
   } {
@@ -129,6 +149,7 @@ export class UsageAggregator {
     return {
       totals: this.totals,
       days: [...this.byDay.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      series: [...this.byBucket.values()].sort((a, b) => a.ts - b.ts),
       models: [...this.byModel.values()].sort(
         (a, b) => b.totalTokens - a.totalTokens
       ),
@@ -153,8 +174,10 @@ export function unavailableReport(
     storageRoot,
     plan: null,
     limitWindows: [],
+    limitSnapshots: [],
     totals: emptyTotals(),
     days: [],
+    series: [],
     models: [],
     estimated: false,
     lastActivityAt: null,

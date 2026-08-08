@@ -160,6 +160,21 @@ test("codex collector aggregates token_count deltas, rate limits, and plan", asy
   const secondary = report.limitWindows.find((w) => w.id === "secondary")!;
   assert.equal(secondary.usedPercent, 91.2);
   assert.equal(secondary.label, "Weekly window");
+
+  // Snapshot history + 30-minute series feed the charts.
+  assert.equal(report.limitSnapshots.length, 1);
+  assert.equal(
+    report.limitSnapshots[0]!.windows.find((w) => w.id === "primary")!.usedPercent,
+    42.5
+  );
+  assert.ok(report.series.length >= 1);
+  assert.equal(
+    report.series.reduce((acc, p) => acc + p.totalTokens, 0),
+    report.totals.totalTokens
+  );
+  for (const point of report.series) {
+    assert.equal(point.ts % (30 * 60 * 1000), 0, "series buckets are 30-min aligned");
+  }
 });
 
 /* ----------------------------- Claude Code ----------------------------- */
@@ -222,11 +237,15 @@ test("claude collector dedupes requests and reports the 5h session block", async
   assert.equal(report.totals.sessions, 1);
   assert.equal(report.models[0]!.model, "claude-opus-4-6");
 
-  assert.equal(report.limitWindows.length, 1);
-  const block = report.limitWindows[0]!;
+  assert.equal(report.limitWindows.length, 2);
+  const block = report.limitWindows.find((w) => w.id === "session-block")!;
   assert.equal(block.usedPercent, null);
   assert.ok(block.resetsAt && Date.parse(block.resetsAt) > NOW);
   assert.match(block.detail ?? "", /2 requests/);
+  const week = report.limitWindows.find((w) => w.id === "rolling-week")!;
+  assert.equal(week.usedPercent, null);
+  assert.match(week.detail ?? "", /2 requests/);
+  assert.ok(report.series.length >= 1);
 });
 
 /* -------------------------------- Gemini -------------------------------- */

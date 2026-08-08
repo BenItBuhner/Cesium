@@ -4509,6 +4509,18 @@ export type UsageLimitWindow = {
   detail: string | null;
 };
 
+export type UsageSeriesPoint = UsageTokenTotals & {
+  /** Epoch ms of the 30-minute bucket start. */
+  ts: number;
+  costUsd: number | null;
+  requests: number;
+};
+
+export type UsageLimitSnapshotPoint = {
+  ts: number;
+  windows: Array<{ id: string; usedPercent: number }>;
+};
+
 export type ProviderUsageReport = {
   id: string;
   label: string;
@@ -4518,8 +4530,10 @@ export type ProviderUsageReport = {
   storageRoot: string | null;
   plan: string | null;
   limitWindows: UsageLimitWindow[];
+  limitSnapshots: UsageLimitSnapshotPoint[];
   totals: UsageTotals;
   days: UsageDailyBucket[];
+  series: UsageSeriesPoint[];
   models: UsageModelBreakdown[];
   estimated: boolean;
   lastActivityAt: string | null;

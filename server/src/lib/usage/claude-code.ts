@@ -154,7 +154,31 @@ export async function collectClaudeCodeUsage(
     });
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  // Anthropic subscriptions also rate-limit on a weekly horizon; the exact
+  // account boundary is not exposed locally, so report a rolling 7-day view.
+  const weekSince = nowMs - 7 * 24 * 60 * 60 * 1000;
+  let weekTokens = 0;
+  let weekRequests = 0;
+  for (const sample of samples) {
+    if (sample.ts >= weekSince) {
+      weekTokens +=
+        sample.input + sample.output + sample.cacheWrite + sample.cacheRead;
+      weekRequests += 1;
+    }
+  }
+  if (weekRequests > 0) {
+    limitWindows.push({
+      id: "rolling-week",
+      label: "Rolling 7-day window",
+      usedPercent: null,
+      windowMinutes: 10080,
+      resetsAt: null,
+      capturedAt: new Date(nowMs).toISOString(),
+      detail: `${weekRequests} requests · ${weekTokens.toLocaleString("en-US")} tokens in the last 7 days`,
+    });
+  }
+
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -162,8 +186,10 @@ export async function collectClaudeCodeUsage(
     storageRoot: projectsRoot,
     plan: null,
     limitWindows,
+    limitSnapshots: [],
     totals,
     days,
+    series,
     models,
     estimated: false,
     lastActivityAt,

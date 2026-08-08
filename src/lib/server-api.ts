@@ -318,9 +318,11 @@ export type {
   UploadedAttachment,
   ProviderUsageReport,
   UsageDailyBucket,
+  UsageLimitSnapshotPoint,
   UsageLimitWindow,
   UsageModelBreakdown,
   UsageOverviewResponse,
+  UsageSeriesPoint,
   UsageTokenTotals,
   UsageTotals,
 } from "@cesium/client";

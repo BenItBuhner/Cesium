@@ -38,6 +38,28 @@ export type UsageModelBreakdown = UsageTokenTotals & {
 };
 
 /**
+ * Fine-grained time-series bucket (30-minute aligned, UTC epoch ms). Sparse:
+ * only buckets with activity are emitted; clients densify for charting.
+ */
+export type UsageSeriesPoint = UsageTokenTotals & {
+  /** Epoch ms of the bucket start. */
+  ts: number;
+  costUsd: number | null;
+  requests: number;
+};
+
+/**
+ * Point-in-time subscription meter observation (e.g. Codex rate_limits
+ * snapshots), used to chart limit consumption over time and project when a
+ * window will be exhausted.
+ */
+export type UsageLimitSnapshotPoint = {
+  /** Epoch ms the harness reported this observation. */
+  ts: number;
+  windows: Array<{ id: string; usedPercent: number }>;
+};
+
+/**
  * A subscription rate-limit meter (e.g. Codex 5h / weekly windows) or a
  * rolling-session block for providers that do not expose hard percentages.
  */
@@ -66,8 +88,12 @@ export type ProviderUsageReport = {
   /** Subscription plan when discoverable locally (e.g. ChatGPT plan type). */
   plan: string | null;
   limitWindows: UsageLimitWindow[];
+  /** Historical meter observations, oldest first (empty when not exposed). */
+  limitSnapshots: UsageLimitSnapshotPoint[];
   totals: UsageTotals;
   days: UsageDailyBucket[];
+  /** Sparse 30-minute buckets across the lookback, oldest first. */
+  series: UsageSeriesPoint[];
   models: UsageModelBreakdown[];
   /** True when token counts are heuristic (chars/4) rather than provider-reported. */
   estimated: boolean;

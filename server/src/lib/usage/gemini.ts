@@ -152,7 +152,7 @@ export async function collectGeminiUsage(sinceMs: number): Promise<ProviderUsage
     }
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -160,8 +160,10 @@ export async function collectGeminiUsage(sinceMs: number): Promise<ProviderUsage
     storageRoot: tmpRoot,
     plan: null,
     limitWindows: [],
+    limitSnapshots: [],
     totals,
     days,
+    series,
     models,
     estimated: anyEstimated,
     lastActivityAt,

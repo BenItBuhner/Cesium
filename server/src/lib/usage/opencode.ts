@@ -182,7 +182,7 @@ export async function collectOpenCodeUsage(sinceMs: number): Promise<ProviderUsa
     );
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -190,8 +190,10 @@ export async function collectOpenCodeUsage(sinceMs: number): Promise<ProviderUsa
     storageRoot,
     plan: null,
     limitWindows: [],
+    limitSnapshots: [],
     totals,
     days,
+    series,
     models,
     estimated: false,
     lastActivityAt,

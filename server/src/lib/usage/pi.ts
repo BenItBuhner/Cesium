@@ -130,7 +130,7 @@ export async function collectPiUsage(sinceMs: number): Promise<ProviderUsageRepo
     }
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -138,8 +138,10 @@ export async function collectPiUsage(sinceMs: number): Promise<ProviderUsageRepo
     storageRoot: sessionsRoot,
     plan: null,
     limitWindows: [],
+    limitSnapshots: [],
     totals,
     days,
+    series,
     models,
     estimated: anyEstimated,
     lastActivityAt,

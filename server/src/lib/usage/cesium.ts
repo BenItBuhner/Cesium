@@ -102,7 +102,7 @@ export async function collectCesiumUsage(sinceMs: number): Promise<ProviderUsage
     }
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -110,8 +110,10 @@ export async function collectCesiumUsage(sinceMs: number): Promise<ProviderUsage
     storageRoot: null,
     plan: null,
     limitWindows: [],
+    limitSnapshots: [],
     totals,
     days,
+    series,
     models,
     estimated: true,
     lastActivityAt,

@@ -15,7 +15,11 @@ import {
   fileTouchedSince,
   unavailableReport,
 } from "./helpers.js";
-import type { ProviderUsageReport, UsageLimitWindow } from "./types.js";
+import type {
+  ProviderUsageReport,
+  UsageLimitSnapshotPoint,
+  UsageLimitWindow,
+} from "./types.js";
 
 /**
  * Codex CLI usage: rollout files under ~/.codex/sessions carry `token_count`
@@ -165,6 +169,7 @@ export async function collectCodexUsage(sinceMs: number): Promise<ProviderUsageR
   const aggregator = new UsageAggregator();
   let latestSnapshot: RateLimitSnapshot | null = null;
   let planFromRollouts: string | null = null;
+  const snapshotHistory: UsageLimitSnapshotPoint[] = [];
 
   for (const file of files) {
     if (!(await fileTouchedSince(file, sinceMs))) {
@@ -199,13 +204,24 @@ export async function collectCodexUsage(sinceMs: number): Promise<ProviderUsageR
       if (planType) {
         planFromRollouts = planType.charAt(0).toUpperCase() + planType.slice(1);
       }
-      if (rateLimits && (!latestSnapshot || ts >= latestSnapshot.capturedAtMs)) {
+      if (rateLimits) {
         const windows = [
           parseRateLimitWindow(rateLimits.primary, "primary", "Primary window", ts),
           parseRateLimitWindow(rateLimits.secondary, "secondary", "Secondary window", ts),
         ].filter((window): window is UsageLimitWindow => window !== null);
         if (windows.length > 0) {
-          latestSnapshot = { capturedAtMs: ts, windows };
+          if (!latestSnapshot || ts >= latestSnapshot.capturedAtMs) {
+            latestSnapshot = { capturedAtMs: ts, windows };
+          }
+          if (ts >= sinceMs) {
+            snapshotHistory.push({
+              ts,
+              windows: windows.map((window) => ({
+                id: window.id,
+                usedPercent: window.usedPercent ?? 0,
+              })),
+            });
+          }
         }
       }
 
@@ -256,7 +272,20 @@ export async function collectCodexUsage(sinceMs: number): Promise<ProviderUsageR
     }
   }
 
-  const { totals, days, models, lastActivityAt } = aggregator.finish();
+  // Snapshot history feeds the consumption-over-time charts; keep it ordered
+  // and bounded so a giant archive cannot bloat the payload.
+  snapshotHistory.sort((a, b) => a.ts - b.ts);
+  const MAX_SNAPSHOTS = 1000;
+  const thinned =
+    snapshotHistory.length > MAX_SNAPSHOTS
+      ? snapshotHistory.filter(
+          (_, index) =>
+            index % Math.ceil(snapshotHistory.length / MAX_SNAPSHOTS) === 0 ||
+            index === snapshotHistory.length - 1
+        )
+      : snapshotHistory;
+
+  const { totals, days, series, models, lastActivityAt } = aggregator.finish();
   return {
     ...BASE,
     available: true,
@@ -264,8 +293,10 @@ export async function collectCodexUsage(sinceMs: number): Promise<ProviderUsageR
     storageRoot: path.join(home, "sessions"),
     plan: (await readCodexPlan(home)) ?? planFromRollouts,
     limitWindows: latestSnapshot?.windows ?? [],
+    limitSnapshots: thinned,
     totals,
     days,
+    series,
     models,
     estimated: false,
     lastActivityAt,

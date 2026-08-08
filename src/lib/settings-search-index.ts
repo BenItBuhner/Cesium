@@ -294,41 +294,46 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
 
   // —— Usage ——
-  section("usage", "overview", "Usage overview", "tokens quota subscription meter analytics"),
+  section(
+    "usage",
+    "overview",
+    "Usage overview",
+    "tokens quota subscription meter analytics graphs projections burn rate"
+  ),
   row(
     "usage",
     "usage-controls",
-    "Usage lookback and refresh",
-    "Choose the analytics window (7, 30, or 90 days) and re-scan local harness data.",
-    ["tokens", "quota", "rate limit", "refresh"]
+    "Usage auto-refresh",
+    "Live polling of local harness usage data every 60 seconds, with manual refresh.",
+    ["tokens", "quota", "rate limit", "refresh", "polling"]
+  ),
+  row(
+    "usage",
+    "usage-tabs",
+    "Harness selector",
+    "Switch between Codex, Claude Code, Antigravity, OpenCode, Pi, and Cesium usage dashboards.",
+    ["codex", "claude", "antigravity", "gemini", "opencode", "pi", "tabs"]
+  ),
+  row(
+    "usage",
+    "usage-summary",
+    "Usage summary",
+    "Total tokens, requests, known spend, and tracked harnesses across subscriptions.",
+    ["tokens", "spend", "cost", "summary"]
   ),
   row(
     "usage",
     "usage-limits-codex",
     "Codex subscription limits",
-    "ChatGPT plan rate-limit windows (5h and weekly) read from Codex CLI rollouts.",
-    ["codex", "openai", "chatgpt", "quota", "rate limit", "meter"]
+    "ChatGPT plan 5h and weekly rate-limit meters with consumption charts and projections.",
+    ["codex", "openai", "chatgpt", "quota", "rate limit", "meter", "projection"]
   ),
   row(
     "usage",
-    "usage-activity-claude-code",
-    "Claude Code usage",
-    "Token analytics and current 5h session block from ~/.claude transcripts.",
-    ["claude", "anthropic", "session block", "tokens"]
-  ),
-  row(
-    "usage",
-    "usage-activity-gemini",
-    "Gemini CLI / Antigravity usage",
-    "Token analytics from ~/.gemini chat checkpoints.",
-    ["gemini", "antigravity", "google", "tokens"]
-  ),
-  row(
-    "usage",
-    "usage-activity-opencode",
-    "OpenCode usage",
-    "Tokens and recorded spend from the OpenCode store.",
-    ["opencode", "cost", "tokens"]
+    "usage-limits-claude-code",
+    "Claude Code session blocks",
+    "Current 5h session block and rolling 7-day window with burn-rate projections.",
+    ["claude", "anthropic", "session block", "weekly", "projection"]
   ),
 
   // —— Plugins ——
