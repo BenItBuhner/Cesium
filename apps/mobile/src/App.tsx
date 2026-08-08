@@ -59,7 +59,8 @@ export default function App() {
   const [focused, setFocused] = useState<{
     workspaceId: string | null;
     conversationId: string | null;
-  }>({ workspaceId: null, conversationId: null });
+    activeConversationIds: string[];
+  }>({ workspaceId: null, conversationId: null, activeConversationIds: [] });
   const [canGoBack, setCanGoBack] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -67,7 +68,8 @@ export default function App() {
   const webViewRef = useRef<WebViewType>(null);
   const serverUrlRef = useRef(serverUrl);
   const authTokenRef = useRef(authToken);
-  const liveUpdatesRef = useRef(new LiveUpdateController());
+  const liveUpdatesRef = useRef(new LiveUpdateController(CesiumLiveUpdates));
+  const webSendsProjectionSetsRef = useRef(false);
   const sendToWebRef = useRef<((message: MobileNativeToWebMessage) => void) | null>(null);
   const agentStatusRef = useRef(
     new AgentStatusService({
@@ -75,10 +77,13 @@ export default function App() {
         void liveUpdatesRef.current.update(projection);
         sendToWebRef.current?.({
           type: "resumeCatchUp",
-          workspaceId: projection?.workspaceId,
-          conversationId: projection?.conversationId,
-          lastEventSeq: projection?.lastEventSeq,
+          workspaceId: projection.workspaceId,
+          conversationId: projection.conversationId,
+          lastEventSeq: projection.lastEventSeq,
         });
+      },
+      onConversationRemoved: (conversationId) => {
+        void liveUpdatesRef.current.removeConversation(conversationId);
       },
     })
   );
@@ -114,10 +119,17 @@ export default function App() {
       nextAuthToken = authTokenRef.current,
       nextServerUrl = serverUrlRef.current
     ) => {
+      const conversationIds = [
+        ...new Set(
+          [nextFocused.conversationId, ...nextFocused.activeConversationIds].filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        ),
+      ];
       agentStatusRef.current.updateConfig({
         serverBaseUrl: nextServerUrl,
         workspaceId: nextFocused.workspaceId,
-        conversationId: nextFocused.conversationId,
+        conversationIds,
         authToken: nextAuthToken,
       });
       // Phone control does not care about the focused conversation, and a null
@@ -283,6 +295,7 @@ export default function App() {
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.focusedConversationId,
+          activeConversationIds: focused.activeConversationIds,
         };
         const nextToken = message.authToken ?? null;
         setAuthToken(nextToken);
@@ -341,13 +354,26 @@ export default function App() {
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.conversationId,
+          activeConversationIds:
+            message.activeConversationIds ?? focused.activeConversationIds,
         };
         setFocused(nextFocused);
         configureNativeServices(nextFocused);
         return;
       }
+      if (message.type === "agentProjections") {
+        webSendsProjectionSetsRef.current = true;
+        void liveUpdatesRef.current.updateAll(
+          message.projections as MobileAgentProjection[]
+        );
+        return;
+      }
+      // Legacy single-projection message from older web bundles. Ignored once
+      // the web sends full sets — mixing both would track the same run twice.
       if (message.type === "agentProjection") {
-        void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
+        if (!webSendsProjectionSetsRef.current) {
+          void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
+        }
         return;
       }
       if (message.type === "wearSyncEnvelope") {

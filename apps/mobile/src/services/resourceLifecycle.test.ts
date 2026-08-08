@@ -41,7 +41,7 @@ test("agent event merge appends monotonic batches and replaces duplicate sequenc
   assert.deepEqual(merged, [replacement, second]);
 });
 
-test("agent status reconnects and subscribes when background config changes", () => {
+test("agent status tracks multiple conversations on one background socket", () => {
   const originalWebSocket = globalThis.WebSocket;
   FakeAgentWebSocket.instances = [];
   globalThis.WebSocket = FakeAgentWebSocket as unknown as typeof WebSocket;
@@ -51,24 +51,50 @@ test("agent status reconnects and subscribes when background config changes", ()
     service.updateConfig({
       serverBaseUrl: "http://localhost:9100",
       workspaceId: "workspace",
-      conversationId: "first",
+      conversationIds: ["first", "second"],
     });
     FakeAgentWebSocket.instances[0]?.open();
 
+    assert.equal(FakeAgentWebSocket.instances.length, 1);
+    assert.deepEqual(
+      JSON.parse(FakeAgentWebSocket.instances[0]?.sent[0] ?? "{}"),
+      {
+        type: "subscribe",
+        conversationIds: ["first", "second"],
+        sinceByConversationId: { first: 0, second: 0 },
+      }
+    );
+
+    // Changing the tracked set resubscribes on the same socket.
     service.updateConfig({
       serverBaseUrl: "http://localhost:9100",
       workspaceId: "workspace",
-      conversationId: "second",
+      conversationIds: ["second", "third"],
+    });
+    assert.equal(FakeAgentWebSocket.instances.length, 1);
+    assert.deepEqual(
+      JSON.parse(FakeAgentWebSocket.instances[0]?.sent[1] ?? "{}"),
+      {
+        type: "subscribe",
+        conversationIds: ["second", "third"],
+        sinceByConversationId: { second: 0, third: 0 },
+      }
+    );
+
+    // Changing the server reconnects with a fresh socket.
+    service.updateConfig({
+      serverBaseUrl: "http://localhost:9200",
+      workspaceId: "workspace",
+      conversationIds: ["second", "third"],
     });
     FakeAgentWebSocket.instances[1]?.open();
-
     assert.equal(FakeAgentWebSocket.instances.length, 2);
     assert.deepEqual(
       JSON.parse(FakeAgentWebSocket.instances[1]?.sent[0] ?? "{}"),
       {
         type: "subscribe",
-        conversationIds: ["second"],
-        sinceByConversationId: { second: 0 },
+        conversationIds: ["second", "third"],
+        sinceByConversationId: { second: 0, third: 0 },
       }
     );
     service.close();
@@ -127,6 +153,6 @@ function liveUpdateStatus() {
     canPostPromotedNotifications: true,
     notificationPermissionGranted: true,
     suppressedByDismissal: false,
-    deliveryPreference: "nowbar" as const,
+    deliveryPreference: "live" as const,
   };
 }

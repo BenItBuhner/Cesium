@@ -7,7 +7,15 @@ const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
 const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
 
 export type MobileLifecycleState = "active" | "background" | "inactive";
-export type MobileLiveUpdatePreference = "nowbar" | "live" | "off";
+/**
+ * "live"  — Android Live Updates (promoted ongoing notifications). The system
+ *           renders these in the status bar chip / lock screen, and Samsung's
+ *           Now Bar picks them up automatically on One UI 8+. Falls back to a
+ *           standard notification whenever promotion is unsupported/denied.
+ * "basic" — standard live notification only, never request promotion.
+ * "off"   — no run notifications.
+ */
+export type MobileLiveUpdatePreference = "live" | "basic" | "off";
 
 export type MobileNativeStatus = {
   liveUpdates: {
@@ -49,11 +57,19 @@ export type MobileFocusedConversation = {
   workspaceId: string | null;
   conversationId: string | null;
   lastEventSeq?: number;
+  /** Every conversation with an active agent run, for background tracking. */
+  activeConversationIds?: string[];
 };
 
 export type MobileAgentProjectionMessage = {
   type: "agentProjection";
   projection: unknown;
+};
+
+/** Full set of tracked agent projections (one live notification per run). */
+export type MobileAgentProjectionsMessage = {
+  type: "agentProjections";
+  projections: unknown[];
 };
 
 export type MobileNativeToWebMessage =
@@ -67,6 +83,7 @@ export type MobileWebToNativeMessage =
   | { type: "webReady"; workspaceId: string | null; focusedConversationId: string | null; authToken?: string | null }
   | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
   | MobileAgentProjectionMessage
+  | MobileAgentProjectionsMessage
   | { type: "webIdleMode"; enabled: boolean }
   | { type: "webRuntimeError"; message: string; source?: string; line?: number }
   | { type: "getMobileNativeStatus" }

@@ -11,48 +11,70 @@ import {
 export type AgentStatusServiceConfig = {
   serverBaseUrl: string;
   workspaceId: string | null;
-  conversationId: string | null;
+  /** Every conversation to track (focused + all with active agent runs). */
+  conversationIds: string[];
   authToken?: string | null;
 };
 
 export type AgentStatusServiceOptions = {
-  onProjection(projection: MobileAgentProjection | null): void;
+  onProjection(projection: MobileAgentProjection): void;
+  onConversationRemoved?(conversationId: string): void;
   onConnectionState?(state: "idle" | "connecting" | "open" | "closed" | "reconnecting"): void;
 };
 
+type TrackedConversation = {
+  conversation: AgentConversationRecord | null;
+  events: AgentStoredEvent[];
+  previousProjection: MobileAgentProjection | null;
+};
+
+/**
+ * Background companion to the web workbench: keeps one agent socket open and
+ * subscribed to every tracked conversation so each active agent's live
+ * notification stays current while the WebView is idle.
+ */
 export class AgentStatusService {
   private config: AgentStatusServiceConfig | null = null;
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
-  private conversation: AgentConversationRecord | null = null;
-  private events: AgentStoredEvent[] = [];
-  private previousProjection: MobileAgentProjection | null = null;
+  private tracked = new Map<string, TrackedConversation>();
   private manuallyClosed = false;
   private connectionEnabled = false;
 
   constructor(private readonly options: AgentStatusServiceOptions) {}
 
   updateConfig(config: AgentStatusServiceConfig) {
-    const previousKey = this.configKey(this.config);
-    const nextKey = this.configKey(config);
+    const previousBaseKey = this.baseKey(this.config);
+    const nextBaseKey = this.baseKey(config);
+    const previousIds = this.config?.conversationIds ?? [];
     this.config = config;
-    if (!config.workspaceId || !config.conversationId) {
+    if (!config.workspaceId || config.conversationIds.length === 0) {
       this.close("idle");
-      this.resetProjection();
+      this.tracked.clear();
       return;
     }
-    if (previousKey !== nextKey) {
-      this.events = [];
-      this.conversation = null;
-      this.previousProjection = null;
+    if (previousBaseKey !== nextBaseKey) {
+      this.tracked.clear();
       this.reconnectAttempt = 0;
       this.close("idle");
       if (this.connectionEnabled) {
         this.connect();
       }
-    } else if (this.connectionEnabled && this.ws?.readyState === WebSocket.OPEN) {
-      this.subscribe();
+      return;
+    }
+    const nextIds = new Set(config.conversationIds);
+    for (const id of previousIds) {
+      if (!nextIds.has(id)) {
+        this.tracked.delete(id);
+      }
+    }
+    if (this.connectionEnabled) {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.subscribe();
+      } else {
+        this.connect();
+      }
     }
   }
 
@@ -60,7 +82,7 @@ export class AgentStatusService {
     if (
       !this.connectionEnabled ||
       !this.config?.workspaceId ||
-      !this.config.conversationId ||
+      this.config.conversationIds.length === 0 ||
       this.ws?.readyState === WebSocket.OPEN ||
       this.ws?.readyState === WebSocket.CONNECTING
     ) {
@@ -112,43 +134,61 @@ export class AgentStatusService {
     this.options.onConnectionState?.(nextState);
   }
 
-  getLastEventSeq() {
-    return this.events.reduce((max, event) => Math.max(max, event.seq), 0);
+  getLastEventSeq(conversationId: string) {
+    const events = this.tracked.get(conversationId)?.events ?? [];
+    return events.reduce((max, event) => Math.max(max, event.seq), 0);
+  }
+
+  private isTracked(conversationId: string): boolean {
+    return this.config?.conversationIds.includes(conversationId) ?? false;
+  }
+
+  private entryFor(conversationId: string): TrackedConversation {
+    let entry = this.tracked.get(conversationId);
+    if (!entry) {
+      entry = { conversation: null, events: [], previousProjection: null };
+      this.tracked.set(conversationId, entry);
+    }
+    return entry;
   }
 
   private handleMessage(message: AgentSocketServerMessage) {
-    if (!this.config?.conversationId) return;
+    if (!this.config) return;
     switch (message.type) {
       case "conversation":
       case "conversation_upserted":
-        if (message.conversation.id === this.config.conversationId) {
-          this.conversation = message.conversation;
-          this.emitProjection();
+        if (this.isTracked(message.conversation.id)) {
+          this.entryFor(message.conversation.id).conversation = message.conversation;
+          this.emitProjection(message.conversation.id);
         }
         return;
       case "snapshot":
       case "snapshot_head":
-        if (message.snapshot.conversation.id === this.config.conversationId) {
-          this.conversation = message.snapshot.conversation;
-          this.events = mergeEvents(this.events, message.snapshot.events);
-          this.emitProjection();
+        if (this.isTracked(message.snapshot.conversation.id)) {
+          const entry = this.entryFor(message.snapshot.conversation.id);
+          entry.conversation = message.snapshot.conversation;
+          entry.events = mergeEvents(entry.events, message.snapshot.events);
+          this.emitProjection(message.snapshot.conversation.id);
         }
         return;
       case "event":
-        if (message.conversationId === this.config.conversationId) {
-          this.events = mergeEvents(this.events, [message.event]);
-          this.emitProjection();
+        if (this.isTracked(message.conversationId)) {
+          const entry = this.entryFor(message.conversationId);
+          entry.events = mergeEvents(entry.events, [message.event]);
+          this.emitProjection(message.conversationId);
         }
         return;
       case "event_batch":
-        if (message.conversationId === this.config.conversationId) {
-          this.events = mergeEvents(this.events, message.events);
-          this.emitProjection();
+        if (this.isTracked(message.conversationId)) {
+          const entry = this.entryFor(message.conversationId);
+          entry.events = mergeEvents(entry.events, message.events);
+          this.emitProjection(message.conversationId);
         }
         return;
       case "conversation_deleted":
-        if (message.conversationId === this.config.conversationId) {
-          this.resetProjection();
+        if (this.isTracked(message.conversationId)) {
+          this.tracked.delete(message.conversationId);
+          this.options.onConversationRemoved?.(message.conversationId);
         }
         return;
       default:
@@ -156,31 +196,34 @@ export class AgentStatusService {
     }
   }
 
-  private emitProjection() {
-    if (!this.conversation) return;
-    const projection = deriveMobileAgentProjection(this.conversation, this.events, {
-      previous: this.previousProjection,
+  private emitProjection(conversationId: string) {
+    const entry = this.tracked.get(conversationId);
+    if (!entry?.conversation) return;
+    const projection = deriveMobileAgentProjection(entry.conversation, entry.events, {
+      previous: entry.previousProjection,
     });
-    this.previousProjection = projection;
+    entry.previousProjection = projection;
     this.options.onProjection(projection);
   }
 
-  private resetProjection() {
-    this.conversation = null;
-    this.events = [];
-    this.previousProjection = null;
-    this.options.onProjection(null);
-  }
-
   private subscribe() {
-    if (!this.config?.conversationId || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (
+      !this.config ||
+      this.config.conversationIds.length === 0 ||
+      this.ws?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
     this.ws.send(
       JSON.stringify({
         type: "subscribe",
-        conversationIds: [this.config.conversationId],
-        sinceByConversationId: {
-          [this.config.conversationId]: this.getLastEventSeq(),
-        },
+        conversationIds: this.config.conversationIds,
+        sinceByConversationId: Object.fromEntries(
+          this.config.conversationIds.map((conversationId) => [
+            conversationId,
+            this.getLastEventSeq(conversationId),
+          ])
+        ),
       })
     );
   }
@@ -210,9 +253,9 @@ export class AgentStatusService {
     return `${base.replace(/\/+$/, "")}/ws/agent?${params.toString()}`;
   }
 
-  private configKey(config: AgentStatusServiceConfig | null) {
+  private baseKey(config: AgentStatusServiceConfig | null) {
     if (!config) return "";
-    return [config.serverBaseUrl, config.workspaceId, config.conversationId, config.authToken ?? ""].join("\0");
+    return [config.serverBaseUrl, config.workspaceId, config.authToken ?? ""].join("\0");
   }
 }
 
