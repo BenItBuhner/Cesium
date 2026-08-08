@@ -9,6 +9,12 @@ import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { VoiceProvider, useVoice } from "@/components/voice/VoiceProvider";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
+import { MobileBackController } from "@/components/mobile/MobileBackController";
+import {
+  BACK_INTENT_PRIORITY,
+  BackIntentProvider,
+  useBackHandler,
+} from "@/components/mobile/BackIntentContext";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
 import { isDocsRoute } from "@/lib/open-documentation";
@@ -32,7 +38,12 @@ function useDocsRouteActive() {
 }
 
 function WorkbenchShell() {
-  const { shellView } = useShellView();
+  const { shellView, closeSettingsView } = useShellView();
+  // A back gesture in the full-screen settings view returns to the agent view
+  // rather than exiting the app or walking WebView history.
+  useBackHandler(shellView === "settings", BACK_INTENT_PRIORITY.settings, () => {
+    closeSettingsView();
+  });
   if (shellView === "settings") {
     return <SettingsShellView />;
   }
@@ -67,6 +78,7 @@ function WorkbenchWithConversationProviders() {
       <AgentConversationsProvider>
         <VoiceProvider>
           <MobileBridgeSync />
+          <MobileBackController />
           <WorkbenchShell />
           <VoiceOrbGate />
         </VoiceProvider>
@@ -96,9 +108,11 @@ export function WorkbenchApp({
 
   return (
     <Suspense fallback={suspenseFallback ?? <LoadingFallback />}>
-      <ShellViewProvider>
-        <WorkbenchWithConversationProviders />
-      </ShellViewProvider>
+      <BackIntentProvider>
+        <ShellViewProvider>
+          <WorkbenchWithConversationProviders />
+        </ShellViewProvider>
+      </BackIntentProvider>
     </Suspense>
   );
 }

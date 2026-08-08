@@ -60,11 +60,14 @@ export default function App() {
     workspaceId: string | null;
     conversationId: string | null;
   }>({ workspaceId: null, conversationId: null });
-  const [canGoBack, setCanGoBack] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  // Refs so the single hardware-back subscription can read the freshest
+  // navigation state without re-subscribing on every WebView update.
+  const canGoBackRef = useRef(false);
+  const webCanHandleBackRef = useRef(false);
   const serverUrlRef = useRef(serverUrl);
   const authTokenRef = useRef(authToken);
   const liveUpdatesRef = useRef(new LiveUpdateController());
@@ -247,13 +250,27 @@ export default function App() {
   }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
+    // A single, stable subscription. The Android predictive/hardware back
+    // gesture is resolved in priority order:
+    //   1. If the web layer reports an open in-WebView layer (overlay, drawer,
+    //      settings view), route the intent there. The web replies with
+    //      `backFallback` if it turns out there is nothing to pop.
+    //   2. Otherwise walk the WebView's own navigation history.
+    //   3. Otherwise let Android run its default back behavior (exit the app),
+    //      which is where the predictive-back exit animation applies.
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (!canGoBack) return false;
-      webViewRef.current?.goBack();
-      return true;
+      if (webViewRef.current && webCanHandleBackRef.current) {
+        sendToWeb({ type: "backRequest" });
+        return true;
+      }
+      if (webViewRef.current && canGoBackRef.current) {
+        webViewRef.current.goBack();
+        return true;
+      }
+      return false;
     });
     return () => subscription.remove();
-  }, [canGoBack]);
+  }, [sendToWeb]);
 
   useEffect(() => {
     void consumeNotificationAction();
@@ -321,6 +338,19 @@ export default function App() {
         void CesiumPhoneControl.invokeAssistant();
         return;
       }
+      if (message.type === "backCapability") {
+        webCanHandleBackRef.current = message.canHandleBack;
+        return;
+      }
+      if (message.type === "backFallback") {
+        // The web layer had nothing to pop after all; run the native default.
+        if (canGoBackRef.current) {
+          webViewRef.current?.goBack();
+        } else {
+          BackHandler.exitApp();
+        }
+        return;
+      }
       if (message.type === "openExternalUrl") {
         // Open outside the WebView so the workbench (a file:// bundle) is not
         // navigated away, e.g. the F-Droid page for the Termux server setup.
@@ -361,7 +391,7 @@ export default function App() {
   );
 
   const handleNavigation = useCallback((navigation: WebViewNavigation) => {
-    setCanGoBack(navigation.canGoBack);
+    canGoBackRef.current = navigation.canGoBack;
   }, []);
 
   return (
@@ -402,7 +432,8 @@ export default function App() {
               ? "Android System WebView crashed. The failed renderer was discarded. Update Android System WebView and, on an emulator, enable hardware acceleration before retrying."
               : "Android stopped the WebView renderer to reclaim resources. The failed renderer was discarded; retry to create a fresh one.";
             webViewRef.current = null;
-            setCanGoBack(false);
+            canGoBackRef.current = false;
+            webCanHandleBackRef.current = false;
             setWebViewAvailable(false);
             setLoadError(description);
           }}
@@ -420,6 +451,8 @@ export default function App() {
           <Text style={styles.errorBody}>{loadError}</Text>
           <Pressable
             onPress={() => {
+              canGoBackRef.current = false;
+              webCanHandleBackRef.current = false;
               setLoadError(null);
               setReloadKey((current) => current + 1);
               setWebViewAvailable(true);
