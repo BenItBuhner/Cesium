@@ -1188,6 +1188,12 @@ export function AgentCenterPane() {
                     conversationId={selectedConversationId}
                     contextUsageRefreshGeneration={contextUsageRefreshGeneration}
                     layout="docked-bottom"
+                    dockedCardVisible={
+                      (visibleConversationView != null &&
+                        (dockedAsk != null || completionErrorDock.visible)) ||
+                      dockedPlan != null ||
+                      queuedPrompts.length > 0
+                    }
                     draftAttachments={composerDraftAttachments}
                     onDraftAttachmentsChange={(next) =>
                       // Do not pass `content` here — submit clears text then

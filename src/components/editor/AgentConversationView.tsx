@@ -646,6 +646,11 @@ const showRecentChatsSection =
         conversationId={conversationId}
         contextUsageRefreshGeneration={contextUsageRefreshGeneration}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+        dockedCardVisible={
+          dockedAsk != null ||
+          queuedPrompts.length > 0 ||
+          completionErrorDock.visible
+        }
         userMessageHistory={composerUserMessageHistory}
         hasMoreOlderUserMessageHistory={historyCursor.hasOlder}
         onRequestOlderUserMessageHistory={() =>
