@@ -102,7 +102,7 @@ function AgentLayoutShell() {
   const applyingShellLayoutFromContextRef = useRef(false);
   const desktopShellRef = useRef<HTMLDivElement | null>(null);
   const panelsAnimatingRef = useRef(false);
-  const panelAnimationCleanupRef = useRef<number | null>(null);
+  const panelTweenRafRef = useRef<number | null>(null);
   const prevPanelToggleStateRef = useRef<{ rail: boolean; side: boolean } | null>(null);
 
   const agentShellLayout = useMemo(
@@ -110,9 +110,24 @@ function AgentLayoutShell() {
       const baseLayout =
         normalizeAgentShellDesktopLayout(agentShellDesktopLayout) ??
         AGENT_SHELL_DEFAULT_LAYOUT;
-      return rightPaneOpen ? baseLayout : collapseAgentShellSideLayout(baseLayout);
+      const withSide = rightPaneOpen
+        ? baseLayout
+        : collapseAgentShellSideLayout(baseLayout);
+      if (!leftRailCollapsed) {
+        return withSide;
+      }
+      // Fold the rail's share into the center so `setLayout` always receives
+      // the exact final layout — the slide tween needs analytic targets
+      // instead of whatever the library redistributes after `collapse()`.
+      const rail = withSide[AGENT_SHELL_PANEL_IDS.rail] ?? 0;
+      return {
+        ...withSide,
+        [AGENT_SHELL_PANEL_IDS.rail]: 0,
+        [AGENT_SHELL_PANEL_IDS.center]:
+          (withSide[AGENT_SHELL_PANEL_IDS.center] ?? 0) + rail,
+      };
     },
-    [agentShellDesktopLayout, rightPaneOpen]
+    [agentShellDesktopLayout, leftRailCollapsed, rightPaneOpen]
   );
 
   const workbench = useMemo(
@@ -140,11 +155,17 @@ function AgentLayoutShell() {
       return;
     }
 
-    // Slide animation for programmatic rail / workbench toggles: transition
-    // `flex-grow` on the panels (react-resizable-panels' size channel) and pin
-    // each sliding panel's content to the edge it travels from, locked at its
-    // resting width, so it genuinely slides instead of squishing. Drag-resizes
-    // never enter this path (the classes live only for the toggle window).
+    // Slide animation for programmatic rail / workbench toggles.
+    //
+    // The panels' size channel is inline `flex-grow`, but a CSS transition on
+    // it is unreliable: whether the style recalc pairs the class with the new
+    // grow value is timing-dependent (it intermittently snapped), and WebKit
+    // does not interpolate flex-grow at all. Instead a rAF tween writes the
+    // three panels' flex-grow every frame from the pre-toggle values to the
+    // analytic target layout — deterministic and engine-independent. While a
+    // panel slides, its content is pinned to the edge it travels from and
+    // locked to its resting width so it genuinely slides instead of
+    // squishing. Drag-resizes never enter this path.
     const previousToggleState = prevPanelToggleStateRef.current;
     const nextToggleState = { rail: leftRailCollapsed, side: rightPaneOpen };
     prevPanelToggleStateRef.current = nextToggleState;
@@ -155,48 +176,49 @@ function AgentLayoutShell() {
     const groupEl = desktopShellRef.current?.querySelector<HTMLElement>("[data-group]");
     const reducedMotion =
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+    const panelIds = [
+      AGENT_SHELL_PANEL_IDS.rail,
+      AGENT_SHELL_PANEL_IDS.center,
+      AGENT_SHELL_PANEL_IDS.side,
+    ];
+    let tweenPanels: Array<{ el: HTMLElement; from: number; to: number }> | null = null;
+
     if (groupEl && (railToggled || sideToggled) && !reducedMotion) {
       const groupWidth = groupEl.getBoundingClientRect().width || 1;
-      groupEl.classList.add("agent-shell-panels-animating");
-      if (railToggled) {
-        const railEl = groupEl.querySelector<HTMLElement>(
-          `[data-panel][id="${AGENT_SHELL_PANEL_IDS.rail}"]`
+      const els = panelIds.map((id) =>
+        groupEl.querySelector<HTMLElement>(`[data-panel][id="${id}"]`)
+      );
+      if (els.every((el): el is HTMLElement => el != null)) {
+        // Pre-toggle sizes; mid-flight values when interrupting a live tween.
+        const startGrows = els.map(
+          (el) => Number.parseFloat(getComputedStyle(el).flexGrow) || 0
         );
-        const currentPx = railEl?.getBoundingClientRect().width ?? 0;
-        const targetPx =
-          ((agentShellLayout[AGENT_SHELL_PANEL_IDS.rail] ?? 0) / 100) * groupWidth;
-        groupEl.style.setProperty(
-          "--agent-rail-slide-width",
-          `${Math.max(1, Math.round(Math.max(currentPx, targetPx)))}px`
-        );
-        groupEl.classList.add("agent-shell-rail-sliding");
+        const targetGrows = panelIds.map((id) => agentShellLayout[id] ?? 0);
+        tweenPanels = els.map((el, index) => ({
+          el,
+          from: startGrows[index],
+          to: targetGrows[index],
+        }));
+
+        if (railToggled) {
+          const railPx = (grow: number) => (grow / 100) * groupWidth;
+          groupEl.style.setProperty(
+            "--agent-rail-slide-width",
+            `${Math.max(1, Math.round(Math.max(railPx(startGrows[0]), railPx(targetGrows[0]))))}px`
+          );
+          groupEl.classList.add("agent-shell-rail-sliding");
+        }
+        if (sideToggled) {
+          const sidePx = (grow: number) => (grow / 100) * groupWidth;
+          groupEl.style.setProperty(
+            "--agent-side-slide-width",
+            `${Math.max(1, Math.round(Math.max(sidePx(startGrows[2]), sidePx(targetGrows[2]))))}px`
+          );
+          groupEl.classList.add("agent-shell-side-sliding");
+        }
+        panelsAnimatingRef.current = true;
       }
-      if (sideToggled) {
-        const sideEl = groupEl.querySelector<HTMLElement>(
-          `[data-panel][id="${AGENT_SHELL_PANEL_IDS.side}"]`
-        );
-        const currentPx = sideEl?.getBoundingClientRect().width ?? 0;
-        const targetPx =
-          ((agentShellLayout[AGENT_SHELL_PANEL_IDS.side] ?? 0) / 100) * groupWidth;
-        groupEl.style.setProperty(
-          "--agent-side-slide-width",
-          `${Math.max(1, Math.round(Math.max(currentPx, targetPx)))}px`
-        );
-        groupEl.classList.add("agent-shell-side-sliding");
-      }
-      panelsAnimatingRef.current = true;
-      if (panelAnimationCleanupRef.current != null) {
-        window.clearTimeout(panelAnimationCleanupRef.current);
-      }
-      panelAnimationCleanupRef.current = window.setTimeout(() => {
-        groupEl.classList.remove(
-          "agent-shell-panels-animating",
-          "agent-shell-rail-sliding",
-          "agent-shell-side-sliding"
-        );
-        panelsAnimatingRef.current = false;
-        panelAnimationCleanupRef.current = null;
-      }, 320);
     }
 
     applyingShellLayoutFromContextRef.current = true;
@@ -227,6 +249,53 @@ function AgentLayoutShell() {
       } else if (!sidePanel.isCollapsed()) {
         sidePanel.collapse();
       }
+    }
+
+    if (tweenPanels && groupEl) {
+      // The library has committed the final layout above; rewind the DOM to
+      // the start values before this effect returns (pre-paint, so no flash)
+      // and tween to the targets. JS drives every frame, so no engine has to
+      // interpolate flex-grow and no style-recalc ordering can drop the
+      // animation.
+      if (panelTweenRafRef.current != null) {
+        cancelAnimationFrame(panelTweenRafRef.current);
+        panelTweenRafRef.current = null;
+      }
+      const panels = tweenPanels;
+      for (const panel of panels) {
+        panel.el.style.flexGrow = String(panel.from);
+      }
+      const durationMs = 260;
+      const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+      // Epoch anchors to the FIRST callback's own timestamp: rAF hands frames
+      // the vsync-aligned start time, which can precede a `performance.now()`
+      // captured mid-effect during a long commit — a naive epoch makes the
+      // first t negative and the eased value overshoot wildly.
+      let startedAt: number | null = null;
+      const finish = () => {
+        for (const panel of panels) {
+          panel.el.style.flexGrow = String(panel.to);
+        }
+        groupEl.classList.remove("agent-shell-rail-sliding", "agent-shell-side-sliding");
+        panelsAnimatingRef.current = false;
+        panelTweenRafRef.current = null;
+      };
+      const step = (now: number) => {
+        if (startedAt == null) {
+          startedAt = now;
+        }
+        const t = Math.min(1, Math.max(0, (now - startedAt) / durationMs));
+        if (t >= 1) {
+          finish();
+          return;
+        }
+        const eased = easeOutCubic(t);
+        for (const panel of panels) {
+          panel.el.style.flexGrow = String(panel.from + (panel.to - panel.from) * eased);
+        }
+        panelTweenRafRef.current = requestAnimationFrame(step);
+      };
+      panelTweenRafRef.current = requestAnimationFrame(step);
     }
   }, [
     agentShellLayout,

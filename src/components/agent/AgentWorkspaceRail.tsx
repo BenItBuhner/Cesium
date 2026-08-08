@@ -3367,7 +3367,10 @@ export function AgentWorkspaceRail() {
             </div>
           )}
 
-          {!leftRailCollapsed ? (
+          {/* Gate on the DELAYED collapse flag: the raw context value would
+              unmount the list on the first frame of the desktop slide-out and
+              empty the mobile drawer while it is still animating closed. */}
+          {!desktopRailCollapsed ? (
             <>
               <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
           {railLoading ? (

@@ -379,22 +379,17 @@ html.dark .landing-shot-dark {
 /**
  * Agent shell panel open/close animation (desktop + tablet).
  *
- * react-resizable-panels drives panel sizes through inline `flex-grow` on the
- * `[data-panel]` element, so transitioning that property animates programmatic
- * expand/collapse. The class is attached only for the toggle window (~300ms)
- * by AgentLayout, so drag-resizing stays 1:1 with the pointer.
- *
- * While a panel is sliding, its content is pinned to the edge it enters from
- * and locked to its resting width (via the CSS vars set inline by
+ * react-resizable-panels drives panel sizes through inline `flex-grow`;
+ * AgentLayout animates programmatic expand/collapse with a rAF tween that
+ * writes flex-grow every frame (CSS transitions on flex-grow are
+ * timing-sensitive and WebKit does not interpolate the property at all).
+ * These rules only pin the sliding panel's content to the edge it travels
+ * from, locked to its resting width (via the CSS vars set inline by
  * AgentLayout): the rail content hugs the panel's right edge (slides in from
  * the left), the workbench pane content hugs the panel's left edge (slides in
  * from the right). Without the lock the content would squish while the flex
  * width interpolates.
  */
-.agent-shell-panels-animating [data-panel] {
-  transition: flex-grow 260ms cubic-bezier(0.26, 0.88, 0.32, 1);
-}
-
 .agent-shell-rail-sliding #agent-shell-rail > div {
   position: relative;
   overflow: hidden !important;
@@ -419,12 +414,6 @@ html.dark .landing-shot-dark {
   bottom: 0;
   left: 0;
   width: var(--agent-side-slide-width, 764px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-shell-panels-animating [data-panel] {
-    transition: none;
-  }
 }
 
 /**
