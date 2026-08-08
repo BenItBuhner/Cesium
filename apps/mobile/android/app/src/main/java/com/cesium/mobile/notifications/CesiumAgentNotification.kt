@@ -14,29 +14,57 @@ import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
 import com.cesium.mobile.R
 import com.cesium.shared.generated.CesiumDesignTokens
+import kotlin.math.abs
 
 object CesiumAgentNotification {
   const val CHANNEL_ID = "cesium-agent-runs"
-  const val NOTIFICATION_ID = 6100
+  const val ALERT_CHANNEL_ID = "cesium-agent-alerts"
 
-  fun ensureChannel(context: Context) {
+  /**
+   * Base for per-run notification ids. Each active agent run gets its own
+   * stable id so multiple agents can be tracked side by side. The range stays
+   * clear of the phone-control foreground notification (0xCE72).
+   */
+  const val NOTIFICATION_ID_BASE = 6100
+  private const val NOTIFICATION_ID_RANGE = 40_000
+
+  fun notificationId(runKey: String?): Int {
+    if (runKey.isNullOrBlank()) return NOTIFICATION_ID_BASE
+    return NOTIFICATION_ID_BASE + (abs(runKey.hashCode()) % NOTIFICATION_ID_RANGE)
+  }
+
+  fun ensureChannels(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(NotificationManager::class.java)
-    val existing = manager.getNotificationChannel(CHANNEL_ID)
-    if (existing != null) return
-    val channel = NotificationChannel(
-      CHANNEL_ID,
-      "Agent runs",
-      NotificationManager.IMPORTANCE_DEFAULT
-    ).apply {
-      description = "Ongoing Cesium agent task state"
-      setShowBadge(false)
-    }
-    manager.createNotificationChannel(channel)
+    // Silent progress channel. LOW keeps live-update reposts quiet while still
+    // qualifying for Android 16 promotion (only IMPORTANCE_MIN is excluded).
+    // createNotificationChannel lowers the importance of the pre-existing
+    // DEFAULT channel when the user has not customized it.
+    manager.createNotificationChannel(
+      NotificationChannel(
+        CHANNEL_ID,
+        "Agent runs",
+        NotificationManager.IMPORTANCE_LOW
+      ).apply {
+        description = "Ongoing Cesium agent task state"
+        setShowBadge(false)
+      }
+    )
+    manager.createNotificationChannel(
+      NotificationChannel(
+        ALERT_CHANNEL_ID,
+        "Agent attention",
+        NotificationManager.IMPORTANCE_HIGH
+      ).apply {
+        description = "An agent needs your input or finished a run"
+        setShowBadge(true)
+      }
+    )
   }
 
   fun build(context: Context, extras: Bundle): Notification {
-    ensureChannel(context)
+    ensureChannels(context)
+    val runKey = extras.getString("runKey") ?: ""
     val title = extras.getString("title") ?: "Cesium agent"
     val body = extras.getString("body") ?: "Running"
     val shortText = extras.getString("shortText")
@@ -46,17 +74,23 @@ object CesiumAgentNotification {
     val startedAt = extras.getLong("startedAt", System.currentTimeMillis())
     val estimatedCompletionAt = extras.getLong("estimatedCompletionAt", 0L)
     val ongoing = extras.getBoolean("ongoing", true)
+    val alert = extras.getBoolean("alert", false)
     val requestPromotion = extras.getBoolean("promote", false) && ongoing
 
-    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+    val builder = NotificationCompat.Builder(
+      context,
+      if (alert) ALERT_CHANNEL_ID else CHANNEL_ID
+    )
 
     builder
       .setSmallIcon(R.drawable.ic_stat_cesium)
       .setContentTitle(title)
       .setContentText(body)
-      .setCategory(Notification.CATEGORY_PROGRESS)
+      .setCategory(
+        if (ongoing) Notification.CATEGORY_PROGRESS else Notification.CATEGORY_STATUS
+      )
       .setOngoing(ongoing)
-      .setOnlyAlertOnce(true)
+      .setOnlyAlertOnce(!alert)
       .setShowWhen(true)
       .setWhen(startedAt)
       .setContentIntent(openIntent(context, extras, "open"))
@@ -80,7 +114,9 @@ object CesiumAgentNotification {
         builder.setShortCriticalText(shortText)
       }
     } else {
-      builder.setProgress(progressMax, progress.coerceIn(0, progressMax), indeterminate)
+      if (ongoing) {
+        builder.setProgress(progressMax, progress.coerceIn(0, progressMax), indeterminate)
+      }
       if (!shortText.isNullOrBlank()) {
         builder.setSubText(shortText)
       }
@@ -180,34 +216,43 @@ object CesiumAgentNotification {
   }
 
   private fun openIntent(context: Context, extras: Bundle, action: String): PendingIntent {
+    val runKey = extras.getString("runKey") ?: ""
     val intent = Intent(context, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
       putExtra("cesiumAction", action)
+      putExtra("runKey", runKey)
       putExtra("conversationId", extras.getString("conversationId"))
       putExtra("workspaceId", extras.getString("workspaceId"))
     }
+    // Request codes must differ per run AND per action, otherwise concurrent
+    // agent notifications overwrite each other's intent extras via
+    // FLAG_UPDATE_CURRENT and every tap lands on the same conversation.
     return PendingIntent.getActivity(
       context,
-      action.hashCode(),
+      requestCode(runKey, action),
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
   }
 
   private fun deleteIntent(context: Context, extras: Bundle): PendingIntent {
+    val runKey = extras.getString("runKey") ?: ""
     val intent = Intent(context, CesiumNotificationActionReceiver::class.java).apply {
       action = "com.cesium.mobile.NOTIFICATION_DISMISSED"
-      putExtra("runKey", extras.getString("runKey"))
+      putExtra("runKey", runKey)
       putExtra("conversationId", extras.getString("conversationId"))
       putExtra("workspaceId", extras.getString("workspaceId"))
     }
     return PendingIntent.getBroadcast(
       context,
-      9001,
+      requestCode(runKey, "dismiss"),
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
   }
+
+  private fun requestCode(runKey: String, action: String): Int =
+    abs("$runKey:$action".hashCode())
 
   private fun progressColors(context: Context): CesiumProgressColors {
     val dark =

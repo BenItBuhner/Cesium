@@ -35,17 +35,50 @@ describe("mobile bridge", () => {
     assert.equal(parseMobileBridgeMessage(null), null);
   });
 
+  test("round-trips multi-agent projection sets and active conversation ids", () => {
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "agentProjections",
+          projections: [{ conversationId: "c1" }, { conversationId: "c2" }],
+        })
+      ),
+      {
+        type: "agentProjections",
+        projections: [{ conversationId: "c1" }, { conversationId: "c2" }],
+      }
+    );
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "focusedConversationChanged",
+          workspaceId: "w1",
+          conversationId: "c1",
+          lastEventSeq: 7,
+          activeConversationIds: ["c1", "c2"],
+        })
+      ),
+      {
+        type: "focusedConversationChanged",
+        workspaceId: "w1",
+        conversationId: "c1",
+        lastEventSeq: 7,
+        activeConversationIds: ["c1", "c2"],
+      }
+    );
+  });
+
   test("round-trips mobile live-activity preference and native status", () => {
     assert.deepEqual(
       parseMobileBridgeMessage(
         encodeMobileBridgeMessage({
           type: "setLiveUpdatePreference",
-          preference: "nowbar",
+          preference: "basic",
         })
       ),
       {
         type: "setLiveUpdatePreference",
-        preference: "nowbar",
+        preference: "basic",
       }
     );
     assert.deepEqual(

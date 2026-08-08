@@ -22,6 +22,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
+import { useHoverCapable } from "@/hooks/useHoverCapable";
 import { usePopover } from "@/hooks/usePopover";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useShellView } from "@/components/layout/ShellViewContext";
@@ -467,7 +468,9 @@ const ModelPickerRow = memo(function ModelPickerRow({
             className={`pointer-events-auto flex size-[22px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-opacity duration-150 focus-visible:opacity-100 ${
               index === highlightedIndex
                 ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100"
+                : // pointer-coarse: hover never fires on touch, so the edit
+                  // affordance must stay visible there or it is unreachable.
+                  "opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100"
             } ${
               active
                 ? "text-[var(--text-primary)]"
@@ -550,6 +553,13 @@ export function ModelDropdown({
 }: ModelDropdownProps) {
   const { openSettingsView } = useShellView();
   const { updateWorkspaceSession } = useWorkspace();
+  /**
+   * Touch taps synthesize mouseenter/mouseleave bursts; hover-open + click
+   * -toggle on the same target makes the harness flyout open and instantly
+   * close on Android. Only run hover open/close logic on hover-capable
+   * pointers; touch relies on explicit tap-to-toggle.
+   */
+  const hoverCapable = useHoverCapable();
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledIsOpen !== undefined;
   const open = isControlled ? controlledIsOpen ?? false : internalOpen;
@@ -671,6 +681,12 @@ export function ModelDropdown({
     setHarnessFlyoutOpen(true);
   }, [clearHarnessCloseTimer, repositionHarnessFlyout]);
 
+  const closeHarnessFlyoutNow = useCallback(() => {
+    clearHarnessCloseTimer();
+    setHarnessFlyoutOpen(false);
+    setHarnessFlyoutPos(null);
+  }, [clearHarnessCloseTimer]);
+
   const scheduleCloseHarnessFlyout = useCallback(() => {
     clearHarnessCloseTimer();
     harnessCloseTimerRef.current = setTimeout(() => {
@@ -681,19 +697,25 @@ export function ModelDropdown({
   }, [clearHarnessCloseTimer]);
 
   const toggleHarnessFlyout = useCallback(() => {
-    clearHarnessCloseTimer();
     if (harnessFlyoutOpen) {
-      setHarnessFlyoutOpen(false);
-      setHarnessFlyoutPos(null);
+      closeHarnessFlyoutNow();
     } else {
-      repositionHarnessFlyout();
-      setHarnessFlyoutOpen(true);
+      openHarnessFlyoutNow();
     }
-  }, [
-    clearHarnessCloseTimer,
-    repositionHarnessFlyout,
-    harnessFlyoutOpen,
-  ]);
+  }, [closeHarnessFlyoutNow, harnessFlyoutOpen, openHarnessFlyoutNow]);
+
+  /**
+   * Row-level activation: hover-capable pointers already opened the flyout on
+   * mouseenter, so a click only ensures it is open; touch taps (no hover
+   * events run) toggle it so a second tap closes instead of reopening.
+   */
+  const handleHarnessRowClick = useCallback(() => {
+    if (hoverCapable) {
+      openHarnessFlyoutNow();
+    } else {
+      toggleHarnessFlyout();
+    }
+  }, [hoverCapable, openHarnessFlyoutNow, toggleHarnessFlyout]);
 
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
     placement: popoverPlacement,
@@ -874,9 +896,7 @@ export function ModelDropdown({
           if (modelEditFlyout) {
             setModelEditFlyout(null);
           } else if (harnessFlyoutOpen) {
-            clearHarnessCloseTimer();
-            setHarnessFlyoutOpen(false);
-            setHarnessFlyoutPos(null);
+            closeHarnessFlyoutNow();
           } else {
             close();
           }
@@ -891,7 +911,7 @@ export function ModelDropdown({
       close,
       modelEditFlyout,
       harnessFlyoutOpen,
-      clearHarnessCloseTimer,
+      closeHarnessFlyoutNow,
     ]
   );
 
@@ -1024,10 +1044,13 @@ export function ModelDropdown({
                 <div
                   ref={harnessAnchorRef}
                   className="group min-w-0 shrink-0 border-b border-[var(--border-card)] p-[4px]"
-                  onMouseEnter={openHarnessFlyoutNow}
-                  onMouseLeave={scheduleCloseHarnessFlyout}
+                  onMouseEnter={hoverCapable ? openHarnessFlyoutNow : undefined}
+                  onMouseLeave={hoverCapable ? scheduleCloseHarnessFlyout : undefined}
                 >
-                  <div className="flex min-w-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[6px] py-[3px] transition-colors group-hover:bg-[var(--accent-bg)]/60">
+                  <div
+                    className="flex min-w-0 cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[6px] py-[3px] transition-colors group-hover:bg-[var(--accent-bg)]/60"
+                    onClick={handleHarnessRowClick}
+                  >
                     <AgentBackendIcon
                       backendId={backendId}
                       className="size-[14px] shrink-0"
@@ -1284,8 +1307,8 @@ export function ModelDropdown({
               left: harnessFlyoutPos.left,
               maxHeight: "min(320px, calc(100vh - 24px))",
             }}
-            onMouseEnter={openHarnessFlyoutNow}
-            onMouseLeave={scheduleCloseHarnessFlyout}
+            onMouseEnter={hoverCapable ? openHarnessFlyoutNow : undefined}
+            onMouseLeave={hoverCapable ? scheduleCloseHarnessFlyout : undefined}
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
@@ -1341,6 +1364,10 @@ export function ModelDropdown({
                           { backendId: backend.id }
                         );
                         onBackendChange?.(backend.id);
+                        // Selection is done: close the flyout on every input
+                        // type so touch users are not left with it covering
+                        // the model list (no mouseleave ever fires on tap).
+                        closeHarnessFlyoutNow();
                       }}
                       className="flex min-w-0 flex-1 items-center gap-[8px] text-left disabled:cursor-not-allowed"
                     >

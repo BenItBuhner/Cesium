@@ -18,8 +18,8 @@ import {
 import { selectClass } from "./shared";
 
 const MOBILE_LIVE_UPDATE_OPTIONS = [
-  { value: "nowbar", label: "Now Bar, with live notification fallback" },
-  { value: "live", label: "Live notification only" },
+  { value: "live", label: "Live Updates, with notification fallback" },
+  { value: "basic", label: "Standard notification only" },
   { value: "off", label: "Off" },
 ] satisfies Array<{ value: MobileLiveUpdatePreference; label: string }>;
 
@@ -46,7 +46,7 @@ export function MobileNativeSettings() {
   if (!available) return null;
   const live = status?.liveUpdates;
   const phone = status?.phoneControl;
-  const preference = live?.preference ?? "nowbar";
+  const preference = live?.preference ?? "live";
   const promotionAvailable =
     live?.progressStyleSupported && live.canPostPromotedNotifications;
 
@@ -58,8 +58,8 @@ export function MobileNativeSettings() {
           title="Run progress placement"
           description={
             promotionAvailable
-              ? "Prefer Samsung Now Bar / Android promoted ongoing activity, with a normal live notification fallback."
-              : "Now Bar is preferred. This device will automatically use a normal live notification when promoted ongoing activity is unavailable."
+              ? "Android Live Updates show each agent run in the status bar chip, lock screen, and Samsung's Now Bar (One UI 8+)."
+              : "Android Live Updates are preferred. This device will automatically fall back to a standard live notification while promoted ongoing activity is unavailable."
           }
           trailing={
             <SettingsThemeSelect
@@ -79,13 +79,13 @@ export function MobileNativeSettings() {
           }
         />
         <SettingsRow
-          title="Now Bar access"
+          title="Live Updates access"
           description={
             live?.progressStyleSupported
               ? live.canPostPromotedNotifications
-                ? "Promoted ongoing notifications are allowed for Cesium."
-                : "Android supports promoted ongoing notifications, but access is not currently allowed."
-              : "This Android version does not support promoted ongoing notifications; Cesium will use live notifications."
+                ? "Promoted Live Updates are allowed for Cesium. Samsung's Now Bar picks these up automatically."
+                : "Android supports Live Updates, but promotion is not currently allowed for Cesium; standard live notifications are used instead."
+              : "This Android version does not support promoted Live Updates; Cesium falls back to standard live notifications."
           }
           trailing={
             <button
