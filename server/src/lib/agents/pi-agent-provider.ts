@@ -346,15 +346,18 @@ class PiAgentSessionHandle implements AgentSessionHandle {
     });
     const promptText = appendAgentPluginPrompt(input.text, pluginAttachments);
 
-    if (input.attachments?.length) {
+    // Generic file attachments carry no inline data (saved to disk, surfaced
+    // via the prompt text); only send real inline images.
+    const inlineImages = (input.attachments ?? []).filter(
+      (attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0
+    );
+    if (inlineImages.length > 0) {
       await this.session.prompt(promptText, {
-        images: input.attachments
-          .filter((attachment) => attachment.mimeType.startsWith("image/"))
-          .map((attachment) => ({
-            type: "image" as const,
-            data: attachment.data,
-            mimeType: attachment.mimeType,
-          })),
+        images: inlineImages.map((attachment) => ({
+          type: "image" as const,
+          data: attachment.data,
+          mimeType: attachment.mimeType,
+        })),
       });
       return;
     }

@@ -320,7 +320,12 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     if (this.disposed) {
       throw new Error("Claude Code SDK session has been disposed.");
     }
-    if (input.attachments?.length) {
+    // Generic file attachments are saved to disk and surfaced via the prompt
+    // text, so only inline images warrant the "not enabled" warning.
+    const inlineImageCount = (input.attachments ?? []).filter(
+      (attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0
+    ).length;
+    if (inlineImageCount > 0) {
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),

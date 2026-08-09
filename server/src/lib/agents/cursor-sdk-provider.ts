@@ -363,11 +363,17 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       },
       mode
     );
+    // Generic file attachments carry no inline data (they live on disk under
+    // `.cesium/file-uploads/` and are surfaced via the prompt text); only ship
+    // real inline images to the SDK.
+    const inlineImages = (input.attachments ?? []).filter(
+      (attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0
+    );
     const run = await this.agent.send(
-      input.attachments?.length
+      inlineImages.length
         ? {
             text: promptText,
-            images: input.attachments.map((attachment) => ({
+            images: inlineImages.map((attachment) => ({
               data: attachment.data,
               mimeType: attachment.mimeType,
             })),

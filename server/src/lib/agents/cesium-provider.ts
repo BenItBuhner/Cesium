@@ -817,7 +817,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]);
       const history = await this.buildHistory(input.userMessageId);
       const promptImages = (input.attachments ?? [])
-        .filter((attachment) => attachment.mimeType.startsWith("image/"))
+        .filter(
+          (attachment) =>
+            attachment.mimeType.startsWith("image/") && attachment.data.length > 0
+        )
         .map((attachment) => ({
           mimeType: attachment.mimeType,
           data: attachment.data,

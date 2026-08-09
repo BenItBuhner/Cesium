@@ -19,7 +19,6 @@ import {
   FileText,
   Flame,
   GitBranch,
-  Image as ImageIcon,
   Infinity as InfinityIcon,
   Layers,
   LayoutTemplate,
@@ -29,11 +28,11 @@ import {
   MessageSquare,
   Mic,
   Minimize2,
-  Plus,
   Square,
   X,
 } from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
+import { ComposerAttachMenu } from "./ComposerAttachMenu";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import {
   DESIGN_2_MODE_RECIPES,
@@ -1064,6 +1063,7 @@ export function ChatComposer({
   >();
   const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const anyFileInputRef = useRef<HTMLInputElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
   /** Docked main row (measures available width) + hidden full-size controls probe. */
   const inlineRowRef = useRef<HTMLDivElement>(null);
@@ -1304,26 +1304,34 @@ export function ChatComposer({
     setInputLevel(0);
   }, []);
 
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB — images ship inline base64 to vision models
+  const MAX_ANY_FILE_SIZE = 50 * 1024 * 1024; // 50MB — generic files only travel to disk via multipart
+  const MAX_ATTACHMENT_COUNT = 10;
   const SLOW_UPLOAD_THRESHOLD_MS = 2500;
 
-  const addImagesFromFileList = useCallback(
-    (files: FileList) => {
-      const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+  /**
+   * Attach any mix of images and generic files. Images are read to base64 for
+   * inline vision delivery; every attachment (images included) is eagerly
+   * uploaded so it lands in the workspace `.cesium/file-uploads/` directory
+   * and the agent can be pointed at its saved path.
+   */
+  const addAttachmentsFromFiles = useCallback(
+    (files: FileList | File[]) => {
       const currentCount = attachedImages.length;
-      const maxImages = 10 - currentCount;
-      const filesToAdd = imageFiles.slice(0, maxImages);
+      const filesToAdd = Array.from(files).slice(0, Math.max(0, MAX_ATTACHMENT_COUNT - currentCount));
 
       const validFiles = filesToAdd.filter((file) => {
-        if (file.size > MAX_FILE_SIZE) {
-      pushNotification({
-          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-          severity: "warning",
-          title: "Image too large",
-          message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
-          autoDismissMs: 5000,
-          compact: true,
-        });
+        const isImage = file.type.startsWith("image/");
+        const maxSize = isImage ? MAX_IMAGE_SIZE : MAX_ANY_FILE_SIZE;
+        if (file.size > maxSize) {
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "warning",
+            title: isImage ? "Image too large" : "File too large",
+            message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is ${Math.round(maxSize / 1024 / 1024)}MB.`,
+            autoDismissMs: 5000,
+            compact: true,
+          });
           return false;
         }
         return true;
@@ -1331,26 +1339,29 @@ export function ChatComposer({
 
       if (validFiles.length === 0) return;
 
-      const newImageEntries: ImageAttachmentState[] = validFiles.map((file) => ({
+      const newEntries: ImageAttachmentState[] = validFiles.map((file) => ({
         localId: globalThis.crypto?.randomUUID?.() ?? `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        mimeType: file.type,
+        mimeType: file.type || "application/octet-stream",
         data: "",
         name: file.name,
+        size: file.size,
+        kind: file.type.startsWith("image/") ? ("image" as const) : ("file" as const),
         uploadState: "pending",
         showSlowSpinner: false,
       }));
 
       // Store files in ref for retry functionality
-      newImageEntries.forEach((entry, i) => {
+      newEntries.forEach((entry, i) => {
         imageFilesRef.current.set(entry.localId, validFiles[i]);
       });
 
-      setAttachedImages((prev) => [...prev, ...newImageEntries]);
+      setAttachedImages((prev) => [...prev, ...newEntries]);
 
       void Promise.all(
         validFiles.map((file, i) => {
           return new Promise<void>((resolve) => {
-            const localId = newImageEntries[i].localId;
+            const localId = newEntries[i].localId;
+            const isImage = newEntries[i].kind !== "file";
 
             const slowUploadTimer = setTimeout(() => {
               setAttachedImages((prev) =>
@@ -1360,23 +1371,21 @@ export function ChatComposer({
               );
             }, SLOW_UPLOAD_THRESHOLD_MS);
 
-            const reader = new FileReader();
-            reader.onload = () => {
-              const base64 = (reader.result as string).split(",")[1] ?? "";
-
-              setAttachedImages((prev) =>
-                prev.map((img) =>
-                  img.localId === localId ? { ...img, data: base64, uploadState: "uploading" as const } : img
-                )
-              );
-
+            const startUpload = () => {
               uploadAttachments([file])
                 .then((results) => {
                   clearTimeout(slowUploadTimer);
                   setAttachedImages((prev) =>
                     prev.map((img) =>
                       img.localId === localId
-                        ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
+                        ? {
+                            ...img,
+                            uploadState: "uploaded" as const,
+                            serverId: results[0]?.id,
+                            savedPath: results[0]?.path,
+                            ...(results[0]?.name ? { name: results[0].name } : {}),
+                            showSlowSpinner: false,
+                          }
                         : img
                     )
                   );
@@ -1392,25 +1401,62 @@ export function ChatComposer({
                   resolve();
                 });
             };
+
+            if (!isImage) {
+              // Generic files never travel inline — upload straight to disk.
+              setAttachedImages((prev) =>
+                prev.map((img) =>
+                  img.localId === localId ? { ...img, uploadState: "uploading" as const } : img
+                )
+              );
+              startUpload();
+              return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = (reader.result as string).split(",")[1] ?? "";
+
+              setAttachedImages((prev) =>
+                prev.map((img) =>
+                  img.localId === localId ? { ...img, data: base64, uploadState: "uploading" as const } : img
+                )
+              );
+
+              startUpload();
+            };
             reader.readAsDataURL(file);
           });
         })
       );
     },
-    [attachedImages.length, pushNotification, MAX_FILE_SIZE, SLOW_UPLOAD_THRESHOLD_MS]
+    [attachedImages.length, pushNotification, MAX_IMAGE_SIZE, MAX_ANY_FILE_SIZE, SLOW_UPLOAD_THRESHOLD_MS]
   );
 
   const handleFileInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (files && files.length > 0) {
-        addImagesFromFileList(files);
+        addAttachmentsFromFiles(files);
       }
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     },
-    [addImagesFromFileList]
+    [addAttachmentsFromFiles]
+  );
+
+  const handleAnyFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (files && files.length > 0) {
+        addAttachmentsFromFiles(files);
+      }
+      if (anyFileInputRef.current) {
+        anyFileInputRef.current.value = "";
+      }
+    },
+    [addAttachmentsFromFiles]
   );
 
   /**
@@ -1419,7 +1465,7 @@ export function ChatComposer({
    * list index keeps existing keys intact across mutations).
    */
   const draftAttachmentKey = useCallback((att: ImageAttachment): string => {
-    return `${att.name ?? "image"}|${att.mimeType}|${att.data.length}|${att.data.slice(0, 64)}`;
+    return `${att.name ?? "image"}|${att.mimeType}|${att.data.length}|${att.data.slice(0, 64)}|${att.savedPath ?? ""}`;
   }, []);
 
   useEffect(() => {
@@ -1451,6 +1497,9 @@ export function ChatComposer({
           mimeType: att.mimeType,
           data: att.data,
           name: att.name,
+          ...(att.kind ? { kind: att.kind } : {}),
+          ...(att.savedPath ? { savedPath: att.savedPath } : {}),
+          ...(typeof att.size === "number" ? { size: att.size } : {}),
           uploadState: "uploaded",
           showSlowSpinner: false,
         });
@@ -1554,7 +1603,14 @@ export function ChatComposer({
           setAttachedImages((prev) =>
             prev.map((img) =>
               img.localId === localId
-                ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
+                ? {
+                    ...img,
+                    uploadState: "uploaded" as const,
+                    serverId: results[0]?.id,
+                    savedPath: results[0]?.path,
+                    ...(results[0]?.name ? { name: results[0].name } : {}),
+                    showSlowSpinner: false,
+                  }
                 : img
             )
           );
@@ -1590,10 +1646,10 @@ export function ChatComposer({
       isDraggingRef.current = false;
       const files = event.dataTransfer.files;
       if (files && files.length > 0) {
-        addImagesFromFileList(files);
+        addAttachmentsFromFiles(files);
       }
     },
-    [addImagesFromFileList]
+    [addAttachmentsFromFiles]
   );
 
   const insertTranscription = useCallback(
@@ -2126,14 +2182,19 @@ export function ChatComposer({
     }
     const directed = applyComposerDirectives(trimmed);
     const promptText = expandComposerReferenceTokens(directed);
-    // Base64 `data` is the attachment contract; a "pending" entry's data stays
+    // Images need their inline base64 (`data`); a "pending" entry's data stays
     // "" until its FileReader completes and would submit a zero-byte image.
+    // Generic files carry no inline data — they only count once their upload
+    // landed on disk (`savedPath`), which is what the agent gets pointed at.
     const imagesToSubmit: ImageAttachment[] = attachedImages
-      .filter((image) => image.data.length > 0)
-      .map(({ mimeType, data, name }) => ({
+      .filter((att) => (att.kind === "file" ? Boolean(att.savedPath) : att.data.length > 0))
+      .map(({ mimeType, data, name, kind, savedPath, size }) => ({
         mimeType,
         data,
         name,
+        ...(kind ? { kind } : {}),
+        ...(savedPath ? { savedPath } : {}),
+        ...(typeof size === "number" ? { size } : {}),
       }));
     if (!trimmed && imagesToSubmit.length === 0) {
       return;
@@ -3242,16 +3303,12 @@ const handleNativeComposerKeyDown = useCallback(
 
   if (variant === "docked" && !isExpanded) {
     const plusButton = (
-      <button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
+      <ComposerAttachMenu
+        variant="plus"
         disabled={configLocked}
-        className="flex size-[var(--d2-composer-plus-size)] shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label="Attach media"
-        title="Attach media"
-      >
-        <Plus className="size-[14px] shrink-0" strokeWidth={2} aria-hidden />
-      </button>
+        onPickFiles={() => anyFileInputRef.current?.click()}
+        onPickMedia={() => fileInputRef.current?.click()}
+      />
     );
 
     const modeChip = (
@@ -3467,7 +3524,7 @@ const handleNativeComposerKeyDown = useCallback(
                   for (const file of imageFiles) {
                     dt.items.add(file);
                   }
-                  addImagesFromFileList(dt.files);
+                  addAttachmentsFromFiles(dt.files);
                   return;
                 }
 
@@ -3582,6 +3639,13 @@ const handleNativeComposerKeyDown = useCallback(
           accept="image/*"
           multiple
           onChange={handleFileInputChange}
+          className="hidden"
+        />
+        <input
+          ref={anyFileInputRef}
+          type="file"
+          multiple
+          onChange={handleAnyFileInputChange}
           className="hidden"
         />
       </div>
@@ -3708,7 +3772,7 @@ const handleNativeComposerKeyDown = useCallback(
               for (const file of imageFiles) {
                 dt.items.add(file);
               }
-              addImagesFromFileList(dt.files);
+              addAttachmentsFromFiles(dt.files);
               return;
             }
 
@@ -3881,20 +3945,24 @@ const handleNativeComposerKeyDown = useCallback(
               <Maximize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="-m-[4px] touch-manipulation p-[4px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-            aria-label="Upload image"
-          >
-            <ImageIcon className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-          </button>
+          <ComposerAttachMenu
+            variant="icon"
+            onPickFiles={() => anyFileInputRef.current?.click()}
+            onPickMedia={() => fileInputRef.current?.click()}
+          />
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
             multiple
             onChange={handleFileInputChange}
+            className="hidden"
+          />
+          <input
+            ref={anyFileInputRef}
+            type="file"
+            multiple
+            onChange={handleAnyFileInputChange}
             className="hidden"
           />
           {!primaryControlIsVoice ? voiceButton : null}

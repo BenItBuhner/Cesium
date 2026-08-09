@@ -2422,7 +2422,12 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
 
 export type UploadedAttachment = {
   id: string;
+  /** Workspace-relative saved path (e.g. `.cesium/file-uploads/report.xlsx`). */
   path: string;
+  /** Final on-disk filename after sanitizing/deduping. */
+  name?: string;
+  size?: number;
+  mimeType?: string;
 };
 
 /**

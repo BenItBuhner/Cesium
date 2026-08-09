@@ -55,6 +55,7 @@ import {
   findPrimaryModeConfigOption,
 } from "./config-option-utils.js";
 import { harnessLog } from "./harness-diagnostics.js";
+import { buildAttachmentsReminderText } from "./attachment-reminders.js";
 import { getImportSourceForBackend } from "./import/registry.js";
 import type {
   AgentBackendId,
@@ -70,6 +71,7 @@ import type {
   AgentConversationStatus,
   AgentContextUsageSnapshot,
   AgentEventInput,
+  AgentPromptAttachment,
   AgentProvider,
   AgentQueuedChatPrompt,
   AgentStoredEvent,
@@ -527,7 +529,7 @@ export class AgentRuntimeManager {
     input: AgentConversationCreateInput,
     prompt: {
       text: string;
-      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      attachments?: AgentPromptAttachment[];
       clientEventId?: string;
       clientMessageId?: string;
       configOverride?: AgentQueuedChatPrompt["configOverride"];
@@ -1189,7 +1191,7 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string,
     text: string,
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>,
+    attachments?: AgentPromptAttachment[],
     options?: {
       configOverride?: AgentQueuedChatPrompt["configOverride"];
       planHandoff?: AgentQueuedChatPrompt["planHandoff"];
@@ -1212,7 +1214,7 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string,
     text: string,
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>,
+    attachments?: AgentPromptAttachment[],
     options?: {
       configOverride?: AgentQueuedChatPrompt["configOverride"];
       planHandoff?: AgentQueuedChatPrompt["planHandoff"];
@@ -1393,6 +1395,15 @@ export class AgentRuntimeManager {
         : baseRuntimePromptText;
 
     const userMessageId = clientMessageId || randomUUID();
+    // Universal upload notice: attachments saved under `.cesium/file-uploads/`
+    // are surfaced to the agent verbatim. Persisted as a `system_reminder`
+    // event (rebuilt into history by cesium/CLI transcript builders) and also
+    // appended to the live prompt text for session-based backends that never
+    // re-read stored events.
+    const attachmentsReminderText = buildAttachmentsReminderText(
+      attachments,
+      workspace.root
+    );
     const designMatch = trimmed.match(/`design:([^`]+)`/);
     const displayContent = options?.planHandoff
       ? `Build: ${options.planHandoff.planTitle ?? options.planHandoff.planPath}`
@@ -1417,6 +1428,19 @@ export class AgentRuntimeManager {
           ...(options?.hidden ? { hidden: true } : {}),
           attachments,
         },
+        ...(attachmentsReminderText
+          ? [
+              {
+                eventId: randomUUID(),
+                conversationId,
+                kind: "system_reminder" as const,
+                reminderId: `attachments-${userMessageId}`,
+                targetMessageId: userMessageId,
+                reason: "attachments" as const,
+                text: attachmentsReminderText,
+              },
+            ]
+          : []),
       ],
       {
         status: "running",
@@ -1430,10 +1454,17 @@ export class AgentRuntimeManager {
     void (async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        // The cesium backend rebuilds its model history from stored events (the
+        // reminder event above is prepended there); appending it to the live
+        // text too would defeat its duplicate-user-message guard.
+        const promptTextWithAttachmentNotice =
+          attachmentsReminderText && updatedRecord.config.backendId !== "cesium-agent"
+            ? `${runtimePromptText}\n\n${attachmentsReminderText}`
+            : runtimePromptText;
         const providerPromptText = await this.buildGoalRuntimePrompt({
           workspace,
           record: updatedRecord,
-          userText: runtimePromptText,
+          userText: promptTextWithAttachmentNotice,
           continuation: options?.hidden === true,
         });
         // Handoff/fork seed prompts already embed the transcript; wrapping them

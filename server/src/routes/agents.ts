@@ -17,6 +17,7 @@ import { getJSON, setJSON } from "../cache/kv.js";
 import { generateTitleFromText } from "../lib/agents/title-generator.js";
 import type {
   AgentBackendId,
+  AgentPromptAttachment,
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
   AgentConversationMetadataPatch,
@@ -30,6 +31,8 @@ import {
   readHarnessDiagnostics,
   type HarnessDiagnosticLevel,
 } from "../lib/agents/harness-diagnostics.js";
+import { FILE_UPLOADS_DIR } from "../lib/agents/attachment-reminders.js";
+import { ensureCesiumDirGitignored } from "../lib/artifacts/store.js";
 
 export const agentRoutes = new Hono();
 
@@ -154,7 +157,7 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
   const body = await c.req.json<{
     conversation?: AgentConversationCreateInput;
     text?: string;
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    attachments?: AgentPromptAttachment[];
     clientEventId?: string;
     clientMessageId?: string;
     configOverride?: AgentQueuedChatPrompt["configOverride"];
@@ -185,7 +188,7 @@ agentRoutes.post("/api/agents/conversations/standalone/create-and-prompt", async
   const body = await c.req.json<{
     conversation?: AgentConversationCreateInput;
     text?: string;
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    attachments?: AgentPromptAttachment[];
     clientEventId?: string;
     clientMessageId?: string;
     title?: string;
@@ -308,7 +311,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
   const conversationId = c.req.param("conversationId");
   const body = await c.req.json<{
     text?: string;
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    attachments?: AgentPromptAttachment[];
     configOverride?: AgentQueuedChatPrompt["configOverride"];
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
     clientEventId?: string;
@@ -527,8 +530,6 @@ agentRoutes.post("/api/agents/conversations/:conversationId/fork", async (c) => 
   }
 });
 
-const ATTACHMENTS_FOLDER = ".attachments";
-
 function getExtensionFromMime(mimeType: string): string {
   const mimeToExt: Record<string, string> = {
     "image/jpeg": ".jpg",
@@ -536,8 +537,46 @@ function getExtensionFromMime(mimeType: string): string {
     "image/gif": ".gif",
     "image/webp": ".webp",
     "image/svg+xml": ".svg",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "text/csv": ".csv",
+    "application/json": ".json",
+    "application/zip": ".zip",
   };
   return mimeToExt[mimeType] ?? ".bin";
+}
+
+/**
+ * Keep the user's original filename (so agents see `budget.xlsx`, not a UUID)
+ * while stripping directory components and shell-hostile characters.
+ */
+function sanitizeUploadFileName(rawName: string | undefined, mimeType: string): string {
+  const base = (rawName ?? "").split(/[\\/]/).pop()?.trim() ?? "";
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[<>:"|?*]/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 128);
+  if (!cleaned) {
+    return `upload-${randomUUID().slice(0, 8)}${getExtensionFromMime(mimeType)}`;
+  }
+  return cleaned;
+}
+
+/** `budget.xlsx` → `budget-2.xlsx` when the name is already taken. */
+async function dedupeUploadPath(uploadsDir: string, fileName: string): Promise<string> {
+  const parsed = path.parse(fileName);
+  let candidate = fileName;
+  for (let attempt = 2; attempt < 1000; attempt += 1) {
+    try {
+      await fs.access(path.join(uploadsDir, candidate));
+    } catch {
+      return candidate;
+    }
+    candidate = `${parsed.name}-${attempt}${parsed.ext}`;
+  }
+  return `${parsed.name}-${randomUUID().slice(0, 8)}${parsed.ext}`;
 }
 
 agentRoutes.post("/api/agents/attachments", async (c) => {
@@ -553,25 +592,31 @@ agentRoutes.post("/api/agents/attachments", async (c) => {
   if (fileArray.length === 0) {
     return c.json({ error: "Expected files field with at least one file" }, 400);
   }
-  const attachments: { id: string; path: string }[] = [];
-  const attachmentsDir = path.join(workspace.root, ATTACHMENTS_FOLDER);
-  try {
-    await fs.mkdir(attachmentsDir, { recursive: true });
-  } catch {
-    // Directory may already exist
-  }
+  const attachments: {
+    id: string;
+    path: string;
+    name: string;
+    size: number;
+    mimeType: string;
+  }[] = [];
+  const uploadsDir = path.join(workspace.root, FILE_UPLOADS_DIR);
+  await fs.mkdir(uploadsDir, { recursive: true });
+  await ensureCesiumDirGitignored(workspace.root).catch(() => undefined);
   for (const file of fileArray) {
     if (typeof file === "string") {
       continue;
     }
     const id = randomUUID();
-    const ext = getExtensionFromMime(file.type);
-    const fileName = `${id}${ext}`;
-    const filePath = path.join(ATTACHMENTS_FOLDER, fileName);
+    const mimeType = file.type || "application/octet-stream";
+    const fileName = await dedupeUploadPath(
+      uploadsDir,
+      sanitizeUploadFileName(file.name, mimeType)
+    );
+    const filePath = path.posix.join(FILE_UPLOADS_DIR, fileName);
     const absolutePath = resolveSafePath(workspace.root, filePath);
     const buf = Buffer.from(await file.arrayBuffer());
     await fs.writeFile(absolutePath, buf);
-    attachments.push({ id, path: filePath });
+    attachments.push({ id, path: filePath, name: fileName, size: buf.byteLength, mimeType });
   }
   return c.json({ attachments });
 });
