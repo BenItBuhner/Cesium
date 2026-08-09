@@ -948,14 +948,17 @@ export class AcpSessionHandle implements AgentSessionHandle {
 
     try {
       const promptContent: Record<string, unknown>[] = [];
-      if (input.attachments && input.attachments.length > 0) {
-        for (const attachment of input.attachments) {
-          promptContent.push({
-            type: "image",
-            mimeType: attachment.mimeType,
-            data: attachment.data,
-          });
+      // Generic file attachments have no inline payload (saved to disk and
+      // surfaced via the prompt text); only forward real inline images.
+      for (const attachment of input.attachments ?? []) {
+        if (!attachment.mimeType.startsWith("image/") || attachment.data.length === 0) {
+          continue;
         }
+        promptContent.push({
+          type: "image",
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+        });
       }
       if (input.text.trim()) {
         const pluginAttachments = await resolveAgentPluginAttachments({

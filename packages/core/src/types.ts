@@ -79,6 +79,17 @@ export type ImageAttachment = {
   mimeType: string;
   data: string;
   name?: string;
+  /**
+   * `image` (default) attachments ship inline base64 `data` to vision models.
+   * `file` attachments are generic uploads persisted to the workspace uploads
+   * directory (`.cesium/file-uploads/`) and referenced by `savedPath` instead
+   * of inline data.
+   */
+  kind?: "image" | "file";
+  /** Workspace-relative path where the upload was saved (e.g. `.cesium/file-uploads/report.xlsx`). */
+  savedPath?: string;
+  /** Original file size in bytes (for carousel captions and agent reminders). */
+  size?: number;
 };
 
 export type ImageAttachmentState = {
@@ -86,6 +97,9 @@ export type ImageAttachmentState = {
   mimeType: string;
   data: string;
   name?: string;
+  kind?: "image" | "file";
+  savedPath?: string;
+  size?: number;
   uploadState?: "pending" | "uploading" | "uploaded" | "failed";
   serverId?: string;
   error?: string;

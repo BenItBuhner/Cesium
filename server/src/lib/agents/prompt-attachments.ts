@@ -28,8 +28,8 @@ export async function materializeImageAttachments(
   attachments: PromptAttachment[] | undefined,
   prefix: string
 ): Promise<{ paths: string[]; cleanup: () => Promise<void> }> {
-  const images = (attachments ?? []).filter((attachment) =>
-    attachment.mimeType.startsWith("image/")
+  const images = (attachments ?? []).filter(
+    (attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0
   );
   if (images.length === 0) {
     return { paths: [], cleanup: async () => undefined };

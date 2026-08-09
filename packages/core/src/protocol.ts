@@ -183,7 +183,14 @@ export type AgentStoredEvent =
       content: string;
       displayContent?: string;
       hidden?: boolean;
-      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      attachments?: Array<{
+        mimeType: string;
+        data: string;
+        name?: string;
+        kind?: "image" | "file";
+        savedPath?: string;
+        size?: number;
+      }>;
       inheritedInFork?: boolean;
     }
   | {
@@ -194,7 +201,7 @@ export type AgentStoredEvent =
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "other";
+      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "attachments" | "other";
       text: string;
       raw?: unknown;
     }

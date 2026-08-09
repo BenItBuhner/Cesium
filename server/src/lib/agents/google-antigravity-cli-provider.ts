@@ -519,7 +519,12 @@ class GoogleAntigravityCliSessionHandle implements AgentSessionHandle {
     }
 
     const warningEvents: AgentEventInput[] = [];
-    if (input.attachments?.length) {
+    // Generic file attachments are saved to disk and surfaced via the prompt
+    // text; only inline images are actually dropped by this harness.
+    const hasInlineImages = (input.attachments ?? []).some(
+      (attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0
+    );
+    if (hasInlineImages) {
       warningEvents.push({
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,

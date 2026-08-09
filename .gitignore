@@ -161,3 +161,6 @@ apps/mobile/android/local.properties
 apps/mobile/node_modules/
 
 artifacts/browser/
+
+# Cesium local data (plans, artifacts, worktrees)
+.cesium/

@@ -20,6 +20,26 @@ export type AgentBackendId =
   | "pi-agent"
   | "google-antigravity-cli";
 
+/**
+ * Attachment payload sent with a user prompt.
+ *
+ * Image attachments ship inline base64 `data` for vision models; generic file
+ * attachments ship metadata only — their bytes are persisted on disk in the
+ * workspace uploads directory (`.cesium/file-uploads/`) at `savedPath` so
+ * agents can read them with normal file tools.
+ */
+export type AgentPromptAttachment = {
+  mimeType: string;
+  data: string;
+  name?: string;
+  /** `image` (default) or generic `file` saved to the workspace uploads dir. */
+  kind?: "image" | "file";
+  /** Workspace-relative saved path, e.g. `.cesium/file-uploads/report.xlsx`. */
+  savedPath?: string;
+  /** Original file size in bytes. */
+  size?: number;
+};
+
 export type AgentConversationStatus =
   | "idle"
   | "running"
@@ -186,7 +206,7 @@ export type AgentStoredEvent =
       displayContent?: string;
       /** Runtime-owned prompt context that should be sent to the model but hidden from normal chat UI. */
       hidden?: boolean;
-      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      attachments?: AgentPromptAttachment[];
       /**
        * `true` for events materialized from a source conversation when forking. Ignored
        * when resolving the first *new* post-fork prompt (seed context) vs inherited rows.
@@ -202,7 +222,7 @@ export type AgentStoredEvent =
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "other";
+      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "attachments" | "other";
       text: string;
       raw?: unknown;
     }
@@ -428,7 +448,7 @@ export type AgentQueuedChatPrompt = {
   id: string;
   text: string;
   delivery?: "normal" | "steer";
-  attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  attachments?: AgentPromptAttachment[];
   clientEventId?: string;
   clientMessageId?: string;
   /** IANA timezone from the client (e.g. America/Los_Angeles) for date reminders. */
@@ -650,7 +670,7 @@ export interface AgentSessionHandle {
   prompt: (input: {
     text: string;
     userMessageId: string;
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    attachments?: AgentPromptAttachment[];
     isRetry?: boolean;
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
     /** IANA timezone from the client for date / time-gap reminders. */
