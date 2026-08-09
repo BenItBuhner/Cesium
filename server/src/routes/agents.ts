@@ -583,7 +583,9 @@ agentRoutes.post("/api/agents/attachments", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   let body: Record<string, string | File | (string | File)[]>;
   try {
-    body = await c.req.parseBody();
+    // `all: true` keeps every repeated `files` field; the default silently
+    // drops all but the last file of a multi-file upload.
+    body = await c.req.parseBody({ all: true });
   } catch {
     return c.json({ error: "Invalid multipart body" }, 400);
   }
