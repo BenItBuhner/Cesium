@@ -28,6 +28,17 @@ export function UserMessage({
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Measurement target: the text content element (<p> or segments <div>), NOT
+  // bodyRef. bodyRef's classes change with `singleLineOrLess` (flex/min-h-[24px]),
+  // so measuring bodyRef feeds the state back into its own input — when the
+  // one-line threshold lands between the natural text height and 24px (e.g.
+  // WebView font scaling), the boolean turns bistable and flips every
+  // ResizeObserver tick, shaking the whole thread. The text element's geometry
+  // is invariant under the compact/expanded wrapper styling.
+  const textRef = useRef<HTMLElement | null>(null);
+  const setTextRef = (el: HTMLElement | null) => {
+    textRef.current = el;
+  };
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const [singleLineOrLess, setSingleLineOrLess] = useState(true);
@@ -37,25 +48,28 @@ export function UserMessage({
   }, [content, segments]);
 
   useEffect(() => {
-    const node = bodyRef.current;
-    if (!node) {
+    const textEl = textRef.current;
+    if (!textEl) {
       setOverflowing(false);
       return;
     }
     const collapsedMaxHeight = 100;
     const measure = () => {
-      const style = window.getComputedStyle(node);
+      // line-height comes from the SAME node whose height is measured
+      // (text-[14px] leading-normal), so scaled fonts can't desync the two.
+      const style = window.getComputedStyle(textEl);
       const lineHeight = Number.parseFloat(style.lineHeight);
       const oneLineHeight = Number.isFinite(lineHeight) ? lineHeight : 20;
-      setOverflowing(node.scrollHeight > collapsedMaxHeight + 4);
-      setSingleLineOrLess(node.scrollHeight <= oneLineHeight + 6);
+      const textHeight = textEl.getBoundingClientRect().height;
+      setOverflowing(textHeight > collapsedMaxHeight + 4);
+      setSingleLineOrLess(textHeight <= oneLineHeight + 6);
     };
     measure();
     if (typeof ResizeObserver === "undefined") {
       return;
     }
     const observer = new ResizeObserver(measure);
-    observer.observe(node);
+    observer.observe(textEl);
     return () => observer.disconnect();
   }, [content, segments]);
 
@@ -115,7 +129,10 @@ export function UserMessage({
           className={`min-w-0 select-text ${compactSingleLine ? "flex-1" : ""}`}
         >
         {hasSegments ? (
-          <div className="block font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
+          <div
+            ref={setTextRef}
+            className="block font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]"
+          >
             {segments!.map((s, i) => {
               if (s.type === "text") {
                 return (
@@ -217,7 +234,10 @@ export function UserMessage({
             })}
           </div>
         ) : (
-          <p className="whitespace-pre-wrap font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
+          <p
+            ref={setTextRef}
+            className="whitespace-pre-wrap font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]"
+          >
             {content ?? ""}
           </p>
         )}

@@ -86,7 +86,10 @@ export function StickyChatHeader({
       className={
         allowSticky
           ? "sticky z-10 shrink-0 bg-transparent pb-[10px] transition-[top] duration-75"
-          : "relative z-10 shrink-0 bg-transparent"
+          : // pb-[10px] must match the sticky branch: measure() reads this
+            // element's scrollHeight against MAX_STICKY_HEIGHT_PX, so a
+            // state-dependent padding makes heights in (550, 560] bistable.
+            "relative z-10 shrink-0 bg-transparent pb-[10px]"
       }
     >
       {children}
