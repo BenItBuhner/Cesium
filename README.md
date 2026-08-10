@@ -240,8 +240,13 @@ The server accepts **`baseUrl`**, **`apiKey`**, and **`model`** from env, option
 | `OPENCURSOR_TRANSCRIPTION_PROMPT` | Default prompt hint (optional). |
 | `OPENCURSOR_TRANSCRIPTION_CONFIG_FILE` | Path to a JSON file `{ "baseUrl", "apiKey", "model" }`. |
 | `OPENCURSOR_TRANSCRIPTION_CONFIG_JSON` | Same object as a single-line JSON string (useful for secrets in PaaS). |
+| `OPENCURSOR_TRANSCRIPTION_MAX_RETRIES` | Automatic retries (exponential backoff) for transient upstream failures — network errors, 408/429/5xx (default `5`, `0` disables). |
+| `OPENCURSOR_TRANSCRIPTION_RETRY_BASE_DELAY_MS` | First backoff delay in ms, doubled per retry (default `500`). |
+| `OPENCURSOR_TRANSCRIPTION_RETRY_MAX_DELAY_MS` | Cap for a single backoff delay in ms (default `8000`). |
 
 File fallback locations include `server/transcription-provider.json` (see `server/transcription-provider.json.example`) and paths under `OPENCURSOR_DATA_DIR`. **`GET /health`** reports whether transcription is configured.
+
+When a transcription still fails after the automatic retries, the composer keeps the recording: the mic button becomes a **retry button** (indefinitely retryable), and after the third failed attempt a notification offers to save the audio under `.cesium/tmp/recordings/` in the workspace so it can be downloaded or transcribed later.
 
 ### Browser proxy
 

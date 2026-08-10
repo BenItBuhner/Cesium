@@ -28,6 +28,7 @@ import {
   MessageSquare,
   Mic,
   Minimize2,
+  RotateCcw,
   Square,
   X,
 } from "lucide-react";
@@ -164,7 +165,12 @@ import {
 import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { getServerBaseUrl, transcribeAudio, uploadAttachments } from "@/lib/server-api";
+import {
+  getServerBaseUrl,
+  saveVoiceRecording,
+  transcribeAudio,
+  uploadAttachments,
+} from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   buildDesignCaptureBlock,
@@ -1091,7 +1097,7 @@ export function ChatComposer({
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
   const hasHardwareKeyboard = useHardwareKeyboard();
-  const { pushNotification } = useWorkbenchNotifications();
+  const { pushNotification, dismiss: dismissNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1136,6 +1142,17 @@ export function ChatComposer({
   const [recordingState, setRecordingState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
+  /**
+   * Recording kept after a failed transcription so the user can retry it
+   * (mic button turns into a retry button) or save it under `.cesium/`.
+   * `failures` counts user-visible failed attempts for this recording.
+   */
+  const [pendingVoiceRecording, setPendingVoiceRecording] = useState<{
+    file: File;
+    failures: number;
+  } | null>(null);
+  const pendingVoiceRecordingRef = useRef(pendingVoiceRecording);
+  pendingVoiceRecordingRef.current = pendingVoiceRecording;
   const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
   const [localTextReferences, setLocalTextReferences] = useState<
     Record<string, TextReference> | undefined
@@ -1912,6 +1929,110 @@ export function ChatComposer({
     [hardwareInputEnabled, setComposerSelection, setComposerValue]
   );
 
+  const discardPendingVoiceRecording = useCallback(() => {
+    setPendingVoiceRecording(null);
+  }, []);
+
+  const savePendingVoiceRecording = useCallback(
+    async (file: File) => {
+      try {
+        const saved = await saveVoiceRecording(file);
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "info",
+          title: "Voice input",
+          message: `Recording saved to ${saved.path}. You can retry transcription later from that file.`,
+          autoDismissMs: 9000,
+          compact: true,
+        });
+      } catch (error) {
+        flashComposerError(
+          error instanceof Error
+            ? `Could not save recording: ${error.message}`
+            : "Could not save recording."
+        );
+      }
+    },
+    [flashComposerError, pushNotification]
+  );
+
+  /**
+   * Failure 1–2: compact toast pointing at the retry button. Failure 3+: a
+   * persistent notification offering to save the recording under `.cesium/`
+   * so the audio survives even if transcription keeps failing.
+   */
+  const reportVoiceTranscriptionFailure = useCallback(
+    (file: File, failures: number, message: string) => {
+      if (failures < 3) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Voice input",
+          message: `${message} Recording kept — press the retry button to try again (attempt ${failures}).`,
+          autoDismissMs: 8000,
+          compact: true,
+        });
+        return;
+      }
+      const nid = pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "error",
+        title: "Voice transcription keeps failing",
+        message: `${message} Transcription failed ${failures} times. Save the recording to .cesium/tmp/recordings/ so you can download it or transcribe it later? You can also keep retrying.`,
+        persistent: true,
+        actions: [
+          {
+            id: "save",
+            label: "Save recording",
+            primary: true,
+            onClick: () => {
+              dismissNotification(nid);
+              void savePendingVoiceRecording(file);
+            },
+          },
+          {
+            id: "discard",
+            label: "Discard",
+            onClick: () => {
+              dismissNotification(nid);
+              discardPendingVoiceRecording();
+            },
+          },
+        ],
+      });
+    },
+    [
+      discardPendingVoiceRecording,
+      dismissNotification,
+      pushNotification,
+      savePendingVoiceRecording,
+    ]
+  );
+
+  /** Re-runs transcription for the kept recording. Retryable indefinitely. */
+  const retryVoiceTranscription = useCallback(async () => {
+    const pending = pendingVoiceRecordingRef.current;
+    if (!pending) {
+      return;
+    }
+    setRecordingState("transcribing");
+    try {
+      const result = await transcribeAudio(pending.file);
+      setPendingVoiceRecording(null);
+      insertTranscription(result.text);
+    } catch (error) {
+      const failures = pending.failures + 1;
+      setPendingVoiceRecording({ file: pending.file, failures });
+      reportVoiceTranscriptionFailure(
+        pending.file,
+        failures,
+        error instanceof Error ? error.message : "Voice transcription failed."
+      );
+    } finally {
+      setRecordingState("idle");
+    }
+  }, [insertTranscription, reportVoiceTranscriptionFailure]);
+
   const updateVoiceLevel = useCallback(() => {
     const analyser = analyserRef.current;
     if (!analyser) {
@@ -1939,26 +2060,30 @@ export function ChatComposer({
       return;
     }
     setRecordingState("transcribing");
+    const blob = new Blob(parts, { type: recorderMimeType });
+    const extension = recorderMimeType.includes("mp4")
+      ? "mp4"
+      : recorderMimeType.includes("ogg")
+        ? "ogg"
+        : "webm";
+    const file = new File([blob], `composer-recording.${extension}`, {
+      type: recorderMimeType,
+    });
     try {
-      const blob = new Blob(parts, { type: recorderMimeType });
-      const extension = recorderMimeType.includes("mp4")
-        ? "mp4"
-        : recorderMimeType.includes("ogg")
-          ? "ogg"
-          : "webm";
-      const file = new File([blob], `composer-recording.${extension}`, {
-        type: recorderMimeType,
-      });
       const result = await transcribeAudio(file);
+      setPendingVoiceRecording(null);
       insertTranscription(result.text);
     } catch (error) {
-      flashComposerError(
+      setPendingVoiceRecording({ file, failures: 1 });
+      reportVoiceTranscriptionFailure(
+        file,
+        1,
         error instanceof Error ? error.message : "Voice transcription failed."
       );
     } finally {
       setRecordingState("idle");
     }
-  }, [cleanupVoiceCapture, flashComposerError, insertTranscription]);
+  }, [cleanupVoiceCapture, insertTranscription, reportVoiceTranscriptionFailure]);
 
   const stopVoiceInput = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -2104,6 +2229,7 @@ export function ChatComposer({
         case "toggleVoiceInput":
           if (recordingState === "transcribing" || busy || configLocked) return;
           if (recordingState === "recording") stopVoiceInput();
+          else if (pendingVoiceRecordingRef.current) void retryVoiceTranscription();
           else void startVoiceInput();
           break;
         case "startVoiceInput":
@@ -2142,6 +2268,7 @@ export function ChatComposer({
     onCollapseComposer,
     onExpandComposer,
     recordingState,
+    retryVoiceTranscription,
     showComposerHeightOverlay,
     startVoiceInput,
     stopVoiceInput,
@@ -3513,11 +3640,17 @@ const handleNativeComposerKeyDown = useCallback(
       ? "Stop voice input"
       : recordingState === "transcribing"
         ? "Transcribing voice input"
-        : "Voice input";
+        : pendingVoiceRecording
+          ? `Retry transcription (${pendingVoiceRecording.failures} failed attempt${pendingVoiceRecording.failures === 1 ? "" : "s"})`
+          : "Voice input";
 
   const handleVoiceButtonClick = () => {
     if (recordingState === "recording") {
       stopVoiceInput();
+      return;
+    }
+    if (pendingVoiceRecording) {
+      void retryVoiceTranscription();
       return;
     }
     void startVoiceInput();
@@ -3570,6 +3703,14 @@ const handleNativeComposerKeyDown = useCallback(
               />
             ))}
           </span>
+        ) : pendingVoiceRecording ? (
+          <RotateCcw
+            className={`size-[14px] shrink-0 ${
+              isPrimary ? primaryIconClassName : "text-amber-500"
+            }`}
+            strokeWidth={1.75}
+            aria-hidden
+          />
         ) : (
           <Mic className={`size-[14px] shrink-0 ${primaryIconClassName}`} strokeWidth={1.5} aria-hidden />
         )}

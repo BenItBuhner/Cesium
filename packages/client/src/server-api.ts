@@ -1661,6 +1661,46 @@ export async function transcribeAudio(
   return (await response.json()) as AudioTranscriptionResult;
 }
 
+export type SavedVoiceRecording = {
+  /** Workspace-relative path, e.g. `.cesium/tmp/recordings/voice-recording-….webm`. */
+  path: string;
+  name: string;
+  size: number;
+};
+
+/**
+ * Persists a voice recording that failed to transcribe into the workspace's
+ * `.cesium/tmp/recordings/` directory so it can be retried or downloaded later.
+ */
+export async function saveVoiceRecording(file: File): Promise<SavedVoiceRecording> {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/audio/recordings`, {
+    method: "POST",
+    body: form,
+    headers: Object.fromEntries(
+      attachSessionToken(getWorkspaceHeaders()).entries()
+    ),
+    credentials: "include",
+    cache: "no-store",
+  });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
+  if (!response.ok) {
+    const message = await response.text();
+    let parsedError = "";
+    try {
+      parsedError = (JSON.parse(message) as { error?: string })?.error ?? "";
+    } catch {
+      parsedError = "";
+    }
+    throw new Error(parsedError || message || `Request failed with status ${response.status}`);
+  }
+  return (await response.json()) as SavedVoiceRecording;
+}
+
 export type VoiceControllerAction = {
   tool: string;
   ok: boolean;
