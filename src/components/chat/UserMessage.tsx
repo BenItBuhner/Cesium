@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { AtSign, CornerUpLeft, FileText, LayoutTemplate, MessageSquare, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
+import { LinkAttachmentPill, guessFaviconUrlFromPageUrl } from "./LinkAttachmentPill";
 import { MessageTextSelectionCite } from "./MessageTextSelectionCite";
 
 interface UserMessageProps {
@@ -207,6 +208,18 @@ export function UserMessage({
                       aria-hidden
                     />
                     <span className="max-w-[260px] truncate">{s.text || "pasted text"}</span>
+                  </span>
+                );
+              }
+              if (s.type === "link") {
+                const url = s.linkUrl ?? "";
+                return (
+                  <span key={i} onClick={(event) => event.stopPropagation()}>
+                    <LinkAttachmentPill
+                      title={s.text || "link"}
+                      url={url}
+                      faviconUrl={guessFaviconUrlFromPageUrl(url)}
+                    />
                   </span>
                 );
               }

@@ -454,6 +454,7 @@ export function AgentCenterPane() {
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
   const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
+  const composerDraftLinkReferences = composerDrafts[composerDraftId]?.linkReferences;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -1449,6 +1450,13 @@ export function AgentCenterPane() {
                       upsertComposerDraft(composerDraftId, {
                         title: composerDraftTitle,
                         textReferences: next,
+                      })
+                    }
+                    draftLinkReferences={composerDraftLinkReferences}
+                    onDraftLinkReferencesChange={(next) =>
+                      upsertComposerDraft(composerDraftId, {
+                        title: composerDraftTitle,
+                        linkReferences: next,
                       })
                     }
                   />

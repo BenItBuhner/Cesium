@@ -89,3 +89,29 @@ export function buildBrowserProxyUrl(serverBase: string, target: string | URL): 
   const base = serverBase.replace(/\/+$/, "");
   return `${base}${buildBrowserProxyPath(u)}`;
 }
+
+/**
+ * If `href` is already a Cesium browser-proxy URL (absolute or path-only),
+ * recover the upstream absolute URL. Otherwise return `href` unchanged.
+ * Needed when HTML rewritten by the proxy embeds `/browser/https/...` links
+ * (favicons, etc.) that must not be wrapped a second time.
+ */
+export function decodeBrowserProxyHref(href: string, serverBase?: string): string {
+  const trimmed = href.trim();
+  if (!trimmed) return trimmed;
+  try {
+    const base = (serverBase ?? "http://localhost").replace(/\/+$/, "");
+    const parsed = new URL(trimmed, `${base}/`);
+    const match = parsed.pathname.match(/^\/browser\/(https?)\/([^/]+)(\/.*)?$/i);
+    if (!match?.[1] || !match[2]) return trimmed;
+    const scheme = match[1].toLowerCase();
+    const host = decodeURIComponent(match[2]);
+    const path = match[3] || "/";
+    const cleaned = new URLSearchParams(parsed.search);
+    cleaned.delete("__ocs_access");
+    const qs = cleaned.toString();
+    return `${scheme}://${host}${path}${qs ? `?${qs}` : ""}${parsed.hash}`;
+  } catch {
+    return trimmed;
+  }
+}

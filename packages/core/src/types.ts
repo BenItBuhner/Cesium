@@ -108,7 +108,15 @@ export type ImageAttachmentState = {
 
 /** Inline user bubble: plain text runs, file/context chips, or design-capture pills. */
 export interface UserMessageSegment {
-  type: "text" | "file" | "context" | "image" | "design" | "text-reference" | "conversation";
+  type:
+    | "text"
+    | "file"
+    | "context"
+    | "image"
+    | "design"
+    | "text-reference"
+    | "conversation"
+    | "link";
   text: string;
   mimeType?: string;
   data?: string;
@@ -128,6 +136,8 @@ export interface UserMessageSegment {
   conversationId?: string;
   /** Conversation pills: workspace name of the referenced conversation. */
   conversationWorkspaceName?: string;
+  /** Link pills: absolute http(s) URL the markdown destination pointed at. */
+  linkUrl?: string;
 }
 
 export interface TodoItem {

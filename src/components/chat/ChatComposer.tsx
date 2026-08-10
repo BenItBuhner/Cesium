@@ -164,7 +164,7 @@ import {
 import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
+import { getServerBaseUrl, transcribeAudio, uploadAttachments } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   buildDesignCaptureBlock,
@@ -181,12 +181,24 @@ import {
   type TextReference,
 } from "@/lib/text-reference";
 import {
+  buildLinkMarkdown,
+  COMPOSER_LINK_REFERENCE_TOKEN_REGEX,
+  fallbackTitleFromUrl,
+  findComposerLinkReferenceTokens,
+  makeComposerLinkReferenceToken,
+  tryParsePastedLinkUrl,
+  type LinkReference,
+} from "@/lib/link-reference";
+import { resolveLinkPreview } from "@/lib/link-preview";
+import { buildBrowserProxyUrl } from "@/lib/browser-proxy-url";
+import {
   buildConversationReferenceBlock,
   COMPOSER_CONVERSATION_REFERENCE_TOKEN_REGEX,
   type AtConversationSource,
   type ConversationReference,
 } from "@cesium/core";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
+import { LinkAttachmentPill } from "@/components/chat/LinkAttachmentPill";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
@@ -574,6 +586,10 @@ interface ChatComposerProps {
   draftTextReferences?: Record<string, TextReference>;
   /** Called when long pasted text references are added or their tokens are deleted. */
   onDraftTextReferencesChange?: (next: Record<string, TextReference> | undefined) => void;
+  /** Metadata for each `⟦link:<id>⟧` pill currently embedded in `value`. */
+  draftLinkReferences?: Record<string, LinkReference>;
+  /** Called when link attachments are added, resolved, or their tokens are deleted. */
+  onDraftLinkReferencesChange?: (next: Record<string, LinkReference> | undefined) => void;
   /**
    * Newest-first list of the user's previously sent messages (raw `content`)
    * for terminal-style Up/Down arrow history recall. Pressing Up while the
@@ -850,13 +866,60 @@ function renderTextReferencePill(
   );
 }
 
+function renderLinkReferencePill(
+  tokenStart: number,
+  tokenEnd: number,
+  reference: LinkReference | undefined,
+  safe: TextSelection,
+  active: boolean,
+  caretRef: { current: HTMLSpanElement | null },
+  nodes: ReactElement[]
+): void {
+  const pushCaret = (at: number) => {
+    if (!active || safe.start !== safe.end || safe.start !== at) {
+      return;
+    }
+    nodes.push(
+      <span
+        key={`caret-${at}`}
+        ref={(node) => {
+          caretRef.current = node;
+        }}
+        className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+        data-faux-caret
+      />
+    );
+  };
+
+  pushCaret(tokenStart);
+  const selected = tokenStart >= safe.start && tokenEnd <= safe.end && safe.end > safe.start;
+  const label = reference?.title ?? "link";
+  const url = reference?.url ?? "";
+  nodes.push(
+    <LinkAttachmentPill
+      key={`link-${tokenStart}`}
+      title={reference ? label : "missing link"}
+      url={url}
+      faviconUrl={reference?.faviconUrl}
+      selected={selected}
+      data-faux-offset-start={tokenStart}
+      data-faux-offset-end={tokenEnd}
+      data-link-reference-id={reference?.id ?? ""}
+      className={`mx-[2px] inline-flex max-w-full items-center gap-[4px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[1px] align-baseline font-sans text-[12.5px] font-medium whitespace-nowrap ${
+        selected ? "ring-2 ring-[var(--accent)]" : ""
+      } ${reference ? "text-[var(--file-tag-text)]" : "text-[var(--text-secondary)] italic"}`}
+    />
+  );
+}
+
 function renderComposerText(
   value: string,
   selection: TextSelection,
   active: boolean,
   caretRef: { current: HTMLSpanElement | null },
   captures: Record<string, DesignCapture> | undefined,
-  textReferences: Record<string, TextReference> | undefined
+  textReferences: Record<string, TextReference> | undefined,
+  linkReferences: Record<string, LinkReference> | undefined
 ) {
   const safe = clampSelection(value, selection);
   const nodes: ReactElement[] = [];
@@ -885,6 +948,10 @@ function renderComposerText(
     ...findComposerTextReferenceTokens(value).map((token) => ({
       ...token,
       kind: "text-reference" as const,
+    })),
+    ...findComposerLinkReferenceTokens(value).map((token) => ({
+      ...token,
+      kind: "link" as const,
     })),
   ].sort((left, right) => left.start - right.start);
 
@@ -928,11 +995,21 @@ function renderComposerText(
         caretRef,
         nodes
       );
-    } else {
+    } else if (tk.kind === "text-reference") {
       renderTextReferencePill(
         tk.start,
         tk.end,
         textReferences?.[tk.referenceId],
+        safe,
+        active,
+        caretRef,
+        nodes
+      );
+    } else {
+      renderLinkReferencePill(
+        tk.start,
+        tk.end,
+        linkReferences?.[tk.linkId],
         safe,
         active,
         caretRef,
@@ -999,6 +1076,8 @@ export function ChatComposer({
   onDraftCapturesChange,
   draftTextReferences,
   onDraftTextReferencesChange,
+  draftLinkReferences,
+  onDraftLinkReferencesChange,
   userMessageHistory,
   hasMoreOlderUserMessageHistory = false,
   onRequestOlderUserMessageHistory,
@@ -1061,6 +1140,10 @@ export function ChatComposer({
   const [localTextReferences, setLocalTextReferences] = useState<
     Record<string, TextReference> | undefined
   >();
+  const [localLinkReferences, setLocalLinkReferences] = useState<
+    Record<string, LinkReference> | undefined
+  >();
+  const linkPreviewAbortRef = useRef<Map<string, AbortController>>(new Map());
   const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const anyFileInputRef = useRef<HTMLInputElement>(null);
@@ -1151,6 +1234,41 @@ export function ChatComposer({
     },
     [onDraftTextReferencesChange]
   );
+  const effectiveLinkReferences = draftLinkReferences ?? localLinkReferences;
+  const effectiveLinkReferencesRef = useRef(effectiveLinkReferences);
+  // Sync from props/local state after React commits — never overwrite mid-patch
+  // updates that `updateLinkReferences` already wrote synchronously.
+  useEffect(() => {
+    effectiveLinkReferencesRef.current = effectiveLinkReferences;
+  }, [effectiveLinkReferences]);
+  const updateLinkReferences = useCallback(
+    (next: Record<string, LinkReference> | undefined) => {
+      effectiveLinkReferencesRef.current = next;
+      if (onDraftLinkReferencesChange) {
+        onDraftLinkReferencesChange(next);
+      } else {
+        setLocalLinkReferences(next);
+      }
+    },
+    [onDraftLinkReferencesChange]
+  );
+  const patchLinkReference = useCallback(
+    (linkId: string, patch: Partial<LinkReference> & Pick<LinkReference, "id" | "url" | "title">) => {
+      const next = {
+        ...(effectiveLinkReferencesRef.current ?? {}),
+        [linkId]: {
+          ...(effectiveLinkReferencesRef.current?.[linkId] ?? {
+            id: patch.id,
+            url: patch.url,
+            title: patch.title,
+          }),
+          ...patch,
+        },
+      };
+      updateLinkReferences(next);
+    },
+    [updateLinkReferences]
+  );
   // Saved conversations become taggable like files; tokens expand into
   // <conversation-reference> blocks on submit so Cesium agents can pull the
   // transcripts through the conversation tools.
@@ -1240,8 +1358,72 @@ export function ChatComposer({
     [controlledSelection, onSelectionChange]
   );
 
+  const beginLinkPreviewResolve = useCallback(
+    (linkId: string, url: string) => {
+      const existing = linkPreviewAbortRef.current.get(linkId);
+      existing?.abort();
+      const controller = new AbortController();
+      linkPreviewAbortRef.current.set(linkId, controller);
+      void resolveLinkPreview(url, getServerBaseUrl(), controller.signal)
+        .then((preview) => {
+          if (controller.signal.aborted) return;
+          patchLinkReference(linkId, {
+            id: linkId,
+            url: preview.url,
+            title: preview.title,
+            faviconUrl: preview.faviconUrl ?? undefined,
+            status: "ready",
+          });
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          patchLinkReference(linkId, {
+            id: linkId,
+            url,
+            title: fallbackTitleFromUrl(url),
+            status: "failed",
+          });
+        })
+        .finally(() => {
+          if (linkPreviewAbortRef.current.get(linkId) === controller) {
+            linkPreviewAbortRef.current.delete(linkId);
+          }
+        });
+    },
+    [patchLinkReference]
+  );
+
+  const createLinkReferenceToken = useCallback(
+    (rawUrl: string): string | null => {
+      const trimmed = rawUrl.trim();
+      const url =
+        tryParsePastedLinkUrl(trimmed) ??
+        (/^https?:\/\//i.test(trimmed)
+          ? null
+          : tryParsePastedLinkUrl(`https://${trimmed}`));
+      if (!url) return null;
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `link-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      patchLinkReference(id, {
+        id,
+        url,
+        title: fallbackTitleFromUrl(url),
+        status: "loading",
+      });
+      beginLinkPreviewResolve(id, url);
+      return makeComposerLinkReferenceToken(id);
+    },
+    [beginLinkPreviewResolve, patchLinkReference]
+  );
+
   const textForPaste = useCallback(
     (plain: string): string => {
+      const pastedUrl = tryParsePastedLinkUrl(plain);
+      if (pastedUrl) {
+        return createLinkReferenceToken(pastedUrl) ?? plain;
+      }
       if (
         !settings.themeConfig.longPasteReferencesEnabled ||
         plain.length < LONG_PASTE_REFERENCE_THRESHOLD_CHARS
@@ -1265,8 +1447,34 @@ export function ChatComposer({
       });
       return makeComposerTextReferenceToken(id);
     },
-    [effectiveTextReferences, settings.themeConfig.longPasteReferencesEnabled, updateTextReferences]
+    [
+      createLinkReferenceToken,
+      effectiveTextReferences,
+      settings.themeConfig.longPasteReferencesEnabled,
+      updateTextReferences,
+    ]
   );
+
+  const promptAttachLink = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.prompt("Attach a link (https://…)");
+    if (!raw) return;
+    const token = createLinkReferenceToken(raw);
+    if (!token) {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "warning",
+        title: "Invalid link",
+        message: "Enter a full http(s) URL to attach.",
+        autoDismissMs: 5000,
+        compact: true,
+      });
+      return;
+    }
+    const next = replaceSelection(valueRef.current, selectionRef.current, token);
+    setComposerValue(next.value);
+    setComposerSelection(next.selection);
+  }, [createLinkReferenceToken, pushNotification, setComposerSelection, setComposerValue]);
 
   const flashComposerError = useCallback(
   (message: string) => {
@@ -1547,6 +1755,34 @@ export function ChatComposer({
       updateTextReferences(Object.keys(kept).length > 0 ? kept : undefined);
     }
   }, [effectiveTextReferences, updateTextReferences, value]);
+
+  useEffect(() => {
+    if (!effectiveLinkReferences) return;
+    const liveIds = new Set(findComposerLinkReferenceTokens(value).map((t) => t.linkId));
+    const kept: Record<string, LinkReference> = {};
+    let changed = false;
+    for (const [id, reference] of Object.entries(effectiveLinkReferences)) {
+      if (liveIds.has(id)) {
+        kept[id] = reference;
+      } else {
+        changed = true;
+        linkPreviewAbortRef.current.get(id)?.abort();
+        linkPreviewAbortRef.current.delete(id);
+      }
+    }
+    if (changed) {
+      updateLinkReferences(Object.keys(kept).length > 0 ? kept : undefined);
+    }
+  }, [effectiveLinkReferences, updateLinkReferences, value]);
+
+  useEffect(() => {
+    return () => {
+      for (const controller of linkPreviewAbortRef.current.values()) {
+        controller.abort();
+      }
+      linkPreviewAbortRef.current.clear();
+    };
+  }, []);
 
   const handleRemoveImage = useCallback(
     (localId: string) => {
@@ -2132,16 +2368,18 @@ export function ChatComposer({
   }, [setComposerSelection, value]);
 
   /**
-   * Expand compact reference tokens into their full XML blocks so the LLM can
-   * see the hidden content. Unknown references (metadata lost to pruning / reload) keep
-   * the raw token as a signal — better than silently sending nothing.
+   * Expand compact reference tokens into their full XML / markdown forms so the
+   * LLM can see the hidden content. Link pills expand to `[title](url)`.
+   * Unknown references (metadata lost to pruning / reload) keep the raw token
+   * as a signal — better than silently sending nothing.
    */
   const expandComposerReferenceTokens = useCallback(
     (text: string): string => {
       if (
         !text.includes("\u27E6design:") &&
         !text.includes("\u27E6textref:") &&
-        !text.includes("\u27E6conv:")
+        !text.includes("\u27E6conv:") &&
+        !text.includes("\u27E6link:")
       ) {
         return text;
       }
@@ -2163,7 +2401,7 @@ export function ChatComposer({
           return buildTextReferenceBlock(reference);
         }
       );
-      return expandedTextRefs.replace(
+      const expandedConversations = expandedTextRefs.replace(
         new RegExp(COMPOSER_CONVERSATION_REFERENCE_TOKEN_REGEX.source, "g"),
         (match, id: string) => {
           const reference = conversationReferences[id];
@@ -2171,8 +2409,17 @@ export function ChatComposer({
           return buildConversationReferenceBlock(reference);
         }
       );
+      const linkRefs = effectiveLinkReferences ?? {};
+      return expandedConversations.replace(
+        new RegExp(COMPOSER_LINK_REFERENCE_TOKEN_REGEX.source, "g"),
+        (match, id: string) => {
+          const reference = linkRefs[id];
+          if (!reference) return match;
+          return buildLinkMarkdown(reference);
+        }
+      );
     },
-    [conversationReferences, draftCaptures, effectiveTextReferences]
+    [conversationReferences, draftCaptures, effectiveLinkReferences, effectiveTextReferences]
   );
 
   const submitComposer = useCallback(async (delivery: "normal" | "steer" = "normal") => {
@@ -2234,6 +2481,11 @@ export function ChatComposer({
       onDraftCapturesChange(undefined);
     }
     updateTextReferences(undefined);
+    updateLinkReferences(undefined);
+    for (const controller of linkPreviewAbortRef.current.values()) {
+      controller.abort();
+    }
+    linkPreviewAbortRef.current.clear();
     // Re-assert empty after metadata callbacks. Parents that incorrectly
     // re-apply a stale `content` field while clearing attachments/captures
     // would otherwise resurrect the prompt (especially on mobile agent UI).
@@ -2258,6 +2510,7 @@ export function ChatComposer({
     hardwareInputEnabled,
     onDraftAttachmentsChange,
     onDraftCapturesChange,
+    updateLinkReferences,
     updateTextReferences,
     onSubmit,
     setComposerSelection,
@@ -2281,7 +2534,10 @@ export function ChatComposer({
    */
   const pillDescriptors = useMemo<Record<string, ComposerPillDescriptor> | undefined>(() => {
     const hasConversations = Object.keys(conversationReferences).length > 0;
-    if (!draftCaptures && !effectiveTextReferences && !hasConversations) return undefined;
+    const hasLinks = Boolean(effectiveLinkReferences && Object.keys(effectiveLinkReferences).length > 0);
+    if (!draftCaptures && !effectiveTextReferences && !hasConversations && !hasLinks) {
+      return undefined;
+    }
     const out: Record<string, ComposerPillDescriptor> = {};
     for (const [id, cap] of Object.entries(draftCaptures ?? {})) {
       out[`design:${id}`] = {
@@ -2307,14 +2563,26 @@ export function ChatComposer({
         snippet: reference.workspaceName ? `Chat in ${reference.workspaceName}` : "Chat",
       };
     }
+    const serverBase = getServerBaseUrl();
+    for (const [id, reference] of Object.entries(effectiveLinkReferences ?? {})) {
+      out[`link:${id}`] = {
+        kind: "link",
+        id: reference.id,
+        label: reference.title || fallbackTitleFromUrl(reference.url),
+        href: reference.url,
+        faviconSrc: reference.faviconUrl
+          ? buildBrowserProxyUrl(serverBase, reference.faviconUrl)
+          : undefined,
+      };
+    }
     return out;
-  }, [conversationReferences, draftCaptures, effectiveTextReferences]);
+  }, [conversationReferences, draftCaptures, effectiveLinkReferences, effectiveTextReferences]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (!composerEditorDomInSync(el, value)) {
+    if (!composerEditorDomInSync(el, value, pillDescriptors)) {
       reconcilingRef.current = true;
       reconcileComposerEditorDom(el, value, pillDescriptors);
       queueMicrotask(() => { reconcilingRef.current = false; });
@@ -3119,9 +3387,17 @@ const handleNativeComposerKeyDown = useCallback(
         isActive,
         caretRef,
         draftCaptures,
-        effectiveTextReferences
+        effectiveTextReferences,
+        effectiveLinkReferences
       ),
-    [draftCaptures, effectiveTextReferences, isActive, selection, value]
+    [
+      draftCaptures,
+      effectiveLinkReferences,
+      effectiveTextReferences,
+      isActive,
+      selection,
+      value,
+    ]
   );
   const composerTrimmedLength = value.trim().length;
   const canSubmit = composerTrimmedLength > 0 || attachedImages.length > 0;
@@ -3308,6 +3584,7 @@ const handleNativeComposerKeyDown = useCallback(
         disabled={configLocked}
         onPickFiles={() => anyFileInputRef.current?.click()}
         onPickMedia={() => fileInputRef.current?.click()}
+        onAttachLink={promptAttachLink}
       />
     );
 
@@ -3951,6 +4228,7 @@ const handleNativeComposerKeyDown = useCallback(
             variant="icon"
             onPickFiles={() => anyFileInputRef.current?.click()}
             onPickMedia={() => fileInputRef.current?.click()}
+            onAttachLink={promptAttachLink}
           />
           <input
             ref={fileInputRef}

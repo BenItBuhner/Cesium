@@ -285,6 +285,7 @@ import {
 } from "./chat-modes";
 import { splitContentByDesignBlocks } from "./design-capture";
 import { splitContentByTextReferenceBlocks } from "./text-reference";
+import { splitContentByMarkdownLinks } from "./link-reference";
 import { splitContentByConversationReferenceBlocks } from "./conversation-reference";
 import {
   findConversationModeConfigOptionForUi,
@@ -1340,6 +1341,37 @@ function parseAtChipSegments(content: string): {
   return { segments, sawChip };
 }
 
+/**
+ * Finish a plain-text slice: markdown http(s) links become `link` pills, then
+ * remaining text goes through the @-chip pass.
+ */
+function finalizePlainUserMessageSlice(text: string): UserMessageSegment[] {
+  if (!text) return [];
+  const linkSplit = splitContentByMarkdownLinks(text);
+  if (!linkSplit) {
+    const atChips = parseAtChipSegments(text);
+    return atChips.sawChip
+      ? atChips.segments.filter((segment) => segment.text.length > 0)
+      : text.length > 0
+        ? [{ type: "text", text }]
+        : [];
+  }
+  const out: UserMessageSegment[] = [];
+  for (const seg of linkSplit) {
+    if (seg.type !== "text") {
+      out.push(seg);
+      continue;
+    }
+    const atChips = parseAtChipSegments(seg.text);
+    if (atChips.sawChip) {
+      out.push(...atChips.segments);
+    } else if (seg.text.length > 0) {
+      out.push({ type: "text", text: seg.text });
+    }
+  }
+  return out.filter((s) => s.type !== "text" || s.text.length > 0);
+}
+
 function parseUserMessageSegments(content: string): UserMessageSegment[] | undefined {
   // Conversation-reference blocks split first: their text slices then run
   // through the existing text-reference/design/@-chip pipeline unchanged.
@@ -1377,12 +1409,7 @@ function parseUserMessageSegments(content: string): UserMessageSegment[] | undef
             out.push(nestedSeg);
             continue;
           }
-          const atChips = parseAtChipSegments(nestedSeg.text);
-          if (atChips.sawChip) {
-            out.push(...atChips.segments);
-          } else if (nestedSeg.text.length > 0) {
-            out.push({ type: "text", text: nestedSeg.text });
-          }
+          out.push(...finalizePlainUserMessageSlice(nestedSeg.text));
         }
         continue;
       }
@@ -1390,20 +1417,14 @@ function parseUserMessageSegments(content: string): UserMessageSegment[] | undef
         out.push(seg);
         continue;
       }
-      const atChips = parseAtChipSegments(seg.text);
-      if (atChips.sawChip) {
-        out.push(...atChips.segments);
-      } else if (seg.text.length > 0) {
-        out.push({ type: "text", text: seg.text });
-      }
+      out.push(...finalizePlainUserMessageSlice(seg.text));
     }
     return out.filter((s) => s.type !== "text" || s.text.length > 0);
   }
 
-  const atChips = parseAtChipSegments(content);
-  return atChips.sawChip
-    ? atChips.segments.filter((segment) => segment.text.length > 0)
-    : undefined;
+  const finalized = finalizePlainUserMessageSlice(content);
+  const sawStructured = finalized.some((segment) => segment.type !== "text");
+  return sawStructured ? finalized : undefined;
 }
 
 function toWorkedToolStatus(
