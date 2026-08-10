@@ -61,6 +61,24 @@ export type MobileFocusedConversation = {
   activeConversationIds?: string[];
 };
 
+/** One attachment received through the Android share sheet. */
+export type MobileSharedFile = {
+  name: string;
+  mimeType: string;
+  /** File bytes; the WebView cannot read Android content:// URIs itself. */
+  base64: string;
+  byteLength: number;
+};
+
+/** Payload of an Android ACTION_SEND / ACTION_SEND_MULTIPLE intent. */
+export type MobileSharePayload = {
+  text?: string | null;
+  subject?: string | null;
+  files?: MobileSharedFile[];
+  /** Names of attachments dropped native-side (unreadable or over size caps). */
+  skippedFiles?: string[];
+};
+
 export type MobileAgentProjectionMessage = {
   type: "agentProjection";
   projection: unknown;
@@ -78,6 +96,10 @@ export type MobileNativeToWebMessage =
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
   | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number }
+  // Content shared to Cesium via the Android share sheet. The web layer shows
+  // a chat picker (new chat or existing conversation) and prefills that
+  // composer draft with the shared text/attachments.
+  | { type: "shareIntent"; share: MobileSharePayload }
   // The Android hardware/predictive back gesture was invoked. The web layer
   // owns the in-WebView navigation stack (open overlays, drawers, settings
   // view) and decides what to pop; if it cannot handle the intent it replies

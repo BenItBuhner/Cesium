@@ -13,6 +13,7 @@ class CesiumMobilePackage : ReactPackage {
     return listOf(
       CesiumAndroidRuntimeModule(reactContext),
       CesiumLiveUpdatesModule(reactContext),
+      CesiumShareModule(reactContext),
       CesiumWearCompanionModule(reactContext),
       CesiumPhoneControlModule(reactContext),
       CesiumWindowInsetsModule(reactContext)

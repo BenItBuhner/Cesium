@@ -10,6 +10,7 @@ import { VoiceProvider, useVoice } from "@/components/voice/VoiceProvider";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
 import { MobileBackController } from "@/components/mobile/MobileBackController";
+import { MobileShareTarget } from "@/components/mobile/MobileShareTarget";
 import {
   BACK_INTENT_PRIORITY,
   BackIntentProvider,
@@ -77,6 +78,7 @@ function WorkbenchWithConversationProviders() {
     <OpenInEditorProvider>
       <AgentConversationsProvider>
         <VoiceProvider>
+          <MobileShareTarget />
           <MobileBridgeSync />
           <MobileBackController />
           <WorkbenchShell />
