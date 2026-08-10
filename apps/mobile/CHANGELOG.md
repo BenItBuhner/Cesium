@@ -6,20 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-10
+
 ### Changed
 
 - Android Live Updates (promoted `ProgressStyle` notifications) are now the primary — and default — run-progress surface, with a standard live notification as the only fallback when promotion is unsupported or denied. The previous "Now Bar" placement option was a misnomer: Samsung exposes no third-party Now Bar API; One UI 8+ simply renders standard Live Updates in the Now Bar. Stored preferences migrate (`nowbar` → `live`, old `live` → `basic`).
 - Every active agent now gets its own live notification (stable per-run notification ids, per-run pending intents, per-run dismissal memory) instead of a single shared notification that the most recent update overwrote. The foreground service anchors on one run and re-anchors when that run finishes or is dismissed, so remaining agents keep updating.
 - The workbench projects **all** conversations with active agent runs over the bridge (`agentProjections`), not just the focused one, and the background agent socket subscribes to every active conversation, so multi-agent tracking keeps working while the app is idle.
+- Bundled workbench picks up the post-0.3.1 chat/composer polish: icon-compact model/mode on narrow rows, action pills (dynamic status + custom quick actions), OLED-friendly dark theme defaults, larger touch targets, and Cloud Agents official icons instead of abbreviation badges.
 
 ### Added
 
 - "Agent attention" high-importance notification channel: agents alert (heads-up/sound) exactly when they start needing input (permission/question) and when a watched run completes, fails, or is cancelled; routine progress updates stay silent on the low-importance runs channel. Interventions and completions also bypass a run's dismissed state.
 - Completion/failure notifications now persist until dismissed instead of auto-cancelling ~15 s after the run ends.
+- Predictive-back capable Android back stack: hardware / gesture back routes through in-WebView overlays (settings, rails, panes, modals) before WebView history or app exit (`enableOnBackInvokedCallback`).
 
 ### Fixed
 
 - Voice orb is no longer always visible on Android. The packaged workbench now includes the Settings → General → Voice opt-in gate (`showVoiceOrb`, default off), so the floating mic stays hidden until the user enables it.
+- Live notification projections resolve the focused conversation correctly (URL / agent view / chat tab), so background runs actually update the native notification surface instead of starving on a stale `new` tab id.
+- Harness picker no longer auto-closes on Android touch taps (hover compat events were racing the open/toggle path); the whole harness row is tap-to-toggle and the model edit control stays visible on coarse pointers.
+- Background agent/socket work no longer falls back into aggressive polling when the app is idle; terminal transport and bridge handoff waste less battery while backgrounded.
+- Subagent cards no longer duplicate, lose transcripts, or leave stuck spinners; chat scroll jitter from stream updates is tamed; composer draft text no longer sticks after send / New Chat.
 
 ## [0.3.1] - 2026-07-30
 
