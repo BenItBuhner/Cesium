@@ -11,6 +11,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.ByteArrayOutputStream
 
 /**
@@ -21,7 +22,33 @@ import java.io.ByteArrayOutputStream
 class CesiumShareModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
+  init {
+    // Warm deliveries (onNewIntent while the app is foreground) never change
+    // the React Native AppState, so the JS side must be poked explicitly.
+    CesiumShareIntentStore.onShareIntent = {
+      try {
+        if (reactContext.hasActiveReactInstance()) {
+          reactContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit(SHARE_EVENT, null)
+        }
+      } catch (error: Exception) {
+        // JS not up yet; the mount/AppState consumers will drain the store.
+      }
+    }
+  }
+
   override fun getName(): String = "CesiumShare"
+
+  @ReactMethod
+  fun addListener(eventName: String) {
+    // Required by NativeEventEmitter; events are broadcast unconditionally.
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Double) {
+    // Required by NativeEventEmitter; events are broadcast unconditionally.
+  }
 
   @ReactMethod
   fun consumeSharePayload(promise: Promise) {
@@ -127,6 +154,8 @@ class CesiumShareModule(
   }
 
   companion object {
+    /** DeviceEventEmitter event poking JS to drain the share store. */
+    const val SHARE_EVENT = "cesiumShareIntent"
     /** Matches the composer's attachment cap. */
     private const val MAX_FILES = 10
     /** Matches the composer's inline-image limit. */

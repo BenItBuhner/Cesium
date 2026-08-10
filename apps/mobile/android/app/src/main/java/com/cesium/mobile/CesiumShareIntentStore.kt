@@ -12,10 +12,15 @@ object CesiumShareIntentStore {
   @Volatile
   private var lastIntent: Intent? = null
 
+  /** Invoked whenever a new share intent is parked (delivery is drained by JS). */
+  @Volatile
+  var onShareIntent: (() -> Unit)? = null
+
   fun update(intent: Intent?) {
     val action = intent?.action
     if (action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE) {
       lastIntent = intent
+      onShareIntent?.invoke()
     }
   }
 

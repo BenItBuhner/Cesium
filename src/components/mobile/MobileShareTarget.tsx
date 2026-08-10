@@ -28,6 +28,13 @@ import type { ImageAttachment } from "@/lib/types";
 
 const MAX_LISTED_CONVERSATIONS = 50;
 
+/**
+ * Module-scope park for the pending share. Workbench providers can remount
+ * their subtree during workspace bootstrap; React state would lose the share,
+ * but this store lets a remounted picker pick it right back up.
+ */
+let parkedShare: MobileSharePayload | null = null;
+
 type ShareTarget = { kind: "new" } | { kind: "conversation"; conversationId: string };
 
 function sharedText(share: MobileSharePayload): string {
@@ -82,7 +89,9 @@ export function MobileShareTarget() {
   const { shellView, setShellView } = useShellView();
   const { pushNotification } = useWorkbenchNotifications();
 
-  const [pendingShare, setPendingShare] = useState<MobileSharePayload | null>(null);
+  const [pendingShare, setPendingShare] = useState<MobileSharePayload | null>(
+    () => parkedShare
+  );
   const [applyingTarget, setApplyingTarget] = useState<ShareTarget | null>(null);
   const [query, setQuery] = useState("");
 
@@ -104,6 +113,7 @@ export function MobileShareTarget() {
       if (!hasContent) {
         return;
       }
+      parkedShare = share;
       setQuery("");
       setApplyingTarget(null);
       setPendingShare(share);
@@ -128,6 +138,7 @@ export function MobileShareTarget() {
     if (applyingTarget) {
       return;
     }
+    parkedShare = null;
     setPendingShare(null);
   }, [applyingTarget]);
 
@@ -257,6 +268,7 @@ export function MobileShareTarget() {
         });
 
         routeToTarget(target);
+        parkedShare = null;
         setPendingShare(null);
 
         if (failedUploads.length > 0) {
@@ -292,27 +304,87 @@ export function MobileShareTarget() {
   const files = pendingShare.files ?? [];
   const busy = applyingTarget != null;
 
+  // Styling note: everything load-bearing is inline. The bundled workbench
+  // runs on Android 11's Chromium 83 WebView, where Tailwind v4's @layer-based
+  // output is largely ignored — utility classes (even `fixed inset-0`) never
+  // apply, so a class-styled overlay renders as an invisible static block.
+  const textPrimary = "var(--text-primary, #f2f2f2)";
+  const textSecondary = "var(--text-secondary, #a3a3a3)";
+  const divider = "1px solid var(--palette-divider, rgba(127,127,127,0.35))";
+  const rowButtonStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    width: "100%",
+    padding: "12px 16px",
+    textAlign: "left",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    opacity: busy ? 0.6 : 1,
+  };
+
   return createPortal(
     <div
-      className="fixed inset-0 z-[10050] flex items-end justify-center sm:items-center sm:px-4"
       role="presentation"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 10050,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
     >
       <div
-        className="absolute inset-0 bg-black/55"
         aria-hidden
         onPointerDown={(event) => {
           event.preventDefault();
           dismiss();
+        }}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.55)",
         }}
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Share to Cesium"
-        className="relative flex max-h-[82vh] w-full flex-col overflow-hidden rounded-t-[16px] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-2xl sm:w-[min(480px,94vw)] sm:rounded-[var(--radius-card)]"
+        style={{
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          width: "100%",
+          maxWidth: 520,
+          maxHeight: "82vh",
+          overflow: "hidden",
+          borderRadius: "16px 16px 0 0",
+          border: "1px solid var(--border-card, rgba(127,127,127,0.4))",
+          background: "var(--bg-panel, #202020)",
+          color: textPrimary,
+          boxShadow: "0 -12px 40px rgba(0,0,0,0.45)",
+          fontFamily: "var(--font-sans, system-ui, sans-serif)",
+        }}
       >
-        <div className="mobile-safe-top-pad flex items-center justify-between gap-[8px] border-b border-[var(--palette-divider)] px-[16px] py-[12px]">
-          <h2 className="font-sans text-[15px] font-semibold text-[var(--text-primary)]">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            borderBottom: divider,
+            padding: "12px 16px",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: textPrimary }}>
             Share to Cesium
           </h2>
           <button
@@ -320,71 +392,157 @@ export function MobileShareTarget() {
             aria-label="Cancel share"
             onClick={dismiss}
             disabled={busy}
-            className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 28,
+              height: 28,
+              flexShrink: 0,
+              borderRadius: 6,
+              border: "none",
+              background: "transparent",
+              color: textSecondary,
+              cursor: "pointer",
+            }}
           >
-            <X className="size-[15px]" strokeWidth={1.8} />
+            <X size={15} strokeWidth={1.8} />
           </button>
         </div>
 
-        <div className="flex flex-col gap-[8px] border-b border-[var(--palette-divider)] px-[16px] py-[10px]">
-          {previewText ? (
-            <p className="line-clamp-3 font-sans text-[13px] leading-[1.45] text-[var(--text-secondary)]">
-              {previewText}
-            </p>
-          ) : null}
-          {files.length > 0 ? (
-            <div className="flex flex-wrap gap-[6px]">
-              {files.map((file, index) => (
-                <span
-                  key={`${file.name}-${index}`}
-                  className="flex max-w-full items-center gap-[5px] rounded-[var(--radius-pill)] bg-white/[0.07] px-[8px] py-[3px] font-sans text-[12px] text-[var(--text-secondary)]"
-                >
-                  {file.mimeType.startsWith("image/") ? (
-                    <ImageIcon className="size-[12px] shrink-0" strokeWidth={1.8} />
-                  ) : (
-                    <FileText className="size-[12px] shrink-0" strokeWidth={1.8} />
-                  )}
-                  <span className="min-w-0 truncate">{file.name}</span>
-                  <span className="shrink-0 opacity-70">{formatByteSize(file.byteLength)}</span>
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        {previewText || files.length > 0 ? (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              borderBottom: divider,
+              padding: "10px 16px",
+            }}
+          >
+            {previewText ? (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  color: textSecondary,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {previewText}
+              </p>
+            ) : null}
+            {files.length > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {files.map((file, index) => (
+                  <span
+                    key={`${file.name}-${index}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      maxWidth: "100%",
+                      borderRadius: 999,
+                      background: "rgba(127,127,127,0.18)",
+                      padding: "3px 8px",
+                      fontSize: 12,
+                      color: textSecondary,
+                    }}
+                  >
+                    {file.mimeType.startsWith("image/") ? (
+                      <ImageIcon size={12} strokeWidth={1.8} style={{ flexShrink: 0 }} />
+                    ) : (
+                      <FileText size={12} strokeWidth={1.8} style={{ flexShrink: 0 }} />
+                    )}
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {file.name}
+                    </span>
+                    <span style={{ flexShrink: 0, opacity: 0.7 }}>
+                      {formatByteSize(file.byteLength)}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
           <button
             type="button"
             data-testid="share-target-new-chat"
             onClick={() => void applyShareToTarget({ kind: "new" })}
             disabled={busy}
-            className="flex items-center gap-[10px] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-60"
+            style={rowButtonStyle}
           >
             {busy && applyingTarget?.kind === "new" ? (
-              <Loader2 className="size-[17px] shrink-0 animate-spin text-[var(--accent)]" strokeWidth={1.8} />
+              <Loader2
+                size={17}
+                strokeWidth={1.8}
+                style={{ flexShrink: 0, color: "var(--accent, #6ea8fe)" }}
+                className="animate-spin"
+              />
             ) : (
-              <MessageSquarePlus className="size-[17px] shrink-0 text-[var(--accent)]" strokeWidth={1.8} />
+              <MessageSquarePlus
+                size={17}
+                strokeWidth={1.8}
+                style={{ flexShrink: 0, color: "var(--accent, #6ea8fe)" }}
+              />
             )}
-            <span className="font-sans text-[14px] font-medium text-[var(--text-primary)]">
+            <span style={{ fontSize: 14, fontWeight: 500, color: textPrimary }}>
               New chat
             </span>
           </button>
 
-          <div className="flex items-center gap-[8px] border-y border-[var(--palette-divider)] px-[16px] py-[8px]">
-            <Search className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.8} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              borderTop: divider,
+              borderBottom: divider,
+              padding: "8px 16px",
+            }}
+          >
+            <Search size={13} strokeWidth={1.8} style={{ flexShrink: 0, color: textSecondary }} />
             <input
               type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search chats"
               disabled={busy}
-              className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
+              style={{
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                fontSize: 13,
+                color: textPrimary,
+              }}
             />
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto pb-[max(env(safe-area-inset-bottom),8px)]">
+          <div
+            style={{
+              minHeight: 0,
+              flex: 1,
+              overflowY: "auto",
+              paddingBottom: "max(env(safe-area-inset-bottom), 8px)",
+            }}
+          >
             {recentConversations.length === 0 ? (
-              <p className="px-[16px] py-[14px] font-sans text-[13px] text-[var(--text-secondary)]">
+              <p style={{ margin: 0, padding: "14px 16px", fontSize: 13, color: textSecondary }}>
                 No matching chats.
               </p>
             ) : (
@@ -403,18 +561,31 @@ export function MobileShareTarget() {
                       })
                     }
                     disabled={busy}
-                    className="flex w-full items-center gap-[10px] px-[16px] py-[11px] text-left transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-60"
+                    style={{ ...rowButtonStyle, padding: "11px 16px" }}
                   >
                     {applyingHere ? (
                       <Loader2
-                        className="size-[15px] shrink-0 animate-spin text-[var(--text-secondary)]"
+                        size={15}
                         strokeWidth={1.8}
+                        style={{ flexShrink: 0, color: textSecondary }}
+                        className="animate-spin"
                       />
                     ) : null}
-                    <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
+                    <span
+                      style={{
+                        minWidth: 0,
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 13,
+                        color: textPrimary,
+                        textAlign: "left",
+                      }}
+                    >
                       {conversation.title}
                     </span>
-                    <span className="shrink-0 font-sans text-[11px] text-[var(--text-secondary)]">
+                    <span style={{ flexShrink: 0, fontSize: 11, color: textSecondary }}>
                       {formatUpdatedAt(conversation.updatedAt)}
                     </span>
                   </button>

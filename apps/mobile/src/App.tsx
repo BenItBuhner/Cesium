@@ -196,6 +196,12 @@ export default function App() {
     }
   }, [sendToWeb]);
 
+  useEffect(() => {
+    return CesiumShare.onShareIntentReceived(() => {
+      void consumeShareIntent();
+    });
+  }, [consumeShareIntent]);
+
   const sendNativeStatus = useCallback(async () => {
     const [liveUpdates, phoneControl] = await Promise.all([
       CesiumLiveUpdates.getPromotionStatus(),
