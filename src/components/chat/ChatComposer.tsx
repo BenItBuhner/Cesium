@@ -2582,7 +2582,7 @@ export function ChatComposer({
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (!composerEditorDomInSync(el, value)) {
+    if (!composerEditorDomInSync(el, value, pillDescriptors)) {
       reconcilingRef.current = true;
       reconcileComposerEditorDom(el, value, pillDescriptors);
       queueMicrotask(() => { reconcilingRef.current = false; });

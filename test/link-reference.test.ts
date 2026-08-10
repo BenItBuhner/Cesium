@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { decodeBrowserProxyHref } from "../src/lib/browser-proxy-url";
 import {
   buildLinkMarkdown,
   findComposerLinkReferenceTokens,
@@ -60,4 +61,14 @@ test("markdown http links parse into compact user message segments", () => {
     },
     { type: "text", text: " please" },
   ]);
+});
+
+test("decodeBrowserProxyHref unwraps proxied favicon hrefs from rewritten HTML", () => {
+  assert.equal(
+    decodeBrowserProxyHref(
+      "http://localhost:9100/browser/https/resources.samsung.com/path/Favicon.png",
+      "http://localhost:9100"
+    ),
+    "https://resources.samsung.com/path/Favicon.png"
+  );
 });

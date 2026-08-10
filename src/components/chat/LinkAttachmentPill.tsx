@@ -72,7 +72,10 @@ export function LinkAttachmentPill({
 /** Best-effort favicon guess from a page URL when history only has markdown. */
 export function guessFaviconUrlFromPageUrl(pageUrl: string): string | null {
   try {
-    return new URL("/favicon.ico", new URL(pageUrl).origin).href;
+    const host = new URL(pageUrl).hostname;
+    // Many sites 404 `/favicon.ico`; Google's icon service is a reliable fallback
+    // for historical bubbles that only store markdown `[title](url)`.
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
   } catch {
     return null;
   }

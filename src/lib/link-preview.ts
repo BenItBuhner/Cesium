@@ -1,5 +1,8 @@
-import { buildBrowserProxyUrl, normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
-import { resolveFaviconForPage } from "@/lib/browser-favicon";
+import {
+  buildBrowserProxyUrl,
+  decodeBrowserProxyHref,
+  normalizeBrowserTargetUrl,
+} from "@/lib/browser-proxy-url";
 import { fallbackTitleFromUrl } from "@/lib/link-reference";
 
 function decodeBasicEntities(value: string): string {
@@ -39,14 +42,69 @@ function extractMetaContent(html: string, propertyOrName: string): string | null
 }
 
 function extractDocumentTitle(html: string): string | null {
+  // Prefer the document `<title>` — "header title" — over social meta tags.
+  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (titleMatch?.[1]) {
+    const cleaned = collapseWhitespace(decodeBasicEntities(titleMatch[1]));
+    if (cleaned) return cleaned;
+  }
   const og = extractMetaContent(html, "og:title");
   if (og) return og;
   const twitter = extractMetaContent(html, "twitter:title");
   if (twitter) return twitter;
-  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  if (!titleMatch?.[1]) return null;
-  const cleaned = collapseWhitespace(decodeBasicEntities(titleMatch[1]));
-  return cleaned || null;
+  return null;
+}
+
+function isLikelyImageResponse(contentType: string, url: string): boolean {
+  const ct = contentType.toLowerCase();
+  if (ct.includes("image/")) return true;
+  if (ct.includes("octet-stream") && /\.ico$/i.test(url)) return true;
+  return false;
+}
+
+function parseFaviconCandidates(html: string, pageUrl: URL, serverBase: string): string[] {
+  const out: string[] = [];
+  const linkTagRe = /<link\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = linkTagRe.exec(html)) !== null) {
+    const tag = match[0];
+    if (!/\brel\s*=\s*["'][^"']*icon[^"']*["']/i.test(tag)) continue;
+    const hrefMatch = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (!hrefMatch?.[1]) continue;
+    const raw = hrefMatch[1].trim();
+    // Proxied HTML may already rewrite icon hrefs to `/browser/https/...`.
+    const decoded = decodeBrowserProxyHref(raw, serverBase);
+    try {
+      const absolute = new URL(decoded, pageUrl.href).href;
+      // Decode again in case resolving against pageUrl reintroduced a proxy path.
+      out.push(decodeBrowserProxyHref(absolute, serverBase));
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
+
+async function firstWorkingImageUrl(
+  candidates: string[],
+  serverBase: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  for (const abs of candidates) {
+    const proxy = buildBrowserProxyUrl(serverBase, abs);
+    try {
+      const response = await fetch(proxy, {
+        method: "GET",
+        signal: signal ?? AbortSignal.timeout(8000),
+      });
+      if (!response.ok) continue;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (isLikelyImageResponse(contentType, abs)) return abs;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }
 
 export type LinkPreviewResult = {
@@ -77,6 +135,7 @@ export async function resolveLinkPreview(
 
   const fallbackTitle = fallbackTitleFromUrl(pageUrl.href);
   let title = fallbackTitle;
+  let html: string | null = null;
 
   try {
     const pageProxy = buildBrowserProxyUrl(serverBase, pageUrl.href);
@@ -85,19 +144,24 @@ export async function resolveLinkPreview(
       headers: { Accept: "text/html,application/xhtml+xml" },
     });
     if (response.ok) {
-      const html = await response.text();
+      html = await response.text();
       title = extractDocumentTitle(html) ?? fallbackTitle;
     }
   } catch {
-    // Keep hostname fallback; favicon resolution still worth trying.
+    // Keep hostname fallback; still try origin favicon candidates below.
   }
 
-  let faviconUrl: string | null = null;
-  try {
-    faviconUrl = await resolveFaviconForPage(pageUrl.href, serverBase);
-  } catch {
-    faviconUrl = null;
+  const candidates: string[] = [];
+  if (html) {
+    candidates.push(...parseFaviconCandidates(html, pageUrl, serverBase));
   }
+  candidates.push(
+    new URL("/favicon.ico", pageUrl.origin).href,
+    new URL("/favicon.png", pageUrl.origin).href,
+    new URL("/apple-touch-icon.png", pageUrl.origin).href
+  );
+
+  const faviconUrl = await firstWorkingImageUrl(candidates, serverBase, signal);
 
   return {
     url: pageUrl.href,

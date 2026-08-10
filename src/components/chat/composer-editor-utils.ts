@@ -280,12 +280,15 @@ export interface ComposerPillDescriptor {
 
 /**
  * True if the container's DOM already matches `value` *and* has a pill span
- * in each token slot. We use this as a cheap guard so the reconciler doesn't
- * churn the DOM (and blow away the user's caret) on every keystroke.
+ * in each token slot whose visible label/favicon match `pills`. We use this as
+ * a cheap guard so the reconciler doesn't churn the DOM (and blow away the
+ * user's caret) on every keystroke — but still re-renders when async metadata
+ * (link title / favicon) resolves for an unchanged token.
  */
 export function composerEditorDomInSync(
   container: HTMLElement,
-  value: string
+  value: string,
+  pills?: Record<string, ComposerPillDescriptor>
 ): boolean {
   if (walkComposerPlainText(container) !== value) return false;
   const pillSpans = container.querySelectorAll(`[${DESIGN_TOKEN_ATTR}]`);
@@ -298,8 +301,29 @@ export function composerEditorDomInSync(
   }
   if (pillSpans.length !== expected.length) return false;
   for (i = 0; i < pillSpans.length; i += 1) {
-    if (pillSpans[i]!.getAttribute(DESIGN_TOKEN_ATTR) !== expected[i]) {
+    const span = pillSpans[i] as HTMLElement;
+    const token = expected[i]!;
+    if (span.getAttribute(DESIGN_TOKEN_ATTR) !== token) {
       return false;
+    }
+    const keyMatch = /^\u27E6((?:design|textref|conv|link):[A-Za-z0-9_-]+)\u27E7$/.exec(token);
+    const key = keyMatch?.[1];
+    if (!key) continue;
+    const descriptor = pills?.[key];
+    const labelEl = span.querySelector("span.truncate");
+    const labelText = (labelEl?.textContent ?? "").trim();
+    const expectedLabel = (descriptor?.label ?? "").trim();
+    if (expectedLabel && labelText !== expectedLabel) {
+      return false;
+    }
+    if (descriptor?.kind === "link") {
+      const img = span.querySelector("img[data-link-favicon]") as HTMLImageElement | null;
+      const hasImg = Boolean(img);
+      const wantsImg = Boolean(descriptor.faviconSrc);
+      if (wantsImg !== hasImg) return false;
+      if (img && descriptor.faviconSrc && img.getAttribute("src") !== descriptor.faviconSrc) {
+        return false;
+      }
     }
   }
   return true;
