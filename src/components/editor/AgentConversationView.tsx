@@ -416,6 +416,7 @@ loadOlderConversationHistory,
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
   const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
+  const composerDraftLinkReferences = composerDrafts[composerDraftId]?.linkReferences;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -565,6 +566,7 @@ const showRecentChatsSection =
             attachments: composerDraftAttachments,
             captures: composerDraftCaptures,
             textReferences: composerDraftTextReferences,
+            linkReferences: composerDraftLinkReferences,
           });
         }}
         busy={composerState.busy}
@@ -589,6 +591,13 @@ const showRecentChatsSection =
           upsertComposerDraft(composerDraftId, {
             title: composerDraftTitle,
             textReferences: next,
+          })
+        }
+        draftLinkReferences={composerDraftLinkReferences}
+        onDraftLinkReferencesChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            linkReferences: next,
           })
         }
         onSubmit={(text, attachments?: ImageAttachment[], options?: { delivery?: "normal" | "steer" }) => {

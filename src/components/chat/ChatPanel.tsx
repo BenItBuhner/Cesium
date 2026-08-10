@@ -2510,6 +2510,7 @@ const cancelPromptForDraft = useCallback(
           attachments: composerDraftAttachments,
           captures: composerDrafts[composerDraftId]?.captures,
           textReferences: composerDrafts[composerDraftId]?.textReferences,
+          linkReferences: composerDrafts[composerDraftId]?.linkReferences,
         });
       }}
       busy={busy}
@@ -2558,6 +2559,13 @@ const cancelPromptForDraft = useCallback(
                 upsertComposerDraft(composerDraftId, {
                   title: composerDraftTitle,
                   textReferences: next,
+                })
+              }
+              draftLinkReferences={composerDrafts[composerDraftId]?.linkReferences}
+              onDraftLinkReferencesChange={(next) =>
+                upsertComposerDraft(composerDraftId, {
+                  title: composerDraftTitle,
+                  linkReferences: next,
                 })
               }
               userMessageHistory={composerUserMessageHistory}

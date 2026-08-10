@@ -30,6 +30,7 @@ import {
   type DesignCapture,
 } from "@/lib/design-capture";
 import type { TextReference } from "@/lib/text-reference";
+import type { LinkReference } from "@/lib/link-reference";
 import type { GoalProgressStatus } from "@/lib/agent-chat";
 
 export type OpenTranscriptPayload = {
@@ -49,6 +50,8 @@ export type OpenComposerDraftPayload = {
   captures?: Record<string, DesignCapture>;
   /** Metadata for each `⟦textref:…⟧` pill currently embedded in `content`. */
   textReferences?: Record<string, TextReference>;
+  /** Metadata for each `⟦link:…⟧` pill currently embedded in `content`. */
+  linkReferences?: Record<string, LinkReference>;
 };
 
 export type OpenAgentConversationPayload = {
@@ -70,6 +73,7 @@ export function hasMeaningfulComposerContent(draft: ComposerDraftRecord): boolea
   if (draft.attachments && draft.attachments.length > 0) return true;
   if (draft.captures && Object.keys(draft.captures).length > 0) return true;
   if (draft.textReferences && Object.keys(draft.textReferences).length > 0) return true;
+  if (draft.linkReferences && Object.keys(draft.linkReferences).length > 0) return true;
   return false;
 }
 
@@ -82,8 +86,9 @@ export function agentWorkspaceComposerDraftId(workspaceId: string | null | undef
 
 /**
  * Merge a partial composer draft patch. Omitting `content` (or attachments /
- * captures / textReferences) preserves the existing field — callers that clear
- * text on submit must not re-pass a stale `content` when updating attachments.
+ * captures / textReferences / linkReferences) preserves the existing field —
+ * callers that clear text on submit must not re-pass a stale `content` when
+ * updating attachments.
  */
 export function mergeComposerDraftRecord(
   existing: ComposerDraftRecord | undefined,
@@ -101,6 +106,10 @@ export function mergeComposerDraftRecord(
       patch.textReferences !== undefined
         ? patch.textReferences
         : existing?.textReferences,
+    linkReferences:
+      patch.linkReferences !== undefined
+        ? patch.linkReferences
+        : existing?.linkReferences,
   };
 }
 
@@ -379,7 +388,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           existing.content === next.content &&
           existing.attachments === next.attachments &&
           existing.captures === next.captures &&
-          existing.textReferences === next.textReferences
+          existing.textReferences === next.textReferences &&
+          existing.linkReferences === next.linkReferences
         ) {
           return current;
         }
@@ -400,7 +410,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         existing.content === "" &&
         existing.attachments === undefined &&
         existing.captures === undefined &&
-        existing.textReferences === undefined
+        existing.textReferences === undefined &&
+        existing.linkReferences === undefined
       ) {
         return current;
       }
@@ -413,6 +424,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           attachments: undefined,
           captures: undefined,
           textReferences: undefined,
+          linkReferences: undefined,
         },
       };
     });
@@ -528,6 +540,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         attachments: prevAtt,
         captures: nextCaptures,
         textReferences: ex?.textReferences,
+        linkReferences: ex?.linkReferences,
       };
       return { ...current, [draftId]: next };
     });
@@ -572,6 +585,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           attachments: ex?.attachments,
           captures: nextCaptures,
           textReferences: ex?.textReferences,
+          linkReferences: ex?.linkReferences,
         };
         return { ...current, [draftId]: next };
       });

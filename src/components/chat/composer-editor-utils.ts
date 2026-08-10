@@ -264,13 +264,18 @@ export function replaceTextRange(
 
 const DESIGN_TOKEN_OPEN = "\u27E6";
 const DESIGN_TOKEN_CLOSE = "\u27E7";
-const COMPOSER_PILL_TOKEN_PATTERN = /\u27E6(design|textref|conv):([A-Za-z0-9_-]+)\u27E7/g;
+const COMPOSER_PILL_TOKEN_PATTERN =
+  /\u27E6(design|textref|conv|link):([A-Za-z0-9_-]+)\u27E7/g;
 
 export interface ComposerPillDescriptor {
-  kind: "design" | "text-reference" | "conversation";
+  kind: "design" | "text-reference" | "conversation" | "link";
   id: string;
   label: string;
   snippet?: string;
+  /** Already-proxied favicon URL for `<img src>` (link pills). */
+  faviconSrc?: string;
+  /** Absolute destination URL (link pills; used for tooltip). */
+  href?: string;
 }
 
 /**
@@ -319,6 +324,13 @@ function appendTextWithBrBreaks(parent: HTMLElement | DocumentFragment, text: st
   }
 }
 
+const LINK_FALLBACK_ICON_SVG =
+  '<svg class="size-[12px] shrink-0 text-[var(--file-tag-icon)]" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+  '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
+  "</svg>";
+
 /** Pill span HTML. Kept in one place so the composer and the design pill in
  *  user messages stay visually aligned. */
 function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined): HTMLSpanElement {
@@ -329,13 +341,19 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
   span.setAttribute("data-design-capture-id", pill?.kind === "design" ? pill.id : "");
   span.setAttribute("data-text-reference-id", pill?.kind === "text-reference" ? pill.id : "");
   span.setAttribute("data-conversation-reference-id", pill?.kind === "conversation" ? pill.id : "");
+  span.setAttribute("data-link-reference-id", pill?.kind === "link" ? pill.id : "");
+  if (pill?.kind === "link" && pill.href) {
+    span.setAttribute("data-link-url", pill.href);
+  }
   span.className =
     "cesium-design-pill mx-[2px] inline-flex max-w-full items-center gap-[4px] " +
     "rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] " +
     "px-[7px] py-[1px] align-baseline font-sans text-[12.5px] font-medium " +
     "whitespace-nowrap select-none cursor-default " +
     (pill ? "text-[var(--file-tag-text)]" : "text-[var(--text-secondary)] italic");
-  if (pill?.snippet) {
+  if (pill?.kind === "link" && pill.href) {
+    span.setAttribute("title", `${pill.label}\n${pill.href}`);
+  } else if (pill?.snippet) {
     const title = `${pill.label}\n\n${pill.snippet.slice(0, 600)}${
       pill.snippet.length > 600 ? "…" : ""
     }`;
@@ -343,27 +361,49 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
   } else if (pill?.label) {
     span.setAttribute("title", pill.label);
   }
-  const iconSvg =
-    pill?.kind === "text-reference"
-      ? '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
-        'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
-        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
-        '<path d="M8 13h8"/><path d="M8 17h5"/>' +
-        "</svg>"
-      : pill?.kind === "conversation"
-        ? '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
-          'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-          '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
-          "</svg>"
-        : '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
-          'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-          '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
-          '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
-          '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
-          "</svg>";
-  const label = escapeHtml(pill?.label ?? "missing capture");
-  span.innerHTML = `${iconSvg}<span class="max-w-[240px] truncate">${label}</span>`;
+  let iconHtml: string;
+  if (pill?.kind === "link") {
+    iconHtml = pill.faviconSrc
+      ? `<img class="size-[12px] shrink-0 rounded-[2px] object-contain" src="${escapeHtml(pill.faviconSrc)}" alt="" draggable="false" data-link-favicon />`
+      : LINK_FALLBACK_ICON_SVG;
+  } else if (pill?.kind === "text-reference") {
+    iconHtml =
+      '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
+      '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+      '<path d="M8 13h8"/><path d="M8 17h5"/>' +
+      "</svg>";
+  } else if (pill?.kind === "conversation") {
+    iconHtml =
+      '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+      "</svg>";
+  } else {
+    iconHtml =
+      '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
+      '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
+      '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
+      "</svg>";
+  }
+  const label = escapeHtml(
+    pill?.label ?? (pill?.kind === "link" ? "missing link" : "missing capture")
+  );
+  span.innerHTML = `${iconHtml}<span class="max-w-[240px] truncate">${label}</span>`;
+  if (pill?.kind === "link" && pill.faviconSrc) {
+    const img = span.querySelector("img[data-link-favicon]") as HTMLImageElement | null;
+    if (img) {
+      img.addEventListener("error", () => {
+        const wrap = document.createElement("span");
+        wrap.innerHTML = LINK_FALLBACK_ICON_SVG;
+        const icon = wrap.firstElementChild;
+        if (icon) img.replaceWith(icon);
+      });
+    }
+  }
   return span;
 }
 
