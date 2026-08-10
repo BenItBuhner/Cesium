@@ -36,10 +36,60 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   path stays as a Node/desktop fallback only — do **not** switch the server to
   Node just for terminals. Deno is not used or supported.
 - **Agent backends need external CLIs / API keys** (Cursor, Codex, Claude, Gemini,
-  OpenCode) that are not installed. The app still boots and lists them as
-  unavailable; sending a chat without a configured backend surfaces a
-  "Compilation failed / Provider responded" toast. This is expected, not an
-  environment break.
+ OpenCode) that are not installed. The app still boots and lists them as
+ unavailable; sending a chat without a configured backend surfaces a
+ "Compilation failed / Provider responded" toast. This is expected, not an
+ environment break.
+
+### Android emulator (mobile app testing)
+
+Use the **official Google Android Emulator (AVD)** — it is the best (and only
+practical) emulator in this VM. Run it with software GPU
+(`-gpu swiftshader_indirect`); there is no host GPU. `/dev/kvm` exists but is
+root-owned, so unlock it first — with KVM the emulator is fast. Only set this
+up when the user asks for Android/emulator testing.
+
+One-time setup (~2.5 GB download into `~/android-sdk`):
+
+```bash
+sudo chmod 666 /dev/kvm   # required each boot; without KVM add -no-accel (slow)
+export ANDROID_HOME=$HOME/android-sdk
+mkdir -p $ANDROID_HOME/cmdline-tools && cd /tmp
+curl -fsSLO https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+unzip -q commandlinetools-linux-*.zip -d $ANDROID_HOME/cmdline-tools
+mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
+yes | sdkmanager --licenses >/dev/null
+sdkmanager "platform-tools" "emulator" "platforms;android-36" \
+  "build-tools;36.0.0" "ndk;27.0.12077973" "system-images;android-36;google_apis;x86_64"
+avdmanager create avd -n CesiumPixel -k "system-images;android-36;google_apis;x86_64" -d pixel_7
+```
+
+Boot (window appears on the XFCE desktop, `DISPLAY=:1`, so computer-use tools
+can drive it; boot takes ~1–2 min with KVM):
+
+```bash
+DISPLAY=:1 emulator -avd CesiumPixel -gpu swiftshader_indirect \
+  -no-snapshot -no-audio -no-boot-anim -memory 4096 -cores 2 &
+adb wait-for-device
+```
+
+Build + install the Cesium APK (Java 21 is preinstalled; gradle needs
+`ANDROID_HOME` exported):
+
+```bash
+npm run build:android:debug --workspace @cesium/mobile   # or :app:assembleDebug only via scripts/run-gradle.mjs
+adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Notes:
+- The app's WebView loads the bundled workbench from APK assets and talks to
+ the host's backend at `http://10.0.2.2:9100` (start `npm run dev:server` on
+ the host). Rebuild web assets into the APK with the same debug build (it runs
+ `build:web-assets` + `bundle:android` first).
+- Share-sheet / intent flows can be exercised without a second app:
+ `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "hello" com.cesium.mobile` (add `--eu android.intent.extra.STREAM <content-uri> --grant-read-uri-permission` for files, e.g. via the Files app instead).
+- `adb emu kill` stops the emulator; AVD state lives in `~/.android/avd/`.
 
 ### Inference / model provider environment variables
 
