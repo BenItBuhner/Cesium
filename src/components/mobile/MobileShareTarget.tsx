@@ -22,6 +22,7 @@ import {
   type MobileSharePayload,
   type MobileSharedFile,
 } from "@/lib/mobile-bridge";
+import { safeReplaceLocationSearchParams } from "@/lib/safe-url";
 import { uploadAttachments } from "@/lib/server-api";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import type { ImageAttachment } from "@/lib/types";
@@ -165,6 +166,15 @@ export function MobileShareTarget() {
       if (shellView !== "agent") {
         setShellView("agent");
       }
+      // The agent shell honors the conversationId deep link in the location
+      // over session state (see AgentShellStateContext), so updating only the
+      // session gets reverted back to the URL's conversation. Keep both in
+      // sync, mirroring setSelectedConversationId / startNewConversation.
+      const conversationIdForLocation =
+        target.kind === "new" ? AGENT_NEW_CHAT_SESSION_ID : target.conversationId;
+      safeReplaceLocationSearchParams((params) => {
+        params.set("conversationId", conversationIdForLocation);
+      });
       updateWorkspaceSession((current) => {
         if (target.kind === "new") {
           return {
