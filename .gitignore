@@ -15,6 +15,7 @@ coverage/
 .nyc_output/
 *.lcov
 .jest/
+server/bench-results/
 
 # next.js
 .next/

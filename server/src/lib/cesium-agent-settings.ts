@@ -15,6 +15,10 @@ import {
   type CesiumHarnessSettings,
   type CesiumSubagentsVersion,
 } from "./agents/cesium/features/index.js";
+import {
+  CESIUM_COMPACTION_DEFAULT_INTENSITY,
+  normalizeCompactionIntensity,
+} from "./agents/cesium/cesium-compaction.js";
 
 export type CesiumModeId =
   | "agent"
@@ -121,6 +125,12 @@ export type CesiumAgentSettings = {
     enabled: boolean;
     modelId: string | null;
     thresholdRatio: number;
+    /**
+     * 0..1 compaction intensity dial. 0 = maximum retention (post-compaction
+     * context stays ~70% full, gentle pruning), 1 = maximum aggression
+     * (compacts down to ~15% fill). See cesium-compaction.ts.
+     */
+    intensity: number;
   };
   orchestration: {
     /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
@@ -596,6 +606,7 @@ function defaultSettings(): CesiumAgentSettings {
       enabled: true,
       modelId: null,
       thresholdRatio: 0.82,
+      intensity: CESIUM_COMPACTION_DEFAULT_INTENSITY,
     },
     orchestration: {
       continueWhenIncomplete: true,
@@ -777,6 +788,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
       modelId: asString(compression?.modelId) ?? null,
       thresholdRatio:
         asNumber(compression?.thresholdRatio) ?? defaults.compression.thresholdRatio,
+      intensity: normalizeCompactionIntensity(asNumber(compression?.intensity)),
     },
     orchestration: {
       continueWhenIncomplete:

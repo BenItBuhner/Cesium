@@ -558,6 +558,36 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "pin_context",
+    description:
+      "Pin a note that survives context compaction verbatim (shown in the PINNED section of the context ledger forever). " +
+      "Use it — especially when warned that compaction is near — to preserve nuance a summary could lose: exact user phrasing you are honoring, " +
+      "ids/tasks of subagents you spawned, approaches already tried and failed, magic values, and in-flight hypotheses.",
+    parameters: {
+      type: "object",
+      properties: {
+        note: {
+          type: "string",
+          description: "Dense note to preserve verbatim. Keep under ~1000 characters.",
+        },
+      },
+      required: ["note"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "compact_context",
+    description:
+      "Proactively compact older conversation history into the context ledger now, at a checkpoint you choose " +
+      "(e.g. right after finishing a subtask, or before reading large files). The harness auto-compacts near the " +
+      "context threshold anyway; calling this yourself lets you pick a clean moment and keeps more headroom.",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
@@ -956,6 +986,9 @@ export function toolKind(name: string): string {
     case "read_conversation":
     case "search_conversations":
       return "search";
+    case "pin_context":
+    case "compact_context":
+      return "think";
     case "switch_branch":
     case "create_worktree":
       return "terminal";
@@ -1109,6 +1142,10 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return "Search history";
     case "read_history_page":
       return "Read history";
+    case "pin_context":
+      return "Pin context note";
+    case "compact_context":
+      return "Compact context";
     case "list_conversations":
       return "List conversations";
     case "read_conversation":
