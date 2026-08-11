@@ -56,6 +56,10 @@ const ExtensionSurfaceView = dynamic(
   () => import("./ExtensionSurfaceView").then((m) => m.ExtensionSurfaceView),
   { ssr: false, loading: PanelLoading }
 );
+const PullRequestView = dynamic(
+  () => import("./PullRequestView").then((m) => m.PullRequestView),
+  { ssr: false, loading: PanelLoading }
+);
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
@@ -1290,6 +1294,13 @@ export function EditorPanel({
           group,
         });
       },
+      openPullRequestTab: (options?: { baseRef?: string; group?: EditorGroup }) => {
+        dispatch({
+          type: "OPEN_PULL_REQUEST_TAB",
+          baseRef: options?.baseRef,
+          group: options?.group,
+        });
+      },
       openExtensionSurfaceTab: (input) => {
         dispatch({
           type: "OPEN_EXTENSION_SURFACE_TAB",
@@ -1929,6 +1940,11 @@ export function EditorPanel({
           key={tab.id}
           boardId={tab.orchestrationBoard.boardId}
         />
+      );
+    }
+    if (tab.kind === "pullRequest" || tab.pullRequest) {
+      return (
+        <PullRequestView key={tab.id} initialBaseRef={tab.pullRequest?.baseRef} />
       );
     }
     if (tab.extensionSurface) {

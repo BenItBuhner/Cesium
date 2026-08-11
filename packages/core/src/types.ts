@@ -255,7 +255,8 @@ export interface EditorTab {
     | "browser"
     | "kanban"
     | "plan"
-    | "extension";
+    | "extension"
+    | "pullRequest";
   content: string;
   active?: boolean;
   /** New explicit discriminator for extension surfaces; older tab kinds still infer from legacy fields. */
@@ -267,7 +268,8 @@ export interface EditorTab {
     | "browser"
     | "terminal"
     | "orchestration"
-    | "extension";
+    | "extension"
+    | "pullRequest";
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
   transcriptMessages?: ChatMessage[];
   /** Real OpenCode session id for live subagent transcript hydration. */
@@ -329,6 +331,11 @@ export interface EditorTab {
   /** Server-owned Orchestration Mode board rendered as a kanban surface. */
   orchestrationBoard?: {
     boardId: string;
+  };
+  /** Pull Request review surface (branch vs base, commits, diffs, GitHub metadata). */
+  pullRequest?: {
+    /** Optional base-ref override; the server picks a default when absent. */
+    baseRef?: string;
   };
   extensionSurface?: {
     kind: "marketplace" | "webview" | "customEditor" | "view" | "output";
@@ -453,6 +460,108 @@ export type GitWorktreeSetupResult = {
   commands: string[];
   output: string[];
 };
+
+/** One changed file in a pull-request review (base...head diff). */
+export type PullRequestReviewFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "unknown";
+
+export interface PullRequestReviewFile {
+  path: string;
+  /** Original path when the file was renamed or copied. */
+  previousPath?: string;
+  status: PullRequestReviewFileStatus;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  /** Unified diff text for this file (absent for binary or oversized diffs). */
+  patch?: string;
+  /** True when the patch was cut off at the size cap. */
+  patchTruncated?: boolean;
+}
+
+export interface PullRequestReviewCommit {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  body?: string;
+  authorName: string;
+  authorEmail?: string;
+  /** Epoch milliseconds. */
+  authoredAt: number;
+}
+
+export interface PullRequestGitHubComment {
+  author: string;
+  body: string;
+  /** Epoch milliseconds. */
+  createdAt: number;
+}
+
+/** Best-effort GitHub PR metadata layered on top of the local git review via the `gh` CLI. */
+export interface PullRequestGitHubInfo {
+  /** True when `gh` resolved an actual PR for the head branch. */
+  available: boolean;
+  /** Why GitHub data is unavailable (gh missing, not authenticated, no PR, ...). */
+  reason?: string;
+  number?: number;
+  title?: string;
+  body?: string;
+  state?: "OPEN" | "CLOSED" | "MERGED" | string;
+  isDraft?: boolean;
+  url?: string;
+  baseRefName?: string;
+  headRefName?: string;
+  author?: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+  mergeable?: string;
+  reviewDecision?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  comments?: PullRequestGitHubComment[];
+}
+
+/**
+ * Full payload for the Pull Request editor tab: local branch-vs-base review
+ * (commits + per-file patches) with optional GitHub PR metadata.
+ */
+export interface PullRequestReview {
+  workspaceId: string;
+  root: string;
+  isGitRepo: boolean;
+  /** Current branch, or null when detached / unborn. */
+  headBranch: string | null;
+  detached: boolean;
+  headSha: string | null;
+  /** Ref the review compares against (e.g. `origin/main`). */
+  baseBranch: string | null;
+  /** Merge-base commit the diff and commit list are computed from. */
+  mergeBaseSha: string | null;
+  /** Refs that could serve as a comparison base (for the base picker). */
+  candidateBases: string[];
+  aheadOfBase: number;
+  behindBase: number;
+  uncommitted: {
+    dirty: boolean;
+    files: number;
+    additions: number;
+    deletions: number;
+  };
+  commits: PullRequestReviewCommit[];
+  files: PullRequestReviewFile[];
+  totals: { files: number; additions: number; deletions: number };
+  remoteUrl: string | null;
+  github: PullRequestGitHubInfo;
+  error?: string;
+  /** Epoch milliseconds when this snapshot was computed. */
+  generatedAt: number;
+}
 
 export interface WorkspaceWindowRecord {
   id: string;

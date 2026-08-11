@@ -114,6 +114,11 @@ export type EditorPanelAction =
       group?: EditorGroup;
     }
   | {
+      type: "OPEN_PULL_REQUEST_TAB";
+      baseRef?: string;
+      group?: EditorGroup;
+    }
+  | {
       type: "OPEN_EXTENSION_SURFACE_TAB";
       extensionId: string;
       surfaceId: string;
@@ -902,6 +907,58 @@ export function editorPanelReducer(
         icon: "kanban",
         content: "",
         orchestrationBoard: { boardId: action.boardId },
+      };
+      const targetGroup =
+        action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");
+      if (targetGroup === "right") {
+        const splitState = state.split ? state : { ...state, split: true };
+        return {
+          ...splitState,
+          focusedGroup: "right",
+          rightTabs: [...splitState.rightTabs, tab],
+          rightActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "left",
+        leftTabs: [...state.leftTabs, tab],
+        leftActiveId: tabId,
+      };
+    }
+
+    case "OPEN_PULL_REQUEST_TAB": {
+      const tabId = "pull-request";
+      const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
+      const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
+      const patchTab = (tab: EditorTab): EditorTab =>
+        tab.id === tabId
+          ? { ...tab, pullRequest: { baseRef: action.baseRef } }
+          : tab;
+      if (existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map(patchTab),
+        };
+      }
+      if (existingRight && action.group !== "left") {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map(patchTab),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name: "Pull Request",
+        language: "plaintext",
+        icon: "pullRequest",
+        content: "",
+        kind: "pullRequest",
+        pullRequest: { baseRef: action.baseRef },
       };
       const targetGroup =
         action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");

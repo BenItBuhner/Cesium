@@ -51,6 +51,7 @@ export type EditorBridge = {
     title: string,
     group?: EditorGroup
   ) => void;
+  openPullRequestTab: (options?: { baseRef?: string; group?: EditorGroup }) => void;
   openExtensionSurfaceTab: (input: {
     extensionId: string;
     surfaceId: string;

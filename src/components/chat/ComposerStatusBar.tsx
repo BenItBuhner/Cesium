@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { Flame, GitBranch } from "lucide-react";
+import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
+import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   resolveComposerBranchLabel,
@@ -120,8 +122,15 @@ export function ComposerStatusBar({
 }: ComposerStatusBarProps) {
   const { gitStatus, workspaceInfo, workspaceSession, updateWorkspaceSession, workspaces, activeWorkspaceId } =
     useWorkspace();
+  const bridgeRef = useEditorBridgeRef();
+  const agentShell = useAgentShellStateMaybe();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [goalSummaryOpen, setGoalSummaryOpen] = useState(false);
+
+  const openPullRequestView = useCallback(() => {
+    bridgeRef.current?.openPullRequestTab();
+    agentShell?.setRightPaneOpen(true);
+  }, [agentShell, bridgeRef]);
 
   const visibility = resolveComposerStatusBarVisibilityForConversation(
     workspaceSession.chat,
@@ -237,10 +246,15 @@ export function ComposerStatusBar({
             <span className="truncate text-[var(--text-secondary)]">{leftSegments[0]}</span>
           ) : null}
           {showBranch && branchLabel ? (
-            <span className="flex min-w-0 items-center gap-[5px] truncate">
+            <button
+              type="button"
+              onClick={openPullRequestView}
+              title="Open Pull Request view"
+              className="flex min-w-0 items-center gap-[5px] truncate rounded-[5px] px-[3px] py-[1px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            >
               <GitBranch className="size-[12px] shrink-0 opacity-80" strokeWidth={1.5} aria-hidden />
               <span className="truncate">{branchLabel}</span>
-            </span>
+            </button>
           ) : null}
         </div>
 

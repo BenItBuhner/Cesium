@@ -27,6 +27,7 @@ import type {
   GitWorktreeSetupResult,
   ImageAttachment,
   PlanBuildHandoff,
+  PullRequestReview,
   QueuedPromptConfigOverride,
   QuickActionDefinition,
   QuickActionPreset,
@@ -763,6 +764,20 @@ export async function fetchWorkspaceGitStatus(workspaceId: string): Promise<{
   return request(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`,
     undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchWorkspacePullRequestReview(
+  workspaceId: string,
+  options?: { baseRef?: string; signal?: AbortSignal }
+): Promise<{ review: PullRequestReview }> {
+  const query = options?.baseRef
+    ? `?base=${encodeURIComponent(options.baseRef)}`
+    : "";
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/pull-request${query}`,
+    options?.signal ? { signal: options.signal, cache: "no-store" } : { cache: "no-store" },
     { skipWorkspaceHeader: true }
   );
 }
