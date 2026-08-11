@@ -1345,6 +1345,20 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => openBrowserUrlPrompt(),
       },
       {
+        id: "workbench.action.openPullRequest",
+        label: "Git: Open Pull Request",
+        detail: "Review the current branch — state, commits, and diffs against the base branch.",
+        run: () => {
+          const bridge = bridgeRef.current;
+          if (!bridge) {
+            flash(setToast, "Editor is not ready yet.");
+            return;
+          }
+          bridge.openPullRequestTab();
+          agentShell?.setRightPaneOpen(true);
+        },
+      },
+      {
         id: "workbench.action.newOrchestrationBoard",
         label: "Orchestration: New Board",
         run: () =>

@@ -86,6 +86,7 @@ export {
   fetchQuickActions,
   fetchWorkspaceGitStatus,
   fetchWorkspaceInsights,
+  fetchWorkspacePullRequestReview,
   fetchWorkspaceSession,
   fetchWorkspaceWindowSession,
   fetchWorkspaceWindows,

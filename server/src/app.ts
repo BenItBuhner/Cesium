@@ -3,6 +3,7 @@ import { compress } from "hono/compress";
 import { Hono } from "hono";
 import { fsRoutes } from "./routes/fs.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
+import { pullRequestRoutes } from "./routes/pull-requests.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
@@ -158,6 +159,7 @@ export function createCesiumApp(): Hono {
   app.route("/", browserControlRoutes);
   app.route("/", phoneControlRoutes);
   app.route("/", workspaceRoutes);
+  app.route("/", pullRequestRoutes);
   app.route("/", settingsRoutes);
   app.route("/", fsRoutes);
   app.route("/", terminalRoutes);
