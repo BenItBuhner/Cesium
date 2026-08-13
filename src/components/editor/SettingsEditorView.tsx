@@ -57,7 +57,6 @@ import {
 } from "@/lib/server-rail-appearance";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
-import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -894,7 +893,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>
@@ -938,7 +936,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>

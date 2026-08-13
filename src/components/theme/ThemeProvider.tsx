@@ -64,8 +64,10 @@ function normalizeConfigIds(config: ThemeConfig): ThemeConfig {
 }
 
 /**
- * Renders under {@link GlobalSettingsProvider}. Theme is persisted in the same server
- * blob as the rest of app settings and synced after flush + refetch (see provider).
+ * Renders under {@link GlobalSettingsProvider}. Theme is client-owned: it
+ * lives in the client-first app settings document (mirrored to the signed-in
+ * user's cloud account) plus a dedicated localStorage key that the pre-React
+ * boot script reads to avoid FOUC. Engines never store theme state.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { settings, ready, updateSettings } = useGlobalSettings();
@@ -79,7 +81,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   const lastSerializedRef = useRef(serializeThemeConfig(themeConfig));
-  const didMigrateLocalThemeToServer = useRef(false);
+  const didReconcileLocalTheme = useRef(false);
   const configRef = useRef(themeConfig);
   configRef.current = themeConfig;
 
@@ -105,8 +107,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!ready) {
       return;
     }
-    if (!didMigrateLocalThemeToServer.current) {
-      didMigrateLocalThemeToServer.current = true;
+    if (!didReconcileLocalTheme.current) {
+      // The dedicated theme key (used by the boot script) can be newer than
+      // the settings document, e.g. right after a legacy import. Local wins.
+      didReconcileLocalTheme.current = true;
       const fromServer = normalizeConfigIds(
         normalizeThemeConfig(settings.themeConfig)
       );

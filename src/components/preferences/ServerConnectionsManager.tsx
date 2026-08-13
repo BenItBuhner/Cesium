@@ -25,16 +25,13 @@ type ProbeState = {
 
 export function ServerConnectionsManager({
   onActivate,
-  onSetDefault,
   compact = false,
 }: {
   onActivate?: (serverId: string) => void;
-  onSetDefault?: (serverId: string) => void;
   compact?: boolean;
 }) {
   const {
     activeServer,
-    settingsServer,
     servers,
     onlineServers,
     serverStatusById,
@@ -162,10 +159,9 @@ export function ServerConnectionsManager({
       servers.map((server) => {
         const probe = probeByServerId[server.id] ?? { status: "idle", message: null };
         const isActiveChat = server.id === activeServer.id;
-        const isDefaultSettings = server.id === settingsServer?.id;
         const runtimeStatus = serverStatusById[server.id];
         const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
-        return { isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server };
+        return { isActiveChat, isRuntimeConnected, probe, runtimeStatus, server };
       }),
     [
       activeServer.id,
@@ -173,7 +169,6 @@ export function ServerConnectionsManager({
       probeByServerId,
       serverStatusById,
       servers,
-      settingsServer?.id,
     ]
   );
 
@@ -182,7 +177,7 @@ export function ServerConnectionsManager({
       <div className="flex min-w-0 flex-col gap-[12px] sm:gap-[14px]">
         {rows.length > 0 ? (
           <div className="flex min-w-0 flex-col">
-            {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
+            {rows.map(({ isActiveChat, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
               <div
                 key={server.id}
                 className={`flex min-w-0 flex-col gap-[10px] py-[10px] sm:py-[12px] ${
@@ -201,14 +196,9 @@ export function ServerConnectionsManager({
                   <p className="min-w-0 max-w-full truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
                     {server.label}
                   </p>
-                  {isDefaultSettings ? (
-                    <span className="shrink-0 rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
-                      Default settings
-                    </span>
-                  ) : null}
                   {isActiveChat ? (
-                    <span className="shrink-0 rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
-                      Active chat
+                    <span className="shrink-0 rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
+                      Active
                     </span>
                   ) : null}
                   {isRuntimeConnected ? (
@@ -243,17 +233,6 @@ export function ServerConnectionsManager({
                     : "grid w-full grid-cols-2 gap-[8px] sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"
                 }
               >
-                {onSetDefault ? (
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={isDefaultSettings}
-                    onClick={() => onSetDefault(server.id)}
-                  >
-                    <Check className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                    {isDefaultSettings ? "Default" : "Set default"}
-                  </button>
-                ) : null}
                 {onActivate ? (
                   <button
                     type="button"
@@ -262,13 +241,7 @@ export function ServerConnectionsManager({
                     onClick={() => onActivate(server.id)}
                   >
                     <Check className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                    {onSetDefault
-                      ? isActiveChat
-                        ? "Active chat"
-                        : "Use for chats"
-                      : isActiveChat
-                        ? "Selected"
-                        : "Use for settings"}
+                    {isActiveChat ? "Active" : "Use this server"}
                   </button>
                 ) : null}
                 {runtimeStatus?.health === "auth_required" ? (

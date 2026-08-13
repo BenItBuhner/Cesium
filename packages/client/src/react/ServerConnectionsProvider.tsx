@@ -13,9 +13,6 @@ import {
 import {
   applyRendezvousBootstrap,
   applyServerUrlBootstrap,
-  getSettingsServerConnection,
-  requiresDefaultServerSelection,
-  setDefaultServerConnection,
   updateRendezvousServerEndpoint,
   upsertServerConnection,
   type ServerConnection,
@@ -56,10 +53,7 @@ type ServerConnectionsContextValue = {
   serverStatusById: Record<string, ServerRuntimeStatus>;
   onlineServers: ServerConnection[];
   activeServer: ServerConnection;
-  settingsServer: ServerConnection | null;
-  requiresDefaultServer: boolean;
   setActiveServer: (serverId: string) => void;
-  setDefaultServer: (serverId: string) => void;
   saveServer: (input: { id?: string; label?: string; baseUrl: string }) => ServerConnection;
   removeServer: (serverId: string) => void;
   probeServer: (baseUrl: string) => Promise<ServerProbeResult>;
@@ -453,14 +447,6 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     });
   }, []);
 
-  const setDefaultServer = useCallback((serverId: string) => {
-    setState((current) => {
-      const next = setDefaultServerConnection(current, serverId);
-      writeStoredServerConnectionsState(next);
-      return next;
-    });
-  }, []);
-
   const saveServer = useCallback((input: { id?: string; label?: string; baseUrl: string }) => {
     let savedServer: ServerConnection | null = null;
     setState((current) => {
@@ -507,14 +493,6 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       state.servers.find((server) => server.id === state.activeServerId) ??
       state.servers[0] ??
       getActiveServerConnection();
-    const configuredSettingsServer = getSettingsServerConnection(state);
-    const configuredSettingsHealth = configuredSettingsServer
-      ? serverStatusById[configuredSettingsServer.id]?.health ?? "unknown"
-      : "unknown";
-    const settingsServer =
-      configuredSettingsServer && configuredSettingsHealth !== "offline"
-        ? configuredSettingsServer
-        : activeServer;
     return {
       ready,
       state,
@@ -522,10 +500,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       serverStatusById,
       onlineServers,
       activeServer,
-      settingsServer,
-      requiresDefaultServer: requiresDefaultServerSelection(state),
       setActiveServer,
-      setDefaultServer,
       saveServer,
       removeServer: deleteServer,
       probeServer: probeServerBaseUrl,
@@ -539,7 +514,6 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     saveServer,
     serverStatusById,
     setActiveServer,
-    setDefaultServer,
     state,
   ]);
 

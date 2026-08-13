@@ -13,12 +13,9 @@ import {
   createDefaultServerConnectionsState,
   getActiveServerStorageKey,
   getServerConnectionKey,
-  getSettingsServerConnection,
   markServerConnectionUsed,
   mergeServerConnectionBootstrap,
   normalizeServerConnectionsState,
-  requiresDefaultServerSelection,
-  setDefaultServerConnection,
   shouldApplyServerUrlFromSearch,
   updateRendezvousServerEndpoint,
   writeStoredServerConnectionsState,
@@ -88,7 +85,6 @@ describe("server connections", () => {
     assert.equal(state.servers.length, 1);
     assert.equal(state.servers[0]?.baseUrl, "http://localhost:9100");
     assert.equal(state.activeServerId, state.servers[0]?.id ?? null);
-    assert.equal(state.defaultServerId, state.servers[0]?.id ?? null);
   });
 
   test("normalization drops invalid entries and dedupes by base URL", () => {
@@ -171,11 +167,14 @@ describe("server connections", () => {
     );
   });
 
-  test("multi-server profiles migrate default server from active server", () => {
+  test("legacy defaultServerId in stored state is tolerated and dropped", () => {
+    // Pre-refactor storage carried a "default settings server". Shared
+    // preferences are client-owned now, so the field must parse away cleanly.
     const state = normalizeServerConnectionsState(
       {
         version: 1,
         activeServerId: "local",
+        defaultServerId: "prod",
         servers: [
           { id: "local", label: "Local", baseUrl: "http://localhost:9100", updatedAt: 1 },
           { id: "prod", label: "Prod", baseUrl: "https://example.com", updatedAt: 2 },
@@ -183,33 +182,9 @@ describe("server connections", () => {
       },
       "http://localhost:9100"
     );
-    assert.equal(state.defaultServerId, "local");
-    assert.equal(getSettingsServerConnection(state)?.id, "local");
-    assert.equal(requiresDefaultServerSelection(state), false);
-  });
-
-  test("setDefaultServerConnection stores the chosen settings server", () => {
-    const base = createDefaultServerConnectionsState("http://localhost:9100");
-    const withSecond = {
-      ...base,
-      servers: [
-        ...base.servers,
-        {
-          id: "prod",
-          label: "Prod",
-          baseUrl: "https://example.com",
-          createdAt: 1,
-          updatedAt: 1,
-          lastUsedAt: 1,
-        },
-      ],
-      defaultServerId: null,
-    };
-    assert.equal(requiresDefaultServerSelection(withSecond), true);
-    const next = setDefaultServerConnection(withSecond, "prod");
-    assert.equal(next.defaultServerId, "prod");
-    assert.equal(getSettingsServerConnection(next)?.id, "prod");
-    assert.equal(requiresDefaultServerSelection(next), false);
+    assert.equal(state.servers.length, 2);
+    assert.equal(state.activeServerId, "local");
+    assert.equal("defaultServerId" in state, false);
   });
 
   test("configured default uses port 9100 when env is unset", () => {
@@ -312,11 +287,10 @@ describe("server connections", () => {
         baseUrl: "http://10.0.2.2:9100/",
         now: 3,
       },
-      { activate: "if-missing", defaultServer: "if-missing" }
+      { activate: "if-missing" }
     );
 
     assert.equal(next.activeServerId, "remote");
-    assert.equal(next.defaultServerId, "remote");
     assert.deepEqual(
       next.servers.map((server) => server.baseUrl).sort(),
       ["http://10.0.2.2:9100", "https://opencursor.example.com"]
@@ -335,7 +309,6 @@ describe("server connections", () => {
     assert.equal(next.servers.length, 1);
     assert.equal(next.servers[0]?.baseUrl, "http://10.0.2.2:9100");
     assert.equal(next.activeServerId, "mobile-server");
-    assert.equal(next.defaultServerId, "mobile-server");
   });
 
   test("runtime bootstrap keeps auth lookup on the saved active server", () => {

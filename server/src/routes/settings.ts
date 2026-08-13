@@ -8,6 +8,8 @@ import {
   clearRememberedAgentPermissionRules,
   replaceRememberedAgentPermissionRules,
   saveGlobalSettingsPreservingRememberedPermissions,
+  setEngineAgentFlags,
+  type EngineAgentFlagsUpdate,
   type GlobalSettings,
   type ModelToggleUpdate,
 } from "../lib/global-settings-store.js";
@@ -150,6 +152,29 @@ settingsRoutes.put("/api/settings/global", async (c) => {
     globalSettingsCoalescer.schedule("global", toSave);
   }
 
+  const nextRevision = bumpRevision(GLOBAL_SETTINGS_KEY);
+  c.header("ETag", formatEtag(nextRevision));
+  return c.json({ ok: true, revision: nextRevision });
+});
+
+settingsRoutes.put("/api/settings/agent-flags", async (c) => {
+  const body = await c.req
+    .json<{ autoAcceptAllAgentPermissions?: unknown; mcpProt?: unknown }>()
+    .catch(() => ({}) as { autoAcceptAllAgentPermissions?: unknown; mcpProt?: unknown });
+  const update: EngineAgentFlagsUpdate = {};
+  if (typeof body.autoAcceptAllAgentPermissions === "boolean") {
+    update.autoAcceptAllAgentPermissions = body.autoAcceptAllAgentPermissions;
+  }
+  if (typeof body.mcpProt === "boolean") {
+    update.mcpProt = body.mcpProt;
+  }
+  if (Object.keys(update).length === 0) {
+    return c.json(
+      { error: "Expected autoAcceptAllAgentPermissions and/or mcpProt booleans." },
+      400
+    );
+  }
+  await setEngineAgentFlags(update);
   const nextRevision = bumpRevision(GLOBAL_SETTINGS_KEY);
   c.header("ETag", formatEtag(nextRevision));
   return c.json({ ok: true, revision: nextRevision });

@@ -4,7 +4,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
-import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -185,42 +184,16 @@ function SettingsServerPicker({
 export function ServerConnectionsSettingsPanel() {
   const {
     activeServer,
-    settingsServer,
     servers,
     onlineServers,
     serverStatusById,
-    requiresDefaultServer,
     setActiveServer,
-    setDefaultServer,
   } = useServerConnections();
 
   return (
     <>
       <PageIntro title="Servers" />
-      <DefaultServerSettingsBanner className="mx-[16px] mb-[12px] mt-[4px]" />
-      <SettingsSection title="Default settings server">
-        <SettingsRow
-          searchId="home-server"
-          title="Home server for shared preferences"
-          description={
-            settingsServer
-              ? `${settingsServer.baseUrl} · ${serverStatusById[settingsServer.id]?.health ?? "checking"}`
-              : requiresDefaultServer
-                ? "Pick which server stores theme, keyboard shortcuts, and model toggles."
-                : "Unavailable"
-          }
-          trailing={
-            <SettingsServerPicker
-              label="Default settings server"
-              title="Theme, shortcuts, and models are stored on this server for all chats"
-              selectedServerId={settingsServer?.id ?? null}
-              servers={servers}
-              serverStatusById={serverStatusById}
-              onSelect={setDefaultServer}
-              disabled={servers.length === 0}
-            />
-          }
-        />
+      <SettingsSection title="Active server">
         <SettingsRow
           searchId="active-chat"
           title="Active chat server"
@@ -258,9 +231,6 @@ export function ServerConnectionsSettingsPanel() {
         <ServerConnectionsManager
           onActivate={(serverId) => {
             setActiveServer(serverId);
-          }}
-          onSetDefault={(serverId) => {
-            setDefaultServer(serverId);
           }}
         />
       </SettingsSection>
