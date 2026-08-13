@@ -139,9 +139,12 @@ export function WelcomeOverlay() {
   const [dismissed, setDismissed] = useState(false);
 
   const activeHealth = serverStatusById[activeServer.id]?.health ?? "unknown";
+  // An unreachable engine wins over stale auth state: a cached session token
+  // must not present a credentials form for an engine that is simply down.
+  const engineUnreachable = Boolean(connectionError);
   const needsEngineAuth =
-    (enabled && !authenticated) || activeHealth === "auth_required";
-  const engineUnreachable = Boolean(connectionError) && !needsEngineAuth;
+    !engineUnreachable &&
+    ((enabled && !authenticated) || activeHealth === "auth_required");
   const blocked = ready && (needsEngineAuth || engineUnreachable);
 
   const mode: "auth" | "connect" = needsEngineAuth ? "auth" : "connect";
