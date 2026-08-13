@@ -1,28 +1,39 @@
 "use client";
 
-import { clientKeyValueStore, USER_PREFERENCES_STORAGE_KEY } from "@cesium/client";
+import {
+  CLIENT_SETTINGS_STORAGE_KEY,
+  clientKeyValueStore,
+  parseClientSettingsPayload,
+  USER_PREFERENCES_STORAGE_KEY,
+  writeClientSettings,
+} from "@cesium/client";
 import { THEME_CONFIG_STORAGE_KEY } from "@/lib/theme-config";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 
 /**
  * Portable personalization payload: the local personalization surface
- * (preferences + theme) bundled into one JSON document for cloud sync, so a
- * fresh device looks and behaves like home the moment you sign in.
+ * (preferences + theme + client-owned workbench settings) bundled into one
+ * JSON document for cloud sync, so a fresh sign-in looks like home.
  */
 
-const PAYLOAD_VERSION = 1;
+const PAYLOAD_VERSION = 2;
 
 type PersonalizationPayload = {
   version: number;
   preferences: string | null;
   theme: string | null;
   themeConfig: string | null;
+  clientSettings: string | null;
 };
 
-const SYNCED_KEYS: Array<{ key: string; field: keyof Omit<PersonalizationPayload, "version"> }> = [
+const SYNCED_KEYS: Array<{
+  key: string;
+  field: keyof Omit<PersonalizationPayload, "version">;
+}> = [
   { key: USER_PREFERENCES_STORAGE_KEY, field: "preferences" },
   { key: THEME_STORAGE_KEY, field: "theme" },
   { key: THEME_CONFIG_STORAGE_KEY, field: "themeConfig" },
+  { key: CLIENT_SETTINGS_STORAGE_KEY, field: "clientSettings" },
 ];
 
 export function collectPersonalizationPayload(): string {
@@ -32,6 +43,7 @@ export function collectPersonalizationPayload(): string {
     preferences: null,
     theme: null,
     themeConfig: null,
+    clientSettings: null,
   };
   for (const { key, field } of SYNCED_KEYS) {
     payload[field] = store.getItem(key);
@@ -63,6 +75,12 @@ export function applyPersonalizationPayload(raw: string): boolean {
     if (store.getItem(key) !== value) {
       store.setItem(key, value);
       changed = true;
+    }
+  }
+  if (typeof parsed.clientSettings === "string") {
+    const next = parseClientSettingsPayload(parsed.clientSettings);
+    if (next) {
+      writeClientSettings(next);
     }
   }
   return changed;

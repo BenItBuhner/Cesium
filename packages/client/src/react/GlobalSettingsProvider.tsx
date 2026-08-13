@@ -16,6 +16,16 @@ import {
   type GlobalSettingsState,
 } from "../global-settings";
 import {
+  CLIENT_SETTINGS_EVENT,
+  clientSettingsHavePersonalization,
+  hasMigratedClientSettingsFromEngine,
+  markClientSettingsMigratedFromEngine,
+  mergeEngineBoundSettings,
+  readClientSettings,
+  stripEngineBoundSettings,
+  writeClientSettings,
+} from "../client-settings";
+import {
   fetchGlobalSettings,
   saveGlobalSettings,
   fetchModelToggleState,
@@ -27,6 +37,7 @@ import {
 } from "../server-api";
 import { useServerConnections } from "./ServerConnectionsProvider";
 import { recordPerfSample } from "../dev-perf";
+import { getClientPlatform } from "../platform";
 
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
@@ -36,7 +47,7 @@ type GlobalSettingsContextValue = {
   updateSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
-  /** Re-fetch global settings from the server without writing local state back. */
+  /** Re-fetch engine-bound settings (models / remembered permissions) without clobbering client prefs. */
   refreshSettings: () => Promise<void>;
   refreshModels: () => Promise<void>;
   modelsRefreshing: boolean;
@@ -69,12 +80,13 @@ export function GlobalSettingsProvider({
   serverSettingsEnabled = true,
 }: {
   children: ReactNode;
+  /** When true and an engine is reachable, sync model catalogs and remembered permissions. */
   serverSettingsEnabled?: boolean;
 }) {
-  const { settingsServer, requiresDefaultServer } = useServerConnections();
+  const { activeServer } = useServerConnections();
   const [settings, setSettings] = useState<GlobalSettingsState>(createDefaultState);
   const [ready, setReady] = useState(false);
-  const settingsServerRef = useRef<ServerRequestContext | null>(null);
+  const engineServerRef = useRef<ServerRequestContext | null>(null);
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const [modelToggleSaveState, setModelToggleSaveState] = useState<{
     pending: number;
@@ -87,18 +99,22 @@ export function GlobalSettingsProvider({
   const modelToggleTimerRef = useRef<number | null>(null);
   const modelToggleEpochRef = useRef(0);
 
-  const settingsRequestContext = useMemo(
-    () => (settingsServer ? toServerRequestContext(settingsServer) : null),
-    [settingsServer]
+  const engineRequestContext = useMemo(
+    () => (activeServer ? toServerRequestContext(activeServer) : null),
+    [activeServer]
   );
 
   useEffect(() => {
-    settingsServerRef.current = settingsRequestContext;
-  }, [settingsRequestContext]);
+    engineServerRef.current = engineRequestContext;
+  }, [engineRequestContext]);
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  const persistClientSettings = useCallback((next: GlobalSettingsState) => {
+    writeClientSettings(next);
+  }, []);
 
   const flushModelToggleUpdates = useCallback(async () => {
     if (modelToggleTimerRef.current) {
@@ -117,9 +133,12 @@ export function GlobalSettingsProvider({
     const startedAt = performance.now();
     setModelToggleSaveState({ pending: updates.length, error: null });
     try {
-      const server = settingsServerRef.current;
+      const server = engineServerRef.current;
       if (!server) {
-        setModelToggleSaveState({ pending: 0, error: "Choose a default server for shared settings." });
+        setModelToggleSaveState({
+          pending: 0,
+          error: "Connect a server to save model availability.",
+        });
         return;
       }
       const result = await saveModelToggles(updates, { server });
@@ -160,59 +179,81 @@ export function GlobalSettingsProvider({
         saveTimerRef.current = null;
       }
 
+      persistClientSettings(settingsRef.current);
       await flushModelToggleUpdates();
-      const server = settingsServerRef.current;
-      if (!server) {
+      const server = engineServerRef.current;
+      if (!server || !serverSettingsEnabled) {
         return;
       }
       await saveGlobalSettings(settingsRef.current, { ...options, server }).catch(() => {});
     },
-    [flushModelToggleUpdates, ready]
+    [flushModelToggleUpdates, persistClientSettings, ready, serverSettingsEnabled]
   );
+
+  useEffect(() => {
+    skipNextSaveRef.current = true;
+    setSettings(readClientSettings());
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    const platform = getClientPlatform();
+    return platform.addEventListener(CLIENT_SETTINGS_EVENT, () => {
+      const next = readClientSettings();
+      setSettings((current) => {
+        const merged = mergeEngineBoundSettings(next, current);
+        if (
+          JSON.stringify(stripEngineBoundSettings(current)) ===
+          JSON.stringify(stripEngineBoundSettings(merged))
+        ) {
+          return current;
+        }
+        skipNextSaveRef.current = true;
+        return merged;
+      });
+    });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    async function load(): Promise<void> {
-      if (!settingsRequestContext) {
-        if (mounted) {
-          skipNextSaveRef.current = true;
-          setSettings(createDefaultState());
-          setReady(true);
-        }
-        return;
-      }
-      if (!serverSettingsEnabled) {
-        if (mounted) {
-          setReady(false);
-        }
+    async function loadEngineBound(): Promise<void> {
+      if (!engineRequestContext || !serverSettingsEnabled) {
         return;
       }
       try {
-        const result = await fetchGlobalSettings({ server: settingsRequestContext });
+        const result = await fetchGlobalSettings({ server: engineRequestContext });
         if (!mounted) return;
-        skipNextSaveRef.current = true;
-        setSettings(normalizeLoadedGlobalSettings(result.settings));
+        const engineSettings = normalizeLoadedGlobalSettings(result.settings);
+        setSettings((current) => {
+          let next = current;
+          if (
+            !hasMigratedClientSettingsFromEngine() &&
+            !clientSettingsHavePersonalization(current)
+          ) {
+            next = stripEngineBoundSettings(engineSettings);
+            persistClientSettings(next);
+            markClientSettingsMigratedFromEngine();
+          } else if (!hasMigratedClientSettingsFromEngine()) {
+            markClientSettingsMigratedFromEngine();
+          }
+          skipNextSaveRef.current = true;
+          return mergeEngineBoundSettings(next, engineSettings);
+        });
       } catch {
-        // Logged-out, offline, or stale-auth startup should keep defaults and let AuthGate own the UI.
-      } finally {
-        if (mounted) {
-          setReady(true);
-        }
+        // Offline, unsigned, or guest-without-engine: client prefs still apply.
       }
     }
 
-    setReady(false);
-    void load();
-
+    void loadEngineBound();
     return () => {
       mounted = false;
     };
-  }, [serverSettingsEnabled, settingsRequestContext]);
+  }, [engineRequestContext, persistClientSettings, serverSettingsEnabled]);
 
   const syncModelToggleState = useCallback(async () => {
-    const server = settingsServerRef.current;
-    if (!server) {
+    const server = engineServerRef.current;
+    if (!server || !serverSettingsEnabled) {
       return;
     }
     try {
@@ -224,25 +265,30 @@ export function GlobalSettingsProvider({
     } catch {
       // Silently ignore; existing state remains valid.
     }
-  }, []);
+  }, [serverSettingsEnabled]);
 
-  const refetchGlobalSettingsFromServer = useCallback(async () => {
-    const server = settingsServerRef.current;
-    if (!server) {
+  const refetchEngineBoundFromServer = useCallback(async () => {
+    const server = engineServerRef.current;
+    if (!server || !serverSettingsEnabled) {
       return;
     }
     try {
       const result = await fetchGlobalSettings({ server });
       skipNextSaveRef.current = true;
-      setSettings(normalizeLoadedGlobalSettings(result.settings));
+      setSettings((current) =>
+        mergeEngineBoundSettings(
+          current,
+          normalizeLoadedGlobalSettings(result.settings)
+        )
+      );
     } catch {
       // Offline or auth; keep in-memory state.
     }
-  }, []);
+  }, [serverSettingsEnabled]);
 
   const refreshModels = useCallback(async () => {
-    const server = settingsServerRef.current;
-    if (!server) {
+    const server = engineServerRef.current;
+    if (!server || !serverSettingsEnabled) {
       return;
     }
     setModelsRefreshing(true);
@@ -261,7 +307,7 @@ export function GlobalSettingsProvider({
     } finally {
       setModelsRefreshing(false);
     }
-  }, []);
+  }, [serverSettingsEnabled]);
 
   const saveModelToggleUpdates = useCallback(
     async (updates: ModelToggleUpdate[]) => {
@@ -279,18 +325,19 @@ export function GlobalSettingsProvider({
   );
 
   useEffect(() => {
-    if (ready) {
+    if (ready && serverSettingsEnabled) {
       void syncModelToggleState();
     }
-  }, [ready, syncModelToggleState]);
+  }, [ready, serverSettingsEnabled, syncModelToggleState]);
 
   useEffect(() => {
-    if (!ready || !settingsServerRef.current) {
+    if (!ready) {
       return;
     }
 
     if (skipNextSaveRef.current) {
       skipNextSaveRef.current = false;
+      persistClientSettings(settingsRef.current);
       return;
     }
 
@@ -299,8 +346,9 @@ export function GlobalSettingsProvider({
     }
 
     saveTimerRef.current = scheduleTimeout(() => {
-      const server = settingsServerRef.current;
-      if (!server) {
+      persistClientSettings(settingsRef.current);
+      const server = engineServerRef.current;
+      if (!server || !serverSettingsEnabled) {
         return;
       }
       void saveGlobalSettings(settingsRef.current, { server }).catch(() => {});
@@ -311,7 +359,7 @@ export function GlobalSettingsProvider({
         cancelTimeout(saveTimerRef.current);
       }
     };
-  }, [ready, settings]);
+  }, [persistClientSettings, ready, serverSettingsEnabled, settings]);
 
   useEffect(() => {
     if (!ready) {
@@ -328,7 +376,7 @@ export function GlobalSettingsProvider({
       } else if (document.visibilityState === "visible") {
         void (async () => {
           await flushGlobalSettingsNow();
-          await refetchGlobalSettingsFromServer();
+          await refetchEngineBoundFromServer();
           await syncModelToggleState();
         })();
       }
@@ -338,8 +386,6 @@ export function GlobalSettingsProvider({
       void syncModelToggleState();
     }, MODEL_SYNC_INTERVAL_MS);
 
-    // Page lifecycle hooks only exist on web; RN relies on AppState-driven
-    // flushes from the host app plus the periodic sync above.
     const canUsePageLifecycle =
       typeof window !== "undefined" &&
       typeof window.addEventListener === "function" &&
@@ -362,7 +408,7 @@ export function GlobalSettingsProvider({
   }, [
     flushGlobalSettingsNow,
     ready,
-    refetchGlobalSettingsFromServer,
+    refetchEngineBoundFromServer,
     syncModelToggleState,
   ]);
 
@@ -377,22 +423,21 @@ export function GlobalSettingsProvider({
     () => ({
       settings,
       ready,
-      settingsServerId: settingsServer?.id ?? null,
-      settingsServerMissing: requiresDefaultServer,
+      settingsServerId: activeServer?.id ?? null,
+      settingsServerMissing: false,
       updateSettings,
-      refreshSettings: refetchGlobalSettingsFromServer,
+      refreshSettings: refetchEngineBoundFromServer,
       refreshModels,
       modelsRefreshing,
       modelToggleSaveState,
       saveModelToggleUpdates,
     }),
     [
+      activeServer?.id,
       ready,
-      requiresDefaultServer,
       settings,
-      settingsServer?.id,
       updateSettings,
-      refetchGlobalSettingsFromServer,
+      refetchEngineBoundFromServer,
       refreshModels,
       modelsRefreshing,
       modelToggleSaveState,

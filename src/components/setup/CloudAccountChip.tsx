@@ -53,7 +53,7 @@ export function CloudAccountChip() {
   return <DeviceModeChip status={cloud.status} userKey={cloud.userKey} />;
 }
 
-function DeviceModeChip({
+export function DeviceModeChip({
   status,
   userKey,
 }: {
@@ -67,7 +67,7 @@ function DeviceModeChip({
     if (!deviceKey) {
       return;
     }
-    const url = `${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`;
+    const url = `${window.location.origin}/agent?view=settings&link=${encodeURIComponent(deviceKey)}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);

@@ -64,8 +64,8 @@ function normalizeConfigIds(config: ThemeConfig): ThemeConfig {
 }
 
 /**
- * Renders under {@link GlobalSettingsProvider}. Theme is persisted in the same server
- * blob as the rest of app settings and synced after flush + refetch (see provider).
+ * Renders under {@link GlobalSettingsProvider}. Theme lives on the client
+ * (local storage + cloud account sync) and is mirrored into global settings.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { settings, ready, updateSettings } = useGlobalSettings();

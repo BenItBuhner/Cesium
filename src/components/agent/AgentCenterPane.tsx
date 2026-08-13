@@ -64,7 +64,9 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { AgentInactiveState } from "./AgentInactiveState";
 import { useAgentShellState } from "./AgentShellStateContext";
+import { useWorkbenchAccess } from "@/lib/workbench-access";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -136,6 +138,7 @@ export function AgentCenterPane() {
     retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
+  const { agentsLive } = useWorkbenchAccess();
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -1165,6 +1168,10 @@ export function AgentCenterPane() {
       </div>
     </div>
   );
+
+  if (!agentsLive) {
+    return <AgentInactiveState />;
+  }
 
   if (showLanding) {
     return (

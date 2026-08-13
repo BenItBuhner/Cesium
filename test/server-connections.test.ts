@@ -205,10 +205,11 @@ describe("server connections", () => {
       ],
       defaultServerId: null,
     };
-    assert.equal(requiresDefaultServerSelection(withSecond), true);
+    assert.equal(requiresDefaultServerSelection(withSecond), false);
     const next = setDefaultServerConnection(withSecond, "prod");
     assert.equal(next.defaultServerId, "prod");
-    assert.equal(getSettingsServerConnection(next)?.id, "prod");
+    assert.equal(getSettingsServerConnection(withSecond)?.id, base.activeServerId);
+    assert.equal(getSettingsServerConnection(next)?.id, next.activeServerId);
     assert.equal(requiresDefaultServerSelection(next), false);
   });
 

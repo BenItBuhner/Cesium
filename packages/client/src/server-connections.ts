@@ -218,8 +218,12 @@ function pickDefaultServerId(
   return null;
 }
 
-export function requiresDefaultServerSelection(state: ServerConnectionsState): boolean {
-  return state.servers.length > 1 && !getSettingsServerConnection(state);
+/**
+ * Personalization no longer lives on a "home" engine. This always returns
+ * false so the workbench never gates on picking a default settings server.
+ */
+export function requiresDefaultServerSelection(_state: ServerConnectionsState): boolean {
+  return false;
 }
 
 export function getSettingsServerConnection(
@@ -228,13 +232,19 @@ export function getSettingsServerConnection(
   if (state.servers.length === 0) {
     return null;
   }
-  if (state.servers.length === 1) {
-    return state.servers[0] ?? null;
+  if (typeof state.activeServerId === "string") {
+    const active = state.servers.find((server) => server.id === state.activeServerId);
+    if (active) {
+      return active;
+    }
   }
-  if (!state.defaultServerId) {
-    return null;
+  if (typeof state.defaultServerId === "string") {
+    const preferred = state.servers.find((server) => server.id === state.defaultServerId);
+    if (preferred) {
+      return preferred;
+    }
   }
-  return state.servers.find((server) => server.id === state.defaultServerId) ?? null;
+  return state.servers[0] ?? null;
 }
 
 function pickActiveServerId(
