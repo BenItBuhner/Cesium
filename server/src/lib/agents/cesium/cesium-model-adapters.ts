@@ -19,6 +19,84 @@ import type {
   CesiumToolRequest,
 } from "./cesium-types.js";
 
+/**
+ * OAuth request shaping passed through from resolveCesiumAuth. `providerId`
+ * selects protocol quirks (ChatGPT Codex backend, Anthropic OAuth betas,
+ * Copilot editor headers); `headers` carries provider/model static headers.
+ */
+export type CesiumOAuthAdapterAuth = {
+  providerId: string;
+  headers?: Record<string, string>;
+};
+
+const ANTHROPIC_OAUTH_BETAS = "claude-code-20250219,oauth-2025-04-20";
+const ANTHROPIC_OAUTH_SPOOF = "You are Claude Code, Anthropic's official CLI for Claude.";
+const CODEX_DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
+
+/** Collect system message text so provider-native system slots stay faithful. */
+function systemPromptFromMessages(messages: CesiumHistoryMessage[]): string {
+  const parts = messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content.trim())
+    .filter(Boolean);
+  return parts.join("\n\n");
+}
+
+function mergedHeaders(
+  base: Record<string, string>,
+  extra?: Record<string, string>
+): Record<string, string> {
+  if (!extra) {
+    return base;
+  }
+  const merged: Record<string, string> = { ...base };
+  for (const [key, value] of Object.entries(extra)) {
+    merged[key.toLowerCase()] = value;
+  }
+  return merged;
+}
+
+/** ChatGPT Codex account id travels inside the OAuth access token JWT. */
+function extractChatGptAccountId(token: string): string {
+  try {
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) {
+      throw new Error("Invalid token");
+    }
+    const payload = JSON.parse(
+      Buffer.from(payloadPart, "base64url").toString("utf8")
+    ) as Record<string, unknown>;
+    const auth = asRecord(payload["https://api.openai.com/auth"]);
+    const accountId = asString(auth?.chatgpt_account_id);
+    if (!accountId) {
+      throw new Error("No account id in token");
+    }
+    return accountId;
+  } catch {
+    throw new Error(
+      "Failed to extract the ChatGPT account id from the Codex OAuth token. Reconnect ChatGPT (Codex) in Settings → Agents → Cesium Agent."
+    );
+  }
+}
+
+function resolveCodexResponsesUrl(baseUrl: string | undefined): string {
+  const raw = baseUrl?.trim() || CODEX_DEFAULT_BASE_URL;
+  const normalized = raw.replace(/\/+$/, "");
+  if (normalized.endsWith("/codex/responses")) {
+    return normalized;
+  }
+  if (normalized.endsWith("/codex")) {
+    return `${normalized}/responses`;
+  }
+  return `${normalized}/codex/responses`;
+}
+
+/** Copilot expects X-Initiator to distinguish user turns from agent follow-ups. */
+function copilotInitiator(messages: CesiumHistoryMessage[]): "user" | "agent" {
+  const last = messages[messages.length - 1];
+  return last && last.role !== "user" ? "agent" : "user";
+}
+
 /** Omit tools when the caller passed an empty list (tool-less child turns). */
 function optionalProviderTools(
   tools: CesiumToolDefinition[] | undefined,
@@ -180,15 +258,26 @@ async function fetchOpenAiChat(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  oauth?: CesiumOAuthAdapterAuth;
   stream: boolean;
 }): Promise<Response> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
-  return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
+  let headers = mergedHeaders(
+    {
       authorization: `Bearer ${input.apiKey}`,
       "content-type": "application/json",
     },
+    input.oauth?.headers
+  );
+  if (input.oauth?.providerId === "github-copilot") {
+    headers = mergedHeaders(headers, {
+      "X-Initiator": copilotInitiator(input.messages),
+      "Openai-Intent": "conversation-edits",
+    });
+  }
+  return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    method: "POST",
+    headers,
     body: JSON.stringify(openAiChatRequestBody(input, input.stream)),
   });
 }
@@ -312,6 +401,7 @@ async function* streamOpenAiChat(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  oauth?: CesiumOAuthAdapterAuth;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const response = await fetchOpenAiChat({ ...input, stream: true });
   if (!response.ok) {
@@ -361,6 +451,65 @@ async function* streamOpenAiChat(input: {
   yield { kind: "done" };
 }
 
+/**
+ * Responses API input items. Tool traffic maps onto native
+ * `function_call` / `function_call_output` items (the Responses API has no
+ * "tool" message role), which the ChatGPT Codex backend also requires.
+ */
+function openAiResponsesInput(
+  messages: CesiumHistoryMessage[],
+  options: { includeSystem: boolean }
+): unknown[] {
+  const items: unknown[] = [];
+  for (const message of messages) {
+    if (message.role === "system") {
+      if (options.includeSystem) {
+        items.push({ role: "developer", content: message.content });
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      items.push({
+        type: "function_call_output",
+        call_id: message.toolCallId ?? message.name ?? randomUUID(),
+        output: message.content,
+      });
+      continue;
+    }
+    if (message.role === "assistant" && message.toolCalls?.length) {
+      if (message.content.trim()) {
+        items.push({ role: "assistant", content: message.content });
+      }
+      for (const call of message.toolCalls) {
+        items.push({
+          type: "function_call",
+          call_id: call.id,
+          name: call.name,
+          arguments: call.arguments,
+        });
+      }
+      continue;
+    }
+    if (message.role === "user" && message.images?.length) {
+      items.push({
+        role: "user",
+        content: [
+          ...(message.content.trim()
+            ? [{ type: "input_text", text: message.content }]
+            : []),
+          ...message.images.map((image) => ({
+            type: "input_image",
+            image_url: toDataUrl(image.mimeType, image.data),
+          })),
+        ],
+      });
+      continue;
+    }
+    items.push({ role: message.role, content: message.content });
+  }
+  return items;
+}
+
 async function* streamOpenAiResponses(input: {
   apiKey: string;
   baseUrl?: string;
@@ -368,41 +517,60 @@ async function* streamOpenAiResponses(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  oauth?: CesiumOAuthAdapterAuth;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
-  const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+  const isCodex = input.oauth?.providerId === "openai-codex";
   const tools = optionalProviderTools(input.tools, responseTools);
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${input.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  let url: string;
+  let headers: Record<string, string>;
+  let body: Record<string, unknown>;
+  if (isCodex) {
+    // ChatGPT subscription backend: system prompt travels in `instructions`,
+    // storage must be disabled, and the account id header is mandatory.
+    url = resolveCodexResponsesUrl(input.baseUrl);
+    headers = mergedHeaders(
+      {
+        authorization: `Bearer ${input.apiKey}`,
+        "chatgpt-account-id": extractChatGptAccountId(input.apiKey),
+        originator: "pi",
+        "openai-beta": "responses=experimental",
+        accept: "text/event-stream",
+        "content-type": "application/json",
+        session_id: randomUUID(),
+      },
+      input.oauth?.headers
+    );
+    body = {
       model: input.model,
-      input: input.messages.map((message) => {
-        if (message.role === "user" && message.images?.length) {
-          return {
-            role: "user",
-            content: [
-              ...(message.content.trim()
-                ? [{ type: "input_text", text: message.content }]
-                : []),
-              ...message.images.map((image) => ({
-                type: "input_image",
-                image_url: toDataUrl(image.mimeType, image.data),
-              })),
-            ],
-          };
-        }
-        return {
-          role: message.role === "system" ? "developer" : message.role,
-          content: message.content,
-        };
-      }),
+      instructions: systemPromptFromMessages(input.messages) || "You are a helpful assistant.",
+      input: openAiResponsesInput(input.messages, { includeSystem: false }),
+      ...(tools ? { tools, tool_choice: "auto", parallel_tool_calls: true } : {}),
+      store: false,
+      stream: true,
+      include: ["reasoning.encrypted_content"],
+    };
+  } else {
+    const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+    url = `${baseUrl.replace(/\/+$/, "")}/responses`;
+    headers = mergedHeaders(
+      {
+        authorization: `Bearer ${input.apiKey}`,
+        "content-type": "application/json",
+      },
+      input.oauth?.headers
+    );
+    body = {
+      model: input.model,
+      input: openAiResponsesInput(input.messages, { includeSystem: true }),
       ...(tools ? { tools } : {}),
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       stream: true,
-    }),
+    };
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -625,23 +793,74 @@ function anthropicMessages(messages: CesiumHistoryMessage[]) {
     });
 }
 
+function anthropicMessagesUrl(baseUrl: string | undefined): string {
+  const normalized = (baseUrl?.trim() || "https://api.anthropic.com").replace(/\/+$/, "");
+  if (normalized.endsWith("/v1/messages")) {
+    return normalized;
+  }
+  if (normalized.endsWith("/v1")) {
+    return `${normalized}/messages`;
+  }
+  return `${normalized}/v1/messages`;
+}
+
 async function runAnthropic(input: {
   apiKey: string;
+  baseUrl?: string;
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  oauth?: CesiumOAuthAdapterAuth;
 }): Promise<CesiumAdapterResult> {
   const tools = optionalProviderTools(input.tools, anthropicTools);
-  const payload = await fetchJson("https://api.anthropic.com/v1/messages", {
+  const isAnthropicOAuth = input.oauth?.providerId === "anthropic";
+  const isCopilot = input.oauth?.providerId === "github-copilot";
+  let headers: Record<string, string>;
+  if (isAnthropicOAuth) {
+    // Claude Pro/Max subscription tokens require Bearer auth, the OAuth beta
+    // flags, and the Claude Code identity as the first system block.
+    headers = mergedHeaders(
+      {
+        authorization: `Bearer ${input.apiKey}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": ANTHROPIC_OAUTH_BETAS,
+        "content-type": "application/json",
+      },
+      input.oauth?.headers
+    );
+  } else if (isCopilot) {
+    headers = mergedHeaders(
+      {
+        authorization: `Bearer ${input.apiKey}`,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "X-Initiator": copilotInitiator(input.messages),
+      },
+      input.oauth?.headers
+    );
+  } else {
+    headers = mergedHeaders(
+      {
+        "x-api-key": input.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      input.oauth?.headers
+    );
+  }
+  const systemPrompt = systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT;
+  const system = isAnthropicOAuth
+    ? [
+        { type: "text", text: ANTHROPIC_OAUTH_SPOOF },
+        { type: "text", text: systemPrompt },
+      ]
+    : systemPrompt;
+  const payload = await fetchJson(anthropicMessagesUrl(input.baseUrl), {
     method: "POST",
-    headers: {
-      "x-api-key": input.apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       model: input.model,
-      system: CESIUM_SYSTEM_PROMPT,
+      system,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       messages: anthropicMessages(input.messages),
       ...(tools ? { tools } : {}),
@@ -683,18 +902,37 @@ function googleContents(messages: CesiumHistoryMessage[]) {
 
 async function runGoogle(input: {
   apiKey: string;
+  baseUrl?: string;
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  oauth?: CesiumOAuthAdapterAuth;
 }): Promise<CesiumAdapterResult> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
+  const base = (input.baseUrl?.trim() || "https://generativelanguage.googleapis.com").replace(
+    /\/+$/,
+    ""
+  );
+  const apiRoot = /\/v\d+(beta)?$/i.test(base) ? base : `${base}/v1beta`;
+  const endpoint = `${apiRoot}/models/${encodeURIComponent(input.model)}:generateContent`;
+  // OAuth accounts (Pi Google provider packages) authenticate via Bearer;
+  // plain API keys keep the ?key= query parameter.
+  const url = input.oauth ? endpoint : `${endpoint}?key=${encodeURIComponent(input.apiKey)}`;
+  const headers = mergedHeaders(
+    {
+      "content-type": "application/json",
+      ...(input.oauth ? { authorization: `Bearer ${input.apiKey}` } : {}),
+    },
+    input.oauth?.headers
+  );
   const tools = optionalProviderTools(input.tools, googleTools);
   const payload = await fetchJson(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({
       contents: googleContents(input.messages),
-      systemInstruction: { parts: [{ text: CESIUM_SYSTEM_PROMPT }] },
+      systemInstruction: {
+        parts: [{ text: systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT }],
+      },
       ...(tools ? { tools } : {}),
       generationConfig: {
         maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
@@ -742,6 +980,8 @@ export type RunAdapterInput = {
   messages: CesiumHistoryMessage[];
   /** When set, overrides the default composed Cesium tool list (including harness feature modules). */
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  /** Present when the request is backed by an OAuth subscription account. */
+  oauth?: CesiumOAuthAdapterAuth;
 };
 
 async function* streamStaticResult(
@@ -774,6 +1014,7 @@ export async function* streamAdapter(
         model,
         messages: input.messages,
         tools: input.tools,
+        oauth: input.oauth,
       });
       return;
     case "openai-realtime":
@@ -788,9 +1029,11 @@ export async function* streamAdapter(
       yield* streamStaticResult(
         await runAnthropic({
           apiKey: input.apiKey,
+          baseUrl: input.baseUrl,
           model,
           messages: input.messages,
           tools: input.tools,
+          oauth: input.oauth,
         })
       );
       return;
@@ -798,9 +1041,11 @@ export async function* streamAdapter(
       yield* streamStaticResult(
         await runGoogle({
           apiKey: input.apiKey,
+          baseUrl: input.baseUrl,
           model,
           messages: input.messages,
           tools: input.tools,
+          oauth: input.oauth,
         })
       );
       return;
@@ -813,6 +1058,7 @@ export async function* streamAdapter(
         model,
         messages: input.messages,
         tools: input.tools,
+        oauth: input.oauth,
       });
       return;
   }

@@ -888,6 +888,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               apiKey: auth.apiKey,
               baseUrl: auth.baseUrl,
               providerId: auth.providerId,
+              oauth: auth.oauth,
               modelId,
               messages: [...modelHistory, ...toolResultMessages],
               tools: this.harness.tools,
@@ -3778,6 +3779,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         apiKey: auth.apiKey,
         baseUrl: auth.baseUrl,
         providerId: auth.providerId,
+        oauth: auth.oauth,
         modelId,
         messages: [
           { role: "system", content: system },
@@ -3992,6 +3994,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           apiKey: auth.apiKey,
           baseUrl: auth.baseUrl,
           providerId: auth.providerId,
+          oauth: auth.oauth,
           modelId,
         },
         messages: [

@@ -111,6 +111,14 @@ export type CesiumCustomProvider = {
   }>;
 };
 
+export type CesiumTitleGenerationSettings = {
+  /**
+   * Catalog model used to auto-title new conversations (`provider/model`).
+   * null keeps the environment-configured transcription/title pipeline.
+   */
+  modelId: string | null;
+};
+
 export type CesiumAgentSettings = {
   schemaVersion: 1;
   updatedAt: number;
@@ -122,6 +130,7 @@ export type CesiumAgentSettings = {
     modelId: string | null;
     thresholdRatio: number;
   };
+  titleGeneration: CesiumTitleGenerationSettings;
   orchestration: {
     /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
     continueWhenIncomplete: boolean;
@@ -146,6 +155,7 @@ export type CesiumProviderKeyStatus = Omit<CesiumProviderKey, "apiKey" | "source
 export type CesiumAgentSettingsPublic = Omit<CesiumAgentSettings, "providerKeys"> & {
   configured: boolean;
   providerKeys: CesiumProviderKeyStatus[];
+  oauthProviders: import("./cesium-oauth.js").CesiumOAuthProviderStatus[];
   harnessCatalog: ReturnType<typeof getCesiumFeatureCatalog>;
   modeCatalog: CesiumModeDefinition[];
 };
@@ -597,6 +607,9 @@ function defaultSettings(): CesiumAgentSettings {
       modelId: null,
       thresholdRatio: 0.82,
     },
+    titleGeneration: {
+      modelId: null,
+    },
     orchestration: {
       continueWhenIncomplete: true,
     },
@@ -778,6 +791,9 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
       thresholdRatio:
         asNumber(compression?.thresholdRatio) ?? defaults.compression.thresholdRatio,
     },
+    titleGeneration: {
+      modelId: asString(asRecord(record.titleGeneration)?.modelId) ?? null,
+    },
     orchestration: {
       continueWhenIncomplete:
         typeof orchestration?.continueWhenIncomplete === "boolean"
@@ -934,10 +950,14 @@ export async function saveCesiumAgentSettings(
 export async function getCesiumAgentSettingsPublic(): Promise<CesiumAgentSettingsPublic> {
   const settings = await getCesiumAgentSettings();
   const providerKeys = [...envProviderKeys(), ...settings.providerKeys.map(redactedKey)];
+  const { listCesiumOAuthProviders } = await import("./cesium-oauth.js");
+  const oauthProviders = await listCesiumOAuthProviders();
   return {
     ...settings,
-    configured: providerKeys.length > 0,
+    configured:
+      providerKeys.length > 0 || oauthProviders.some((provider) => provider.connected),
     providerKeys,
+    oauthProviders,
     harnessCatalog: getCesiumFeatureCatalog(),
     modeCatalog: [...CESIUM_MODE_DEFINITIONS],
   };
@@ -1033,6 +1053,7 @@ export async function patchCesiumAgentSettings(input: {
   defaultModelId?: string;
   defaultApiKind?: CesiumProviderKind;
   compression?: Partial<CesiumAgentSettings["compression"]>;
+  titleGeneration?: Partial<CesiumTitleGenerationSettings>;
   orchestration?: Partial<CesiumAgentSettings["orchestration"]>;
   modes?: {
     enabled?: Partial<Record<CesiumModeId, boolean>>;
@@ -1058,6 +1079,10 @@ export async function patchCesiumAgentSettings(input: {
     compression: {
       ...settings.compression,
       ...(input.compression ?? {}),
+    },
+    titleGeneration: {
+      ...settings.titleGeneration,
+      ...(input.titleGeneration ?? {}),
     },
     orchestration: {
       ...settings.orchestration,
@@ -1443,12 +1468,23 @@ async function customProviderCatalogEntries(): Promise<CesiumModelCatalogEntry[]
   );
 }
 
+/** Catalog rows contributed by connected OAuth subscription accounts. */
+async function oauthCatalogEntries(): Promise<CesiumModelCatalogEntry[]> {
+  try {
+    const { getCesiumOAuthCatalogEntries } = await import("./cesium-oauth.js");
+    return (await getCesiumOAuthCatalogEntries()).map(normalizeCatalogEntry);
+  } catch {
+    return [];
+  }
+}
+
 export async function getCesiumModelCatalog(options?: {
   forceRefresh?: boolean;
 }): Promise<CesiumModelCatalogEntry[]> {
   const bootstrap = readCesiumEnvBootstrap();
   const bootstrapEntries = bootstrap ? cesiumEnvBootstrapCatalog(bootstrap) : [];
   const customEntries = await customProviderCatalogEntries();
+  const oauthEntries = await oauthCatalogEntries();
   const cached = await readCatalogCache();
   if (
     !options?.forceRefresh &&
@@ -1458,6 +1494,7 @@ export async function getCesiumModelCatalog(options?: {
   ) {
     return mergeCatalogEntries([
       ...customEntries,
+      ...oauthEntries,
       ...cached.entries,
       ...(await getCrofAiCatalog()),
       ...bootstrapEntries,
@@ -1466,12 +1503,14 @@ export async function getCesiumModelCatalog(options?: {
   try {
     return mergeCatalogEntries([
       ...customEntries,
+      ...oauthEntries,
       ...(await refreshCesiumModelCatalog()),
       ...bootstrapEntries,
     ]);
   } catch {
     return mergeCatalogEntries([
       ...customEntries,
+      ...oauthEntries,
       ...(cached?.entries ?? fallbackCatalog()),
       ...(await getCrofAiCatalog()),
       ...bootstrapEntries,
@@ -1684,7 +1723,12 @@ export async function resolveCesiumModelRuntime(input: {
   }
 
   // Third-party hosts only expose OpenAI-compatible chat completions.
-  if (providerId !== "openai" && (apiKind === "openai-responses" || apiKind === "openai-realtime")) {
+  // openai-codex is exempt: the ChatGPT backend speaks the Responses API.
+  if (
+    providerId !== "openai" &&
+    providerId !== "openai-codex" &&
+    (apiKind === "openai-responses" || apiKind === "openai-realtime")
+  ) {
     apiKind = "openai-chat-completions";
   }
   if (apiKind === "openai-compatible") {
@@ -1694,10 +1738,21 @@ export async function resolveCesiumModelRuntime(input: {
   return { providerId, apiKind, baseUrl };
 }
 
+export type CesiumResolvedApiKey = {
+  apiKey: string;
+  baseUrl?: string;
+  providerId: string;
+  apiKind: CesiumProviderKind;
+  /** Present when the credential is an OAuth subscription account. */
+  oauth?: import("./cesium-oauth.js").CesiumOAuthRequestAuth;
+};
+
 export async function resolveCesiumApiKey(input: {
   providerId: string;
   apiKind: CesiumProviderKind;
-}): Promise<{ apiKey: string; baseUrl?: string; providerId: string; apiKind: CesiumProviderKind }> {
+  /** Full `provider/model` id; lets OAuth resolution pick model base URLs/headers. */
+  modelId?: string;
+}): Promise<CesiumResolvedApiKey> {
   const settings = await getCesiumAgentSettings();
   const providerId = normalizeProviderId(input.providerId);
   const providerIds = providerKeyLookupIds(providerId);
@@ -1749,24 +1804,49 @@ export async function resolveCesiumApiKey(input: {
       apiKind: input.apiKind,
     };
   }
+  // OAuth subscription accounts (ChatGPT/Codex, Claude Pro/Max, Copilot, …)
+  // back providers with no stored/env API key.
+  try {
+    const { resolveCesiumOAuthRequestAuth } = await import("./cesium-oauth.js");
+    const oauth = await resolveCesiumOAuthRequestAuth({
+      providerId,
+      modelId: input.modelId,
+    });
+    if (oauth) {
+      return {
+        apiKey: oauth.apiKey,
+        baseUrl: oauth.baseUrl,
+        providerId,
+        apiKind: input.apiKind,
+        oauth,
+      };
+    }
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
   throw new Error(
-    `No API key configured for ${providerLabelFromId(providerId)}. Add one in Settings → Agents → Cesium Agent.`
+    `No API key configured for ${providerLabelFromId(providerId)}. Add one in Settings → Agents → Cesium Agent, or connect an OAuth account.`
   );
 }
 
-export async function resolveCesiumAuth(input: {
-  modelId: string;
-  configuredApiKind?: CesiumProviderKind;
-}): Promise<{
+export type CesiumResolvedAuth = {
   apiKey: string;
   baseUrl?: string;
   providerId: string;
   apiKind: CesiumProviderKind;
-}> {
+  /** Present when the request is backed by an OAuth subscription account. */
+  oauth?: import("./cesium-oauth.js").CesiumOAuthRequestAuth;
+};
+
+export async function resolveCesiumAuth(input: {
+  modelId: string;
+  configuredApiKind?: CesiumProviderKind;
+}): Promise<CesiumResolvedAuth> {
   const runtime = await resolveCesiumModelRuntime(input);
   const key = await resolveCesiumApiKey({
     providerId: runtime.providerId,
     apiKind: runtime.apiKind,
+    modelId: input.modelId,
   });
   const baseUrl =
     key.baseUrl ??
@@ -1774,6 +1854,7 @@ export async function resolveCesiumAuth(input: {
     (await resolveProviderApiBaseUrl(runtime.providerId));
   if (
     runtime.providerId !== "openai" &&
+    !key.oauth &&
     (runtime.apiKind === "openai-chat-completions" || runtime.apiKind === "openai-compatible") &&
     !baseUrl?.trim()
   ) {
@@ -1786,5 +1867,6 @@ export async function resolveCesiumAuth(input: {
     baseUrl: baseUrl?.trim() || (runtime.providerId === "openai" ? OPENAI_DEFAULT_BASE_URL : undefined),
     providerId: runtime.providerId,
     apiKind: runtime.apiKind,
+    oauth: key.oauth,
   };
 }

@@ -2207,6 +2207,16 @@ export type CesiumCustomProvider = {
   }>;
 };
 
+export type CesiumOAuthProviderStatus = {
+  id: string;
+  name: string;
+  connected: boolean;
+  oauthSupported: boolean;
+  usesCallbackServer?: boolean;
+  modelCount: number;
+  description?: string;
+};
+
 export type CesiumAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
@@ -2218,6 +2228,10 @@ export type CesiumAgentSettingsPayload = {
     enabled: boolean;
     modelId: string | null;
     thresholdRatio: number;
+  };
+  titleGeneration: {
+    /** Catalog model for auto-titling conversations; null keeps the env pipeline. */
+    modelId: string | null;
   };
   orchestration: {
     continueWhenIncomplete: boolean;
@@ -2265,6 +2279,7 @@ export type CesiumAgentSettingsPayload = {
     switchMode: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
+  oauthProviders: CesiumOAuthProviderStatus[];
   customProviders: CesiumCustomProvider[];
 };
 
@@ -2301,6 +2316,7 @@ export async function patchCesiumAgentSettings(
       | "defaultModelId"
       | "defaultApiKind"
       | "compression"
+      | "titleGeneration"
       | "orchestration"
       | "modes"
       | "harness"
@@ -2381,6 +2397,57 @@ export async function discoverCesiumProviderModels(input: {
       body: JSON.stringify(input),
     }
   );
+}
+
+export async function startCesiumOAuth(
+  providerId: string
+): Promise<PiAgentOAuthStartResponse> {
+  return request<PiAgentOAuthStartResponse>(
+    `/api/settings/cesium-agent/oauth/${encodeURIComponent(providerId)}/start`,
+    { method: "GET" }
+  );
+}
+
+export async function disconnectCesiumOAuth(
+  providerId: string
+): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
+  return request<{ ok: true; settings: CesiumAgentSettingsPayload }>(
+    `/api/settings/cesium-agent/oauth/${encodeURIComponent(providerId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export type GrokBuildLoginState = {
+  status: "idle" | "pending" | "awaiting-confirmation" | "success" | "failed";
+  verificationUrl?: string;
+  userCode?: string;
+  outputTail?: string;
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+export type GrokBuildLoginResponse = {
+  installed: boolean;
+  login: GrokBuildLoginState;
+};
+
+export async function fetchGrokBuildLogin(): Promise<GrokBuildLoginResponse> {
+  return request<GrokBuildLoginResponse>("/api/settings/grok-build/login", {
+    method: "GET",
+  });
+}
+
+export async function startGrokBuildLogin(): Promise<GrokBuildLoginResponse> {
+  return request<GrokBuildLoginResponse>("/api/settings/grok-build/login/start", {
+    method: "POST",
+  });
+}
+
+export async function cancelGrokBuildLogin(): Promise<GrokBuildLoginResponse> {
+  return request<GrokBuildLoginResponse>("/api/settings/grok-build/login/cancel", {
+    method: "POST",
+  });
 }
 
 export async function fetchTree(depth?: number): Promise<{

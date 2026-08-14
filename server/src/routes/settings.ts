@@ -48,6 +48,17 @@ import {
   type CesiumAgentSettings,
 } from "../lib/cesium-agent-settings.js";
 import {
+  disconnectCesiumOAuth,
+  invalidateCesiumOAuthCache,
+  startCesiumOAuth,
+} from "../lib/cesium-oauth.js";
+import {
+  cancelGrokBuildDeviceLogin,
+  getGrokBuildLoginState,
+  isGrokCliInstalled,
+  startGrokBuildDeviceLogin,
+} from "../lib/grok-build-login.js";
+import {
   bumpRevision,
   formatEtag,
   getRevision,
@@ -363,6 +374,9 @@ settingsRoutes.get("/api/settings/pi-agent/oauth/callback", async (c) => {
       ...(state ? { state } : {}),
     });
     await forceRefreshAllBackendCaches(["pi-agent"]);
+    // The Cesium harness reads the same auth.json; surface the new connection
+    // (provider status + OAuth model catalog rows) without waiting for the TTL.
+    invalidateCesiumOAuthCache();
     return c.html(piAgentOAuthSuccessHtml(providerLabelForId(result.providerId)));
   } catch (callbackError) {
     const message =
@@ -431,6 +445,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     defaultModelId?: string;
     defaultApiKind?: unknown;
     compression?: Record<string, unknown>;
+    titleGeneration?: { modelId?: string | null };
     orchestration?: Record<string, unknown>;
     modes?: { enabled?: Record<string, boolean> };
     harness?: {
@@ -448,6 +463,21 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(isCesiumProviderKind(body.defaultApiKind) ? { defaultApiKind: body.defaultApiKind } : {}),
     ...(body.compression
       ? { compression: body.compression as Partial<CesiumAgentSettings["compression"]> }
+      : {}),
+    ...(body.titleGeneration
+      ? {
+          titleGeneration: {
+            ...(body.titleGeneration.modelId !== undefined
+              ? {
+                  modelId:
+                    typeof body.titleGeneration.modelId === "string" &&
+                    body.titleGeneration.modelId.trim()
+                      ? body.titleGeneration.modelId.trim()
+                      : null,
+                }
+              : {}),
+          },
+        }
       : {}),
     ...(body.orchestration
       ? { orchestration: body.orchestration as Partial<CesiumAgentSettings["orchestration"]> }
@@ -501,6 +531,55 @@ settingsRoutes.put("/api/settings/cesium-agent/provider-key", async (c) => {
 settingsRoutes.delete("/api/settings/cesium-agent/provider-key/:id", async (c) => {
   const settings = await deleteCesiumProviderKey(c.req.param("id"));
   return c.json({ ok: true, settings });
+});
+
+settingsRoutes.get("/api/settings/cesium-agent/oauth/:providerId/start", async (c) => {
+  const providerId = c.req.param("providerId");
+  try {
+    const origin = publicOriginFromRequest(c);
+    // Shares the Pi OAuth flow and callback endpoint; the credential lands in
+    // the shared auth.json that resolveCesiumOAuthRequestAuth reads.
+    const result = await startCesiumOAuth({ providerId, publicOrigin: origin });
+    return c.json({
+      ...result,
+      callbackUrl: result.callbackUrl ?? buildPiAgentOAuthCallbackUrl(origin),
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to start Cesium OAuth.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.delete("/api/settings/cesium-agent/oauth/:providerId", async (c) => {
+  try {
+    await disconnectCesiumOAuth(c.req.param("providerId"));
+    await forceRefreshAllBackendCaches(["pi-agent"]);
+    return c.json({ ok: true, settings: await getCesiumAgentSettingsPublic() });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to disconnect OAuth provider.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.get("/api/settings/grok-build/login", async (c) => {
+  return c.json({
+    installed: isGrokCliInstalled(),
+    login: getGrokBuildLoginState(),
+  });
+});
+
+settingsRoutes.post("/api/settings/grok-build/login/start", async (c) => {
+  const login = await startGrokBuildDeviceLogin();
+  return c.json({ installed: isGrokCliInstalled(), login });
+});
+
+settingsRoutes.post("/api/settings/grok-build/login/cancel", async (c) => {
+  return c.json({
+    installed: isGrokCliInstalled(),
+    login: cancelGrokBuildDeviceLogin(),
+  });
 });
 
 settingsRoutes.get("/api/settings/cesium-agent/models", async (c) => {
