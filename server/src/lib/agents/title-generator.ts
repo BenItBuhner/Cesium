@@ -20,7 +20,10 @@ const SYSTEM_PROMPT =
 function validateTitle(raw: string): string | null {
   const trimmed = raw.trim().replace(/^["'`]+|["'`]+$/g, "").replace(/[.:;,!?]+$/, "");
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length < 3 || words.length > 5) {
+  // Models frequently return a word or two outside the requested 3-5 range;
+  // a slightly long-but-good title beats discarding it and falling back to
+  // "New chat". Reject only clearly malformed output (empty or run-on prose).
+  if (words.length < 1 || words.length > 10 || trimmed.length > 80) {
     return null;
   }
   return words.join(" ");

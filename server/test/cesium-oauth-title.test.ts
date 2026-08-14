@@ -169,6 +169,60 @@ test("generateTitleFromText uses the configured catalog model end to end", async
   }
 });
 
+test("generateTitleFromText accepts slightly-long titles instead of discarding them", async () => {
+  // Regression: kimi-k3 returned "SQLite vs Postgres for Local-First Apps"
+  // (6 words) and the old 3-5 word validator threw the title away.
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          choices: [
+            { message: { content: "SQLite vs Postgres for Local-First Apps" } },
+          ],
+        })
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const baseUrl = `http://127.0.0.1:${port}/v1`;
+
+  try {
+    await patchCesiumAgentSettings({
+      customProviders: [
+        {
+          id: "title-proxy-long",
+          name: "Title Proxy Long",
+          apiKind: "openai-chat-completions",
+          baseUrl,
+          models: [{ id: "title-mini", name: "Title Mini" }],
+        },
+      ],
+    });
+    await upsertCesiumProviderKey({
+      providerId: "title-proxy-long",
+      label: "Title Proxy Long",
+      apiKind: "openai-chat-completions",
+      apiKey: "test-title-key",
+      baseUrl,
+    });
+    await patchCesiumAgentSettings({
+      titleGeneration: { modelId: "title-proxy-long/title-mini" },
+    });
+
+    const title = await generateTitleFromText("sqlite or postgres?");
+    assert.equal(title, "SQLite vs Postgres for Local-First Apps");
+  } finally {
+    await patchCesiumAgentSettings({
+      customProviders: [],
+      titleGeneration: { modelId: null },
+    });
+    server.close();
+  }
+});
+
 test("generateTitleFromText returns null when neither settings nor env are usable", async () => {
   setTitleModelIdOverrideForTests("missing-provider/missing-model");
   try {
