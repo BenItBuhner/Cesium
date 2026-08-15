@@ -106,12 +106,12 @@ const MOOD_TARGETS: Record<AuroraMood, MoodParams> = {
   waiting: {
     flow: 0.45,
     energy: 0.75,
-    luminance: 0.95,
+    luminance: 1.0,
     bottomGlow: 0.55,
     pulse: 0.85,
     shimmer: 0.2,
     tint: [251, 191, 36],
-    tintStrength: 0.45,
+    tintStrength: 0.62,
   },
   completed: {
     flow: 0.75,

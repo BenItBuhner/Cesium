@@ -1062,6 +1062,8 @@ export function AgentCenterPane() {
       selectedConversationId ?? (optimisticTurn ? OPTIMISTIC_CONVERSATION_ID : "__draft__"),
     status: conversation?.status,
     hasCompletionFailure: conversationHasCompletionFailure(conversation, rawThreadEvents),
+    hasDockedQuestion: dockedAsk != null,
+    optimisticKey: OPTIMISTIC_CONVERSATION_ID,
     showLanding,
     isTyping: composerDraftText.trim().length > 0,
     workingOverride: Boolean(optimisticTurn),

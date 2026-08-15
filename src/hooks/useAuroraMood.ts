@@ -36,6 +36,18 @@ export function useAuroraMood(input: {
    * conversation — so status transitions alone would miss them.
    */
   hasCompletionFailure: boolean;
+  /**
+   * A docked ask-question card is waiting on the user. More reliable than
+   * `awaiting_question`, which can read as `running` mid-question.
+   */
+  hasDockedQuestion: boolean;
+  /**
+   * Key used for the optimistic first-turn view. Handing off from this key to
+   * the server-acked conversation is a continuation of the same thread, so
+   * transition tracking survives it (instant failures land right at the
+   * handoff and would otherwise be swallowed by the reset).
+   */
+  optimisticKey?: string;
   /** New-chat landing (draft conversation, nothing sent yet). */
   showLanding: boolean;
   /** Composer draft has content. */
@@ -49,6 +61,8 @@ export function useAuroraMood(input: {
     conversationKey,
     status,
     hasCompletionFailure,
+    hasDockedQuestion,
+    optimisticKey,
     showLanding,
     isTyping,
     workingOverride,
@@ -62,14 +76,17 @@ export function useAuroraMood(input: {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const keyChanged = prevKeyRef.current !== conversationKey;
+    const previousKey = prevKeyRef.current;
+    const keyChanged = previousKey !== conversationKey;
+    const isOptimisticHandoff =
+      keyChanged && optimisticKey != null && previousKey === optimisticKey;
     const previous = prevStatusRef.current;
     const previousFailure = prevFailureRef.current;
     prevKeyRef.current = conversationKey;
     prevStatusRef.current = status;
     prevFailureRef.current = hasCompletionFailure;
 
-    if (keyChanged) {
+    if (keyChanged && !isOptimisticHandoff) {
       // Selecting another thread must never replay its last transition.
       if (timerRef.current) {
         clearTimeout(timerRef.current);
@@ -115,7 +132,7 @@ export function useAuroraMood(input: {
         next === "completed" ? COMPLETED_LINGER_MS : ERROR_LINGER_MS
       );
     }
-  }, [conversationKey, status, hasCompletionFailure, reactToActivity]);
+  }, [conversationKey, status, hasCompletionFailure, optimisticKey, reactToActivity]);
 
   useEffect(
     () => () => {
@@ -129,11 +146,11 @@ export function useAuroraMood(input: {
   if (!reactToActivity) {
     return "idle";
   }
+  if (isWaitingStatus(status) || hasDockedQuestion) {
+    return "waiting";
+  }
   if (workingOverride || isWorkingStatus(status)) {
     return "working";
-  }
-  if (isWaitingStatus(status)) {
-    return "waiting";
   }
   if (transient) {
     return transient;
