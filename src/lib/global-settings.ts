@@ -24,3 +24,19 @@ export type {
   WorkspaceSortMode,
 } from "@cesium/client";
 export { AGENT_RAIL_SECTION_IDS } from "@cesium/client";
+export {
+  AURORA_MAX_CUSTOM_COLORS,
+  AURORA_MIN_CUSTOM_COLORS,
+  AURORA_PRESET_CATALOG,
+  AURORA_PRESET_IDS,
+  DEFAULT_AURORA_PRESET_ID,
+  createDefaultAuroraSettings,
+  isAuroraPresetId,
+  normalizeAuroraSettings,
+  resolveAuroraColors,
+} from "@cesium/client";
+export type {
+  AuroraPresetDefinition,
+  AuroraPresetId,
+  AuroraSettingsState,
+} from "@cesium/client";

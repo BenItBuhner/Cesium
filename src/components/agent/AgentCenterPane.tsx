@@ -64,7 +64,9 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { AuroraBackdrop } from "./AuroraBackdrop";
 import { useAgentShellState } from "./AgentShellStateContext";
+import { useAuroraMood } from "@/hooks/useAuroraMood";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -1051,6 +1053,16 @@ export function AgentCenterPane() {
   }, [expandedComposerState, setExpandedComposerController]);
 
   const showLanding = isDraftConversationSelected && !conversation && !optimisticTurn;
+
+  const auroraMood = useAuroraMood({
+    conversationKey:
+      selectedConversationId ?? (optimisticTurn ? OPTIMISTIC_CONVERSATION_ID : "__draft__"),
+    status: conversation?.status,
+    showLanding,
+    isTyping: composerDraftText.trim().length > 0,
+    workingOverride: Boolean(optimisticTurn),
+    reactToActivity: globalSettings.aurora.reactToActivity,
+  });
   const showConversationTransitionState =
     !optimisticTurn &&
     (conversationSelectionPending ||
@@ -1172,7 +1184,10 @@ export function AgentCenterPane() {
         ref={paneRootRef}
         className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
       >
-        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+        <AuroraBackdrop mood={auroraMood} />
+        <div className="relative z-10 min-h-0 min-w-0 flex-1">
+          <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+        </div>
       </div>
     );
   }
@@ -1182,6 +1197,7 @@ export function AgentCenterPane() {
       ref={paneRootRef}
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
+      <AuroraBackdrop mood={auroraMood} />
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
