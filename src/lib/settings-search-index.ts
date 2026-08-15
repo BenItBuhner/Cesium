@@ -186,6 +186,43 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Show file edits as added and removed line counts instead of the full inline diff.",
     ["edit diff", "diff", "counts", "lines added", "lines removed"]
   ),
+  section("appearance", "aurora", "Conversation aurora", "borealis background"),
+  row(
+    "appearance",
+    "aurora-enabled",
+    "Aurora background",
+    "Soft moving color wash behind the agent conversation.",
+    ["aurora", "borealis", "background", "ambient", "lights"]
+  ),
+  row(
+    "appearance",
+    "aurora-react-state",
+    "React to conversation state",
+    "Shift aurora motion when the chat is new, typing, working, waiting, or finished.",
+    ["aurora", "typing", "working", "completed"]
+  ),
+  row(
+    "appearance",
+    "aurora-preset",
+    "Aurora preset",
+    "Borealis, Australis, Arctic, Dusk, Nebula, Monochrome, or custom colors.",
+    ["aurora", "preset", "borealis", "australis", "arctic", "dusk", "nebula"]
+  ),
+  row(
+    "appearance",
+    "aurora-custom-colors",
+    "Aurora custom colors",
+    "Three colors used when the Custom aurora preset is selected."
+  ),
+  row("appearance", "aurora-intensity", "Aurora intensity", "How present the conversation wash is."),
+  row("appearance", "aurora-speed", "Aurora speed", "How quickly the aurora curtains drift."),
+  row("appearance", "aurora-blur", "Aurora blur", "Softness of the conversation aurora edges."),
+  row(
+    "appearance",
+    "aurora-preview",
+    "Aurora preview",
+    "Sample aurora motion for each conversation state."
+  ),
   section("appearance", "chat", "Chat"),
   row(
     "appearance",

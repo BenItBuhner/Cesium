@@ -6,6 +6,14 @@ import {
 } from "../src/lib/settings-search-index.ts";
 
 describe("settings search index", () => {
+  test("indexes conversation aurora settings", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "aurora borealis");
+    assert.ok(hits.some((hit) => hit.rowId === "aurora-enabled"));
+    assert.ok(hits.some((hit) => hit.rowId === "aurora-preset"));
+    assert.ok(hits.some((hit) => hit.id === "appearance::section::aurora"));
+  });
+
   test("finds nav and row entries by label", () => {
     const index = buildSettingsSearchIndex({});
     const appearance = searchSettingsIndex(index, "appearance");

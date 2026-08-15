@@ -12,6 +12,11 @@ import {
   type ThemePreference,
 } from "./theme";
 import { clientKeyValueStore } from "./platform";
+import {
+  createDefaultAuroraConfig,
+  normalizeAuroraConfig,
+  type AuroraConfig,
+} from "./aurora-config";
 
 export const THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config" as const;
 
@@ -67,6 +72,8 @@ export type ThemeConfig = {
   longPasteReferencesEnabled: boolean;
   /** Max height of expanded worked-session tool-call dropdown bodies in chat (px). */
   toolCallDropdownMaxHeightPx: number;
+  /** Ambient aurora wash behind the agent conversation pane. */
+  aurora: AuroraConfig;
 };
 
 export function createDefaultThemeConfig(): ThemeConfig {
@@ -80,6 +87,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     editDiffRenderingMode: "full",
     longPasteReferencesEnabled: true,
     toolCallDropdownMaxHeightPx: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
+    aurora: createDefaultAuroraConfig(),
   };
 }
 
@@ -150,6 +158,7 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     toolCallDropdownMaxHeightPx: normalizeToolCallDropdownMaxHeightPx(
       r.toolCallDropdownMaxHeightPx
     ),
+    aurora: normalizeAuroraConfig(r.aurora),
   };
 }
 

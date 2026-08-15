@@ -25,6 +25,7 @@ export * from "./theme-tokens";
 export * from "./theme-presets";
 export * from "./theme-design-overlays";
 export * from "./theme-config";
+export * from "./aurora-config";
 export * from "./theme-resolve";
 export * from "./global-settings";
 export * from "./rail-fetch";

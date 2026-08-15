@@ -14,6 +14,7 @@ import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
+import { AuroraBackground } from "@/components/chat/AuroraBackground";
 import { MessageList } from "@/components/chat/MessageList";
 import { PlanReviewDock, type DockedPlanFile } from "@/components/chat/PlanReviewDock";
 import {
@@ -42,6 +43,7 @@ import {
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
 import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { useAuroraConversationState } from "@/lib/aurora-state";
 import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
@@ -1051,6 +1053,18 @@ export function AgentCenterPane() {
   }, [expandedComposerState, setExpandedComposerController]);
 
   const showLanding = isDraftConversationSelected && !conversation && !optimisticTurn;
+  const auroraState = useAuroraConversationState({
+    isNewChat: showLanding || (!optimisticTurn && scrollMessages.length === 0),
+    status: optimisticTurn ? "running" : conversation?.status,
+    busy:
+      Boolean(optimisticTurn) ||
+      isAgentComposerBusy(
+        conversation,
+        selectedConversationId ? eventsByConversationId[selectedConversationId] : undefined
+      ),
+    composerText: composerDraftText,
+    hasCompletionError: completionErrorDock.visible,
+  });
   const showConversationTransitionState =
     !optimisticTurn &&
     (conversationSelectionPending ||
@@ -1172,7 +1186,10 @@ export function AgentCenterPane() {
         ref={paneRootRef}
         className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
       >
-        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+        <AuroraBackground state={auroraState} />
+        <div className="relative z-[1] flex h-full min-h-0 w-full flex-col">
+          <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+        </div>
       </div>
     );
   }
@@ -1182,7 +1199,8 @@ export function AgentCenterPane() {
       ref={paneRootRef}
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <AuroraBackground state={auroraState} />
+      <div className="relative z-[1] min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
             <MessageList

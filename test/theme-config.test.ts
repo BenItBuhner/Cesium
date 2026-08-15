@@ -61,6 +61,8 @@ describe("theme config", () => {
     const config = createDefaultThemeConfig();
     assert.equal(config.toolCallDropdownMaxHeightPx, TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX);
     assert.equal(config.editDiffRenderingMode, "full");
+    assert.equal(config.aurora.enabled, true);
+    assert.equal(config.aurora.presetId, "borealis");
   });
 
   test("defaults dark appearance to the OLED black theme", () => {

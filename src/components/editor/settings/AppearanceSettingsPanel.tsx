@@ -28,6 +28,7 @@ import {
 } from "@/components/editor/settings-ui";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { AuroraSettingsSection } from "./AuroraSettingsSection";
 import { selectClass, shortcutInputClass } from "./shared";
 
 const APPEARANCE_MODE_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
@@ -237,6 +238,7 @@ export function AppearanceSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <AuroraSettingsSection />
       <SettingsSection title="Chat">
         <SettingsBlock searchId="tool-call-dropdown-height">
           <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
