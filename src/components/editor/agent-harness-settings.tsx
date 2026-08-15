@@ -18,15 +18,18 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { AgentsSettingsState, RememberedAgentPermissionRule } from "@/lib/global-settings";
 import {
+  cancelGrokBuildLogin,
   deleteCursorSdkApiKey,
   deleteClaudeCodeSdkSettings,
   deleteCesiumProviderKey,
+  disconnectCesiumOAuth,
   disconnectPiAgentOAuth,
   discoverCesiumProviderModels,
   fetchClaudeCodeSdkSettings,
   fetchCesiumAgentSettings,
   fetchCesiumModelCatalog,
   fetchCursorSdkCredentialStatus,
+  fetchGrokBuildLogin,
   fetchPiAgentSettings,
   patchCesiumAgentSettings,
   refreshCesiumModelCatalog,
@@ -35,6 +38,8 @@ import {
   saveCesiumProviderKey,
   savePiAgentHome,
   savePiAgentProviderKey,
+  startCesiumOAuth,
+  startGrokBuildLogin,
   startPiAgentOAuth,
   removeRememberedAgentPermission,
   clearRememberedAgentPermissions,
@@ -43,9 +48,11 @@ import {
   type CesiumCustomProvider,
   type CesiumDiscoveredProviderModel,
   type CesiumModelCatalogEntry,
+  type CesiumOAuthProviderStatus,
   type CesiumProviderKeyStatus,
   type CesiumProviderKind,
   type CursorSdkCredentialStatus,
+  type GrokBuildLoginResponse,
   type PiAgentHomeMode,
   type PiAgentProviderStatus,
   type PiAgentSettingsResponse,
@@ -961,6 +968,7 @@ function CesiumAgentHarnessSettings() {
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [customModalOpen, setCustomModalOpen] = useState(false);
 
@@ -1004,6 +1012,71 @@ function CesiumAgentHarnessSettings() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    // The Cesium OAuth flow reuses the Pi callback page, which posts this
+    // message to the opener window when the provider finishes connecting.
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "opencursor-pi-agent-oauth") {
+        void refresh().then(() => notifyAgentBackendsChanged());
+        setMessage("OAuth account connected.");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [refresh]);
+
+  const connectOAuthAccount = useCallback(
+    async (provider: CesiumOAuthProviderStatus) => {
+      setOauthBusyId(provider.id);
+      setMessage(null);
+      try {
+        const result = await startCesiumOAuth(provider.id);
+        if (result.authUrl) {
+          window.open(result.authUrl, "_blank", "noopener,noreferrer,width=520,height=720");
+          setMessage(
+            result.instructions ??
+              `Complete sign-in for ${provider.name} in your browser, then return here.`
+          );
+        } else if (result.verificationUri && result.userCode) {
+          window.open(
+            result.verificationUri,
+            "_blank",
+            "noopener,noreferrer,width=520,height=720"
+          );
+          setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
+        } else {
+          setMessage("OAuth flow started. Refreshing status…");
+        }
+        window.setTimeout(() => {
+          void refresh().then(() => notifyAgentBackendsChanged());
+        }, 4000);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to start OAuth sign-in.");
+      } finally {
+        setOauthBusyId(null);
+      }
+    },
+    [refresh]
+  );
+
+  const disconnectOAuthAccount = useCallback(
+    async (provider: CesiumOAuthProviderStatus) => {
+      setOauthBusyId(provider.id);
+      setMessage(null);
+      try {
+        const result = await disconnectCesiumOAuth(provider.id);
+        setSettings(result.settings);
+        setMessage(`${provider.name} disconnected.`);
+        notifyAgentBackendsChanged();
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to disconnect account.");
+      } finally {
+        setOauthBusyId(null);
+      }
+    },
+    []
+  );
 
   const saveKey = useCallback(async () => {
     if (!selectedProvider || !apiKey.trim()) {
@@ -1114,6 +1187,32 @@ function CesiumAgentHarnessSettings() {
     }));
     return [{ value: "", label: "Automatic" }, ...options];
   }, [uniqueProviderKeys]);
+
+  const titleModelOptions = useMemo(() => {
+    // Only offer models the harness can actually call: providers with saved/env
+    // keys, connected OAuth accounts, or custom endpoints.
+    const usableProviderIds = new Set<string>();
+    for (const key of settings?.providerKeys ?? []) {
+      usableProviderIds.add(key.providerId);
+    }
+    for (const provider of settings?.oauthProviders ?? []) {
+      if (provider.connected) {
+        usableProviderIds.add(provider.id);
+      }
+    }
+    for (const provider of settings?.customProviders ?? []) {
+      usableProviderIds.add(provider.id);
+    }
+    const options = catalog
+      .filter((entry) => usableProviderIds.has(entry.providerId))
+      .map((entry) => ({ value: entry.modelId, label: entry.modelName }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const selected = settings?.titleGeneration?.modelId;
+    if (selected && !options.some((option) => option.value === selected)) {
+      options.unshift({ value: selected, label: selected });
+    }
+    return [{ value: "", label: "Automatic (server env pipeline)" }, ...options];
+  }, [catalog, settings]);
 
   const needsBaseUrlField =
     selectedProvider &&
@@ -1285,6 +1384,70 @@ function CesiumAgentHarnessSettings() {
         </div>
       </HarnessDetailBlock>
 
+      {settings && settings.oauthProviders.length > 0 ? (
+        <HarnessDetailBlock>
+          <SettingsSubsectionHeading>OAuth accounts</SettingsSubsectionHeading>
+          <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+            Subscription sign-ins (ChatGPT/Codex, Claude Pro/Max, GitHub Copilot, Google) shared
+            with the Pi harness. Connected providers add their models to the Cesium picker and are
+            used automatically when no API key is saved.
+          </p>
+          <ul className="mt-[10px] divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
+            {settings.oauthProviders.map((provider) => {
+              const providerBusy = oauthBusyId === provider.id;
+              return (
+                <li
+                  key={provider.id}
+                  className="flex flex-wrap items-start justify-between gap-[10px] px-[12px] py-[12px]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      {provider.name}
+                    </p>
+                    <p className="mt-[3px] font-mono text-[11px] text-[var(--text-secondary)]">
+                      {provider.id}
+                      {provider.modelCount > 0
+                        ? ` · ${provider.modelCount} model${provider.modelCount === 1 ? "" : "s"}`
+                        : ""}
+                      {" · "}
+                      {provider.connected ? "connected" : "not connected"}
+                    </p>
+                    {provider.description ? (
+                      <p className="mt-[4px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                        {provider.description}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-[8px]">
+                    {provider.oauthSupported && !provider.connected ? (
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={providerBusy}
+                        onClick={() => void connectOAuthAccount(provider)}
+                      >
+                        <ExternalLink className="size-[14px]" strokeWidth={1.5} />
+                        Connect
+                      </button>
+                    ) : null}
+                    {provider.connected ? (
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={providerBusy}
+                        onClick={() => void disconnectOAuthAccount(provider)}
+                      >
+                        Disconnect
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </HarnessDetailBlock>
+      ) : null}
+
       {settings ? (
         <>
           <HarnessDetailBlock>
@@ -1321,6 +1484,31 @@ function CesiumAgentHarnessSettings() {
                 />
               </label>
             </div>
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
+            <SettingsSubsectionHeading>Conversation titles</SettingsSubsectionHeading>
+            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              Model used to auto-title new conversations. Pick any configured catalog model —
+              including OAuth-connected ones — or keep Automatic to use the server&apos;s
+              transcription/title environment pipeline.
+            </p>
+            <label className="mt-[10px] flex flex-col gap-[5px]">
+              <SettingsFieldLabel>Title generation model</SettingsFieldLabel>
+              <SettingsThemeSelect
+                value={settings.titleGeneration?.modelId ?? ""}
+                options={titleModelOptions}
+                onChange={(value) =>
+                  void patchSettings({
+                    titleGeneration: { modelId: value || null },
+                  })
+                }
+                ariaLabel="Title generation model"
+                className="w-full max-w-none"
+                triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                disabled={busy}
+              />
+            </label>
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
@@ -2045,6 +2233,146 @@ function PiAgentHarnessSettings() {
   );
 }
 
+function GrokBuildHarnessSettings() {
+  const [payload, setPayload] = useState<GrokBuildLoginResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setPayload(await fetchGrokBuildLogin());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load Grok Build status.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const login = payload?.login;
+  const active = login?.status === "pending" || login?.status === "awaiting-confirmation";
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const timer = window.setInterval(() => void refresh(), 2500);
+    return () => window.clearInterval(timer);
+  }, [active, refresh]);
+
+  const startLogin = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await startGrokBuildLogin();
+      setPayload(result);
+      if (result.login.status === "failed") {
+        setMessage(result.login.error ?? "Grok login failed to start.");
+      } else if (result.login.verificationUrl) {
+        window.open(
+          result.login.verificationUrl,
+          "_blank",
+          "noopener,noreferrer,width=520,height=720"
+        );
+      }
+      notifyAgentBackendsChanged();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to start Grok login.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const cancelLogin = useCallback(async () => {
+    setBusy(true);
+    try {
+      setPayload(await cancelGrokBuildLogin());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to cancel Grok login.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const statusLabel =
+    login == null
+      ? "Loading…"
+      : login.status === "success"
+        ? "Signed in — the CLI cached its token; Grok Build sessions authenticate automatically."
+        : login.status === "awaiting-confirmation"
+          ? "Waiting for you to approve the sign-in in your browser."
+          : login.status === "pending"
+            ? "Starting the Grok CLI device sign-in…"
+            : login.status === "failed"
+              ? login.error ?? "Sign-in failed."
+              : payload?.installed
+                ? "Not signed in. Start the device sign-in below, or set XAI_API_KEY."
+                : "Grok CLI not detected on the server host.";
+
+  return (
+    <HarnessDetailBlock>
+      <SettingsSubsectionHeading>Grok account</SettingsSubsectionHeading>
+      <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
+        <p className="text-[13px] font-medium text-[var(--text-primary)]">{statusLabel}</p>
+        <p className="leading-relaxed">
+          Runs <span className="font-mono text-[11px] text-[var(--text-primary)]">grok login
+          --device-auth</span> on the server host. Approve the request in your browser and the CLI
+          caches its token for the ACP handshake.
+        </p>
+        {login?.verificationUrl && active ? (
+          <div className="rounded-[8px] border border-[var(--border-subtle)] px-[12px] py-[10px]">
+            <p className="font-sans text-[12px] text-[var(--text-primary)]">
+              Open{" "}
+              <a
+                href={login.verificationUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-dotted underline-offset-2"
+              >
+                {login.verificationUrl}
+              </a>
+              {login.userCode ? (
+                <>
+                  {" "}and enter code{" "}
+                  <span className="font-mono text-[12px] font-semibold">{login.userCode}</span>
+                </>
+              ) : null}
+              .
+            </p>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-[8px]">
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={busy || active || payload?.installed === false}
+            onClick={() => void startLogin()}
+          >
+            <ExternalLink className="size-[14px]" strokeWidth={1.5} />
+            Sign in with device auth
+          </button>
+          {active ? (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={busy}
+              onClick={() => void cancelLogin()}
+            >
+              Cancel
+            </button>
+          ) : null}
+          <button type="button" className={rowButtonClass} onClick={() => void refresh()}>
+            <RefreshCw className="size-[14px]" strokeWidth={1.5} />
+            Refresh status
+          </button>
+        </div>
+        {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
+      </div>
+    </HarnessDetailBlock>
+  );
+}
+
 function HarnessGenericSettings() {
   return (
     <HarnessDetailBlock>
@@ -2067,6 +2395,8 @@ function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
       return <ClaudeCodeSdkHarnessSettings />;
     case "pi-agent":
       return <PiAgentHarnessSettings />;
+    case "grok-build":
+      return <GrokBuildHarnessSettings />;
     default:
       return <HarnessGenericSettings />;
   }

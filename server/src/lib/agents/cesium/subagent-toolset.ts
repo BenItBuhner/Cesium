@@ -141,6 +141,7 @@ export async function runSubagentToolLoop(input: {
     apiKind: CesiumProviderKind;
     apiKey: string;
     baseUrl?: string;
+    oauth?: import("./cesium-model-adapters.js").CesiumOAuthAdapterAuth;
     providerId: string;
     modelId: string;
   };
@@ -170,6 +171,7 @@ export async function runSubagentToolLoop(input: {
       apiKey: input.adapter.apiKey,
       baseUrl: input.adapter.baseUrl,
       providerId: input.adapter.providerId,
+      oauth: input.adapter.oauth,
       modelId: input.adapter.modelId,
       messages,
       // Explicit empty array when no toolset: adapters omit tools from the
