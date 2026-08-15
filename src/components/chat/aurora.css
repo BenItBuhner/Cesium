@@ -68,22 +68,22 @@
   inset: 0;
   background:
     radial-gradient(
-      72% 58% at 22% 18%,
-      rgba(var(--aurora-color-a), calc(var(--aurora-opacity) * 0.72)) 0%,
-      transparent 62%
-    ),
-    radial-gradient(
-      64% 52% at 78% 12%,
-      rgba(var(--aurora-color-b), calc(var(--aurora-opacity) * 0.58)) 0%,
-      transparent 64%
-    ),
-    radial-gradient(
-      70% 48% at 58% 78%,
-      rgba(var(--aurora-color-c), calc(var(--aurora-opacity) * 0.42)) 0%,
+      80% 64% at 18% 16%,
+      rgba(var(--aurora-color-a), calc(var(--aurora-opacity) * 0.95)) 0%,
       transparent 68%
+    ),
+    radial-gradient(
+      74% 58% at 82% 10%,
+      rgba(var(--aurora-color-b), calc(var(--aurora-opacity) * 0.88)) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      78% 56% at 54% 82%,
+      rgba(var(--aurora-color-c), calc(var(--aurora-opacity) * 0.7)) 0%,
+      transparent 72%
     );
-  filter: blur(calc(var(--aurora-blur) * 0.35));
-  opacity: 0.9;
+  filter: blur(calc(var(--aurora-blur) * 0.28));
+  opacity: 1;
   animation: aurora-breathe calc(var(--aurora-duration) * 0.72) ease-in-out infinite;
 }
 
@@ -96,33 +96,33 @@
 html:not(.dark) .aurora-blob,
 html:not(.dark) .aurora-ribbon,
 html:not(.dark) .aurora-wash {
-  mix-blend-mode: multiply;
+  mix-blend-mode: normal;
 }
 
 .aurora-blob-a {
-  width: 58%;
-  height: 46%;
-  left: -6%;
-  top: -4%;
-  background: rgba(var(--aurora-color-a), calc(var(--aurora-opacity) * 0.95));
+  width: 68%;
+  height: 54%;
+  left: -10%;
+  top: -8%;
+  background: rgba(var(--aurora-color-a), calc(var(--aurora-opacity) * 1.05));
   animation: aurora-drift-a var(--aurora-duration) ease-in-out infinite alternate;
 }
 
 .aurora-blob-b {
-  width: 52%;
-  height: 42%;
-  right: -8%;
-  top: 2%;
-  background: rgba(var(--aurora-color-b), calc(var(--aurora-opacity) * 0.82));
+  width: 62%;
+  height: 50%;
+  right: -12%;
+  top: -2%;
+  background: rgba(var(--aurora-color-b), calc(var(--aurora-opacity) * 0.95));
   animation: aurora-drift-b calc(var(--aurora-duration) * 1.18) ease-in-out infinite alternate;
 }
 
 .aurora-blob-c {
-  width: 46%;
-  height: 40%;
-  left: 28%;
-  bottom: 8%;
-  background: rgba(var(--aurora-color-c), calc(var(--aurora-opacity) * 0.7));
+  width: 56%;
+  height: 48%;
+  left: 22%;
+  bottom: 2%;
+  background: rgba(var(--aurora-color-c), calc(var(--aurora-opacity) * 0.86));
   animation: aurora-drift-c calc(var(--aurora-duration) * 1.36) ease-in-out infinite alternate;
 }
 
@@ -210,43 +210,43 @@ html:not(.dark) .aurora-wash {
 }
 
 .aurora-root[data-state="new"] {
-  mask-image: radial-gradient(ellipse 92% 78% at 50% 42%, black 18%, transparent 78%);
+  mask-image: radial-gradient(ellipse 130% 110% at 50% 42%, black 48%, transparent 92%);
 }
 
 .aurora-root[data-state="idle"] {
-  mask-image: radial-gradient(ellipse 100% 72% at 50% 8%, black 8%, transparent 74%);
+  mask-image: radial-gradient(ellipse 140% 100% at 50% 18%, black 42%, transparent 90%);
 }
 
 .aurora-root[data-state="typing"] {
-  mask-image: radial-gradient(ellipse 100% 86% at 50% 70%, black 12%, transparent 78%);
+  mask-image: radial-gradient(ellipse 130% 115% at 50% 62%, black 46%, transparent 92%);
 }
 
 .aurora-root[data-state="working"] {
-  mask-image: radial-gradient(ellipse 110% 88% at 50% 18%, black 16%, transparent 80%);
+  mask-image: radial-gradient(ellipse 145% 120% at 50% 28%, black 52%, transparent 94%);
 }
 
 .aurora-root[data-state="awaiting"] {
   --aurora-tint: 255, 196, 92;
-  --aurora-tint-opacity: calc(var(--aurora-opacity) * 0.55);
-  mask-image: radial-gradient(ellipse 96% 80% at 50% 28%, black 14%, transparent 76%);
+  --aurora-tint-opacity: calc(var(--aurora-opacity) * 0.42);
+  mask-image: radial-gradient(ellipse 130% 110% at 50% 32%, black 46%, transparent 92%);
 }
 
 .aurora-root[data-state="completed"] {
-  mask-image: radial-gradient(ellipse 108% 90% at 50% 24%, black 20%, transparent 82%);
+  mask-image: radial-gradient(ellipse 140% 118% at 50% 30%, black 50%, transparent 94%);
 }
 
 .aurora-root[data-state="failed"] {
   --aurora-tint: 255, 92, 118;
-  --aurora-tint-opacity: calc(var(--aurora-opacity) * 0.48);
-  mask-image: radial-gradient(ellipse 90% 70% at 50% 20%, black 10%, transparent 72%);
+  --aurora-tint-opacity: calc(var(--aurora-opacity) * 0.38);
+  mask-image: radial-gradient(ellipse 125% 100% at 50% 24%, black 40%, transparent 90%);
 }
 
 .aurora-root[data-state="paused"] {
-  mask-image: radial-gradient(ellipse 88% 64% at 50% 12%, black 8%, transparent 70%);
+  mask-image: radial-gradient(ellipse 120% 92% at 50% 16%, black 36%, transparent 88%);
 }
 
 .aurora-root[data-state="cancelled"] {
-  mask-image: radial-gradient(ellipse 86% 62% at 50% 10%, black 6%, transparent 68%);
+  mask-image: radial-gradient(ellipse 118% 88% at 50% 14%, black 32%, transparent 86%);
 }
 
 .aurora-root[data-preview="true"] {

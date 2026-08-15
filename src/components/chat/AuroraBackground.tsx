@@ -90,10 +90,10 @@ export function AuroraBackground({
 
   const intensity = aurora.intensity / 100;
   const speed = aurora.speed / 100;
-  const blur = 42 + (aurora.blur / 100) * 110;
-  const baseOpacity = (isDark ? 0.2 : 0.14) * (0.35 + intensity * 1.15);
+  const blur = 36 + (aurora.blur / 100) * 96;
+  const baseOpacity = (isDark ? 0.34 : 0.26) * (0.55 + intensity * 1.05);
   const opacity = baseOpacity * STATE_OPACITY_MULT[visualState];
-  const durationSec = (18 + (1 - speed) * 42) * STATE_DURATION_MULT[visualState];
+  const durationSec = (16 + (1 - speed) * 36) * STATE_DURATION_MULT[visualState];
 
   const style = {
     "--aurora-color-a": colors[0].join(", "),

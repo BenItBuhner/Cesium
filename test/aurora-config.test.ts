@@ -17,6 +17,7 @@ describe("aurora config", () => {
     assert.equal(config.enabled, true);
     assert.equal(config.presetId, "borealis");
     assert.equal(config.intensity, AURORA_INTENSITY_DEFAULT);
+    assert.equal(AURORA_INTENSITY_DEFAULT, 52);
     assert.equal(config.reactToState, true);
     assert.equal(config.customColors.length, 3);
   });

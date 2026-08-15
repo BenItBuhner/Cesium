@@ -235,8 +235,8 @@ export function AuroraSettingsSection() {
             );
           })}
         </div>
-        <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-main)]">
-          <AuroraBackground state={previewState} preview />
+        <div className="relative min-h-[188px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-main)]">
+          <AuroraBackground state={previewState} preview className="min-h-[188px]" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 px-[12px] py-[10px]">
             <p className="font-sans text-[12px] font-medium text-[var(--text-primary)]">
               {STATE_LABELS[previewState]}

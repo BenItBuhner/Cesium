@@ -1,6 +1,6 @@
 export const AURORA_INTENSITY_MIN = 0;
 export const AURORA_INTENSITY_MAX = 100;
-export const AURORA_INTENSITY_DEFAULT = 32;
+export const AURORA_INTENSITY_DEFAULT = 52;
 export const AURORA_SPEED_MIN = 0;
 export const AURORA_SPEED_MAX = 100;
 export const AURORA_SPEED_DEFAULT = 38;
