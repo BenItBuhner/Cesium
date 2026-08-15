@@ -106,12 +106,12 @@ const MOOD_TARGETS: Record<AuroraMood, MoodParams> = {
   waiting: {
     flow: 0.45,
     energy: 0.75,
-    luminance: 0.92,
+    luminance: 0.95,
     bottomGlow: 0.55,
     pulse: 0.85,
     shimmer: 0.2,
     tint: [251, 191, 36],
-    tintStrength: 0.24,
+    tintStrength: 0.45,
   },
   completed: {
     flow: 0.75,
@@ -121,17 +121,17 @@ const MOOD_TARGETS: Record<AuroraMood, MoodParams> = {
     pulse: 0,
     shimmer: 0.5,
     tint: [167, 243, 208],
-    tintStrength: 0.38,
+    tintStrength: 0.45,
   },
   error: {
     flow: 0.35,
     energy: 0.65,
-    luminance: 0.92,
-    bottomGlow: 0.42,
+    luminance: 0.95,
+    bottomGlow: 0.5,
     pulse: 0.3,
     shimmer: 0.1,
     tint: [244, 63, 94],
-    tintStrength: 0.52,
+    tintStrength: 0.68,
   },
   paused: {
     flow: 0.12,
@@ -305,7 +305,7 @@ export function createAuroraRenderer(): AuroraRenderer {
 
     for (const [index, band] of bands.entries()) {
       const color = params.tintStrength > 0.01
-        ? mixRgb(band.color, tintColor, Math.min(1, params.tintStrength) * 0.65)
+        ? mixRgb(band.color, tintColor, Math.min(1, params.tintStrength) * 0.8)
         : band.color;
       const sprite = spriteFor(color);
       const dir = band.direction;
@@ -359,7 +359,7 @@ export function createAuroraRenderer(): AuroraRenderer {
     // Up-welling glow behind the composer; brightens while typing/waiting.
     if (params.bottomGlow > 0.015) {
       const glowColor = params.tintStrength > 0.01
-        ? mixRgb(bands[0].color, tintColor, Math.min(1, params.tintStrength) * 0.65)
+        ? mixRgb(bands[0].color, tintColor, Math.min(1, params.tintStrength) * 0.8)
         : mixRgb(bands[0].color, bands[bands.length - 1].color, 0.35);
       const sprite = spriteFor(glowColor);
       const wander = Math.sin(t * 0.00011) * w * 0.08;

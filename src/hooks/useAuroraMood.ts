@@ -29,6 +29,13 @@ export function useAuroraMood(input: {
   /** Distinguishes conversations so switching threads never fires a false bloom. */
   conversationKey: string | null;
   status: AgentConversationStatus | undefined;
+  /**
+   * Latest turn ended in a completion failure (from
+   * `conversationHasCompletionFailure`). Some failures never pass through the
+   * `failed` status — synchronous rejections and failure events on an `idle`
+   * conversation — so status transitions alone would miss them.
+   */
+  hasCompletionFailure: boolean;
   /** New-chat landing (draft conversation, nothing sent yet). */
   showLanding: boolean;
   /** Composer draft has content. */
@@ -41,6 +48,7 @@ export function useAuroraMood(input: {
   const {
     conversationKey,
     status,
+    hasCompletionFailure,
     showLanding,
     isTyping,
     workingOverride,
@@ -49,14 +57,17 @@ export function useAuroraMood(input: {
 
   const [transient, setTransient] = useState<"completed" | "error" | null>(null);
   const prevStatusRef = useRef<AgentConversationStatus | undefined>(status);
+  const prevFailureRef = useRef<boolean>(hasCompletionFailure);
   const prevKeyRef = useRef<string | null>(conversationKey);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const keyChanged = prevKeyRef.current !== conversationKey;
     const previous = prevStatusRef.current;
+    const previousFailure = prevFailureRef.current;
     prevKeyRef.current = conversationKey;
     prevStatusRef.current = status;
+    prevFailureRef.current = hasCompletionFailure;
 
     if (keyChanged) {
       // Selecting another thread must never replay its last transition.
@@ -67,18 +78,23 @@ export function useAuroraMood(input: {
       setTransient(null);
       return;
     }
-    if (!reactToActivity || previous === status) {
+    if (!reactToActivity) {
+      return;
+    }
+    const statusChanged = previous !== status;
+    const failureAppeared = !previousFailure && hasCompletionFailure;
+    if (!statusChanged && !failureAppeared) {
       return;
     }
 
     const wasActive =
       isWorkingStatus(previous) || isWaitingStatus(previous);
     let next: "completed" | "error" | null = null;
-    if (wasActive && status === "idle") {
-      next = "completed";
-    } else if (status === "failed") {
+    if (failureAppeared || status === "failed") {
       next = "error";
-    } else if (isWorkingStatus(status) || isWaitingStatus(status)) {
+    } else if (statusChanged && wasActive && status === "idle") {
+      next = hasCompletionFailure ? "error" : "completed";
+    } else if (statusChanged && (isWorkingStatus(status) || isWaitingStatus(status))) {
       // A new turn immediately supersedes any lingering bloom/wash.
       next = null;
     } else {
@@ -99,7 +115,7 @@ export function useAuroraMood(input: {
         next === "completed" ? COMPLETED_LINGER_MS : ERROR_LINGER_MS
       );
     }
-  }, [conversationKey, status, reactToActivity]);
+  }, [conversationKey, status, hasCompletionFailure, reactToActivity]);
 
   useEffect(
     () => () => {

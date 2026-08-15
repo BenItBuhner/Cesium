@@ -41,7 +41,10 @@ import {
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
-import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import {
+  conversationHasCompletionFailure,
+  isAgentComposerBusy,
+} from "@/lib/agent-completion-error";
 import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
@@ -1058,6 +1061,7 @@ export function AgentCenterPane() {
     conversationKey:
       selectedConversationId ?? (optimisticTurn ? OPTIMISTIC_CONVERSATION_ID : "__draft__"),
     status: conversation?.status,
+    hasCompletionFailure: conversationHasCompletionFailure(conversation, rawThreadEvents),
     showLanding,
     isTyping: composerDraftText.trim().length > 0,
     workingOverride: Boolean(optimisticTurn),
