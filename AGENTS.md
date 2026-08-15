@@ -36,10 +36,75 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   path stays as a Node/desktop fallback only — do **not** switch the server to
   Node just for terminals. Deno is not used or supported.
 - **Agent backends need external CLIs / API keys** (Cursor, Codex, Claude, Gemini,
-  OpenCode) that are not installed. The app still boots and lists them as
-  unavailable; sending a chat without a configured backend surfaces a
-  "Compilation failed / Provider responded" toast. This is expected, not an
-  environment break.
+ OpenCode) that are not installed. The app still boots and lists them as
+ unavailable; sending a chat without a configured backend surfaces a
+ "Compilation failed / Provider responded" toast. This is expected, not an
+ environment break.
+
+### Android emulator (mobile app testing)
+
+Use the **official Google Android Emulator (AVD) in pure software mode** — it
+is the best (and only practical) emulator in this VM. Only set this up when
+the user asks for Android/emulator testing.
+
+**KVM is a trap here:** `/dev/kvm` exists and `emulator -accel-check` reports
+"KVM is installed and usable", but creating a vCPU triggers a host kernel BUG
+(`kvm_spurious_fault` in dmesg) and the emulator hangs forever at 0% CPU with
+the device stuck "offline". Always pass `-accel off`. Use the lightweight
+**API 30** google_apis image (app minSdk is 26); newer images take far longer
+under software emulation. There is no host GPU either → `-gpu
+swiftshader_indirect`.
+
+One-time setup (~2.5 GB download into `~/android-sdk`, a few minutes):
+
+```bash
+export ANDROID_HOME=$HOME/android-sdk
+mkdir -p $ANDROID_HOME/cmdline-tools && cd /tmp
+curl -fsSLO https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+unzip -q commandlinetools-linux-*.zip -d $ANDROID_HOME/cmdline-tools
+mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
+yes | sdkmanager --licenses >/dev/null
+sdkmanager "platform-tools" "emulator" "platforms;android-36" "build-tools;36.0.0" \
+  "ndk;27.0.12077973" "cmake;3.31.6" "system-images;android-30;google_apis;x86_64"
+avdmanager create avd -n CesiumPixel30 -k "system-images;android-30;google_apis;x86_64" -d pixel_7
+```
+
+Boot (window appears on the XFCE desktop, `DISPLAY=:1`, so computer-use tools
+can drive it; software boot takes ~5–15 min — wait for
+`adb shell getprop sys.boot_completed` to print `1`):
+
+```bash
+DISPLAY=:1 emulator -avd CesiumPixel30 -accel off -gpu swiftshader_indirect \
+  -no-snapshot -no-audio -no-boot-anim -no-metrics -memory 3072 -cores 2 &
+```
+
+Build + install the Cesium APK (Java 21 is preinstalled; gradle needs
+`ANDROID_HOME` exported; `-PreactNativeArchitectures=x86_64` skips the ARM
+native builds and roughly quarters C++ compile time):
+
+```bash
+cd apps/mobile
+npm run build:web-assets && npm run bundle:android   # refresh bundled workbench + RN bundle
+node scripts/run-gradle.mjs --parallel --build-cache -PreactNativeArchitectures=x86_64 :app:assembleDebug
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Notes:
+- The app's WebView loads the bundled workbench from APK assets and talks to
+ the host's backend at `http://10.0.2.2:9100` (start `npm run dev:server` on
+ the host first).
+- Share-sheet / intent flows can be exercised without a second app:
+ `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "hello"`
+ opens the system share sheet with Cesium listed; for files, push to
+ `/sdcard/Download`, then share from the Files app.
+- `adb emu kill` stops the emulator; AVD state lives in `~/.android/avd/`.
+- Everything is slow under software emulation — give app launches and taps
+ 10–30 s before judging them broken; "isn't responding" ANR dialogs are
+ normal, tap Wait.
+- The API 30 image ships a Chromium 83 WebView: Tailwind v4's `@layer`-based
+ CSS is largely ignored there, so overlays/components meant to render inside
+ the bundled mobile workbench need inline styles for load-bearing layout.
 
 ### Inference / model provider environment variables
 

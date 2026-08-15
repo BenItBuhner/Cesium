@@ -29,10 +29,12 @@ import {
   parseMobileBridgeMessage,
   type MobileNativeToWebMessage,
   type MobileNativeStatus,
+  type MobileSharePayload,
   type MobileWebToNativeMessage,
 } from "../../../src/lib/mobile-bridge";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
+import { CesiumShare } from "./native/CesiumShare";
 import { CesiumPhoneControl } from "./native/CesiumPhoneControl";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
 import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
@@ -179,6 +181,27 @@ export default function App() {
     });
   }, [sendToWeb]);
 
+  // Share intents can arrive before the workbench has booted (cold start via
+  // the share sheet), so payloads are buffered until the web layer reports
+  // ready; `webReady` re-arrives after any WebView reload and flushes again.
+  const webReadyRef = useRef(false);
+  const pendingShareRef = useRef<MobileSharePayload | null>(null);
+  const consumeShareIntent = useCallback(async () => {
+    const share = await CesiumShare.consumeSharePayload();
+    if (!share) return;
+    if (webReadyRef.current) {
+      sendToWeb({ type: "shareIntent", share });
+    } else {
+      pendingShareRef.current = share;
+    }
+  }, [sendToWeb]);
+
+  useEffect(() => {
+    return CesiumShare.onShareIntentReceived(() => {
+      void consumeShareIntent();
+    });
+  }, [consumeShareIntent]);
+
   const sendNativeStatus = useCallback(async () => {
     const [liveUpdates, phoneControl] = await Promise.all([
       CesiumLiveUpdates.getPromotionStatus(),
@@ -246,6 +269,7 @@ export default function App() {
       if (nextState === "active") {
         refreshSafeArea();
         void consumeNotificationAction();
+        void consumeShareIntent();
       }
     });
     const network = NetInfo.addEventListener((state) => {
@@ -259,7 +283,7 @@ export default function App() {
       agentStatusRef.current.close();
       void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
+  }, [consumeNotificationAction, consumeShareIntent, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
     // A single, stable subscription. The Android predictive/hardware back
@@ -286,7 +310,8 @@ export default function App() {
 
   useEffect(() => {
     void consumeNotificationAction();
-  }, [consumeNotificationAction]);
+    void consumeShareIntent();
+  }, [consumeNotificationAction, consumeShareIntent]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -319,6 +344,12 @@ export default function App() {
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
         void sendNativeStatus();
+        webReadyRef.current = true;
+        const pendingShare = pendingShareRef.current;
+        if (pendingShare) {
+          pendingShareRef.current = null;
+          sendToWeb({ type: "shareIntent", share: pendingShare });
+        }
         return;
       }
       if (message.type === "getMobileNativeStatus") {
@@ -413,7 +444,7 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, focused, sendNativeStatus]
+    [configureNativeServices, focused, sendNativeStatus, sendToWeb]
   );
 
   const handleNavigation = useCallback((navigation: WebViewNavigation) => {
