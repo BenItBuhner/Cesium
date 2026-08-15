@@ -13,7 +13,7 @@ import {
 /** Background effect — 30fps is plenty and halves the paint work. */
 const FRAME_INTERVAL_MS = 1000 / 30;
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
-const INTERNAL_SCALE = 1 / 7;
+const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
 const MAX_INTERNAL_WIDTH = 300;
 
@@ -191,7 +191,7 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
         ref={canvasRef}
         className="h-full w-full"
         style={{
-          filter: "blur(26px) saturate(1.2)",
+          filter: "blur(22px) saturate(1.3)",
           transform: "scale(1.18)",
           mixBlendMode: isDark ? "screen" : undefined,
         }}

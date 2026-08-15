@@ -209,12 +209,14 @@ function buildBands(colors: string[]): BandSpec[] {
     parsed.push([139, 92, 246]);
   }
   const count = parsed.length;
+  // Top-weighted: the aurora hangs from the upper edge and a vertical fade
+  // mask keeps the middle of the pane neutral so content has resting space.
   return parsed.map((color, index) => ({
     color,
-    baseY: 0.16 + (0.42 / Math.max(1, count - 1)) * index,
+    baseY: 0.08 + (0.3 / Math.max(1, count - 1)) * index,
     phase: index * 2.39996, // golden angle keeps the waves visually unrelated
     direction: index % 2 === 0 ? 1 : -1,
-    alpha: 0.5 - index * 0.05,
+    alpha: 0.46 - index * 0.04,
   }));
 }
 
@@ -290,7 +292,7 @@ export function createAuroraRenderer(): AuroraRenderer {
     ctx.clearRect(0, 0, w, h);
     ctx.globalCompositeOperation = "lighter";
 
-    const intensityFactor = Math.pow(options.intensity / 100, 1.15) * (options.isDark ? 1 : 0.8);
+    const intensityFactor = Math.pow(options.intensity / 100, 1.15) * (options.isDark ? 1 : 0.62);
     const breath = 1 + params.pulse * 0.3 * Math.sin(clockMs * 0.0016);
     const master = intensityFactor * params.luminance * breath;
     if (master <= 0.001) {
@@ -334,12 +336,25 @@ export function createAuroraRenderer(): AuroraRenderer {
         }
         const sway = Math.sin(x * k2 * 0.7 + t * 0.00013 + band.phase) * 0.35;
         const sw = stepX * 3.1;
-        const sh = sw * (1.85 + sway) * (0.9 + params.energy * 0.25);
+        const sh = sw * (1.65 + sway) * (0.9 + params.energy * 0.25);
         ctx.globalAlpha = Math.min(0.85, alpha);
         // Curtains hang downward from the ridge.
         ctx.drawImage(sprite, x - sw / 2, y - sh * 0.22, sw, sh);
       }
     }
+
+    // Vertical fade: strong along the top, dissolving before mid-pane so the
+    // conversation area stays neutral. Applied before the composer glow.
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.globalAlpha = 1;
+    const fade = ctx.createLinearGradient(0, 0, 0, h);
+    fade.addColorStop(0, "rgba(255, 255, 255, 1)");
+    fade.addColorStop(0.42, "rgba(255, 255, 255, 0.8)");
+    fade.addColorStop(0.72, "rgba(255, 255, 255, 0.16)");
+    fade.addColorStop(1, "rgba(255, 255, 255, 0.04)");
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = "lighter";
 
     // Up-welling glow behind the composer; brightens while typing/waiting.
     if (params.bottomGlow > 0.015) {
@@ -348,10 +363,10 @@ export function createAuroraRenderer(): AuroraRenderer {
         : mixRgb(bands[0].color, bands[bands.length - 1].color, 0.35);
       const sprite = spriteFor(glowColor);
       const wander = Math.sin(t * 0.00011) * w * 0.08;
-      const gw = w * 1.5;
-      const gh = h * 0.62;
-      ctx.globalAlpha = Math.min(0.6, params.bottomGlow * master * 0.55);
-      ctx.drawImage(sprite, w / 2 - gw / 2 + wander, h - gh * 0.42, gw, gh);
+      const gw = w * 1.3;
+      const gh = h * 0.5;
+      ctx.globalAlpha = Math.min(0.55, params.bottomGlow * master * 0.5);
+      ctx.drawImage(sprite, w / 2 - gw / 2 + wander, h - gh * 0.3, gw, gh);
     }
 
     ctx.globalAlpha = 1;
