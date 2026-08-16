@@ -293,7 +293,7 @@ describe("global settings", () => {
     assert.equal(compact.rowDetail, "compact");
     const compactFromInbox = applyAgentRailViewPreset("compact", inbox);
     assert.equal(compactFromInbox.groupBy, "workspace");
-    assert.equal(compactFromInbox.scope, { type: "all" });
+    assert.deepEqual(compactFromInbox.scope, { type: "all" });
     const restored = applyAgentRailViewPreset("default", compact);
     assert.equal(restored.groupBy, "workspace");
     assert.equal(restored.rowDetail, "balanced");
