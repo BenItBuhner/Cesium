@@ -2237,6 +2237,12 @@ export type CesiumAgentProfilePayload = {
   >;
 };
 
+export type CesiumProfileToolGroupPayload = {
+  id: string;
+  label: string;
+  tools: string[];
+};
+
 export type CesiumAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
@@ -2306,6 +2312,10 @@ export type CesiumAgentSettingsPayload = {
   defaultProfileId: string;
   /** Built-in presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfilePayload[];
+  /** Grouped tool inventory for profile editors. */
+  profileToolGroups: CesiumProfileToolGroupPayload[];
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
 };
 
 export type CesiumModelCatalogEntry = {

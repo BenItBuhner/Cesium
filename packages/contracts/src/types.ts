@@ -376,6 +376,10 @@ export type CesiumAgentSettingsPublic = {
   defaultProfileId: string;
   /** Built-in Code/Work presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfile[];
+  /** Grouped tool inventory for profile editors. */
+  profileToolGroups: Array<{ id: string; label: string; tools: string[] }>;
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
 };
 
 export type CesiumAgentProfile = {

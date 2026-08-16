@@ -17,10 +17,13 @@ import {
 } from "./agents/cesium/features/index.js";
 import {
   CESIUM_DEFAULT_PROFILE_ID,
+  CESIUM_PROFILE_LOCKED_TOOLS,
+  CESIUM_PROFILE_TOOL_GROUPS,
   listCesiumProfileCatalog,
   normalizeCesiumDefaultProfileId,
   normalizeCesiumProfiles,
   type CesiumAgentProfile,
+  type CesiumProfileToolGroup,
 } from "./agents/cesium-profiles.js";
 
 export type { CesiumAgentProfile } from "./agents/cesium-profiles.js";
@@ -173,6 +176,10 @@ export type CesiumAgentSettingsPublic = Omit<CesiumAgentSettings, "providerKeys"
   modeCatalog: CesiumModeDefinition[];
   /** Built-in presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfile[];
+  /** Grouped tool inventory for profile editors (single source: cesium-profiles.ts). */
+  profileToolGroups: CesiumProfileToolGroup[];
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
 };
 
 export type CesiumModelCatalogEntry = {
@@ -981,6 +988,11 @@ export async function getCesiumAgentSettingsPublic(): Promise<CesiumAgentSetting
     harnessCatalog: getCesiumFeatureCatalog(),
     modeCatalog: [...CESIUM_MODE_DEFINITIONS],
     profileCatalog: listCesiumProfileCatalog(settings.profiles),
+    profileToolGroups: CESIUM_PROFILE_TOOL_GROUPS.map((group) => ({
+      ...group,
+      tools: [...group.tools],
+    })),
+    profileLockedTools: [...CESIUM_PROFILE_LOCKED_TOOLS],
   };
 }
 
