@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AppState,
   BackHandler,
+  DeviceEventEmitter,
   Dimensions,
   Linking,
   PermissionsAndroid,
@@ -31,9 +32,11 @@ import {
   type MobileNativeToWebMessage,
   type MobileNativeStatus,
   type MobileServerConfig,
+  type MobileSharePayload,
   type MobileWebToNativeMessage,
 } from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
+import { CesiumAndroidRuntime } from "./native/CesiumAndroidRuntime";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
 import {
   CesiumPredictiveBack,
@@ -205,6 +208,33 @@ export default function App() {
     });
   }, [sendToWeb]);
 
+  // Share-sheet payloads can arrive before the workbench has booted (cold
+  // start straight from the share sheet), so they are staged here and flushed
+  // once the web layer reports `webReady`.
+  const pendingShareRef = useRef<MobileSharePayload | null>(null);
+  const webReadyRef = useRef(false);
+
+  const flushPendingShare = useCallback(() => {
+    const payload = pendingShareRef.current;
+    if (!payload || !webReadyRef.current) return;
+    pendingShareRef.current = null;
+    sendToWeb({ type: "shareIntake", payload });
+  }, [sendToWeb]);
+
+  const consumeSharePayload = useCallback(async () => {
+    const payload = await CesiumAndroidRuntime.consumeSharedPayload();
+    if (!payload) return;
+    // Skipped-only payloads still surface the sheet so the user learns the
+    // shared item was unreadable/oversized instead of a silent no-op.
+    const hasContent =
+      (payload.text != null && payload.text.length > 0) ||
+      payload.items.length > 0 ||
+      (payload.skippedCount ?? 0) > 0;
+    if (!hasContent) return;
+    pendingShareRef.current = payload;
+    flushPendingShare();
+  }, [flushPendingShare]);
+
   const sendNativeStatus = useCallback(async () => {
     const [liveUpdates, phoneControl] = await Promise.all([
       CesiumLiveUpdates.getPromotionStatus(),
@@ -281,6 +311,7 @@ export default function App() {
       if (nextState === "active") {
         refreshSafeArea();
         void consumeNotificationAction();
+        void consumeSharePayload();
       }
     });
     const network = NetInfo.addEventListener((state) => {
@@ -294,7 +325,7 @@ export default function App() {
       agentStatusRef.current.close();
       void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
+  }, [consumeNotificationAction, consumeSharePayload, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
     // A single, stable subscription. The Android back intent is resolved in
@@ -364,7 +395,19 @@ export default function App() {
 
   useEffect(() => {
     void consumeNotificationAction();
-  }, [consumeNotificationAction]);
+    void consumeSharePayload();
+  }, [consumeNotificationAction, consumeSharePayload]);
+
+  useEffect(() => {
+    // A share delivered while the activity is already foreground (split-screen
+    // or freeform-window source app) never flips AppState, so the native
+    // module emits this nudge from onNewIntent instead.
+    const subscription = DeviceEventEmitter.addListener(
+      "cesiumShareIntakeAvailable",
+      () => void consumeSharePayload()
+    );
+    return () => subscription.remove();
+  }, [consumeSharePayload]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -405,6 +448,8 @@ export default function App() {
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
         void sendNativeStatus();
+        webReadyRef.current = true;
+        flushPendingShare();
         return;
       }
       if (message.type === "getMobileNativeStatus") {
@@ -507,7 +552,7 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, focused, sendNativeStatus, syncBackIntercept]
+    [configureNativeServices, flushPendingShare, focused, sendNativeStatus, syncBackIntercept]
   );
 
   const handleNavigation = useCallback(

@@ -2,15 +2,10 @@
 
 import {
   Check,
-  ChevronDown,
-  ChevronUp,
-  Eye,
-  EyeOff,
   Lightbulb,
   LoaderCircle,
   MessageSquare,
   PanelRight,
-  Settings2,
   X,
 } from "lucide-react";
 import {
@@ -211,9 +206,9 @@ function ActionResultPopover({
  * quick actions system keeps its own button design; commands execute against
  * the actively selected workspace's path), and full-sized widget CARDS for
  * recent conversations and recently opened workspaces, sharing the chat
- * composer's material. Order and visibility persist in
- * `settings.general.newChatWidgets` (Settings → General → New chat widgets,
- * or the gear popover on the landing).
+ * composer's material. The stack spans the composer's full width; order and
+ * visibility are configured in Settings → General → New chat widgets and
+ * persist in `settings.general.newChatWidgets`.
  */
 export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean }) {
   const { settings } = useGlobalSettings();
@@ -435,41 +430,6 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
       .slice(0, MAX_RECENT_WORKSPACES);
   }, [activeWorkspaceId, recentWorkspaceIds, workspaces]);
 
-  // ── Customize popover ──────────────────────────────────────────────────────
-  const [customizeOpen, setCustomizeOpen] = useState(false);
-  const customizeButtonRef = useRef<HTMLButtonElement>(null);
-  const customizePopoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!customizeOpen) {
-      return;
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        setCustomizeOpen(false);
-        return;
-      }
-      if (customizeButtonRef.current?.contains(target)) return;
-      if (customizePopoverRef.current?.contains(target)) return;
-      setCustomizeOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setCustomizeOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [customizeOpen]);
-
-  const toggleWidgetHidden = useNewChatWidgetVisibilityToggle();
-  const moveWidget = useNewChatWidgetMove();
-
   // ── Tile renderers (uniform look, no titles) ───────────────────────────────
   const shortcutPills: ReactNode[] = [
     <button
@@ -662,86 +622,14 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     })
     .filter((node) => node != null);
 
-  return (
-    <div className="mt-[10px] flex w-full min-w-0 items-start gap-[6px]">
-      <div className="flex min-w-0 flex-1 flex-col gap-[10px]">{widgetNodes}</div>
-      <div className="relative shrink-0">
-        <button
-          ref={customizeButtonRef}
-          type="button"
-          aria-label="Customize new chat widgets"
-          title="Customize new chat widgets"
-          onClick={() => setCustomizeOpen((open) => !open)}
-          className={`flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] ${
-            customizeOpen ? "bg-[var(--accent-bg)] text-[var(--text-primary)]" : ""
-          }`}
-        >
-          <Settings2 className="size-[13px]" strokeWidth={1.5} aria-hidden />
-        </button>
-        {customizeOpen ? (
-          <div
-            ref={customizePopoverRef}
-            className="absolute right-0 top-[calc(100%+6px)] z-[10002] w-[212px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[4px] shadow-lg"
-            data-ide-input-sink
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            {widgetsState.order.map((id, index) => {
-              const hidden = widgetsState.hidden.includes(id);
-              return (
-                <div
-                  key={id}
-                  className="flex items-center gap-[4px] rounded-[var(--radius-tab)] px-[8px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
-                >
-                  <span
-                    className={`min-w-0 flex-1 truncate ${
-                      hidden ? "text-[var(--text-disabled)]" : ""
-                    }`}
-                  >
-                    {NEW_CHAT_WIDGET_LABELS[id]}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} up`}
-                    disabled={index === 0}
-                    onClick={() => moveWidget(id, -1)}
-                    className="flex size-[20px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-30"
-                  >
-                    <ChevronUp className="size-[12px]" strokeWidth={1.8} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} down`}
-                    disabled={index === widgetsState.order.length - 1}
-                    onClick={() => moveWidget(id, 1)}
-                    className="flex size-[20px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-30"
-                  >
-                    <ChevronDown className="size-[12px]" strokeWidth={1.8} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${hidden ? "Show" : "Hide"} ${NEW_CHAT_WIDGET_LABELS[id]}`}
-                    onClick={() => toggleWidgetHidden(id)}
-                    className="flex size-[20px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                  >
-                    {hidden ? (
-                      <EyeOff className="size-[12px]" strokeWidth={1.8} aria-hidden />
-                    ) : (
-                      <Eye className="size-[12px]" strokeWidth={1.8} aria-hidden />
-                    )}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+  // Full width, aligned with the chat composer above. Customization lives in
+  // Settings → General → New chat widgets — no inline edit chrome.
+  return <div className="mt-[10px] flex w-full min-w-0 flex-col gap-[10px]">{widgetNodes}</div>;
 }
 
 /**
  * Toggle a widget in/out of `settings.general.newChatWidgets.hidden`.
- * Shared by the landing gear popover and Settings → General.
+ * Used by Settings → General → New chat widgets.
  */
 export function useNewChatWidgetVisibilityToggle(): (id: NewChatWidgetId) => void {
   const { updateSettings } = useGlobalSettings();
@@ -769,7 +657,7 @@ export function useNewChatWidgetVisibilityToggle(): (id: NewChatWidgetId) => voi
 
 /**
  * Move a widget within `settings.general.newChatWidgets.order`.
- * Shared by the landing gear popover and Settings → General.
+ * Used by Settings → General → New chat widgets.
  */
 export function useNewChatWidgetMove(): (id: NewChatWidgetId, delta: -1 | 1) => void {
   const { updateSettings } = useGlobalSettings();

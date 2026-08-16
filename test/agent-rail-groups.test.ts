@@ -286,4 +286,28 @@ describe("agent rail grouping", () => {
     );
     assert.equal(totalConversations, 2);
   });
+
+  test("acknowledged failures leave the priority attention bucket", () => {
+    const grouped = groupAgentRailGroups(
+      [
+        {
+          workspace: workspace("ws-1", "App"),
+          conversations: [
+            conversation("failed-read", "ws-1", 40, { status: "failed" }),
+            conversation("failed-unread", "ws-1", 41, { status: "failed" }),
+          ],
+        },
+      ],
+      "priority",
+      1_000,
+      { acknowledgedFailureByConversationId: { "failed-read": true } }
+    );
+    assert.deepEqual(
+      grouped[0]?.conversations.map((item) => item.id),
+      ["failed-unread"]
+    );
+    assert.equal(grouped[0]?.workspace.name, "Needs attention");
+    const recent = grouped.find((group) => group.workspace.name === "Recent");
+    assert.deepEqual(recent?.conversations.map((item) => item.id), ["failed-read"]);
+  });
 });

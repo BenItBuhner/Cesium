@@ -25,6 +25,15 @@ export default defineConfig({
       // standalone renderer; cloud mode is pinned to "disabled" below, so the
       // inert shim is never exercised beyond import resolution.
       "@clerk/nextjs": r("./src/next-shims/clerk.tsx"),
+      // Same story as Clerk: the workbench graph imports CloudContext, which
+      // pulls `convex/react` even when NEXT_PUBLIC_CONVEX_URL is unset. Android
+      // CI installs workspace packages without the root `convex` dependency.
+      // Vite-only: do not mirror these in tsconfig paths. Generated
+      // `@convex/_generated/api` types import the real Convex backend modules,
+      // which need the real `convex/server` typings.
+      "convex/react-clerk": r("./src/next-shims/convex-react-clerk.tsx"),
+      "convex/react": r("./src/next-shims/convex-react.ts"),
+      "convex/server": r("./src/next-shims/convex-server.ts"),
       "@cesium/core": r("../../packages/core/src/index.ts"),
       "@cesium/contracts/cloud-agents": r("../../packages/contracts/src/cloud-agents.ts"),
       "@cesium/contracts/meta": r("../../packages/contracts/src/meta.ts"),

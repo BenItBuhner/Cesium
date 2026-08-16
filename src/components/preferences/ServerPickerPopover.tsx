@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleUserRound } from "lucide-react";
+import { Check, CircleUserRound, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -10,6 +10,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
+import { DeviceConnectPanel } from "@/components/preferences/DeviceConnectPanel";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useShellView } from "@/components/layout/ShellViewContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ServerRailAppearance } from "@/lib/global-settings";
 import {
   getServerDisplayLabel,
@@ -34,6 +38,8 @@ export type ServerPickerPopoverProps = {
   onSelect: (serverId: string) => void;
   /** Rail footer opens upward; settings pickers open below the trigger. */
   placement?: "above" | "below";
+  /** Device surface adds connect / rename / remove / advanced settings. */
+  variant?: "switch" | "device";
 };
 
 export function ServerPickerPopover({
@@ -47,9 +53,16 @@ export function ServerPickerPopover({
   serverRailAppearances = {},
   onSelect,
   placement = "below",
+  variant = "switch",
 }: ServerPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0, width: 280 });
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const { saveServer, removeServer } = useServerConnections();
+  const { updateWorkspaceSession } = useWorkspace();
+  const { openSettingsView } = useShellView();
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -62,7 +75,7 @@ export function ServerPickerPopover({
       const width = Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2));
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
       const gap = 6;
-      const estimatedHeight = popoverRef.current?.offsetHeight ?? 280;
+      const estimatedHeight = popoverRef.current?.offsetHeight ?? (variant === "device" ? 360 : 280);
       const desiredTop =
         placement === "above"
           ? rect.top - estimatedHeight - gap
@@ -78,10 +91,14 @@ export function ServerPickerPopover({
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [anchorRef, open, placement, servers.length]);
+  }, [anchorRef, connectOpen, open, placement, renamingId, servers.length, variant]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setConnectOpen(false);
+      setRenamingId(null);
+      return;
+    }
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (
@@ -107,6 +124,23 @@ export function ServerPickerPopover({
     return null;
   }
 
+  const commitRename = (server: { id: string; label: string; baseUrl: string }) => {
+    const nextLabel = renameValue.trim();
+    if (nextLabel && nextLabel !== server.label) {
+      saveServer({ id: server.id, label: nextLabel, baseUrl: server.baseUrl });
+    }
+    setRenamingId(null);
+  };
+
+  const openAdvancedServers = () => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: { ...current.settingsView, activeNav: "servers" },
+    }));
+    openSettingsView();
+    onClose();
+  };
+
   return createPortal(
     <div
       ref={popoverRef}
@@ -122,9 +156,9 @@ export function ServerPickerPopover({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <VerticalFadedScroll
-        measureKey={servers.length}
+        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}`}
         edgeColorVar="var(--bg-panel)"
-        scrollClassName="hide-scrollbar-y max-h-[min(360px,60dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+        scrollClassName="hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
       >
         {servers.map((server, index) => {
           const selected = server.id === selectedServerId;
@@ -132,53 +166,148 @@ export function ServerPickerPopover({
           const appearance = getServerRailAppearance(serverRailAppearances, server.id, index);
           const displayLabel = getServerDisplayLabel(server, appearance);
           const isLocalDevice = isLocalDeviceServer(server);
+          const renaming = renamingId === server.id;
           return (
-            <button
-              key={server.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={selected}
-              onClick={() => {
-                onSelect(server.id);
-                onClose();
-              }}
-              className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[8px] text-left hover:bg-[var(--accent-bg)] sm:py-[7px]"
-            >
-              {isLocalDevice ? (
-                <CircleUserRound
-                  className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-                  strokeWidth={1.5}
-                  aria-hidden
-                />
-              ) : (
-                <WorkspaceFolderIcon
-                  iconName={appearance.icon}
-                  color={appearance.color}
-                  className="size-[14px] shrink-0"
-                  strokeWidth={1.8}
-                />
-              )}
-              <span
-                className={`shrink-0 text-[10px] ${serverHealthColorClass(health)}`}
-                aria-hidden
-              >
-                {serverHealthIndicator(health)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
-                  {displayLabel}
-                </span>
-                <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
-                  {server.baseUrl}
-                </span>
-              </span>
-              {selected ? (
-                <Check className="size-[13px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
-              ) : null}
-            </button>
+            <div key={server.id} className="flex w-full min-w-0 flex-col">
+              <div className="flex w-full min-w-0 items-center gap-[4px] rounded-[var(--radius-tab)] hover:bg-[var(--accent-bg)]">
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  onClick={() => {
+                    onSelect(server.id);
+                    onClose();
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-[8px] px-[8px] py-[8px] text-left sm:py-[7px]"
+                >
+                  {isLocalDevice ? (
+                    <CircleUserRound
+                      className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    />
+                  ) : (
+                    <WorkspaceFolderIcon
+                      iconName={appearance.icon}
+                      color={appearance.color}
+                      className="size-[14px] shrink-0"
+                      strokeWidth={1.8}
+                    />
+                  )}
+                  <span
+                    className={`shrink-0 text-[10px] ${serverHealthColorClass(health)}`}
+                    aria-hidden
+                  >
+                    {serverHealthIndicator(health)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    {renaming ? (
+                      <input
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitRename(server);
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setRenamingId(null);
+                          }
+                        }}
+                        onBlur={() => commitRename(server)}
+                        autoFocus
+                        className="w-full bg-transparent font-sans text-[12.5px] text-[var(--text-primary)] outline-none"
+                        aria-label="Device name"
+                      />
+                    ) : (
+                      <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
+                        {displayLabel}
+                      </span>
+                    )}
+                    <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
+                      {server.baseUrl}
+                    </span>
+                  </span>
+                  {selected ? (
+                    <Check className="size-[13px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
+                  ) : null}
+                </button>
+                {variant === "device" ? (
+                  <div className="flex shrink-0 items-center pr-[4px]">
+                    <button
+                      type="button"
+                      aria-label={`Rename ${displayLabel}`}
+                      title="Rename"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setRenamingId(server.id);
+                        setRenameValue(displayLabel);
+                      }}
+                      className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                    >
+                      <Pencil className="size-[12px]" strokeWidth={1.7} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${displayLabel}`}
+                      title="Remove"
+                      disabled={servers.length <= 1}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (servers.length <= 1) {
+                          return;
+                        }
+                        if (
+                          typeof window !== "undefined" &&
+                          !window.confirm(`Remove ${displayLabel} from this device list?`)
+                        ) {
+                          return;
+                        }
+                        removeServer(server.id);
+                      }}
+                      className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-35"
+                    >
+                      <Trash2 className="size-[12px]" strokeWidth={1.7} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           );
         })}
       </VerticalFadedScroll>
+      {variant === "device" ? (
+        <div className="border-t border-[var(--border-card)] p-[4px]">
+          <button
+            type="button"
+            onClick={() => setConnectOpen((openConnect) => !openConnect)}
+            className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+          >
+            <Plus className="size-[13px] shrink-0" strokeWidth={1.5} />
+            Connect a device
+          </button>
+          {connectOpen ? (
+            <DeviceConnectPanel
+              onConnected={(serverId) => {
+                onSelect(serverId);
+                setConnectOpen(false);
+                onClose();
+              }}
+            />
+          ) : null}
+          <button
+            type="button"
+            onClick={openAdvancedServers}
+            className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+          >
+            <Settings className="size-[13px] shrink-0" strokeWidth={1.5} />
+            Advanced…
+          </button>
+        </div>
+      ) : null}
     </div>,
     document.body
   );

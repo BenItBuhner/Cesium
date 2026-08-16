@@ -4,11 +4,15 @@ export {
   DEFAULT_MODE_TAGS,
   createDefaultGlobalSettings,
   normalizeLoadedGlobalSettings,
+  applyAgentRailViewPreset,
+  matchingAgentRailViewPreset,
 } from "@cesium/client";
 export type {
   AgentRailGroupByMode,
+  AgentRailScope,
   AgentRailSectionId,
   AgentRailSettingsState,
+  AgentRailViewPreset,
   AgentsSettingsState,
   ChatFolderState,
   FeaturesSettingsState,
@@ -27,6 +31,7 @@ export type {
 } from "@cesium/client";
 export {
   AGENT_RAIL_SECTION_IDS,
+  AGENT_RAIL_VIEW_PRESETS,
   NEW_CHAT_WIDGET_IDS,
   createDefaultNewChatWidgetsState,
   isNewChatWidgetId,

@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings,
+  Layers,
 } from "lucide-react";
 import {
   useCallback,
@@ -53,6 +54,7 @@ import {
 } from "@/lib/agent-rail-status";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { AgentRailFilterMenuPortal } from "@/components/agent/AgentRailFilterMenuPortal";
+import { WorkspacePickerMenu, WorkspacePickerRowIcon } from "@/components/agent/rail/WorkspacePickerMenu";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -61,14 +63,17 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
+import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
 import type {
   AgentRailGroupByMode,
   AgentRailSectionId,
+  AgentRailViewPreset,
   ChatFolderState,
   ServerRailAppearance,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@/lib/global-settings";
+import { applyAgentRailViewPreset, matchingAgentRailViewPreset } from "@/lib/global-settings";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
   getServerDisplayLabel,
@@ -90,6 +95,7 @@ import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-even
 import { agentRecordToRailSummary } from "@/lib/agent-rail-patch";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
+import { getAgentRailWorkspaceKey } from "@/lib/multi-server-workspaces";
 import {
   FOLDER_COLOR_OPTIONS,
   FOLDER_ICON_OPTIONS,
@@ -509,6 +515,7 @@ export function AgentWorkspaceRail() {
     archiveConversation,
     unarchiveConversation,
     pinnedRailConversations,
+    attentionRailConversations,
     pinConversation,
     unpinConversation,
     railFilterToggles,
@@ -516,6 +523,7 @@ export function AgentWorkspaceRail() {
     setRailFilterToggle,
     clearRailFilters,
     unreadCompletionByConversationId,
+    acknowledgedFailureByConversationId,
     railWorkspaceNameById,
     isMobile,
   } = useAgentShellState();
@@ -530,11 +538,21 @@ export function AgentWorkspaceRail() {
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
-  const { byServerId: directoryByServerId } = useWorkspaceDirectory();
+  const { byServerId: directoryByServerId, workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const agentRailSettings = settings.general.agentRail;
   const railRowDetail = agentRailSettings.rowDetail ?? "balanced";
+  const scopedDirectoryWorkspace = useMemo(() => {
+    const scope = agentRailSettings.scope;
+    if (scope?.type !== "workspace") {
+      return null;
+    }
+    return (
+      directoryWorkspaces.find((workspace) => workspace.workspaceKey === scope.workspaceKey) ??
+      null
+    );
+  }, [agentRailSettings.scope, directoryWorkspaces]);
   // Reference clock for relative times on row detail lines ("5m ago").
   const [railNow, setRailNow] = useState(() => Date.now());
   useEffect(() => {
@@ -546,6 +564,11 @@ export function AgentWorkspaceRail() {
       Boolean(unreadCompletionByConversationId?.[conversation.id]),
     [unreadCompletionByConversationId]
   );
+  const isConversationAcknowledgedFailed = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      Boolean(acknowledgedFailureByConversationId?.[conversation.id]),
+    [acknowledgedFailureByConversationId]
+  );
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
   const railTopBarPadClass = `${padRailForWindowChrome
@@ -556,6 +579,8 @@ export function AgentWorkspaceRail() {
   const accountAnchorRef = useRef<HTMLButtonElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const workspacePickerAnchorRef = useRef<HTMLButtonElement>(null);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
   const [draggingWorkspaceId, setDraggingWorkspaceId] = useState<string | null>(null);
@@ -684,9 +709,9 @@ export function AgentWorkspaceRail() {
   const sortSummary = WORKSPACE_SORT_LABELS[workspaceSortMode];
   const railControlActive =
     railFilterActive ||
-    workspaceSortMode !== "recent" ||
     agentRailSettings.groupBy !== "workspace" ||
-    agentRailSettings.hiddenServerIds.length > 0;
+    railRowDetail !== "balanced" ||
+    (agentRailSettings.scope?.type === "workspace");
 
   const visibleGroups = useMemo(() => {
     const seenKeys = new Set<string>();
@@ -716,6 +741,28 @@ export function AgentWorkspaceRail() {
       }
     }
     return conversations;
+  }, [groups]);
+
+  const showStandaloneHomeGroup = useMemo(() => {
+    if (agentRailSettings.groupBy === "priority") {
+      return false;
+    }
+    const scope = agentRailSettings.scope;
+    if (!scope || scope.type === "all") {
+      return true;
+    }
+    if (scope.type !== "workspace") {
+      return false;
+    }
+    const scoped = directoryWorkspaces.find(
+      (workspace) => workspace.workspaceKey === scope.workspaceKey
+    );
+    return Boolean(scoped && isStandaloneChatWorkspace(scoped));
+  }, [agentRailSettings.groupBy, agentRailSettings.scope, directoryWorkspaces]);
+
+  const standaloneHomeLabel = useMemo(() => {
+    const named = groups.find((group) => isStandaloneChatWorkspace(group.workspace));
+    return named?.workspace.name?.trim() || "Chat";
   }, [groups]);
 
   const standaloneWorkspaceIds = useMemo(() => {
@@ -783,11 +830,9 @@ export function AgentWorkspaceRail() {
     const order =
       agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"];
     const hidden = new Set(agentRailSettings.hiddenSections ?? []);
-    // Priority grouping IS the attention surface and folds standalone chats
-    // into its flat buckets; the extra sections would duplicate rows.
+    hidden.add("chats");
     if (agentRailSettings.groupBy === "priority") {
       hidden.add("attention");
-      hidden.add("chats");
     }
     return order.filter((id) => !hidden.has(id));
   }, [
@@ -796,28 +841,7 @@ export function AgentWorkspaceRail() {
     agentRailSettings.sectionOrder,
   ]);
 
-  // Cross-workspace priority inbox: conversations blocked on the user (approval,
-  // question) or failed, ranked by urgency. Rows also stay in their home
-  // sections; this is a live surfacing layer, not a move.
-  const attentionRailConversations = useMemo(() => {
-    if (!railSectionOrder.includes("attention")) {
-      return [];
-    }
-    const byKey = new Map<string, AgentRailConversationSummary>();
-    for (const conversation of pinnedRailConversations) {
-      if (agentRailConversationNeedsAttention(conversation)) {
-        byKey.set(getRailConversationKey(conversation), conversation);
-      }
-    }
-    for (const group of groups) {
-      for (const conversation of group.conversations) {
-        if (agentRailConversationNeedsAttention(conversation)) {
-          byKey.set(getRailConversationKey(conversation), conversation);
-        }
-      }
-    }
-    return [...byKey.values()].sort((a, b) => compareAgentRailByStatusPriority(a, b));
-  }, [groups, pinnedRailConversations, railSectionOrder]);
+  // Attention rows are extracted in the shell and stripped from home lists.
 
   const handleNewStandaloneChat = useCallback(() => {
     startStandaloneChat();
@@ -861,52 +885,6 @@ export function AgentWorkspaceRail() {
     rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
   }, [activeServer.id, activeWorkspaceId]);
 
-  const setWorkspaceSortMode = useCallback(
-    (mode: WorkspaceSortMode) => {
-      updateSettings((current) => {
-        const seededCustomOrderIds =
-          mode === "custom" && current.general.workspaceCustomOrderIds.length === 0
-            ? visibleGroups.map((group) =>
-                resolveGroupWorkspaceAppearanceKey(group, activeServer.id)
-              )
-            : current.general.workspaceCustomOrderIds;
-        if (current.general.workspaceSortMode === mode) {
-          if (seededCustomOrderIds === current.general.workspaceCustomOrderIds) {
-            return current;
-          }
-        }
-        return {
-          ...current,
-          general: {
-            ...current.general,
-            workspaceSortMode: mode,
-            workspaceCustomOrderIds: seededCustomOrderIds,
-          },
-        };
-      });
-    },
-    [activeServer.id, updateSettings, visibleGroups]
-  );
-
-  const resetWorkspaceCustomOrder = useCallback(() => {
-    updateSettings((current) => {
-      if (
-        current.general.workspaceSortMode === "recent" &&
-        current.general.workspaceCustomOrderIds.length === 0
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        general: {
-          ...current.general,
-          workspaceSortMode: "recent",
-          workspaceCustomOrderIds: [],
-        },
-      };
-    });
-  }, [updateSettings]);
-
   const setAgentRailGroupBy = useCallback(
     (mode: AgentRailGroupByMode) => {
       updateSettings((current) => ({
@@ -939,37 +917,6 @@ export function AgentWorkspaceRail() {
     [updateSettings]
   );
 
-  const setMachineVisible = useCallback(
-    (serverId: string, visible: boolean) => {
-      updateSettings((current) => {
-        const hidden = new Set(current.general.agentRail.hiddenServerIds);
-        if (visible) {
-          hidden.delete(serverId);
-        } else {
-          hidden.add(serverId);
-        }
-        return {
-          ...current,
-          general: {
-            ...current.general,
-            agentRail: {
-              ...current.general.agentRail,
-              hiddenServerIds: [...hidden],
-            },
-          },
-        };
-      });
-    },
-    [updateSettings]
-  );
-
-  const setRailSectionOrder = useCallback(
-    (order: AgentRailSectionId[]) => {
-      patchAgentRailSettings({ sectionOrder: order });
-    },
-    [patchAgentRailSettings]
-  );
-
   const setRailSectionHidden = useCallback(
     (sectionId: AgentRailSectionId, hidden: boolean) => {
       if (sectionId === "workspaces") {
@@ -995,6 +942,39 @@ export function AgentWorkspaceRail() {
       });
     },
     [updateSettings]
+  );
+
+  const applyRailViewPreset = useCallback(
+    (preset: AgentRailViewPreset) => {
+      patchAgentRailSettings(applyAgentRailViewPreset(preset, agentRailSettings));
+    },
+    [agentRailSettings, patchAgentRailSettings]
+  );
+
+  const handleRailAllWorkspaces = useCallback(() => {
+    patchAgentRailSettings({ scope: { type: "all" } });
+  }, [patchAgentRailSettings]);
+
+  const handleRailWorkspaceSelect = useCallback(
+    (workspace: DirectoryWorkspaceRecord) => {
+      patchAgentRailSettings({
+        scope: { type: "workspace", workspaceKey: workspace.workspaceKey },
+      });
+      if (workspace.serverId !== activeServer.id) {
+        if (activeWorkspaceId) {
+          rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
+        }
+        setActiveServer(workspace.serverId);
+      }
+      void openWorkspaceById(workspace.id).catch(() => undefined);
+    },
+    [
+      activeServer.id,
+      activeWorkspaceId,
+      openWorkspaceById,
+      patchAgentRailSettings,
+      setActiveServer,
+    ]
   );
 
   const reorderWorkspaceGroups = useCallback(
@@ -1657,11 +1637,26 @@ export function AgentWorkspaceRail() {
           badge:
             c.status === "running"
               ? "running"
-              : agentRailConversationNeedsAttention(c)
+              : agentRailConversationNeedsAttention(c, {
+                  acknowledgedFailure: Boolean(
+                    acknowledgedFailureByConversationId?.[c.id]
+                  ),
+                })
                 ? "needs attention"
                 : undefined,
         });
       }
+    }
+    for (const c of attentionRailConversations) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      items.push({
+        id: c.id,
+        title: c.title,
+        updatedAt: c.updatedAt,
+        detail: railWorkspaceNameById.get(c.workspaceId) ?? "Needs attention",
+        badge: "needs attention",
+      });
     }
     for (const c of pinnedRailConversations) {
       if (seen.has(c.id)) continue;
@@ -1678,13 +1673,24 @@ export function AgentWorkspaceRail() {
         badge:
           c.status === "running"
             ? "running"
-            : agentRailConversationNeedsAttention(c)
+            : agentRailConversationNeedsAttention(c, {
+                acknowledgedFailure: Boolean(
+                  acknowledgedFailureByConversationId?.[c.id]
+                ),
+              })
               ? "needs attention"
               : undefined,
       });
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [activeServer.id, groups, pinnedRailConversations, railWorkspaceNameById]);
+  }, [
+    acknowledgedFailureByConversationId,
+    activeServer.id,
+    attentionRailConversations,
+    groups,
+    pinnedRailConversations,
+    railWorkspaceNameById,
+  ]);
 
   const visibleConversationIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1696,8 +1702,11 @@ export function AgentWorkspaceRail() {
     for (const conversation of pinnedRailConversations) {
       ids.add(conversation.id);
     }
+    for (const conversation of attentionRailConversations) {
+      ids.add(conversation.id);
+    }
     return ids;
-  }, [groups, pinnedRailConversations]);
+  }, [attentionRailConversations, groups, pinnedRailConversations]);
 
   useEffect(() => {
     if (!renameState || visibleConversationIds.has(renameState.conversationId)) {
@@ -2342,9 +2351,8 @@ export function AgentWorkspaceRail() {
   );
 
   const attentionSection: ReactNode = useMemo(() => {
-    // Hidden while bulk-selecting: rows keep living in their home sections and
-    // duplicated rows would make range selection ambiguous.
-    if (bulkSelectMode || attentionRailConversations.length === 0) {
+    // Unique rows now live in this section, so bulk select can include them.
+    if (attentionRailConversations.length === 0) {
       return null;
     }
     const isAttentionHeaderCollapsed = collapsedWorkspaceIds.has(
@@ -2384,7 +2392,13 @@ export function AgentWorkspaceRail() {
         </div>
         {!isAttentionHeaderCollapsed ? (
           <div className="flex flex-col gap-[2px]">
-            {attentionRailConversations.map((conversation, index) => (
+            {attentionRailConversations.map((conversation, index) => {
+              const attentionSection: RailConversationRowSection = {
+                workspaceId: ATTENTION_SECTION_WORKSPACE_ID,
+                orderedConversations: attentionRailConversations,
+              };
+              const railKey = getRailConversationKey(conversation);
+              return (
               <AgentConversationRow
                 key={`attention:${conversation.conversationKey ?? conversation.id}`}
                 conversation={conversation}
@@ -2392,10 +2406,25 @@ export function AgentWorkspaceRail() {
                 detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
                 now={railNow}
                 unreadCompletion={isConversationUnread(conversation)}
+                acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                 showMachineBadge={showMachine}
                 rowIndex={index}
                 selected={isConversationChatSelected(conversation)}
-                onSelect={() => handleConversationSelect(conversation)}
+                bulkSelectMode={bulkSelectMode}
+                bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
+                editing={renameState?.conversationId === conversation.id}
+                editValue={renameState?.draft}
+                onBeginRename={() => beginConversationRename(conversation)}
+                onEditValueChange={updateConversationRenameDraft}
+                onCommitRename={commitConversationRename}
+                onCancelRename={cancelConversationRename}
+                onSelect={(event) => {
+                  if (bulkSelectMode) {
+                    handleBulkRowClick(event, conversation, attentionSection);
+                    return;
+                  }
+                  handleConversationSelect(conversation);
+                }}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2410,25 +2439,34 @@ export function AgentWorkspaceRail() {
                   })
                 }
               />
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </section>
     );
   }, [
     attentionRailConversations,
+    beginConversationRename,
     bulkSelectMode,
+    bulkSelectedKeys,
+    cancelConversationRename,
     collapsedWorkspaceIds,
+    commitConversationRename,
     experimentalIpadCustomButtons,
+    handleBulkRowClick,
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
+    isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
     railNow,
     railRowDetail,
     railWorkspaceNameById,
+    renameState,
     toggleWorkspaceCollapsed,
+    updateConversationRenameDraft,
   ]);
 
   const pinnedSection: ReactNode = useMemo(() => {
@@ -2477,6 +2515,7 @@ export function AgentWorkspaceRail() {
                   detail={railRowDetail}
                   now={railNow}
                   unreadCompletion={isConversationUnread(conversation)}
+                  acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                   rowIndex={index}
                   selected={isConversationChatSelected(conversation)}
                   bulkSelectMode={bulkSelectMode}
@@ -2568,6 +2607,7 @@ export function AgentWorkspaceRail() {
           detail={railRowDetail}
           now={railNow}
           unreadCompletion={isConversationUnread(conversation)}
+          acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
           rowIndex={index}
           selected={isConversationChatSelected(conversation)}
           bulkSelectMode={bulkSelectMode}
@@ -2644,7 +2684,7 @@ export function AgentWorkspaceRail() {
               />
             </span>
             <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
-              Chats
+              {standaloneHomeLabel}
             </span>
           </button>
           <button
@@ -2848,6 +2888,7 @@ export function AgentWorkspaceRail() {
     settings.general.chatFolders,
     settings.general.chatRootOrderByScope,
     standaloneChatConversations,
+    standaloneHomeLabel,
     toggleFolderCollapsed,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
@@ -2945,7 +2986,7 @@ export function AgentWorkspaceRail() {
                       <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
-                      {groupMachineLabel && agentRailSettings.groupBy !== "server" ? (
+                      {groupMachineLabel ? (
                         <span className="max-w-[86px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
                           {groupMachineLabel}
                         </span>
@@ -3121,6 +3162,7 @@ export function AgentWorkspaceRail() {
                                         detail={railRowDetail}
                                         now={railNow}
                                         unreadCompletion={isConversationUnread(conversation)}
+                                        acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                                         showMachineBadge={showConversationMachine}
                                         rowIndex={index}
                                         selected={isConversationChatSelected(conversation)}
@@ -3203,6 +3245,7 @@ export function AgentWorkspaceRail() {
                               detail={railRowDetail}
                               now={railNow}
                               unreadCompletion={isConversationUnread(conversation)}
+                              acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                               showMachineBadge={showConversationMachine}
                               rowIndex={index}
                               selected={isConversationChatSelected(conversation)}
@@ -3280,14 +3323,24 @@ export function AgentWorkspaceRail() {
         if (attentionSection) nodes.push(<div key="attention">{attentionSection}</div>);
       } else if (sectionId === "pinned") {
         if (pinnedSection) nodes.push(<div key="pinned">{pinnedSection}</div>);
-      } else if (sectionId === "chats") {
-        nodes.push(<div key="chats">{chatsSection}</div>);
       } else if (sectionId === "workspaces") {
-        nodes.push(<div key="workspaces">{workspaceGroupsSection}</div>);
+        nodes.push(
+          <div key="workspaces">
+            {showStandaloneHomeGroup ? chatsSection : null}
+            {workspaceGroupsSection}
+          </div>
+        );
       }
     }
     return nodes;
-  }, [attentionSection, chatsSection, pinnedSection, railSectionOrder, workspaceGroupsSection]);
+  }, [
+    attentionSection,
+    chatsSection,
+    pinnedSection,
+    railSectionOrder,
+    showStandaloneHomeGroup,
+    workspaceGroupsSection,
+  ]);
 
   // Desktop collapse animates the rail panel to 0% width; keep the content
   // mounted for the slide-out so it visibly travels off instead of vanishing.
@@ -3366,6 +3419,51 @@ export function AgentWorkspaceRail() {
               </button>
             </div>
           )}
+          {!bulkSelectMode ? (
+            <div className={`shrink-0 pb-[4px] pt-[6px] ${railTopBarPadClass}`} data-electron-no-drag>
+              <button
+                ref={workspacePickerAnchorRef}
+                type="button"
+                onClick={() => {
+                  setFilterMenuOpen(false);
+                  setServerPickerOpen(false);
+                  setWorkspacePickerOpen((open) => !open);
+                }}
+                className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[6px] py-[5px] text-left hover:bg-[var(--agent-card-bg)]"
+                aria-label="Choose workspace"
+                aria-expanded={workspacePickerOpen}
+                aria-haspopup="dialog"
+              >
+                {agentRailSettings.scope?.type === "workspace" && scopedDirectoryWorkspace ? (
+                  <WorkspacePickerRowIcon
+                    appearances={workspaceRailAppearances}
+                    workspaceKey={scopedDirectoryWorkspace.workspaceKey}
+                    isHome={Boolean(
+                      homeWorkspaceId &&
+                        scopedDirectoryWorkspace.id === homeWorkspaceId &&
+                        scopedDirectoryWorkspace.serverId === activeServer.id
+                    )}
+                  />
+                ) : (
+                  <Layers
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
+                  {agentRailSettings.scope?.type === "workspace"
+                    ? (scopedDirectoryWorkspace?.name ?? "Workspace")
+                    : "All workspaces"}
+                </span>
+                <ChevronDown
+                  className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                  strokeWidth={1.5}
+                  aria-hidden
+                />
+              </button>
+            </div>
+          ) : null}
 
           {/* Gate on the DELAYED collapse flag: the raw context value would
               unmount the list on the first frame of the desktop slide-out and
@@ -3533,13 +3631,38 @@ export function AgentWorkspaceRail() {
         open={serverPickerOpen}
         onClose={() => setServerPickerOpen(false)}
         anchorRef={accountAnchorRef}
-        label="Switch server"
+        label="This device"
         selectedServerId={activeServer.id}
         servers={servers}
         serverStatusById={serverStatusById}
         serverRailAppearances={serverRailAppearances}
         onSelect={handleActiveServerChange}
         placement="above"
+        variant="device"
+      />
+
+      <WorkspacePickerMenu
+        open={workspacePickerOpen}
+        onClose={() => setWorkspacePickerOpen(false)}
+        anchorRef={workspacePickerAnchorRef}
+        workspaces={directoryWorkspaces}
+        appearances={workspaceRailAppearances}
+        homeWorkspaceId={homeWorkspaceId}
+        activeServerId={activeServer.id}
+        selectedWorkspaceKey={
+          agentRailSettings.scope?.type === "workspace"
+            ? agentRailSettings.scope.workspaceKey
+            : (activeWorkspaceId
+                ? getAgentRailWorkspaceKey({
+                    serverId: activeServer.id,
+                    workspaceId: activeWorkspaceId,
+                  })
+                : null)
+        }
+        allSelected={agentRailSettings.scope?.type !== "workspace"}
+        showAllWorkspacesOption
+        onSelectAll={handleRailAllWorkspaces}
+        onSelectWorkspace={handleRailWorkspaceSelect}
       />
 
       <RecentChatsModal
@@ -3561,25 +3684,19 @@ export function AgentWorkspaceRail() {
         setRailFilterToggle={setRailFilterToggle}
         clearRailFilters={clearRailFilters}
         railFilterActive={railFilterActive}
-        workspaceSortMode={workspaceSortMode}
-        setWorkspaceSortMode={setWorkspaceSortMode}
-        workspaceCustomOrderActive={workspaceCustomOrderIds.length > 0}
-        resetWorkspaceCustomOrder={resetWorkspaceCustomOrder}
         groupBy={agentRailSettings.groupBy}
         setGroupBy={setAgentRailGroupBy}
-        machines={machineOptions}
-        hiddenMachineIds={agentRailSettings.hiddenServerIds}
-        setMachineVisible={setMachineVisible}
         showIcons={agentRailSettings.showIcons}
         setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
-        sectionOrder={
-          agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"]
-        }
         rowDetail={railRowDetail}
         setRowDetail={(mode) => patchAgentRailSettings({ rowDetail: mode })}
         hiddenSections={agentRailSettings.hiddenSections ?? []}
-        setSectionOrder={setRailSectionOrder}
         setSectionHidden={setRailSectionHidden}
+        viewPreset={matchingAgentRailViewPreset({
+          groupBy: agentRailSettings.groupBy,
+          rowDetail: railRowDetail,
+        })}
+        onSelectPreset={applyRailViewPreset}
       />
     </>
   );
