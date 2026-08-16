@@ -38,4 +38,16 @@ export type LiveUpdateStatus = {
   notificationPermissionGranted: boolean;
   suppressedByDismissal: boolean;
   deliveryPreference: LiveUpdateDeliveryPreference;
+  /** Device manufacturer is Samsung (Now Bar renders live updates). */
+  isSamsung?: boolean;
+  /**
+   * This Android build actually renders promoted live updates: Android 16
+   * QPR1+ (status-bar chip) or Samsung One UI 8 (Now Bar). Base Android 16
+   * shipped the APIs without the rendering UI.
+   */
+  promotionRenderSupported?: boolean;
+  /** A representative run notification structurally qualifies for promotion. */
+  hasPromotableCharacteristics?: boolean;
+  /** A Cesium notification is currently promoted (live update rendering). */
+  promotedNotificationPosted?: boolean;
 };

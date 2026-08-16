@@ -1,6 +1,7 @@
 package com.cesium.mobile.notifications
 
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -52,6 +53,24 @@ internal fun migrateLegacyLiveUpdatePreference(legacy: String?): String? =
     else -> null
   }
 
+internal fun isSamsungDevice(manufacturer: String?): Boolean =
+  manufacturer?.trim()?.equals("samsung", ignoreCase = true) == true
+
+/**
+ * Whether this Android build actually RENDERS promoted live updates.
+ * Base Android 16 (SDK 36.0) shipped the Live Update APIs without the
+ * system UI: canPostPromotedNotifications() reports false and no status-bar
+ * chip exists, so notifications silently fall back to the standard shade.
+ * Rendering arrived in Android 16 QPR1 (a minor SDK release above the 36
+ * base) — and, independently, Samsung One UI 8 renders promoted
+ * notifications in the Now Bar on base 36.
+ */
+internal fun isPromotionRenderCapable(
+  sdkInt: Int,
+  hasMinorSdkAboveBase: Boolean,
+  samsung: Boolean
+): Boolean = sdkInt > 36 || (sdkInt == 36 && (hasMinorSdkAboveBase || samsung))
+
 class CesiumLiveUpdatesModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
@@ -66,7 +85,13 @@ class CesiumLiveUpdatesModule(
       promise.resolve(statusMap())
       return
     }
-    extras.putBoolean("promote", preference == LIVE_UPDATE_PREFERENCE_LIVE)
+    // Promotion requires both the user preference AND the payload's consent
+    // (terminal updates arrive with promote=false); previously the payload
+    // flag was silently overwritten.
+    extras.putBoolean(
+      "promote",
+      extras.getBoolean("promote", true) && preference == LIVE_UPDATE_PREFERENCE_LIVE
+    )
     val runKey = extras.getString("runKey")
     val alert = extras.getBoolean("alert", false)
     // A dismissed run stays quiet for progress updates, but interventions and
@@ -137,7 +162,12 @@ class CesiumLiveUpdatesModule(
   }
 
   private fun notifyDirectly(extras: Bundle) {
-    if (!extras.getBoolean("ongoing", true)) {
+    if (extras.getBoolean("ongoing", true)) {
+      // Keep the run restorable even when the service could not be started
+      // (background start restrictions); otherwise a process restart drops
+      // the notification entirely.
+      CesiumLiveUpdateStateStore.saveRun(reactContext, extras)
+    } else {
       CesiumLiveUpdateStateStore.removeRun(reactContext, extras.getString("runKey"))
     }
     reactContext.getSystemService(NotificationManager::class.java).notify(
@@ -187,6 +217,53 @@ class CesiumLiveUpdatesModule(
     promise.resolve(available)
   }
 
+  /**
+   * Best-effort deep link into Samsung's Now Bar settings (Lock screen and
+   * AOD → Now bar). There is no documented public intent, so each candidate
+   * is resolve-guarded; when none exists the app's notification settings
+   * open instead (where One UI hosts the per-app "Live notifications"
+   * toggle). Resolves with the surface that opened, or null.
+   */
+  @ReactMethod
+  fun openNowBarSettings(promise: Promise) {
+    val nowBarCandidates = listOf(
+      // Samsung ships its settings screens inside com.android.settings with
+      // com.samsung.android.settings.* class names.
+      Intent().setComponent(
+        ComponentName(
+          "com.android.settings",
+          "com.samsung.android.settings.lockscreen.NowBarSettingsActivity"
+        )
+      ),
+      Intent("com.samsung.android.settings.NOW_BAR_SETTINGS")
+    )
+    for (candidate in nowBarCandidates) {
+      candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      if (candidate.resolveActivity(reactContext.packageManager) == null) continue
+      try {
+        reactContext.startActivity(candidate)
+        promise.resolve("nowbar")
+        return
+      } catch (_: Exception) {
+        // Fall through to the next candidate.
+      }
+    }
+    val fallback = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+      putExtra(Settings.EXTRA_APP_PACKAGE, reactContext.packageName)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    if (fallback.resolveActivity(reactContext.packageManager) != null) {
+      try {
+        reactContext.startActivity(fallback)
+        promise.resolve("appNotificationSettings")
+        return
+      } catch (_: Exception) {
+        // Nothing openable.
+      }
+    }
+    promise.resolve(null)
+  }
+
   @ReactMethod
   fun consumeInitialNotificationAction(promise: Promise) {
     val intent = CesiumNotificationIntentStore.consume()
@@ -200,12 +277,63 @@ class CesiumLiveUpdatesModule(
   }
 
   private fun statusMap(suppressedByDismissal: Boolean = false) = Arguments.createMap().apply {
+    val samsung = isSamsungDevice(Build.MANUFACTURER)
     putInt("sdkInt", Build.VERSION.SDK_INT)
     putBoolean("progressStyleSupported", Build.VERSION.SDK_INT >= 36)
     putBoolean("canPostPromotedNotifications", CesiumAgentNotification.canPostPromoted(reactContext))
     putBoolean("notificationPermissionGranted", notificationsEnabled())
     putBoolean("suppressedByDismissal", suppressedByDismissal)
     putString("deliveryPreference", deliveryPreference())
+    // Promotion diagnostics: whether this Android build can render promoted
+    // live updates at all, whether our notifications structurally qualify,
+    // and whether one is promoted right now.
+    putBoolean("isSamsung", samsung)
+    putBoolean(
+      "promotionRenderSupported",
+      isPromotionRenderCapable(Build.VERSION.SDK_INT, hasMinorSdkAboveBase(), samsung)
+    )
+    putBoolean("hasPromotableCharacteristics", samplePromotableCharacteristics())
+    putBoolean(
+      "promotedNotificationPosted",
+      CesiumAgentNotification.isPromotedOngoingPosted(reactContext)
+    )
+  }
+
+  /**
+   * True on Android 16 minor releases (QPR1+), where the Live Update system
+   * UI actually exists. SDK_INT_FULL was added in API 36, so the read is
+   * guarded and failure-tolerant.
+   */
+  private fun hasMinorSdkAboveBase(): Boolean {
+    if (Build.VERSION.SDK_INT != 36) return false
+    return try {
+      Build.VERSION.SDK_INT_FULL > Build.VERSION_CODES_FULL.BAKLAVA
+    } catch (_: Throwable) {
+      false
+    }
+  }
+
+  /**
+   * Builds a representative ongoing run notification and asks the platform
+   * whether it structurally qualifies for promotion. Nothing is posted.
+   */
+  private fun samplePromotableCharacteristics(): Boolean {
+    if (Build.VERSION.SDK_INT < 36) return false
+    return try {
+      val sample = Bundle().apply {
+        putString("runKey", "cesium-promotion-diagnostic")
+        putString("title", "Cesium agent")
+        putString("body", "Diagnostic")
+        putBoolean("ongoing", true)
+        putBoolean("promote", true)
+        putBoolean("indeterminate", true)
+      }
+      CesiumAgentNotification.hasPromotableCharacteristics(
+        CesiumAgentNotification.build(reactContext, sample)
+      )
+    } catch (_: Throwable) {
+      false
+    }
   }
 
   private fun deliveryPreference(): String {

@@ -1,3 +1,6 @@
+// Must stay the first import: installs built-ins missing from old Android
+// System WebViews before any other module executes.
+import "./legacy-webview-polyfills";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { WorkbenchApp } from "@/components/layout/WorkbenchApp";

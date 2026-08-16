@@ -69,10 +69,6 @@
     </service>
 
     <service
-      android:name=".background.CesiumHeadlessService"
-      android:exported="false" />
-
-    <service
       android:name=".phonecontrol.CesiumPhoneControlService"
       android:exported="false"
       android:foregroundServiceType="specialUse">

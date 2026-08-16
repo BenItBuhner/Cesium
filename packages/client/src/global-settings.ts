@@ -1,6 +1,11 @@
 import { pruneModelToggleByBackend } from "@cesium/core";
 import { normalizeAgentConversationMruByServer } from "./agent-conversation-mru";
 import {
+  createDefaultAuroraSettings,
+  normalizeAuroraSettings,
+  type AuroraSettingsState,
+} from "./aurora-settings";
+import {
   createDefaultKeyboardShortcutsState,
   normalizeKeyboardShortcutsState,
   type KeyboardShortcutsSettingsState,
@@ -14,6 +19,12 @@ import {
   isAgentRailRowDetailMode,
   type AgentRailRowDetailMode,
 } from "./agent-rail-status";
+import {
+  normalizeQuickOpenScope,
+  normalizeQuickSwitcherScope,
+  type QuickOpenScopeId,
+  type QuickSwitcherScopeId,
+} from "./quick-open-scopes";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 export type AgentRailGroupByMode =
@@ -74,6 +85,10 @@ export type GeneralSettingsState = {
   serverRailAppearances: Record<string, ServerRailAppearance>;
   /** Per-server MRU of agent conversation ids for Ctrl+Tab switcher. */
   agentConversationMruByServer: Record<string, string[]>;
+  /** Scope Quick Open (Mod+P) starts in — files, chats, commands, settings, or tabs. */
+  quickOpenDefaultScope: QuickOpenScopeId;
+  /** What the hold-to-cycle (Mod+Tab) switcher steps through. */
+  quickSwitcherScope: QuickSwitcherScopeId;
   chatFolders: ChatFolderState[];
   /**
    * Custom root (unfoldered) conversation order keyed by folder scope id.
@@ -183,6 +198,8 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   /** Appearance, light/dark theme ids, custom token presets; persisted on the server. */
   themeConfig: ThemeConfig;
   keyboardShortcuts: KeyboardShortcutsSettingsState;
+  /** Animated aurora backdrop behind agent conversations. */
+  aurora: AuroraSettingsState;
 };
 
 export const DEFAULT_CMD_TAGS = [
@@ -203,6 +220,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     schemaVersion: 1,
     themeConfig: createDefaultThemeConfig(),
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
+    aurora: createDefaultAuroraSettings(),
     general: {
       doNotDisturb: false,
       batchStreamEvents: true,
@@ -213,6 +231,8 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       workspaceRailAppearances: {},
       serverRailAppearances: {},
       agentConversationMruByServer: {},
+      quickOpenDefaultScope: "files",
+      quickSwitcherScope: "conversations",
       chatFolders: [],
       chatRootOrderByScope: {},
       agentRail: {
@@ -607,6 +627,7 @@ export function normalizeLoadedGlobalSettings(
     schemaVersion: 1,
     themeConfig: normalizeThemeConfig((r as { themeConfig?: unknown }).themeConfig),
     keyboardShortcuts: normalizeKeyboardShortcutsState(r.keyboardShortcuts),
+    aurora: normalizeAuroraSettings((r as { aurora?: unknown }).aurora),
     general: {
       ...base.general,
       ...(r.general ?? {}),
@@ -633,6 +654,12 @@ export function normalizeLoadedGlobalSettings(
       ),
       agentConversationMruByServer: normalizeAgentConversationMruByServer(
         (r.general as Record<string, unknown> | undefined)?.agentConversationMruByServer
+      ),
+      quickOpenDefaultScope: normalizeQuickOpenScope(
+        (r.general as Record<string, unknown> | undefined)?.quickOpenDefaultScope
+      ),
+      quickSwitcherScope: normalizeQuickSwitcherScope(
+        (r.general as Record<string, unknown> | undefined)?.quickSwitcherScope
       ),
       chatFolders: normalizeChatFolders(
         (r.general as Record<string, unknown> | undefined)?.chatFolders

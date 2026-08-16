@@ -1,6 +1,7 @@
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import postcss from "postcss";
+import { buildMobileFirstPaintThemeScript } from "@cesium/core";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const source = resolve(repoRoot, "apps/desktop-renderer/dist");
@@ -71,6 +72,18 @@ if (bundledCss) {
     `<style data-cesium-bundled>${bundledCss.replace(/<\/style/gi, "<\\/style")}</style>`
   );
   await writeFile(indexPath, inlined, "utf8");
+}
+
+// Apply the stored theme before the first paint (dark users must not see a
+// light flash). The native bootstrap used to re-apply theme on every inject;
+// stamping it into the asset copy keeps the runtime injection minimal.
+{
+  const mobileIndex = await readFile(indexPath, "utf8");
+  const themeScript = `<script data-cesium-first-paint-theme>${buildMobileFirstPaintThemeScript()}</script>`;
+  const stamped = mobileIndex.includes("data-cesium-first-paint-theme")
+    ? mobileIndex
+    : mobileIndex.replace(/<head>/i, `<head>${themeScript}`);
+  await writeFile(indexPath, stamped, "utf8");
 }
 
 console.log(`Copied Cesium web workbench to ${target}`);

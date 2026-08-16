@@ -4,6 +4,7 @@ import {
   CESIUM_PROTOCOL_VERSION,
   type CesiumServerMetadata,
 } from "@cesium/contracts/meta";
+import { resolveCurrentVersion } from "../lib/updates/app-version.js";
 
 export const metaRoutes = new Hono();
 
@@ -12,6 +13,7 @@ metaRoutes.get("/api/meta", (c) => {
     name: "cesium",
     protocolVersion: CESIUM_PROTOCOL_VERSION,
     capabilities: [...CESIUM_CAPABILITIES],
+    serverVersion: resolveCurrentVersion(),
     transports: {
       http: "/api",
       websocket: "/ws",

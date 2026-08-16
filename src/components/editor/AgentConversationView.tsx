@@ -670,7 +670,7 @@ const showRecentChatsSection =
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
+    <div className="aurora-editor-surface flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
       {isEmptyThread ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
@@ -698,7 +698,7 @@ const showRecentChatsSection =
             </div>
           ) : null}
           <div
-            className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
+            className={`aurora-editor-surface min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
           >
             {recentChatsSection ? (
               <div className="flex h-full flex-col justify-end">
