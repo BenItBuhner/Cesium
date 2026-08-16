@@ -3793,10 +3793,23 @@ const handleNativeComposerKeyDown = useCallback(
       />
     );
 
+    const profileChip =
+      isCesiumBackend && profileOptions.length > 0 ? (
+        <ProfileDropdown
+          profileId={activeProfileId}
+          options={profileOptions}
+          onProfileChange={handleProfileChange}
+          popoverPlacement={modeModelPopoverPlacement}
+          disabled={configLocked}
+          onManageProfiles={handleManageProfiles}
+        />
+      ) : null;
+
     const leadingModeControls = (
       <div className="flex shrink-0 items-center gap-[6px]">
         {plusButton}
         {modeChip}
+        {profileChip}
       </div>
     );
 
@@ -3841,6 +3854,10 @@ const handleNativeComposerKeyDown = useCallback(
               disabled
               removable={!modeLocked}
             />
+            {profileChip ? (
+              // Collapsed profile chip: icon (13px) + horizontal padding (7px x2).
+              <span className="block h-[16px] w-[27px] shrink-0" />
+            ) : null}
           </div>
           <span
             className="block shrink-0"
