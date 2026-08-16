@@ -23,11 +23,37 @@ export const BACK_INTENT_PRIORITY = {
   rightPane: 30,
 } as const;
 
+/**
+ * One frame of the Android progressive (predictive) back gesture. `progress`
+ * runs 0 → 1 as the finger travels inward from `swipeEdge`; the gesture then
+ * either commits (the layer must pop) or cancels (the layer must return to
+ * rest).
+ */
+export type BackGestureEvent = {
+  progress: number;
+  swipeEdge: "left" | "right";
+  touchX?: number;
+  touchY?: number;
+};
+
+/**
+ * Optional progressive hooks for a back handler. Layers that can preview
+ * their pop (drawers sliding with the finger, the settings view scaling down)
+ * implement these; layers that can only close discretely (modals, palettes)
+ * omit them and simply pop on commit.
+ */
+export type BackGestureHooks = {
+  onStart?: (event: BackGestureEvent) => void;
+  onProgress?: (event: BackGestureEvent) => void;
+  onCancel?: () => void;
+};
+
 export type BackHandlerEntry = {
   /** Monotonically increasing registration id (higher = registered later). */
   id: number;
   priority: number;
   handler: () => boolean;
+  gesture?: BackGestureHooks;
 };
 
 /**
@@ -49,4 +75,44 @@ export function selectTopBackHandler(
     }
   }
   return top;
+}
+
+/**
+ * Drives one progressive back gesture against the handler registry.
+ *
+ * The gesture target is resolved once at `start` and stashed for the rest of
+ * the gesture, so progress/cancel/commit always reach the same layer even if
+ * the registry changes mid-gesture (e.g. another overlay opens or the target
+ * unregisters). A `commit` without a preceding `start` — 3-button navigation,
+ * pre-Android-14 devices — falls back to resolving the top handler at commit
+ * time, which is exactly the old discrete behavior.
+ */
+export class BackGestureCoordinator {
+  private active: BackHandlerEntry | null = null;
+
+  constructor(private readonly getEntries: () => readonly BackHandlerEntry[]) {}
+
+  /** Returns whether a handler claimed the gesture. */
+  start(event: BackGestureEvent): boolean {
+    this.active = selectTopBackHandler(this.getEntries());
+    this.active?.gesture?.onStart?.(event);
+    return this.active !== null;
+  }
+
+  progress(event: BackGestureEvent): void {
+    this.active?.gesture?.onProgress?.(event);
+  }
+
+  cancel(): void {
+    const target = this.active;
+    this.active = null;
+    target?.gesture?.onCancel?.();
+  }
+
+  /** Returns whether the back intent was consumed. */
+  commit(): boolean {
+    const target = this.active ?? selectTopBackHandler(this.getEntries());
+    this.active = null;
+    return target ? target.handler() : false;
+  }
 }

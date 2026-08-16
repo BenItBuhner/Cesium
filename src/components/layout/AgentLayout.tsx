@@ -33,10 +33,6 @@ import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWor
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
-import {
-  BACK_INTENT_PRIORITY,
-  useBackHandler,
-} from "@/components/mobile/BackIntentContext";
 
 function AgentShellResizeHandle() {
   return (
@@ -80,17 +76,9 @@ function AgentLayoutShell() {
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
 
-  // On mobile the workspace rail and workbench pane are overlays, so a back
-  // gesture should dismiss them (top-most first) before the app exits. The
-  // rail drawer sits above the right pane, matching their visual stacking.
-  useBackHandler(
-    isMobile && !leftRailCollapsed,
-    BACK_INTENT_PRIORITY.leftRail,
-    () => setLeftRailCollapsed(true)
-  );
-  useBackHandler(isMobile && rightPaneOpen, BACK_INTENT_PRIORITY.rightPane, () =>
-    setRightPaneOpen(false)
-  );
+  // Android back gestures for the mobile rail drawer and right pane are
+  // registered inside MobileAgentShell, where the drawer motion engine lives —
+  // that lets the predictive back gesture drive the drawers frame by frame.
   const padTrailingForWindowChrome =
     experimentalIpadWindowedTabInset && !isMobile && !rightPaneOpen;
   const electronTrailingChromeForToggle =
