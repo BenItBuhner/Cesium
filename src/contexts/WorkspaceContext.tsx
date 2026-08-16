@@ -1264,18 +1264,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await loadWorkspaceStateRef.current(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
+        setWorkspaceSession((current) => ({
+          ...current,
+          layout: { ...current.layout, shellView: "settings" },
+          settingsView: { ...current.settingsView, activeNav: "account" },
+        }));
+        setSessionReady(true);
+        setLoading(false);
         const msg =
           nextError instanceof Error ? nextError.message : "Failed to load workspace";
-    pushNotificationRef.current({
-      kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-      severity: "error",
-      title: "Workspace error",
-      message: msg,
-      persistent: false,
-      autoDismissMs: 10_000,
-      compact: true,
-    });
-        setLoading(false);
+        const isConnection =
+          /fetch|network|timed out|ECONNREFUSED|Failed to/i.test(msg);
+        if (!isConnection) {
+          pushNotificationRef.current({
+            kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
+            severity: "error",
+            title: "Workspace error",
+            message: msg,
+            persistent: false,
+            autoDismissMs: 10_000,
+            compact: true,
+          });
+        }
       }
     }
 

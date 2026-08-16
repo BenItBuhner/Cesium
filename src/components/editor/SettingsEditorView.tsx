@@ -30,8 +30,6 @@ import {
   BookMarked,
   Bot,
   Box,
-  ChevronDown,
-  CircleUserRound,
   Cloud,
   Database,
   Download,
@@ -46,28 +44,16 @@ import {
   Blocks,
   Server,
   Settings,
+  UserRound,
   Zap,
 } from "lucide-react";
-import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
-import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-  isLocalDeviceServer,
-} from "@/lib/server-rail-appearance";
-import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
-import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
+import { AccountRailButton } from "@/components/account/AccountRailButton";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 import { openDocumentation } from "@/lib/open-documentation";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
@@ -86,6 +72,7 @@ type NavEntry =
  * Settings categories we actually use in this shell (trimmed from full Cursor parity).
  */
 const NAV_ENTRIES: NavEntry[] = [
+  { kind: "item", id: "account", label: "Account", icon: UserRound },
   { kind: "item", id: "general", label: "General", icon: Settings },
   { kind: "item", id: "actions", label: "Actions", icon: Zap },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
@@ -188,58 +175,6 @@ function SettingsNavContent({
   /** Windowed tab inset (beta): extra leading padding on the search field only (mobile drawer + desktop aside). */
   padSettingsSearchForWindowChrome: boolean;
 }) {
-  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
-  const { settings } = useGlobalSettings();
-  const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
-  const { byServerId: directoryByServerId } = useWorkspaceDirectory();
-  const serverPickerAnchorRef = useRef<HTMLButtonElement>(null);
-  const [serverPickerOpen, setServerPickerOpen] = useState(false);
-  const serverRailAppearances = settings.general.serverRailAppearances;
-  const activeServerAppearance = useMemo(
-    () =>
-      getServerRailAppearance(
-        serverRailAppearances,
-        activeServer.id,
-        servers.findIndex((server) => server.id === activeServer.id)
-      ),
-    [activeServer.id, serverRailAppearances, servers]
-  );
-  const activeServerDisplayLabel = useMemo(
-    () => getServerDisplayLabel(activeServer, activeServerAppearance),
-    [activeServer, activeServerAppearance]
-  );
-
-  const handleActiveServerChange = useCallback(
-    (serverId: string) => {
-      if (serverId === activeServer.id) {
-        setServerPickerOpen(false);
-        return;
-      }
-      if (activeWorkspaceId) {
-        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
-      }
-      setActiveServer(serverId);
-      setServerPickerOpen(false);
-      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
-      const directoryWorkspaces = directoryByServerId.get(serverId) ?? [];
-      const targetWorkspaceId =
-        restoredWorkspaceId &&
-        directoryWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
-          ? restoredWorkspaceId
-          : directoryWorkspaces[0]?.id;
-      if (targetWorkspaceId) {
-        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
-      }
-    },
-    [
-      activeServer.id,
-      activeWorkspaceId,
-      directoryByServerId,
-      openWorkspaceById,
-      setActiveServer,
-    ]
-  );
-
   return (
     <div className="flex h-full flex-col bg-[var(--bg-panel)]">
       <div className="mobile-safe-top-pad flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
@@ -373,39 +308,7 @@ function SettingsNavContent({
       </nav>
 
       <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
-        <button
-          ref={serverPickerAnchorRef}
-          type="button"
-          onClick={() => setServerPickerOpen((open) => !open)}
-          className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
-          aria-label={`Switch server (${activeServerDisplayLabel})`}
-          aria-expanded={serverPickerOpen}
-          aria-haspopup="menu"
-          title={activeServerDisplayLabel}
-        >
-          {isLocalDeviceServer(activeServer) ? (
-            <CircleUserRound
-              className="size-[18px] shrink-0 text-[var(--text-secondary)]"
-              strokeWidth={1.5}
-              aria-hidden
-            />
-          ) : (
-            <WorkspaceFolderIcon
-              iconName={activeServerAppearance.icon}
-              color={activeServerAppearance.color}
-              className="size-[18px] shrink-0"
-              strokeWidth={1.5}
-            />
-          )}
-          <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-            {activeServerDisplayLabel}
-          </span>
-          <ChevronDown
-            className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-            strokeWidth={1.5}
-            aria-hidden
-          />
-        </button>
+        <AccountRailButton />
         {onCloseShell ? (
           <button
             type="button"
@@ -418,19 +321,6 @@ function SettingsNavContent({
           </button>
         ) : null}
       </div>
-
-      <ServerPickerPopover
-        open={serverPickerOpen}
-        onClose={() => setServerPickerOpen(false)}
-        anchorRef={serverPickerAnchorRef}
-        label="Switch server"
-        selectedServerId={activeServer.id}
-        servers={servers}
-        serverStatusById={serverStatusById}
-        serverRailAppearances={serverRailAppearances}
-        onSelect={handleActiveServerChange}
-        placement="above"
-      />
     </div>
   );
 }
@@ -894,7 +784,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>
@@ -938,7 +827,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>

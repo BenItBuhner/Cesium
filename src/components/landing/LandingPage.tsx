@@ -297,7 +297,7 @@ export function LandingPage() {
               Docs
             </Link>
             <Link
-              href="/setup"
+              href="/agent?view=settings"
               className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             >
               Get started

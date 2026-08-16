@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -45,6 +46,31 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
   const { workspaceSession, updateWorkspaceSession, sessionReady } = useWorkspace();
 
   const explicitView = searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
+  const hydratedUrlViewRef = useRef(false);
+
+  useEffect(() => {
+    if (!sessionReady || hydratedUrlViewRef.current) {
+      return;
+    }
+    hydratedUrlViewRef.current = true;
+    const fromUrl = workbenchViewFromSearchParam(explicitView);
+    if (fromUrl === "default") {
+      return;
+    }
+    updateWorkspaceSession((current) => {
+      if (current.layout.shellView === fromUrl) {
+        return current;
+      }
+      return {
+        ...current,
+        layout: {
+          ...current.layout,
+          shellView: fromUrl,
+          priorShellView: fromUrl === "settings" ? "agent" : current.layout.priorShellView,
+        },
+      };
+    });
+  }, [explicitView, sessionReady, updateWorkspaceSession]);
 
   const shellView: WorkbenchShellView = useMemo(() => {
     if (!sessionReady) {

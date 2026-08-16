@@ -42,6 +42,7 @@ import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
 } from "@/lib/cloud/personalization";
+import { CLIENT_SETTINGS_EVENT } from "@cesium/client";
 
 /**
  * Cesium Cloud Context — the client side of the cross-device user context.
@@ -152,6 +153,7 @@ export type CloudContextValue = {
   userKey: string | null;
   userName: string | null;
   userEmail: string | null;
+  userImageUrl: string | null;
   bootstrap: CloudBootstrap | null;
   actions: CloudActions | null;
 };
@@ -162,6 +164,7 @@ const DISABLED_VALUE: CloudContextValue = {
   userKey: null,
   userName: null,
   userEmail: null,
+  userImageUrl: null,
   bootstrap: null,
   actions: null,
 };
@@ -252,6 +255,7 @@ function CloudBridge({
   signedIn,
   clerkName,
   clerkEmail,
+  clerkImageUrl,
   children,
 }: {
   mode: CloudMode;
@@ -259,6 +263,7 @@ function CloudBridge({
   signedIn: boolean;
   clerkName: string | null;
   clerkEmail: string | null;
+  clerkImageUrl?: string | null;
   children: ReactNode;
 }) {
   // The device key lives in browser storage; resolve it client-side only so
@@ -352,7 +357,37 @@ function CloudBridge({
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
   }, [bootstrap, actions]);
 
-  // Local server-list changes push up (additive, idempotent upserts).
+  // Local personalization changes push up so a signed-in account stays the
+  // source of truth across devices (client-owned settings, not the engine).
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const platform = getClientPlatform();
+    let timer: number | null = null;
+    const push = () => {
+      if (timer != null) {
+        globalThis.clearTimeout(timer);
+      }
+      timer = globalThis.setTimeout(() => {
+        void actions
+          .savePreferences(collectPersonalizationPayload())
+          .catch(() => undefined);
+      }, 400) as unknown as number;
+    };
+    const unsubSettings = platform.addEventListener(CLIENT_SETTINGS_EVENT, push);
+    const unsubPrefs = platform.addEventListener(
+      "opencursor:user-preferences-changed",
+      push
+    );
+    return () => {
+      if (timer != null) {
+        globalThis.clearTimeout(timer);
+      }
+      unsubSettings();
+      unsubPrefs();
+    };
+  }, [active, actions]);
   useEffect(() => {
     if (!active) {
       return;
@@ -389,10 +424,11 @@ function CloudBridge({
       userKey: bootstrap?.user.key ?? (deviceKey ? `device:${deviceKey}` : null),
       userName: bootstrap?.user.name ?? clerkName,
       userEmail: bootstrap?.user.email ?? clerkEmail,
+      userImageUrl: bootstrap?.user.imageUrl ?? clerkImageUrl ?? null,
       bootstrap: bootstrap ?? null,
       actions: active ? actions : null,
     }),
-    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions]
+    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, clerkImageUrl, active, actions]
   );
 
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
@@ -407,8 +443,9 @@ function ClerkCloudBridge({ children }: { children: ReactNode }) {
       mode="clerk"
       authReady={isLoaded && !isLoading}
       signedIn={isAuthenticated}
-      clerkName={user?.fullName ?? null}
+      clerkName={user?.fullName ?? user?.firstName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
+      clerkImageUrl={user?.imageUrl ?? null}
     >
       {children}
     </CloudBridge>
@@ -464,6 +501,7 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         signedIn
         clerkName={null}
         clerkEmail={null}
+        clerkImageUrl={null}
       >
         {children}
       </CloudBridge>

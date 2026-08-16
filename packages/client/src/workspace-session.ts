@@ -541,7 +541,7 @@ export function createDefaultWorkspaceSession(
       sidePaneSessionsByConversationId: {},
     },
     settingsView: {
-      activeNav: "general",
+      activeNav: "account",
       searchQuery: "",
       scrollTop: 0,
     },

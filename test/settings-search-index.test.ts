@@ -67,6 +67,18 @@ describe("settings search index", () => {
     assert.ok(index.some((hit) => hit.navId === "beta" && hit.rowId === "vscode-extensions"));
   });
 
+  test("indexes Account settings for sign-in and engines", () => {
+    const index = buildSettingsSearchIndex({});
+    const nav = searchSettingsIndex(index, "account");
+    assert.ok(nav.some((hit) => hit.kind === "nav" && hit.navId === "account"));
+
+    const signIn = searchSettingsIndex(index, "clerk sign in");
+    assert.ok(signIn.some((hit) => hit.navId === "account" && hit.rowId === "sign-in"));
+
+    const engine = searchSettingsIndex(index, "guest server");
+    assert.ok(engine.some((hit) => hit.navId === "account" && hit.rowId === "account-engine"));
+  });
+
   test("indexes backend public access controls under Servers", () => {
     const index = buildSettingsSearchIndex({});
     const hits = searchSettingsIndex(index, "permanent connection link");

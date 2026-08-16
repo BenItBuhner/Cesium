@@ -24,6 +24,7 @@ import {
 } from "@/components/mobile/BackIntentContext";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
+import { WorkbenchSessionBootstrap } from "@/components/layout/WorkbenchSessionBootstrap";
 import { isDocsRoute } from "@/lib/open-documentation";
 
 function subscribeToDocsRoute(onStoreChange: () => void) {
@@ -154,6 +155,7 @@ function WorkbenchWithConversationProviders() {
         <VoiceProvider>
           <MobileBridgeSync />
           <MobileBackController />
+          <WorkbenchSessionBootstrap />
           <WorkbenchShell />
           <VoiceOrbGate />
         </VoiceProvider>

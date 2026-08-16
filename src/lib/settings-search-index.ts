@@ -32,6 +32,7 @@ export type SettingsSearchEntry = {
 };
 
 const NAV_LABELS: Record<string, string> = {
+  account: "Account",
   general: "General",
   actions: "Actions",
   appearance: "Appearance",
@@ -107,6 +108,23 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
       navId,
       keywords: [navId],
     })
+  ),
+
+  // —— Account ——
+  section("account", "identity", "Account"),
+  row(
+    "account",
+    "sign-in",
+    "Sign in",
+    "Clerk account for synced personalization.",
+    ["clerk", "convex", "cloud", "login"]
+  ),
+  row(
+    "account",
+    "account-engine",
+    "Engine",
+    "Connect a local or remote Cesium engine.",
+    ["guest", "server"]
   ),
 
   // —— General ——
@@ -384,14 +402,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("rulesSkills", "workspace-files", "Workspace files", "rules skills subagents"),
 
   // —— Servers ——
-  section("servers", "default", "Default settings server"),
-  row(
-    "servers",
-    "home-server",
-    "Home server for shared preferences",
-    "Theme, keyboard shortcuts, and model toggles.",
-    ["default server", "settings server"]
-  ),
+  section("servers", "active", "Active engine"),
   row("servers", "active-chat", "Active chat server", "New chats and workspace actions."),
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
   section("servers", "public-access-section", "Public access", "share expose tunnel remote link"),
