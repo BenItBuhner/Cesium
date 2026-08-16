@@ -55,6 +55,66 @@ export type ServerRailAppearance = {
   nickname?: string;
 };
 
+/**
+ * Widgets available on the new-chat landing beneath the composer. Users can
+ * reorder and hide them from the landing's customize menu.
+ */
+export const NEW_CHAT_WIDGET_IDS = [
+  "shortcuts",
+  "actions",
+  "recent-chats",
+  "recent-activity",
+] as const;
+
+export type NewChatWidgetId = (typeof NEW_CHAT_WIDGET_IDS)[number];
+
+export type NewChatWidgetsState = {
+  /** Render order. Unknown/missing ids are appended in default order. */
+  order: NewChatWidgetId[];
+  /** Widgets removed from the landing. */
+  hidden: NewChatWidgetId[];
+};
+
+export function isNewChatWidgetId(value: unknown): value is NewChatWidgetId {
+  return NEW_CHAT_WIDGET_IDS.includes(value as NewChatWidgetId);
+}
+
+export function createDefaultNewChatWidgetsState(): NewChatWidgetsState {
+  return { order: [...NEW_CHAT_WIDGET_IDS], hidden: [] };
+}
+
+function dedupeNewChatWidgetIds(raw: unknown): NewChatWidgetId[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<NewChatWidgetId>();
+  const out: NewChatWidgetId[] = [];
+  for (const value of raw) {
+    if (!isNewChatWidgetId(value) || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+export function normalizeNewChatWidgetsState(raw: unknown): NewChatWidgetsState {
+  const defaults = createDefaultNewChatWidgetsState();
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  const record = raw as Partial<NewChatWidgetsState>;
+  const ordered = dedupeNewChatWidgetIds(record.order);
+  return {
+    order: [
+      ...ordered,
+      ...NEW_CHAT_WIDGET_IDS.filter((id) => !ordered.includes(id)),
+    ],
+    hidden: dedupeNewChatWidgetIds(record.hidden),
+  };
+}
+
 export type GeneralSettingsState = {
   doNotDisturb: boolean;
   /**
@@ -81,6 +141,8 @@ export type GeneralSettingsState = {
    */
   chatRootOrderByScope: Record<string, string[]>;
   agentRail: AgentRailSettingsState;
+  /** Order + visibility of the widgets on the new-chat landing. */
+  newChatWidgets: NewChatWidgetsState;
 };
 
 export type AgentRailSettingsState = {
@@ -225,6 +287,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         sectionOrder: ["attention", "pinned", "chats", "workspaces"],
         hiddenSections: [],
       },
+      newChatWidgets: createDefaultNewChatWidgetsState(),
     },
     agents: {
       submitCtrlEnter: false,
@@ -642,6 +705,9 @@ export function normalizeLoadedGlobalSettings(
       ),
       agentRail: normalizeAgentRailSettings(
         (r.general as Record<string, unknown> | undefined)?.agentRail
+      ),
+      newChatWidgets: normalizeNewChatWidgetsState(
+        (r.general as Record<string, unknown> | undefined)?.newChatWidgets
       ),
     },
     agents: {

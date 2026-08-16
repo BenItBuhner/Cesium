@@ -17,10 +17,18 @@ export type {
   GlobalSettingsState,
   ModelToggleState,
   ModelsSettingsState,
+  NewChatWidgetId,
+  NewChatWidgetsState,
   RememberedAgentPermissionRule,
   ServerRailAppearance,
   ToolsSettingsState,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@cesium/client";
-export { AGENT_RAIL_SECTION_IDS } from "@cesium/client";
+export {
+  AGENT_RAIL_SECTION_IDS,
+  NEW_CHAT_WIDGET_IDS,
+  createDefaultNewChatWidgetsState,
+  isNewChatWidgetId,
+  normalizeNewChatWidgetsState,
+} from "@cesium/client";
