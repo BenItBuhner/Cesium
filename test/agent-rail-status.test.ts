@@ -59,7 +59,7 @@ describe("agent rail status", () => {
     assert.equal(info.description, "Waiting for your answer");
   });
 
-  test("failed conversations surface the error summary", () => {
+  test("failed conversations surface the error summary until they are read", () => {
     const info = getAgentRailStatusInfo(
       summary({ status: "failed", lastErrorSummary: "Provider timed out" })
     );
@@ -67,6 +67,14 @@ describe("agent rail status", () => {
     assert.equal(info.tone, "error");
     assert.equal(info.needsAttention, true);
     assert.equal(info.description, "Failed · Provider timed out");
+    const read = getAgentRailStatusInfo(
+      summary({ status: "failed", lastErrorSummary: "Provider timed out" }),
+      { acknowledgedFailure: true }
+    );
+    assert.equal(read.kind, "idle");
+    assert.equal(read.needsAttention, false);
+    assert.equal(read.tone, "muted");
+    assert.equal(read.description, null);
   });
 
   test("running / pausing / paused map to active or muted states", () => {
@@ -125,6 +133,12 @@ describe("agent rail status", () => {
       true
     );
     assert.equal(agentRailConversationNeedsAttention(summary({ status: "failed" })), true);
+    assert.equal(
+      agentRailConversationNeedsAttention(summary({ status: "failed" }), {
+        acknowledgedFailure: true,
+      }),
+      false
+    );
     assert.equal(agentRailConversationNeedsAttention(summary({ status: "running" })), false);
     assert.equal(agentRailConversationNeedsAttention(summary()), false);
   });
@@ -173,6 +187,10 @@ describe("agent rail status", () => {
       "attention"
     );
     assert.equal(getAgentRailPriorityBucket(summary({ status: "failed" })), "attention");
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ status: "failed" }), { acknowledgedFailure: true }),
+      "recent"
+    );
     assert.equal(getAgentRailPriorityBucket(summary({ status: "running" })), "active");
     assert.equal(getAgentRailPriorityBucket(summary({ status: "pausing" })), "active");
     assert.equal(

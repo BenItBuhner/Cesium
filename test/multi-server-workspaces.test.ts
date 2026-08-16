@@ -4,6 +4,7 @@ import type { AgentConversationGroup } from "../src/lib/agent-types.ts";
 import type { DirectoryWorkspaceRecord } from "../src/contexts/WorkspaceDirectoryContext.tsx";
 import {
   filterGroupsByMachine,
+  filterGroupsByWorkspaceScope,
   getRepositoryGroupingKey,
   groupDirectoryWorkspacesByRepository,
   sortDirectoryWorkspaces,
@@ -121,6 +122,39 @@ describe("multi-server workspace organization", () => {
       filterGroupsByMachine(groups, ["desktop"]).map((group) => group.serverId),
       ["laptop", "new-machine"]
     );
+  });
+
+  test("scopes conversation groups to one workspace key", () => {
+    const groups = [
+      {
+        workspace: workspace({
+          id: "one",
+          serverId: "laptop",
+          serverLabel: "Laptop",
+        }),
+        serverId: "laptop",
+        workspaceKey: "laptop:one",
+        conversations: [],
+      },
+      {
+        workspace: workspace({
+          id: "two",
+          serverId: "desktop",
+          serverLabel: "Desktop",
+        }),
+        serverId: "desktop",
+        workspaceKey: "desktop:two",
+        conversations: [],
+      },
+    ] satisfies AgentConversationGroup[];
+    assert.deepEqual(
+      filterGroupsByWorkspaceScope(groups, {
+        type: "workspace",
+        workspaceKey: "desktop:two",
+      }).map((group) => group.workspaceKey),
+      ["desktop:two"]
+    );
+    assert.equal(filterGroupsByWorkspaceScope(groups, { type: "all" }).length, 2);
   });
 
   test("sorts deterministically by machine then workspace", () => {

@@ -27,13 +27,11 @@ import {
 } from "./quick-open-scopes";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
-export type AgentRailGroupByMode =
-  | "workspace"
-  | "priority"
-  | "repository"
-  | "server"
-  | "updated"
-  | "status";
+export type AgentRailGroupByMode = "workspace" | "priority";
+
+/** Retired group-by modes; persisted values migrate to `workspace`. */
+const LEGACY_AGENT_RAIL_GROUP_BY = new Set(["repository", "server", "updated", "status"]);
+
 export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
 
 export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
@@ -42,6 +40,13 @@ export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
   "chats",
   "workspaces",
 ];
+
+export type AgentRailScope =
+  | { type: "all" }
+  | { type: "workspace"; workspaceKey: string };
+
+export const AGENT_RAIL_VIEW_PRESETS = ["default", "inbox", "compact"] as const;
+export type AgentRailViewPreset = (typeof AGENT_RAIL_VIEW_PRESETS)[number];
 
 export type ChatFolderState = {
   id: string;
@@ -110,10 +115,13 @@ export type AgentRailSettingsState = {
   /**
    * Top-level rail section order. Unknown/missing ids are appended in default order.
    * Default: attention → pinned → chats (standalone) → workspaces.
+   * The chats section is no longer rendered; it stays here so old settings round-trip.
    */
   sectionOrder: AgentRailSectionId[];
-  /** Sections omitted from the rail (e.g. hide the standalone Chats block). */
+  /** Sections omitted from the rail (e.g. hide Needs attention). */
   hiddenSections: AgentRailSectionId[];
+  /** Rail list scope: every workspace, or one workspace. */
+  scope: AgentRailScope;
 };
 
 export type AgentsSettingsState = {
@@ -244,6 +252,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         rowDetail: "balanced",
         sectionOrder: ["attention", "pinned", "chats", "workspaces"],
         hiddenSections: [],
+        scope: { type: "all" },
       },
     },
     agents: {
@@ -477,21 +486,86 @@ function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
   return out;
 }
 
+function normalizeAgentRailScope(raw: unknown): AgentRailScope {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { type: "all" };
+  }
+  const record = raw as { type?: unknown; workspaceKey?: unknown };
+  if (
+    record.type === "workspace" &&
+    typeof record.workspaceKey === "string" &&
+    record.workspaceKey.length > 0
+  ) {
+    return { type: "workspace", workspaceKey: record.workspaceKey };
+  }
+  return { type: "all" };
+}
+
+function normalizeAgentRailGroupBy(raw: unknown, fallback: AgentRailGroupByMode): AgentRailGroupByMode {
+  if (raw === "workspace" || raw === "priority") {
+    return raw;
+  }
+  if (typeof raw === "string" && LEGACY_AGENT_RAIL_GROUP_BY.has(raw)) {
+    return "workspace";
+  }
+  return fallback;
+}
+
+export function applyAgentRailViewPreset(
+  preset: AgentRailViewPreset,
+  current: AgentRailSettingsState
+): AgentRailSettingsState {
+  const homeSections = (current.hiddenSections ?? []).filter(
+    (id) => id !== "attention" && id !== "pinned"
+  );
+  switch (preset) {
+    case "inbox":
+      return {
+        ...current,
+        groupBy: "priority",
+        rowDetail: current.rowDetail === "compact" ? "balanced" : current.rowDetail,
+      };
+    case "compact":
+      return {
+        ...current,
+        groupBy: "workspace",
+        rowDetail: "compact",
+        scope: { type: "all" },
+        hiddenSections: homeSections,
+      };
+    default:
+      return {
+        ...current,
+        groupBy: "workspace",
+        rowDetail: "balanced",
+        scope: { type: "all" },
+        hiddenSections: homeSections,
+      };
+  }
+}
+
+export function matchingAgentRailViewPreset(
+  settings: Pick<AgentRailSettingsState, "groupBy" | "rowDetail">
+): AgentRailViewPreset | null {
+  if (settings.groupBy === "priority" && settings.rowDetail !== "compact") {
+    return "inbox";
+  }
+  if (settings.groupBy === "workspace" && settings.rowDetail === "compact") {
+    return "compact";
+  }
+  if (settings.groupBy === "workspace" && settings.rowDetail === "balanced") {
+    return "default";
+  }
+  return null;
+}
+
 function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const defaults = createDefaultGlobalSettings().general.agentRail;
   if (!raw || typeof raw !== "object") {
     return defaults;
   }
-  const record = raw as Partial<AgentRailSettingsState>;
-  const rawGroupBy =
-    record.groupBy === "workspace" ||
-    record.groupBy === "priority" ||
-    record.groupBy === "repository" ||
-    record.groupBy === "server" ||
-    record.groupBy === "updated" ||
-    record.groupBy === "status"
-      ? record.groupBy
-      : defaults.groupBy;
+  const record = raw as Partial<AgentRailSettingsState> & { groupBy?: unknown; scope?: unknown };
+  const groupBy = normalizeAgentRailGroupBy(record.groupBy, defaults.groupBy);
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
@@ -510,8 +584,8 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     (id) => id !== "workspaces"
   );
   return {
-    groupBy: rawGroupBy,
-    visibleStatusFilters: strings(record.visibleStatusFilters),
+    groupBy,
+    visibleStatusFilters: [],
     // Do not preserve legacy allow-lists. They hide newly added servers forever,
     // which is catastrophic for a dynamic multi-server rail.
     visibleServerIds: [],
@@ -526,6 +600,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
         : defaults.rowDetail,
     sectionOrder,
     hiddenSections,
+    scope: normalizeAgentRailScope(record.scope),
   };
 }
 

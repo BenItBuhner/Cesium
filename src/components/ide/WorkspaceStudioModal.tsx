@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Folder, FolderGit2, Server, Trash2 } from "lucide-react";
+import { ArrowLeft, Folder, FolderGit2, Server } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
@@ -242,7 +242,7 @@ export function WorkspaceStudioModal({
     const url = repoUrl.trim();
     const parent = cloneParent.trim();
     if (!url || !parent) {
-      flash("Repository URL and parent folder are required.");
+      flash("Git URL and parent folder are required.");
       return;
     }
     setCloneBusy(true);
@@ -252,7 +252,7 @@ export function WorkspaceStudioModal({
         parentPath: parent,
         directoryName: cloneFolderName.trim() || undefined,
       });
-      flash("Repository cloned and opened.");
+      flash("Workspace cloned and opened.");
       onClose();
     } catch (e) {
       flash(e instanceof Error ? e.message : "Clone failed.");
@@ -282,7 +282,7 @@ export function WorkspaceStudioModal({
     const parent = newFolderParent.trim();
     const name = newFolderName.trim();
     if (!parent || !name) {
-      flash("Parent path and folder name are required.");
+      flash("Parent path and workspace name are required.");
       return;
     }
     setNewFolderBusy(true);
@@ -291,7 +291,7 @@ export function WorkspaceStudioModal({
       flash(`Created ${name}`);
       onClose();
     } catch (e) {
-      flash(e instanceof Error ? e.message : "Failed to create folder.");
+      flash(e instanceof Error ? e.message : "Failed to create workspace.");
     } finally {
       setNewFolderBusy(false);
     }
@@ -398,7 +398,7 @@ export function WorkspaceStudioModal({
   const handleSshRemoteClone = async () => {
     const url = sshRemoteRepoUrl.trim();
     if (!url) {
-      flash("Repository URL is required.");
+      flash("Git URL is required.");
       return;
     }
     const connection = sshConnectionInput();
@@ -570,12 +570,14 @@ export function WorkspaceStudioModal({
     }
   };
 
-  const tabClass = (m: Mode) =>
-    `rounded-[var(--radius-tab)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
-      mode === m
+  const tabClass = (m: "clone" | "browse" | "newfolder") => {
+    const active = m === "browse" ? mode === "browse" || mode === "ssh" : mode === m;
+    return `rounded-[var(--radius-tab)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+      active
         ? "bg-[var(--bg-card)] text-[var(--text-primary)]"
         : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]/60 hover:text-[var(--text-primary)]"
     }`;
+  };
 
   const removable = useMemo(
     () => workspaces.filter((w) => w.id !== homeWorkspaceId),
@@ -620,41 +622,23 @@ export function WorkspaceStudioModal({
             Workspaces
           </h2>
           <p className="font-sans text-[11px] text-[var(--text-secondary)]">
-            Clone a Git repo into an allowed folder, browse the host to open a folder, create a new empty project folder, or remove saved workspaces.
+            Clone from git, open a folder, or create a new workspace. Git checkouts, disk folders, and empty projects are all workspaces.
           </p>
           <div className="flex flex-wrap gap-1 pt-1">
             <button type="button" className={tabClass("clone")} onClick={() => setMode("clone")}>
               <span className="inline-flex items-center gap-1">
                 <FolderGit2 className="size-[14px]" strokeWidth={1.5} />
-                Clone Git URL
+                Clone from git
               </span>
             </button>
             <button type="button" className={tabClass("browse")} onClick={() => setMode("browse")}>
               <span className="inline-flex items-center gap-1">
                 <Folder className="size-[14px]" strokeWidth={1.5} />
-                Browse folders
+                Open folder
               </span>
             </button>
             <button type="button" className={tabClass("newfolder")} onClick={() => setMode("newfolder")}>
-              New empty folder
-            </button>
-            <button type="button" className={tabClass("ssh")} onClick={() => setMode("ssh")}>
-              <span className="inline-flex items-center gap-1">
-                <Server className="size-[14px]" strokeWidth={1.5} />
-                SSH
-              </span>
-            </button>
-            <button type="button" className={tabClass("worktrees")} onClick={() => setMode("worktrees")}>
-              <span className="inline-flex items-center gap-1">
-                <FolderGit2 className="size-[14px]" strokeWidth={1.5} />
-                Worktrees
-              </span>
-            </button>
-            <button type="button" className={tabClass("remove")} onClick={() => setMode("remove")}>
-              <span className="inline-flex items-center gap-1">
-                <Trash2 className="size-[14px]" strokeWidth={1.5} />
-                Remove…
-              </span>
+              New workspace
             </button>
           </div>
         </div>
@@ -782,6 +766,14 @@ export function WorkspaceStudioModal({
                 >
                   {browseOpenBusy ? "Opening…" : "Open this folder"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("ssh")}
+                  className="inline-flex items-center gap-1 rounded-[var(--radius-tab)] px-3 py-2 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                >
+                  <Server className="size-[14px]" strokeWidth={1.5} />
+                  Remote via SSH…
+                </button>
               </div>
             </div>
           )}
@@ -852,11 +844,11 @@ export function WorkspaceStudioModal({
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
                   className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
-                  ariaLabel="Parent directory for new folder"
+                  ariaLabel="Parent directory for new workspace"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-[var(--text-secondary)]">New folder name</span>
+                <span className="text-[11px] text-[var(--text-secondary)]">Workspace name</span>
                 <HardwareAwareTextInput
                   placeholder="my-app"
                   value={newFolderName}
@@ -864,7 +856,7 @@ export function WorkspaceStudioModal({
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
                   className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
-                  ariaLabel="New folder name"
+                  ariaLabel="New workspace name"
                   autoFocus
                 />
               </label>
@@ -881,6 +873,14 @@ export function WorkspaceStudioModal({
 
           {mode === "ssh" && (
             <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => setMode("browse")}
+                className="inline-flex w-fit items-center gap-1 rounded-[var(--radius-tab)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              >
+                <ArrowLeft className="size-[14px]" />
+                Open folder
+              </button>
               <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]">
                 <span
                   className={
@@ -1041,7 +1041,7 @@ export function WorkspaceStudioModal({
                     >
                       <span className="inline-flex items-center gap-1">
                         <Folder className="size-[13px]" strokeWidth={1.5} />
-                        Browse folders
+                        Browse remote folder
                       </span>
                     </button>
                     <button
@@ -1058,7 +1058,7 @@ export function WorkspaceStudioModal({
                     >
                       <span className="inline-flex items-center gap-1">
                         <FolderGit2 className="size-[13px]" strokeWidth={1.5} />
-                        Clone Git URL
+                        Clone from git
                       </span>
                     </button>
                   </div>

@@ -2,7 +2,7 @@ import type {
   AgentConversationGroup,
   AgentRailRepositoryInfo,
 } from "@/lib/agent-types";
-import type { WorkspaceSortMode } from "@/lib/global-settings";
+import type { AgentRailScope, WorkspaceSortMode } from "@/lib/global-settings";
 import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
 
 export function getRepositoryGroupingKey(input: {
@@ -26,6 +26,35 @@ export function filterGroupsByMachine(
   }
   const hidden = new Set(hiddenServerIds);
   return groups.filter((group) => !group.serverId || !hidden.has(group.serverId));
+}
+
+export function getAgentRailWorkspaceKey(input: {
+  workspaceKey?: string | null;
+  serverId?: string | null;
+  workspaceId?: string | null;
+}): string {
+  if (input.workspaceKey) {
+    return input.workspaceKey;
+  }
+  return `${input.serverId ?? "local"}:${input.workspaceId ?? ""}`;
+}
+
+export function filterGroupsByWorkspaceScope(
+  groups: AgentConversationGroup[],
+  scope: AgentRailScope | undefined
+): AgentConversationGroup[] {
+  if (!scope || scope.type === "all") {
+    return groups;
+  }
+  const wanted = scope.workspaceKey;
+  return groups.filter(
+    (group) =>
+      getAgentRailWorkspaceKey({
+        workspaceKey: group.workspaceKey,
+        serverId: group.serverId,
+        workspaceId: group.workspace.id,
+      }) === wanted
+  );
 }
 
 export function compareMachineWorkspace(

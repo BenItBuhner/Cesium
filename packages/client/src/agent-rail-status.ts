@@ -57,22 +57,30 @@ const STATUS_PRIORITY: Record<AgentRailStatusKind, number> = {
 export type AgentRailStatusContext = {
   /** True when the conversation finished a turn the user has not viewed yet. */
   unreadCompletion?: boolean;
+  /** True when a failed run has been viewed (or seen while visible). */
+  acknowledgedFailure?: boolean;
 };
 
-/** Needs a user decision (approval/answer) or ended in an error. */
+/** Needs a user decision (approval/answer) or an unread failure. */
 export function agentRailConversationNeedsAttention(
   conversation: Pick<
     AgentRailConversationSummary,
     "status" | "hasPendingPermission" | "hasPendingQuestion"
-  >
+  >,
+  ctx?: AgentRailStatusContext
 ): boolean {
-  return (
+  if (
     conversation.hasPendingPermission ||
     conversation.hasPendingQuestion === true ||
     conversation.status === "awaiting_permission" ||
-    conversation.status === "awaiting_question" ||
-    conversation.status === "failed"
-  );
+    conversation.status === "awaiting_question"
+  ) {
+    return true;
+  }
+  if (conversation.status === "failed") {
+    return !ctx?.acknowledgedFailure;
+  }
+  return false;
 }
 
 export function getAgentRailStatusKind(
@@ -88,7 +96,7 @@ export function getAgentRailStatusKind(
   if (conversation.hasPendingQuestion === true || conversation.status === "awaiting_question") {
     return "question";
   }
-  if (conversation.status === "failed") {
+  if (conversation.status === "failed" && !ctx?.acknowledgedFailure) {
     return "failed";
   }
   if (conversation.status === "running") {
@@ -171,18 +179,23 @@ export function compareAgentRailByStatusPriority(
     AgentRailConversationSummary,
     "status" | "hasPendingPermission" | "hasPendingQuestion" | "updatedAt" | "id"
   >,
-  ctx?: { unreadCompletionByConversationId?: Record<string, true> }
+  ctx?: {
+    unreadCompletionByConversationId?: Record<string, true>;
+    acknowledgedFailureByConversationId?: Record<string, true>;
+  }
 ): number {
   const pa =
     STATUS_PRIORITY[
       getAgentRailStatusKind(a, {
         unreadCompletion: Boolean(ctx?.unreadCompletionByConversationId?.[a.id]),
+        acknowledgedFailure: Boolean(ctx?.acknowledgedFailureByConversationId?.[a.id]),
       })
     ];
   const pb =
     STATUS_PRIORITY[
       getAgentRailStatusKind(b, {
         unreadCompletion: Boolean(ctx?.unreadCompletionByConversationId?.[b.id]),
+        acknowledgedFailure: Boolean(ctx?.acknowledgedFailureByConversationId?.[b.id]),
       })
     ];
   if (pa !== pb) {

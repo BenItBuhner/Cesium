@@ -477,11 +477,17 @@ async function runAgentTargetDropdownBenchmarks(page: Page): Promise<BrowserPerf
 
   const codebaseOpenStartedAt = performance.now();
   await codebaseButton.click();
-  await page.getByRole("menu", { name: "Context menu" }).waitFor({ state: "visible", timeout: 5_000 });
+  await page.getByRole("dialog", { name: "Choose workspace" }).waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
   pushSample(samples, "target.codebase_picker.open_visible", codebaseOpenStartedAt);
   const codebaseCloseStartedAt = performance.now();
   await page.keyboard.press("Escape");
-  await page.getByRole("menu", { name: "Context menu" }).waitFor({ state: "hidden", timeout: 5_000 });
+  await page.getByRole("dialog", { name: "Choose workspace" }).waitFor({
+    state: "hidden",
+    timeout: 5_000,
+  });
   pushSample(samples, "target.codebase_picker.close_visible", codebaseCloseStartedAt);
 
   const branchButton = page.locator('[data-perf="agent-branch-picker-button"]').first();
@@ -509,21 +515,15 @@ async function runAgentTargetDropdownBenchmarks(page: Page): Promise<BrowserPerf
     });
   }
 
-  const targetButton = page.locator('[data-perf="agent-worktree-target-picker-button"]').first();
-  const targetOpenStartedAt = performance.now();
-  await targetButton.click();
-  await page
-    .locator('[data-perf="agent-worktree-target-picker-popover"]')
-    .first()
-    .waitFor({ state: "visible", timeout: 5_000 });
-  pushSample(samples, "target.worktree_picker.open_visible", targetOpenStartedAt);
-  const targetCloseStartedAt = performance.now();
-  await page.mouse.click(4, 4);
-  await page
-    .locator('[data-perf="agent-worktree-target-picker-popover"]')
-    .first()
-    .waitFor({ state: "hidden", timeout: 5_000 });
-  pushSample(samples, "target.worktree_picker.clickaway_close_visible", targetCloseStartedAt);
+  samples.push({
+    label: "target.worktree_picker.open_visible",
+    ms: 0,
+    at: Date.now(),
+    fields: {
+      skipped: true,
+      reason: "laptop target picker removed; new worktree lives on the branch picker",
+    },
+  });
 
   return samples;
 }
