@@ -20,6 +20,7 @@ import {
 } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import {
+  APP_SETTINGS_EVENT,
   clientKeyValueStore,
   getClientPlatform,
   getConfiguredServerBaseUrl,
@@ -178,6 +179,9 @@ export function useCloudContext(): CloudContextValue {
 
 const PERSONALIZATION_SYNC_MARKER_KEY = "cesium-cloud-personalization-last-sync";
 export const CLOUD_PERSONALIZATION_APPLIED_EVENT = "cesium:cloud-personalization-applied";
+
+const USER_PREFERENCES_CHANGED_EVENT = "opencursor:user-preferences-changed";
+const PERSONALIZATION_PUSH_DEBOUNCE_MS = 1_500;
 
 /**
  * Reconcile personalization between local storage and the cloud:
@@ -351,6 +355,53 @@ function CloudBridge({
     mergeCloudServersIntoLocal(bootstrap.servers);
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
   }, [bootstrap, actions]);
+
+  // Continuous personalization push: any client-side settings change flows to
+  // the account (debounced). The last-sync marker breaks apply→push echoes.
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedulePush = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        const store = clientKeyValueStore();
+        const payload = collectPersonalizationPayload();
+        if (store.getItem(PERSONALIZATION_SYNC_MARKER_KEY) === payload) {
+          return;
+        }
+        void actions
+          .savePreferences(payload)
+          .then(() => store.setItem(PERSONALIZATION_SYNC_MARKER_KEY, payload))
+          .catch(() => undefined);
+      }, PERSONALIZATION_PUSH_DEBOUNCE_MS);
+    };
+    const platform = getClientPlatform();
+    const unsubscribeSettings = platform.addEventListener(APP_SETTINGS_EVENT, schedulePush);
+    const unsubscribePrefs = platform.addEventListener(
+      USER_PREFERENCES_CHANGED_EVENT,
+      schedulePush
+    );
+    const canUseWindowEvents =
+      typeof window !== "undefined" && typeof window.addEventListener === "function";
+    if (canUseWindowEvents) {
+      window.addEventListener(USER_PREFERENCES_CHANGED_EVENT, schedulePush);
+    }
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      unsubscribeSettings();
+      unsubscribePrefs();
+      if (canUseWindowEvents) {
+        window.removeEventListener(USER_PREFERENCES_CHANGED_EVENT, schedulePush);
+      }
+    };
+  }, [active, actions]);
 
   // Local server-list changes push up (additive, idempotent upserts).
   useEffect(() => {

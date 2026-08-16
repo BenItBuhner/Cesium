@@ -23,8 +23,6 @@ export type ServerConnection = {
 export type ServerConnectionsState = {
   version: 1;
   activeServerId: string | null;
-  /** Stores theme, shortcuts, models, and other cross-server preferences. */
-  defaultServerId: string | null;
   servers: ServerConnection[];
 };
 
@@ -34,7 +32,6 @@ export type ServerConnectionBootstrapOptions = {
    * "always" only for explicit user navigation or a trusted one-shot launch.
    */
   activate?: "always" | "if-missing" | "never";
-  defaultServer?: "always" | "if-missing" | "never";
   configuredDefaultBaseUrl?: string;
 };
 
@@ -192,51 +189,6 @@ function dedupeServers(servers: ServerConnection[]): ServerConnection[] {
   });
 }
 
-function pickDefaultServerId(
-  servers: ServerConnection[],
-  preferredDefaultId: unknown,
-  activeServerId: string | null
-): string | null {
-  if (servers.length === 0) {
-    return null;
-  }
-  if (servers.length === 1) {
-    return servers[0]?.id ?? null;
-  }
-  if (typeof preferredDefaultId === "string") {
-    const preferred = servers.find((server) => server.id === preferredDefaultId);
-    if (preferred) {
-      return preferred.id;
-    }
-  }
-  if (typeof activeServerId === "string") {
-    const active = servers.find((server) => server.id === activeServerId);
-    if (active) {
-      return active.id;
-    }
-  }
-  return null;
-}
-
-export function requiresDefaultServerSelection(state: ServerConnectionsState): boolean {
-  return state.servers.length > 1 && !getSettingsServerConnection(state);
-}
-
-export function getSettingsServerConnection(
-  state: ServerConnectionsState
-): ServerConnection | null {
-  if (state.servers.length === 0) {
-    return null;
-  }
-  if (state.servers.length === 1) {
-    return state.servers[0] ?? null;
-  }
-  if (!state.defaultServerId) {
-    return null;
-  }
-  return state.servers.find((server) => server.id === state.defaultServerId) ?? null;
-}
-
 function pickActiveServerId(
   servers: ServerConnection[],
   preferredActiveId: unknown
@@ -342,7 +294,6 @@ export function applyRendezvousBootstrap(
     },
     {
       activate: "always",
-      defaultServer: "always",
     }
   );
 }
@@ -377,7 +328,6 @@ export function updateRendezvousServerEndpoint(
     },
     {
       activate: "never",
-      defaultServer: "never",
     }
   );
 }
@@ -387,7 +337,6 @@ export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: st
   return {
     version: 1,
     activeServerId: initial.id,
-    defaultServerId: initial.id,
     servers: [initial],
   };
 }
@@ -465,24 +414,10 @@ export function mergeServerConnectionBootstrap(
     : existingActive
       ? state.activeServerId
       : (bootstrappedServer?.id ?? servers[0]?.id ?? null);
-  const existingDefault =
-    typeof state.defaultServerId === "string" &&
-    servers.some((server) => server.id === state.defaultServerId)
-      ? state.defaultServerId
-      : null;
-  const defaultMode = options?.defaultServer ?? "if-missing";
-  const defaultServerId =
-    defaultMode === "always"
-      ? (bootstrappedServer?.id ?? existingDefault)
-      : existingDefault ??
-        (defaultMode === "if-missing" && servers.length === 1
-          ? (servers[0]?.id ?? null)
-          : null);
 
   return {
     version: 1,
     activeServerId,
-    defaultServerId,
     servers,
   };
 }
@@ -496,10 +431,11 @@ export function normalizeServerConnectionsState(
     return fallback;
   }
 
+  // `defaultServerId` from pre-refactor storage is intentionally ignored:
+  // shared preferences are client-owned now, so no engine is "the default".
   const parsed = raw as {
     version?: unknown;
     activeServerId?: unknown;
-    defaultServerId?: unknown;
     servers?: unknown;
   };
   const serverList = Array.isArray(parsed.servers)
@@ -528,16 +464,10 @@ export function normalizeServerConnectionsState(
     servers,
     parsed.activeServerId
   );
-  const defaultServerId = pickDefaultServerId(
-    servers,
-    parsed.defaultServerId,
-    activeServerId
-  );
 
   return {
     version: 1,
     activeServerId,
-    defaultServerId,
     servers,
   };
 }
@@ -583,7 +513,6 @@ export function bootstrapStoredServerConnection(
   let current: ServerConnectionsState = {
     version: 1,
     activeServerId: null,
-    defaultServerId: null,
     servers: [],
   };
   try {
@@ -595,7 +524,6 @@ export function bootstrapStoredServerConnection(
     current = {
       version: 1,
       activeServerId: null,
-      defaultServerId: null,
       servers: [],
     };
   }
@@ -688,31 +616,10 @@ export function upsertServerConnection(
         server.rendezvous?.serverId !== input.rendezvous.serverId)
   );
   const servers = dedupeServers([nextServer, ...remaining]);
-  const defaultServerId =
-    state.defaultServerId &&
-    servers.some((server) => server.id === state.defaultServerId)
-      ? state.defaultServerId
-      : servers.length === 1
-        ? (servers[0]?.id ?? null)
-        : state.defaultServerId;
   return {
     version: 1,
     activeServerId: state.activeServerId ?? nextServer.id,
-    defaultServerId,
     servers,
-  };
-}
-
-export function setDefaultServerConnection(
-  state: ServerConnectionsState,
-  serverId: string
-): ServerConnectionsState {
-  if (!state.servers.some((server) => server.id === serverId)) {
-    return state;
-  }
-  return {
-    ...state,
-    defaultServerId: serverId,
   };
 }
 
@@ -727,17 +634,9 @@ export function removeServerConnection(
   }
   const activeServerId =
     state.activeServerId === serverId ? (servers[0]?.id ?? null) : state.activeServerId;
-  let defaultServerId = state.defaultServerId;
-  if (defaultServerId === serverId) {
-    defaultServerId = servers.length === 1 ? (servers[0]?.id ?? null) : null;
-  }
-  if (servers.length === 1) {
-    defaultServerId = servers[0]?.id ?? null;
-  }
   return {
     version: 1,
     activeServerId,
-    defaultServerId,
     servers,
   };
 }
@@ -757,16 +656,9 @@ export function markServerConnectionUsed(
         : server
     )
   );
-  const defaultServerId =
-    state.defaultServerId && servers.some((server) => server.id === state.defaultServerId)
-      ? state.defaultServerId
-      : servers.length === 1
-        ? (servers[0]?.id ?? null)
-        : state.defaultServerId;
   return {
     version: 1,
     activeServerId: serverId,
-    defaultServerId,
     servers,
   };
 }

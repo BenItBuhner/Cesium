@@ -14,7 +14,6 @@ export async function initializeMobileRuntime() {
     },
     {
       activate: "if-missing",
-      defaultServer: "if-missing",
       configuredDefaultBaseUrl: backendInfo.baseUrl,
     }
   );

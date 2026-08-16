@@ -1,15 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Cloud } from "lucide-react";
 import {
   getActiveServerConnection,
   getConfiguredServerBaseUrl,
+  getStoredSessionToken,
+  markServerConnectionUsed,
+  readStoredServerConnectionsState,
+  setStoredSessionToken,
+  writeStoredServerConnectionsState,
 } from "@cesium/client";
 import { adoptDeviceKey } from "@/lib/cloud/cloud-env";
 import { useCloudContext } from "@/contexts/CloudContext";
+import {
+  checkEngineHealth,
+  getEngineAuthStatus,
+} from "@/lib/onboarding/engine-api";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
   getPlatformSetupProfile,
@@ -31,7 +40,7 @@ import { FirstChatStep } from "./FirstChatStep";
 
 const STEP_DESCRIPTIONS: Record<SetupStepId, string> = {
   "connect-server":
-    "Point Cesium at the engine that runs where your code lives.",
+    "Point Cesium at the engine that runs where your code lives. Signed in? Your engines restore automatically.",
   agents:
     "Pick the coding agents you want. Missing CLIs install with one click.",
   import: "Bring conversations from other tools or from your cloud account.",
@@ -71,6 +80,7 @@ export function SetupWizard() {
   );
   const [engineName, setEngineName] = useState<string | null>(null);
   const [agentsReady, setAgentsReady] = useState(false);
+  const [restoredEngine, setRestoredEngine] = useState<string | null>(null);
 
   // Cloud onboarding progress merges in additively (resume on any device).
   useEffect(() => {
@@ -115,6 +125,59 @@ export function SetupWizard() {
     [cloud.actions, profile]
   );
 
+  // Account restore: the cloud bridge already merged the signed-in user's
+  // engines into local state. When one of them is reachable, the connect step
+  // completes itself — a new device needs zero server ceremony.
+  const autoRestoreAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (autoRestoreAttemptedRef.current) {
+      return;
+    }
+    const cloudServers = cloud.bootstrap?.servers ?? [];
+    if (cloud.status !== "ready" || cloudServers.length === 0) {
+      return;
+    }
+    if (
+      profile.serverConnection === "footnote" ||
+      state.completedSteps.includes("connect-server")
+    ) {
+      return;
+    }
+    autoRestoreAttemptedRef.current = true;
+    void (async () => {
+      for (const server of cloudServers) {
+        try {
+          if (server.sessionToken && !getStoredSessionToken(server.baseUrl)) {
+            setStoredSessionToken(server.sessionToken, null, server.baseUrl);
+          }
+          await checkEngineHealth(server.baseUrl);
+          const auth = await getEngineAuthStatus(server.baseUrl);
+          if (auth.enabled && !auth.authenticated) {
+            continue;
+          }
+          const connections = readStoredServerConnectionsState(
+            getConfiguredServerBaseUrl()
+          );
+          const target = connections.servers.find(
+            (entry) => entry.baseUrl === server.baseUrl
+          );
+          if (target) {
+            writeStoredServerConnectionsState(
+              markServerConnectionUsed(connections, target.id)
+            );
+          }
+          setEngineBaseUrl(server.baseUrl);
+          setEngineName(server.name);
+          setRestoredEngine(server.name || server.baseUrl);
+          complete("connect-server");
+          return;
+        } catch {
+          // Unreachable from this device (e.g. another machine's localhost); try the next.
+        }
+      }
+    })();
+  }, [cloud.status, cloud.bootstrap, complete, profile.serverConnection, state.completedSteps]);
+
   const allDone = profile.steps.every((step) =>
     state.completedSteps.includes(step)
   );
@@ -137,15 +200,26 @@ export function SetupWizard() {
     switch (step) {
       case "connect-server":
         return (
-          <ConnectServerStep
-            onConnected={(baseUrl) => {
-              setEngineBaseUrl(baseUrl);
-              setEngineName(
-                getActiveServerConnection(getConfiguredServerBaseUrl()).label
-              );
-              complete("connect-server");
-            }}
-          />
+          <div className="space-y-[14px]">
+            {restoredEngine ? (
+              <div className="flex items-center gap-[10px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[14px]">
+                <CheckCircle2 className="size-[18px] shrink-0 text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
+                <p className="text-[13px] text-[var(--text-primary)]">
+                  Restored from your account:{" "}
+                  <span className="font-medium">{restoredEngine}</span> is connected.
+                </p>
+              </div>
+            ) : null}
+            <ConnectServerStep
+              onConnected={(baseUrl) => {
+                setEngineBaseUrl(baseUrl);
+                setEngineName(
+                  getActiveServerConnection(getConfiguredServerBaseUrl()).label
+                );
+                complete("connect-server");
+              }}
+            />
+          </div>
         );
       case "agents":
         return (
@@ -207,6 +281,24 @@ export function SetupWizard() {
       </header>
 
       <main className="mx-auto max-w-[860px] px-[24px] py-[36px]">
+        {cloud.mode === "clerk" && cloud.status === "signed-out" ? (
+          <div className="mb-[24px] flex flex-wrap items-center justify-between gap-[14px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[18px]">
+            <div className="flex min-w-0 items-start gap-[12px]">
+              <Cloud className="mt-[2px] size-[18px] shrink-0 text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
+              <div className="min-w-0">
+                <p className="text-[14.5px] font-semibold tracking-tight text-[var(--text-primary)]">
+                  Have a Cesium account?
+                </p>
+                <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+                  Sign in and your engines, theme, and personalization restore automatically —
+                  most of this setup disappears.
+                </p>
+              </div>
+            </div>
+            <CloudAccountChip />
+          </div>
+        ) : null}
+
         {allDone ? (
           <div className="mb-[24px] flex items-center justify-between rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[18px]">
             <div>

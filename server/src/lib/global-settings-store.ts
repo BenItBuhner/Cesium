@@ -818,6 +818,36 @@ export async function clearRememberedAgentPermissionRules(input?: {
   });
 }
 
+export type EngineAgentFlagsUpdate = {
+  autoAcceptAllAgentPermissions?: boolean;
+  mcpProt?: boolean;
+};
+
+/**
+ * Engine-enforced permission flags, updated independently of the (now
+ * client-owned) preference blob. Runs through the same mutation chain as
+ * remembered-permission writes so concurrent agent saves cannot be lost.
+ */
+export async function setEngineAgentFlags(
+  update: EngineAgentFlagsUpdate
+): Promise<GlobalSettings["agents"]> {
+  return enqueueRememberedPermissionMutation(async () => {
+    const settings = await getGlobalSettings();
+    const next: GlobalSettings = {
+      ...settings,
+      agents: {
+        ...settings.agents,
+        ...(typeof update.autoAcceptAllAgentPermissions === "boolean"
+          ? { autoAcceptAllAgentPermissions: update.autoAcceptAllAgentPermissions }
+          : {}),
+        ...(typeof update.mcpProt === "boolean" ? { mcpProt: update.mcpProt } : {}),
+      },
+    };
+    await saveGlobalSettings(next);
+    return next.agents;
+  });
+}
+
 export async function replaceRememberedAgentPermissionRules(
   rules: RememberedAgentPermissionRule[]
 ): Promise<RememberedAgentPermissionRule[]> {

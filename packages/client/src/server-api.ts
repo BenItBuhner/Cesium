@@ -1847,6 +1847,30 @@ export async function saveGlobalSettings(
   );
 }
 
+export type EngineAgentFlagsUpdate = {
+  autoAcceptAllAgentPermissions?: boolean;
+  mcpProt?: boolean;
+};
+
+/**
+ * Push engine-enforced permission flags to a specific engine. These are the
+ * only agent toggles the engine reads at run time; every other agent setting
+ * is client-owned.
+ */
+export async function saveEngineAgentFlags(
+  flags: EngineAgentFlagsUpdate,
+  options?: { server?: ServerRequestContext }
+): Promise<{ ok: true; revision?: number }> {
+  return request(
+    `/api/settings/agent-flags`,
+    {
+      method: "PUT",
+      body: JSON.stringify(flags),
+    },
+    { skipWorkspaceHeader: true, server: options?.server }
+  );
+}
+
 export async function removeRememberedAgentPermission(
   id: string,
   options?: { server?: ServerRequestContext }
