@@ -577,29 +577,39 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   // `eventsByConversationId` is fed by socket event batches and by catch-up
   // snapshot polls that stop 5s after submit. Both can fail silently — a dead
   // socket even freezes the conversation's client-side status at "running",
-  // so nothing status-driven can be trusted as a trigger. While a reply is
-  // pending, poll the snapshot directly (deduped inside
-  // syncConversationSnapshot): the merge repopulates events (letting the
-  // speak effect fire) and refreshes the conversation status (unsticking the
-  // orb). The first poll waits a few seconds so a healthy socket wins.
+  // so nothing push-based can be trusted. Poll the snapshot directly (deduped
+  // inside syncConversationSnapshot) while either (a) a submitted turn has
+  // not yet surfaced its assistant_message_end, or (b) the bound
+  // conversation's client-side status still reads busy — the last merged
+  // snapshot may have been fetched mid-turn, and without a working socket
+  // nothing else would ever settle the status (and the orb) back to ready.
+  // The merge repopulates events (firing the speak effect) and refreshes the
+  // status. The first tick waits a few seconds so a healthy socket wins.
+  const agentWorking = Boolean(
+    conversationId && conversationsById[conversationId]?.status === "running"
+  );
+  const shouldReconcile =
+    Boolean(conversationId) &&
+    view !== "closed" &&
+    (awaitingReplySince !== null || agentWorking);
   useEffect(() => {
-    if (awaitingReplySince === null || !conversationId) return;
-    const pendingSince = awaitingReplySince;
+    if (!shouldReconcile || !conversationId) return;
+    const startedAt = Date.now();
     const reconcile = () => {
-      // All pending replies processed, or a newer submit restarted the poller.
-      if (awaitingReplySinceRef.current !== pendingSince) return;
-      if (Date.now() - pendingSince > REPLY_RECONCILE_MAX_MS) {
-        // No assistant_message_end within the window (failed/cancelled or
-        // genuinely reply-less turns); stop polling until the next submit.
+      if (Date.now() - startedAt > REPLY_RECONCILE_MAX_MS) {
+        // No settle within the window (failed/cancelled or genuinely
+        // reply-less turns); stop fetching until the next submit.
         resetPendingReplies();
         return;
       }
       void syncConversationSnapshot(conversationId).catch(() => undefined);
     };
     const timer = window.setInterval(reconcile, REPLY_RECONCILE_RETRY_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+    };
   }, [
-    awaitingReplySince,
+    shouldReconcile,
     conversationId,
     resetPendingReplies,
     syncConversationSnapshot,
@@ -640,10 +650,6 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       playerRef.current?.cancel();
     };
   }, [engine, teardownCapture]);
-
-  const agentWorking = Boolean(
-    conversationId && conversationsById[conversationId]?.status === "running"
-  );
 
   const status: SessionOrbStatus = useMemo(() => {
     if (view === "closed") return "idle";
