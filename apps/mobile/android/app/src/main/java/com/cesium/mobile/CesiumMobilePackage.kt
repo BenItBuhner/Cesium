@@ -15,6 +15,7 @@ class CesiumMobilePackage : ReactPackage {
       CesiumLiveUpdatesModule(reactContext),
       CesiumWearCompanionModule(reactContext),
       CesiumPhoneControlModule(reactContext),
+      CesiumPredictiveBackModule(reactContext),
       CesiumWindowInsetsModule(reactContext)
     )
   }

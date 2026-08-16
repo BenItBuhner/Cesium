@@ -46,6 +46,17 @@
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="cesium" android:host="mobile" />
       </intent-filter>
+      <!-- System share sheet: text, links, and any file(s) can be shared into a chat. -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
     </activity>
 
     <service
@@ -56,10 +67,6 @@
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="User-initiated AI agent run monitoring and intervention surfacing" />
     </service>
-
-    <service
-      android:name=".background.CesiumHeadlessService"
-      android:exported="false" />
 
     <service
       android:name=".phonecontrol.CesiumPhoneControlService"

@@ -17,9 +17,23 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": r("../../src"),
+      "@convex": r("../../convex"),
       "next/dynamic": r("./src/next-shims/dynamic.tsx"),
       "next/link": r("./src/next-shims/link.tsx"),
       "next/navigation": r("./src/next-shims/navigation.tsx"),
+      // @clerk/nextjs ships Next server actions that cannot bundle in the
+      // standalone renderer; cloud mode is pinned to "disabled" below, so the
+      // inert shim is never exercised beyond import resolution.
+      "@clerk/nextjs": r("./src/next-shims/clerk.tsx"),
+      // Same story as Clerk: the workbench graph imports CloudContext, which
+      // pulls `convex/react` even when NEXT_PUBLIC_CONVEX_URL is unset. Android
+      // CI installs workspace packages without the root `convex` dependency.
+      // Vite-only: do not mirror these in tsconfig paths. Generated
+      // `@convex/_generated/api` types import the real Convex backend modules,
+      // which need the real `convex/server` typings.
+      "convex/react-clerk": r("./src/next-shims/convex-react-clerk.tsx"),
+      "convex/react": r("./src/next-shims/convex-react.ts"),
+      "convex/server": r("./src/next-shims/convex-server.ts"),
       "@cesium/core": r("../../packages/core/src/index.ts"),
       "@cesium/contracts/cloud-agents": r("../../packages/contracts/src/cloud-agents.ts"),
       "@cesium/contracts/meta": r("../../packages/contracts/src/meta.ts"),
@@ -35,6 +49,12 @@ export default defineConfig({
     "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? "development"),
     "process.env.NEXT_PUBLIC_ENABLE_NEXT_PWA": JSON.stringify("0"),
     "process.env.NEXT_PUBLIC_SERVER_URL": JSON.stringify(undefined),
+    // Cloud accounts (Convex + Clerk) are a hosted-web feature; the desktop /
+    // Android workbench always runs CloudContext in "disabled" mode.
+    "process.env.NEXT_PUBLIC_CESIUM_CLOUD": JSON.stringify(undefined),
+    "process.env.NEXT_PUBLIC_CONVEX_URL": JSON.stringify(undefined),
+    "process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": JSON.stringify(undefined),
+    "process.env.NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN": JSON.stringify(undefined),
   },
   build: {
     // Android 11's bundled System WebView is Chromium 83, but its WebView V8

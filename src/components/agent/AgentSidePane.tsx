@@ -24,7 +24,7 @@ export function AgentSidePane() {
   const electronTrailingChrome = isDesktopApp && !isMobile;
 
   return (
-    <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
+    <div className="agent-side-pane aurora-shell-panel relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
       {rightPaneOpen ? (
         <button
           type="button"

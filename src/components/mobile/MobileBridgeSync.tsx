@@ -10,8 +10,10 @@ import { getStoredSessionToken } from "@/lib/auth-client";
 import { getConfiguredServerBaseUrl } from "@/lib/configured-server-base-url";
 import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import {
+  applyMobileHostConfig,
   dispatchMobileBridgeMessage,
   MOBILE_BRIDGE_MESSAGE_EVENT,
+  MOBILE_BRIDGE_PROTOCOL_VERSION,
   MOBILE_IDLE_CLASS,
   parseMobileBridgeMessage,
   postMobileBridgeMessage,
@@ -197,6 +199,7 @@ export function MobileBridgeSync() {
       workspaceId: activeWorkspaceId,
       focusedConversationId,
       authToken: getStoredSessionToken(),
+      protocolVersion: MOBILE_BRIDGE_PROTOCOL_VERSION,
     });
   }, [activeWorkspaceId, focusedConversationId]);
 
@@ -316,10 +319,14 @@ export function MobileBridgeSync() {
       if (!message) {
         return;
       }
+      if (message.type === "nativeConfigChanged") {
+        applyMobileHostConfig(message.server);
+        return;
+      }
+
       if (message.type === "lifecycle") {
         const idle = message.state !== "active";
         document.documentElement.classList.toggle(MOBILE_IDLE_CLASS, idle);
-        postMobileBridgeMessage({ type: "webIdleMode", enabled: idle });
         if (idle) {
           void flushWorkspaceSessionNow().catch(() => undefined);
         } else if (focusedConversationId) {

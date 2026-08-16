@@ -5,9 +5,11 @@
     "types": ["vite/client", "react", "react-dom"],
     "paths": {
       "@/*": ["../../src/*"],
+      "@convex/*": ["../../convex/*"],
       "next/dynamic": ["./src/next-shims/dynamic.tsx"],
       "next/link": ["./src/next-shims/link.tsx"],
       "next/navigation": ["./src/next-shims/navigation.tsx"],
+      "@clerk/nextjs": ["./src/next-shims/clerk.tsx"],
       "@cesium/core": ["../../packages/core/src/index.ts"],
       "@cesium/contracts": ["../../packages/contracts/src/index.ts"],
       "@cesium/contracts/*": ["../../packages/contracts/src/*.ts"],

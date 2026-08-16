@@ -10,9 +10,7 @@ import {
   GitBranch,
   GitFork,
   Import,
-  Laptop,
   MessageSquare,
-  Plus,
 } from "lucide-react";
 import {
   useCallback,
@@ -32,7 +30,6 @@ import {
 } from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
-import type { WorkspaceRailAppearance } from "@/lib/global-settings";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
@@ -50,10 +47,8 @@ import type {
   AgentImportResult,
 } from "@/lib/agent-types";
 import { ImportConversationDialog } from "./ImportConversationDialog";
-import {
-  detectShortcutPlatform,
-  getShortcutDisplayForCommand,
-} from "@/lib/keyboard-shortcuts";
+import { NewChatWidgets } from "./NewChatWidgets";
+import { WorkspacePickerMenu, WorkspacePickerRowIcon } from "@/components/agent/rail/WorkspacePickerMenu";
 import type {
   EditorMode,
   GitBranchInfo,
@@ -65,27 +60,15 @@ import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
-import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
   CHAT_UI_SHORTCUT_EVENT,
   isChatUiShortcutEvent,
 } from "@/lib/chat-ui-shortcut-events";
-import {
-  getWorkspaceRailAppearance,
-  resolveGroupWorkspaceAppearanceKey,
-  WorkspaceFolderIcon,
-} from "@/lib/workspace-rail-appearance";
+import { resolveGroupWorkspaceAppearanceKey } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
-import {
-  groupDirectoryWorkspacesByRepository,
-  sortDirectoryWorkspaces,
-} from "@/lib/multi-server-workspaces";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-} from "@/lib/server-rail-appearance";
+import { sortDirectoryWorkspaces } from "@/lib/multi-server-workspaces";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -123,32 +106,6 @@ function localBranchNameForRemote(branchName: string): string {
   return branchName.replace(/^[^/]+\//, "");
 }
 
-const QUICK_ACTION_BUTTON_CLASSNAME =
-  "inline-flex max-w-full items-center gap-[4px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)]";
-
-function WorkspacePickerIcon({
-  appearances,
-  workspaceKey,
-  isHome,
-  className = "size-[13px] shrink-0",
-  strokeWidth = 1.5,
-}: {
-  appearances: Record<string, WorkspaceRailAppearance>;
-  workspaceKey: string;
-  isHome: boolean;
-  className?: string;
-  strokeWidth?: number;
-}) {
-  const appearance = getWorkspaceRailAppearance(appearances, workspaceKey, { isHome });
-  return (
-    <WorkspaceFolderIcon
-      iconName={appearance.icon}
-      color={appearance.color}
-      className={className}
-      strokeWidth={strokeWidth}
-    />
-  );
-}
 
 export function AgentNewChatLanding({
   onInstantSubmit,
@@ -196,15 +153,12 @@ export function AgentNewChatLanding({
     groups,
     refreshConversationGroups,
     setSelectedConversationId,
-    setRightPaneOpen,
     standaloneDraftActive,
     setStandaloneDraftActive,
-    startStandaloneChat,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
-  const runCommand = useIDECommandRunner();
 
   const draftBackend = useMemo(
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
@@ -270,16 +224,10 @@ export function AgentNewChatLanding({
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
   const branchPickerRef = useRef<HTMLButtonElement>(null);
   const workspacePickerRef = useRef<HTMLButtonElement>(null);
-  const targetPickerRef = useRef<HTMLButtonElement>(null);
   const branchPopoverRef = useRef<HTMLDivElement>(null);
-  const workspacePopoverRef = useRef<HTMLDivElement>(null);
-  const targetPopoverRef = useRef<HTMLDivElement>(null);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
-  const [workspaceQuery, setWorkspaceQuery] = useState("");
-  const [workspaceMachineFilter, setWorkspaceMachineFilter] = useState("all");
-  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
@@ -470,7 +418,6 @@ export function AgentNewChatLanding({
       return;
     }
     setBranchPickerOpen(false);
-    setTargetPickerOpen(false);
   }, [isHomeWorkspace]);
 
   useEffect(() => {
@@ -479,16 +426,6 @@ export function AgentNewChatLanding({
       setExpandedComposerController(null);
     };
   }, [expandedComposerState, setExpandedComposerController]);
-
-  const planShortcutHint = useMemo(() => {
-    return (
-      getShortcutDisplayForCommand(
-        settings.keyboardShortcuts.bindings,
-        "workbench.action.focusChatPlanMode",
-        detectShortcutPlatform()
-      ) || "Mod+I"
-    );
-  }, [settings.keyboardShortcuts.bindings]);
 
   const branchPickerItems = useMemo<BranchPickerItem[]>(() => {
     const branches = gitStatus?.branches ?? [];
@@ -571,18 +508,6 @@ export function AgentNewChatLanding({
     settings.general.workspaceSortMode,
   ]);
 
-  const workspaceMachineOptions = useMemo(
-    () =>
-      servers.map((server, index) => ({
-        id: server.id,
-        label: getServerDisplayLabel(
-          server,
-          getServerRailAppearance(settings.general.serverRailAppearances, server.id, index)
-        ),
-      })),
-    [servers, settings.general.serverRailAppearances]
-  );
-
   const homeAppearancePersistEntries = useMemo(
     () =>
       workspacePickerOptions.map((group) => ({
@@ -608,37 +533,12 @@ export function AgentNewChatLanding({
     return resolveGroupWorkspaceAppearanceKey(activeWorkspaceGroup, activeServer.id);
   }, [activeServer.id, activeWorkspaceGroup]);
 
-  const filteredWorkspaceGroups = useMemo(() => {
-    const q = workspaceQuery.trim().toLowerCase();
-    return workspacePickerOptions.filter(
-      (g) =>
-        (workspaceMachineFilter === "all" || g.serverId === workspaceMachineFilter) &&
-        (!q ||
-          g.name.toLowerCase().includes(q) ||
-          g.serverLabel.toLowerCase().includes(q) ||
-          g.repository?.repoRoot?.toLowerCase().includes(q) ||
-          g.repository?.repositoryId?.toLowerCase().includes(q))
-    );
-  }, [workspaceMachineFilter, workspacePickerOptions, workspaceQuery]);
-
-  const workspaceRepositorySections = useMemo(
-    () => groupDirectoryWorkspacesByRepository(filteredWorkspaceGroups),
-    [filteredWorkspaceGroups]
-  );
-
   const activeBranchLabel = gitStatus?.isGitRepo
     ? gitStatus.currentBranch ?? "Detached"
     : "No git repo";
 
   const branchPickerPosition = branchPickerOpen && branchPickerRef.current
     ? branchPickerRef.current.getBoundingClientRect()
-    : null;
-  const workspacePickerPosition =
-    workspacePickerOpen && workspacePickerRef.current
-      ? workspacePickerRef.current.getBoundingClientRect()
-      : null;
-  const targetPickerPosition = targetPickerOpen && targetPickerRef.current
-    ? targetPickerRef.current.getBoundingClientRect()
     : null;
 
   const runGitAction = useCallback(
@@ -658,13 +558,11 @@ export function AgentNewChatLanding({
 
   const closeLandingPickers = useCallback(() => {
     setBranchPickerOpen(false);
-    setTargetPickerOpen(false);
     setWorkspacePickerOpen(false);
-    setWorkspaceQuery("");
   }, []);
 
   useEffect(() => {
-    if (!branchPickerOpen && !targetPickerOpen && !workspacePickerOpen) {
+    if (!branchPickerOpen) {
       return;
     }
 
@@ -675,11 +573,7 @@ export function AgentNewChatLanding({
         return;
       }
       if (branchPickerRef.current?.contains(target)) return;
-      if (workspacePickerRef.current?.contains(target)) return;
-      if (targetPickerRef.current?.contains(target)) return;
       if (branchPopoverRef.current?.contains(target)) return;
-      if (workspacePopoverRef.current?.contains(target)) return;
-      if (targetPopoverRef.current?.contains(target)) return;
       closeLandingPickers();
     };
 
@@ -697,13 +591,7 @@ export function AgentNewChatLanding({
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [branchPickerOpen, closeLandingPickers, targetPickerOpen, workspacePickerOpen]);
-
-  useEffect(() => {
-    if (workspacePickerOpen) {
-      setWorkspaceQuery("");
-    }
-  }, [workspacePickerOpen]);
+  }, [branchPickerOpen, closeLandingPickers]);
 
   const handleInitializeGitRepo = useCallback(async () => {
     await runGitAction("git-init", async () => {
@@ -758,7 +646,6 @@ export function AgentNewChatLanding({
       if (e.detail.target !== "workspacePicker") return;
       if (!workspacePickerRef.current) return;
       setBranchPickerOpen(false);
-      setTargetPickerOpen(false);
       setWorkspacePickerOpen(true);
     };
     window.addEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
@@ -771,7 +658,22 @@ export function AgentNewChatLanding({
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
         <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
-          <div className="w-fit max-w-full self-start">
+          {/*
+           * Same chrome family as the cards docked above the chat composer
+           * (AskQuestionCard / dockedComposerCardFrame): top-rounded, open
+           * bottom, card fill + border. Inset by `--agent-composer-radius`
+           * so the card's square bottom corners land on the flat part of
+           * the composer's top edge instead of poking past its curve.
+           * `-mb-[4px]` cancels the column `gap-[2px]` plus the composer's
+           * empty-top `mt-[2px]` so the card sits flush on the composer edge.
+           */}
+          <div
+            className={`aurora-glass mx-[var(--agent-composer-radius)] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
+              composerHiddenForExpanded
+                ? "rounded-[var(--agent-composer-radius)] border border-[var(--border-card)]"
+                : "-mb-[4px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)]"
+            }`}
+          >
             <div className="flex max-w-full flex-wrap items-center gap-[6px]">
               <button
                 ref={workspacePickerRef}
@@ -780,7 +682,6 @@ export function AgentNewChatLanding({
                 data-perf="agent-codebase-picker-button"
                 onClick={() => {
                   setBranchPickerOpen(false);
-                  setTargetPickerOpen(false);
                   setWorkspacePickerOpen((open) => !open);
                 }}
                 className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
@@ -788,7 +689,7 @@ export function AgentNewChatLanding({
                 {noWorkspaceDraft ? (
                   <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
                 ) : activeWorkspaceAppearanceKey ? (
-                  <WorkspacePickerIcon
+                  <WorkspacePickerRowIcon
                     appearances={workspaceRailAppearances}
                     workspaceKey={activeWorkspaceAppearanceKey}
                     isHome={isHomeWorkspace}
@@ -811,7 +712,6 @@ export function AgentNewChatLanding({
                 data-perf="agent-branch-picker-button"
                 onClick={() => {
                   setWorkspacePickerOpen(false);
-                  setTargetPickerOpen(false);
                   setBranchPickerOpen((open) => !open);
                   void refreshGitStatus().catch(() => undefined);
                 }}
@@ -819,23 +719,6 @@ export function AgentNewChatLanding({
               >
                 <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
                 <span className="truncate">{activeBranchLabel}</span>
-                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
-              </button>
-              ) : null}
-              {!noWorkspaceDraft && !isHomeWorkspace ? (
-              <button
-                ref={targetPickerRef}
-                type="button"
-                aria-label="Open local target picker"
-                data-perf="agent-worktree-target-picker-button"
-                onClick={() => {
-                  setBranchPickerOpen(false);
-                  setWorkspacePickerOpen(false);
-                  setTargetPickerOpen((open) => !open);
-                }}
-                className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              >
-                <Laptop className="size-[13px] shrink-0" strokeWidth={1.5} />
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
               ) : null}
@@ -848,7 +731,6 @@ export function AgentNewChatLanding({
                   onClick={() => {
                     setWorkspacePickerOpen(false);
                     setBranchPickerOpen(false);
-                    setTargetPickerOpen(false);
                     setImportDialogOpen(true);
                   }}
                   className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
@@ -936,208 +818,28 @@ export function AgentNewChatLanding({
                   })
                 }
               />
-              <div className="mt-[10px] flex w-full min-w-0 flex-wrap items-center gap-[10px]">
-                <button
-                  type="button"
-                  onClick={() => runCommand?.("workbench.action.focusChatPlanMode")}
-                  className={QUICK_ACTION_BUTTON_CLASSNAME}
-                >
-                  Plan new idea{" "}
-                  <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRightPaneOpen(true);
-                  }}
-                  className={QUICK_ACTION_BUTTON_CLASSNAME}
-                >
-                  Open editor panel
-                </button>
-              </div>
+              <NewChatWidgets noWorkspaceDraft={noWorkspaceDraft} />
             </>
           ) : null}
         </div>
       </div>
-      {workspacePickerOpen && workspacePickerPosition
-        ? createPortal(
-            <div
-              ref={workspacePopoverRef}
-              data-perf="agent-workspace-picker-popover"
-              className="fixed z-[10002] w-[min(280px,calc(100vw-16px))] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
-              style={{
-                top: workspacePickerPosition.bottom + 6,
-                left: Math.max(8, Math.min(workspacePickerPosition.left, window.innerWidth - 288)),
-              }}
-              data-ide-input-sink
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <div className="border-b border-[var(--border-card)] px-[10px] py-[7px]">
-                <input
-                  value={workspaceQuery}
-                  onChange={(event) => setWorkspaceQuery(event.target.value)}
-                  placeholder="Search workspaces..."
-                  className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-                  autoFocus={shouldAutoFocusTextInput()}
-                />
-              </div>
-              {workspaceMachineOptions.length > 1 ? (
-                <div className="flex items-center gap-[4px] border-b border-[var(--border-card)] px-[6px] py-[5px]">
-                  <div className="hide-scrollbar-x flex min-w-0 flex-1 gap-[3px] overflow-x-auto">
-                    <button
-                      type="button"
-                      onClick={() => setWorkspaceMachineFilter("all")}
-                      className={`shrink-0 rounded-[var(--radius-pill)] px-[7px] py-[3px] font-sans text-[10px] ${
-                        workspaceMachineFilter === "all"
-                          ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
-                      }`}
-                    >
-                      All
-                    </button>
-                    {workspaceMachineOptions.map((machine) => (
-                      <button
-                        key={machine.id}
-                        type="button"
-                        onClick={() => setWorkspaceMachineFilter(machine.id)}
-                        className={`max-w-[104px] shrink-0 truncate rounded-[var(--radius-pill)] px-[7px] py-[3px] font-sans text-[10px] ${
-                          workspaceMachineFilter === machine.id
-                            ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
-                        }`}
-                        title={machine.label}
-                      >
-                        {machine.label}
-                      </button>
-                    ))}
-                  </div>
-                  <select
-                    aria-label="Sort workspaces"
-                    value={settings.general.workspaceSortMode}
-                    onChange={(event) => {
-                      const mode = event.target.value as
-                        | "recent"
-                        | "alphabetical"
-                        | "machine"
-                        | "custom";
-                      updateSettings((current) => ({
-                        ...current,
-                        general: { ...current.general, workspaceSortMode: mode },
-                      }));
-                    }}
-                    className="max-w-[76px] shrink-0 rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-[3px] font-sans text-[10px] text-[var(--text-secondary)] outline-none"
-                  >
-                    <option value="recent">Recent</option>
-                    <option value="alphabetical">A–Z</option>
-                    <option value="machine">Machine</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-              ) : null}
-              <VerticalFadedScroll
-                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}\0${noWorkspaceDraft ? 1 : 0}`}
-                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
-              >
-                <div
-                  className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      startStandaloneChat();
-                      setWorkspacePickerOpen(false);
-                    }}
-                    className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
-                  >
-                    <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
-                    <span className="min-w-0 flex-1 truncate">No workspace</span>
-                  </button>
-                  {noWorkspaceDraft ? (
-                    <Check className="size-[13px] shrink-0" strokeWidth={2} />
-                  ) : null}
-                </div>
-                {workspaceRepositorySections.map((section) => (
-                  <div key={section.key}>
-                    {section.machineCount > 1 ? (
-                      <div className="flex items-center gap-[6px] px-[8px] pb-[2px] pt-[6px] font-sans text-[9.5px] font-medium text-[var(--text-disabled)]">
-                        <FolderGit2 className="size-[11px] shrink-0" strokeWidth={1.5} />
-                        <span className="min-w-0 flex-1 truncate">{section.label}</span>
-                        <span className="shrink-0">{section.machineCount} machines</span>
-                      </div>
-                    ) : null}
-                    {section.items.map((group) => {
-                      const groupKey = group.workspaceKey;
-                      const current =
-                        !noWorkspaceDraft && groupKey === activeWorkspaceAppearanceKey;
-                      const isHomeRow = Boolean(
-                        homeWorkspaceId &&
-                        group.id === homeWorkspaceId &&
-                        group.serverId === activeServer.id
-                      );
-                      return (
-                        <div
-                          key={groupKey}
-                          className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void (async () => {
-                                setStandaloneDraftActive(false);
-                                if (group.serverId !== activeServer.id) {
-                                  setActiveServer(group.serverId);
-                                }
-                                await openWorkspaceById(group.id);
-                              })();
-                              setWorkspacePickerOpen(false);
-                            }}
-                            className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
-                          >
-                            <WorkspacePickerIcon
-                              appearances={workspaceRailAppearances}
-                              workspaceKey={groupKey}
-                              isHome={isHomeRow}
-                            />
-                            <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                            {workspaceMachineOptions.length > 1 ? (
-                              <span className="max-w-[88px] shrink truncate font-sans text-[9.5px] text-[var(--text-disabled)]">
-                                {workspaceMachineOptions.find(
-                                  (machine) => machine.id === group.serverId
-                                )?.label ?? group.serverLabel}
-                              </span>
-                            ) : null}
-                          </button>
-                          {current ? (
-                            <Check className="size-[13px] shrink-0" strokeWidth={2} />
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-                {filteredWorkspaceGroups.length === 0 ? (
-                  <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
-                    No workspaces found
-                  </div>
-                ) : null}
-              </VerticalFadedScroll>
-              <div className="border-t border-[var(--border-card)] p-[4px]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    runCommand?.("workbench.action.createWorkspace");
-                    setWorkspacePickerOpen(false);
-                  }}
-                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
-                >
-                  <Plus className="size-[13px] shrink-0" strokeWidth={1.5} />
-                  New workspace
-                </button>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <WorkspacePickerMenu
+        open={workspacePickerOpen}
+        onClose={() => setWorkspacePickerOpen(false)}
+        anchorRef={workspacePickerRef}
+        workspaces={workspacePickerOptions}
+        appearances={workspaceRailAppearances}
+        homeWorkspaceId={homeWorkspaceId}
+        activeServerId={activeServer.id}
+        selectedWorkspaceKey={noWorkspaceDraft ? null : activeWorkspaceAppearanceKey}
+        onSelectWorkspace={(workspace) => {
+          setStandaloneDraftActive(false);
+          if (workspace.serverId !== activeServer.id) {
+            setActiveServer(workspace.serverId);
+          }
+          void openWorkspaceById(workspace.id);
+        }}
+      />
       {branchPickerOpen && branchPickerPosition
         ? createPortal(
             <div
@@ -1249,42 +951,6 @@ export function AgentNewChatLanding({
                   </div>
                 </>
               )}
-            </div>,
-            document.body
-          )
-        : null}
-      {targetPickerOpen && targetPickerPosition
-        ? createPortal(
-            <div
-              ref={targetPopoverRef}
-              data-perf="agent-worktree-target-picker-popover"
-              className="fixed z-[10002] w-[220px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
-              style={{
-                top: targetPickerPosition.bottom + 6,
-                left: Math.max(8, Math.min(targetPickerPosition.left, window.innerWidth - 228)),
-              }}
-              data-ide-input-sink
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <VerticalFadedScroll
-                measureKey={gitActionBusy ?? "idle"}
-                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
-              >
-                <div className="flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12.5px] text-[var(--text-primary)]">
-                  <Laptop className="size-[14px] shrink-0" strokeWidth={1.5} />
-                  <span className="min-w-0 flex-1">This device</span>
-                  <Check className="size-[13px] shrink-0" strokeWidth={2} />
-                </div>
-                <button
-                  type="button"
-                  disabled={!gitStatus?.isGitRepo || gitActionBusy != null}
-                  onClick={() => void handleNewBranchWorktree()}
-                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
-                >
-                  <GitFork className="size-[14px] shrink-0" strokeWidth={1.5} />
-                  New worktree
-                </button>
-              </VerticalFadedScroll>
             </div>,
             document.body
           )

@@ -46,7 +46,7 @@ export function CesiumProfileToggle({
   }
   const active = options.find((option) => option.value === activeId) ?? options[0];
   return (
-    <div className="flex w-full shrink-0 justify-center pb-[2px] pt-[8px]">
+    <div className="relative z-10 flex w-full shrink-0 justify-center pb-[2px] pt-[8px]">
       <div
         className="flex max-w-full items-center gap-[2px] overflow-x-auto rounded-full border border-[var(--agent-border)] bg-[var(--bg-input)] p-[2px]"
         role="tablist"

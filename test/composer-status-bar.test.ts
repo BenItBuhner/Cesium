@@ -5,6 +5,7 @@ import {
   formatContextTokenCount,
   formatContextUsagePair,
   normalizeComposerStatusBarVisibility,
+  pinComposerStatusBarVisibilityForConversation,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
   resolveComposerStatusBarVisibilityForConversation,
@@ -169,6 +170,72 @@ describe("per-conversation composer status bar visibility", () => {
     assert.equal(
       resolveComposerStatusBarVisibilityForConversation(afterB, "conv-c").repo,
       false
+    );
+  });
+
+  test("pinning snapshots the last-used default without changing it", () => {
+    const scope = {
+      composerStatusBarVisibility: {
+        repo: true,
+        branch: false,
+        goal: true,
+        context: true,
+      },
+      composerStatusBarVisibilityByConversationId: {},
+    };
+    const pinned = pinComposerStatusBarVisibilityForConversation(scope, "conv-a");
+    assert.deepEqual(
+      pinned.composerStatusBarVisibilityByConversationId?.["conv-a"],
+      { repo: true, branch: false, goal: true, context: true }
+    );
+    // The last-used default itself is untouched.
+    assert.deepEqual(pinned.composerStatusBarVisibility, scope.composerStatusBarVisibility);
+  });
+
+  test("pinning is a no-op for pinned conversations and missing ids", () => {
+    const scope = {
+      composerStatusBarVisibility: {
+        repo: true,
+        branch: true,
+        goal: true,
+        context: true,
+      },
+      composerStatusBarVisibilityByConversationId: {
+        "conv-a": hidden,
+      },
+    };
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, "conv-a"), scope);
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, null), scope);
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, undefined), scope);
+  });
+
+  test("a pinned chat keeps its state after the default moves from another chat", () => {
+    // Chat A is created while the default hides the branch label.
+    const start = {
+      composerStatusBarVisibility: {
+        repo: true,
+        branch: false,
+        goal: true,
+        context: true,
+      },
+      composerStatusBarVisibilityByConversationId: {},
+    };
+    const pinnedA = pinComposerStatusBarVisibilityForConversation(start, "conv-a");
+    // The user then re-enables the branch label from chat B.
+    const afterB = withComposerStatusBarVisibility(pinnedA, "conv-b", {
+      repo: true,
+      branch: true,
+      goal: true,
+      context: true,
+    });
+    // Chat A retains its creation-time state; new chats get the latest default.
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-a").branch,
+      false
+    );
+    assert.equal(
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-new").branch,
+      true
     );
   });
 });

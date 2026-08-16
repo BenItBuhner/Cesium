@@ -15,6 +15,7 @@ export const CESIUM_CAPABILITIES = [
   "orchestration",
   "cloud-agents",
   "storage",
+  "updates",
 ] as const;
 
 export type CesiumCapability = (typeof CESIUM_CAPABILITIES)[number];
@@ -23,6 +24,8 @@ export type CesiumServerMetadata = {
   name: "cesium";
   protocolVersion: typeof CESIUM_PROTOCOL_VERSION;
   capabilities: CesiumCapability[];
+  /** Semver of the running server build (from `cesium-server` package.json). */
+  serverVersion?: string;
   transports: {
     http: "/api";
     websocket: "/ws";
@@ -310,6 +313,91 @@ export type CesiumModelCatalogEntry = {
   contextWindow?: number;
   outputLimit?: number;
 };
+
+/**
+ * How this Cesium instance was installed. Each kind maps to a different
+ * update strategy (see `/api/updates`).
+ */
+export type CesiumInstallKind =
+  | "isolated-server"
+  | "termux-server"
+  | "desktop-electron"
+  | "source"
+  | "unknown";
+
+export type CesiumUpdateChannelId = "app" | "server" | "desktop" | "mobile";
+
+export type CesiumUpdateReleaseAsset = {
+  name: string;
+  size: number;
+  downloadUrl: string;
+  contentType: string | null;
+};
+
+export type CesiumUpdateRelease = {
+  channel: CesiumUpdateChannelId;
+  tag: string;
+  version: string;
+  name: string | null;
+  prerelease: boolean;
+  publishedAt: string | null;
+  htmlUrl: string | null;
+  notes: string | null;
+  assets: CesiumUpdateReleaseAsset[];
+};
+
+export type CesiumUpdateSelfUpdateMethod = "cesium-server-cli" | "git-pull";
+
+export type CesiumUpdateGitStatus = {
+  branch: string | null;
+  commit: string | null;
+  remoteCommit: string | null;
+  behind: number | null;
+  updateAvailable: boolean;
+  error: string | null;
+};
+
+export type CesiumUpdateNpmStatus = {
+  packageName: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  error: string | null;
+};
+
+export type CesiumUpdateSettings = {
+  autoCheck: boolean;
+  includePrereleases: boolean;
+  dismissedVersion: string | null;
+};
+
+export type CesiumUpdateStatusPayload = {
+  currentVersion: string;
+  protocolVersion: string;
+  installKind: CesiumInstallKind;
+  githubRepo: string;
+  githubError: string | null;
+  primaryChannel: CesiumUpdateChannelId;
+  updateAvailable: boolean;
+  latest: CesiumUpdateRelease | null;
+  channels: Partial<Record<CesiumUpdateChannelId, CesiumUpdateRelease>>;
+  npm: CesiumUpdateNpmStatus | null;
+  git: CesiumUpdateGitStatus | null;
+  selfUpdate: {
+    supported: boolean;
+    method: CesiumUpdateSelfUpdateMethod | null;
+    reason: string | null;
+  };
+  settings: CesiumUpdateSettings;
+  lastCheckedAt: number | null;
+  applying: boolean;
+};
+
+export type CesiumUpdateApplyEvent =
+  | { type: "start"; method: CesiumUpdateSelfUpdateMethod }
+  | { type: "log"; line: string }
+  | { type: "restarting"; message: string }
+  | { type: "done"; ok: boolean; restartRequired: boolean; error?: string };
 
 export type CesiumAgentSettingsPublic = {
   schemaVersion: 1;

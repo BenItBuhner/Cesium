@@ -104,4 +104,8 @@ export const CESIUM_SDK_OPERATIONS = [
   operation("cloudAgents.tasks.artifacts", "GET", "/api/cloud-agents/tasks/:taskId/artifacts"),
   operation("cloudAgents.tasks.remove", "DELETE", "/api/cloud-agents/tasks/:taskId"),
   operation("storage.status", "GET", "/api/storage/status", "server", "experimental"),
+  operation("updates.status", "GET", "/api/updates/status", "server", "experimental"),
+  operation("updates.check", "POST", "/api/updates/check", "server", "experimental"),
+  operation("updates.settings.update", "PUT", "/api/updates/settings", "server", "experimental"),
+  operation("updates.apply", "POST", "/api/updates/apply", "server", "experimental"),
 ] as const satisfies readonly CesiumOperation[];

@@ -32,6 +32,7 @@ export type SettingsSearchEntry = {
 };
 
 const NAV_LABELS: Record<string, string> = {
+  account: "Account",
   general: "General",
   actions: "Actions",
   appearance: "Appearance",
@@ -46,6 +47,7 @@ const NAV_LABELS: Record<string, string> = {
   rulesSkills: "Rules, Skills, Subagents",
   exportImport: "Import & export",
   storage: "Storage",
+  updates: "Updates",
   beta: "Beta",
 };
 
@@ -109,6 +111,37 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     })
   ),
 
+  // —— Account ——
+  section("account", "identity", "Account & session", "profile sign in sign out login"),
+  row(
+    "account",
+    "account-identity",
+    "Signed-in account",
+    "Your cloud account, device sync identity, or local workspace.",
+    ["profile", "avatar", "email", "clerk", "identity", "user"]
+  ),
+  row(
+    "account",
+    "account-cloud-mode",
+    "Cloud account",
+    "Sign in, sync status, and sign out for the cloud account layer.",
+    ["sign in", "sign out", "sync", "clerk", "device", "local-only"]
+  ),
+  row(
+    "account",
+    "account-server-session",
+    "Server session",
+    "Password session on the active server: expiry, last active, sign out.",
+    ["logout", "sign out", "password", "auth", "session", "expires"]
+  ),
+  row(
+    "account",
+    "account-active-server",
+    "Active server",
+    "The server this client is connected to; switch or manage servers.",
+    ["server", "switch", "connection"]
+  ),
+
   // —— General ——
   section("general", "preferences", "Preferences"),
   row(
@@ -130,6 +163,57 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Import & export settings",
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
+  ),
+  section("general", "new-chat-widgets", "New chat widgets", "landing tiles home"),
+  row(
+    "general",
+    "new-chat-widget-shortcuts",
+    "Shortcuts",
+    "Plan-mode and editor-panel quick buttons on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "plan"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-actions",
+    "Actions",
+    "Quick actions on the new chat landing, run in the selected workspace's path.",
+    ["new chat", "landing", "widget", "tiles", "quick actions"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-recent-chats",
+    "Recent chats",
+    "Recent conversation tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "conversations", "history"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-recent-activity",
+    "Recent activity",
+    "Recently opened workspace tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "workspaces", "recents"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-actions-link",
+    "Configure quick actions",
+    "Add, edit, or remove the actions shown on the new chat landing.",
+    ["new chat", "landing", "actions"]
+  ),
+  section("general", "quick-open", "Quick Open & switcher", "palette search"),
+  row(
+    "general",
+    "quick-open-default-scope",
+    "Default Quick Open search",
+    "What Ctrl/Cmd+P searches when it opens: files, chats, commands, settings, or tabs.",
+    ["quick open", "palette", "cmd+p", "ctrl+p", "scope", "search", "default"]
+  ),
+  row(
+    "general",
+    "quick-switcher-scope",
+    "Ctrl+Tab switcher cycles",
+    "Cycle agent conversations, open editor tabs, or both with the hold-to-cycle switcher.",
+    ["ctrl+tab", "switcher", "mru", "tabs", "conversations", "cycle"]
   ),
   section("general", "performance", "Performance", "stream rendering"),
   row(
@@ -198,6 +282,49 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("appearance", "light-theme", "Light theme", "Theme applied when the UI resolves to light."),
   row("appearance", "dark-theme", "Dark theme", "Theme applied when the UI resolves to dark."),
   section("appearance", "custom-themes", "Custom themes", "duplicate preset tokens"),
+  section("appearance", "aurora", "Aurora background", "aurora borealis animated backdrop"),
+  row(
+    "appearance",
+    "aurora-background",
+    "Aurora background",
+    "Soft animated aurora-borealis color field behind agent conversations.",
+    ["aurora", "borealis", "background", "backdrop", "animation", "ambient", "northern lights"]
+  ),
+  row(
+    "appearance",
+    "aurora-preset",
+    "Aurora preset",
+    "Curated aurora palettes or custom colors.",
+    ["aurora", "preset", "palette", "colors", "custom"]
+  ),
+  row(
+    "appearance",
+    "aurora-placement",
+    "Aurora placement",
+    "Where the aurora sits: dynamic, top, center, full pane, or bottom.",
+    ["aurora", "placement", "position", "top", "center", "bottom", "full", "dynamic"]
+  ),
+  row(
+    "appearance",
+    "aurora-intensity",
+    "Aurora intensity",
+    "Overall visibility of the aurora backdrop.",
+    ["aurora", "intensity", "opacity", "brightness"]
+  ),
+  row(
+    "appearance",
+    "aurora-speed",
+    "Aurora speed",
+    "Animation pace of the aurora backdrop.",
+    ["aurora", "speed", "animation", "motion"]
+  ),
+  row(
+    "appearance",
+    "aurora-react",
+    "Aurora reacts to agent activity",
+    "Shift the aurora with conversation state: typing, working, waiting, completed, error.",
+    ["aurora", "activity", "state", "mood", "react"]
+  ),
 
   // —— Agents ——
   section("agents", "composer", "Chat composer"),
@@ -454,6 +581,32 @@ const IPAD_BETA_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
 ];
 
+/** Rows rendered only inside the Android native shell (MobileNativeSettings). */
+const MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  section("general", "mobile-live-activity", "Mobile live activity", "android live updates"),
+  row(
+    "general",
+    "mobile-live-update-placement",
+    "Run progress placement",
+    "Show agent runs as Android Live Updates (status bar chip, lock screen, Samsung Now Bar), a standard notification, or not at all.",
+    ["live updates", "notification", "now bar", "status bar", "chip", "android", "progress"]
+  ),
+  row(
+    "general",
+    "mobile-live-update-access",
+    "Live Updates access",
+    "Allow Cesium to post promoted Live Updates so runs render as a status bar chip and Now Bar activity.",
+    ["live updates", "promoted", "permission", "allow", "android", "chip"]
+  ),
+  row(
+    "general",
+    "mobile-now-bar-settings",
+    "Samsung Now Bar",
+    "Open Samsung's Now Bar settings where Cesium's live notifications appear on the lock screen and AOD.",
+    ["samsung", "now bar", "one ui", "lock screen", "aod", "live notifications"]
+  ),
+];
+
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Actions ——
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
@@ -502,6 +655,38 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Storage ——
   section("storage", "status", "Storage status", "driver postgres sqlite"),
   section("storage", "migrate", "Migrate between drivers", "migration"),
+
+  // —— Updates ——
+  section("updates", "installation", "This installation", "version release github npm"),
+  section("updates", "available", "Available updates", "release github npm git"),
+  row(
+    "updates",
+    "check-now",
+    "Check for updates",
+    "Query GitHub releases, the npm registry, and the git remote for new builds.",
+    ["update", "upgrade", "release", "version", "github", "npm"]
+  ),
+  row(
+    "updates",
+    "auto-check",
+    "Check for updates automatically",
+    "Background update checks every few hours.",
+    ["automatic", "auto", "update"]
+  ),
+  row(
+    "updates",
+    "prereleases",
+    "Include pre-releases",
+    "Offer beta and release-candidate builds.",
+    ["beta", "rc", "prerelease"]
+  ),
+  row(
+    "updates",
+    "self-update",
+    "Self-update this server",
+    "Apply the update in place for installer and git-based servers.",
+    ["upgrade", "apply", "install", "restart"]
+  ),
 ];
 
 const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITIONS.map(
@@ -563,12 +748,14 @@ function buildModelSearchEntries(
 
 export function buildSettingsSearchIndex(
   modelsByBackend: Record<string, ModelToggleState[]>,
-  options?: { includeIpadBeta?: boolean }
+  options?: { includeIpadBeta?: boolean; includeMobileNative?: boolean }
 ): SettingsSearchEntry[] {
   const includeIpadBeta = options?.includeIpadBeta !== false;
+  const includeMobileNative = options?.includeMobileNative === true;
   return [
     ...STATIC_SETTINGS_SEARCH_ENTRIES,
     ...(includeIpadBeta ? IPAD_BETA_SETTINGS_SEARCH_ENTRIES : []),
+    ...(includeMobileNative ? MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
     ...STATIC_SETTINGS_SEARCH_ENTRIES_TAIL,
     ...SHORTCUT_SEARCH_ENTRIES,
     ...buildModelSearchEntries(modelsByBackend),

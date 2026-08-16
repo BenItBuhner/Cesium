@@ -41,6 +41,82 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   "Compilation failed / Provider responded" toast. This is expected, not an
   environment break.
 
+### Android emulator (mobile app testing)
+
+Best route for Cesium mobile (`apps/mobile`, RN + WebView APK): the official
+**Google Android SDK emulator** (cmdline-tools) with the
+`system-images;android-30;google_apis;x86_64` image, run **fully software-bound**:
+`-accel off` (TCG CPU emulation) plus `-gpu swiftshader_indirect` (software GPU).
+**Do not trust KVM here:** `/dev/kvm` exists and `emulator -accel-check` claims
+"KVM installed and usable", but that probe never runs a vCPU — with KVM enabled
+the emulator parks at ~0% CPU before guest boot and never comes up. `-accel off`
+is mandatory. **Use the API 30 image, not newer:** API 33+ system WebViews
+(recent Chromium `libmonochrome`) hard-crash with SIGTRAP under TCG even with
+`-qemu -cpu max`; API 30 ships Chromium 83, which the mobile asset pipeline
+explicitly supports. Expect a slow boot (~10 min) and a sluggish but usable
+guest. Run headless (`-no-window`; the Qt window also fails to map on this
+desktop) and drive it with `adb shell input` / `screencap` / `screenrecord`.
+
+One-time setup (~4 min):
+
+```bash
+mkdir -p ~/android-sdk/cmdline-tools && cd ~/android-sdk
+curl -sSLo tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip -q tools.zip -d cmdline-tools && mv cmdline-tools/cmdline-tools cmdline-tools/latest && rm tools.zip
+export ANDROID_HOME=$HOME/android-sdk
+yes | cmdline-tools/latest/bin/sdkmanager --licenses
+cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" \
+  "build-tools;36.0.0" "emulator" "cmake;3.31.6" "ndk;27.0.12077973" \
+  "system-images;android-30;google_apis;x86_64"
+echo no | cmdline-tools/latest/bin/avdmanager create avd -n cesium \
+  -k "system-images;android-30;google_apis;x86_64" -d pixel_5
+```
+
+(CMake + the pinned NDK are required or `:app:configureCMakeDebug` fails with
+`[CXX1300] CMake '3.31.6' was not found`.)
+
+Run + install (from repo root):
+
+```bash
+export ANDROID_HOME=$HOME/android-sdk \
+  PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+emulator -avd cesium -no-window -accel off -gpu swiftshader_indirect \
+  -no-snapshot -no-audio -no-boot-anim -no-metrics -memory 3072 -cores 4 &
+adb wait-for-device   # then poll: adb shell getprop sys.boot_completed -> 1
+npm run build:packages
+npm --prefix apps/mobile run build:web-assets      # workbench bundle -> APK assets
+npm --prefix apps/mobile run build:android:debug   # gradle assembleDebug (JDK 21 OK)
+adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.cesium.mobile/.MainActivity
+```
+
+Interact headlessly: `adb shell input tap/swipe/text`, screenshots with
+`adb exec-out screencap -p > shot.png`, demo videos with
+`adb shell screenrecord` (pull the mp4 afterwards). Give the WebView extra
+time under TCG — first workbench load can take a couple of minutes.
+
+TCG survival kit (all learned the hard way):
+
+- **ANR dialogs**: the slow guest trips "Cesium isn't responding" dialogs.
+  Detect with `adb shell dumpsys window windows | grep -ci "not responding"`
+  and tap **Wait** at `adb shell input tap 336 1313` (Pixel 5, 1080x2340).
+  Do NOT `settings put global hide_error_dialogs 1` — that silently kills the
+  app instead.
+- **Stale screencaps**: the Android compositor can lag the WebView by minutes
+  under SwiftShader. When `screencap` looks frozen, verify the real UI state
+  over CDP: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
+  (find the socket via `adb shell cat /proc/net/unix | grep webview_devtools`),
+  then query/screenshot Chromium directly (`http://localhost:9222/json`).
+- **Share-intent testing**: `am start -a android.intent.action.SEND` with a
+  `content://media/...` EXTRA_STREAM fails with SecurityException (shell can't
+  grant URI perms on extras). Instead `run-as com.cesium.mobile` to drop a file
+  into `files/` and share `file:///data/user/0/com.cesium.mobile/files/<name>`.
+
+The app's WebView reaches a host-side backend at `http://10.0.2.2:9100`
+(default), so start `npm run dev:server` on the VM first. Rebuild
+`build:web-assets` whenever shared `src/` web code changes — the APK ships a
+static copy.
+
 ### Inference / model provider environment variables
 
 The built-in `cesium-agent` backend is the one that talks to LLM providers over

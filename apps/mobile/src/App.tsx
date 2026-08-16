@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AppState,
   BackHandler,
+  DeviceEventEmitter,
   Dimensions,
   Linking,
   PermissionsAndroid,
@@ -22,17 +23,25 @@ import {
   type WebViewProps,
 } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
-import type { MobileAgentProjection } from "@cesium/core";
 import {
   buildMobileBootstrapScript,
   encodeMobileBridgeMessage,
+  MOBILE_BRIDGE_PROTOCOL_VERSION,
   parseMobileBridgeMessage,
+  type MobileAgentProjection,
   type MobileNativeToWebMessage,
   type MobileNativeStatus,
+  type MobileServerConfig,
+  type MobileSharePayload,
   type MobileWebToNativeMessage,
-} from "../../../src/lib/mobile-bridge";
+} from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
+import { CesiumAndroidRuntime } from "./native/CesiumAndroidRuntime";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
+import {
+  CesiumPredictiveBack,
+  type PredictiveBackGestureEvent,
+} from "./native/CesiumPredictiveBack";
 import { CesiumPhoneControl } from "./native/CesiumPhoneControl";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
 import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
@@ -99,20 +108,40 @@ export default function App() {
   }, []);
   sendToWebRef.current = sendToWeb;
 
-  const bootstrapScript = useMemo(
-    () =>
-      `${buildWebErrorBridgeScript()}\n${buildMobileBootstrapScript({
-        baseUrl: serverUrl,
-        label: "This phone",
-        authToken,
-        safeAreaTop,
-        systemColorScheme:
-          systemColorScheme === "light" || systemColorScheme === "dark"
-            ? systemColorScheme
-            : null,
-        runtime,
-      })}`,
+  // Keep the native predictive-back intercept armed exactly while the app has
+  // something to pop in-app (an in-WebView layer or WebView history). The
+  // Android dispatcher decides at gesture START who owns the gesture, so this
+  // must be pushed proactively on every capability/history change — it cannot
+  // be resolved lazily at commit time.
+  const syncBackIntercept = useCallback(() => {
+    CesiumPredictiveBack.setBackInterceptEnabled(
+      webViewRef.current != null &&
+        (webCanHandleBackRef.current || canGoBackRef.current)
+    );
+  }, []);
+
+  // The current host config: embedded once into the pre-load bootstrap
+  // (Electron preload analog) and streamed to the live page as
+  // `nativeConfigChanged` messages whenever it changes afterwards. The crash
+  // reporter that used to be a separate injected script lives inside the
+  // bootstrap now.
+  const hostServerConfig = useMemo<MobileServerConfig>(
+    () => ({
+      baseUrl: serverUrl,
+      label: "This phone",
+      authToken,
+      safeAreaTop,
+      systemColorScheme:
+        systemColorScheme === "light" || systemColorScheme === "dark"
+          ? systemColorScheme
+          : null,
+      runtime,
+    }),
     [authToken, runtime, safeAreaTop, serverUrl, systemColorScheme]
+  );
+  const bootstrapScript = useMemo(
+    () => buildMobileBootstrapScript(hostServerConfig),
+    [hostServerConfig]
   );
 
   const lastPhoneControlConfigRef = useRef<string | null>(null);
@@ -179,6 +208,33 @@ export default function App() {
     });
   }, [sendToWeb]);
 
+  // Share-sheet payloads can arrive before the workbench has booted (cold
+  // start straight from the share sheet), so they are staged here and flushed
+  // once the web layer reports `webReady`.
+  const pendingShareRef = useRef<MobileSharePayload | null>(null);
+  const webReadyRef = useRef(false);
+
+  const flushPendingShare = useCallback(() => {
+    const payload = pendingShareRef.current;
+    if (!payload || !webReadyRef.current) return;
+    pendingShareRef.current = null;
+    sendToWeb({ type: "shareIntake", payload });
+  }, [sendToWeb]);
+
+  const consumeSharePayload = useCallback(async () => {
+    const payload = await CesiumAndroidRuntime.consumeSharedPayload();
+    if (!payload) return;
+    // Skipped-only payloads still surface the sheet so the user learns the
+    // shared item was unreadable/oversized instead of a silent no-op.
+    const hasContent =
+      (payload.text != null && payload.text.length > 0) ||
+      payload.items.length > 0 ||
+      (payload.skippedCount ?? 0) > 0;
+    if (!hasContent) return;
+    pendingShareRef.current = payload;
+    flushPendingShare();
+  }, [flushPendingShare]);
+
   const sendNativeStatus = useCallback(async () => {
     const [liveUpdates, phoneControl] = await Promise.all([
       CesiumLiveUpdates.getPromotionStatus(),
@@ -191,6 +247,10 @@ export default function App() {
         progressStyleSupported: liveUpdates.progressStyleSupported,
         canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
         notificationPermissionGranted: liveUpdates.notificationPermissionGranted,
+        isSamsung: liveUpdates.isSamsung,
+        promotionRenderSupported: liveUpdates.promotionRenderSupported,
+        hasPromotableCharacteristics: liveUpdates.hasPromotableCharacteristics,
+        promotedNotificationPosted: liveUpdates.promotedNotificationPosted,
       },
       phoneControl,
     };
@@ -230,9 +290,14 @@ export default function App() {
     };
   }, [refreshSafeArea]);
 
+  // Dynamic host state reaches the live page as a typed message instead of
+  // re-injecting the whole bootstrap script. The very first render is covered
+  // by the pre-load bootstrap itself; a message posted before the page's
+  // relay listener exists is simply dropped, which is fine because that page
+  // boots with the same config embedded.
   useEffect(() => {
-    webViewRef.current?.injectJavaScript(bootstrapScript);
-  }, [bootstrapScript]);
+    sendToWeb({ type: "nativeConfigChanged", server: hostServerConfig });
+  }, [hostServerConfig, sendToWeb]);
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -246,6 +311,7 @@ export default function App() {
       if (nextState === "active") {
         refreshSafeArea();
         void consumeNotificationAction();
+        void consumeSharePayload();
       }
     });
     const network = NetInfo.addEventListener((state) => {
@@ -259,18 +325,18 @@ export default function App() {
       agentStatusRef.current.close();
       void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
+  }, [consumeNotificationAction, consumeSharePayload, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
-    // A single, stable subscription. The Android predictive/hardware back
-    // gesture is resolved in priority order:
+    // A single, stable subscription. The Android back intent is resolved in
+    // priority order:
     //   1. If the web layer reports an open in-WebView layer (overlay, drawer,
     //      settings view), route the intent there. The web replies with
     //      `backFallback` if it turns out there is nothing to pop.
     //   2. Otherwise walk the WebView's own navigation history.
     //   3. Otherwise let Android run its default back behavior (exit the app),
     //      which is where the predictive-back exit animation applies.
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+    const routeBackIntent = () => {
       if (webViewRef.current && webCanHandleBackRef.current) {
         sendToWeb({ type: "backRequest" });
         return true;
@@ -280,13 +346,68 @@ export default function App() {
         return true;
       }
       return false;
+    };
+
+    // Legacy/discrete path: 3-button navigation, pre-Android-14 devices, and
+    // any gesture that lands while the progressive intercept is disarmed.
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      routeBackIntent
+    );
+
+    // Progressive path: while the native intercept is armed, MainActivity's
+    // OnBackPressedCallback streams the gesture here (per-frame progress on
+    // Android 14+). Started/progressed/cancelled are forwarded to the web
+    // layer so the top-most in-WebView layer can track the finger; `invoked`
+    // is the commit and routes exactly like a discrete back press.
+    const toBridgeGesture = (payload: PredictiveBackGestureEvent) => ({
+      progress: Math.min(1, Math.max(0, payload.progress ?? 0)),
+      swipeEdge: (payload.swipeEdge === 1 ? "right" : "left") as "left" | "right",
+      touchX: payload.touchX,
+      touchY: payload.touchY,
     });
-    return () => subscription.remove();
+    const predictiveSubscriptions = [
+      CesiumPredictiveBack.addListener("started", (payload) => {
+        sendToWeb({ type: "backStarted", ...toBridgeGesture(payload) });
+      }),
+      CesiumPredictiveBack.addListener("progressed", (payload) => {
+        sendToWeb({ type: "backProgressed", ...toBridgeGesture(payload) });
+      }),
+      CesiumPredictiveBack.addListener("cancelled", () => {
+        sendToWeb({ type: "backCancelled" });
+      }),
+      CesiumPredictiveBack.addListener("invoked", () => {
+        // Native auto-disarmed itself before emitting; the web republishes
+        // its capability after popping, which re-arms via syncBackIntercept.
+        if (!routeBackIntent()) {
+          BackHandler.exitApp();
+        }
+      }),
+    ];
+
+    return () => {
+      subscription.remove();
+      for (const predictiveSubscription of predictiveSubscriptions) {
+        predictiveSubscription?.remove();
+      }
+    };
   }, [sendToWeb]);
 
   useEffect(() => {
     void consumeNotificationAction();
-  }, [consumeNotificationAction]);
+    void consumeSharePayload();
+  }, [consumeNotificationAction, consumeSharePayload]);
+
+  useEffect(() => {
+    // A share delivered while the activity is already foreground (split-screen
+    // or freeform-window source app) never flips AppState, so the native
+    // module emits this nudge from onNewIntent instead.
+    const subscription = DeviceEventEmitter.addListener(
+      "cesiumShareIntakeAvailable",
+      () => void consumeSharePayload()
+    );
+    return () => subscription.remove();
+  }, [consumeSharePayload]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -309,6 +430,14 @@ export default function App() {
         return;
       }
       if (message.type === "webReady") {
+        if (
+          message.protocolVersion != null &&
+          message.protocolVersion !== MOBILE_BRIDGE_PROTOCOL_VERSION
+        ) {
+          console.warn(
+            `[Cesium bridge] Protocol mismatch: web ${message.protocolVersion}, native ${MOBILE_BRIDGE_PROTOCOL_VERSION}. Rebuild the workbench assets and the APK together.`
+          );
+        }
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.focusedConversationId,
@@ -319,6 +448,8 @@ export default function App() {
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
         void sendNativeStatus();
+        webReadyRef.current = true;
+        flushPendingShare();
         return;
       }
       if (message.type === "getMobileNativeStatus") {
@@ -333,6 +464,10 @@ export default function App() {
       }
       if (message.type === "openLiveUpdatePromotionSettings") {
         void CesiumLiveUpdates.openPromotionSettings().then(() => sendNativeStatus());
+        return;
+      }
+      if (message.type === "openNowBarSettings") {
+        void CesiumLiveUpdates.openNowBarSettings().then(() => sendNativeStatus());
         return;
       }
       if (message.type === "setPhoneControlEnabled") {
@@ -353,6 +488,7 @@ export default function App() {
       }
       if (message.type === "backCapability") {
         webCanHandleBackRef.current = message.canHandleBack;
+        syncBackIntercept();
         return;
       }
       if (message.type === "backFallback") {
@@ -360,6 +496,9 @@ export default function App() {
         if (canGoBackRef.current) {
           webViewRef.current?.goBack();
         } else {
+          // Disarm before exiting so the dispatcher walk triggered by exitApp
+          // can never re-enter the predictive intercept.
+          CesiumPredictiveBack.setBackInterceptEnabled(false);
           BackHandler.exitApp();
         }
         return;
@@ -413,12 +552,16 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, focused, sendNativeStatus]
+    [configureNativeServices, flushPendingShare, focused, sendNativeStatus, syncBackIntercept]
   );
 
-  const handleNavigation = useCallback((navigation: WebViewNavigation) => {
-    canGoBackRef.current = navigation.canGoBack;
-  }, []);
+  const handleNavigation = useCallback(
+    (navigation: WebViewNavigation) => {
+      canGoBackRef.current = navigation.canGoBack;
+      syncBackIntercept();
+    },
+    [syncBackIntercept]
+  );
 
   return (
     <View style={styles.root} testID="cesium-mobile-root">
@@ -439,10 +582,8 @@ export default function App() {
           allowUniversalAccessFromFileURLs
           mixedContentMode="always"
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
-          injectedJavaScript={bootstrapScript}
           onLoadEnd={() => {
             setLoadError(null);
-            webViewRef.current?.injectJavaScript(bootstrapScript);
           }}
           onMessage={handleMessage}
           onNavigationStateChange={handleNavigation}
@@ -460,6 +601,7 @@ export default function App() {
             webViewRef.current = null;
             canGoBackRef.current = false;
             webCanHandleBackRef.current = false;
+            syncBackIntercept();
             setWebViewAvailable(false);
             setLoadError(description);
           }}
@@ -479,6 +621,7 @@ export default function App() {
             onPress={() => {
               canGoBackRef.current = false;
               webCanHandleBackRef.current = false;
+              syncBackIntercept();
               setLoadError(null);
               setReloadKey((current) => current + 1);
               setWebViewAvailable(true);
@@ -497,31 +640,6 @@ function toMobileLifecycleState(state: AppStateStatus) {
   return state === "active" || state === "background" || state === "inactive"
     ? state
     : "background";
-}
-
-function buildWebErrorBridgeScript() {
-  return `
-(() => {
-  if (window.__CESIUM_MOBILE_ERROR_BRIDGE__) return true;
-  window.__CESIUM_MOBILE_ERROR_BRIDGE__ = true;
-  const send = (message, source, line) => {
-    try {
-      window.ReactNativeWebView?.postMessage(JSON.stringify({
-        type: "webRuntimeError",
-        message: String(message || "Unknown web runtime error"),
-        source: source || undefined,
-        line: Number.isFinite(line) ? line : undefined
-      }));
-    } catch {}
-  };
-  window.addEventListener("error", (event) => {
-    send(event.message || event.error?.message, event.filename, event.lineno);
-  });
-  window.addEventListener("unhandledrejection", (event) => {
-    send(event.reason?.message || event.reason);
-  });
-  true;
-})();`;
 }
 
 const styles = StyleSheet.create({

@@ -9,12 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import {
-  AGENT_RAIL_FILTER_TOGGLE_KEYS,
-  type AgentRailFilterToggleKey,
-  type AgentRailFilterToggleState,
-} from "@/lib/agent-rail";
+import type { AgentRailFilterToggleKey, AgentRailFilterToggleState } from "@/lib/agent-rail";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import {
   popoverMenuListClass,
@@ -22,39 +17,27 @@ import {
   popoverMenuSectionLabelClass,
   popoverMenuSeparatorClass,
 } from "@/components/ui/popover-menu-ui";
-import type { WorkspaceSortMode } from "@/lib/global-settings";
-import type { AgentRailGroupByMode, AgentRailSectionId } from "@/lib/global-settings";
-import { AGENT_RAIL_SECTION_IDS } from "@/lib/global-settings";
+import type {
+  AgentRailGroupByMode,
+  AgentRailSectionId,
+  AgentRailViewPreset,
+} from "@/lib/global-settings";
 import type { AgentRailRowDetailMode } from "@/lib/agent-rail-status";
 
-const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
-  archived: "Archived",
-  running: "Running",
-  needs_attention: "Needs attention",
-  pinned: "Pinned",
-  unread: "Unread",
-  read: "Read",
-  external: "External",
-};
+const FILTER_TOGGLE_KEYS = ["archived", "unread"] as const satisfies AgentRailFilterToggleKey[];
 
-const WORKSPACE_SORT_OPTIONS: Array<{ value: WorkspaceSortMode; label: string }> = [
-  { value: "recent", label: "Recent" },
-  { value: "alphabetical", label: "A–Z" },
-  { value: "machine", label: "Machine" },
-  { value: "custom", label: "Custom" },
-];
+const FILTER_TOGGLE_LABELS: Record<(typeof FILTER_TOGGLE_KEYS)[number], string> = {
+  archived: "Archived",
+  unread: "Unread",
+};
 
 const GROUP_BY_OPTIONS: Array<{
   value: AgentRailGroupByMode;
   label: string;
   hint: string;
 }> = [
-  { value: "workspace", label: "Workspace", hint: "Grouped by project workspace" },
-  { value: "priority", label: "Priority", hint: "One flat list, urgent first — no workspaces or folders" },
-  { value: "repository", label: "Repository", hint: "Grouped by git repository" },
-  { value: "server", label: "Machine", hint: "Grouped by connected machine" },
-  { value: "updated", label: "Updated", hint: "Grouped by last activity" },
-  { value: "status", label: "Status", hint: "Grouped by raw conversation status" },
+  { value: "workspace", label: "Workspace", hint: "Grouped by workspace" },
+  { value: "priority", label: "Priority", hint: "One list, urgent first" },
 ];
 
 const ROW_DETAIL_OPTIONS: Array<{
@@ -67,11 +50,15 @@ const ROW_DETAIL_OPTIONS: Array<{
   { value: "expanded", label: "Expanded", hint: "Every row shows status or time" },
 ];
 
-const SECTION_LABELS: Record<AgentRailSectionId, string> = {
+const PRESET_OPTIONS: Array<{ value: AgentRailViewPreset; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "inbox", label: "Inbox" },
+  { value: "compact", label: "Compact" },
+];
+
+const SECTION_LABELS: Record<Extract<AgentRailSectionId, "attention" | "pinned">, string> = {
   attention: "Needs attention",
   pinned: "Pinned",
-  chats: "Chats",
-  workspaces: "Workspaces",
 };
 
 function OptionPill({
@@ -129,23 +116,16 @@ type AgentRailFilterMenuPortalProps = {
   setRailFilterToggle: (key: AgentRailFilterToggleKey, value: boolean) => void;
   clearRailFilters: () => void;
   railFilterActive: boolean;
-  workspaceSortMode: WorkspaceSortMode;
-  setWorkspaceSortMode: (mode: WorkspaceSortMode) => void;
-  workspaceCustomOrderActive: boolean;
-  resetWorkspaceCustomOrder: () => void;
   groupBy: AgentRailGroupByMode;
   setGroupBy: (mode: AgentRailGroupByMode) => void;
-  machines: Array<{ id: string; label: string }>;
-  hiddenMachineIds: string[];
-  setMachineVisible: (serverId: string, visible: boolean) => void;
   showIcons: boolean;
   setShowIcons: (value: boolean) => void;
   rowDetail: AgentRailRowDetailMode;
   setRowDetail: (mode: AgentRailRowDetailMode) => void;
-  sectionOrder: AgentRailSectionId[];
   hiddenSections: AgentRailSectionId[];
-  setSectionOrder: (order: AgentRailSectionId[]) => void;
   setSectionHidden: (sectionId: AgentRailSectionId, hidden: boolean) => void;
+  viewPreset: AgentRailViewPreset | null;
+  onSelectPreset: (preset: AgentRailViewPreset) => void;
 };
 
 export function AgentRailFilterMenuPortal({
@@ -156,23 +136,16 @@ export function AgentRailFilterMenuPortal({
   setRailFilterToggle,
   clearRailFilters,
   railFilterActive,
-  workspaceSortMode,
-  setWorkspaceSortMode,
-  workspaceCustomOrderActive,
-  resetWorkspaceCustomOrder,
   groupBy,
   setGroupBy,
-  machines,
-  hiddenMachineIds,
-  setMachineVisible,
   showIcons,
   setShowIcons,
   rowDetail,
   setRowDetail,
-  sectionOrder,
   hiddenSections,
-  setSectionOrder,
   setSectionHidden,
+  viewPreset,
+  onSelectPreset,
 }: AgentRailFilterMenuPortalProps) {
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
@@ -244,20 +217,30 @@ export function AgentRailFilterMenuPortal({
     (option) => option.value === rowDetail
   )?.hint;
   const priorityMode = groupBy === "priority";
-  const activeFilterCount = AGENT_RAIL_FILTER_TOGGLE_KEYS.filter(
-    (key) => railFilterToggles[key]
-  ).length;
+  const visibleFilterCount = FILTER_TOGGLE_KEYS.filter((key) => railFilterToggles[key]).length;
 
   return createPortal(
     <div
       ref={filterPanelRef}
       role="dialog"
-      aria-label="Rail view, sections, and conversation filters"
+      aria-label="Rail view and conversation filters"
       className={`fixed z-[10040] w-[248px] transition-opacity ${popoverMenuPanelClass}`}
       style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className={popoverMenuListClass}>
+        <div className={popoverMenuSectionLabelClass}>Preset</div>
+        <PillRow>
+          {PRESET_OPTIONS.map((option) => (
+            <OptionPill
+              key={option.value}
+              active={viewPreset === option.value}
+              label={option.label}
+              onSelect={() => onSelectPreset(option.value)}
+            />
+          ))}
+        </PillRow>
+
         <div className={popoverMenuSectionLabelClass}>Group by</div>
         <PillRow>
           {GROUP_BY_OPTIONS.map((option) => (
@@ -286,44 +269,16 @@ export function AgentRailFilterMenuPortal({
         </PillRow>
         {rowDetailHint ? <HintLine text={rowDetailHint} /> : null}
 
-        {!priorityMode ? (
-          <>
-            <div className={popoverMenuSectionLabelClass}>Sort workspaces</div>
-            <PillRow>
-              {WORKSPACE_SORT_OPTIONS.map((option) => (
-                <OptionPill
-                  key={option.value}
-                  active={workspaceSortMode === option.value}
-                  label={option.label}
-                  onSelect={() => setWorkspaceSortMode(option.value)}
-                />
-              ))}
-            </PillRow>
-            {workspaceCustomOrderActive ? (
-              <button
-                type="button"
-                onClick={() => resetWorkspaceCustomOrder()}
-                className="px-[10px] pb-[2px] pt-[3px] text-left font-sans text-[10.5px] text-[var(--accent)] hover:underline"
-              >
-                Reset custom order
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
         <div className={popoverMenuSeparatorClass} />
         <div className={popoverMenuSectionLabelClass}>Sections</div>
         <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-          {AGENT_RAIL_SECTION_IDS.map((sectionId) => {
+          {(["attention", "pinned"] as const).map((sectionId) => {
             const hidden = hiddenSections.includes(sectionId);
-            const canHide = sectionId !== "workspaces";
-            const index = sectionOrder.indexOf(sectionId);
-            const foldedByPriority =
-              priorityMode && (sectionId === "attention" || sectionId === "chats");
+            const foldedByPriority = priorityMode && sectionId === "attention";
             return (
-              <div
+              <label
                 key={sectionId}
-                className={`flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)] ${
+                className={`flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)] ${
                   foldedByPriority ? "opacity-45" : ""
                 }`}
                 title={
@@ -332,54 +287,15 @@ export function AgentRailFilterMenuPortal({
                     : undefined
                 }
               >
-                {canHide ? (
-                  <input
-                    type="checkbox"
-                    checked={!hidden}
-                    disabled={foldedByPriority}
-                    onChange={(ev) => setSectionHidden(sectionId, !ev.target.checked)}
-                    className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-                    aria-label={`Show ${SECTION_LABELS[sectionId]}`}
-                  />
-                ) : (
-                  <span className="size-[13px] shrink-0" />
-                )}
-                <span className="min-w-0 flex-1 truncate">
-                  {SECTION_LABELS[sectionId]}
-                </span>
-                <button
-                  type="button"
-                  disabled={index <= 0}
-                  onClick={() => {
-                    if (index <= 0) return;
-                    const next = [...sectionOrder];
-                    const prev = next[index - 1]!;
-                    next[index - 1] = sectionId;
-                    next[index] = prev;
-                    setSectionOrder(next);
-                  }}
-                  className="grid size-[18px] shrink-0 place-items-center rounded text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-25"
-                  aria-label={`Move ${SECTION_LABELS[sectionId]} up`}
-                >
-                  <ChevronUp className="size-[12px]" strokeWidth={2} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  disabled={index < 0 || index >= sectionOrder.length - 1}
-                  onClick={() => {
-                    if (index < 0 || index >= sectionOrder.length - 1) return;
-                    const next = [...sectionOrder];
-                    const after = next[index + 1]!;
-                    next[index + 1] = sectionId;
-                    next[index] = after;
-                    setSectionOrder(next);
-                  }}
-                  className="grid size-[18px] shrink-0 place-items-center rounded text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-25"
-                  aria-label={`Move ${SECTION_LABELS[sectionId]} down`}
-                >
-                  <ChevronDown className="size-[12px]" strokeWidth={2} aria-hidden />
-                </button>
-              </div>
+                <input
+                  type="checkbox"
+                  checked={!hidden}
+                  disabled={foldedByPriority}
+                  onChange={(ev) => setSectionHidden(sectionId, !ev.target.checked)}
+                  className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
+                />
+                <span className="min-w-0 flex-1 truncate">{SECTION_LABELS[sectionId]}</span>
+              </label>
             );
           })}
           <label className="flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]">
@@ -393,46 +309,9 @@ export function AgentRailFilterMenuPortal({
           </label>
         </div>
 
-        {machines.length > 1 ? (
-          <>
-            <div className={popoverMenuSeparatorClass} />
-            <div className={`${popoverMenuSectionLabelClass} flex items-center justify-between`}>
-              <span>Machines</span>
-              <button
-                type="button"
-                disabled={hiddenMachineIds.length === 0}
-                onClick={() => {
-                  for (const machine of machines) {
-                    setMachineVisible(machine.id, true);
-                  }
-                }}
-                className="text-[10px] normal-case tracking-normal text-[var(--accent)] disabled:opacity-35"
-              >
-                Show all
-              </button>
-            </div>
-            <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-              {machines.map((machine) => (
-                <label
-                  key={machine.id}
-                  className="flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={!hiddenMachineIds.includes(machine.id)}
-                    onChange={(event) => setMachineVisible(machine.id, event.target.checked)}
-                    className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{machine.label}</span>
-                </label>
-              ))}
-            </div>
-          </>
-        ) : null}
-
         <div className={popoverMenuSeparatorClass} />
         <div className={`${popoverMenuSectionLabelClass} flex items-center justify-between`}>
-          <span>Filters{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ""}</span>
+          <span>Filters{visibleFilterCount > 0 ? ` · ${visibleFilterCount}` : ""}</span>
           <button
             type="button"
             disabled={!railFilterActive}
@@ -443,7 +322,7 @@ export function AgentRailFilterMenuPortal({
           </button>
         </div>
         <PillRow>
-          {AGENT_RAIL_FILTER_TOGGLE_KEYS.map((key) => (
+          {FILTER_TOGGLE_KEYS.map((key) => (
             <OptionPill
               key={key}
               active={railFilterToggles[key]}

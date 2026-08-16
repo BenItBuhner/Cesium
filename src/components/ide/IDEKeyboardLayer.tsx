@@ -10,11 +10,19 @@ import {
 } from "react";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
-import { AgentSwitcherPalette } from "./AgentSwitcherPalette";
+import {
+  AgentSwitcherPalette,
+  type QuickSwitcherItem,
+} from "./AgentSwitcherPalette";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
-import { QuickOpen } from "./QuickOpen";
+import { QuickOpen, type QuickOpenTabItem } from "./QuickOpen";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
 import { WorkspaceStudioModal } from "./WorkspaceStudioModal";
+import {
+  isOpenWorkspaceStudioEvent,
+  OPEN_WORKSPACE_STUDIO_EVENT,
+  type WorkspaceStudioOpenMode,
+} from "@/lib/workspace-studio-events";
 import { WorkspaceWindowsModal } from "./WorkspaceWindowsModal";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
@@ -47,10 +55,19 @@ import {
   type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import {
-  initialAgentSwitcherIndex,
   nextAgentSwitcherIndex,
   seedAgentConversationMruFromCandidates,
 } from "@/lib/agent-conversation-mru";
+import {
+  QUICK_SWITCHER_SCOPE_LABELS,
+  type QuickSwitcherScopeId,
+} from "@/lib/quick-open-scopes";
+import {
+  buildSettingsSearchIndex,
+  searchSettingsIndex,
+  settingsSearchHitToFocus,
+  type SettingsSearchEntry,
+} from "@/lib/settings-search-index";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
@@ -106,6 +123,8 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "chat.action.agentRailNextConversation",
   "palette.agentSwitcherPrevious",
   "palette.agentSwitcherNext",
+  "palette.editorTabSwitcherPrevious",
+  "palette.editorTabSwitcherNext",
 ] as const;
 
 function flash(setter: (s: string | null) => void, msg: string) {
@@ -175,11 +194,19 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const conversationAtAgentSwitcherOpenRef = useRef<string | null>(null);
   const agentSwitcherItemsRef = useRef(agentShell?.agentSwitcherItems ?? []);
   agentSwitcherItemsRef.current = agentShell?.agentSwitcherItems ?? [];
+  /** Scope of the currently open hold-to-cycle switcher (conversations, tabs, both). */
+  const [switcherScope, setSwitcherScope] = useState<QuickSwitcherScopeId>(
+    "conversations"
+  );
+  const switcherScopeRef = useRef<QuickSwitcherScopeId>("conversations");
+  switcherScopeRef.current = switcherScope;
+  /** Editor-tab rows snapshotted when the switcher opens (bridge state is not reactive). */
+  const [switcherTabItems, setSwitcherTabItems] = useState<QuickSwitcherItem[]>([]);
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
   const [folderPromptValue, setFolderPromptValue] = useState("");
   const [workspaceStudioOpen, setWorkspaceStudioOpen] = useState(false);
   const [workspaceStudioMode, setWorkspaceStudioMode] = useState<
-    "clone" | "browse" | "newfolder" | "remove"
+    WorkspaceStudioOpenMode | "remove"
   >("clone");
   const [browserPromptOpen, setBrowserPromptOpen] = useState(false);
   const [browserPromptValue, setBrowserPromptValue] = useState(
@@ -201,6 +228,52 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     () => (fileTree ? buildQuickOpenIndex(fileTree) : []),
     [fileTree]
   );
+
+  const conversationSwitcherItems = useMemo<QuickSwitcherItem[]>(
+    () =>
+      (agentShell?.agentSwitcherItems ?? []).map((candidate) => ({
+        id: `conv:${candidate.id}`,
+        title: candidate.title,
+        kind: "conversation" as const,
+        secondary: candidate.workspaceName || undefined,
+        badge: candidate.badge,
+        updatedAt: candidate.updatedAt,
+      })),
+    [agentShell?.agentSwitcherItems]
+  );
+  const conversationSwitcherItemsRef = useRef<QuickSwitcherItem[]>([]);
+  conversationSwitcherItemsRef.current = conversationSwitcherItems;
+
+  const switcherItems = useMemo<QuickSwitcherItem[]>(() => {
+    if (switcherScope === "tabs") return switcherTabItems;
+    if (switcherScope === "conversations") return conversationSwitcherItems;
+    return [...conversationSwitcherItems, ...switcherTabItems];
+  }, [conversationSwitcherItems, switcherScope, switcherTabItems]);
+  const switcherItemsRef = useRef<QuickSwitcherItem[]>([]);
+  switcherItemsRef.current = switcherItems;
+
+  const collectSwitcherTabItems = useCallback((): QuickSwitcherItem[] => {
+    const bridge = bridgeRef.current;
+    if (!bridge) return [];
+    const snapshot = bridge.getState();
+    const groups: Array<"left" | "right"> =
+      snapshot.focusedGroup === "right" ? ["right", "left"] : ["left", "right"];
+    const items: QuickSwitcherItem[] = [];
+    for (const group of groups) {
+      const tabs = group === "left" ? snapshot.leftTabs : snapshot.rightTabs;
+      for (const tab of tabs) {
+        items.push({
+          id: `tab:${group}:${tab.id}`,
+          title: tab.name,
+          kind: "tab",
+          secondary: group === "right" ? "right pane" : "left pane",
+          group,
+          tabId: tab.id,
+        });
+      }
+    }
+    return items;
+  }, [bridgeRef]);
 
   useEffect(() => {
     if (!toast) return;
@@ -423,6 +496,19 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     setWorkspaceStudioOpen(true);
   }, []);
 
+  useEffect(() => {
+    const onOpenStudio = (event: Event) => {
+      if (!isOpenWorkspaceStudioEvent(event)) {
+        return;
+      }
+      setPalette("closed");
+      setWorkspaceStudioMode(event.detail.mode);
+      setWorkspaceStudioOpen(true);
+    };
+    window.addEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
+    return () => window.removeEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
+  }, []);
+
   const promptToRemoveWorkspace = useCallback(() => {
     setPalette("closed");
     setWorkspaceStudioMode("remove");
@@ -632,60 +718,123 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   });
 
   const confirmAgentSwitcher = useCallback(() => {
-    const items = agentSwitcherItemsRef.current;
+    const items = switcherItemsRef.current;
     const selected = items[agentSwitcherSelectedIndex];
     closeAgentSwitcher();
     if (!selected) {
       return;
     }
+    if (selected.kind === "tab" && selected.group && selected.tabId) {
+      const group = selected.group;
+      const tabId = selected.tabId;
+      runWithBridge((bridge) => {
+        bridge.dispatch({ type: "SELECT_TAB", group, id: tabId });
+        bridge.dispatch({ type: "FOCUS_EDITOR_GROUP", group });
+      });
+      return;
+    }
+    const conversationId = selected.id.startsWith("conv:")
+      ? selected.id.slice(5)
+      : selected.id;
     if (!agentShell) {
       window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
       return;
     }
-    const summary = agentShell.findConversationSummaryById(selected.id);
+    const summary = agentShell.findConversationSummaryById(conversationId);
     if (summary) {
       void agentShell.openConversationSummary(summary);
     }
-  }, [agentShell, agentSwitcherSelectedIndex, closeAgentSwitcher]);
+  }, [agentShell, agentSwitcherSelectedIndex, closeAgentSwitcher, runWithBridge]);
 
+  /**
+   * Opens or advances the hold-to-cycle quick switcher. With no override the
+   * scope comes from settings (Mod+Tab default: agent conversations); the
+   * editor-tab switcher commands pass `"tabs"` explicitly.
+   */
   const stepAgentSwitcher = useCallback(
-    (direction: 1 | -1) => {
-      if (!agentShell) {
+    (direction: 1 | -1, scopeOverride?: QuickSwitcherScopeId) => {
+      const scope = scopeOverride ?? settings.general.quickSwitcherScope;
+      if (scope === "conversations" && !agentShell) {
         window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
         return;
       }
 
-      const items = agentSwitcherItemsRef.current;
+      const opening =
+        paletteRef.current !== "agentSwitcher" || switcherScopeRef.current !== scope;
+      const conversationItems =
+        scope === "tabs" ? [] : conversationSwitcherItemsRef.current;
+      const tabItems =
+        scope === "conversations"
+          ? []
+          : opening
+            ? collectSwitcherTabItems()
+            : switcherItemsRef.current.filter((item) => item.kind === "tab");
+      const items =
+        scope === "tabs"
+          ? tabItems
+          : scope === "conversations"
+            ? conversationItems
+            : [...conversationItems, ...tabItems];
       if (items.length === 0) {
-        flash(setToast, "No agents to switch.");
+        flash(
+          setToast,
+          scope === "tabs" ? "No open editor tabs to switch." : "No agents to switch."
+        );
         return;
       }
 
-      const serverId = activeServer.id;
-      const mruStack = settings.general.agentConversationMruByServer[serverId] ?? [];
-      if (mruStack.length === 0) {
-        const seed = seedAgentConversationMruFromCandidates(items);
-        if (seed.length > 0) {
-          updateSettings((current) => ({
-            ...current,
-            general: {
-              ...current.general,
-              agentConversationMruByServer: {
-                ...current.general.agentConversationMruByServer,
-                [serverId]: seed,
+      if (scope !== "tabs" && agentShell) {
+        const serverId = activeServer.id;
+        const mruStack = settings.general.agentConversationMruByServer[serverId] ?? [];
+        if (mruStack.length === 0) {
+          const seed = seedAgentConversationMruFromCandidates(agentSwitcherItemsRef.current);
+          if (seed.length > 0) {
+            updateSettings((current) => ({
+              ...current,
+              general: {
+                ...current.general,
+                agentConversationMruByServer: {
+                  ...current.general.agentConversationMruByServer,
+                  [serverId]: seed,
+                },
               },
-            },
-          }));
+            }));
+          }
         }
       }
 
-      if (paletteRef.current !== "agentSwitcher") {
+      if (opening) {
+        setSwitcherScope(scope);
+        setSwitcherTabItems(tabItems);
         setPalette("agentSwitcher");
-        const currentId = agentShell.isDraftConversationSelected
-          ? null
-          : agentShell.selectedConversationId;
-        conversationAtAgentSwitcherOpenRef.current = currentId;
-        setAgentSwitcherSelectedIndex(initialAgentSwitcherIndex(currentId, items, direction));
+        let currentId: string | null = null;
+        if (scope === "tabs") {
+          conversationAtAgentSwitcherOpenRef.current = null;
+          const snapshot = bridgeRef.current?.getState();
+          if (snapshot) {
+            const group = snapshot.focusedGroup;
+            const activeId =
+              group === "left" ? snapshot.leftActiveId : snapshot.rightActiveId;
+            if (activeId) currentId = `tab:${group}:${activeId}`;
+          }
+        } else {
+          const conversationId =
+            agentShell && !agentShell.isDraftConversationSelected
+              ? agentShell.selectedConversationId
+              : null;
+          conversationAtAgentSwitcherOpenRef.current = conversationId;
+          currentId = conversationId ? `conv:${conversationId}` : null;
+        }
+        const currentIndex = currentId
+          ? items.findIndex((item) => item.id === currentId)
+          : -1;
+        setAgentSwitcherSelectedIndex(
+          currentIndex < 0
+            ? direction > 0
+              ? 0
+              : items.length - 1
+            : nextAgentSwitcherIndex(currentIndex, items.length, direction)
+        );
         return;
       }
 
@@ -696,7 +845,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [
       activeServer.id,
       agentShell,
+      bridgeRef,
+      collectSwitcherTabItems,
       settings.general.agentConversationMruByServer,
+      settings.general.quickSwitcherScope,
       updateSettings,
     ]
   );
@@ -931,6 +1083,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           break;
         case "palette.agentSwitcherNext":
           stepAgentSwitcher(1);
+          break;
+        case "palette.editorTabSwitcherPrevious":
+          stepAgentSwitcher(-1, "tabs");
+          break;
+        case "palette.editorTabSwitcherNext":
+          stepAgentSwitcher(1, "tabs");
           break;
         case "chat.action.agentRailPreviousConversation":
           agentShell?.cycleAgentConversation(-1);
@@ -1175,6 +1333,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Agent: Quick switch forward",
         keybinding: kb("palette.agentSwitcherNext"),
         run: () => runShortcutCommand("palette.agentSwitcherNext"),
+      },
+      {
+        id: "palette.editorTabSwitcherPrevious",
+        label: "Editor: Quick switch tab backward",
+        keybinding: kb("palette.editorTabSwitcherPrevious"),
+        run: () => runShortcutCommand("palette.editorTabSwitcherPrevious"),
+      },
+      {
+        id: "palette.editorTabSwitcherNext",
+        label: "Editor: Quick switch tab forward",
+        keybinding: kb("palette.editorTabSwitcherNext"),
+        run: () => runShortcutCommand("palette.editorTabSwitcherNext"),
       },
       {
         id: "chat.action.agentRailPreviousConversation",
@@ -1694,7 +1864,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     const onKeyUp = (e: KeyboardEvent) => {
       if (
         paletteRef.current === "agentSwitcher" &&
-        (e.key === "Meta" || e.key === "Control")
+        (e.key === "Meta" || e.key === "Control" || e.key === "Alt")
       ) {
         e.preventDefault();
         confirmAgentSwitcher();
@@ -1766,6 +1936,82 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [inferEditorIcon, openExplorerFile]
   );
 
+  const settingsSearchEntries = useMemo(
+    () => buildSettingsSearchIndex(settings.models.byBackend),
+    [settings.models.byBackend]
+  );
+
+  const onQuickPickConversation = useCallback(
+    (conversationId: string) => {
+      if (!agentShell) {
+        window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
+        return;
+      }
+      const summary = agentShell.findConversationSummaryById(conversationId);
+      if (summary) {
+        void agentShell.openConversationSummary(summary);
+      } else {
+        flash(setToast, "Conversation is no longer available.");
+      }
+    },
+    [agentShell]
+  );
+
+  const onQuickPickSetting = useCallback(
+    (hit: SettingsSearchEntry) => {
+      const focus = settingsSearchHitToFocus(hit);
+      const opensMcpsSubview =
+        hit.navId === "plugins" &&
+        (hit.rowId === "mcp-link" ||
+          hit.id === "plugins::section::mcp-presets" ||
+          hit.id === "plugins::section::mcp-custom" ||
+          hit.id === "plugins::section::mcp-connected");
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav: hit.navId,
+          agentsHarnessId:
+            hit.kind === "harness" && hit.agentsHarnessId
+              ? hit.agentsHarnessId
+              : hit.navId === "agents" && hit.kind !== "harness"
+                ? null
+                : current.settingsView.agentsHarnessId ?? null,
+          mcpsOpen: opensMcpsSubview,
+          panelSearchFocus: focus,
+        },
+      }));
+      openSettingsView();
+    },
+    [openSettingsView, updateWorkspaceSession]
+  );
+
+  const getQuickOpenTabs = useCallback((): QuickOpenTabItem[] => {
+    const bridge = bridgeRef.current;
+    if (!bridge) return [];
+    const snapshot = bridge.getState();
+    const mapGroup = (group: "left" | "right"): QuickOpenTabItem[] => {
+      const activeId = group === "left" ? snapshot.leftActiveId : snapshot.rightActiveId;
+      return (group === "left" ? snapshot.leftTabs : snapshot.rightTabs).map((tab) => ({
+        id: tab.id,
+        name: tab.name,
+        group,
+        active: tab.id === activeId,
+      }));
+    };
+    return [...mapGroup("left"), ...mapGroup("right")];
+  }, [bridgeRef]);
+
+  const onQuickPickTab = useCallback(
+    (tab: QuickOpenTabItem) => {
+      runWithBridge((bridge) => {
+        bridge.dispatch({ type: "SELECT_TAB", group: tab.group, id: tab.id });
+        bridge.dispatch({ type: "FOCUS_EDITOR_GROUP", group: tab.group });
+      });
+    },
+    [runWithBridge]
+  );
+
   return (
     <IDECommandProvider value={runCommand}>
       {children}
@@ -1779,13 +2025,26 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         onClose={() => setPalette("closed")}
         entries={quickEntries}
         onPick={onQuickPick}
+        conversations={agentShell?.agentSwitcherItems ?? []}
+        onPickConversation={onQuickPickConversation}
+        commands={commands}
+        settingsEntries={settingsSearchEntries}
+        onPickSetting={onQuickPickSetting}
+        getOpenTabs={getQuickOpenTabs}
+        onPickTab={onQuickPickTab}
+        searchSettings={searchSettingsIndex}
+        defaultScope={settings.general.quickOpenDefaultScope}
       />
       <AgentSwitcherPalette
         open={palette === "agentSwitcher"}
-        items={agentShell?.agentSwitcherItems ?? []}
+        items={switcherItems}
         selectedIndex={agentSwitcherSelectedIndex}
         onSelectedIndexChange={setAgentSwitcherSelectedIndex}
         onClose={cancelAgentSwitcher}
+        listLabel={QUICK_SWITCHER_SCOPE_LABELS[switcherScope]}
+        emptyLabel={
+          switcherScope === "tabs" ? "No open editor tabs" : "No agents to switch"
+        }
       />
       <VSCodeQuickInputShell
         open={folderPromptOpen}

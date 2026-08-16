@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
+  applyAgentRailViewPreset,
   createDefaultGlobalSettings,
   normalizeLoadedGlobalSettings,
 } from "../src/lib/global-settings.ts";
@@ -93,6 +94,7 @@ describe("global settings", () => {
       rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
+      scope: { type: "all" },
     });
   });
 
@@ -111,7 +113,7 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.groupBy, "priority");
   });
 
-  test("preserves machine group-by", () => {
+  test("migrates retired group-by modes to workspace", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -123,7 +125,7 @@ describe("global settings", () => {
         },
       },
     });
-    assert.equal(settings.general.agentRail.groupBy, "server");
+    assert.equal(settings.general.agentRail.groupBy, "workspace");
   });
 
   test("drops retired harness ids from model toggle settings", () => {
@@ -164,14 +166,15 @@ describe("global settings", () => {
     });
 
     assert.deepEqual(settings.general.agentRail, {
-      groupBy: "repository",
-      visibleStatusFilters: ["running"],
+      groupBy: "workspace",
+      visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
       rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
+      scope: { type: "all" },
     });
   });
 
@@ -249,6 +252,63 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.rowDetail, "balanced");
   });
 
+  test("defaults new-chat widgets to all visible in default order", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["shortcuts", "actions", "recent-chats", "recent-activity"],
+      hidden: [],
+    });
+  });
+
+  test("normalizes missing new-chat widgets to defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const { newChatWidgets: _ignored, ...generalWithoutWidgets } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutWidgets,
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["shortcuts", "actions", "recent-chats", "recent-activity"],
+      hidden: [],
+    });
+  });
+
+  test("preserves custom new-chat widget order and hidden set", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        newChatWidgets: {
+          order: ["recent-chats", "shortcuts", "actions", "recent-activity"],
+          hidden: ["recent-activity"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["recent-chats", "shortcuts", "actions", "recent-activity"],
+      hidden: ["recent-activity"],
+    });
+  });
+
+  test("appends missing widget ids and drops unknown/duplicate widget ids", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        newChatWidgets: {
+          order: ["actions", "actions", "bogus", "recent-chats"],
+          hidden: ["bogus", "shortcuts", "shortcuts"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["actions", "recent-chats", "shortcuts", "recent-activity"],
+      hidden: ["shortcuts"],
+    });
+  });
+
   test("normalizes machine workspace sorting", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
@@ -259,5 +319,47 @@ describe("global settings", () => {
       },
     });
     assert.equal(settings.general.workspaceSortMode, "machine");
+  });
+
+  test("persists a workspace rail scope and defaults to all", () => {
+    const base = createDefaultGlobalSettings();
+    assert.deepEqual(base.general.agentRail.scope, { type: "all" });
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          scope: { type: "workspace", workspaceKey: "local:ws-1" },
+        },
+      },
+    });
+    assert.deepEqual(settings.general.agentRail.scope, {
+      type: "workspace",
+      workspaceKey: "local:ws-1",
+    });
+  });
+
+  test("applies named rail view presets", () => {
+    const rail = createDefaultGlobalSettings().general.agentRail;
+    const inbox = applyAgentRailViewPreset("inbox", rail);
+    assert.equal(inbox.groupBy, "priority");
+    assert.equal(inbox.rowDetail, "balanced");
+    const compact = applyAgentRailViewPreset("compact", rail);
+    assert.equal(compact.groupBy, "workspace");
+    assert.equal(compact.rowDetail, "compact");
+    const compactFromInbox = applyAgentRailViewPreset("compact", inbox);
+    assert.equal(compactFromInbox.groupBy, "workspace");
+    assert.deepEqual(compactFromInbox.scope, { type: "all" });
+    const restored = applyAgentRailViewPreset("default", compact);
+    assert.equal(restored.groupBy, "workspace");
+    assert.equal(restored.rowDetail, "balanced");
+    const scoped = applyAgentRailViewPreset("default", {
+      ...rail,
+      scope: { type: "workspace", workspaceKey: "local:ws-1" },
+      hiddenSections: ["attention"],
+    });
+    assert.deepEqual(scoped.scope, { type: "all" });
+    assert.equal(scoped.hiddenSections.includes("attention"), false);
   });
 });

@@ -10,14 +10,24 @@ import {
   getAgentRailPriorityBucket,
 } from "@/lib/agent-rail-status";
 
+/** Includes retired modes so persisted values and tests still regroup until migrated. */
+export type AgentRailGroupByInput =
+  | AgentRailGroupByMode
+  | "repository"
+  | "server"
+  | "updated"
+  | "status";
+
 export type AgentRailGroupContext = {
   /** Conversations whose finished turn the user has not opened yet. */
   unreadCompletionByConversationId?: Record<string, true>;
+  /** Failed runs the user has already viewed. */
+  acknowledgedFailureByConversationId?: Record<string, true>;
 };
 
 export function groupAgentRailGroups(
   groups: AgentConversationGroup[],
-  mode: AgentRailGroupByMode,
+  mode: AgentRailGroupByInput,
   now = Date.now(),
   ctx: AgentRailGroupContext = {}
 ): AgentConversationGroup[] {
@@ -125,6 +135,9 @@ export function groupAgentRailGroups(
         const bucket = getAgentRailPriorityBucket(conversation, {
           unreadCompletion: Boolean(
             ctx.unreadCompletionByConversationId?.[conversation.id]
+          ),
+          acknowledgedFailure: Boolean(
+            ctx.acknowledgedFailureByConversationId?.[conversation.id]
           ),
         });
         const list = byBucket.get(bucket) ?? [];
