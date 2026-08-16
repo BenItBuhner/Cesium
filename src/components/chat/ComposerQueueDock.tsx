@@ -42,7 +42,7 @@ export function ComposerQueueDock({
   }
 
   const frame =
-    "aurora-glass mx-[12px] flex flex-col gap-[8px] overflow-hidden rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]";
+    "aurora-glass mx-[var(--agent-composer-radius)] flex flex-col gap-[8px] overflow-hidden rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]";
 
   return (
     <div className={frame}>

@@ -347,7 +347,7 @@ export function AskQuestionCard({
   const frame = embeddedInDock
     ? `${frameBase} px-[8px] pb-[8px] pt-[6px]`
     : dockAboveComposer
-      ? `${frameBase} aurora-glass mx-[12px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`
+      ? `${frameBase} aurora-glass mx-[var(--agent-composer-radius)] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`
       : `${frameBase} aurora-glass mx-[10px] rounded-[var(--agent-composer-radius)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`;
 
   const navDisabledPrev = stepIndex === 0;

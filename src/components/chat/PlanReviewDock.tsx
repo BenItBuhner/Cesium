@@ -34,7 +34,7 @@ export function PlanReviewDock({
   onDismiss,
 }: PlanReviewDockProps) {
   return (
-    <div className="aurora-glass mx-[12px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]">
+    <div className="aurora-glass mx-[var(--agent-composer-radius)] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]">
       <div className="flex min-w-0 items-start gap-[9px]">
         <ListChecks className="mt-[2px] size-[14px] shrink-0 text-[var(--plan-accent)]" strokeWidth={1.5} />
         <div className="min-w-0 flex-1">

@@ -35,7 +35,7 @@ export function AgentCompletionErrorCard({
   onDismiss,
 }: AgentCompletionErrorCardProps) {
   const frame = dockAboveComposer
-    ? "aurora-glass mx-[12px] flex flex-col overflow-hidden rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]"
+    ? "aurora-glass mx-[var(--agent-composer-radius)] flex flex-col overflow-hidden rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]"
     : "aurora-glass flex flex-col overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]";
 
   return (
