@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AppState,
   BackHandler,
+  DeviceEventEmitter,
   Dimensions,
   Linking,
   PermissionsAndroid,
@@ -314,6 +315,17 @@ export default function App() {
     void consumeNotificationAction();
     void consumeSharePayload();
   }, [consumeNotificationAction, consumeSharePayload]);
+
+  useEffect(() => {
+    // A share delivered while the activity is already foreground (split-screen
+    // or freeform-window source app) never flips AppState, so the native
+    // module emits this nudge from onNewIntent instead.
+    const subscription = DeviceEventEmitter.addListener(
+      "cesiumShareIntakeAvailable",
+      () => void consumeSharePayload()
+    );
+    return () => subscription.remove();
+  }, [consumeSharePayload]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {

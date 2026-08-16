@@ -20,9 +20,12 @@ class MainActivity : ReactActivity() {
   }
 
   override fun onNewIntent(intent: Intent) {
+    // Update the intent stores first: super.onNewIntent() notifies React's
+    // ActivityEventListeners (CesiumAndroidRuntimeModule nudges JS to drain
+    // the share store), so the payload must already be staged by then.
+    handleLaunchIntent(intent)
     super.onNewIntent(intent)
     setIntent(intent)
-    handleLaunchIntent(intent)
   }
 
   private fun handleLaunchIntent(intent: Intent?) {

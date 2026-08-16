@@ -210,9 +210,13 @@ export function MobileShareIntake() {
   const isLikelyLink = /^https?:\/\/\S+$/i.test(sharedText.trim());
 
   return createPortal(
-    <div className="fixed inset-0 z-[10060] flex items-end justify-center sm:items-center">
+    // Longhand positioning (not `inset-0`): the `inset` shorthand only landed in
+    // Chromium 87, and stock Android 11 WebViews still ship Chromium 83.
+    <div className="fixed bottom-0 left-0 right-0 top-0 z-[10060] flex items-end justify-center sm:items-center">
       <div
-        className="absolute inset-0 bg-black/50"
+        // Plain rgba (not `bg-black/50`): Tailwind 4 opacity modifiers compile to
+        // color-mix(), which Chromium < 111 drops, leaving the backdrop invisible.
+        className="absolute bottom-0 left-0 right-0 top-0 bg-[rgba(0,0,0,0.5)]"
         onClick={dismiss}
         aria-hidden
       />

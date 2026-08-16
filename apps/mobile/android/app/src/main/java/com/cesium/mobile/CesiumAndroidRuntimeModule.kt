@@ -14,6 +14,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -92,7 +93,21 @@ class CesiumAndroidRuntimeModule(
   }
 
   override fun onNewIntent(intent: Intent) {
-    // Notification and share intents are handled by MainActivity.
+    // A share can arrive while the activity is already resumed and top-most
+    // (e.g. sharing from a split-screen or freeform-window app). AppState never
+    // flips in that case, so JS would not poll `consumeSharedPayload` on its
+    // own — nudge it. MainActivity stages the payload in CesiumShareIntentStore
+    // before super.onNewIntent() reaches this listener.
+    val action = intent.action
+    if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+      return
+    }
+    if (!reactContext.hasActiveReactInstance()) {
+      return
+    }
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit(SHARE_INTAKE_EVENT, null)
   }
 
   /**
@@ -296,6 +311,9 @@ class CesiumAndroidRuntimeModule(
     // each shared stream is base64-encoded across the RN bridge, so keep a
     // conservative per-item byte cap to protect bridge throughput.
     private const val MAX_SHARED_ITEMS = 10
+
+    /** DeviceEventEmitter event telling JS a share intent is waiting in the store. */
+    const val SHARE_INTAKE_EVENT = "cesiumShareIntakeAvailable"
     private const val MAX_SHARED_FILE_BYTES = 25 * 1024 * 1024
   }
 }
