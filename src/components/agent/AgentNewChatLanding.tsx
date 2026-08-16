@@ -651,7 +651,22 @@ export function AgentNewChatLanding({
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
         <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
-          <div className="w-fit max-w-full self-start">
+          {/*
+           * Same chrome family as the cards docked above the chat composer
+           * (AskQuestionCard / dockedComposerCardFrame): top-rounded, open
+           * bottom, card fill + border. Inset by `--agent-composer-radius`
+           * so the card's square bottom corners land on the flat part of
+           * the composer's top edge instead of poking past its curve.
+           * `-mb-[4px]` cancels the column `gap-[2px]` plus the composer's
+           * empty-top `mt-[2px]` so the card sits flush on the composer edge.
+           */}
+          <div
+            className={`aurora-glass mx-[var(--agent-composer-radius)] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
+              composerHiddenForExpanded
+                ? "rounded-[var(--agent-composer-radius)] border border-[var(--border-card)]"
+                : "-mb-[4px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)]"
+            }`}
+          >
             <div className="flex max-w-full flex-wrap items-center gap-[6px]">
               <button
                 ref={workspacePickerRef}

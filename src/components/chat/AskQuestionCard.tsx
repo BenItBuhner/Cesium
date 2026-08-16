@@ -19,6 +19,7 @@ import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextFiel
 import { formatAskQuestionSubmission } from "@/lib/ask-question-dock";
 import type { AskQuestionOption, AskQuestionStep } from "@/lib/types";
 import { CollapsibleHeight } from "./CollapsibleHeight";
+import { dockedComposerCardMx } from "./docked-card";
 
 const transitionSnappy =
   "duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:duration-0";
@@ -347,8 +348,8 @@ export function AskQuestionCard({
   const frame = embeddedInDock
     ? `${frameBase} px-[8px] pb-[8px] pt-[6px]`
     : dockAboveComposer
-      ? `${frameBase} aurora-glass mx-[12px] rounded-t-[var(--radius-card)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`
-      : `${frameBase} aurora-glass mx-[10px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`;
+      ? `${frameBase} aurora-glass ${dockedComposerCardMx} rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`
+      : `${frameBase} aurora-glass mx-[10px] rounded-[var(--agent-composer-radius)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`;
 
   const navDisabledPrev = stepIndex === 0;
   const navDisabledNext = stepIndex >= steps.length - 1;
