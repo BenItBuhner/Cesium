@@ -1,4 +1,9 @@
-import type { CesiumHarnessLimits, CesiumHarnessSettings, CesiumSubagentsVersion } from "./types.js";
+import type {
+  CesiumHarnessFeatureSelection,
+  CesiumHarnessLimits,
+  CesiumHarnessSettings,
+  CesiumSubagentsVersion,
+} from "./types.js";
 
 /** Timed `wait` tool hard cap (24 hours) — mirrors Cesium prompt defaults. */
 export const DEFAULT_WAIT_MAX_SECONDS = 24 * 60 * 60;
@@ -82,6 +87,10 @@ function asVersion(value: unknown): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.floor(value)));
 }
@@ -145,13 +154,21 @@ export function normalizeHarnessSettings(raw: unknown): CesiumHarnessSettings {
   if (!record) return defaults;
   const features = asRecord(record.features);
   const subagents = asRecord(features?.subagents);
-  const normalizedFeatures: Record<string, { version: number }> = {};
+  const normalizedFeatures: Record<string, CesiumHarnessFeatureSelection> = {};
   if (features) {
     for (const [id, selection] of Object.entries(features)) {
       const selectionRecord = asRecord(selection);
       const version = asVersion(selectionRecord?.version ?? selection);
       if (id.trim() && version != null) {
-        normalizedFeatures[id] = { version };
+        normalizedFeatures[id] = {
+          version,
+          ...(asBoolean(selectionRecord?.enabled) != null
+            ? { enabled: asBoolean(selectionRecord?.enabled) }
+            : {}),
+          ...(asRecord(selectionRecord?.config)
+            ? { config: { ...asRecord(selectionRecord?.config)! } }
+            : {}),
+        };
       }
     }
   }
@@ -162,6 +179,12 @@ export function normalizeHarnessSettings(raw: unknown): CesiumHarnessSettings {
         version: normalizeSubagentsVersion(
           subagents?.version ?? features?.subagents ?? defaults.features.subagents.version
         ),
+        ...(asBoolean(subagents?.enabled) != null
+          ? { enabled: asBoolean(subagents?.enabled) }
+          : {}),
+        ...(asRecord(subagents?.config)
+          ? { config: { ...asRecord(subagents?.config)! } }
+          : {}),
       },
     },
     limits: normalizeHarnessLimits(record.limits),
@@ -171,8 +194,19 @@ export function normalizeHarnessSettings(raw: unknown): CesiumHarnessSettings {
 export function mergeHarnessSettings(
   current: CesiumHarnessSettings,
   patch: {
-    features?: Record<string, { version?: number | string } | undefined> & {
-      subagents?: { version?: CesiumSubagentsVersion | number | string };
+    features?: Record<
+      string,
+      {
+        version?: number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      } | undefined
+    > & {
+      subagents?: {
+        version?: CesiumSubagentsVersion | number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      };
     };
     limits?: Partial<CesiumHarnessLimits>;
   }
@@ -183,6 +217,12 @@ export function mergeHarnessSettings(
       ...(patch.features ?? {}),
       subagents: {
         version: patch.features?.subagents?.version ?? current.features.subagents.version,
+        enabled:
+          patch.features?.subagents?.enabled ??
+          current.features.subagents.enabled,
+        config:
+          patch.features?.subagents?.config ??
+          current.features.subagents.config,
       },
     },
     limits: {

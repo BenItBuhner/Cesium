@@ -1092,8 +1092,19 @@ export async function patchCesiumAgentSettings(input: {
     enabled?: Partial<Record<CesiumModeId, boolean>>;
   };
   harness?: {
-    features?: Record<string, { version?: number | string } | undefined> & {
-      subagents?: { version?: CesiumSubagentsVersion | number | string };
+    features?: Record<
+      string,
+      {
+        version?: number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      } | undefined
+    > & {
+      subagents?: {
+        version?: CesiumSubagentsVersion | number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      };
     };
     limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
   };

@@ -423,7 +423,14 @@ export type CesiumAgentSettingsPublic = {
     description: string;
   }>;
   harness: {
-    features: Record<string, { version: number }>;
+    features: Record<
+      string,
+      {
+        version: number;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      }
+    >;
     limits: {
       waitMaxSeconds: number;
       waitAgentDefaultTimeoutMs: number;
@@ -437,6 +444,12 @@ export type CesiumAgentSettingsPublic = {
     label: string;
     description: string;
     defaultVersion: number;
+    apiVersion?: 1;
+    enabledByDefault: boolean;
+    priority: number;
+    dependencies: string[];
+    optionalDependencies: string[];
+    failureMode: "isolate" | "fatal";
     versions: Array<{
       version: number;
       label: string;

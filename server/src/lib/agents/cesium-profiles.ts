@@ -159,6 +159,7 @@ const MAX_PROFILE_INSTRUCTIONS_CHARS = 8_000;
 const MAX_PROFILE_NAME_CHARS = 60;
 const MAX_PROFILE_DESCRIPTION_CHARS = 240;
 const MAX_CUSTOM_PROFILES = 32;
+const HARNESS_TOOL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 
 const WORK_PROFILE_ALLOWED_TOOLS: string[] = [
   // Locked core tools are implicit but listed for the editor UI.
@@ -275,7 +276,10 @@ function normalizeToolAllowlist(raw: unknown): "all" | string[] {
   const seen = new Set<string>();
   for (const entry of raw) {
     const name = asTrimmedString(entry);
-    if (name && CESIUM_KNOWN_PROFILE_TOOLS.has(name)) {
+    // Preserve syntactically valid names contributed by harness plugins. The
+    // static set still drives built-in grouping, but must not erase extension
+    // tools from persisted custom-profile allowlists.
+    if (name && HARNESS_TOOL_NAME_PATTERN.test(name)) {
       seen.add(name);
     }
   }
