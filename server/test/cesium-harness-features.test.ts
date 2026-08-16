@@ -27,6 +27,7 @@ const [
     createCesiumFeatureRegistry,
     CesiumHarnessPluginRuntime,
     loadCesiumHarnessPluginModules,
+    loadCesiumHarnessPluginModulesFromEnv,
     resetLoadedCesiumHarnessPluginModulesForTests,
   },
   { resolveCesiumTools, parseWaitToolArgs, buildOpenAiToolDefinitions },
@@ -411,6 +412,71 @@ test("harness plugin registry rejects missing, disabled, and cyclic dependencies
     () => cyclic.resolve(defaultHarnessSettings(), defaultHarnessSettings().limits),
     /dependency cycle/
   );
+  assert.throws(
+    () =>
+      createCesiumFeatureRegistry().register({
+        apiVersion: 2 as never,
+        id: "future-api",
+        label: "Future API",
+        description: "Unsupported",
+        defaultVersion: 1,
+        versions: [],
+      }),
+    /unsupported plugin API version/
+  );
+});
+
+test("resolved harness rejects plugin tool collisions with core tools", () => {
+  const registry = createCesiumFeatureRegistry([
+    {
+      id: "colliding-plugin",
+      label: "Colliding plugin",
+      description: "Collision test",
+      defaultVersion: 1,
+      toolNames: ["read_file"],
+      versions: [
+        {
+          version: 1,
+          label: "V1",
+          description: "Collision",
+          resolve: () => ({
+            id: "colliding-plugin",
+            version: 1,
+            label: "Colliding plugin",
+            description: "Collision",
+            tools: [
+              {
+                name: "read_file",
+                description: "Conflicts with the core tool",
+                parameters: { type: "object" },
+              },
+            ],
+            toolNames: ["read_file"],
+          }),
+        },
+      ],
+    },
+  ]);
+  assert.throws(
+    () =>
+      resolveCesiumHarness(
+        [
+          {
+            name: "read_file",
+            description: "Core read",
+            parameters: { type: "object" },
+          },
+        ],
+        {
+          features: {
+            subagents: { version: 1 },
+            "colliding-plugin": { version: 1 },
+          },
+        },
+        registry
+      ),
+    /tool collision: read_file/
+  );
 });
 
 test("per-session harness plugin runtime composes hooks and isolates failures", async () => {
@@ -542,6 +608,44 @@ test("fatal harness plugin hooks fail closed", async () => {
   );
 });
 
+test("isolated plugin hook timeouts preserve the previous pipeline value", async () => {
+  const diagnostics: Array<{ pluginId: string; hook: string; message: string }> = [];
+  const runtime = new CesiumHarnessPluginRuntime({
+    hookTimeoutMs: 5,
+    modules: [
+      {
+        id: "slow-plugin",
+        version: 1,
+        label: "Slow plugin",
+        description: "Times out",
+        tools: [],
+        toolNames: [],
+        hooks: {
+          transformSystemPrompt: async (_context, prompt) => {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            return `${prompt}\ntoo late`;
+          },
+        },
+      },
+    ],
+    context: () => ({
+      sessionId: "session",
+      conversationId: "conversation",
+      workspaceId: "workspace",
+      workspaceRoot: TEST_DATA_DIR,
+      mode: "agent",
+      modelId: "test/model",
+    }),
+    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+  });
+  assert.equal(await runtime.transformSystemPrompt("original"), "original");
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0]?.pluginId, "slow-plugin");
+  assert.equal(diagnostics[0]?.hook, "transformSystemPrompt");
+  assert.match(diagnostics[0]?.message ?? "", /timed out after 5ms/);
+  await runtime.dispose();
+});
+
 test("executable harness plugin modules load once and can unload", async () => {
   const fs = await import("node:fs/promises");
   const modulePath = path.join(TEST_DATA_DIR, "external-plugin.mjs");
@@ -578,6 +682,25 @@ test("executable harness plugin modules load once and can unload", async () => {
   assert.deepEqual(registry.catalog().map((entry) => entry.id), ["external-test"]);
   first[0]?.unload();
   assert.deepEqual(registry.catalog(), []);
+});
+
+test("environment plugin loader rejects malformed module lists without registrations", async () => {
+  const previous = process.env.CESIUM_HARNESS_PLUGIN_MODULES;
+  const registry = createCesiumFeatureRegistry();
+  process.env.CESIUM_HARNESS_PLUGIN_MODULES = '{"not":"an array"}';
+  try {
+    await assert.rejects(
+      () => loadCesiumHarnessPluginModulesFromEnv(registry, TEST_DATA_DIR),
+      /JSON must be an array of strings/
+    );
+    assert.deepEqual(registry.catalog(), []);
+  } finally {
+    if (previous == null) {
+      delete process.env.CESIUM_HARNESS_PLUGIN_MODULES;
+    } else {
+      process.env.CESIUM_HARNESS_PLUGIN_MODULES = previous;
+    }
+  }
 });
 
 test("followup_task queued during a running turn is drained after the turn ends", async () => {
