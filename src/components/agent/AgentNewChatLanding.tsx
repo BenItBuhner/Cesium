@@ -767,12 +767,14 @@ export function AgentNewChatLanding({
           {/*
            * Same chrome family as the cards docked above the chat composer
            * (AskQuestionCard / dockedComposerCardFrame): top-rounded, open
-           * bottom, card fill + border, inset 2px relative to the composer.
+           * bottom, card fill + border. Inset by the composer's own corner
+           * radius so the card's square bottom corners land on the flat part
+           * of the composer's top edge instead of poking past its curve.
            * `-mb-[4px]` cancels the column `gap-[2px]` plus the composer's
            * empty-top `mt-[2px]` so the card sits flush on the composer edge.
            */}
           <div
-            className={`aurora-glass mx-[2px] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
+            className={`aurora-glass mx-[var(--agent-composer-radius)] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
               composerHiddenForExpanded
                 ? "rounded-[var(--radius-card)] border border-[var(--border-card)]"
                 : "-mb-[4px] rounded-t-[var(--radius-card)] rounded-b-none border-x border-t border-[var(--border-card)]"
