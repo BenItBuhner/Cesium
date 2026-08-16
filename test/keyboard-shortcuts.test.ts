@@ -120,6 +120,30 @@ test("new chat defaults to Mod+N and runs in editable targets", () => {
   assert.equal(result.commandId, "chat.action.newChat");
 });
 
+test("start voice agent defaults to Mod+Alt+V and runs in editable targets", () => {
+  assert.deepEqual(
+    DEFAULT_KEYBOARD_SHORTCUT_BINDINGS["workbench.action.startVoiceAgent"],
+    ["Mod+Alt+V"]
+  );
+
+  const result = dispatchShortcut({
+    event: keyEvent({ key: "v", ctrlKey: true, altKey: true }),
+    editableTarget: true,
+  });
+
+  assert.equal(result.consumed, true);
+  assert.equal(result.defaultPrevented, true);
+  assert.equal(result.commandId, "workbench.action.startVoiceAgent");
+});
+
+test("start voice agent binding does not collide with plain paste", () => {
+  const result = dispatchShortcut({
+    event: keyEvent({ key: "v", ctrlKey: true }),
+    editableTarget: true,
+  });
+  assert.notEqual(result.commandId, "workbench.action.startVoiceAgent");
+});
+
 test("native editing shortcut detector covers common edit commands", () => {
   for (const key of ["a", "c", "v", "x", "y", "z"]) {
     assert.equal(

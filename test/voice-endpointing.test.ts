@@ -112,6 +112,43 @@ test("max-length cap commits mid-speech", () => {
   assert.equal(commit.reason, "max_length");
 });
 
+test("long pauses split continuous speech into separate utterances", () => {
+  // Two spoken sentences separated by a hard pause must commit as TWO
+  // utterances (each round-trips through STT independently), while the
+  // trailing silence after each burst stays inside its own clip bounds.
+  const endpointer = new Endpointer();
+  const events = drive(endpointer, [
+    { prob: 0.05, ms: 640 },
+    { prob: 0.95, ms: 1600 }, // sentence one
+    { prob: 0.05, ms: 2400 }, // hard pause: well past candidate + hard silence
+    { prob: 0.95, ms: 1600 }, // sentence two
+    { prob: 0.05, ms: 2400 },
+  ]);
+  const commits = events.filter((event) => event.type === "utterance_committed");
+  assert.equal(commits.length, 2);
+  const [first, second] = commits;
+  assert.ok(first && first.type === "utterance_committed");
+  assert.ok(second && second.type === "utterance_committed");
+  // Clips do not overlap: sentence two starts after sentence one ends.
+  assert.ok(first.endMs < second.startMs);
+  // Each clip covers roughly its 1600ms speech burst plus pre/post roll.
+  assert.ok(first.speechMs >= 1400 && first.speechMs <= 1900);
+  assert.ok(second.speechMs >= 1400 && second.speechMs <= 1900);
+});
+
+test("short mid-sentence pauses do NOT split the utterance", () => {
+  const endpointer = new Endpointer();
+  const events = drive(endpointer, [
+    { prob: 0.05, ms: 640 },
+    { prob: 0.95, ms: 900 },
+    { prob: 0.05, ms: 256 }, // thinking pause, below commit thresholds
+    { prob: 0.95, ms: 900 },
+    { prob: 0.05, ms: 2400 },
+  ]);
+  const commits = events.filter((event) => event.type === "utterance_committed");
+  assert.equal(commits.length, 1);
+});
+
 test("heuristic turn detector adapts required pause to utterance shape", () => {
   const detector = new HeuristicTurnDetector();
   // Short command, decent pause: commit.
