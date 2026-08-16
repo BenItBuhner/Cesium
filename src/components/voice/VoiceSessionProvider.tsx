@@ -221,6 +221,30 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const promptConversationRef = useRef(promptConversation);
   promptConversationRef.current = promptConversation;
 
+  /**
+   * Shared conversation delivery — no captions. Engine turns already caption
+   * via `onHeard`; the composer path captions in `submitComposer`.
+   */
+  const submitToConversation = useCallback(
+    async (text: string, attachments?: ImageAttachment[]): Promise<boolean> => {
+      const boundId = conversationIdRef.current;
+      const accepted = boundId
+        ? await promptConversationRef.current(boundId, text, attachments)
+        : await draftRef.current.handleSubmit(text, attachments);
+      if (accepted) {
+        sawTurnRunningRef.current = false;
+        reconcileAttemptsRef.current = 0;
+        markAwaitingReply(Date.now());
+      } else {
+        pushTranscript({ kind: "error", text: "Send: message was not accepted." });
+      }
+      return accepted;
+    },
+    [markAwaitingReply, pushTranscript]
+  );
+  const submitToConversationRef = useRef(submitToConversation);
+  submitToConversationRef.current = submitToConversation;
+
   const submitComposer = useCallback(
     async (text: string, attachments?: ImageAttachment[]): Promise<boolean> => {
       const trimmed = text.trim();
@@ -234,18 +258,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       }
       setComposerSending(true);
       try {
-        const boundId = conversationIdRef.current;
-        const accepted = boundId
-          ? await promptConversationRef.current(boundId, text, attachments)
-          : await draftRef.current.handleSubmit(text, attachments);
-        if (!accepted) {
-          pushTranscript({ kind: "error", text: "Send: message was not accepted." });
-        } else {
-          sawTurnRunningRef.current = false;
-          reconcileAttemptsRef.current = 0;
-          markAwaitingReply(Date.now());
-        }
-        return accepted;
+        return await submitToConversationRef.current(text, attachments);
       } catch (submitError) {
         pushTranscript({
           kind: "error",
@@ -258,10 +271,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         setComposerSending(false);
       }
     },
-    [markAwaitingReply, pushTranscript]
+    [pushTranscript]
   );
-  const submitComposerRef = useRef(submitComposer);
-  submitComposerRef.current = submitComposer;
 
   // ---- Turn engine (epoch + abort + bounded queue) -----------------------
 
@@ -275,7 +286,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           return result.text;
         },
         submit: async (text) => {
-          return submitComposerRef.current(text);
+          return submitToConversationRef.current(text);
         },
         onStatus: setEngineStatus,
         onHeard: (text) => {
