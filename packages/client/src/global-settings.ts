@@ -1,6 +1,11 @@
 import { pruneModelToggleByBackend } from "@cesium/core";
 import { normalizeAgentConversationMruByServer } from "./agent-conversation-mru";
 import {
+  createDefaultAuroraSettings,
+  normalizeAuroraSettings,
+  type AuroraSettingsState,
+} from "./aurora-settings";
+import {
   createDefaultKeyboardShortcutsState,
   normalizeKeyboardShortcutsState,
   type KeyboardShortcutsSettingsState,
@@ -193,6 +198,8 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   /** Appearance, light/dark theme ids, custom token presets; persisted on the server. */
   themeConfig: ThemeConfig;
   keyboardShortcuts: KeyboardShortcutsSettingsState;
+  /** Animated aurora backdrop behind agent conversations. */
+  aurora: AuroraSettingsState;
 };
 
 export const DEFAULT_CMD_TAGS = [
@@ -213,6 +220,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     schemaVersion: 1,
     themeConfig: createDefaultThemeConfig(),
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
+    aurora: createDefaultAuroraSettings(),
     general: {
       doNotDisturb: false,
       batchStreamEvents: true,
@@ -619,6 +627,7 @@ export function normalizeLoadedGlobalSettings(
     schemaVersion: 1,
     themeConfig: normalizeThemeConfig((r as { themeConfig?: unknown }).themeConfig),
     keyboardShortcuts: normalizeKeyboardShortcutsState(r.keyboardShortcuts),
+    aurora: normalizeAuroraSettings((r as { aurora?: unknown }).aurora),
     general: {
       ...base.general,
       ...(r.general ?? {}),

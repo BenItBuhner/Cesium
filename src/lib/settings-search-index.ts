@@ -246,6 +246,49 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("appearance", "light-theme", "Light theme", "Theme applied when the UI resolves to light."),
   row("appearance", "dark-theme", "Dark theme", "Theme applied when the UI resolves to dark."),
   section("appearance", "custom-themes", "Custom themes", "duplicate preset tokens"),
+  section("appearance", "aurora", "Aurora background", "aurora borealis animated backdrop"),
+  row(
+    "appearance",
+    "aurora-background",
+    "Aurora background",
+    "Soft animated aurora-borealis color field behind agent conversations.",
+    ["aurora", "borealis", "background", "backdrop", "animation", "ambient", "northern lights"]
+  ),
+  row(
+    "appearance",
+    "aurora-preset",
+    "Aurora preset",
+    "Curated aurora palettes or custom colors.",
+    ["aurora", "preset", "palette", "colors", "custom"]
+  ),
+  row(
+    "appearance",
+    "aurora-placement",
+    "Aurora placement",
+    "Where the aurora sits: dynamic, top, center, full pane, or bottom.",
+    ["aurora", "placement", "position", "top", "center", "bottom", "full", "dynamic"]
+  ),
+  row(
+    "appearance",
+    "aurora-intensity",
+    "Aurora intensity",
+    "Overall visibility of the aurora backdrop.",
+    ["aurora", "intensity", "opacity", "brightness"]
+  ),
+  row(
+    "appearance",
+    "aurora-speed",
+    "Aurora speed",
+    "Animation pace of the aurora backdrop.",
+    ["aurora", "speed", "animation", "motion"]
+  ),
+  row(
+    "appearance",
+    "aurora-react",
+    "Aurora reacts to agent activity",
+    "Shift the aurora with conversation state: typing, working, waiting, completed, error.",
+    ["aurora", "activity", "state", "mood", "react"]
+  ),
 
   // —— Agents ——
   section("agents", "composer", "Chat composer"),
