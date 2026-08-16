@@ -62,8 +62,11 @@ import {
 } from "@/components/chat/composer-split-animation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
+import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { CesiumProfileToggle } from "./CesiumProfileToggle";
 import { useAgentShellState } from "./AgentShellStateContext";
 
 function pickAvailableBackend(
@@ -379,6 +382,74 @@ export function AgentCenterPane() {
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
   const composerMode = composerState?.mode ?? draftMode;
   const modeLocked = isOrchestrationModeLocked();
+
+  // Capability-profile toggle (Cesium harness only). Profiles are a layer
+  // above the harness — modes/models/tools live inside them — so the switch
+  // renders at the very top of the center pane, not in the composer chips.
+  const { openSettingsView } = useShellView();
+  const isCesiumConversation = conversation?.config.backendId === "cesium-agent";
+  const isCesiumDraft = !conversation && draftBackend?.id === "cesium-agent";
+  const cesiumProfileCatalog = useCesiumProfileCatalog(isCesiumConversation || isCesiumDraft);
+  const profileConfigOption = isCesiumConversation
+    ? composerState?.sessionConfigOptions?.find((option) => option.id === "profile")
+    : undefined;
+  const profileToggleOptions = useMemo(() => {
+    if (profileConfigOption) {
+      return profileConfigOption.options.map((option) => ({
+        value: option.value,
+        name: option.name,
+        description: option.description,
+        builtIn: option.metadata?.builtIn === "true",
+      }));
+    }
+    return cesiumProfileCatalog.catalog.map((profile) => ({
+      value: profile.id,
+      name: profile.name,
+      description: profile.description,
+      builtIn: profile.builtIn,
+    }));
+  }, [cesiumProfileCatalog.catalog, profileConfigOption]);
+  const draftProfileId =
+    workspaceSession.chat.profileId?.trim() || cesiumProfileCatalog.defaultProfileId;
+  const activeProfileId = isCesiumConversation
+    ? profileConfigOption?.currentValue?.trim() ||
+      conversation?.config.profileId?.trim() ||
+      cesiumProfileCatalog.defaultProfileId
+    : draftProfileId;
+  const handleProfileToggle = useCallback(
+    (next: string) => {
+      if (isCesiumConversation && selectedConversationId) {
+        void setConversationConfigOption(selectedConversationId, "profile", next);
+      }
+      // Remember the pick as the new-chat draft default either way.
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: { ...current.chat, profileId: next },
+      }));
+    },
+    [
+      isCesiumConversation,
+      selectedConversationId,
+      setConversationConfigOption,
+      updateWorkspaceSession,
+    ]
+  );
+  const handleManageProfiles = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: { ...current.settingsView, activeNav: "agents" },
+    }));
+    openSettingsView();
+  }, [openSettingsView, updateWorkspaceSession]);
+  const profileToggleEl =
+    (isCesiumConversation || isCesiumDraft) && profileToggleOptions.length > 0 ? (
+      <CesiumProfileToggle
+        options={profileToggleOptions}
+        activeId={activeProfileId}
+        onChange={handleProfileToggle}
+        onManage={handleManageProfiles}
+      />
+    ) : null;
 
   const getRedoComposerSeed = useCallback(() => {
     if (!conversation || !selectedConversationId) {
@@ -809,6 +880,9 @@ export function AgentCenterPane() {
             mode: draftMode,
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
+            ...(backend.id === "cesium-agent" && draftProfileId
+              ? { profileId: draftProfileId }
+              : {}),
           },
           text,
           attachments
@@ -857,6 +931,7 @@ export function AgentCenterPane() {
       draftModel.id,
       draftModel.modelValue,
       draftModel.name,
+      draftProfileId,
       pendingConfigByConversationId,
       promptConversation,
       refreshConversationGroups,
@@ -1172,6 +1247,7 @@ export function AgentCenterPane() {
         ref={paneRootRef}
         className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
       >
+        {profileToggleEl}
         <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
       </div>
     );
@@ -1182,6 +1258,7 @@ export function AgentCenterPane() {
       ref={paneRootRef}
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
+      {profileToggleEl}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
