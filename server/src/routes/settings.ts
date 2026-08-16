@@ -454,6 +454,8 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     };
     toolPermissions?: Record<string, unknown>;
     customProviders?: CesiumCustomProvider[];
+    profiles?: unknown[];
+    defaultProfileId?: string;
   }>();
   const settings = await patchCesiumAgentSettings({
     ...(body.defaultProviderKeyId !== undefined
@@ -501,6 +503,16 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }
       : {}),
     ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
+    ...(Array.isArray(body.profiles)
+      ? {
+          profiles: body.profiles as Parameters<
+            typeof patchCesiumAgentSettings
+          >[0]["profiles"],
+        }
+      : {}),
+    ...(typeof body.defaultProfileId === "string"
+      ? { defaultProfileId: body.defaultProfileId }
+      : {}),
   });
   return c.json({ ok: true, settings });
 });

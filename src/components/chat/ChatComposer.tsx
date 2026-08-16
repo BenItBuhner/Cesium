@@ -1097,6 +1097,11 @@ export function ChatComposer({
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
   const hasHardwareKeyboard = useHardwareKeyboard();
+
+  // The Cesium capability-profile toggle renders at the top of the agent
+  // center pane (CesiumProfileToggle); the composer only hides the raw
+  // "profile" config option so it does not render as a generic dropdown.
+  const isCesiumBackend = backendId === "cesium-agent";
   const { pushNotification, dismiss: dismissNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
@@ -4330,16 +4335,19 @@ const handleNativeComposerKeyDown = useCallback(
           </div>
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-[8px]">
-              {sessionConfigOptions.map((opt) => (
-                <SessionConfigOptionDropdown
-                  key={opt.id}
-                  option={opt}
-                  value={opt.currentValue}
-                  popoverPlacement={modeModelPopoverPlacement}
-                  disabled={configLocked || !onSessionConfigOptionChange}
-                  onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
-                />
-              ))}
+              {sessionConfigOptions
+                // The profile option renders as the center-pane CesiumProfileToggle.
+                .filter((opt) => !(isCesiumBackend && opt.id === "profile"))
+                .map((opt) => (
+                  <SessionConfigOptionDropdown
+                    key={opt.id}
+                    option={opt}
+                    value={opt.currentValue}
+                    popoverPlacement={modeModelPopoverPlacement}
+                    disabled={configLocked || !onSessionConfigOptionChange}
+                    onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
+                  />
+                ))}
             </div>
           )}
         </div>

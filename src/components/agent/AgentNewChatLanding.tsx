@@ -273,6 +273,10 @@ export function AgentNewChatLanding({
       const backend = draftBackend;
       if (!backend) return false;
 
+      const draftProfileId =
+        backend.id === "cesium-agent"
+          ? workspaceSession.chat.profileId?.trim() || undefined
+          : undefined;
       if (noWorkspaceDraft) {
         const created = await createAndPromptStandaloneConversation(
           {
@@ -280,6 +284,7 @@ export function AgentNewChatLanding({
             mode: draftMode,
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
+            ...(draftProfileId ? { profileId: draftProfileId } : {}),
           },
           text,
           attachments
@@ -325,6 +330,7 @@ export function AgentNewChatLanding({
         mode: draftMode,
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
+        ...(draftProfileId ? { profileId: draftProfileId } : {}),
       };
       if (onInstantSubmit) {
         return onInstantSubmit(conversationInput, promptText, attachments);
@@ -356,6 +362,7 @@ export function AgentNewChatLanding({
       seedWorkspaceSessionChatDraft,
       setSelectedConversationId,
       setStandaloneDraftActive,
+      workspaceSession.chat.profileId,
     ]
   );
 

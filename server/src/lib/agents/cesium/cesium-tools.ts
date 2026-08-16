@@ -558,6 +558,39 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "memory",
+    description:
+      "Curated persistent memory across conversations. save durable user preferences, facts, constraints, and decisions; search or list before re-asking the user; forget stale or wrong entries. Scope user is cross-workspace, workspace is project-local. Keep entries short and never save secrets.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["save", "search", "list", "forget"] },
+        content: {
+          type: "string",
+          description: "Memory text to save (required for save). Keep it one short factual sentence.",
+        },
+        category: {
+          type: "string",
+          enum: ["preference", "fact", "constraint", "decision"],
+          description: "Kind of entry when saving. Defaults to fact.",
+        },
+        scope: {
+          type: "string",
+          enum: ["user", "workspace"],
+          description: "Where the entry lives. Defaults to workspace for save; both scopes for search/list.",
+        },
+        id: {
+          type: "string",
+          description: "Entry id: update an existing entry on save, or the entry to forget.",
+        },
+        query: { type: "string", description: "Search terms (required for search)." },
+        limit: { type: "number", description: "Max results for search/list (default 10, max 50)." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
@@ -956,6 +989,8 @@ export function toolKind(name: string): string {
     case "read_conversation":
     case "search_conversations":
       return "search";
+    case "memory":
+      return "memory";
     case "switch_branch":
     case "create_worktree":
       return "terminal";
@@ -1051,6 +1086,19 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
     }
     case "grep":
       return `Grep ${asString(args.pattern) ?? "workspace"}`;
+    case "memory": {
+      const action = asString(args.action) ?? "use";
+      if (action === "save") {
+        return `Memory save ${asString(args.category) ?? "fact"}`;
+      }
+      if (action === "search") {
+        return `Memory search ${asString(args.query) ?? ""}`.trim();
+      }
+      if (action === "forget") {
+        return `Memory forget ${asString(args.id) ?? "entry"}`;
+      }
+      return "Memory list";
+    }
     case "todo":
       return "Update todos";
     case "create_plan":

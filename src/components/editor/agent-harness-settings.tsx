@@ -44,8 +44,11 @@ import {
   removeRememberedAgentPermission,
   clearRememberedAgentPermissions,
   type ClaudeCodeSdkSettingsPayload,
+  type CesiumAgentProfilePayload,
   type CesiumAgentSettingsPayload,
   type CesiumCustomProvider,
+  type CesiumProfilePromptBase,
+  type CesiumProfileToolGroupPayload,
   type CesiumDiscoveredProviderModel,
   type CesiumModelCatalogEntry,
   type CesiumOAuthProviderStatus,
@@ -73,6 +76,7 @@ import {
   tagClass,
 } from "@/components/editor/settings-ui";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
+import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { ACTIVE_AGENT_BACKEND_IDS } from "@cesium/core";
 
 /** Derived from the shared registry so settings never drift from the server menu. */
@@ -960,6 +964,376 @@ function CustomProviderModal({
   );
 }
 
+const PROFILE_PROMPT_BASE_OPTIONS: Array<{ value: CesiumProfilePromptBase; label: string }> = [
+  { value: "code", label: "Code — full software-engineering persona" },
+  { value: "work", label: "Work — research, communication, artifacts-first persona" },
+  { value: "minimal", label: "Minimal — identity and tool contract only" },
+];
+
+const PROFILE_PERMISSION_CATEGORIES: Array<{
+  id: "editFile" | "terminal" | "mcpCall" | "switchMode";
+  label: string;
+}> = [
+  { id: "editFile", label: "Edit file" },
+  { id: "terminal", label: "Terminal" },
+  { id: "mcpCall", label: "MCP call" },
+  { id: "switchMode", label: "Switch mode" },
+];
+
+const PROFILE_PERMISSION_OVERRIDE_OPTIONS = [
+  { value: "", label: "Inherit from settings" },
+  { value: "ask", label: "Ask" },
+  { value: "allow", label: "Allow" },
+  { value: "deny", label: "Deny" },
+];
+
+function newCustomProfileId(): string {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+type ProfileEditorModalProps = {
+  open: boolean;
+  onClose: () => void;
+  /** Prefilled draft; id decides create vs edit against existing custom profiles. */
+  draft: CesiumAgentProfilePayload | null;
+  toolGroups: CesiumProfileToolGroupPayload[];
+  lockedTools: string[];
+  existingProfiles: CesiumAgentProfilePayload[];
+  onSave: (profile: CesiumAgentProfilePayload) => Promise<void>;
+};
+
+function ProfileEditorModal({
+  open,
+  onClose,
+  draft,
+  toolGroups,
+  lockedTools,
+  existingProfiles,
+  onSave,
+}: ProfileEditorModalProps) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [promptBase, setPromptBase] = useState<CesiumProfilePromptBase>("minimal");
+  const [customInstructions, setCustomInstructions] = useState("");
+  const [allTools, setAllTools] = useState(true);
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
+  const [allMcpServers, setAllMcpServers] = useState(true);
+  const [mcpServersText, setMcpServersText] = useState("");
+  const [permissionOverrides, setPermissionOverrides] = useState<
+    CesiumAgentProfilePayload["permissionOverrides"]
+  >({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setName(draft?.name ?? "");
+    setDescription(draft?.description ?? "");
+    setPromptBase(draft?.prompt.base ?? "minimal");
+    setCustomInstructions(draft?.prompt.customInstructions ?? "");
+    const allowed = draft?.tools.allowed ?? "all";
+    setAllTools(allowed === "all");
+    setSelectedTools(new Set(allowed === "all" ? lockedTools : [...allowed, ...lockedTools]));
+    const mcpServers = draft?.tools.mcpServers ?? "all";
+    setAllMcpServers(mcpServers === "all");
+    setMcpServersText(mcpServers === "all" ? "" : mcpServers.join(", "));
+    setPermissionOverrides(draft?.permissionOverrides ?? {});
+    setMessage(null);
+  }, [open, draft, lockedTools]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  const save = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setMessage("Profile name is required.");
+      return;
+    }
+    const id = draft?.id?.trim() || newCustomProfileId();
+    if (
+      existingProfiles.some((profile) => profile.id !== id && profile.name === trimmedName)
+    ) {
+      setMessage("Another profile already uses this name.");
+      return;
+    }
+    const profile: CesiumAgentProfilePayload = {
+      id,
+      name: trimmedName,
+      description: description.trim(),
+      builtIn: false,
+      prompt: {
+        base: promptBase,
+        customInstructions: customInstructions.slice(0, 8000),
+      },
+      tools: {
+        allowed: allTools ? "all" : [...new Set([...selectedTools, ...lockedTools])],
+        mcpServers: allMcpServers
+          ? "all"
+          : mcpServersText
+              .split(",")
+              .map((entry) => entry.trim().toLowerCase())
+              .filter(Boolean),
+      },
+      permissionOverrides,
+    };
+    setBusy(true);
+    setMessage(null);
+    try {
+      await onSave(profile);
+      onClose();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save the profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/45 p-[16px]"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit agent profile"
+        className="flex max-h-[min(760px,92vh)] w-full max-w-[620px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
+        onPointerDown={(event) => event.stopPropagation()}
+        data-ide-input-sink
+      >
+        <div className="flex items-center justify-between gap-[12px] border-b border-[var(--border-subtle)] px-[16px] py-[12px]">
+          <h3 className="font-sans text-[15px] font-semibold text-[var(--text-primary)]">
+            {draft?.id ? "Edit agent profile" : "New agent profile"}
+          </h3>
+          <button
+            type="button"
+            className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X className="size-[16px]" strokeWidth={1.5} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[16px] py-[14px] hide-scrollbar-y">
+          <div className="flex flex-col gap-[12px]">
+            <div className="grid gap-[8px] sm:grid-cols-2">
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Name</SettingsFieldLabel>
+                <HardwareAwareTextInput
+                  value={name}
+                  onChange={setName}
+                  placeholder="e.g. Research"
+                  className={inputClass}
+                  ariaLabel="Profile name"
+                />
+              </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Description</SettingsFieldLabel>
+                <HardwareAwareTextInput
+                  value={description}
+                  onChange={setDescription}
+                  placeholder="Shown in the composer picker"
+                  className={inputClass}
+                  ariaLabel="Profile description"
+                />
+              </label>
+            </div>
+            <label className="flex flex-col gap-[5px]">
+              <SettingsFieldLabel>Prompt base</SettingsFieldLabel>
+              <SettingsThemeSelect
+                value={promptBase}
+                options={PROFILE_PROMPT_BASE_OPTIONS}
+                onChange={(value) => setPromptBase(value as CesiumProfilePromptBase)}
+                ariaLabel="Profile prompt base"
+                className="w-full max-w-none"
+                triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+              />
+            </label>
+            <label className="flex flex-col gap-[5px]">
+              <SettingsFieldLabel>Profile instructions</SettingsFieldLabel>
+              <textarea
+                value={customInstructions}
+                onChange={(event) => setCustomInstructions(event.currentTarget.value)}
+                placeholder="Verbatim instructions appended to the system prompt as a Profile Instructions section (max 8,000 chars)."
+                rows={5}
+                maxLength={8000}
+                className={`${inputClass} min-h-[96px] resize-y leading-relaxed`}
+              />
+              <span className="font-sans text-[11px] text-[var(--text-disabled)]">
+                {customInstructions.length.toLocaleString()} / 8,000 characters
+              </span>
+            </label>
+            <div className="flex items-center justify-between gap-[12px]">
+              <div>
+                <SettingsFieldLabel>Tools</SettingsFieldLabel>
+                <p className="mt-[2px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                  Excluded tools are hidden from the model entirely and blocked at dispatch.
+                </p>
+              </div>
+              <label className="flex shrink-0 items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
+                All tools
+                <ToggleSwitch
+                  checked={allTools}
+                  onChange={setAllTools}
+                  size="md"
+                  variant="green"
+                />
+              </label>
+            </div>
+            {!allTools ? (
+              <div className="grid gap-[10px] rounded-[var(--radius-tab)] border border-[var(--border-card)] p-[10px] sm:grid-cols-2">
+                {toolGroups.map((group) => (
+                  <div key={group.id}>
+                    <p className="font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
+                      {group.label}
+                    </p>
+                    <div className="mt-[4px] flex flex-col gap-[3px]">
+                      {group.tools.map((tool) => {
+                        const locked = lockedTools.includes(tool);
+                        const checked = locked || selectedTools.has(tool);
+                        return (
+                          <label
+                            key={tool}
+                            className={`flex items-center gap-[7px] font-mono text-[11px] ${
+                              locked
+                                ? "text-[var(--text-disabled)]"
+                                : "text-[var(--text-secondary)]"
+                            }`}
+                            title={locked ? "Core tool — always available" : undefined}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={locked}
+                              onChange={() => {
+                                setSelectedTools((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(tool)) {
+                                    next.delete(tool);
+                                  } else {
+                                    next.add(tool);
+                                  }
+                                  return next;
+                                });
+                              }}
+                            />
+                            {tool}
+                            {locked ? <span className={tagClass}>core</span> : null}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between gap-[12px]">
+              <div>
+                <SettingsFieldLabel>MCP servers</SettingsFieldLabel>
+                <p className="mt-[2px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                  Restrict call_mcp_tool to specific server ids (comma-separated, e.g.
+                  browser, artifacts, phone).
+                </p>
+              </div>
+              <label className="flex shrink-0 items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
+                All servers
+                <ToggleSwitch
+                  checked={allMcpServers}
+                  onChange={setAllMcpServers}
+                  size="md"
+                  variant="green"
+                />
+              </label>
+            </div>
+            {!allMcpServers ? (
+              <HardwareAwareTextInput
+                value={mcpServersText}
+                onChange={setMcpServersText}
+                placeholder="browser, artifacts, phone"
+                className={monoInputClass}
+                ariaLabel="Allowed MCP server ids"
+              />
+            ) : null}
+            <div>
+              <SettingsFieldLabel>Permission overrides</SettingsFieldLabel>
+              <p className="mt-[2px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                Per-category defaults that win over settings-level tool permissions. Deny blocks
+                even when the tool is listed.
+              </p>
+              <div className="mt-[8px] grid gap-[8px] sm:grid-cols-2">
+                {PROFILE_PERMISSION_CATEGORIES.map((category) => (
+                  <label key={category.id} className="flex flex-col gap-[4px]">
+                    <span className="font-sans text-[11px] text-[var(--text-secondary)]">
+                      {category.label}
+                    </span>
+                    <SettingsThemeSelect
+                      value={permissionOverrides[category.id] ?? ""}
+                      options={PROFILE_PERMISSION_OVERRIDE_OPTIONS}
+                      onChange={(value) =>
+                        setPermissionOverrides((current) => {
+                          const next = { ...current };
+                          if (value === "ask" || value === "allow" || value === "deny") {
+                            next[category.id] = value;
+                          } else {
+                            delete next[category.id];
+                          }
+                          return next;
+                        })
+                      }
+                      ariaLabel={`${category.label} permission override`}
+                      className="w-full max-w-none"
+                      triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-[8px] border-t border-[var(--border-subtle)] pt-[12px]">
+              <button type="button" className={rowButtonClass} onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={rowButtonClass}
+                disabled={busy}
+                onClick={() => void save()}
+              >
+                Save profile
+              </button>
+            </div>
+            {message ? (
+              <p className="font-sans text-[12px] text-[var(--text-primary)]">{message}</p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function CesiumAgentHarnessSettings() {
   const [settings, setSettings] = useState<CesiumAgentSettingsPayload | null>(null);
   const [catalog, setCatalog] = useState<CesiumModelCatalogEntry[]>([]);
@@ -971,6 +1345,10 @@ function CesiumAgentHarnessSettings() {
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [profileModal, setProfileModal] = useState<{
+    open: boolean;
+    draft: CesiumAgentProfilePayload | null;
+  }>({ open: false, draft: null });
 
   const providerOptions = useMemo(
     () => buildProviderOptionsFromCatalog(catalog),
@@ -1150,6 +1528,52 @@ function CesiumAgentHarnessSettings() {
     },
     []
   );
+
+  /** Upsert one custom profile; throws so the editor modal can surface errors. */
+  const saveProfile = useCallback(
+    async (profile: CesiumAgentProfilePayload) => {
+      const existing = settings?.profiles ?? [];
+      const next = existing.some((candidate) => candidate.id === profile.id)
+        ? existing.map((candidate) => (candidate.id === profile.id ? profile : candidate))
+        : [...existing, profile];
+      const result = await patchCesiumAgentSettings({ profiles: next });
+      setSettings(result.settings);
+      invalidateCesiumProfileCatalog();
+      notifyAgentBackendsChanged();
+    },
+    [settings?.profiles]
+  );
+
+  const deleteProfile = useCallback(
+    async (profileId: string) => {
+      const next = (settings?.profiles ?? []).filter((profile) => profile.id !== profileId);
+      await patchSettings({
+        profiles: next,
+        ...(settings?.defaultProfileId === profileId ? { defaultProfileId: "code" } : {}),
+      });
+      invalidateCesiumProfileCatalog();
+    },
+    [patchSettings, settings?.defaultProfileId, settings?.profiles]
+  );
+
+  const duplicateProfile = useCallback((source: CesiumAgentProfilePayload) => {
+    setProfileModal({
+      open: true,
+      draft: {
+        ...source,
+        id: "",
+        name: `${source.name} copy`,
+        builtIn: false,
+        prompt: { ...source.prompt },
+        tools: {
+          allowed: source.tools.allowed === "all" ? "all" : [...source.tools.allowed],
+          mcpServers:
+            source.tools.mcpServers === "all" ? "all" : [...source.tools.mcpServers],
+        },
+        permissionOverrides: { ...source.permissionOverrides },
+      },
+    });
+  }, []);
 
   const refreshCatalog = useCallback(async () => {
     setBusy(true);
@@ -1609,6 +2033,105 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <div className="flex flex-wrap items-center justify-between gap-[10px]">
+              <SettingsSubsectionHeading>Agent profiles</SettingsSubsectionHeading>
+              <button
+                type="button"
+                className={rowButtonClass}
+                disabled={busy}
+                onClick={() => setProfileModal({ open: true, draft: null })}
+              >
+                <Plus className="size-[13px]" strokeWidth={1.5} />
+                New profile
+              </button>
+            </div>
+            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              Capability presets orthogonal to modes: each profile picks a persona, verbatim
+              instructions, the advertised tool surface, MCP server access, and permission
+              overrides. Built-in Code and Work presets are read-only — duplicate to customize.
+            </p>
+            <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
+              {settings.profileCatalog.map((profile) => {
+                const isDefault = profile.id === settings.defaultProfileId;
+                const toolSummary =
+                  profile.tools.allowed === "all"
+                    ? "All tools"
+                    : `${profile.tools.allowed.length} tools`;
+                const mcpSummary =
+                  profile.tools.mcpServers === "all"
+                    ? "all MCP servers"
+                    : `MCP: ${profile.tools.mcpServers.join(", ") || "none"}`;
+                return (
+                  <div
+                    key={profile.id}
+                    className="flex items-center justify-between gap-[12px] py-[10px] first:pt-0 last:pb-0"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                        {profile.name}
+                        {profile.builtIn ? <span className={tagClass}>built-in</span> : null}
+                        {isDefault ? <span className={tagClass}>default</span> : null}
+                      </p>
+                      {profile.description ? (
+                        <p className="mt-[3px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                          {profile.description}
+                        </p>
+                      ) : null}
+                      <p className="mt-[3px] font-sans text-[11px] text-[var(--text-disabled)]">
+                        {toolSummary} · {mcpSummary} · base: {profile.prompt.base}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-[6px]">
+                      {!isDefault ? (
+                        <button
+                          type="button"
+                          className={rowButtonClass}
+                          disabled={busy}
+                          onClick={() => {
+                            void patchSettings({ defaultProfileId: profile.id }).then(() =>
+                              invalidateCesiumProfileCatalog()
+                            );
+                          }}
+                        >
+                          Set default
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={busy}
+                        onClick={() => duplicateProfile(profile)}
+                      >
+                        Duplicate
+                      </button>
+                      {!profile.builtIn ? (
+                        <>
+                          <button
+                            type="button"
+                            className={rowButtonClass}
+                            disabled={busy}
+                            onClick={() => setProfileModal({ open: true, draft: profile })}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className={rowButtonClass}
+                            disabled={busy}
+                            onClick={() => void deleteProfile(profile.id)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Harness features</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Registered feature layers can contribute versioned tools and prompt behavior without
@@ -1920,6 +2443,16 @@ function CesiumAgentHarnessSettings() {
         onClose={() => setCustomModalOpen(false)}
         existingProviders={settings?.customProviders ?? []}
         onSaved={setSettings}
+      />
+
+      <ProfileEditorModal
+        open={profileModal.open}
+        onClose={() => setProfileModal({ open: false, draft: null })}
+        draft={profileModal.draft}
+        toolGroups={settings?.profileToolGroups ?? []}
+        lockedTools={settings?.profileLockedTools ?? []}
+        existingProfiles={settings?.profileCatalog ?? []}
+        onSave={saveProfile}
       />
     </>
   );

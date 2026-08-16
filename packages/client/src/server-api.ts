@@ -2217,6 +2217,32 @@ export type CesiumOAuthProviderStatus = {
   description?: string;
 };
 
+export type CesiumProfilePromptBase = "code" | "work" | "minimal";
+
+export type CesiumAgentProfilePayload = {
+  id: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+  prompt: {
+    base: CesiumProfilePromptBase;
+    customInstructions: string;
+  };
+  tools: {
+    allowed: "all" | string[];
+    mcpServers: "all" | string[];
+  };
+  permissionOverrides: Partial<
+    Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">
+  >;
+};
+
+export type CesiumProfileToolGroupPayload = {
+  id: string;
+  label: string;
+  tools: string[];
+};
+
 export type CesiumAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
@@ -2281,6 +2307,15 @@ export type CesiumAgentSettingsPayload = {
   providerKeys: CesiumProviderKeyStatus[];
   oauthProviders: CesiumOAuthProviderStatus[];
   customProviders: CesiumCustomProvider[];
+  /** Custom profiles only (persisted). */
+  profiles: CesiumAgentProfilePayload[];
+  defaultProfileId: string;
+  /** Built-in presets plus custom profiles, in picker order. */
+  profileCatalog: CesiumAgentProfilePayload[];
+  /** Grouped tool inventory for profile editors. */
+  profileToolGroups: CesiumProfileToolGroupPayload[];
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
 };
 
 export type CesiumModelCatalogEntry = {
@@ -2322,6 +2357,8 @@ export async function patchCesiumAgentSettings(
       | "harness"
       | "toolPermissions"
       | "customProviders"
+      | "profiles"
+      | "defaultProfileId"
     >
   >
 ): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {

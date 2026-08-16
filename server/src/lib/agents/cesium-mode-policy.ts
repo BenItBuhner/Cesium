@@ -27,6 +27,9 @@ const READ_ONLY_TOOLS = new Set([
   "interrupt_agent",
   "list_agents",
   "wait",
+  // Curated agent memory mutates agent state, not the workspace, so it stays
+  // available in read-only postures.
+  "memory",
 ]);
 
 const PLAN_FILE_TOOLS = new Set([
@@ -156,7 +159,8 @@ export function resolveCesiumModeToolPolicy(input: {
       name === "subagent" ||
       name === "read_subagent_transcript" ||
       name === "call_mcp_tool" ||
-      name === "refresh_mcp_servers"
+      name === "refresh_mcp_servers" ||
+      name === "memory"
     ) {
       return { allowed: true };
     }

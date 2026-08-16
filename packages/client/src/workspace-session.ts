@@ -325,6 +325,11 @@ export type ChatSessionState = {
   mode: EditorMode;
   model: ModelInfo;
   backendId: AgentBackendId;
+  /**
+   * Cesium capability profile for new-chat drafts ("code", "work", or a custom
+   * profile id). Persisted conversations bind their profile via config options.
+   */
+  profileId?: string;
   scrollTopByTabId: Record<string, number>;
   /** Message-anchored scroll (syncs across devices via workspace session). */
   scrollAnchorByTabId?: Record<string, ChatScrollAnchor>;
