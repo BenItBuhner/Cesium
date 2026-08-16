@@ -89,8 +89,8 @@ const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null)
 
 const BARGE_IN_CANCEL_MS = 350;
 const TRANSCRIPT_LIMIT = 6;
-const REPLY_RECONCILE_RETRY_MS = 2500;
-const MAX_REPLY_RECONCILE_ATTEMPTS = 3;
+const REPLY_RECONCILE_RETRY_MS = 4000;
+const REPLY_RECONCILE_MAX_MS = 5 * 60_000;
 
 let transcriptCounter = 0;
 function nextTranscriptId(): string {
@@ -170,8 +170,6 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     null
   );
   const awaitingReplySinceRef = useRef<number | null>(null);
-  const sawTurnRunningRef = useRef(false);
-  const reconcileAttemptsRef = useRef(0);
   const markAwaitingReply = useCallback((value: number | null) => {
     awaitingReplySinceRef.current = value;
     setAwaitingReplySince(value);
@@ -232,8 +230,6 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         ? await promptConversationRef.current(boundId, text, attachments)
         : await draftRef.current.handleSubmit(text, attachments);
       if (accepted) {
-        sawTurnRunningRef.current = false;
-        reconcileAttemptsRef.current = 0;
         markAwaitingReply(Date.now());
       } else {
         pushTranscript({ kind: "error", text: "Send: message was not accepted." });
@@ -560,50 +556,32 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [boundEvents, conversationId, getPlayer, markAwaitingReply, pushTranscript]);
 
   // ---- Reply reconciliation: close the event-delivery hole ---------------
-  // `eventsByConversationId` is fed by socket event batches (which can lag or
-  // stall silently) and by catch-up snapshot polls that stop 5s after submit.
-  // A turn finishing after that window on a degraded socket never surfaces
-  // its assistant_message_end above, even though the conversation status
-  // still flips to idle via the status channel. While a turn is pending,
-  // watch the bound conversation's status: once it settles without the reply
-  // having been processed, re-fetch the snapshot (deduped inside
-  // syncConversationSnapshot) so the speak effect fires from merged events.
-  const boundStatus = conversationId
-    ? conversationsById[conversationId]?.status
-    : undefined;
+  // `eventsByConversationId` is fed by socket event batches and by catch-up
+  // snapshot polls that stop 5s after submit. Both can fail silently — a dead
+  // socket even freezes the conversation's client-side status at "running",
+  // so nothing status-driven can be trusted as a trigger. While a reply is
+  // pending, poll the snapshot directly (deduped inside
+  // syncConversationSnapshot): the merge repopulates events (letting the
+  // speak effect fire) and refreshes the conversation status (unsticking the
+  // orb). The first poll waits a few seconds so a healthy socket wins.
   useEffect(() => {
     if (awaitingReplySince === null || !conversationId) return;
-    if (
-      boundStatus === "running" ||
-      boundStatus === "awaiting_permission" ||
-      boundStatus === "awaiting_question" ||
-      boundStatus === "pause_requested" ||
-      boundStatus === "pausing" ||
-      boundStatus === "paused"
-    ) {
-      sawTurnRunningRef.current = true;
-      return;
-    }
-    // Before the prompt ACK the status is still idle; wait for the turn to
-    // actually start so we do not fetch a snapshot that predates the reply.
-    if (!sawTurnRunningRef.current) return;
+    const pendingSince = awaitingReplySince;
     const reconcile = () => {
-      if (awaitingReplySinceRef.current === null) return;
-      if (reconcileAttemptsRef.current >= MAX_REPLY_RECONCILE_ATTEMPTS) {
-        // The turn settled without an assistant_message_end (e.g. failed or
-        // cancelled turn); stop retrying until the next submit.
+      // A processed reply or a newer submit ends this poller.
+      if (awaitingReplySinceRef.current !== pendingSince) return;
+      if (Date.now() - pendingSince > REPLY_RECONCILE_MAX_MS) {
+        // The turn never produced an assistant_message_end (failed/cancelled
+        // or genuinely reply-less); stop polling until the next submit.
         markAwaitingReply(null);
         return;
       }
-      reconcileAttemptsRef.current += 1;
       void syncConversationSnapshot(conversationId).catch(() => undefined);
     };
-    reconcile();
     const timer = window.setInterval(reconcile, REPLY_RECONCILE_RETRY_MS);
     return () => window.clearInterval(timer);
   }, [
     awaitingReplySince,
-    boundStatus,
     conversationId,
     markAwaitingReply,
     syncConversationSnapshot,
