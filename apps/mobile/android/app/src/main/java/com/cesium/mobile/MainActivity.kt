@@ -16,16 +16,17 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
-    handleNotificationIntent(intent)
+    handleLaunchIntent(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
-    handleNotificationIntent(intent)
+    handleLaunchIntent(intent)
   }
 
-  private fun handleNotificationIntent(intent: Intent?) {
+  private fun handleLaunchIntent(intent: Intent?) {
     CesiumNotificationIntentStore.update(intent)
+    CesiumShareIntentStore.update(intent)
   }
 }

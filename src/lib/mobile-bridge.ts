@@ -61,6 +61,24 @@ export type MobileFocusedConversation = {
   activeConversationIds?: string[];
 };
 
+/** One file/stream delivered through the Android share sheet. */
+export type MobileSharedItem = {
+  name: string;
+  mimeType: string;
+  /** Raw content, base64-encoded by the native layer. */
+  base64: string;
+  byteLength: number;
+};
+
+/** Payload of an ACTION_SEND / ACTION_SEND_MULTIPLE intent forwarded to the web layer. */
+export type MobileSharePayload = {
+  text?: string | null;
+  subject?: string | null;
+  items: MobileSharedItem[];
+  /** Items dropped natively (unreadable stream or over the size/count caps). */
+  skippedCount?: number;
+};
+
 export type MobileAgentProjectionMessage = {
   type: "agentProjection";
   projection: unknown;
@@ -77,6 +95,9 @@ export type MobileNativeToWebMessage =
   | { type: "mobileNativeStatus"; status: MobileNativeStatus }
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
+  // Content arrived via the Android share sheet; the web layer shows the
+  // share-intake picker (new chat vs existing) and prefills the composer.
+  | { type: "shareIntake"; payload: MobileSharePayload }
   | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number }
   // The Android hardware/predictive back gesture was invoked. The web layer
   // owns the in-WebView navigation stack (open overlays, drawers, settings

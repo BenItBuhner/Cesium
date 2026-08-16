@@ -41,6 +41,51 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   "Compilation failed / Provider responded" toast. This is expected, not an
   environment break.
 
+### Android emulator (mobile app testing)
+
+Best route for Cesium mobile (`apps/mobile`, RN + WebView APK): the official
+**Google Android SDK emulator** (cmdline-tools) with the
+`system-images;android-36;google_apis;x86_64` image. Contrary to assumption,
+**KVM IS present on these Cloud VMs** — run `sudo chmod 666 /dev/kvm` and CPU
+acceleration works (`emulator -accel-check` confirms). Use
+`-gpu swiftshader_indirect` (software GPU; no host GPU here). Only add
+`-accel off` if `/dev/kvm` is truly absent (expect a 10+ minute boot).
+
+One-time setup (~4 min):
+
+```bash
+mkdir -p ~/android-sdk/cmdline-tools && cd ~/android-sdk
+curl -sSLo tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip -q tools.zip -d cmdline-tools && mv cmdline-tools/cmdline-tools cmdline-tools/latest && rm tools.zip
+export ANDROID_HOME=$HOME/android-sdk
+yes | cmdline-tools/latest/bin/sdkmanager --licenses
+cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" \
+  "build-tools;36.0.0" "emulator" "system-images;android-36;google_apis;x86_64"
+echo no | cmdline-tools/latest/bin/avdmanager create avd -n cesium \
+  -k "system-images;android-36;google_apis;x86_64" -d pixel_7
+sudo chmod 666 /dev/kvm
+```
+
+Run + install (from repo root; emulator window renders on the VM desktop, so
+screen recording / computer-use testing works):
+
+```bash
+export ANDROID_HOME=$HOME/android-sdk \
+  PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+emulator -avd cesium -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim &
+adb wait-for-device
+npm run build:packages
+npm --prefix apps/mobile run build:web-assets      # workbench bundle -> APK assets
+npm --prefix apps/mobile run build:android:debug   # gradle assembleDebug (JDK 21 OK)
+adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.cesium.mobile/.MainActivity
+```
+
+The app's WebView reaches a host-side backend at `http://10.0.2.2:9100`
+(default), so start `npm run dev:server` on the VM first. Rebuild
+`build:web-assets` whenever shared `src/` web code changes — the APK ships a
+static copy.
+
 ### Inference / model provider environment variables
 
 The built-in `cesium-agent` backend is the one that talks to LLM providers over
