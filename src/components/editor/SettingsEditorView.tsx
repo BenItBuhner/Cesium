@@ -27,6 +27,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
+  ArrowUpCircle,
   BookMarked,
   Bot,
   Box,
@@ -94,6 +95,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "exportImport", label: "Import & export", icon: Download },
   { kind: "item", id: "storage", label: "Storage", icon: Database },
+  { kind: "item", id: "updates", label: "Updates", icon: ArrowUpCircle },
   { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
 ];
 
