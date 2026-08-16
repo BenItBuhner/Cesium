@@ -516,6 +516,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         this.configOptions = next;
       }
     }
+    const profileId = this.callbacks.conversation.config.profileId?.trim();
+    if (profileId) {
+      this.configOptions = updateConfigOption(this.configOptions, "profile", profileId);
+    }
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: this.sessionId,
@@ -590,7 +594,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /** Profile id selected on this conversation, or null to use the settings default. */
   private currentProfileId(): string | null {
     const raw = this.configOptions.find((option) => option.id === "profile")?.currentValue;
-    return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    if (typeof raw === "string" && raw.trim()) {
+      return raw.trim();
+    }
+    return this.callbacks.conversation.config.profileId?.trim() || null;
   }
 
   /** Profile-resolved base system prompt (persona + verbatim profile instructions). */
@@ -1320,6 +1327,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.configOptions = updateConfigOption(this.configOptions, configId, value);
     const modelOption = this.configOptions.find((option) => option.id === "model");
     const modeOption = this.configOptions.find((option) => option.id === "mode");
+    const profileOption = this.configOptions.find((option) => option.id === "profile");
     await this.callbacks.updateConversation((current) => ({
       ...current,
       configOptions: this.configOptions,
@@ -1333,6 +1341,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
           configId === "mode"
             ? value
             : (modeOption?.currentValue ?? current.config.mode),
+        profileId:
+          configId === "profile"
+            ? value
+            : (profileOption?.currentValue ?? current.config.profileId),
       },
     }));
   }

@@ -662,6 +662,9 @@ workspaceSession.chat.mode,
       mode: draft.mode,
       modelId: draft.model.modelValue ?? draft.model.id,
       modelName: draft.model.name,
+      ...(draft.backendId === "cesium-agent" && draft.profileId
+        ? { profileId: draft.profileId }
+        : {}),
     });
     activateConversationTab(conversation, options);
     return conversation;

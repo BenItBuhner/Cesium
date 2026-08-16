@@ -142,6 +142,8 @@ export type AgentConversationConfig = {
   mode: AgentConversationMode;
   modelId: string;
   modelName: string;
+  /** Cesium capability profile id ("code", "work", or a custom profile id). */
+  profileId?: string;
 };
 
 export type AgentToolLocation = {

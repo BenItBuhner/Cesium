@@ -98,7 +98,9 @@ import {
 import { ModeDropdown } from "./ModeDropdown";
 import { ModelDropdown } from "./ModelDropdown";
 import { BackendDropdown } from "./BackendDropdown";
+import { ProfileDropdown } from "./ProfileDropdown";
 import { SessionConfigOptionDropdown } from "./SessionConfigOptionDropdown";
+import { useCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { ComposerStatusBar } from "./ComposerStatusBar";
 import { ComposerActionPills } from "./ComposerActionPills";
 import { ContextBreakdownDock } from "./ContextBreakdownDock";
@@ -110,6 +112,7 @@ import {
 import { ComposerSlashMenu } from "./ComposerSlashMenu";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
+import { useShellView } from "@/components/layout/ShellViewContext";
 import { shouldSubmitComposerOnEnter } from "@/lib/composer-submit-key";
 import {
   getAllAtSuggestions,
@@ -1092,11 +1095,61 @@ export function ChatComposer({
   showStatusBar = true,
   dockedCardVisible = false,
 }: ChatComposerProps) {
-  const { fileTree, gitStatus, workspaceSession } = useWorkspace();
+  const { fileTree, gitStatus, workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const { openSettingsView } = useShellView();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
   const hasHardwareKeyboard = useHardwareKeyboard();
+
+  // Capability-profile picker (Cesium Agent only). Persisted conversations
+  // carry a "profile" config option; drafts fall back to the settings catalog
+  // and remember the pick in workspaceSession.chat.profileId.
+  const isCesiumBackend = backendId === "cesium-agent";
+  const cesiumProfileCatalog = useCesiumProfileCatalog(isCesiumBackend);
+  const profileConfigOption = isCesiumBackend
+    ? sessionConfigOptions?.find((option) => option.id === "profile")
+    : undefined;
+  const profileOptions = useMemo(() => {
+    if (profileConfigOption) {
+      return profileConfigOption.options.map((option) => ({
+        value: option.value,
+        name: option.name,
+        description: option.description,
+        builtIn: option.metadata?.builtIn === "true",
+      }));
+    }
+    return cesiumProfileCatalog.catalog.map((profile) => ({
+      value: profile.id,
+      name: profile.name,
+      description: profile.description,
+      builtIn: profile.builtIn,
+    }));
+  }, [cesiumProfileCatalog.catalog, profileConfigOption]);
+  const activeProfileId =
+    profileConfigOption?.currentValue?.trim() ||
+    workspaceSession.chat.profileId?.trim() ||
+    cesiumProfileCatalog.defaultProfileId;
+  const handleProfileChange = useCallback(
+    (next: string) => {
+      if (profileConfigOption && onSessionConfigOptionChange) {
+        onSessionConfigOptionChange("profile", next);
+      }
+      // Remember the pick as the new-chat draft default either way.
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: { ...current.chat, profileId: next },
+      }));
+    },
+    [onSessionConfigOptionChange, profileConfigOption, updateWorkspaceSession]
+  );
+  const handleManageProfiles = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: { ...current.settingsView, activeNav: "agents" },
+    }));
+    openSettingsView();
+  }, [openSettingsView, updateWorkspaceSession]);
   const { pushNotification, dismiss: dismissNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
@@ -4316,6 +4369,18 @@ const handleNativeComposerKeyDown = useCallback(
                 menuOpenTriggerKey={modeMenuOpenKey}
               />
             </div>
+            {isCesiumBackend && profileOptions.length > 0 ? (
+              <div className="shrink-0">
+                <ProfileDropdown
+                  profileId={activeProfileId}
+                  options={profileOptions}
+                  onProfileChange={handleProfileChange}
+                  popoverPlacement={modeModelPopoverPlacement}
+                  disabled={configLocked}
+                  onManageProfiles={handleManageProfiles}
+                />
+              </div>
+            ) : null}
             <div className="min-w-0 shrink-0">
               <ModelDropdown
                 model={model}
@@ -4330,16 +4395,19 @@ const handleNativeComposerKeyDown = useCallback(
           </div>
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-[8px]">
-              {sessionConfigOptions.map((opt) => (
-                <SessionConfigOptionDropdown
-                  key={opt.id}
-                  option={opt}
-                  value={opt.currentValue}
-                  popoverPlacement={modeModelPopoverPlacement}
-                  disabled={configLocked || !onSessionConfigOptionChange}
-                  onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
-                />
-              ))}
+              {sessionConfigOptions
+                // The profile option renders as the dedicated ProfileDropdown chip.
+                .filter((opt) => !(isCesiumBackend && opt.id === "profile"))
+                .map((opt) => (
+                  <SessionConfigOptionDropdown
+                    key={opt.id}
+                    option={opt}
+                    value={opt.currentValue}
+                    popoverPlacement={modeModelPopoverPlacement}
+                    disabled={configLocked || !onSessionConfigOptionChange}
+                    onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
+                  />
+                ))}
             </div>
           )}
         </div>

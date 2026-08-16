@@ -506,6 +506,7 @@ export class AgentRuntimeManager {
         mode: input.mode ?? backend.defaultMode,
         modelId: input.modelId ?? backend.defaultModelId,
         modelName: input.modelName ?? backend.defaultModelName,
+        ...(input.profileId?.trim() ? { profileId: input.profileId.trim() } : {}),
       },
       providerSessionId: null,
       configOptions: [],
@@ -2236,6 +2237,15 @@ export class AgentRuntimeManager {
         );
       }
     }
+    const profileOption = nextOptions.find((o) => o.id === "profile");
+    const nextProfileId = nextConfig.profileId;
+    if (profileOption && nextProfileId) {
+      if (profileOption.options.some((o) => o.value === nextProfileId)) {
+        nextOptions = nextOptions.map((o) =>
+          o.id === profileOption.id ? { ...o, currentValue: nextProfileId } : o
+        );
+      }
+    }
 
     return {
       ...current,
@@ -2297,6 +2307,16 @@ export class AgentRuntimeManager {
         patch.modelId
       ) {
         await handle.setConfigOption(modelOption.id, patch.modelId);
+      }
+    }
+
+    if (patch.profileId) {
+      const profileOption = handle.configOptions.find((option) => option.id === "profile");
+      const value = profileOption?.options.find(
+        (option) => option.value === patch.profileId
+      )?.value;
+      if (profileOption && value) {
+        await handle.setConfigOption(profileOption.id, value);
       }
     }
 
