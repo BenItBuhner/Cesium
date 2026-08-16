@@ -47,11 +47,8 @@ import type {
   AgentImportResult,
 } from "@/lib/agent-types";
 import { ImportConversationDialog } from "./ImportConversationDialog";
+import { NewChatWidgets } from "./NewChatWidgets";
 import { WorkspacePickerMenu, WorkspacePickerRowIcon } from "@/components/agent/rail/WorkspacePickerMenu";
-import {
-  detectShortcutPlatform,
-  getShortcutDisplayForCommand,
-} from "@/lib/keyboard-shortcuts";
 import type {
   EditorMode,
   GitBranchInfo,
@@ -63,7 +60,6 @@ import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
-import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -110,8 +106,6 @@ function localBranchNameForRemote(branchName: string): string {
   return branchName.replace(/^[^/]+\//, "");
 }
 
-const QUICK_ACTION_BUTTON_CLASSNAME =
-  "aurora-glass inline-flex max-w-full items-center gap-[4px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)]";
 
 export function AgentNewChatLanding({
   onInstantSubmit,
@@ -159,14 +153,12 @@ export function AgentNewChatLanding({
     groups,
     refreshConversationGroups,
     setSelectedConversationId,
-    setRightPaneOpen,
     standaloneDraftActive,
     setStandaloneDraftActive,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
-  const runCommand = useIDECommandRunner();
 
   const draftBackend = useMemo(
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
@@ -427,16 +419,6 @@ export function AgentNewChatLanding({
       setExpandedComposerController(null);
     };
   }, [expandedComposerState, setExpandedComposerController]);
-
-  const planShortcutHint = useMemo(() => {
-    return (
-      getShortcutDisplayForCommand(
-        settings.keyboardShortcuts.bindings,
-        "workbench.action.focusChatPlanMode",
-        detectShortcutPlatform()
-      ) || "Mod+I"
-    );
-  }, [settings.keyboardShortcuts.bindings]);
 
   const branchPickerItems = useMemo<BranchPickerItem[]>(() => {
     const branches = gitStatus?.branches ?? [];
@@ -814,25 +796,7 @@ export function AgentNewChatLanding({
                   })
                 }
               />
-              <div className="mt-[10px] flex w-full min-w-0 flex-wrap items-center gap-[10px]">
-                <button
-                  type="button"
-                  onClick={() => runCommand?.("workbench.action.focusChatPlanMode")}
-                  className={QUICK_ACTION_BUTTON_CLASSNAME}
-                >
-                  Plan new idea{" "}
-                  <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRightPaneOpen(true);
-                  }}
-                  className={QUICK_ACTION_BUTTON_CLASSNAME}
-                >
-                  Open editor panel
-                </button>
-              </div>
+              <NewChatWidgets noWorkspaceDraft={noWorkspaceDraft} />
             </>
           ) : null}
         </div>

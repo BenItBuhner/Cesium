@@ -31,6 +31,18 @@ describe("settings search index", () => {
     assert.ok(hits.some((hit) => hit.kind === "model" && hit.backendId === "cesium-agent"));
   });
 
+  test("indexes new chat widget settings under General", () => {
+    const index = buildSettingsSearchIndex({});
+    const sectionHits = searchSettingsIndex(index, "new chat widgets");
+    assert.ok(
+      sectionHits.some((hit) => hit.id === "general::section::new-chat-widgets")
+    );
+
+    const tileHits = searchSettingsIndex(index, "landing tiles");
+    assert.ok(tileHits.some((hit) => hit.rowId === "new-chat-widget-recent-chats"));
+    assert.ok(tileHits.some((hit) => hit.rowId === "new-chat-widget-recent-activity"));
+  });
+
   test("indexes MCP settings under Plugins, not a top-level MCP nav", () => {
     const index = buildSettingsSearchIndex({});
     const presets = searchSettingsIndex(index, "mcp presets");

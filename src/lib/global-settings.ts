@@ -21,13 +21,22 @@ export type {
   GlobalSettingsState,
   ModelToggleState,
   ModelsSettingsState,
+  NewChatWidgetId,
+  NewChatWidgetsState,
   RememberedAgentPermissionRule,
   ServerRailAppearance,
   ToolsSettingsState,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@cesium/client";
-export { AGENT_RAIL_SECTION_IDS, AGENT_RAIL_VIEW_PRESETS } from "@cesium/client";
+export {
+  AGENT_RAIL_SECTION_IDS,
+  AGENT_RAIL_VIEW_PRESETS,
+  NEW_CHAT_WIDGET_IDS,
+  createDefaultNewChatWidgetsState,
+  isNewChatWidgetId,
+  normalizeNewChatWidgetsState,
+} from "@cesium/client";
 export {
   AURORA_MAX_CUSTOM_COLORS,
   AURORA_MIN_CUSTOM_COLORS,

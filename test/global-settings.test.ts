@@ -252,6 +252,63 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.rowDetail, "balanced");
   });
 
+  test("defaults new-chat widgets to all visible in default order", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["shortcuts", "actions", "recent-chats", "recent-activity"],
+      hidden: [],
+    });
+  });
+
+  test("normalizes missing new-chat widgets to defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const { newChatWidgets: _ignored, ...generalWithoutWidgets } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutWidgets,
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["shortcuts", "actions", "recent-chats", "recent-activity"],
+      hidden: [],
+    });
+  });
+
+  test("preserves custom new-chat widget order and hidden set", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        newChatWidgets: {
+          order: ["recent-chats", "shortcuts", "actions", "recent-activity"],
+          hidden: ["recent-activity"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["recent-chats", "shortcuts", "actions", "recent-activity"],
+      hidden: ["recent-activity"],
+    });
+  });
+
+  test("appends missing widget ids and drops unknown/duplicate widget ids", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        newChatWidgets: {
+          order: ["actions", "actions", "bogus", "recent-chats"],
+          hidden: ["bogus", "shortcuts", "shortcuts"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.newChatWidgets, {
+      order: ["actions", "recent-chats", "shortcuts", "recent-activity"],
+      hidden: ["shortcuts"],
+    });
+  });
+
   test("normalizes machine workspace sorting", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({

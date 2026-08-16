@@ -83,7 +83,8 @@ const PILL_ICONS: Record<string, LucideIcon> = {
 
 export const QUICK_ACTION_PILL_ICON_NAMES = Object.keys(PILL_ICONS);
 
-function pillIcon(name: string | undefined): LucideIcon {
+/** Resolve a quick action's icon name to its Lucide component (Zap fallback). */
+export function quickActionPillIcon(name: string | undefined): LucideIcon {
   return (name && PILL_ICONS[name]) || Zap;
 }
 
@@ -602,7 +603,7 @@ export function ComposerActionPills({
         ) : null}
 
         {visibleActions.map((action) => {
-          const Icon = pillIcon(action.icon);
+          const Icon = quickActionPillIcon(action.icon);
           const runState = runStates[action.id];
           const isRunning = runState?.phase === "running";
           const isConfirm = runState?.phase === "confirm";
