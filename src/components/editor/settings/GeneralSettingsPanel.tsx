@@ -1,5 +1,12 @@
 "use client";
 
+import { ChevronDown, ChevronUp } from "lucide-react";
+import {
+  NEW_CHAT_WIDGET_DESCRIPTIONS,
+  NEW_CHAT_WIDGET_LABELS,
+  useNewChatWidgetMove,
+  useNewChatWidgetVisibilityToggle,
+} from "@/components/agent/NewChatWidgets";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
@@ -15,6 +22,8 @@ export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const { updateWorkspaceSession } = useWorkspace();
   const general = settings.general;
+  const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
+  const moveNewChatWidget = useNewChatWidgetMove();
 
   const patchGeneral = (patch: Partial<typeof general>) => {
     updateSettings((current) => ({
@@ -57,6 +66,54 @@ export function GeneralSettingsPanel() {
           title="Import & export settings"
           description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
           onClick={() => openNav("exportImport")}
+          border={false}
+        />
+      </SettingsSection>
+      <SettingsSection title="New chat widgets">
+        {general.newChatWidgets.order.map((id, index) => {
+          const hidden = general.newChatWidgets.hidden.includes(id);
+          const isLast = index === general.newChatWidgets.order.length - 1;
+          return (
+            <SettingsRow
+              key={id}
+              searchId={`new-chat-widget-${id}`}
+              title={NEW_CHAT_WIDGET_LABELS[id]}
+              description={NEW_CHAT_WIDGET_DESCRIPTIONS[id]}
+              trailing={
+                <div className="flex items-center gap-[8px]">
+                  <button
+                    type="button"
+                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} up`}
+                    disabled={index === 0}
+                    onClick={() => moveNewChatWidget(id, -1)}
+                    className="flex size-[24px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-30"
+                  >
+                    <ChevronUp className="size-[13px]" strokeWidth={1.8} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} down`}
+                    disabled={isLast}
+                    onClick={() => moveNewChatWidget(id, 1)}
+                    className="flex size-[24px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-30"
+                  >
+                    <ChevronDown className="size-[13px]" strokeWidth={1.8} aria-hidden />
+                  </button>
+                  <ToggleSwitch
+                    checked={!hidden}
+                    onChange={() => toggleNewChatWidget(id)}
+                    size="md"
+                  />
+                </div>
+              }
+            />
+          );
+        })}
+        <SettingsLinkRow
+          searchId="new-chat-widget-actions-link"
+          title="Configure quick actions"
+          description="Add, edit, or remove the actions shown on the new chat landing."
+          onClick={() => openNav("actions")}
           border={false}
         />
       </SettingsSection>
