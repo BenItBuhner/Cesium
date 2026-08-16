@@ -193,7 +193,7 @@ export function VoiceAgentView() {
             draft.setComposerSelection(draft.composerDraftId, next)
           }
           busy={false}
-          configLocked={session.conversationId != null}
+          configLocked={false}
           onSubmit={session.submitComposer}
           onCancel={() => undefined}
           gitSlashCommands={Boolean(draft.gitStatus)}
