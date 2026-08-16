@@ -33,6 +33,7 @@ import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
+import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
@@ -484,8 +485,10 @@ export function AgentLayout() {
     <WorkbenchContextMenuProvider>
       <EditorBridgeProvider>
         <AgentShellStateProvider>
-          <AgentLayoutShell />
-          <ExtensionsWorkspaceBridge />
+          <VoiceSessionProvider>
+            <AgentLayoutShell />
+            <ExtensionsWorkspaceBridge />
+          </VoiceSessionProvider>
         </AgentShellStateProvider>
       </EditorBridgeProvider>
     </WorkbenchContextMenuProvider>

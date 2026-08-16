@@ -132,7 +132,6 @@ export function AgentNewChatLanding({
   } = useOpenInEditor();
   const {
     workspaceSession,
-    updateWorkspaceSession,
     openWorkspaceById,
     gitStatus,
     refreshGitStatus,
