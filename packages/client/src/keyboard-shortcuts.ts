@@ -226,6 +226,20 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     allowInEditableContexts: true,
   },
   {
+    id: "palette.editorTabSwitcherPrevious",
+    label: "Editor: Quick switch tab backward",
+    section: "Editor",
+    defaultBindings: ["Alt+PageUp"],
+    allowInEditableContexts: true,
+  },
+  {
+    id: "palette.editorTabSwitcherNext",
+    label: "Editor: Quick switch tab forward",
+    section: "Editor",
+    defaultBindings: ["Alt+PageDown"],
+    allowInEditableContexts: true,
+  },
+  {
     id: "chat.action.agentRailPreviousConversation",
     label: "Agent: Previous conversation in rail",
     section: "Chat",
