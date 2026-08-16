@@ -6,6 +6,7 @@ import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateConte
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
+  pinComposerStatusBarVisibilityForConversation,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
   resolveComposerStatusBarVisibilityForConversation,
@@ -120,8 +121,15 @@ export function ComposerStatusBar({
   onContextBreakdownOpenChange,
   goalProgress = null,
 }: ComposerStatusBarProps) {
-  const { gitStatus, workspaceInfo, workspaceSession, updateWorkspaceSession, workspaces, activeWorkspaceId } =
-    useWorkspace();
+  const {
+    gitStatus,
+    workspaceInfo,
+    workspaceSession,
+    sessionReady,
+    updateWorkspaceSession,
+    workspaces,
+    activeWorkspaceId,
+  } = useWorkspace();
   const bridgeRef = useEditorBridgeRef();
   const agentShell = useAgentShellStateMaybe();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -136,6 +144,26 @@ export function ComposerStatusBar({
     workspaceSession.chat,
     conversationId
   );
+
+  // Snapshot the last-used default as this conversation's own state the first
+  // time its status bar renders (for a new chat, that is the moment it is
+  // created). Later default changes made from other chats then leave this chat
+  // untouched. Keyed on the per-conversation map so a session hydration that
+  // replaces the map re-pins with the hydrated default.
+  const visibilityByConversationId =
+    workspaceSession.chat.composerStatusBarVisibilityByConversationId;
+  useEffect(() => {
+    if (!sessionReady || !conversationId) {
+      return;
+    }
+    updateWorkspaceSession((current) => {
+      const nextChat = pinComposerStatusBarVisibilityForConversation(
+        current.chat,
+        conversationId
+      );
+      return nextChat === current.chat ? current : { ...current, chat: nextChat };
+    });
+  }, [conversationId, sessionReady, updateWorkspaceSession, visibilityByConversationId]);
 
   const workspaceName =
     workspaceInfo?.name ??

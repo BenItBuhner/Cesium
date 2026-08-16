@@ -31,7 +31,7 @@ import {
   BookMarked,
   Bot,
   Box,
-  ChevronDown,
+  ChevronRight,
   CircleUserRound,
   Cloud,
   Database,
@@ -45,30 +45,21 @@ import {
   PanelLeftOpen,
   Puzzle,
   Blocks,
+  Search,
   Server,
   Settings,
+  X,
   Zap,
 } from "lucide-react";
-import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
-import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-  isLocalDeviceServer,
-} from "@/lib/server-rail-appearance";
-import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
+import { SettingsShellChromeContext } from "@/components/editor/settings-ui";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useAccountIdentity } from "@/hooks/useAccountIdentity";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 import { openDocumentation } from "@/lib/open-documentation";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
@@ -87,6 +78,8 @@ type NavEntry =
  * Settings categories we actually use in this shell (trimmed from full Cursor parity).
  */
 const NAV_ENTRIES: NavEntry[] = [
+  { kind: "item", id: "account", label: "Account", icon: CircleUserRound },
+  { kind: "divider" },
   { kind: "item", id: "general", label: "General", icon: Settings },
   { kind: "item", id: "actions", label: "Actions", icon: Zap },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
@@ -107,13 +100,75 @@ const NAV_ENTRIES: NavEntry[] = [
 ];
 
 const searchInputClass =
-  "box-border h-[32px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
+  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] pr-[54px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
 
 const searchResultClass =
   "flex w-full flex-col gap-[2px] rounded-[var(--radius-tab)] px-[10px] py-[7px] text-left transition-colors hover:bg-[var(--accent-bg)]";
+
+/**
+ * Compact identity card pinned to the bottom of the settings nav, right above
+ * the back button. Shows who is signed in (cloud account, device sync, engine
+ * session, or local) and opens the Account panel.
+ */
+function SettingsNavAccountPreview({
+  active,
+  onOpen,
+}: {
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const identity = useAccountIdentity();
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Account: ${identity.title}. Open account settings`}
+      title="Open account settings"
+      className={`flex w-full items-center gap-[10px] rounded-[var(--radius-card)] px-[9px] py-[8px] text-left transition-colors ${
+        active
+          ? "bg-[var(--accent-bg)]"
+          : "bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)]"
+      }`}
+    >
+      {identity.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={identity.imageUrl}
+          alt=""
+          className="size-[28px] shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <span className="flex size-[28px] shrink-0 items-center justify-center rounded-full bg-[var(--accent-bg)] text-[var(--text-secondary)]">
+          <CircleUserRound className="size-[17px]" strokeWidth={1.5} aria-hidden />
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-[6px]">
+          <span className="min-w-0 truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            {identity.title}
+          </span>
+          <span
+            className={`size-[6px] shrink-0 rounded-full ${
+              identity.signedIn ? "bg-[#22c55e]" : "bg-[var(--text-disabled)]"
+            }`}
+            aria-hidden
+          />
+        </span>
+        <span className="block truncate font-sans text-[11px] leading-[14px] text-[var(--text-secondary)]">
+          {identity.subtitle}
+        </span>
+      </span>
+      <ChevronRight
+        className="size-[14px] shrink-0 text-[var(--text-disabled)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    </button>
+  );
+}
 
 function searchResultKindLabel(kind: SettingsSearchEntry["kind"]): string {
   switch (kind) {
@@ -190,57 +245,12 @@ function SettingsNavContent({
   /** Windowed tab inset (beta): extra leading padding on the search field only (mobile drawer + desktop aside). */
   padSettingsSearchForWindowChrome: boolean;
 }) {
-  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
-  const { settings } = useGlobalSettings();
-  const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
-  const { byServerId: directoryByServerId } = useWorkspaceDirectory();
-  const serverPickerAnchorRef = useRef<HTMLButtonElement>(null);
-  const [serverPickerOpen, setServerPickerOpen] = useState(false);
-  const serverRailAppearances = settings.general.serverRailAppearances;
-  const activeServerAppearance = useMemo(
-    () =>
-      getServerRailAppearance(
-        serverRailAppearances,
-        activeServer.id,
-        servers.findIndex((server) => server.id === activeServer.id)
-      ),
-    [activeServer.id, serverRailAppearances, servers]
-  );
-  const activeServerDisplayLabel = useMemo(
-    () => getServerDisplayLabel(activeServer, activeServerAppearance),
-    [activeServer, activeServerAppearance]
-  );
-
-  const handleActiveServerChange = useCallback(
-    (serverId: string) => {
-      if (serverId === activeServer.id) {
-        setServerPickerOpen(false);
-        return;
-      }
-      if (activeWorkspaceId) {
-        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
-      }
-      setActiveServer(serverId);
-      setServerPickerOpen(false);
-      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
-      const directoryWorkspaces = directoryByServerId.get(serverId) ?? [];
-      const targetWorkspaceId =
-        restoredWorkspaceId &&
-        directoryWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
-          ? restoredWorkspaceId
-          : directoryWorkspaces[0]?.id;
-      if (targetWorkspaceId) {
-        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
-      }
-    },
-    [
-      activeServer.id,
-      activeWorkspaceId,
-      directoryByServerId,
-      openWorkspaceById,
-      setActiveServer,
-    ]
-  );
+  const handleOpenAccount = useCallback(() => {
+    onNavChange("account");
+    if (isMobile && closeMobileDrawer) {
+      closeMobileDrawer();
+    }
+  }, [closeMobileDrawer, isMobile, onNavChange]);
 
   return (
     <div className="flex h-full flex-col bg-[var(--bg-panel)]">
@@ -259,24 +269,50 @@ function SettingsNavContent({
         <div
           className={
             padSettingsSearchForWindowChrome
-              ? `${isMobile ? "min-w-0 flex-1" : "min-w-0 flex-1"} pl-[var(--editor-window-chrome-tab-inset)]`
-              : isMobile
-                ? "min-w-0 flex-1"
-                : "min-w-0 flex-1"
+              ? "min-w-0 flex-1 pl-[var(--editor-window-chrome-tab-inset)]"
+              : "min-w-0 flex-1"
           }
         >
-          <HardwareAwareTextInput
-            inputRef={searchInputRef}
-            type="search"
-            value={searchQuery}
-            onChange={onSearchChange}
-            onNativeKeyDown={onSearchKeyDown}
-            placeholder={`Search settings ${searchModLabel}+F`}
-            className={searchInputClass}
-            ariaLabel="Search settings"
-            ariaControls="settings-search-results"
-            ariaExpanded={isSearching}
-          />
+          <div className="relative min-w-0">
+            <Search
+              className="pointer-events-none absolute left-[10px] top-1/2 z-10 size-[13px] -translate-y-1/2 text-[var(--text-disabled)]"
+              strokeWidth={1.75}
+              aria-hidden
+            />
+            <HardwareAwareTextInput
+              inputRef={searchInputRef}
+              type="search"
+              value={searchQuery}
+              onChange={onSearchChange}
+              onNativeKeyDown={onSearchKeyDown}
+              placeholder="Search settings"
+              className={searchInputClass}
+              ariaLabel="Search settings"
+              ariaControls="settings-search-results"
+              ariaExpanded={isSearching}
+            />
+            {searchQuery.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onSearchChange("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="Clear settings search"
+                title="Clear search"
+                className="absolute right-[8px] top-1/2 z-10 flex size-[18px] -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                <X className="size-[13px]" strokeWidth={1.75} aria-hidden />
+              </button>
+            ) : (
+              <span
+                className="pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] bg-[var(--accent-bg)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]"
+                aria-hidden
+              >
+                {searchModLabel}+F
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -314,7 +350,7 @@ function SettingsNavContent({
                     <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
                       {hit.label}
                     </span>
-                    <span className="shrink-0 font-sans text-[10px] uppercase tracking-wide text-[var(--text-disabled)]">
+                    <span className="shrink-0 rounded-full bg-[var(--accent-bg)] px-[6px] py-[2px] font-sans text-[9px] uppercase tracking-wide text-[var(--text-secondary)]">
                       {searchResultKindLabel(hit.kind)}
                     </span>
                   </span>
@@ -351,7 +387,7 @@ function SettingsNavContent({
                   }}
                   className={`${navItemClass} ${
                     sel
-                      ? "bg-[var(--bg-panel)] font-medium text-[var(--text-primary)]"
+                      ? "bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
                       : "font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                   }`}
                 >
@@ -374,65 +410,24 @@ function SettingsNavContent({
         )}
       </nav>
 
-      <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
-        <button
-          ref={serverPickerAnchorRef}
-          type="button"
-          onClick={() => setServerPickerOpen((open) => !open)}
-          className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
-          aria-label={`Switch server (${activeServerDisplayLabel})`}
-          aria-expanded={serverPickerOpen}
-          aria-haspopup="menu"
-          title={activeServerDisplayLabel}
-        >
-          {isLocalDeviceServer(activeServer) ? (
-            <CircleUserRound
-              className="size-[18px] shrink-0 text-[var(--text-secondary)]"
-              strokeWidth={1.5}
-              aria-hidden
-            />
-          ) : (
-            <WorkspaceFolderIcon
-              iconName={activeServerAppearance.icon}
-              color={activeServerAppearance.color}
-              className="size-[18px] shrink-0"
-              strokeWidth={1.5}
-            />
-          )}
-          <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-            {activeServerDisplayLabel}
-          </span>
-          <ChevronDown
-            className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-            strokeWidth={1.5}
-            aria-hidden
-          />
-        </button>
+      <div className="flex shrink-0 flex-col gap-[6px] px-[11px] pb-[10px] pt-[6px]">
+        <SettingsNavAccountPreview
+          active={activeNav === "account"}
+          onOpen={handleOpenAccount}
+        />
         {onCloseShell ? (
           <button
             type="button"
             onClick={onCloseShell}
-            className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-            aria-label="Back"
-            title="Back"
+            className="flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            aria-label="Back to Agents"
+            title="Back to Agents"
           >
-            <ArrowLeft className="size-[16px]" strokeWidth={1.5} aria-hidden />
+            <ArrowLeft className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
+            <span className="min-w-0 flex-1 truncate">Back to Agents</span>
           </button>
         ) : null}
       </div>
-
-      <ServerPickerPopover
-        open={serverPickerOpen}
-        onClose={() => setServerPickerOpen(false)}
-        anchorRef={serverPickerAnchorRef}
-        label="Switch server"
-        selectedServerId={activeServer.id}
-        servers={servers}
-        serverStatusById={serverStatusById}
-        serverRailAppearances={serverRailAppearances}
-        onSelect={handleActiveServerChange}
-        placement="above"
-      />
     </div>
   );
 }
@@ -842,6 +837,14 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     return () => window.removeEventListener("opencursor:focusSettingsSearch", onFocusSearch);
   }, []);
 
+  const shellChrome = useMemo(
+    () => ({
+      closeShell: onCloseShell,
+      navigate: handleNavChange,
+    }),
+    [handleNavChange, onCloseShell]
+  );
+
   const navContent = (
     <SettingsNavContent
       activeNav={activeNav}
@@ -865,6 +868,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
   if (isMobile) {
     return (
+      <SettingsShellChromeContext.Provider value={shellChrome}>
       <div className="relative flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
         {navDrawerOpen ? (
           <>
@@ -901,10 +905,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           </div>
         </main>
       </div>
+      </SettingsShellChromeContext.Provider>
     );
   }
 
   return (
+    <SettingsShellChromeContext.Provider value={shellChrome}>
     <Group
       id="settings-shell-panels"
       groupRef={groupRef}
@@ -946,5 +952,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         </main>
       </Panel>
     </Group>
+    </SettingsShellChromeContext.Provider>
   );
 }

@@ -1,6 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useSyncExternalStore, type ReactNode } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { DocsPageView } from "@/components/docs/DocsPageView";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
@@ -37,15 +44,83 @@ function useDocsRouteActive() {
   return useSyncExternalStore(subscribeToDocsRoute, readDocsRouteActive, () => false);
 }
 
+/** Peak inset of the Material predictive-back preview (scale at progress 1). */
+const SETTINGS_BACK_MIN_SCALE = 0.9;
+/** Peak horizontal shift (px) of the preview, in the swipe direction. */
+const SETTINGS_BACK_MAX_SHIFT_PX = 24;
+/** Peak corner radius (px) of the scaled-down preview surface. */
+const SETTINGS_BACK_MAX_RADIUS_PX = 28;
+
 function WorkbenchShell() {
   const { shellView, closeSettingsView } = useShellView();
+  const settingsSurfaceRef = useRef<HTMLDivElement | null>(null);
+
+  // Material-style predictive-back preview for the full-screen settings view:
+  // as the Android back gesture progresses the surface scales down toward 90%,
+  // nudges in the swipe direction and rounds its corners — committing closes
+  // it, cancelling animates it back to rest. Styles are written imperatively
+  // (no per-frame React re-render), mirroring the drawer motion engine.
+  const applySettingsBackPreview = useCallback(
+    (progress: number, swipeEdge: "left" | "right") => {
+      const surface = settingsSurfaceRef.current;
+      if (!surface) {
+        return;
+      }
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+        return;
+      }
+      const clamped = Math.min(1, Math.max(0, progress));
+      const scale = 1 - (1 - SETTINGS_BACK_MIN_SCALE) * clamped;
+      const shift =
+        (swipeEdge === "left" ? 1 : -1) * SETTINGS_BACK_MAX_SHIFT_PX * clamped;
+      surface.style.transform = `translate3d(${shift}px, 0, 0) scale(${scale})`;
+      surface.style.borderRadius = `${SETTINGS_BACK_MAX_RADIUS_PX * clamped}px`;
+      surface.style.boxShadow =
+        clamped > 0.01 ? "0 12px 48px rgba(0, 0, 0, 0.4)" : "";
+    },
+    []
+  );
+
   // A back gesture in the full-screen settings view returns to the agent view
   // rather than exiting the app or walking WebView history.
-  useBackHandler(shellView === "settings", BACK_INTENT_PRIORITY.settings, () => {
-    closeSettingsView();
-  });
+  useBackHandler(
+    shellView === "settings",
+    BACK_INTENT_PRIORITY.settings,
+    () => {
+      closeSettingsView();
+    },
+    {
+      onStart: (event) => {
+        const surface = settingsSurfaceRef.current;
+        if (surface) {
+          surface.style.transition = "none";
+        }
+        applySettingsBackPreview(event.progress, event.swipeEdge);
+      },
+      onProgress: (event) =>
+        applySettingsBackPreview(event.progress, event.swipeEdge),
+      onCancel: () => {
+        const surface = settingsSurfaceRef.current;
+        if (!surface) {
+          return;
+        }
+        surface.style.transition =
+          "transform 200ms cubic-bezier(0.2, 0, 0, 1), border-radius 200ms cubic-bezier(0.2, 0, 0, 1), box-shadow 200ms cubic-bezier(0.2, 0, 0, 1)";
+        surface.style.transform = "";
+        surface.style.borderRadius = "";
+        surface.style.boxShadow = "";
+      },
+    }
+  );
   if (shellView === "settings") {
-    return <SettingsShellView />;
+    return (
+      <div
+        ref={settingsSurfaceRef}
+        className="h-screen w-screen overflow-hidden bg-[var(--bg-main)] will-change-transform"
+      >
+        <SettingsShellView />
+      </div>
+    );
   }
   return <AgentLayout />;
 }
