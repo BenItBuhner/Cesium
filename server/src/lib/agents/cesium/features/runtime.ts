@@ -61,8 +61,10 @@ function validateToolRequest(value: unknown, previous: CesiumToolRequest): Cesiu
   if (request.id !== previous.id) {
     throw new Error("beforeTool cannot change a tool request id.");
   }
-  if (typeof request.name !== "string" || !request.name.trim()) {
-    throw new Error("beforeTool returned an invalid tool name.");
+  if (request.name !== previous.name) {
+    throw new Error(
+      "beforeTool cannot change a tool name; contribute a separate tool to implement routing."
+    );
   }
   if (!request.arguments || typeof request.arguments !== "object" || Array.isArray(request.arguments)) {
     throw new Error("beforeTool returned invalid tool arguments.");
@@ -144,7 +146,14 @@ export class CesiumHarnessPluginRuntime {
     if (this.diagnostics.length > MAX_DIAGNOSTICS) {
       this.diagnostics.splice(0, this.diagnostics.length - MAX_DIAGNOSTICS);
     }
-    await this.options.onDiagnostic?.(diagnostic);
+    try {
+      await this.options.onDiagnostic?.(diagnostic);
+    } catch (diagnosticError) {
+      console.warn(
+        `[cesium-harness-plugin] failed to publish diagnostic for ${module.id}/${hook}:`,
+        asError(diagnosticError).message
+      );
+    }
     if (module.failureMode === "fatal") {
       throw new Error(
         `Cesium harness plugin "${module.id}" failed in ${hook}: ${normalized.message}`,

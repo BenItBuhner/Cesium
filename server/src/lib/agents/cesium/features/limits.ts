@@ -7,6 +7,8 @@ import type {
 
 /** Timed `wait` tool hard cap (24 hours) — mirrors Cesium prompt defaults. */
 export const DEFAULT_WAIT_MAX_SECONDS = 24 * 60 * 60;
+export const DEFAULT_PLUGIN_HOOK_TIMEOUT_MS = 5_000;
+export const HARD_MAX_PLUGIN_HOOK_TIMEOUT_MS = 60_000;
 
 /**
  * Codex MultiAgentV2 defaults:
@@ -39,6 +41,7 @@ function envInt(name: string): number | undefined {
 
 export function defaultHarnessLimits(): CesiumHarnessLimits {
   return {
+    pluginHookTimeoutMs: DEFAULT_PLUGIN_HOOK_TIMEOUT_MS,
     waitMaxSeconds: DEFAULT_WAIT_MAX_SECONDS,
     waitAgentDefaultTimeoutMs: DEFAULT_WAIT_AGENT_DEFAULT_TIMEOUT_MS,
     waitAgentMinTimeoutMs: DEFAULT_WAIT_AGENT_MIN_TIMEOUT_MS,
@@ -131,6 +134,11 @@ export function normalizeHarnessLimits(raw: unknown): CesiumHarnessLimits {
   );
 
   return {
+    pluginHookTimeoutMs: clampInt(
+      asNumber(record.pluginHookTimeoutMs) ?? defaults.pluginHookTimeoutMs,
+      1,
+      HARD_MAX_PLUGIN_HOOK_TIMEOUT_MS
+    ),
     waitMaxSeconds,
     waitAgentDefaultTimeoutMs,
     waitAgentMinTimeoutMs,
@@ -211,18 +219,31 @@ export function mergeHarnessSettings(
     limits?: Partial<CesiumHarnessLimits>;
   }
 ): CesiumHarnessSettings {
+  const mergedFeatures = { ...current.features };
+  for (const [id, selection] of Object.entries(patch.features ?? {})) {
+    if (!selection) continue;
+    mergedFeatures[id] = {
+      ...(current.features[id] ?? { version: 1 }),
+      ...selection,
+      ...(selection.config
+        ? {
+            config: { ...selection.config },
+          }
+        : {}),
+    } as CesiumHarnessFeatureSelection;
+  }
   return normalizeHarnessSettings({
     features: {
-      ...current.features,
-      ...(patch.features ?? {}),
+      ...mergedFeatures,
       subagents: {
         version: patch.features?.subagents?.version ?? current.features.subagents.version,
         enabled:
           patch.features?.subagents?.enabled ??
           current.features.subagents.enabled,
         config:
-          patch.features?.subagents?.config ??
-          current.features.subagents.config,
+          patch.features?.subagents?.config
+            ? { ...patch.features.subagents.config }
+            : current.features.subagents.config,
       },
     },
     limits: {

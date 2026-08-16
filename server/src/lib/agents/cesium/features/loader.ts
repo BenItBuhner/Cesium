@@ -30,7 +30,11 @@ function parseModuleSpecifiers(raw: string | undefined): string[] {
 
 function resolveSpecifier(specifier: string, workspaceRoot: string): string {
   if (specifier.startsWith("file:")) return specifier;
-  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes(path.sep)) {
+  if (
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("/")
+  ) {
     const absolute = path.isAbsolute(specifier)
       ? specifier
       : path.resolve(workspaceRoot, specifier);
@@ -48,9 +52,13 @@ function pluginDefinitionsFromModule(
     moduleValue.cesiumHarnessPlugin,
     moduleValue.default,
   ];
-  const definitions = candidates.flatMap((candidate) =>
-    Array.isArray(candidate) ? candidate : candidate ? [candidate] : []
-  );
+  const definitions = [
+    ...new Set(
+      candidates.flatMap((candidate) =>
+        Array.isArray(candidate) ? candidate : candidate ? [candidate] : []
+      )
+    ),
+  ];
   if (definitions.length === 0) {
     throw new Error(
       `Cesium harness plugin module "${specifier}" must export default, cesiumHarnessPlugin, or cesiumHarnessPlugins.`

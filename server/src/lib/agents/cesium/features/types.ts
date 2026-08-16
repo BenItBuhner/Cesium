@@ -47,6 +47,8 @@ export type CesiumHarnessFeatureVersions = Record<
 };
 
 export type CesiumHarnessLimits = {
+  /** Timeout applied independently to each plugin hook. Default: 5000. */
+  pluginHookTimeoutMs: number;
   /** Hard cap for the timed `wait` tool (seconds). Default: 86400 (24h). */
   waitMaxSeconds: number;
   /** Default timeout for `wait_agent` when omitted. Default: 30000. */

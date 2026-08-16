@@ -2220,11 +2220,71 @@ function CesiumAgentHarnessSettings() {
                       Tools: {feature.toolNames.join(", ")}
                     </span>
                   ) : null}
+                  <SettingsFieldLabel>Configuration (JSON)</SettingsFieldLabel>
+                  <textarea
+                    key={`${feature.id}-${JSON.stringify(selection?.config ?? {})}`}
+                    defaultValue={JSON.stringify(selection?.config ?? {}, null, 2)}
+                    disabled={busy || !enabled}
+                    rows={3}
+                    spellCheck={false}
+                    className="resize-y rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-[9px] py-[7px] font-mono text-[11px] text-[var(--text-primary)]"
+                    onBlur={(event) => {
+                      try {
+                        const parsed = JSON.parse(event.currentTarget.value) as unknown;
+                        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                          throw new Error("Configuration must be a JSON object.");
+                        }
+                        event.currentTarget.setCustomValidity("");
+                        void patchSettings({
+                          harness: {
+                            features: {
+                              ...settings.harness.features,
+                              [feature.id]: {
+                                version: selection?.version ?? feature.defaultVersion,
+                                enabled,
+                                config: parsed as Record<string, unknown>,
+                              },
+                            },
+                            limits: { ...settings.harness.limits },
+                          },
+                        });
+                      } catch {
+                        event.currentTarget.setCustomValidity(
+                          "Enter a valid JSON object."
+                        );
+                        event.currentTarget.reportValidity();
+                      }
+                    }}
+                  />
                 </label>
                 </div>
                 );
               })}
               <div className="grid gap-[12px] md:grid-cols-2">
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>Plugin hook timeout (ms)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60000}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.pluginHookTimeoutMs ?? 5000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const pluginHookTimeoutMs = Number(event.target.value);
+                      if (!Number.isFinite(pluginHookTimeoutMs)) return;
+                      void patchSettings({
+                        harness: {
+                          features: { ...(settings.harness?.features ?? {}) },
+                          limits: {
+                            ...(settings.harness?.limits ?? {}),
+                            pluginHookTimeoutMs,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
                 <label className="flex flex-col gap-[5px]">
                   <SettingsFieldLabel>Wait tool max (seconds)</SettingsFieldLabel>
                   <input

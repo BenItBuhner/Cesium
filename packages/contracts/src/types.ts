@@ -432,6 +432,7 @@ export type CesiumAgentSettingsPublic = {
       }
     >;
     limits: {
+      pluginHookTimeoutMs: number;
       waitMaxSeconds: number;
       waitAgentDefaultTimeoutMs: number;
       waitAgentMinTimeoutMs: number;

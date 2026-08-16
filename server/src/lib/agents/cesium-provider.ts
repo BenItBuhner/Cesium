@@ -1548,6 +1548,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.harnessSignature = signature;
       this.pluginRuntime = new CesiumHarnessPluginRuntime({
         modules: this.harness.modules,
+        hookTimeoutMs: this.harness.settings.limits.pluginHookTimeoutMs,
         context: () => ({
           sessionId: this.sessionId,
           conversationId: this.callbacks.conversation.id,

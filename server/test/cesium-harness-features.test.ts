@@ -19,6 +19,7 @@ process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 const [
   {
     DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS,
+    DEFAULT_PLUGIN_HOOK_TIMEOUT_MS,
     resolveCesiumHarness,
     resolveWaitAgentTimeoutMs,
     defaultHarnessSettings,
@@ -47,8 +48,51 @@ after(async () => {
 test("harness defaults to subagents v1 with 30-minute wait_agent max", () => {
   const defaults = defaultHarnessSettings();
   assert.equal(defaults.features.subagents.version, 1);
+  assert.equal(
+    defaults.limits.pluginHookTimeoutMs,
+    DEFAULT_PLUGIN_HOOK_TIMEOUT_MS
+  );
   assert.equal(defaults.limits.waitAgentMaxTimeoutMs, DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS);
   assert.equal(DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS, 30 * 60 * 1000);
+});
+
+test("partial plugin settings patches preserve version and replace config", async () => {
+  await patchCesiumAgentSettings({
+    harness: {
+      features: {
+        subagents: {
+          version: 2,
+          enabled: true,
+          config: { first: 1, retained: true },
+        },
+      },
+      limits: { pluginHookTimeoutMs: 2_500 },
+    },
+  });
+  const patched = await patchCesiumAgentSettings({
+    harness: {
+      features: {
+        subagents: {
+          enabled: false,
+          config: { first: 2 },
+        },
+      },
+    },
+  });
+  assert.equal(patched.harness.features.subagents.version, 2);
+  assert.equal(patched.harness.features.subagents.enabled, false);
+  assert.deepEqual(patched.harness.features.subagents.config, {
+    first: 2,
+  });
+  assert.equal(patched.harness.limits.pluginHookTimeoutMs, 2_500);
+  await patchCesiumAgentSettings({
+    harness: {
+      features: {
+        subagents: { version: 1, enabled: true, config: {} },
+      },
+      limits: { pluginHookTimeoutMs: DEFAULT_PLUGIN_HOOK_TIMEOUT_MS },
+    },
+  });
 });
 
 test("resolveCesiumTools swaps subagent tool families by version", () => {

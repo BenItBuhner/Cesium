@@ -8,8 +8,10 @@ import {
 } from "./persistence.js";
 import type { AgentConfigOption, AgentPermissionCategory } from "./agents/types.js";
 import {
+  CESIUM_FEATURE_REGISTRY,
   defaultHarnessSettings,
   getCesiumFeatureCatalog,
+  loadCesiumHarnessPluginModulesFromEnv,
   mergeHarnessSettings,
   normalizeHarnessSettings,
   type CesiumHarnessSettings,
@@ -962,6 +964,10 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
 }
 
 export async function getCesiumAgentSettings(): Promise<CesiumAgentSettings> {
+  await loadCesiumHarnessPluginModulesFromEnv(
+    CESIUM_FEATURE_REGISTRY,
+    process.env.WORKSPACE_ROOT?.trim() || process.cwd()
+  );
   return normalizeSettings(await readJsonFile<unknown>(SETTINGS_FILE, null));
 }
 
