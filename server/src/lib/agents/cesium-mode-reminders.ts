@@ -8,6 +8,11 @@ import {
 export type CesiumModeReminderInput = {
   mode: string;
   modelName?: string | null;
+  /** Active capability profile: name plus a one-line tool-surface summary. */
+  profileName?: string | null;
+  profileSummary?: string | null;
+  /** Rendered curated-memory snapshot for profiles that include the memory tool. */
+  memorySnapshot?: string | null;
   workspaceRoot: string;
   dateLabel: string;
   gitSummary: string;
@@ -146,7 +151,13 @@ The active mode is authoritative whether the user selected it directly or approv
 - Workspace root: ${input.workspaceRoot}
 - Date: ${input.dateLabel}
 - Repository: ${input.gitSummary}
-- Model: ${input.modelName?.trim() || "configured model"}
+- Model: ${input.modelName?.trim() || "configured model"}${
+    input.profileName?.trim()
+      ? `\n- Agent profile: ${input.profileName.trim()}${
+          input.profileSummary?.trim() ? ` — ${input.profileSummary.trim()}` : ""
+        }`
+      : ""
+  }
 
 ${input.environmentChangeNotice?.trim() ? `### Environment Changes Since Last Turn\n\n${input.environmentChangeNotice.trim()}\n\n` : ""}Do note, the following tools have been changed:
 
@@ -169,7 +180,11 @@ ${modeFlow(mode)}
 
 It is best to keep it all short and concise, but is preferable to also use warm and friendly communication, along with bold proposals and ideas to evade blockers and innovate where stagnant. Best practice also assumes you are to create your to-do list before researching or implementing and executing within the codebase, and keeping on-track with said to-do list to keep working and updating the list as you go, be it adjusting the list, checking off completed tasks, or anything else.
 
-${planLines ? `## Active Plan, Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}## MCP Servers
+${planLines ? `## Active Plan, Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}${
+    input.memorySnapshot?.trim()
+      ? `## Curated Memory\n\nRecent saved memory entries (manage them with the \`memory\` tool; forget entries that are wrong or stale):\n\n${input.memorySnapshot.trim()}\n\n`
+      : ""
+  }## MCP Servers
 
 ${mcpSummaryText(input.mcpSummaries)}
 

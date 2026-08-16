@@ -371,4 +371,27 @@ export type CesiumAgentSettingsPublic = {
       supportsImages?: boolean;
     }>;
   }>;
+  /** Custom capability profiles (persisted). */
+  profiles: CesiumAgentProfile[];
+  defaultProfileId: string;
+  /** Built-in Code/Work presets plus custom profiles, in picker order. */
+  profileCatalog: CesiumAgentProfile[];
+};
+
+export type CesiumAgentProfile = {
+  id: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+  prompt: {
+    base: "code" | "work" | "minimal";
+    customInstructions: string;
+  };
+  tools: {
+    allowed: "all" | string[];
+    mcpServers: "all" | string[];
+  };
+  permissionOverrides: Partial<
+    Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">
+  >;
 };

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  buildCesiumBaseSystemPrompt,
   formatGitSummaryForPrompt,
   type BuildCesiumSystemPromptInput,
   type McpServerSummary,
@@ -53,6 +54,24 @@ import {
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
 } from "./cesium-mode-policy.js";
+import {
+  CESIUM_CODE_PROFILE,
+  filterCesiumToolsForProfile,
+  resolveCesiumProfile,
+  resolveCesiumProfileToolPolicy,
+  summarizeCesiumProfileToolSurface,
+  type CesiumAgentProfile,
+} from "./cesium-profiles.js";
+import {
+  forgetCesiumMemoryEntry,
+  formatCesiumMemoryEntry,
+  listCesiumMemoryEntries,
+  renderCesiumMemorySnapshot,
+  saveCesiumMemoryEntry,
+  searchCesiumMemoryEntries,
+  type CesiumMemoryCategory,
+  type CesiumMemoryScope,
+} from "./cesium-memory.js";
 import {
   isOrchestrationPermissionCategory,
   isPersistentPermissionOptionId,
@@ -460,6 +479,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
+  /** Active capability profile (Code by default); refreshed with the harness each turn. */
+  private activeProfile: CesiumAgentProfile = CESIUM_CODE_PROFILE;
   private subagentsV2: SubagentsV2Runtime | null = null;
 
   constructor(
@@ -481,6 +502,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const mode = this.callbacks.conversation.config.mode?.trim();
     if (mode) {
       this.configOptions = updateConfigOption(this.configOptions, "mode", mode);
+    }
+    // Conversations created before capability profiles existed have no
+    // "profile" config option; backfill it from the current catalog so the
+    // picker and setConfigOption("profile", …) work on resumed sessions.
+    if (!this.configOptions.some((option) => option.id === "profile")) {
+      const freshOptions = await createCesiumAgentConfigOptions().catch(() => null);
+      const profileOption = freshOptions?.find((option) => option.id === "profile");
+      if (profileOption) {
+        const modeIndex = this.configOptions.findIndex((option) => option.id === "mode");
+        const next = [...this.configOptions];
+        next.splice(modeIndex >= 0 ? modeIndex + 1 : next.length, 0, profileOption);
+        this.configOptions = next;
+      }
     }
     await this.callbacks.updateConversation((current) => ({
       ...current,
@@ -551,6 +585,52 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.conversation.config.mode ?? "agent"
     );
     return normalizeCesiumMode(String(raw));
+  }
+
+  /** Profile id selected on this conversation, or null to use the settings default. */
+  private currentProfileId(): string | null {
+    const raw = this.configOptions.find((option) => option.id === "profile")?.currentValue;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+  }
+
+  /** Profile-resolved base system prompt (persona + verbatim profile instructions). */
+  private profileSystemPrompt(): string {
+    return buildCesiumBaseSystemPrompt({
+      base: this.activeProfile.prompt.base,
+      customInstructions: this.activeProfile.prompt.customInstructions,
+    });
+  }
+
+  /**
+   * Tool schemas advertised to the model: the resolved harness filtered to the
+   * active profile envelope. Unlike mode policy, excluded tools are hidden
+   * from the model entirely.
+   */
+  private advertisedTools(): CesiumToolDefinition[] {
+    return filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
+  }
+
+  /** Whether the active profile exposes the curated `memory` tool. */
+  private profileIncludesMemory(): boolean {
+    return (
+      this.activeProfile.tools.allowed === "all" ||
+      this.activeProfile.tools.allowed.includes("memory")
+    );
+  }
+
+  /** Curated-memory snapshot for the per-turn reminder, or null when hidden/empty. */
+  private async resolveMemorySnapshot(): Promise<string | null> {
+    if (!this.profileIncludesMemory()) {
+      return null;
+    }
+    try {
+      const entries = await listCesiumMemoryEntries({
+        workspaceId: this.callbacks.workspace.id,
+      });
+      return renderCesiumMemorySnapshot(entries) || null;
+    } catch {
+      return null;
+    }
   }
 
   private createAssistantStreamSink(
@@ -710,7 +790,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         promptContext.modelName ?? this.callbacks.conversation.config.modelName,
         modelId
       );
-      this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
       await this.refreshHarnessFromSettings();
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const previousEvents = previousSnapshot?.events ?? [];
@@ -738,6 +817,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           timeZone,
           modelId,
           modelName: promptContext.modelName,
+          profileId: this.activeProfile.id,
+          profileName: this.activeProfile.name,
         },
         previousUserMessageAt: previousUserMessageCreatedAt(
           previousEvents,
@@ -759,10 +840,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
           .catch(() => undefined);
       }
       const featureReminder = harnessFeatureReminder(this.harness);
+      const memorySnapshot = await this.resolveMemorySnapshot();
       const reminderText = [
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
+          profileName: this.activeProfile.name,
+          profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
+          memorySnapshot,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
           dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
           gitSummary: promptContext.gitSummary ?? "not a git repository",
@@ -804,6 +889,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
               timeZone,
               modelId,
               modelName: promptContext.modelName,
+              profileId: this.activeProfile.id,
+              profileName: this.activeProfile.name,
             },
           },
         },
@@ -891,7 +978,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               oauth: auth.oauth,
               modelId,
               messages: [...modelHistory, ...toolResultMessages],
-              tools: this.harness.tools,
+              tools: this.advertisedTools(),
             },
             iteration,
             {
@@ -1385,6 +1472,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async refreshHarnessFromSettings(): Promise<void> {
     const settings = await getCesiumAgentSettings();
     this.harness = resolveCesiumTools(settings.harness);
+    this.activeProfile = resolveCesiumProfile({
+      profileId: this.currentProfileId(),
+      customProfiles: settings.profiles,
+      defaultProfileId: settings.defaultProfileId,
+    });
+    this.activeSystemPrompt = this.profileSystemPrompt();
     if (this.harness.subagentsVersion === 2) {
       const runtime = this.ensureSubagentsV2();
       runtime.updateLimits(this.harness.settings.limits);
@@ -1442,8 +1535,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private buildSubagentToolset(agentPath: string | null): CesiumSubagentToolset {
     const includeCollaboration = agentPath != null && this.harness.subagentsVersion === 2;
+    // Children inherit the parent profile's capability envelope: a Work parent
+    // cannot spawn a terminal-wielding child.
     const definitions = subagentToolDefinitions({
-      hostTools: this.harness.tools,
+      hostTools: this.advertisedTools(),
       includeCollaboration,
     });
     return createSubagentToolset({
@@ -1463,6 +1558,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // Direct browser tools are policy/permission-equivalent to calling the
     // built-in browser MCP server through call_mcp_tool.
     const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
+    const profilePolicy = resolveCesiumProfileToolPolicy({
+      profile: this.activeProfile,
+      toolName: name,
+      arguments: args,
+    });
+    if (!profilePolicy.allowed) {
+      throw new Error(
+        profilePolicy.reason ?? `Tool ${name} is blocked by the active agent profile.`
+      );
+    }
     const policy = resolveCesiumModeToolPolicy({
       mode: this.currentMode(),
       toolName: policyToolName,
@@ -1743,6 +1848,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
     }
 
+    // Profile permission overrides beat settings-level toolPermissions: deny
+    // hard-blocks, allow skips the prompt, absent falls through to the cascade.
+    const profileOverride = this.activeProfile.permissionOverrides[input.permission];
+    if (profileOverride === "deny") {
+      throw new Error(
+        `${input.title} blocked by the active "${this.activeProfile.name}" agent profile.`
+      );
+    }
+    if (profileOverride === "allow") {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Allowed ${input.title} by the "${this.activeProfile.name}" agent profile.`,
+        },
+      ]);
+      return;
+    }
+
     const [settings, globalSettings] = await Promise.all([
       getCesiumAgentSettings(),
       getGlobalSettings().catch(() => null),
@@ -1904,6 +2030,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
     await this.callbacks.appendEvents([callEvent]);
     try {
       let result: string;
+      // Layer 1: hard capability boundary from the active profile (also gates
+      // call_mcp_tool serverIds). Layer 2: mode posture policy.
+      const profilePolicy = resolveCesiumProfileToolPolicy({
+        profile: this.activeProfile,
+        toolName: request.name,
+        arguments: effectiveRequest.arguments,
+      });
+      if (!profilePolicy.allowed) {
+        throw new Error(
+          profilePolicy.reason ?? `Tool ${request.name} is blocked by the active agent profile.`
+        );
+      }
       const policy = resolveCesiumModeToolPolicy({
         mode: this.currentMode(),
         toolName: request.name,
@@ -2059,6 +2197,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "search_conversations":
           result = await this.toolSearchConversations(request.arguments);
+          break;
+        case "memory":
+          result = await this.toolMemory(request.arguments);
           break;
         case "switch_branch":
           result = await this.toolSwitchBranch(request.arguments);
@@ -2874,6 +3015,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         this.callbacks.conversation.config.modelName,
         this.callbacks.conversation.config.modelId || "configured model"
       ),
+      profileName: this.activeProfile.name,
+      profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
       workspaceRoot: this.callbacks.workspace.root,
       dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
@@ -2963,7 +3106,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       workspaceRoot: this.callbacks.workspace.root,
     });
     const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-    this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+    this.activeSystemPrompt = this.profileSystemPrompt();
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
   }
 
@@ -3766,7 +3909,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ? `\n\nYou MUST respond with ONLY valid JSON matching this JSON Schema (no markdown fences):\n${JSON.stringify(request.schema, null, 2)}`
       : "\n\nYour final text response is returned verbatim to the orchestration script as the agent() result. Prefer concise structured text.";
     const system = [
-      CESIUM_SYSTEM_PROMPT,
+      this.activeSystemPrompt,
       "You are a subagent spawned by a Cesium Workflow orchestration script.",
       "Complete the assigned task. Do not spawn additional workflows or subagents.",
       schemaHint,
@@ -4001,7 +4144,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           {
             role: "system",
             content:
-              `${CESIUM_SYSTEM_PROMPT}\n\nYou are a child subagent. Do not spawn additional subagents.` +
+              `${this.activeSystemPrompt}\n\nYou are a child subagent. Do not spawn additional subagents.` +
               (toolGuidance ? `\n\n${toolGuidance}` : ""),
           },
           { role: "user", content: instructions },
@@ -4147,6 +4290,84 @@ class CesiumSessionHandle implements AgentSessionHandle {
       conversationId: asString(args.conversationId),
       maxResults: asNumber(args.maxResults),
     });
+  }
+
+  /** Curated persistent memory: save/search/list/forget over bounded JSON stores. */
+  private async toolMemory(args: Record<string, unknown>): Promise<string> {
+    const action = asString(args.action)?.trim().toLowerCase();
+    const workspaceId = this.callbacks.workspace.id;
+    const rawScope = asString(args.scope)?.trim().toLowerCase();
+    const scope: CesiumMemoryScope | undefined =
+      rawScope === "user" || rawScope === "workspace" ? rawScope : undefined;
+    switch (action) {
+      case "save": {
+        const content = asString(args.content)?.trim();
+        if (!content) {
+          throw new Error("memory.content is required for save.");
+        }
+        const rawCategory = asString(args.category)?.trim().toLowerCase();
+        const category: CesiumMemoryCategory =
+          rawCategory === "preference" ||
+          rawCategory === "constraint" ||
+          rawCategory === "decision"
+            ? rawCategory
+            : "fact";
+        const entry = await saveCesiumMemoryEntry({
+          workspaceId,
+          scope: scope ?? "workspace",
+          category,
+          content,
+          sourceConversationId: this.callbacks.conversation.id,
+          id: asString(args.id)?.trim() || undefined,
+        });
+        return `Saved memory entry.\n${formatCesiumMemoryEntry(entry)}`;
+      }
+      case "search": {
+        const query = asString(args.query)?.trim();
+        if (!query) {
+          throw new Error("memory.query is required for search.");
+        }
+        const entries = await searchCesiumMemoryEntries({
+          workspaceId,
+          query,
+          scope,
+          limit: asNumber(args.limit),
+        });
+        if (entries.length === 0) {
+          return `No memory entries match "${query}".`;
+        }
+        return [
+          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} match "${query}":`,
+          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
+        ].join("\n");
+      }
+      case "list": {
+        const limit = Math.min(Math.max(asNumber(args.limit) ?? 10, 1), 50);
+        const entries = (await listCesiumMemoryEntries({ workspaceId, scope })).slice(0, limit);
+        if (entries.length === 0) {
+          return scope
+            ? `No memory entries saved in the ${scope} scope yet.`
+            : "No memory entries saved yet.";
+        }
+        return [
+          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} (most recent first):`,
+          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
+        ].join("\n");
+      }
+      case "forget": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("memory.id is required for forget.");
+        }
+        const removed = await forgetCesiumMemoryEntry({ workspaceId, id });
+        if (!removed) {
+          return `No memory entry with id ${id}. Use memory list to see current entries.`;
+        }
+        return `Forgot memory entry.\n${formatCesiumMemoryEntry(removed)}`;
+      }
+      default:
+        throw new Error('memory.action must be one of "save", "search", "list", "forget".');
+    }
   }
 
   /**

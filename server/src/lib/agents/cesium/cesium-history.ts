@@ -198,8 +198,11 @@ function systemRemindersByTargetMessageId(
   return reminders;
 }
 
-export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
-  const messages: CesiumHistoryMessage[] = [{ role: "system", content: CESIUM_SYSTEM_PROMPT }];
+export function normalizeEventsToHistory(
+  events: AgentStoredEvent[],
+  systemPrompt: string = CESIUM_SYSTEM_PROMPT
+): CesiumHistoryMessage[] {
+  const messages: CesiumHistoryMessage[] = [{ role: "system", content: systemPrompt }];
   const assistantTextById = new Map<string, string>();
   const pendingToolCalls: PendingHistoryToolCall[] = [];
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
