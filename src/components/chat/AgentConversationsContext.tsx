@@ -48,6 +48,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
+import { nextAcknowledgedFailureMap } from "@/lib/chat-acknowledged-failure";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyEditorSession,
@@ -746,6 +747,7 @@ export function AgentConversationsProvider({
 
 updateWorkspaceSession((current) => {
       const unreadMap = nextUnreadCompletionMap(current, prev, merged);
+      const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
       const nextTabs = current.chat.tabs.map((tab) =>
         tab.id === incoming.id
           ? {
@@ -762,7 +764,7 @@ updateWorkspaceSession((current) => {
           Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
           Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
       );
-      if (unreadMap === null && tabUnchanged) {
+      if (unreadMap === null && ackMap === null && tabUnchanged) {
         return current;
       }
         return {
@@ -772,6 +774,7 @@ updateWorkspaceSession((current) => {
             ...(unreadMap === null
               ? {}
               : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
             ...(!tabUnchanged ? { tabs: nextTabs } : {}),
           },
         };
@@ -1068,6 +1071,7 @@ updateWorkspaceSession((current) => {
       }));
       updateWorkspaceSession((current) => {
         const unreadMap = nextUnreadCompletionMap(current, prev, merged);
+        const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
       const nextTabs = current.chat.tabs.map((tab) =>
         tab.id === conversation.id
           ? {
@@ -1084,7 +1088,7 @@ updateWorkspaceSession((current) => {
           Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
           Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
       );
-      if (unreadMap === null && tabUnchanged) {
+      if (unreadMap === null && ackMap === null && tabUnchanged) {
         return current;
       }
         return {
@@ -1094,6 +1098,7 @@ updateWorkspaceSession((current) => {
             ...(unreadMap === null
               ? {}
               : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
             ...(!tabUnchanged ? { tabs: nextTabs } : {}),
           },
         };

@@ -4,11 +4,15 @@ export {
   DEFAULT_MODE_TAGS,
   createDefaultGlobalSettings,
   normalizeLoadedGlobalSettings,
+  applyAgentRailViewPreset,
+  matchingAgentRailViewPreset,
 } from "@cesium/client";
 export type {
   AgentRailGroupByMode,
+  AgentRailScope,
   AgentRailSectionId,
   AgentRailSettingsState,
+  AgentRailViewPreset,
   AgentsSettingsState,
   ChatFolderState,
   FeaturesSettingsState,
@@ -23,7 +27,7 @@ export type {
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@cesium/client";
-export { AGENT_RAIL_SECTION_IDS } from "@cesium/client";
+export { AGENT_RAIL_SECTION_IDS, AGENT_RAIL_VIEW_PRESETS } from "@cesium/client";
 export {
   AURORA_MAX_CUSTOM_COLORS,
   AURORA_MIN_CUSTOM_COLORS,

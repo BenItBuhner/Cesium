@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
+  applyAgentRailViewPreset,
   createDefaultGlobalSettings,
   normalizeLoadedGlobalSettings,
 } from "../src/lib/global-settings.ts";
@@ -93,6 +94,7 @@ describe("global settings", () => {
       rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
+      scope: { type: "all" },
     });
   });
 
@@ -111,7 +113,7 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.groupBy, "priority");
   });
 
-  test("preserves machine group-by", () => {
+  test("migrates retired group-by modes to workspace", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -123,7 +125,7 @@ describe("global settings", () => {
         },
       },
     });
-    assert.equal(settings.general.agentRail.groupBy, "server");
+    assert.equal(settings.general.agentRail.groupBy, "workspace");
   });
 
   test("drops retired harness ids from model toggle settings", () => {
@@ -164,14 +166,15 @@ describe("global settings", () => {
     });
 
     assert.deepEqual(settings.general.agentRail, {
-      groupBy: "repository",
-      visibleStatusFilters: ["running"],
+      groupBy: "workspace",
+      visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
       rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
+      scope: { type: "all" },
     });
   });
 
@@ -259,5 +262,47 @@ describe("global settings", () => {
       },
     });
     assert.equal(settings.general.workspaceSortMode, "machine");
+  });
+
+  test("persists a workspace rail scope and defaults to all", () => {
+    const base = createDefaultGlobalSettings();
+    assert.deepEqual(base.general.agentRail.scope, { type: "all" });
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          scope: { type: "workspace", workspaceKey: "local:ws-1" },
+        },
+      },
+    });
+    assert.deepEqual(settings.general.agentRail.scope, {
+      type: "workspace",
+      workspaceKey: "local:ws-1",
+    });
+  });
+
+  test("applies named rail view presets", () => {
+    const rail = createDefaultGlobalSettings().general.agentRail;
+    const inbox = applyAgentRailViewPreset("inbox", rail);
+    assert.equal(inbox.groupBy, "priority");
+    assert.equal(inbox.rowDetail, "balanced");
+    const compact = applyAgentRailViewPreset("compact", rail);
+    assert.equal(compact.groupBy, "workspace");
+    assert.equal(compact.rowDetail, "compact");
+    const compactFromInbox = applyAgentRailViewPreset("compact", inbox);
+    assert.equal(compactFromInbox.groupBy, "workspace");
+    assert.equal(compactFromInbox.scope, { type: "all" });
+    const restored = applyAgentRailViewPreset("default", compact);
+    assert.equal(restored.groupBy, "workspace");
+    assert.equal(restored.rowDetail, "balanced");
+    const scoped = applyAgentRailViewPreset("default", {
+      ...rail,
+      scope: { type: "workspace", workspaceKey: "local:ws-1" },
+      hiddenSections: ["attention"],
+    });
+    assert.deepEqual(scoped.scope, { type: "all" });
+    assert.equal(scoped.hiddenSections.includes("attention"), false);
   });
 });
