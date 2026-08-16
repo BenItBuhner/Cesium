@@ -33,6 +33,12 @@ import {
 } from "../lib/agents/harness-diagnostics.js";
 import { FILE_UPLOADS_DIR } from "../lib/agents/attachment-reminders.js";
 import { ensureCesiumDirGitignored } from "../lib/artifacts/store.js";
+import { listWorkspaces } from "../lib/workspace-registry.js";
+import {
+  deleteCesiumTrigger,
+  listCesiumTriggers,
+  updateCesiumTrigger,
+} from "../lib/agents/cesium-triggers.js";
 
 export const agentRoutes = new Hono();
 
@@ -621,4 +627,52 @@ agentRoutes.post("/api/agents/attachments", async (c) => {
     attachments.push({ id, path: filePath, name: fileName, size: buf.byteLength, mimeType });
   }
   return c.json({ attachments });
+});
+
+/** All scheduled triggers across workspaces (for the settings management UI). */
+agentRoutes.get("/api/agents/triggers", async (c) => {
+  const workspaces = await listWorkspaces();
+  const triggers = (
+    await Promise.all(
+      workspaces.map(async (workspace) =>
+        (await listCesiumTriggers(workspace.id)).map((trigger) => ({
+          ...trigger,
+          workspaceName: workspace.name,
+        }))
+      )
+    )
+  ).flat();
+  return c.json({ triggers });
+});
+
+agentRoutes.patch("/api/agents/triggers/:triggerId", async (c) => {
+  const triggerId = c.req.param("triggerId");
+  const body = await c.req.json<{ workspaceId?: string; enabled?: boolean }>();
+  const workspaceId = body.workspaceId?.trim();
+  if (!workspaceId) {
+    return c.json({ error: "Missing workspace id." }, 400);
+  }
+  try {
+    const trigger = await updateCesiumTrigger({
+      workspaceId,
+      id: triggerId,
+      patch: { ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}) },
+    });
+    return c.json({ trigger });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
+  }
+});
+
+agentRoutes.delete("/api/agents/triggers/:triggerId", async (c) => {
+  const triggerId = c.req.param("triggerId");
+  const workspaceId = c.req.query("workspaceId")?.trim();
+  if (!workspaceId) {
+    return c.json({ error: "Missing workspace id." }, 400);
+  }
+  const removed = await deleteCesiumTrigger({ workspaceId, id: triggerId });
+  if (!removed) {
+    return c.json({ error: `No trigger with id ${triggerId}.` }, 404);
+  }
+  return c.json({ trigger: removed });
 });
