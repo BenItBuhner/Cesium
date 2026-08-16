@@ -89,6 +89,8 @@ const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null)
 
 const BARGE_IN_CANCEL_MS = 350;
 const TRANSCRIPT_LIMIT = 6;
+const REPLY_RECONCILE_RETRY_MS = 2500;
+const MAX_REPLY_RECONCILE_ATTEMPTS = 3;
 
 let transcriptCounter = 0;
 function nextTranscriptId(): string {
@@ -120,8 +122,12 @@ declare global {
 }
 
 export function VoiceSessionProvider({ children }: { children: ReactNode }) {
-  const { promptConversation, eventsByConversationId, conversationsById } =
-    useAgentConversations();
+  const {
+    promptConversation,
+    eventsByConversationId,
+    conversationsById,
+    syncConversationSnapshot,
+  } = useAgentConversations();
   const { startNewConversation, setSelectedConversationId } = useAgentShellState();
 
   const [view, setView] = useState<VoiceSessionView>("closed");
@@ -156,6 +162,20 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const bargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const micLevelRef = useRef(0);
   const lastSpokenSeqRef = useRef(0);
+
+  // Pending-turn marker: set when a submit is accepted, cleared when the
+  // speak effect processes the turn's assistant_message_end. Mirrored in a
+  // ref so sibling effects in the same commit see the cleared value.
+  const [awaitingReplySince, setAwaitingReplySince] = useState<number | null>(
+    null
+  );
+  const awaitingReplySinceRef = useRef<number | null>(null);
+  const sawTurnRunningRef = useRef(false);
+  const reconcileAttemptsRef = useRef(0);
+  const markAwaitingReply = useCallback((value: number | null) => {
+    awaitingReplySinceRef.current = value;
+    setAwaitingReplySince(value);
+  }, []);
 
   const pushTranscript = useCallback(
     (entry: { kind: VoiceTranscriptEntry["kind"]; text: string }) => {
@@ -220,6 +240,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           : await draftRef.current.handleSubmit(text, attachments);
         if (!accepted) {
           pushTranscript({ kind: "error", text: "Send: message was not accepted." });
+        } else {
+          sawTurnRunningRef.current = false;
+          reconcileAttemptsRef.current = 0;
+          markAwaitingReply(Date.now());
         }
         return accepted;
       } catch (submitError) {
@@ -234,7 +258,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         setComposerSending(false);
       }
     },
-    [pushTranscript]
+    [markAwaitingReply, pushTranscript]
   );
   const submitComposerRef = useRef(submitComposer);
   submitComposerRef.current = submitComposer;
@@ -390,6 +414,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     conversationIdRef.current = null;
     setConversationId(null);
     lastSpokenSeqRef.current = 0;
+    markAwaitingReply(null);
     setTranscript([]);
     setMicError(null);
     // Present the fresh draft chat behind the overlay so minimizing shows
@@ -398,7 +423,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     engine.start();
     setView("full");
     void setupCapture();
-  }, [engine, setupCapture, startNewConversation]);
+  }, [engine, markAwaitingReply, setupCapture, startNewConversation]);
 
   const stop = useCallback(() => {
     engine.stop();
@@ -407,7 +432,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setView("closed");
     conversationIdRef.current = null;
     setConversationId(null);
-  }, [engine, teardownCapture]);
+    markAwaitingReply(null);
+  }, [engine, markAwaitingReply, teardownCapture]);
 
   const minimize = useCallback(() => {
     if (viewRef.current === "full") {
@@ -497,6 +523,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       if (event.seq <= lastSpokenSeqRef.current) continue;
       if (event.kind !== "assistant_message_end") continue;
       lastSpokenSeqRef.current = event.seq;
+      markAwaitingReply(null);
       const text = boundEvents
         .filter(
           (candidate) =>
@@ -519,7 +546,57 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           .catch(() => {});
       }
     }
-  }, [boundEvents, conversationId, getPlayer, pushTranscript]);
+  }, [boundEvents, conversationId, getPlayer, markAwaitingReply, pushTranscript]);
+
+  // ---- Reply reconciliation: close the event-delivery hole ---------------
+  // `eventsByConversationId` is fed by socket event batches (which can lag or
+  // stall silently) and by catch-up snapshot polls that stop 5s after submit.
+  // A turn finishing after that window on a degraded socket never surfaces
+  // its assistant_message_end above, even though the conversation status
+  // still flips to idle via the status channel. While a turn is pending,
+  // watch the bound conversation's status: once it settles without the reply
+  // having been processed, re-fetch the snapshot (deduped inside
+  // syncConversationSnapshot) so the speak effect fires from merged events.
+  const boundStatus = conversationId
+    ? conversationsById[conversationId]?.status
+    : undefined;
+  useEffect(() => {
+    if (awaitingReplySince === null || !conversationId) return;
+    if (
+      boundStatus === "running" ||
+      boundStatus === "awaiting_permission" ||
+      boundStatus === "awaiting_question" ||
+      boundStatus === "pause_requested" ||
+      boundStatus === "pausing" ||
+      boundStatus === "paused"
+    ) {
+      sawTurnRunningRef.current = true;
+      return;
+    }
+    // Before the prompt ACK the status is still idle; wait for the turn to
+    // actually start so we do not fetch a snapshot that predates the reply.
+    if (!sawTurnRunningRef.current) return;
+    const reconcile = () => {
+      if (awaitingReplySinceRef.current === null) return;
+      if (reconcileAttemptsRef.current >= MAX_REPLY_RECONCILE_ATTEMPTS) {
+        // The turn settled without an assistant_message_end (e.g. failed or
+        // cancelled turn); stop retrying until the next submit.
+        markAwaitingReply(null);
+        return;
+      }
+      reconcileAttemptsRef.current += 1;
+      void syncConversationSnapshot(conversationId).catch(() => undefined);
+    };
+    reconcile();
+    const timer = window.setInterval(reconcile, REPLY_RECONCILE_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    awaitingReplySince,
+    boundStatus,
+    conversationId,
+    markAwaitingReply,
+    syncConversationSnapshot,
+  ]);
 
   // Dev/testing hook: drives the session without a microphone.
   useEffect(() => {
