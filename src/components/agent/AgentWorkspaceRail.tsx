@@ -743,6 +743,28 @@ export function AgentWorkspaceRail() {
     return conversations;
   }, [groups]);
 
+  const showStandaloneHomeGroup = useMemo(() => {
+    if (agentRailSettings.groupBy === "priority") {
+      return false;
+    }
+    const scope = agentRailSettings.scope;
+    if (!scope || scope.type === "all") {
+      return true;
+    }
+    if (scope.type !== "workspace") {
+      return false;
+    }
+    const scoped = directoryWorkspaces.find(
+      (workspace) => workspace.workspaceKey === scope.workspaceKey
+    );
+    return Boolean(scoped && isStandaloneChatWorkspace(scoped));
+  }, [agentRailSettings.groupBy, agentRailSettings.scope, directoryWorkspaces]);
+
+  const standaloneHomeLabel = useMemo(() => {
+    const named = groups.find((group) => isStandaloneChatWorkspace(group.workspace));
+    return named?.workspace.name?.trim() || "Chat";
+  }, [groups]);
+
   const standaloneWorkspaceIds = useMemo(() => {
     const ids = new Set<string>();
     for (const group of groups) {
@@ -2662,7 +2684,7 @@ export function AgentWorkspaceRail() {
               />
             </span>
             <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
-              Chats
+              {standaloneHomeLabel}
             </span>
           </button>
           <button
@@ -2866,6 +2888,7 @@ export function AgentWorkspaceRail() {
     settings.general.chatFolders,
     settings.general.chatRootOrderByScope,
     standaloneChatConversations,
+    standaloneHomeLabel,
     toggleFolderCollapsed,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
@@ -3303,7 +3326,7 @@ export function AgentWorkspaceRail() {
       } else if (sectionId === "workspaces") {
         nodes.push(
           <div key="workspaces">
-            {agentRailSettings.groupBy !== "priority" ? chatsSection : null}
+            {showStandaloneHomeGroup ? chatsSection : null}
             {workspaceGroupsSection}
           </div>
         );
@@ -3311,11 +3334,11 @@ export function AgentWorkspaceRail() {
     }
     return nodes;
   }, [
-    agentRailSettings.groupBy,
     attentionSection,
     chatsSection,
     pinnedSection,
     railSectionOrder,
+    showStandaloneHomeGroup,
     workspaceGroupsSection,
   ]);
 
