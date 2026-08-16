@@ -767,9 +767,9 @@ export function AgentNewChatLanding({
           {/*
            * Same chrome family as the cards docked above the chat composer
            * (AskQuestionCard / dockedComposerCardFrame): top-rounded, open
-           * bottom, card fill + border. Inset by the composer's own corner
-           * radius so the card's square bottom corners land on the flat part
-           * of the composer's top edge instead of poking past its curve.
+           * bottom, card fill + border. Inset by `--agent-composer-radius`
+           * so the card's square bottom corners land on the flat part of
+           * the composer's top edge instead of poking past its curve.
            * `-mb-[4px]` cancels the column `gap-[2px]` plus the composer's
            * empty-top `mt-[2px]` so the card sits flush on the composer edge.
            */}
