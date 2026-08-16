@@ -36,6 +36,10 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
+import {
+  BACK_INTENT_PRIORITY,
+  useBackHandler,
+} from "@/components/mobile/BackIntentContext";
 
 const SPRING_STIFFNESS = 420;
 const SPRING_DAMPING = 2 * Math.sqrt(SPRING_STIFFNESS);
@@ -319,6 +323,42 @@ export function MobileAgentShell({
   useLayoutEffect(() => {
     applyRightFrame(rightMotionRef.current?.progress ?? 0);
   }, [applyRightFrame]);
+
+  // ---- Android predictive back --------------------------------------------
+  //
+  // While an Android back gesture is in flight the drawer is pinned to the
+  // gesture's progress (1 → 0), exactly like a finger drag on the drawer
+  // itself. A committed gesture pops the drawer (spring finishes from wherever
+  // the finger left off); a cancelled gesture springs it back open. The rail
+  // (a full-backdrop modal drawer) outranks the right pane, matching their
+  // visual stacking. Outside the Android shell no gesture stream ever arrives,
+  // so only the discrete pop handlers are reachable there.
+  useBackHandler(
+    railOpen,
+    BACK_INTENT_PRIORITY.leftRail,
+    () => {
+      setRailOpen(false);
+      leftMotionRef.current?.springTo(0);
+    },
+    {
+      onStart: () => leftMotionRef.current?.beginDrag(),
+      onProgress: (event) => leftMotionRef.current?.dragTo(1 - event.progress, 0),
+      onCancel: () => leftMotionRef.current?.springTo(1),
+    }
+  );
+  useBackHandler(
+    rightOpen,
+    BACK_INTENT_PRIORITY.rightPane,
+    () => {
+      setRightOpen(false);
+      rightMotionRef.current?.springTo(0);
+    },
+    {
+      onStart: () => rightMotionRef.current?.beginDrag(),
+      onProgress: (event) => rightMotionRef.current?.dragTo(1 - event.progress, 0),
+      onCancel: () => rightMotionRef.current?.springTo(1),
+    }
+  );
 
   // Programmatic open/close (buttons, back gestures, external state).
   useEffect(() => {

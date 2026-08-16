@@ -78,11 +78,21 @@ export type MobileNativeToWebMessage =
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
   | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number }
-  // The Android hardware/predictive back gesture was invoked. The web layer
-  // owns the in-WebView navigation stack (open overlays, drawers, settings
-  // view) and decides what to pop; if it cannot handle the intent it replies
-  // with `backFallback` so the native shell can walk WebView history or exit.
-  | { type: "backRequest" };
+  // The Android hardware/predictive back gesture was invoked (committed). The
+  // web layer owns the in-WebView navigation stack (open overlays, drawers,
+  // settings view) and decides what to pop; if it cannot handle the intent it
+  // replies with `backFallback` so the native shell can walk WebView history
+  // or exit.
+  | { type: "backRequest" }
+  // Progressive predictive-back stream (Android 14+ gesture navigation). The
+  // gesture `progress` runs 0..1 as the finger travels from the `swipeEdge`;
+  // the web layer previews the pop (drawer follows the finger, settings view
+  // scales down) and then either commits on `backRequest` or reverts on
+  // `backCancelled`. Older Androids and 3-button navigation never send these,
+  // so `backRequest` alone must stay sufficient.
+  | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
+  | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
+  | { type: "backCancelled" };
 
 export type MobileWebToNativeMessage =
   | { type: "webReady"; workspaceId: string | null; focusedConversationId: string | null; authToken?: string | null }
