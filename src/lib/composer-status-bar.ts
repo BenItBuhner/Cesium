@@ -5,6 +5,7 @@ export {
   formatContextTokenCount,
   formatContextUsagePair,
   normalizeComposerStatusBarVisibility,
+  pinComposerStatusBarVisibilityForConversation,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
   resolveComposerStatusBarVisibilityForConversation,
