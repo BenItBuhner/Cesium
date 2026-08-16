@@ -163,6 +163,21 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
   ),
+  section("general", "quick-open", "Quick Open & switcher", "palette search"),
+  row(
+    "general",
+    "quick-open-default-scope",
+    "Default Quick Open search",
+    "What Ctrl/Cmd+P searches when it opens: files, chats, commands, settings, or tabs.",
+    ["quick open", "palette", "cmd+p", "ctrl+p", "scope", "search", "default"]
+  ),
+  row(
+    "general",
+    "quick-switcher-scope",
+    "Ctrl+Tab switcher cycles",
+    "Cycle agent conversations, open editor tabs, or both with the hold-to-cycle switcher.",
+    ["ctrl+tab", "switcher", "mru", "tabs", "conversations", "cycle"]
+  ),
   section("general", "performance", "Performance", "stream rendering"),
   row(
     "general",

@@ -1,8 +1,23 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { AgentSwitcherCandidate } from "@/lib/agent-conversation-mru";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
+
+/** Row shown in the hold-to-cycle quick switcher (agent conversations and/or editor tabs). */
+export type QuickSwitcherItem = {
+  id: string;
+  title: string;
+  kind: "conversation" | "tab";
+  /** Muted trailing detail after the title (workspace name, pane label, …). */
+  secondary?: string;
+  badge?: string;
+  /** Relative activity time; omitted for editor tabs. */
+  updatedAt?: number;
+  /** Editor pane the tab lives in (tab items only). */
+  group?: "left" | "right";
+  /** Raw editor tab id (tab items only). */
+  tabId?: string;
+};
 
 const rowBase =
   "flex w-full cursor-pointer items-center gap-[10px] px-[10px] py-[5px] text-left font-sans text-[13px] outline-none";
@@ -30,13 +45,15 @@ export function AgentSwitcherPalette({
   selectedIndex,
   onSelectedIndexChange,
   onClose,
-  emptyLabel = "No agents to switch",
+  listLabel = "Recently used agents",
+  emptyLabel = "Nothing to switch",
 }: {
   open: boolean;
-  items: AgentSwitcherCandidate[];
+  items: QuickSwitcherItem[];
   selectedIndex: number;
   onSelectedIndexChange: (index: number) => void;
   onClose: () => void;
+  listLabel?: string;
   emptyLabel?: string;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -56,17 +73,17 @@ export function AgentSwitcherPalette({
       open={open}
       onClose={onClose}
       hideInput
-      screenReaderTitle="Switch agent"
-      inputLabel="Recently used agents"
+      screenReaderTitle="Quick switcher"
+      inputLabel={listLabel}
       placeholder=""
       value=""
       onChange={() => undefined}
       onKeyDown={() => undefined}
       footer={
         <p className="font-sans text-[11px] text-[var(--palette-footer-text)]">
-          Hold <kbd className={kbdCls}>Ctrl</kbd> and tap <kbd className={kbdCls}>Tab</kbd> to
-          move · release <kbd className={kbdCls}>Ctrl</kbd> or <kbd className={kbdCls}>Enter</kbd>{" "}
-          to switch · <kbd className={kbdCls}>Esc</kbd> to cancel
+          Hold the modifier and tap the key to move · release it or{" "}
+          <kbd className={kbdCls}>Enter</kbd> to switch ·{" "}
+          <kbd className={kbdCls}>Esc</kbd> to cancel
         </p>
       }
     >
@@ -109,8 +126,8 @@ export function AgentSwitcherPalette({
                   }`}
                 >
                   {item.title}
-                  {item.workspaceName ? (
-                    <span className={secondaryCls}>{` · ${item.workspaceName}`}</span>
+                  {item.secondary ? (
+                    <span className={secondaryCls}>{` · ${item.secondary}`}</span>
                   ) : null}
                   {item.badge ? (
                     <span className={`${secondaryCls} uppercase`}>{` · ${item.badge}`}</span>
@@ -119,7 +136,7 @@ export function AgentSwitcherPalette({
                 <span
                   className={`shrink-0 whitespace-nowrap font-sans text-[11px] ${secondaryCls}`}
                 >
-                  {formatRelativeTime(item.updatedAt)}
+                  {item.updatedAt != null ? formatRelativeTime(item.updatedAt) : ""}
                 </span>
               </div>
             );
