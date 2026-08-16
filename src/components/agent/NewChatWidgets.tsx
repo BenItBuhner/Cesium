@@ -66,12 +66,17 @@ const MAX_ACTION_TILES = 8;
 const MAX_RECENT_CHATS = 4;
 const MAX_RECENT_WORKSPACES = 4;
 
-/** Every widget tile shares one fill, outline, and corner radius. */
+/**
+ * Every widget tile shares one material: the same translucent fill, outline,
+ * and high corner radius as the chat composer shell and the landing quick
+ * actions (`aurora-glass` mirrors `.chat-composer-surface`).
+ */
 const TILE_CLASSNAME =
-  "flex w-full min-w-0 items-center gap-[8px] rounded-[var(--radius-card)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[12px] py-[9px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--agent-card-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60";
-const TILE_ICON_CLASSNAME = "size-[13px] shrink-0 text-[var(--text-secondary)]";
-const TILE_LABEL_CLASSNAME = "min-w-0 flex-1 truncate";
+  "aurora-glass inline-flex max-w-full min-w-0 items-center gap-[6px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60";
+const TILE_ICON_CLASSNAME = "size-[12px] shrink-0 text-[var(--text-secondary)]";
 const TILE_META_CLASSNAME = "shrink-0 font-sans text-[10.5px] text-[var(--text-disabled)]";
+/** One wrap row per widget keeps groups (e.g. Actions) visually distinct. */
+const WIDGET_ROW_CLASSNAME = "flex w-full min-w-0 flex-wrap items-center gap-[8px]";
 
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -466,8 +471,10 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
       title={`Start planning a new idea (${planShortcutHint})`}
     >
       <Lightbulb className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
-      <span className={TILE_LABEL_CLASSNAME}>Plan new idea</span>
-      <span className={TILE_META_CLASSNAME}>{planShortcutHint}</span>
+      <span className="truncate">
+        Plan new idea{" "}
+        <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
+      </span>
     </button>,
     <button
       key="shortcut-editor"
@@ -477,7 +484,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
       title="Open the editor panel"
     >
       <PanelRight className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
-      <span className={TILE_LABEL_CLASSNAME}>Open editor panel</span>
+      <span className="truncate">Open editor panel</span>
     </button>,
   ];
 
@@ -510,26 +517,26 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
         >
           {isRunning ? (
             <LoaderCircle
-              className="size-[13px] shrink-0 animate-spin text-[var(--accent)]"
+              className="size-[12px] shrink-0 animate-spin text-[var(--accent)]"
               strokeWidth={2}
               aria-hidden
             />
           ) : isDone ? (
             <Check
-              className="size-[13px] shrink-0 text-[var(--status-success,#4ade80)]"
+              className="size-[12px] shrink-0 text-[var(--status-success,#4ade80)]"
               strokeWidth={2.2}
               aria-hidden
             />
           ) : isError ? (
             <X
-              className="size-[13px] shrink-0 text-[var(--status-error)]"
+              className="size-[12px] shrink-0 text-[var(--status-error)]"
               strokeWidth={2.2}
               aria-hidden
             />
           ) : (
             <Icon className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
           )}
-          <span className={TILE_LABEL_CLASSNAME}>
+          <span className="truncate">
             {isConfirm ? `Run ${action.label}?` : action.label}
           </span>
         </button>
@@ -559,7 +566,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
         title={otherWorkspace ? `${summary.title} — ${otherWorkspace}` : summary.title}
       >
         <MessageSquare className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
-        <span className={TILE_LABEL_CLASSNAME}>{summary.title}</span>
+        <span className="max-w-[240px] truncate">{summary.title}</span>
         <span className={TILE_META_CLASSNAME}>{formatRelativeTime(summary.updatedAt)}</span>
       </button>
     );
@@ -585,10 +592,10 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
         <WorkspaceFolderIcon
           iconName={appearance.icon}
           color={appearance.color}
-          className="size-[13px] shrink-0"
+          className="size-[12px] shrink-0"
           strokeWidth={1.5}
         />
-        <span className={TILE_LABEL_CLASSNAME}>{workspace.name}</span>
+        <span className="max-w-[180px] truncate">{workspace.name}</span>
         {workspace.lastOpenedAt ? (
           <span className={TILE_META_CLASSNAME}>
             {formatRelativeTime(workspace.lastOpenedAt)}
@@ -598,26 +605,32 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     );
   });
 
-  const tiles: ReactNode[] = visibleWidgets.flatMap((id) => {
-    switch (id) {
-      case "shortcuts":
-        return shortcutTiles;
-      case "actions":
-        return actionTiles;
-      case "recent-chats":
-        return recentChatTiles;
-      case "recent-activity":
-        return recentWorkspaceTiles;
-      default:
-        return [];
-    }
-  });
+  const widgetRows: ReactNode[] = visibleWidgets
+    .map((id) => {
+      const tiles =
+        id === "shortcuts"
+          ? shortcutTiles
+          : id === "actions"
+            ? actionTiles
+            : id === "recent-chats"
+              ? recentChatTiles
+              : id === "recent-activity"
+                ? recentWorkspaceTiles
+                : [];
+      if (tiles.length === 0) {
+        return null;
+      }
+      return (
+        <div key={id} className={WIDGET_ROW_CLASSNAME}>
+          {tiles}
+        </div>
+      );
+    })
+    .filter((rowNode) => rowNode != null);
 
   return (
     <div className="mt-[10px] flex w-full min-w-0 items-start gap-[6px]">
-      <div className="grid min-w-0 flex-1 grid-cols-1 gap-[8px] @min-[480px]:grid-cols-2 @min-[760px]:grid-cols-3">
-        {tiles}
-      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-[10px]">{widgetRows}</div>
       <div className="relative shrink-0">
         <button
           ref={customizeButtonRef}
