@@ -60,7 +60,8 @@ test("bootstrap script carries host identity, protocol version, and the relay", 
     systemColorScheme: "dark",
   });
   assert.ok(script.includes(`protocolVersion: ${MOBILE_BRIDGE_PROTOCOL_VERSION}`));
-  assert.ok(script.includes('"nativeReady"'));
+  // The ready message is embedded as a JSON string literal (escaped quotes).
+  assert.ok(script.includes("nativeReady"));
   assert.ok(script.includes("__CESIUM_MOBILE_SERVER__"));
   assert.ok(script.includes("__CESIUM_MOBILE_NATIVE_READY__"));
   assert.ok(script.includes(MOBILE_BRIDGE_MESSAGE_EVENT));
