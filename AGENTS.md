@@ -45,11 +45,14 @@ handles the first two, but you must repeat them by hand if you re-run installs):
 
 Best route for Cesium mobile (`apps/mobile`, RN + WebView APK): the official
 **Google Android SDK emulator** (cmdline-tools) with the
-`system-images;android-36;google_apis;x86_64` image. Contrary to assumption,
-**KVM IS present on these Cloud VMs** — run `sudo chmod 666 /dev/kvm` and CPU
-acceleration works (`emulator -accel-check` confirms). Use
-`-gpu swiftshader_indirect` (software GPU; no host GPU here). Only add
-`-accel off` if `/dev/kvm` is truly absent (expect a 10+ minute boot).
+`system-images;android-36;google_apis;x86_64` image, run **fully software-bound**:
+`-accel off` (TCG CPU emulation) plus `-gpu swiftshader_indirect` (software GPU).
+**Do not trust KVM here:** `/dev/kvm` exists and `emulator -accel-check` claims
+"KVM installed and usable", but that probe never runs a vCPU — with KVM enabled
+the emulator parks at ~0% CPU before guest boot and never comes up. `-accel off`
+is mandatory. Expect a slow boot (~10 min) and a sluggish but fully usable guest.
+Run headless (`-no-window`; the Qt window also fails to map on this desktop) and
+drive it with `adb shell input` / `screencap` / `screenrecord`.
 
 One-time setup (~4 min):
 
@@ -60,26 +63,34 @@ unzip -q tools.zip -d cmdline-tools && mv cmdline-tools/cmdline-tools cmdline-to
 export ANDROID_HOME=$HOME/android-sdk
 yes | cmdline-tools/latest/bin/sdkmanager --licenses
 cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" \
-  "build-tools;36.0.0" "emulator" "system-images;android-36;google_apis;x86_64"
+  "build-tools;36.0.0" "emulator" "cmake;3.31.6" "ndk;27.0.12077973" \
+  "system-images;android-36;google_apis;x86_64"
 echo no | cmdline-tools/latest/bin/avdmanager create avd -n cesium \
   -k "system-images;android-36;google_apis;x86_64" -d pixel_7
-sudo chmod 666 /dev/kvm
 ```
 
-Run + install (from repo root; emulator window renders on the VM desktop, so
-screen recording / computer-use testing works):
+(CMake + the pinned NDK are required or `:app:configureCMakeDebug` fails with
+`[CXX1300] CMake '3.31.6' was not found`.)
+
+Run + install (from repo root):
 
 ```bash
 export ANDROID_HOME=$HOME/android-sdk \
   PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
-emulator -avd cesium -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim &
-adb wait-for-device
+emulator -avd cesium -no-window -accel off -gpu swiftshader_indirect \
+  -no-snapshot -no-audio -no-boot-anim -no-metrics -memory 3072 -cores 4 &
+adb wait-for-device   # then poll: adb shell getprop sys.boot_completed -> 1
 npm run build:packages
 npm --prefix apps/mobile run build:web-assets      # workbench bundle -> APK assets
 npm --prefix apps/mobile run build:android:debug   # gradle assembleDebug (JDK 21 OK)
 adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.cesium.mobile/.MainActivity
 ```
+
+Interact headlessly: `adb shell input tap/swipe/text`, screenshots with
+`adb exec-out screencap -p > shot.png`, demo videos with
+`adb shell screenrecord` (pull the mp4 afterwards). Give the WebView extra
+time under TCG — first workbench load can take a couple of minutes.
 
 The app's WebView reaches a host-side backend at `http://10.0.2.2:9100`
 (default), so start `npm run dev:server` on the VM first. Rebuild
