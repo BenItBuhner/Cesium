@@ -3,6 +3,12 @@ import type {
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
 import type { AgentRailGroupByMode } from "@/lib/global-settings";
+import {
+  AGENT_RAIL_PRIORITY_BUCKETS,
+  AGENT_RAIL_PRIORITY_BUCKET_LABELS,
+  compareAgentRailByStatusPriority,
+  getAgentRailPriorityBucket,
+} from "@/lib/agent-rail-status";
 
 /** Includes retired modes so persisted values and tests still regroup until migrated. */
 export type AgentRailGroupByInput =
@@ -11,12 +17,6 @@ export type AgentRailGroupByInput =
   | "server"
   | "updated"
   | "status";
-import {
-  AGENT_RAIL_PRIORITY_BUCKETS,
-  AGENT_RAIL_PRIORITY_BUCKET_LABELS,
-  compareAgentRailByStatusPriority,
-  getAgentRailPriorityBucket,
-} from "@/lib/agent-rail-status";
 
 export type AgentRailGroupContext = {
   /** Conversations whose finished turn the user has not opened yet. */

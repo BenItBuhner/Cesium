@@ -2986,7 +2986,7 @@ export function AgentWorkspaceRail() {
                       <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
-                      {groupMachineLabel && agentRailSettings.groupBy !== "server" ? (
+                      {groupMachineLabel ? (
                         <span className="max-w-[86px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
                           {groupMachineLabel}
                         </span>
