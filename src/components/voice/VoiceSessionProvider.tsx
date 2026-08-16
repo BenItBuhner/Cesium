@@ -48,7 +48,6 @@ import { TtsPlayer } from "@/lib/voice/tts-player";
 import { createBestVad, type VadEngine } from "@/lib/voice/vad";
 import { isVoiceSessionEvent, VOICE_SESSION_EVENT } from "@/lib/voice-session-events";
 import type { ImageAttachment } from "@/lib/types";
-import { VoiceAgentView } from "./VoiceAgentView";
 
 export type VoiceSessionView = "closed" | "full" | "minimized";
 
@@ -583,7 +582,6 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   return (
     <VoiceSessionContext.Provider value={value}>
       {children}
-      <VoiceAgentView />
     </VoiceSessionContext.Provider>
   );
 }
