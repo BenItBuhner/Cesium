@@ -198,8 +198,12 @@ export default function App() {
   const consumeSharePayload = useCallback(async () => {
     const payload = await CesiumAndroidRuntime.consumeSharedPayload();
     if (!payload) return;
+    // Skipped-only payloads still surface the sheet so the user learns the
+    // shared item was unreadable/oversized instead of a silent no-op.
     const hasContent =
-      (payload.text != null && payload.text.length > 0) || payload.items.length > 0;
+      (payload.text != null && payload.text.length > 0) ||
+      payload.items.length > 0 ||
+      (payload.skippedCount ?? 0) > 0;
     if (!hasContent) return;
     pendingShareRef.current = payload;
     flushPendingShare();
