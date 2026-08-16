@@ -3,6 +3,8 @@ package com.cesium.mobile
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
 import android.util.Base64
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
@@ -12,6 +14,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -90,7 +93,130 @@ class CesiumAndroidRuntimeModule(
   }
 
   override fun onNewIntent(intent: Intent) {
-    // Notification intents are handled by MainActivity.
+    // A share can arrive while the activity is already resumed and top-most
+    // (e.g. sharing from a split-screen or freeform-window app). AppState never
+    // flips in that case, so JS would not poll `consumeSharedPayload` on its
+    // own — nudge it. MainActivity stages the payload in CesiumShareIntentStore
+    // before super.onNewIntent() reaches this listener.
+    val action = intent.action
+    if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+      return
+    }
+    if (!reactContext.hasActiveReactInstance()) {
+      return
+    }
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit(SHARE_INTAKE_EVENT, null)
+  }
+
+  /**
+   * Drains the pending share-sheet intent (if any) into a JS-friendly payload:
+   * shared text/subject plus every shared stream read into base64. Returns
+   * null when nothing was shared since the last call.
+   */
+  @ReactMethod
+  fun consumeSharedPayload(promise: Promise) {
+    try {
+      val intent = CesiumShareIntentStore.consume()
+      if (intent == null) {
+        promise.resolve(null)
+        return
+      }
+      promise.resolve(readSharedPayload(intent))
+    } catch (error: Exception) {
+      promise.reject("CESIUM_SHARE_READ_FAILED", "Failed to read the shared content.", error)
+    }
+  }
+
+  private fun readSharedPayload(intent: Intent): WritableMap {
+    val uris = mutableListOf<Uri>()
+    if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+      val streams = if (Build.VERSION.SDK_INT >= 33) {
+        intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+      } else {
+        @Suppress("DEPRECATION")
+        intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+      }
+      streams?.filterNotNull()?.let(uris::addAll)
+    } else {
+      val stream = if (Build.VERSION.SDK_INT >= 33) {
+        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+      } else {
+        @Suppress("DEPRECATION")
+        intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+      }
+      stream?.let(uris::add)
+    }
+
+    val items = Arguments.createArray()
+    var skipped = 0
+    for (uri in uris.take(MAX_SHARED_ITEMS)) {
+      val item = readSharedItem(uri, intent.type)
+      if (item != null) {
+        items.pushMap(item)
+      } else {
+        skipped += 1
+      }
+    }
+    skipped += maxOf(0, uris.size - MAX_SHARED_ITEMS)
+
+    return Arguments.createMap().apply {
+      putString("text", intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString())
+      putString("subject", intent.getStringExtra(Intent.EXTRA_SUBJECT))
+      putArray("items", items)
+      putInt("skippedCount", skipped)
+    }
+  }
+
+  private fun readSharedItem(uri: Uri, fallbackMimeType: String?): WritableMap? {
+    val resolver = reactContext.contentResolver
+    val mimeType = resolver.getType(uri)
+      ?: fallbackMimeType?.takeIf { !it.contains('*') }
+      ?: "application/octet-stream"
+    val name = querySharedDisplayName(uri)
+      ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+      ?: "shared-file"
+    val bytes = try {
+      resolver.openInputStream(uri)?.use { input ->
+        val buffer = ByteArrayOutputStream()
+        val chunk = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+          val read = input.read(chunk)
+          if (read <= 0) {
+            break
+          }
+          total += read
+          if (total > MAX_SHARED_FILE_BYTES) {
+            return null
+          }
+          buffer.write(chunk, 0, read)
+        }
+        buffer.toByteArray()
+      }
+    } catch (_: Exception) {
+      null
+    } ?: return null
+
+    return Arguments.createMap().apply {
+      putString("name", name)
+      putString("mimeType", mimeType)
+      putString("base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+      putInt("byteLength", bytes.size)
+    }
+  }
+
+  private fun querySharedDisplayName(uri: Uri): String? {
+    return try {
+      reactContext.contentResolver
+        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor ->
+          if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null
+        }
+    } catch (_: Exception) {
+      null
+    }
   }
 
   private fun readPickedImages(data: Intent): WritableArray {
@@ -181,5 +307,13 @@ class CesiumAndroidRuntimeModule(
     private const val PICK_IMAGES_REQUEST = 0xCE51
     private const val MAX_IMAGES = 10
     private const val MAX_IMAGE_BYTES = 10 * 1024 * 1024
+    // Composer caps mirrored natively: at most 10 attachments per message, and
+    // each shared stream is base64-encoded across the RN bridge, so keep a
+    // conservative per-item byte cap to protect bridge throughput.
+    private const val MAX_SHARED_ITEMS = 10
+
+    /** DeviceEventEmitter event telling JS a share intent is waiting in the store. */
+    const val SHARE_INTAKE_EVENT = "cesiumShareIntakeAvailable"
+    private const val MAX_SHARED_FILE_BYTES = 25 * 1024 * 1024
   }
 }

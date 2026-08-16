@@ -64,7 +64,7 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
-    handleNotificationIntent(intent)
+    handleLaunchIntent(intent)
     CesiumPredictiveBackHub.enabledSink = predictiveBackEnabledSink
     predictiveBackCallback.isEnabled = CesiumPredictiveBackHub.isInterceptEnabled()
     onBackPressedDispatcher.addCallback(this, predictiveBackCallback)
@@ -80,13 +80,17 @@ class MainActivity : ReactActivity() {
   }
 
   override fun onNewIntent(intent: Intent) {
+    // Update the intent stores first: super.onNewIntent() notifies React's
+    // ActivityEventListeners (CesiumAndroidRuntimeModule nudges JS to drain
+    // the share store), so the payload must already be staged by then.
+    handleLaunchIntent(intent)
     super.onNewIntent(intent)
     setIntent(intent)
-    handleNotificationIntent(intent)
   }
 
-  private fun handleNotificationIntent(intent: Intent?) {
+  private fun handleLaunchIntent(intent: Intent?) {
     CesiumNotificationIntentStore.update(intent)
+    CesiumShareIntentStore.update(intent)
   }
 
   private fun gesturePayload(backEvent: BackEventCompat): WritableMap =

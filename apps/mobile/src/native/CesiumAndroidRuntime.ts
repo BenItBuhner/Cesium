@@ -17,9 +17,24 @@ export type PickedAndroidImage = {
   byteLength: number;
 };
 
+export type SharedAndroidItem = {
+  name: string;
+  mimeType: string;
+  base64: string;
+  byteLength: number;
+};
+
+export type SharedAndroidPayload = {
+  text: string | null;
+  subject: string | null;
+  items: SharedAndroidItem[];
+  skippedCount: number;
+};
+
 type CesiumAndroidRuntimeModule = {
   getRuntimeConfig(): Promise<Partial<AndroidRuntimeConfig>>;
   pickImages(allowMultiple: boolean): Promise<PickedAndroidImage[]>;
+  consumeSharedPayload(): Promise<Partial<SharedAndroidPayload> | null>;
 };
 
 const nativeModule = NativeModules.CesiumAndroidRuntime as CesiumAndroidRuntimeModule | undefined;
@@ -46,6 +61,36 @@ export const CesiumAndroidRuntime = {
       return Array.isArray(picked) ? picked : [];
     } catch {
       return [];
+    }
+  },
+
+  /** Drains the pending share-sheet intent, or null when nothing was shared. */
+  async consumeSharedPayload(): Promise<SharedAndroidPayload | null> {
+    // Older native builds predate share intake; treat as best effort.
+    if (Platform.OS !== "android" || typeof nativeModule?.consumeSharedPayload !== "function") {
+      return null;
+    }
+    try {
+      const raw = await nativeModule.consumeSharedPayload();
+      if (!raw) {
+        return null;
+      }
+      return {
+        text: typeof raw.text === "string" && raw.text.length > 0 ? raw.text : null,
+        subject: typeof raw.subject === "string" && raw.subject.length > 0 ? raw.subject : null,
+        items: Array.isArray(raw.items)
+          ? raw.items.filter(
+              (item): item is SharedAndroidItem =>
+                typeof item?.name === "string" &&
+                typeof item?.mimeType === "string" &&
+                typeof item?.base64 === "string" &&
+                typeof item?.byteLength === "number"
+            )
+          : [],
+        skippedCount: typeof raw.skippedCount === "number" ? raw.skippedCount : 0,
+      };
+    } catch {
+      return null;
     }
   },
 };
