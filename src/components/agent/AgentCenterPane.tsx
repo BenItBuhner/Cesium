@@ -62,6 +62,8 @@ import {
   captureComposerSplitSource,
   clearComposerSplitSource,
   runComposerSplitAnimation,
+  waitForComposerSplitSettled,
+  waitForComposerSplitStart,
 } from "@/components/chat/composer-split-animation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -90,12 +92,12 @@ const EMPTY_THREAD_EVENTS: never[] = [];
 /** Synthetic conversation id for the optimistic first-turn view shown before the server ack. */
 const OPTIMISTIC_CONVERSATION_ID = "__optimistic-new-chat__";
 
-/**
- * Hold the selection commit until the composer split animation has finished,
- * so the real conversation view (which remounts MessageList + composer via
- * `key`) never swaps in mid-flight and kills the FLIP transforms.
- */
-const OPTIMISTIC_COMMIT_MIN_MS = 440;
+// The server round-trip and the selection commit are sequenced on the split
+// animation's actual lifecycle (`waitForComposerSplitStart` /
+// `waitForComposerSplitSettled`): the ack processing floods the main thread,
+// so it must not begin before the animation's start frame is committed, and
+// the real conversation view (which remounts MessageList + composer via
+// `key`) must not swap in mid-flight and kill the FLIP transforms.
 
 type OptimisticNewChatTurn = {
   key: number;
@@ -503,6 +505,10 @@ export function AgentCenterPane() {
         createdAt: submittedAt,
       });
       void (async () => {
+        // Let the FLIP's start frame reach the compositor before kicking off
+        // the server round-trip; once started, the transforms run composited
+        // and survive the ack-processing main-thread jank.
+        await waitForComposerSplitStart();
         const created = await createAndPromptConversation(input, text, attachments);
         if (optimisticSubmitSeqRef.current !== key) {
           return;
@@ -521,33 +527,28 @@ export function AgentCenterPane() {
           return;
         }
         void refreshConversationGroups();
-        const commitDelay = Math.max(
-          0,
-          OPTIMISTIC_COMMIT_MIN_MS - (Date.now() - submittedAt)
-        );
-        window.setTimeout(() => {
-          if (optimisticSubmitSeqRef.current !== key) {
-            return;
-          }
-          optimisticPendingRef.current = false;
-          const followUps = optimisticFollowUpsRef.current.splice(0);
-          if (!isDraftConversationSelectedRef.current) {
-            // The user navigated elsewhere while the ack landed; the chat is
-            // in the rail already, so do not yank the selection back.
-            setOptimisticTurn(null);
-            return;
-          }
-          setSelectedConversationId(created.id);
-          for (const followUp of followUps) {
-            void promptConversation(
-              created.id,
-              followUp.text,
-              followUp.attachments,
-              undefined,
-              followUp.delivery
-            );
-          }
-        }, commitDelay);
+        await waitForComposerSplitSettled();
+        if (optimisticSubmitSeqRef.current !== key) {
+          return;
+        }
+        optimisticPendingRef.current = false;
+        const followUps = optimisticFollowUpsRef.current.splice(0);
+        if (!isDraftConversationSelectedRef.current) {
+          // The user navigated elsewhere while the ack landed; the chat is
+          // in the rail already, so do not yank the selection back.
+          setOptimisticTurn(null);
+          return;
+        }
+        setSelectedConversationId(created.id);
+        for (const followUp of followUps) {
+          void promptConversation(
+            created.id,
+            followUp.text,
+            followUp.attachments,
+            undefined,
+            followUp.delivery
+          );
+        }
       })();
       return true;
     },

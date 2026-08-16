@@ -27,6 +27,14 @@
  * those devices. Use any-hover/any-pointer so hover styles activate whenever a
  * fine pointer that can hover is available.
  */
+/**
+ * Bind Tailwind's `dark:` variant to the app theme class. Without this,
+ * Tailwind v4 defaults `dark:` to the OS `prefers-color-scheme` media query,
+ * so theme-aware assets (e.g. light/dark model brand icons) follow the OS
+ * setting instead of the in-app appearance whenever the two disagree.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @custom-variant hover {
   @media (any-hover: hover) and (any-pointer: fine) {
     &:hover {
@@ -373,9 +381,20 @@ html.dark .landing-shot-dark {
 }
 
 .dark [data-aurora-surface="on"] {
-  --text-secondary: #a6aab4;
-  --text-disabled: #7f838d;
-  --text-tertiary: #90949e;
+  --text-secondary: #b7bbc5;
+  --text-disabled: #8d919b;
+  --text-tertiary: #a0a4ae;
+}
+
+/* Composer attach (+) button: translucent over the aurora instead of an
+   opaque dark disc, with a brighter glyph for contrast. */
+[data-aurora-surface="on"] .composer-attach-plus {
+  background: color-mix(in srgb, var(--agent-plus-button-bg) 45%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+.dark [data-aurora-surface="on"] .composer-attach-plus {
+  color: #c6cad4;
 }
 
 /**
