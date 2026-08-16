@@ -161,6 +161,8 @@ test("trigger CRUD round-trip with fire bookkeeping", async () => {
     schedule: { kind: "interval", everyMs: CESIUM_TRIGGER_MIN_INTERVAL_MS },
     profileId: "work",
     mode: "agent",
+    modelId: "techlit/kimi-k3",
+    modelName: "Techlit/Kimi K3",
   });
   assert.ok(created.id);
   assert.equal(created.enabled, true);
@@ -170,6 +172,10 @@ test("trigger CRUD round-trip with fire bookkeeping", async () => {
   const listed = await listCesiumTriggers(workspaceId);
   assert.equal(listed.length, 1);
   assert.equal(listed[0]!.profileId, "work");
+  // Model pinning survives the persistence round-trip so scheduled fires
+  // reuse the creating conversation's provider instead of a static default.
+  assert.equal(listed[0]!.modelId, "techlit/kimi-k3");
+  assert.equal(listed[0]!.modelName, "Techlit/Kimi K3");
 
   // Fire: runCount increments exactly once; nextRunAt re-arms.
   const firedAt = Date.now();

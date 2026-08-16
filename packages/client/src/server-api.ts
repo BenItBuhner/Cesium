@@ -2356,6 +2356,8 @@ export type CesiumAgentTriggerPayload = {
   prompt: string;
   profileId?: string;
   mode?: string;
+  modelId?: string;
+  modelName?: string;
   createdAt: number;
   updatedAt: number;
   nextRunAt: number | null;

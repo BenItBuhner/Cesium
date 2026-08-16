@@ -26,6 +26,9 @@ export type CesiumAgentTrigger = {
   profileId?: string;
   /** Conversation mode for the spawned conversation (default "agent"). */
   mode?: string;
+  /** Model pinned from the creating conversation so fires never fall back to an unconfigured provider. */
+  modelId?: string;
+  modelName?: string;
   createdAt: number;
   updatedAt: number;
   /** Next planned fire time; recomputed after every fire/edit. */
@@ -136,6 +139,8 @@ function normalizePersistedTrigger(raw: unknown, workspaceId: string): CesiumAge
     prompt,
     profileId: asTrimmed(record.profileId),
     mode: asTrimmed(record.mode),
+    modelId: asTrimmed(record.modelId),
+    modelName: asTrimmed(record.modelName),
     createdAt: typeof record.createdAt === "number" ? record.createdAt : now,
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : now,
     nextRunAt: typeof record.nextRunAt === "number" ? record.nextRunAt : null,
@@ -177,6 +182,8 @@ export async function createCesiumTrigger(input: {
   schedule: CesiumTriggerSchedule;
   profileId?: string;
   mode?: string;
+  modelId?: string;
+  modelName?: string;
   maxRuns?: number;
   sourceConversationId?: string;
 }): Promise<CesiumAgentTrigger> {
@@ -204,6 +211,8 @@ export async function createCesiumTrigger(input: {
     prompt,
     profileId: input.profileId?.trim() || undefined,
     mode: input.mode?.trim() || undefined,
+    modelId: input.modelId?.trim() || undefined,
+    modelName: input.modelName?.trim() || undefined,
     createdAt: now,
     updatedAt: now,
     nextRunAt: computeNextRunAt(input.schedule, now),
@@ -374,6 +383,7 @@ export function formatCesiumTrigger(trigger: CesiumAgentTrigger): string {
   const extras = [
     trigger.profileId ? `profile: ${trigger.profileId}` : null,
     trigger.mode ? `mode: ${trigger.mode}` : null,
+    trigger.modelId ? `model: ${trigger.modelId}` : null,
     trigger.maxRuns != null ? `runs: ${trigger.runCount}/${trigger.maxRuns}` : `runs: ${trigger.runCount}`,
   ]
     .filter(Boolean)

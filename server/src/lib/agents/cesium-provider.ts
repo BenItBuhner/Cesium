@@ -4529,8 +4529,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
           name,
           prompt,
           schedule: parseScheduleArgs(),
-          profileId: asString(args.profileId)?.trim() || undefined,
+          profileId:
+            asString(args.profileId)?.trim() || this.currentProfileId() || undefined,
           mode: asString(args.mode)?.trim() || undefined,
+          // Pin the creating conversation's model so scheduled fires never
+          // fall back to an unconfigured provider default.
+          modelId: this.callbacks.conversation.config.modelId || undefined,
+          modelName: this.callbacks.conversation.config.modelName || undefined,
           maxRuns: asNumber(args.maxRuns) ?? undefined,
           sourceConversationId: this.callbacks.conversation.id,
         });
@@ -4612,6 +4617,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
             backendId: "cesium-agent",
             ...(trigger.mode ? { mode: trigger.mode } : {}),
             ...(trigger.profileId ? { profileId: trigger.profileId } : {}),
+            ...(trigger.modelId ? { modelId: trigger.modelId } : {}),
+            ...(trigger.modelName ? { modelName: trigger.modelName } : {}),
             title: `⏰ ${trigger.name}`,
             origin: {
               kind: "trigger",

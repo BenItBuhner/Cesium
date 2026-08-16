@@ -43,6 +43,8 @@ async function fireTrigger(
       backendId: "cesium-agent",
       ...(trigger.mode ? { mode: trigger.mode } : {}),
       ...(trigger.profileId ? { profileId: trigger.profileId } : {}),
+      ...(trigger.modelId ? { modelId: trigger.modelId } : {}),
+      ...(trigger.modelName ? { modelName: trigger.modelName } : {}),
       title: `⏰ ${trigger.name}`,
       origin: {
         kind: "trigger",
