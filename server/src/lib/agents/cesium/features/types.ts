@@ -41,7 +41,7 @@ export type CesiumHarnessFeatureVersions = Record<
   string,
   CesiumHarnessFeatureSelection
 > & {
-  subagents: {
+  subagents: CesiumHarnessFeatureSelection & {
     version: CesiumSubagentsVersion;
   };
 };
