@@ -20,6 +20,7 @@ export * from "./composer-pills";
 export * from "./workspace-session";
 export * from "./agent-conversation-mru";
 export * from "./keyboard-shortcuts";
+export * from "./quick-open-scopes";
 export * from "./theme";
 export * from "./theme-tokens";
 export * from "./theme-presets";

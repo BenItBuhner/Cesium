@@ -268,3 +268,11 @@ export function useAuth(): AuthContextValue {
   }
   return context;
 }
+
+/**
+ * Auth context when available, null otherwise. For surfaces (e.g. settings
+ * account chrome) that may render outside the engine-auth provider tree.
+ */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
+}

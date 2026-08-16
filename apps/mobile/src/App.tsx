@@ -35,6 +35,10 @@ import {
 } from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
+import {
+  CesiumPredictiveBack,
+  type PredictiveBackGestureEvent,
+} from "./native/CesiumPredictiveBack";
 import { CesiumPhoneControl } from "./native/CesiumPhoneControl";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
 import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
@@ -101,9 +105,23 @@ export default function App() {
   }, []);
   sendToWebRef.current = sendToWeb;
 
+  // Keep the native predictive-back intercept armed exactly while the app has
+  // something to pop in-app (an in-WebView layer or WebView history). The
+  // Android dispatcher decides at gesture START who owns the gesture, so this
+  // must be pushed proactively on every capability/history change — it cannot
+  // be resolved lazily at commit time.
+  const syncBackIntercept = useCallback(() => {
+    CesiumPredictiveBack.setBackInterceptEnabled(
+      webViewRef.current != null &&
+        (webCanHandleBackRef.current || canGoBackRef.current)
+    );
+  }, []);
+
   // The current host config: embedded once into the pre-load bootstrap
   // (Electron preload analog) and streamed to the live page as
-  // `nativeConfigChanged` messages whenever it changes afterwards.
+  // `nativeConfigChanged` messages whenever it changes afterwards. The crash
+  // reporter that used to be a separate injected script lives inside the
+  // bootstrap now.
   const hostServerConfig = useMemo<MobileServerConfig>(
     () => ({
       baseUrl: serverUrl,
@@ -279,15 +297,15 @@ export default function App() {
   }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
-    // A single, stable subscription. The Android predictive/hardware back
-    // gesture is resolved in priority order:
+    // A single, stable subscription. The Android back intent is resolved in
+    // priority order:
     //   1. If the web layer reports an open in-WebView layer (overlay, drawer,
     //      settings view), route the intent there. The web replies with
     //      `backFallback` if it turns out there is nothing to pop.
     //   2. Otherwise walk the WebView's own navigation history.
     //   3. Otherwise let Android run its default back behavior (exit the app),
     //      which is where the predictive-back exit animation applies.
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+    const routeBackIntent = () => {
       if (webViewRef.current && webCanHandleBackRef.current) {
         sendToWeb({ type: "backRequest" });
         return true;
@@ -297,8 +315,51 @@ export default function App() {
         return true;
       }
       return false;
+    };
+
+    // Legacy/discrete path: 3-button navigation, pre-Android-14 devices, and
+    // any gesture that lands while the progressive intercept is disarmed.
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      routeBackIntent
+    );
+
+    // Progressive path: while the native intercept is armed, MainActivity's
+    // OnBackPressedCallback streams the gesture here (per-frame progress on
+    // Android 14+). Started/progressed/cancelled are forwarded to the web
+    // layer so the top-most in-WebView layer can track the finger; `invoked`
+    // is the commit and routes exactly like a discrete back press.
+    const toBridgeGesture = (payload: PredictiveBackGestureEvent) => ({
+      progress: Math.min(1, Math.max(0, payload.progress ?? 0)),
+      swipeEdge: (payload.swipeEdge === 1 ? "right" : "left") as "left" | "right",
+      touchX: payload.touchX,
+      touchY: payload.touchY,
     });
-    return () => subscription.remove();
+    const predictiveSubscriptions = [
+      CesiumPredictiveBack.addListener("started", (payload) => {
+        sendToWeb({ type: "backStarted", ...toBridgeGesture(payload) });
+      }),
+      CesiumPredictiveBack.addListener("progressed", (payload) => {
+        sendToWeb({ type: "backProgressed", ...toBridgeGesture(payload) });
+      }),
+      CesiumPredictiveBack.addListener("cancelled", () => {
+        sendToWeb({ type: "backCancelled" });
+      }),
+      CesiumPredictiveBack.addListener("invoked", () => {
+        // Native auto-disarmed itself before emitting; the web republishes
+        // its capability after popping, which re-arms via syncBackIntercept.
+        if (!routeBackIntent()) {
+          BackHandler.exitApp();
+        }
+      }),
+    ];
+
+    return () => {
+      subscription.remove();
+      for (const predictiveSubscription of predictiveSubscriptions) {
+        predictiveSubscription?.remove();
+      }
+    };
   }, [sendToWeb]);
 
   useEffect(() => {
@@ -382,6 +443,7 @@ export default function App() {
       }
       if (message.type === "backCapability") {
         webCanHandleBackRef.current = message.canHandleBack;
+        syncBackIntercept();
         return;
       }
       if (message.type === "backFallback") {
@@ -389,6 +451,9 @@ export default function App() {
         if (canGoBackRef.current) {
           webViewRef.current?.goBack();
         } else {
+          // Disarm before exiting so the dispatcher walk triggered by exitApp
+          // can never re-enter the predictive intercept.
+          CesiumPredictiveBack.setBackInterceptEnabled(false);
           BackHandler.exitApp();
         }
         return;
@@ -442,12 +507,16 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, focused, sendNativeStatus]
+    [configureNativeServices, focused, sendNativeStatus, syncBackIntercept]
   );
 
-  const handleNavigation = useCallback((navigation: WebViewNavigation) => {
-    canGoBackRef.current = navigation.canGoBack;
-  }, []);
+  const handleNavigation = useCallback(
+    (navigation: WebViewNavigation) => {
+      canGoBackRef.current = navigation.canGoBack;
+      syncBackIntercept();
+    },
+    [syncBackIntercept]
+  );
 
   return (
     <View style={styles.root} testID="cesium-mobile-root">
@@ -487,6 +556,7 @@ export default function App() {
             webViewRef.current = null;
             canGoBackRef.current = false;
             webCanHandleBackRef.current = false;
+            syncBackIntercept();
             setWebViewAvailable(false);
             setLoadError(description);
           }}
@@ -506,6 +576,7 @@ export default function App() {
             onPress={() => {
               canGoBackRef.current = false;
               webCanHandleBackRef.current = false;
+              syncBackIntercept();
               setLoadError(null);
               setReloadKey((current) => current + 1);
               setWebViewAvailable(true);

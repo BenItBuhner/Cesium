@@ -6,6 +6,7 @@ import type { ComponentType } from "react";
 import { AgentsHarnessSettingsPanel } from "@/components/editor/agent-harness-settings";
 import { CloudAgentsSettingsPanel } from "@/components/editor/cloud-agents-settings";
 import { VscodeExtensionsSettingsPanel } from "@/components/editor/vscode-extensions-settings";
+import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { ActionsSettingsPanel } from "./ActionsSettingsPanel";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
@@ -17,11 +18,13 @@ import { BetaSettingsPanel } from "./BetaSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "./KeyboardShortcutsSettingsPanel";
 import { ExportImportSettingsPanel } from "./ExportImportSettingsPanel";
 import { StorageSettingsPanel } from "./StorageSettingsPanel";
+import { UpdatesSettingsPanel } from "./UpdatesSettingsPanel";
 import { UsageSettingsPanel } from "./UsageSettingsPanel";
 
 export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
 
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
+  account: AccountSettingsPanel,
   general: GeneralSettingsPanel,
   actions: ActionsSettingsPanel,
   appearance: AppearanceSettingsPanel,
@@ -37,4 +40,5 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   keyboardShortcuts: KeyboardShortcutsSettingsPanel,
   exportImport: ExportImportSettingsPanel,
   storage: StorageSettingsPanel,
+  updates: UpdatesSettingsPanel,
 };

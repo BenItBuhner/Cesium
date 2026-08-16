@@ -32,6 +32,7 @@ export type SettingsSearchEntry = {
 };
 
 const NAV_LABELS: Record<string, string> = {
+  account: "Account",
   general: "General",
   actions: "Actions",
   appearance: "Appearance",
@@ -46,6 +47,7 @@ const NAV_LABELS: Record<string, string> = {
   rulesSkills: "Rules, Skills, Subagents",
   exportImport: "Import & export",
   storage: "Storage",
+  updates: "Updates",
   beta: "Beta",
 };
 
@@ -109,6 +111,37 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     })
   ),
 
+  // —— Account ——
+  section("account", "identity", "Account & session", "profile sign in sign out login"),
+  row(
+    "account",
+    "account-identity",
+    "Signed-in account",
+    "Your cloud account, device sync identity, or local workspace.",
+    ["profile", "avatar", "email", "clerk", "identity", "user"]
+  ),
+  row(
+    "account",
+    "account-cloud-mode",
+    "Cloud account",
+    "Sign in, sync status, and sign out for the cloud account layer.",
+    ["sign in", "sign out", "sync", "clerk", "device", "local-only"]
+  ),
+  row(
+    "account",
+    "account-server-session",
+    "Server session",
+    "Password session on the active server: expiry, last active, sign out.",
+    ["logout", "sign out", "password", "auth", "session", "expires"]
+  ),
+  row(
+    "account",
+    "account-active-server",
+    "Active server",
+    "The server this client is connected to; switch or manage servers.",
+    ["server", "switch", "connection"]
+  ),
+
   // —— General ——
   section("general", "preferences", "Preferences"),
   row(
@@ -130,6 +163,21 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Import & export settings",
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
+  ),
+  section("general", "quick-open", "Quick Open & switcher", "palette search"),
+  row(
+    "general",
+    "quick-open-default-scope",
+    "Default Quick Open search",
+    "What Ctrl/Cmd+P searches when it opens: files, chats, commands, settings, or tabs.",
+    ["quick open", "palette", "cmd+p", "ctrl+p", "scope", "search", "default"]
+  ),
+  row(
+    "general",
+    "quick-switcher-scope",
+    "Ctrl+Tab switcher cycles",
+    "Cycle agent conversations, open editor tabs, or both with the hold-to-cycle switcher.",
+    ["ctrl+tab", "switcher", "mru", "tabs", "conversations", "cycle"]
   ),
   section("general", "performance", "Performance", "stream rendering"),
   row(
@@ -528,6 +576,38 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Storage ——
   section("storage", "status", "Storage status", "driver postgres sqlite"),
   section("storage", "migrate", "Migrate between drivers", "migration"),
+
+  // —— Updates ——
+  section("updates", "installation", "This installation", "version release github npm"),
+  section("updates", "available", "Available updates", "release github npm git"),
+  row(
+    "updates",
+    "check-now",
+    "Check for updates",
+    "Query GitHub releases, the npm registry, and the git remote for new builds.",
+    ["update", "upgrade", "release", "version", "github", "npm"]
+  ),
+  row(
+    "updates",
+    "auto-check",
+    "Check for updates automatically",
+    "Background update checks every few hours.",
+    ["automatic", "auto", "update"]
+  ),
+  row(
+    "updates",
+    "prereleases",
+    "Include pre-releases",
+    "Offer beta and release-candidate builds.",
+    ["beta", "rc", "prerelease"]
+  ),
+  row(
+    "updates",
+    "self-update",
+    "Self-update this server",
+    "Apply the update in place for installer and git-based servers.",
+    ["upgrade", "apply", "install", "restart"]
+  ),
 ];
 
 const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITIONS.map(
