@@ -545,6 +545,32 @@ const IPAD_BETA_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
 ];
 
+/** Rows rendered only inside the Android native shell (MobileNativeSettings). */
+const MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  section("general", "mobile-live-activity", "Mobile live activity", "android live updates"),
+  row(
+    "general",
+    "mobile-live-update-placement",
+    "Run progress placement",
+    "Show agent runs as Android Live Updates (status bar chip, lock screen, Samsung Now Bar), a standard notification, or not at all.",
+    ["live updates", "notification", "now bar", "status bar", "chip", "android", "progress"]
+  ),
+  row(
+    "general",
+    "mobile-live-update-access",
+    "Live Updates access",
+    "Allow Cesium to post promoted Live Updates so runs render as a status bar chip and Now Bar activity.",
+    ["live updates", "promoted", "permission", "allow", "android", "chip"]
+  ),
+  row(
+    "general",
+    "mobile-now-bar-settings",
+    "Samsung Now Bar",
+    "Open Samsung's Now Bar settings where Cesium's live notifications appear on the lock screen and AOD.",
+    ["samsung", "now bar", "one ui", "lock screen", "aod", "live notifications"]
+  ),
+];
+
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Actions ——
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
@@ -686,12 +712,14 @@ function buildModelSearchEntries(
 
 export function buildSettingsSearchIndex(
   modelsByBackend: Record<string, ModelToggleState[]>,
-  options?: { includeIpadBeta?: boolean }
+  options?: { includeIpadBeta?: boolean; includeMobileNative?: boolean }
 ): SettingsSearchEntry[] {
   const includeIpadBeta = options?.includeIpadBeta !== false;
+  const includeMobileNative = options?.includeMobileNative === true;
   return [
     ...STATIC_SETTINGS_SEARCH_ENTRIES,
     ...(includeIpadBeta ? IPAD_BETA_SETTINGS_SEARCH_ENTRIES : []),
+    ...(includeMobileNative ? MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
     ...STATIC_SETTINGS_SEARCH_ENTRIES_TAIL,
     ...SHORTCUT_SEARCH_ENTRIES,
     ...buildModelSearchEntries(modelsByBackend),

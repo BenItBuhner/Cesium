@@ -1,150 +1,43 @@
 "use client";
 
-export const MOBILE_BRIDGE_MESSAGE_EVENT = "cesium:mobile-bridge-message";
-export const MOBILE_IDLE_CLASS = "opencursor-mobile-idle";
-
-const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
-const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
-
-export type MobileLifecycleState = "active" | "background" | "inactive";
 /**
- * "live"  — Android Live Updates (promoted ongoing notifications). The system
- *           renders these in the status bar chip / lock screen, and Samsung's
- *           Now Bar picks them up automatically on One UI 8+. Falls back to a
- *           standard notification whenever promotion is unsupported/denied.
- * "basic" — standard live notification only, never request promotion.
- * "off"   — no run notifications.
+ * DOM-side helpers for the Android host bridge. The protocol itself (message
+ * types, version, bootstrap builder) is shared with the native shell via
+ * `@cesium/core` — see `packages/core/src/mobile-bridge.ts`.
  */
-export type MobileLiveUpdatePreference = "live" | "basic" | "off";
 
-export type MobileNativeStatus = {
-  liveUpdates: {
-    preference: MobileLiveUpdatePreference;
-    sdkInt: number;
-    progressStyleSupported: boolean;
-    canPostPromotedNotifications: boolean;
-    notificationPermissionGranted: boolean;
-  };
-  phoneControl?: {
-    controlEnabled: boolean;
-    configured: boolean;
-    capabilities: {
-      accessibilityEnabled: boolean;
-      assistantRoleHeld: boolean;
-    };
-  } | null;
-};
+import {
+  MOBILE_BRIDGE_MESSAGE_EVENT,
+  MOBILE_LEGACY_THEME_STORAGE_KEY,
+  MOBILE_NATIVE_ROOT_CLASS,
+  MOBILE_SAFE_AREA_TOP_VAR,
+  MOBILE_THEME_CONFIG_STORAGE_KEY,
+  encodeMobileBridgeMessage,
+  type MobileNativeToWebMessage,
+  type MobileServerConfig,
+  type MobileWebToNativeMessage,
+} from "@cesium/core";
 
-export type MobileServerConfig = {
-  baseUrl: string;
-  label?: string;
-  authToken?: string | null;
-  safeAreaTop?: number;
-  systemColorScheme?: "light" | "dark" | null;
-  runtime?: MobileRuntimeConfig | null;
-};
-
-export type MobileRuntimeConfig = {
-  projectsDir?: string | null;
-  serverDataDir?: string | null;
-  defaultWorkspaceRoot?: string | null;
-  allowedWorkspaceRoots?: string[];
-  backendEnvironment?: Record<string, string>;
-  localBackendReady?: boolean;
-};
-
-export type MobileFocusedConversation = {
-  workspaceId: string | null;
-  conversationId: string | null;
-  lastEventSeq?: number;
-  /** Every conversation with an active agent run, for background tracking. */
-  activeConversationIds?: string[];
-};
-
-export type MobileAgentProjectionMessage = {
-  type: "agentProjection";
-  projection: unknown;
-};
-
-/** Full set of tracked agent projections (one live notification per run). */
-export type MobileAgentProjectionsMessage = {
-  type: "agentProjections";
-  projections: unknown[];
-};
-
-export type MobileNativeToWebMessage =
-  | { type: "nativeReady"; server: MobileServerConfig }
-  | { type: "mobileNativeStatus"; status: MobileNativeStatus }
-  | { type: "lifecycle"; state: MobileLifecycleState }
-  | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
-  | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number }
-  // The Android hardware/predictive back gesture was invoked (committed). The
-  // web layer owns the in-WebView navigation stack (open overlays, drawers,
-  // settings view) and decides what to pop; if it cannot handle the intent it
-  // replies with `backFallback` so the native shell can walk WebView history
-  // or exit.
-  | { type: "backRequest" }
-  // Progressive predictive-back stream (Android 14+ gesture navigation). The
-  // gesture `progress` runs 0..1 as the finger travels from the `swipeEdge`;
-  // the web layer previews the pop (drawer follows the finger, settings view
-  // scales down) and then either commits on `backRequest` or reverts on
-  // `backCancelled`. Older Androids and 3-button navigation never send these,
-  // so `backRequest` alone must stay sufficient.
-  | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
-  | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
-  | { type: "backCancelled" };
-
-export type MobileWebToNativeMessage =
-  | { type: "webReady"; workspaceId: string | null; focusedConversationId: string | null; authToken?: string | null }
-  | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
-  | MobileAgentProjectionMessage
-  | MobileAgentProjectionsMessage
-  | { type: "webIdleMode"; enabled: boolean }
-  | { type: "webRuntimeError"; message: string; source?: string; line?: number }
-  | { type: "getMobileNativeStatus" }
-  | { type: "setLiveUpdatePreference"; preference: MobileLiveUpdatePreference }
-  | { type: "openLiveUpdatePromotionSettings" }
-  | { type: "setPhoneControlEnabled"; enabled: boolean }
-  | { type: "openPhoneAccessibilitySettings" }
-  | { type: "requestPhoneAssistantRole" }
-  | { type: "invokePhoneAssistant" }
-  | { type: "openExternalUrl"; url: string }
-  // Tells the native shell whether the web layer currently has an in-WebView
-  // layer (overlay, drawer, settings view, …) that a back gesture should pop.
-  // The native BackHandler uses this to decide between routing the gesture to
-  // the web layer versus walking WebView history / exiting the app.
-  | { type: "backCapability"; canHandleBack: boolean }
-  // Sent in reply to `backRequest` when the web layer had nothing to pop after
-  // all, so the native shell should perform its default back behavior.
-  | { type: "backFallback" }
-  | { type: "serverConfigured"; server: MobileServerConfig }
-  | {
-      type: "wearSyncEnvelope";
-      envelopeJson: string;
-      config: {
-        serverBaseUrl: string;
-        serverLabel: string;
-        authToken?: string | null;
-        workspaceId?: string | null;
-        conversationId?: string | null;
-      };
-    };
-
-export function encodeMobileBridgeMessage(message: MobileNativeToWebMessage | MobileWebToNativeMessage): string {
-  return JSON.stringify(message);
-}
-
-export function parseMobileBridgeMessage<TMessage>(raw: unknown): TMessage | null {
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as Partial<{ type: unknown }>;
-    return typeof parsed?.type === "string" ? (parsed as TMessage) : null;
-  } catch {
-    return null;
-  }
-}
+export {
+  MOBILE_BRIDGE_MESSAGE_EVENT,
+  MOBILE_BRIDGE_PROTOCOL_VERSION,
+  MOBILE_IDLE_CLASS,
+  MOBILE_NATIVE_ROOT_CLASS,
+  MOBILE_SAFE_AREA_TOP_VAR,
+  encodeMobileBridgeMessage,
+  parseMobileBridgeMessage,
+  buildMobileBootstrapScript,
+  type MobileLifecycleState,
+  type MobileLiveUpdatePreference,
+  type MobileNativeStatus,
+  type MobileServerConfig,
+  type MobileRuntimeConfig,
+  type MobileFocusedConversation,
+  type MobileAgentProjectionMessage,
+  type MobileAgentProjectionsMessage,
+  type MobileNativeToWebMessage,
+  type MobileWebToNativeMessage,
+} from "@cesium/core";
 
 export function postMobileBridgeMessage(message: MobileWebToNativeMessage): boolean {
   const bridge = typeof window !== "undefined" ? window.ReactNativeWebView : undefined;
@@ -166,253 +59,53 @@ export function dispatchMobileBridgeMessage(message: MobileNativeToWebMessage): 
   );
 }
 
-export function buildMobileBootstrapScript(server: MobileServerConfig): string {
-  const safeAreaTop =
-    Number.isFinite(server.safeAreaTop) && (server.safeAreaTop ?? 0) > 0
-      ? Math.ceil(server.safeAreaTop ?? 0)
-      : 0;
-  const normalizedServer = {
-    baseUrl: server.baseUrl.replace(/\/+$/, ""),
-    label: server.label ?? "Mobile server",
-    authToken: server.authToken ?? null,
-    safeAreaTop,
-    systemColorScheme:
-      server.systemColorScheme === "dark" || server.systemColorScheme === "light"
-        ? server.systemColorScheme
-        : null,
-    runtime: normalizeMobileRuntimeConfig(server.runtime),
-  };
-  const payload = JSON.stringify(normalizedServer);
-  const message = JSON.stringify({ type: "nativeReady", server: normalizedServer });
-  const serializedMessage = JSON.stringify(message);
-  const themeConfigStorageKey = JSON.stringify(MOBILE_THEME_CONFIG_STORAGE_KEY);
-  const legacyThemeStorageKey = JSON.stringify(MOBILE_LEGACY_THEME_STORAGE_KEY);
-  return `
-(() => {
-  // Android 11 ships Chromium WebView 83. Keep the bundled workbench usable on
-  // every supported Android API (minSdk 26) by installing the modern built-ins
-  // used by today's canonical web client before its module executes.
-  const relativeIndex = (length, index) => {
-    const value = Number(index) || 0;
-    const integer = value < 0 ? Math.ceil(value) : Math.floor(value);
-    return integer < 0 ? length + integer : integer;
-  };
-  if (!Array.prototype.at) {
-    Object.defineProperty(Array.prototype, "at", {
-      configurable: true,
-      writable: true,
-      value: function(index) { return this[relativeIndex(this.length, index)]; }
-    });
+/**
+ * Applies dynamic host state from a `nativeConfigChanged` message: refreshes
+ * the injected server globals, the safe-area inset, and — when the user
+ * follows the system theme — the dark class driven by the native color
+ * scheme (the WebView's own `prefers-color-scheme` is not reliable across
+ * Android configuration changes).
+ */
+export function applyMobileHostConfig(server: MobileServerConfig): void {
+  if (typeof window === "undefined") {
+    return;
   }
-  if (!String.prototype.at) {
-    Object.defineProperty(String.prototype, "at", {
-      configurable: true,
-      writable: true,
-      value: function(index) {
-        const position = relativeIndex(this.length, index);
-        return position < 0 || position >= this.length ? undefined : this.charAt(position);
-      }
-    });
-  }
-  [
-    "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
-    "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array",
-    "BigUint64Array"
-  ].forEach((name) => {
-    const ctor = window[name];
-    if (ctor && !ctor.prototype.at) {
-      Object.defineProperty(ctor.prototype, "at", {
-        configurable: true,
-        writable: true,
-        value: function(index) { return this[relativeIndex(this.length, index)]; }
-      });
-    }
-  });
-  if (!Object.hasOwn) {
-    Object.hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
-  }
-  if (!String.prototype.replaceAll) {
-    Object.defineProperty(String.prototype, "replaceAll", {
-      configurable: true,
-      writable: true,
-      value: function(search, replacement) {
-        if (search instanceof RegExp) {
-          if (!search.global) throw new TypeError("replaceAll requires a global RegExp");
-          return this.replace(search, replacement);
-        }
-        return this.split(String(search)).join(String(replacement));
-      }
-    });
-  }
-  if (!globalThis.structuredClone) {
-    globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
-  }
-  if (globalThis.crypto && !globalThis.crypto.randomUUID) {
-    globalThis.crypto.randomUUID = () =>
-      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
-        const random = Math.random() * 16 | 0;
-        return (char === "x" ? random : (random & 3) | 8).toString(16);
-      });
-  }
-  const server = ${payload};
   window.__CESIUM_MOBILE_SERVER__ = server;
-  const readThemePreference = () => {
-    try {
-      const rawConfig = window.localStorage.getItem(${themeConfigStorageKey});
-      if (rawConfig) {
-        const config = JSON.parse(rawConfig);
-        const appearance = config && config.appearance;
-        if (appearance === "light" || appearance === "dark" || appearance === "system") {
-          return appearance;
-        }
-      }
-    } catch {}
-    try {
-      const legacy = window.localStorage.getItem(${legacyThemeStorageKey});
-      if (legacy === "light" || legacy === "dark" || legacy === "system") {
-        return legacy;
-      }
-    } catch {}
-    return "system";
-  };
-  const systemPrefersDark = () => {
-    const currentServer = window.__CESIUM_MOBILE_SERVER__ || server;
-    if (currentServer.systemColorScheme === "dark") return true;
-    if (currentServer.systemColorScheme === "light") return false;
-    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  };
-  const syncLegacyThemeTokens = (dark) => {
-    const selector = dark ? "html.dark" : ":root";
-    try {
-      for (const sheet of Array.from(document.styleSheets)) {
-        let rules;
-        try { rules = Array.from(sheet.cssRules || []); } catch { continue; }
-        for (const rule of rules) {
-          if (rule.selectorText !== selector || !rule.style?.getPropertyValue("--bg-main")) continue;
-          for (const name of Array.from(rule.style)) {
-            if (name.startsWith("--")) {
-              document.documentElement.style.setProperty(
-                name,
-                rule.style.getPropertyValue(name),
-                rule.style.getPropertyPriority(name)
-              );
-            }
-          }
-        }
-      }
-    } catch {}
-  };
-  const applyStartupTheme = () => {
-    const preference = readThemePreference();
-    const dark = preference === "dark" || (preference === "system" && systemPrefersDark());
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
-    syncLegacyThemeTokens(dark);
-  };
-  const ensureMobileSafeAreaStyle = () => {
-    const styleId = "opencursor-mobile-safe-area-style";
-    let style = document.getElementById(styleId);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = styleId;
-      (document.head || document.documentElement).appendChild(style);
-    }
-    style.textContent = [
-      ".opencursor-mobile-native{--opencursor-mobile-safe-area-top:0px;}",
-      ".opencursor-mobile-native .mobile-safe-top-pad{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
-      ".opencursor-mobile-native .mobile-safe-top-content{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
-      ".opencursor-mobile-native .mobile-safe-top-offset{top:calc(var(--opencursor-mobile-safe-area-top) + 11px)!important;}",
-      ".opencursor-mobile-native .mobile-safe-top-scroll{scroll-padding-top:var(--opencursor-mobile-safe-area-top)!important;}"
-    ].join("\\n");
-  };
-  const applyMobileSafeArea = () => {
-    ensureMobileSafeAreaStyle();
-    const root = document.documentElement;
-    root.classList.add("opencursor-mobile-native");
-    root.style.setProperty("--opencursor-mobile-safe-area-top", server.safeAreaTop + "px");
-  };
-  applyStartupTheme();
-  applyMobileSafeArea();
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      applyStartupTheme();
-      applyMobileSafeArea();
-    }, { once: true });
+  if (window.cesiumMobile) {
+    window.cesiumMobile.server = server;
   }
-  const themeMedia = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
-  if (!server.systemColorScheme && themeMedia && themeMedia.addEventListener && !window.__CESIUM_MOBILE_THEME_LISTENER__) {
-    window.__CESIUM_MOBILE_THEME_LISTENER__ = true;
-    themeMedia.addEventListener("change", () => {
-      if (readThemePreference() === "system") applyStartupTheme();
-    });
+  const root = document.documentElement;
+  root.classList.add(MOBILE_NATIVE_ROOT_CLASS);
+  root.style.setProperty(MOBILE_SAFE_AREA_TOP_VAR, `${server.safeAreaTop ?? 0}px`);
+  if (server.systemColorScheme && readMobileThemePreference() === "system") {
+    const dark = server.systemColorScheme === "dark";
+    root.classList.toggle("dark", dark);
+    root.style.colorScheme = dark ? "dark" : "light";
   }
-  requestAnimationFrame(applyStartupTheme);
-  requestAnimationFrame(applyMobileSafeArea);
-  setTimeout(applyStartupTheme, 0);
-  setTimeout(applyMobileSafeArea, 0);
-  setTimeout(applyStartupTheme, 250);
-  setTimeout(applyMobileSafeArea, 250);
-  window.__CESIUM_MOBILE_SERVER__ = server;
-  window.cesiumMobile = {
-    isReactNative: true,
-    server,
-    getBackendInfo: () => Promise.resolve(server)
-  };
-  window.__CESIUM_MOBILE_NATIVE_READY__ = ${serializedMessage};
-  if (!window.__CESIUM_MOBILE_BRIDGE_LISTENERS__) {
-    window.__CESIUM_MOBILE_BRIDGE_LISTENERS__ = true;
-    window.addEventListener("message", (event) => {
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (data && typeof data.type === "string") {
-          window.dispatchEvent(new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data }));
-        }
-      } catch {}
-    });
-    document.addEventListener("message", (event) => {
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (data && typeof data.type === "string") {
-          window.dispatchEvent(new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data }));
-        }
-      } catch {}
-    });
-  }
-  true;
-})();`;
 }
 
-function normalizeMobileRuntimeConfig(runtime: MobileRuntimeConfig | null | undefined) {
-  if (!runtime) {
-    return null;
+function readMobileThemePreference(): "light" | "dark" | "system" {
+  try {
+    const rawConfig = window.localStorage.getItem(MOBILE_THEME_CONFIG_STORAGE_KEY);
+    if (rawConfig) {
+      const appearance = (JSON.parse(rawConfig) as { appearance?: unknown } | null)
+        ?.appearance;
+      if (appearance === "light" || appearance === "dark" || appearance === "system") {
+        return appearance;
+      }
+    }
+  } catch {
+    // Fall through to the legacy key.
   }
-
-  const backendEnvironment =
-    runtime.backendEnvironment && typeof runtime.backendEnvironment === "object"
-      ? Object.fromEntries(
-          Object.entries(runtime.backendEnvironment).filter(
-            (entry): entry is [string, string] =>
-              typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].length > 0
-          )
-        )
-      : {};
-
-  return {
-    projectsDir: normalizeRuntimeString(runtime.projectsDir),
-    serverDataDir: normalizeRuntimeString(runtime.serverDataDir),
-    defaultWorkspaceRoot: normalizeRuntimeString(runtime.defaultWorkspaceRoot),
-    allowedWorkspaceRoots: Array.isArray(runtime.allowedWorkspaceRoots)
-      ? runtime.allowedWorkspaceRoots.filter(
-          (value): value is string => typeof value === "string" && value.length > 0
-        )
-      : [],
-    backendEnvironment,
-    localBackendReady: runtime.localBackendReady === true,
-  };
-}
-
-function normalizeRuntimeString(value: unknown) {
-  return typeof value === "string" && value.length > 0 ? value : null;
+  try {
+    const legacy = window.localStorage.getItem(MOBILE_LEGACY_THEME_STORAGE_KEY);
+    if (legacy === "light" || legacy === "dark" || legacy === "system") {
+      return legacy;
+    }
+  } catch {
+    // Default below.
+  }
+  return "system";
 }
 
 declare global {
@@ -423,9 +116,9 @@ declare global {
     __CESIUM_MOBILE_NATIVE_READY__?: string;
     __CESIUM_MOBILE_SERVER__?: MobileServerConfig;
     __CESIUM_MOBILE_BRIDGE_LISTENERS__?: boolean;
-    __CESIUM_MOBILE_THEME_LISTENER__?: boolean;
     cesiumMobile?: {
       isReactNative?: boolean;
+      protocolVersion?: number;
       server?: MobileServerConfig;
       getBackendInfo?: () => Promise<MobileServerConfig>;
     };

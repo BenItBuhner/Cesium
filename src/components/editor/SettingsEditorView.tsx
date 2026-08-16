@@ -472,6 +472,9 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     () =>
       buildSettingsSearchIndex(settings.models.byBackend ?? {}, {
         includeIpadBeta: ipadBetaSettings,
+        // Mobile-native rows only exist inside the Android shell's WebView.
+        includeMobileNative:
+          typeof window !== "undefined" && window.ReactNativeWebView != null,
       }),
     [ipadBetaSettings, settings.models.byBackend]
   );
