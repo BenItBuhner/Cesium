@@ -383,6 +383,44 @@ test("mode policy layers after profile policy: Work+Ask still blocks writes the 
   );
 });
 
+test("mode reminder never contradicts the profile envelope", async () => {
+  const { buildCesiumModeReminder, applyCesiumProfileExclusionsToModePolicy } = await import(
+    "../src/lib/agents/cesium-mode-reminders.js"
+  );
+  const { listCesiumProfileExcludedTools } = await import(
+    "../src/lib/agents/cesium-profiles.js"
+  );
+  const excluded = listCesiumProfileExcludedTools(CESIUM_WORK_PROFILE);
+  assert.ok(excluded.includes("terminal"));
+  assert.ok(excluded.includes("switch_branch"));
+  assert.deepEqual(listCesiumProfileExcludedTools(CESIUM_CODE_PROFILE), []);
+
+  const adjusted = applyCesiumProfileExclusionsToModePolicy(
+    { allowed: ["read_file", "terminal"], restricted: ["switch_branch"], blocked: ["x"] },
+    excluded,
+    CESIUM_WORK_PROFILE.name
+  );
+  assert.deepEqual(adjusted.allowed, ["read_file"]);
+  assert.deepEqual(adjusted.restricted, []);
+  assert.ok(adjusted.blocked.some((entry) => entry.includes('"Work" agent profile')));
+
+  const reminder = buildCesiumModeReminder({
+    mode: "agent",
+    profileName: CESIUM_WORK_PROFILE.name,
+    profileSummary: summarizeCesiumProfileToolSurface(CESIUM_WORK_PROFILE),
+    profileExcludedTools: excluded,
+    workspaceRoot: "/tmp/ws",
+    dateLabel: "today",
+    gitSummary: "not a git repository",
+    mcpSummaries: [],
+  });
+  // "terminal" must not be listed as allowed; it appears only in the blocked
+  // aggregation and the profile summary's unavailable list.
+  const allowedSection = reminder.split("Allowed:")[1]?.split("Restricted:")[0] ?? "";
+  assert.ok(!allowedSection.includes("terminal"));
+  assert.match(reminder, /excluded by the active "Work" agent profile/);
+});
+
 test("profile tool-surface summary names available groups and unavailable tools", () => {
   assert.match(summarizeCesiumProfileToolSurface(CESIUM_CODE_PROFILE), /All harness tools/);
   const workSummary = summarizeCesiumProfileToolSurface(CESIUM_WORK_PROFILE);

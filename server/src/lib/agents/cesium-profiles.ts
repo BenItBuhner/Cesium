@@ -505,6 +505,22 @@ export function filterCesiumToolsForProfile(
   );
 }
 
+/**
+ * Known tools the profile excludes from its envelope (locked tools never
+ * appear). Empty for "all" profiles.
+ */
+export function listCesiumProfileExcludedTools(profile: CesiumAgentProfile): string[] {
+  if (profile.tools.allowed === "all") {
+    return [];
+  }
+  const allowed = new Set(profile.tools.allowed);
+  return CESIUM_PROFILE_TOOL_GROUPS.flatMap((group) =>
+    group.tools.filter(
+      (tool) => !allowed.has(tool) && !CESIUM_PROFILE_LOCKED_TOOLS.includes(tool)
+    )
+  );
+}
+
 /** Compact single-line surface summary for reminders and switch confirmations. */
 export function summarizeCesiumProfileToolSurface(profile: CesiumAgentProfile): string {
   if (profile.tools.allowed === "all") {
@@ -518,11 +534,7 @@ export function summarizeCesiumProfileToolSurface(profile: CesiumAgentProfile): 
   const groups = CESIUM_PROFILE_TOOL_GROUPS.filter((group) =>
     group.tools.some((tool) => allowed.has(tool))
   ).map((group) => group.label);
-  const excluded = CESIUM_PROFILE_TOOL_GROUPS.flatMap((group) =>
-    group.tools.filter(
-      (tool) => !allowed.has(tool) && !CESIUM_PROFILE_LOCKED_TOOLS.includes(tool)
-    )
-  );
+  const excluded = listCesiumProfileExcludedTools(profile);
   const mcp =
     profile.tools.mcpServers === "all"
       ? "all MCP servers"

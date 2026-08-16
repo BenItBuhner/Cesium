@@ -47,7 +47,10 @@ import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
-import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
+import {
+  applyCesiumProfileExclusionsToModePolicy,
+  buildCesiumModeReminder,
+} from "./cesium-mode-reminders.js";
 import {
   normalizeCesiumMode,
   normalizeCesiumToolName,
@@ -57,6 +60,7 @@ import {
 import {
   CESIUM_CODE_PROFILE,
   filterCesiumToolsForProfile,
+  listCesiumProfileExcludedTools,
   resolveCesiumProfile,
   resolveCesiumProfileToolPolicy,
   summarizeCesiumProfileToolSurface,
@@ -854,6 +858,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           modelName: promptContext.modelName,
           profileName: this.activeProfile.name,
           profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
+          profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
           memorySnapshot,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
           dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
@@ -3020,7 +3025,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const reason = asString(args.reason)?.trim() || undefined;
     await this.setConfigOption("mode", targetMode);
-    const policy = summarizeCesiumModeToolPolicy(targetMode);
+    const policy = applyCesiumProfileExclusionsToModePolicy(
+      summarizeCesiumModeToolPolicy(targetMode),
+      listCesiumProfileExcludedTools(this.activeProfile),
+      this.activeProfile.name
+    );
     const reminderText = buildCesiumModeReminder({
       mode: targetMode,
       modelName: resolveModelDisplayName(
@@ -3029,6 +3038,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ),
       profileName: this.activeProfile.name,
       profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
+      profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
       workspaceRoot: this.callbacks.workspace.root,
       dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
