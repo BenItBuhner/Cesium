@@ -48,7 +48,7 @@ export function CesiumProfileToggle({
   return (
     <div className="relative z-10 flex w-full shrink-0 justify-center pb-[2px] pt-[8px]">
       <div
-        className="flex max-w-full items-center gap-[2px] overflow-x-auto rounded-full border border-[var(--agent-border)] bg-[var(--bg-input)] p-[2px]"
+        className="chat-composer-surface flex max-w-full items-center gap-[2px] overflow-x-auto rounded-full border border-[var(--agent-border)] p-[3px]"
         role="tablist"
         aria-label="Agent profile"
       >
@@ -71,7 +71,7 @@ export function CesiumProfileToggle({
               }}
               className={`flex shrink-0 touch-manipulation items-center gap-[5px] whitespace-nowrap rounded-full px-[10px] py-[3px] font-sans text-[12px] font-normal transition-colors disabled:cursor-default ${
                 isActive
-                  ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-[0_0_0_1px_var(--border-card)]"
+                  ? "bg-[var(--bg-main)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               }`}
             >

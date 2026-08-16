@@ -392,56 +392,34 @@ export function AgentCenterPane() {
   const composerMode = composerState?.mode ?? draftMode;
   const modeLocked = isOrchestrationModeLocked();
 
-  // Capability-profile toggle (Cesium harness only). Profiles are a layer
-  // above the harness — modes/models/tools live inside them — so the switch
-  // renders at the very top of the center pane, not in the composer chips.
+  // Capability-profile toggle. Hard rule: it renders ONLY on the brand-new
+  // chat landing (never inside an existing conversation, so the transcript
+  // top stays clean) and only when the Cesium agent harness is the draft
+  // backend. The pick is remembered in workspaceSession.chat.profileId and
+  // binds at conversation creation.
   const { openSettingsView } = useShellView();
-  const isCesiumConversation = conversation?.config.backendId === "cesium-agent";
   const isCesiumDraft = !conversation && draftBackend?.id === "cesium-agent";
-  const cesiumProfileCatalog = useCesiumProfileCatalog(isCesiumConversation || isCesiumDraft);
-  const profileConfigOption = isCesiumConversation
-    ? composerState?.sessionConfigOptions?.find((option) => option.id === "profile")
-    : undefined;
-  const profileToggleOptions = useMemo(() => {
-    if (profileConfigOption) {
-      return profileConfigOption.options.map((option) => ({
-        value: option.value,
-        name: option.name,
-        description: option.description,
-        builtIn: option.metadata?.builtIn === "true",
-      }));
-    }
-    return cesiumProfileCatalog.catalog.map((profile) => ({
-      value: profile.id,
-      name: profile.name,
-      description: profile.description,
-      builtIn: profile.builtIn,
-    }));
-  }, [cesiumProfileCatalog.catalog, profileConfigOption]);
+  const cesiumProfileCatalog = useCesiumProfileCatalog(isCesiumDraft);
+  const profileToggleOptions = useMemo(
+    () =>
+      cesiumProfileCatalog.catalog.map((profile) => ({
+        value: profile.id,
+        name: profile.name,
+        description: profile.description,
+        builtIn: profile.builtIn,
+      })),
+    [cesiumProfileCatalog.catalog]
+  );
   const draftProfileId =
     workspaceSession.chat.profileId?.trim() || cesiumProfileCatalog.defaultProfileId;
-  const activeProfileId = isCesiumConversation
-    ? profileConfigOption?.currentValue?.trim() ||
-      conversation?.config.profileId?.trim() ||
-      cesiumProfileCatalog.defaultProfileId
-    : draftProfileId;
   const handleProfileToggle = useCallback(
     (next: string) => {
-      if (isCesiumConversation && selectedConversationId) {
-        void setConversationConfigOption(selectedConversationId, "profile", next);
-      }
-      // Remember the pick as the new-chat draft default either way.
       updateWorkspaceSession((current) => ({
         ...current,
         chat: { ...current.chat, profileId: next },
       }));
     },
-    [
-      isCesiumConversation,
-      selectedConversationId,
-      setConversationConfigOption,
-      updateWorkspaceSession,
-    ]
+    [updateWorkspaceSession]
   );
   const handleManageProfiles = useCallback(() => {
     updateWorkspaceSession((current) => ({
@@ -451,10 +429,10 @@ export function AgentCenterPane() {
     openSettingsView();
   }, [openSettingsView, updateWorkspaceSession]);
   const profileToggleEl =
-    (isCesiumConversation || isCesiumDraft) && profileToggleOptions.length > 0 ? (
+    isCesiumDraft && profileToggleOptions.length > 0 ? (
       <CesiumProfileToggle
         options={profileToggleOptions}
-        activeId={activeProfileId}
+        activeId={draftProfileId}
         onChange={handleProfileToggle}
         onManage={handleManageProfiles}
       />
@@ -1292,11 +1270,13 @@ export function AgentCenterPane() {
       {auroraSceneContext ? null : (
         <AuroraBackdrop mood={auroraMood} placement={auroraPlacement} />
       )}
-      {profileToggleEl}
       {showLanding ? (
+      <>
+      {profileToggleEl}
       <div className="relative z-10 min-h-0 min-w-0 flex-1">
         <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
       </div>
+      </>
       ) : (
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
