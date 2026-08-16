@@ -198,6 +198,13 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     allowInEditableContexts: true,
   },
   {
+    id: "workbench.action.startVoiceAgent",
+    label: "Voice: Start Voice Agent",
+    section: "Workbench",
+    defaultBindings: ["Mod+Alt+V"],
+    allowInEditableContexts: true,
+  },
+  {
     id: "chat.action.toggleComposerExpand",
     label: "Chat: Toggle expand composer",
     section: "Chat",
