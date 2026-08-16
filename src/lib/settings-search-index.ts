@@ -46,6 +46,7 @@ const NAV_LABELS: Record<string, string> = {
   rulesSkills: "Rules, Skills, Subagents",
   exportImport: "Import & export",
   storage: "Storage",
+  updates: "Updates",
   beta: "Beta",
 };
 
@@ -502,6 +503,38 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Storage ——
   section("storage", "status", "Storage status", "driver postgres sqlite"),
   section("storage", "migrate", "Migrate between drivers", "migration"),
+
+  // —— Updates ——
+  section("updates", "installation", "This installation", "version release github npm"),
+  section("updates", "available", "Available updates", "release github npm git"),
+  row(
+    "updates",
+    "check-now",
+    "Check for updates",
+    "Query GitHub releases, the npm registry, and the git remote for new builds.",
+    ["update", "upgrade", "release", "version", "github", "npm"]
+  ),
+  row(
+    "updates",
+    "auto-check",
+    "Check for updates automatically",
+    "Background update checks every few hours.",
+    ["automatic", "auto", "update"]
+  ),
+  row(
+    "updates",
+    "prereleases",
+    "Include pre-releases",
+    "Offer beta and release-candidate builds.",
+    ["beta", "rc", "prerelease"]
+  ),
+  row(
+    "updates",
+    "self-update",
+    "Self-update this server",
+    "Apply the update in place for installer and git-based servers.",
+    ["upgrade", "apply", "install", "restart"]
+  ),
 ];
 
 const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITIONS.map(

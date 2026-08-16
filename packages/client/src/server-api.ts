@@ -2859,6 +2859,190 @@ export async function importStorageArchive(
   return (await response.json()) as StorageImportResponse;
 }
 
+// ---------------------------------------------------------------------------
+// Updates (GitHub releases / npm registry / git-backed self-update)
+// ---------------------------------------------------------------------------
+
+export type CesiumInstallKind =
+  | "isolated-server"
+  | "termux-server"
+  | "desktop-electron"
+  | "source"
+  | "unknown";
+
+export type CesiumUpdateChannelId = "app" | "server" | "desktop" | "mobile";
+
+export type CesiumUpdateReleaseAsset = {
+  name: string;
+  size: number;
+  downloadUrl: string;
+  contentType: string | null;
+};
+
+export type CesiumUpdateRelease = {
+  channel: CesiumUpdateChannelId;
+  tag: string;
+  version: string;
+  name: string | null;
+  prerelease: boolean;
+  publishedAt: string | null;
+  htmlUrl: string | null;
+  notes: string | null;
+  assets: CesiumUpdateReleaseAsset[];
+};
+
+export type CesiumUpdateSelfUpdateMethod = "cesium-server-cli" | "git-pull";
+
+export type CesiumUpdateGitStatus = {
+  branch: string | null;
+  commit: string | null;
+  remoteCommit: string | null;
+  behind: number | null;
+  updateAvailable: boolean;
+  error: string | null;
+};
+
+export type CesiumUpdateNpmStatus = {
+  packageName: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  error: string | null;
+};
+
+export type CesiumUpdateSettings = {
+  autoCheck: boolean;
+  includePrereleases: boolean;
+  dismissedVersion: string | null;
+};
+
+export type CesiumUpdateStatusPayload = {
+  currentVersion: string;
+  protocolVersion: string;
+  installKind: CesiumInstallKind;
+  githubRepo: string;
+  githubError: string | null;
+  primaryChannel: CesiumUpdateChannelId;
+  updateAvailable: boolean;
+  latest: CesiumUpdateRelease | null;
+  channels: Partial<Record<CesiumUpdateChannelId, CesiumUpdateRelease>>;
+  npm: CesiumUpdateNpmStatus | null;
+  git: CesiumUpdateGitStatus | null;
+  selfUpdate: {
+    supported: boolean;
+    method: CesiumUpdateSelfUpdateMethod | null;
+    reason: string | null;
+  };
+  settings: CesiumUpdateSettings;
+  lastCheckedAt: number | null;
+  applying: boolean;
+};
+
+export type CesiumUpdateApplyEvent =
+  | { type: "start"; method: CesiumUpdateSelfUpdateMethod }
+  | { type: "log"; line: string }
+  | { type: "restarting"; message: string }
+  | { type: "done"; ok: boolean; restartRequired: boolean; error?: string };
+
+export type UpdateApplyCallbacks = {
+  onEvent?: (event: CesiumUpdateApplyEvent) => void;
+  signal?: AbortSignal;
+};
+
+/** Cached update status — no network on the server side. */
+export async function fetchUpdateStatus(): Promise<CesiumUpdateStatusPayload> {
+  return request(`/api/updates/status`, undefined, { skipWorkspaceHeader: true });
+}
+
+/** Refresh all update feeds (GitHub releases, npm registry, git remote) now. */
+export async function checkForUpdates(): Promise<CesiumUpdateStatusPayload> {
+  return request(
+    `/api/updates/check`,
+    { method: "POST" },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function saveUpdateSettings(
+  patch: Partial<CesiumUpdateSettings>
+): Promise<CesiumUpdateStatusPayload> {
+  return request(
+    `/api/updates/settings`,
+    { method: "PUT", body: JSON.stringify(patch) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+/**
+ * Kick off a self-update and stream NDJSON progress events. For installer
+ * (`cesium-server-cli`) updates the server restarts itself mid-stream, so the
+ * stream can end abruptly after a `restarting` event — callers should then
+ * poll `/health` until the new build is up.
+ */
+export async function applyServerUpdate(
+  callbacks: UpdateApplyCallbacks = {}
+): Promise<void> {
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/updates/apply`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    signal: callbacks.signal,
+    headers: Object.fromEntries(
+      attachSessionToken({ "Content-Type": "application/json" }).entries()
+    ),
+  });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => "");
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      if (parsed.error) message = parsed.error;
+    } catch {
+      // not JSON — keep raw text
+    }
+    throw new Error(message || `Update failed with status ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIdx = buffer.indexOf("\n");
+      while (newlineIdx !== -1) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+        if (line.length > 0) {
+          try {
+            callbacks.onEvent?.(JSON.parse(line) as CesiumUpdateApplyEvent);
+          } catch {
+            // Malformed line — skip rather than aborting the stream.
+          }
+        }
+        newlineIdx = buffer.indexOf("\n");
+      }
+    }
+  } catch (error) {
+    // Installer-driven updates stop this server mid-stream; a network error
+    // after `restarting` is the expected shutdown, not a failure.
+    if ((error as Error).name !== "AbortError") {
+      callbacks.onEvent?.({
+        type: "log",
+        line: `Connection to the server closed: ${(error as Error).message}`,
+      });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export type BrowserDebugSessionCreateInput = {
   targetUrl: string;
   /** Navigate via the workspace HTML proxy (closer to in-IDE iframe). */

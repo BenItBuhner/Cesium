@@ -17,6 +17,7 @@ import { BetaSettingsPanel } from "./BetaSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "./KeyboardShortcutsSettingsPanel";
 import { ExportImportSettingsPanel } from "./ExportImportSettingsPanel";
 import { StorageSettingsPanel } from "./StorageSettingsPanel";
+import { UpdatesSettingsPanel } from "./UpdatesSettingsPanel";
 import { UsageSettingsPanel } from "./UsageSettingsPanel";
 
 export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
@@ -37,4 +38,5 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   keyboardShortcuts: KeyboardShortcutsSettingsPanel,
   exportImport: ExportImportSettingsPanel,
   storage: StorageSettingsPanel,
+  updates: UpdatesSettingsPanel,
 };
