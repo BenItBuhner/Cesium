@@ -1,13 +1,39 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronRight } from "lucide-react";
-import { useCallback, useId, type ChangeEvent, type FocusEvent, type ReactNode } from "react";
+import { AlertTriangle, ArrowLeft, Check, ChevronRight } from "lucide-react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useId,
+  type ChangeEvent,
+  type FocusEvent,
+  type ReactNode,
+} from "react";
 
 export const rowButtonClass =
-  "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
+  "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--bg-card-hover)] px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
 
 export const tagClass =
-  "inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[3px] font-mono text-[11px] text-[var(--text-primary)]";
+  "inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent-bg)] px-[8px] py-[3px] font-mono text-[11px] text-[var(--text-primary)]";
+
+/**
+ * Shell-level chrome exposed to settings panels: leaving the settings shell
+ * entirely (back to the agent workspace) and jumping between categories.
+ * Provided by `SettingsEditorView`; null when a panel renders standalone.
+ */
+export type SettingsShellChrome = {
+  /** Leave the settings shell and return to the agent workspace. */
+  closeShell?: () => void;
+  /** Navigate to another settings category by nav id (e.g. "servers"). */
+  navigate?: (navId: string) => void;
+};
+
+export const SettingsShellChromeContext = createContext<SettingsShellChrome | null>(null);
+
+export function useSettingsShellChrome(): SettingsShellChrome | null {
+  return useContext(SettingsShellChromeContext);
+}
 
 export function SettingsSection({
   title,
@@ -37,7 +63,7 @@ export function SettingsSection({
         </div>
       ) : null}
       {bordered ? (
-        <div className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]">
+        <div className="overflow-hidden rounded-[var(--radius-card)] bg-[var(--bg-card)]">
           {children}
         </div>
       ) : (
@@ -264,72 +290,112 @@ export function SettingsLinkRow({
   );
 }
 
-export function PageIntro({ title }: { title: string }) {
-  return (
-    <h1 className="mb-[16px] font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
-      {title}
-    </h1>
-  );
-}
-
 export type SettingsBreadcrumbSegment = {
   label: string;
   onClick?: () => void;
 };
 
-/** Top-of-page location trail for nested settings views (e.g. Agents › harness). */
-export function SettingsBreadcrumbs({ segments }: { segments: SettingsBreadcrumbSegment[] }) {
+/**
+ * Standardized settings page chrome: a universal back button, a
+ * "Settings › …" breadcrumb trail, and the page title. Back goes to the
+ * parent segment when one exists (nested views), otherwise it leaves the
+ * settings shell entirely (back to Agents).
+ */
+export function SettingsPageHeader({
+  segments,
+  onBack,
+  actions,
+}: {
+  segments: SettingsBreadcrumbSegment[];
+  /** Override the default back target (parent segment or close-shell). */
+  onBack?: () => void;
+  /** Optional trailing controls rendered beside the page title. */
+  actions?: ReactNode;
+}) {
+  const chrome = useSettingsShellChrome();
   if (segments.length === 0) {
     return null;
   }
+  const current = segments[segments.length - 1];
+  const parent = segments.length > 1 ? segments[segments.length - 2] : null;
+  const handleBack = onBack ?? parent?.onClick ?? chrome?.closeShell;
+  const backTitle = parent ? `Back to ${parent.label}` : "Back to Agents";
   return (
-    <nav
-      aria-label="Breadcrumb"
-      className={`mb-[12px] flex flex-wrap items-center gap-[4px] px-[2px] font-sans ${
-        segments.length === 1 ? "" : "text-[12px]"
-      }`}
-    >
-      {segments.map((segment, index) => {
-        const isLast = index === segments.length - 1;
-        return (
-          <span key={`${segment.label}-${index}`} className="inline-flex min-w-0 items-center gap-[4px]">
-            {index > 0 ? (
+    <header className="mb-[18px]">
+      <nav
+        aria-label="Breadcrumb"
+        className="mb-[10px] flex flex-wrap items-center gap-[6px] font-sans text-[12px]"
+      >
+        {handleBack ? (
+          <button
+            type="button"
+            onClick={handleBack}
+            aria-label={backTitle}
+            title={backTitle}
+            className="mr-[4px] inline-flex h-[24px] items-center gap-[6px] rounded-full bg-[var(--accent-bg)] pl-[8px] pr-[11px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+          >
+            <ArrowLeft className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
+            Back
+          </button>
+        ) : null}
+        <span className="select-none text-[var(--text-disabled)]">Settings</span>
+        {segments.map((segment, index) => {
+          const isLast = index === segments.length - 1;
+          return (
+            <span
+              key={`${segment.label}-${index}`}
+              className="inline-flex min-w-0 items-center gap-[6px]"
+            >
               <span className="select-none text-[var(--text-disabled)]" aria-hidden>
                 ›
               </span>
-            ) : null}
-            {segment.onClick && !isLast ? (
-              <button
-                type="button"
-                onClick={segment.onClick}
-                className="truncate text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-              >
-                {segment.label}
-              </button>
-            ) : (
-              <span
-                className={`truncate ${
-                  isLast
-                    ? segments.length === 1
-                      ? "font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]"
-                      : "font-medium text-[var(--text-primary)]"
-                    : "text-[var(--text-secondary)]"
-                }`}
-                aria-current={isLast ? "page" : undefined}
-              >
-                {segment.label}
-              </span>
-            )}
-          </span>
-        );
-      })}
-    </nav>
+              {segment.onClick && !isLast ? (
+                <button
+                  type="button"
+                  onClick={segment.onClick}
+                  className="truncate text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                >
+                  {segment.label}
+                </button>
+              ) : (
+                <span
+                  className={`truncate ${
+                    isLast
+                      ? "font-medium text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)]"
+                  }`}
+                  aria-current={isLast ? "page" : undefined}
+                >
+                  {segment.label}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </nav>
+      <div className="flex flex-wrap items-center justify-between gap-[12px]">
+        <h1 className="font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
+          {current.label}
+        </h1>
+        {actions}
+      </div>
+    </header>
   );
+}
+
+/** Simple page title — renders the standardized header with a single segment. */
+export function PageIntro({ title }: { title: string }) {
+  return <SettingsPageHeader segments={[{ label: title }]} />;
+}
+
+/** Top-of-page location trail for nested settings views (e.g. Agents › harness). */
+export function SettingsBreadcrumbs({ segments }: { segments: SettingsBreadcrumbSegment[] }) {
+  return <SettingsPageHeader segments={segments} />;
 }
 
 /** Styled select trigger matching server/workspace pickers in settings. */
 export const settingsSelectTriggerClass =
-  "inline-flex min-w-[160px] w-full items-center justify-between gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
+  "inline-flex min-w-[160px] w-full items-center justify-between gap-[8px] rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]";
 
 export function SettingsSubsectionHeading({ children }: { children: ReactNode }) {
   return (
@@ -354,7 +420,7 @@ export function SettingsFieldLabel({
 }
 
 const settingsNumberInputClass =
-  "box-border w-[72px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[6px] text-right font-mono text-[12px] text-[var(--text-primary)] outline-none tabular-nums";
+  "box-border w-[72px] rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[8px] py-[6px] text-right font-mono text-[12px] text-[var(--text-primary)] outline-none tabular-nums";
 
 /** Slider + integer field for pixel-sized appearance preferences. */
 export function SettingsPxRangeControl({

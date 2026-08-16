@@ -32,6 +32,7 @@ export type SettingsSearchEntry = {
 };
 
 const NAV_LABELS: Record<string, string> = {
+  account: "Account",
   general: "General",
   actions: "Actions",
   appearance: "Appearance",
@@ -107,6 +108,37 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
       navId,
       keywords: [navId],
     })
+  ),
+
+  // —— Account ——
+  section("account", "identity", "Account & session", "profile sign in sign out login"),
+  row(
+    "account",
+    "account-identity",
+    "Signed-in account",
+    "Your cloud account, device sync identity, or local workspace.",
+    ["profile", "avatar", "email", "clerk", "identity", "user"]
+  ),
+  row(
+    "account",
+    "account-cloud-mode",
+    "Cloud account",
+    "Sign in, sync status, and sign out for the cloud account layer.",
+    ["sign in", "sign out", "sync", "clerk", "device", "local-only"]
+  ),
+  row(
+    "account",
+    "account-server-session",
+    "Server session",
+    "Password session on the active server: expiry, last active, sign out.",
+    ["logout", "sign out", "password", "auth", "session", "expires"]
+  ),
+  row(
+    "account",
+    "account-active-server",
+    "Active server",
+    "The server this client is connected to; switch or manage servers.",
+    ["server", "switch", "connection"]
   ),
 
   // —— General ——
