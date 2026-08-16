@@ -261,6 +261,13 @@ export type AuroraRenderer = {
   snapToMood(): void;
 };
 
+/** Wall-clock duration of a placement move (independent of the speed setting). */
+const PLACEMENT_GLIDE_MS = 2000;
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 export function createAuroraRenderer(): AuroraRenderer {
   let mood: AuroraMood = "idle";
   let placement: AuroraPlacement = "top";
@@ -269,6 +276,14 @@ export function createAuroraRenderer(): AuroraRenderer {
 
   const params: MoodParams = { ...MOOD_TARGETS.idle, tint: null };
   const place: PlacementParams = { ...PLACEMENT_TARGETS.top };
+  // Placement moves are timed against wall-clock progress rather than
+  // per-frame smoothing: heavy work right at a move's start (e.g. mounting
+  // the conversation view during the composer split) stalls frames, and a
+  // frame-based approach would fast-forward the glide into a visible snap.
+  let placeFrom: PlacementParams = { ...PLACEMENT_TARGETS.top };
+  let placeTo: PlacementParams = { ...PLACEMENT_TARGETS.top };
+  let placeStartMs = -PLACEMENT_GLIDE_MS;
+  let realTimeMs = 0;
   let tintColor: Rgb = [255, 255, 255];
 
   /** Accumulated wave phase; scaling by flow/speed at accumulation time keeps changes seamless. */
@@ -307,15 +322,13 @@ export function createAuroraRenderer(): AuroraRenderer {
     if (target.tint) {
       tintColor = mixRgb(tintColor, target.tint, 1 - Math.exp(-dtMs / SMOOTH_ATTACK_TAU_MS));
     }
-    // Placement glides with a fixed slow constant so moving the whole aurora
-    // (e.g. new chat committing to a conversation) reads as one deliberate
-    // drift rather than a mood-style attack/release.
-    const placeTarget = PLACEMENT_TARGETS[placement];
-    const placeK = 1 - Math.exp(-dtMs / 900);
-    place.centerY += (placeTarget.centerY - place.centerY) * placeK;
-    place.spread += (placeTarget.spread - place.spread) * placeK;
-    place.sigma += (placeTarget.sigma - place.sigma) * placeK;
-    place.floor += (placeTarget.floor - place.floor) * placeK;
+    realTimeMs += dtMs;
+    const progress = Math.min(1, (realTimeMs - placeStartMs) / PLACEMENT_GLIDE_MS);
+    const eased = easeInOutCubic(progress);
+    place.centerY = placeFrom.centerY + (placeTo.centerY - placeFrom.centerY) * eased;
+    place.spread = placeFrom.spread + (placeTo.spread - placeFrom.spread) * eased;
+    place.sigma = placeFrom.sigma + (placeTo.sigma - placeFrom.sigma) * eased;
+    place.floor = placeFrom.floor + (placeTo.floor - placeFrom.floor) * eased;
     const pace = speedMultiplier();
     flowTime += dtMs * params.flow * pace;
     clockMs += dtMs * pace;
@@ -416,7 +429,13 @@ export function createAuroraRenderer(): AuroraRenderer {
       mood = next;
     },
     setPlacement(next) {
+      if (next === placement) {
+        return;
+      }
       placement = next;
+      placeFrom = { ...place };
+      placeTo = { ...PLACEMENT_TARGETS[next] };
+      placeStartMs = realTimeMs;
     },
     setPalette(colors) {
       bands = buildBands(colors);
@@ -441,6 +460,9 @@ export function createAuroraRenderer(): AuroraRenderer {
       place.spread = placeTarget.spread;
       place.sigma = placeTarget.sigma;
       place.floor = placeTarget.floor;
+      placeFrom = { ...placeTarget };
+      placeTo = { ...placeTarget };
+      placeStartMs = realTimeMs - PLACEMENT_GLIDE_MS;
     },
     render(ctx, width, height, dtMs) {
       step(Math.min(120, Math.max(0, dtMs)));
