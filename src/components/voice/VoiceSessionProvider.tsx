@@ -120,7 +120,8 @@ declare global {
 }
 
 export function VoiceSessionProvider({ children }: { children: ReactNode }) {
-  const { promptConversation, eventsByConversationId } = useAgentConversations();
+  const { promptConversation, eventsByConversationId, conversationsById } =
+    useAgentConversations();
   const { startNewConversation, setSelectedConversationId } = useAgentShellState();
 
   const [view, setView] = useState<VoiceSessionView>("closed");
@@ -132,6 +133,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [engineStatus, setEngineStatus] = useState<VoiceTurnStatus>("idle");
   const [capturingSpeech, setCapturingSpeech] = useState(false);
   const [ttsActive, setTtsActive] = useState(false);
+  const [composerSending, setComposerSending] = useState(false);
 
   const viewRef = useRef<VoiceSessionView>("closed");
   viewRef.current = view;
@@ -201,13 +203,38 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const submitComposer = useCallback(
     async (text: string, attachments?: ImageAttachment[]): Promise<boolean> => {
-      const boundId = conversationIdRef.current;
-      if (boundId) {
-        return promptConversationRef.current(boundId, text, attachments);
+      const trimmed = text.trim();
+      const caption =
+        trimmed ||
+        (attachments && attachments.length > 0
+          ? `(${attachments.length} attachment${attachments.length === 1 ? "" : "s"})`
+          : "");
+      if (caption) {
+        pushTranscript({ kind: "heard", text: caption });
       }
-      return draftRef.current.handleSubmit(text, attachments);
+      setComposerSending(true);
+      try {
+        const boundId = conversationIdRef.current;
+        const accepted = boundId
+          ? await promptConversationRef.current(boundId, text, attachments)
+          : await draftRef.current.handleSubmit(text, attachments);
+        if (!accepted) {
+          pushTranscript({ kind: "error", text: "Send: message was not accepted." });
+        }
+        return accepted;
+      } catch (submitError) {
+        pushTranscript({
+          kind: "error",
+          text: `Send: ${
+            submitError instanceof Error ? submitError.message : "failed."
+          }`,
+        });
+        return false;
+      } finally {
+        setComposerSending(false);
+      }
     },
-    []
+    [pushTranscript]
   );
   const submitComposerRef = useRef(submitComposer);
   submitComposerRef.current = submitComposer;
@@ -530,15 +557,28 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     };
   }, [engine, teardownCapture]);
 
+  const agentWorking = Boolean(
+    conversationId && conversationsById[conversationId]?.status === "running"
+  );
+
   const status: SessionOrbStatus = useMemo(() => {
     if (view === "closed") return "idle";
     if (ttsActive) return "speaking";
     if (engineStatus === "transcribing") return "transcribing";
-    if (engineStatus === "sending") return "sending";
+    if (engineStatus === "sending" || composerSending) return "sending";
+    if (agentWorking) return "working";
     if (capturingSpeech) return "capturing";
     if (micState === "on") return "listening";
     return "idle";
-  }, [capturingSpeech, engineStatus, micState, ttsActive, view]);
+  }, [
+    agentWorking,
+    capturingSpeech,
+    composerSending,
+    engineStatus,
+    micState,
+    ttsActive,
+    view,
+  ]);
   statusRef.current = status;
 
   const value = useMemo<VoiceSessionContextValue>(

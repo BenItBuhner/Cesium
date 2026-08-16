@@ -24,6 +24,7 @@ const STATUS_LABELS: Record<SessionOrbStatus, string> = {
   capturing: "Hearing you…",
   transcribing: "Transcribing…",
   sending: "Sending to agent…",
+  working: "Agent working…",
   speaking: "Speaking…",
 };
 

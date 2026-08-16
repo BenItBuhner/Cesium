@@ -8,6 +8,7 @@
  *   capturing    bright teal swell synced to mic level
  *   transcribing violet fast churn
  *   sending      violet fast churn (agent is being prompted)
+ *   working      deep indigo steady churn (agent turn running in the thread)
  *   speaking     warm amber pulse synced to TTS output level
  */
 
@@ -17,6 +18,7 @@ export type SessionOrbStatus =
   | "capturing"
   | "transcribing"
   | "sending"
+  | "working"
   | "speaking";
 
 export type SessionOrbRenderState = {
@@ -77,6 +79,14 @@ const THEMES: Record<SessionOrbStatus, StatusTheme> = {
     churn: 3.9,
     swell: 0.02,
     glow: 0.66,
+  },
+  working: {
+    core: [138, 152, 244],
+    ribbon: [92, 106, 214],
+    halo: [120, 136, 236],
+    churn: 2.2,
+    swell: 0.016,
+    glow: 0.58,
   },
   speaking: {
     core: [250, 196, 122],

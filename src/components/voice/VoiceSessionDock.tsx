@@ -18,6 +18,7 @@ const DOCK_STATUS_LABELS: Record<SessionOrbStatus, string> = {
   capturing: "Hearing you",
   transcribing: "Transcribing",
   sending: "Sending",
+  working: "Agent working",
   speaking: "Speaking",
 };
 
