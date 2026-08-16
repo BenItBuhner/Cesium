@@ -62,21 +62,29 @@ export const NEW_CHAT_WIDGET_DESCRIPTIONS: Record<NewChatWidgetId, string> = {
   "recent-activity": "Recently opened workspaces, one click away.",
 };
 
-const MAX_ACTION_TILES = 8;
+const MAX_ACTION_PILLS = 8;
 const MAX_RECENT_CHATS = 4;
 const MAX_RECENT_WORKSPACES = 4;
 
 /**
- * Every widget tile shares one material: the same translucent fill, outline,
- * and high corner radius as the chat composer shell and the landing quick
- * actions (`aurora-glass` mirrors `.chat-composer-surface`).
+ * Two design tiers, one landing:
+ *
+ * 1. Shortcuts and quick actions are pill buttons — the same design the
+ *    landing quick actions have always had (`aurora-glass` pill material).
+ * 2. Recent chats and recent activity are full-sized widget cards sharing
+ *    the chat composer's material: `.chat-composer-surface` translucent
+ *    fill, `--agent-border` outline, and the composer's high corner radius.
  */
-const TILE_CLASSNAME =
+const PILL_CLASSNAME =
   "aurora-glass inline-flex max-w-full min-w-0 items-center gap-[6px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60";
-const TILE_ICON_CLASSNAME = "size-[12px] shrink-0 text-[var(--text-secondary)]";
-const TILE_META_CLASSNAME = "shrink-0 font-sans text-[10.5px] text-[var(--text-disabled)]";
-/** One wrap row per widget keeps groups (e.g. Actions) visually distinct. */
-const WIDGET_ROW_CLASSNAME = "flex w-full min-w-0 flex-wrap items-center gap-[8px]";
+const PILL_ICON_CLASSNAME = "size-[12px] shrink-0 text-[var(--text-secondary)]";
+const PILL_ROW_CLASSNAME = "flex w-full min-w-0 flex-wrap items-center gap-[8px]";
+const WIDGET_CARD_CLASSNAME =
+  "chat-composer-surface w-full min-w-0 rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] p-[8px]";
+const WIDGET_CARD_ROW_CLASSNAME =
+  "flex w-full min-w-0 items-center gap-[9px] rounded-[calc(var(--agent-composer-radius)-8px)] px-[10px] py-[7px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--agent-card-hover-bg)]";
+const WIDGET_CARD_META_CLASSNAME =
+  "shrink-0 font-sans text-[10.5px] text-[var(--text-disabled)]";
 
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -198,11 +206,12 @@ function ActionResultPopover({
 }
 
 /**
- * Customizable tile grid rendered under the new-chat composer. Every tile
- * shares the same fill, outline, and corner radius — no widget titles.
- * Tiles come from four sources: quick shortcuts, quick actions (executed
- * against the actively selected workspace's path), recent conversations,
- * and recently opened workspaces. Order and visibility persist in
+ * Customizable landing stack rendered under the new-chat composer, with two
+ * design tiers and no widget titles: shortcut and quick-action PILLS (the
+ * quick actions system keeps its own button design; commands execute against
+ * the actively selected workspace's path), and full-sized widget CARDS for
+ * recent conversations and recently opened workspaces, sharing the chat
+ * composer's material. Order and visibility persist in
  * `settings.general.newChatWidgets` (Settings → General → New chat widgets,
  * or the gear popover on the landing).
  */
@@ -269,7 +278,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
             hasConversation: false,
           })
       )
-      .slice(0, MAX_ACTION_TILES);
+      .slice(0, MAX_ACTION_PILLS);
   }, [actionsLoaded, actionsWidgetVisible, effectiveActions, insights]);
 
   const [runStates, setRunStates] = useState<Record<string, ActionRunState>>({});
@@ -462,15 +471,15 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
   const moveWidget = useNewChatWidgetMove();
 
   // ── Tile renderers (uniform look, no titles) ───────────────────────────────
-  const shortcutTiles: ReactNode[] = [
+  const shortcutPills: ReactNode[] = [
     <button
       key="shortcut-plan"
       type="button"
       onClick={() => runCommand?.("workbench.action.focusChatPlanMode")}
-      className={TILE_CLASSNAME}
+      className={PILL_CLASSNAME}
       title={`Start planning a new idea (${planShortcutHint})`}
     >
-      <Lightbulb className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
+      <Lightbulb className={PILL_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
       <span className="truncate">
         Plan new idea{" "}
         <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
@@ -480,15 +489,15 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
       key="shortcut-editor"
       type="button"
       onClick={() => setRightPaneOpen(true)}
-      className={TILE_CLASSNAME}
+      className={PILL_CLASSNAME}
       title="Open the editor panel"
     >
-      <PanelRight className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
+      <PanelRight className={PILL_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
       <span className="truncate">Open editor panel</span>
     </button>,
   ];
 
-  const actionTiles: ReactNode[] = visibleActions.map((action) => {
+  const actionPills: ReactNode[] = visibleActions.map((action) => {
     const Icon = quickActionPillIcon(action.icon);
     const runState = runStates[action.id];
     const isRunning = runState?.phase === "running";
@@ -502,7 +511,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
           type="button"
           onClick={() => handleActionClick(action)}
           disabled={isRunning}
-          className={`${TILE_CLASSNAME} ${
+          className={`${PILL_CLASSNAME} ${
             isError
               ? "!border-[color-mix(in_srgb,var(--status-error)_45%,transparent)]"
               : isConfirm
@@ -534,7 +543,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
               aria-hidden
             />
           ) : (
-            <Icon className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
+            <Icon className={PILL_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
           )}
           <span className="truncate">
             {isConfirm ? `Run ${action.label}?` : action.label}
@@ -551,86 +560,111 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     );
   });
 
-  const recentChatTiles: ReactNode[] = recentChats.map((summary) => {
-    const workspaceName = workspaceNameById.get(summary.workspaceId);
-    const otherWorkspace =
-      workspaceName != null && summary.workspaceId !== activeWorkspaceId
-        ? workspaceName
-        : null;
-    return (
-      <button
-        key={`chat-${summary.id}`}
-        type="button"
-        onClick={() => void openConversationSummary(summary).catch(() => undefined)}
-        className={TILE_CLASSNAME}
-        title={otherWorkspace ? `${summary.title} — ${otherWorkspace}` : summary.title}
-      >
-        <MessageSquare className={TILE_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
-        <span className="max-w-[240px] truncate">{summary.title}</span>
-        <span className={TILE_META_CLASSNAME}>{formatRelativeTime(summary.updatedAt)}</span>
-      </button>
-    );
-  });
+  const recentChatsCard: ReactNode =
+    recentChats.length > 0 ? (
+      <div key="recent-chats" className={WIDGET_CARD_CLASSNAME}>
+        {recentChats.map((summary) => {
+          const workspaceName = workspaceNameById.get(summary.workspaceId);
+          const otherWorkspace =
+            workspaceName != null && summary.workspaceId !== activeWorkspaceId
+              ? workspaceName
+              : null;
+          return (
+            <button
+              key={summary.id}
+              type="button"
+              onClick={() => void openConversationSummary(summary).catch(() => undefined)}
+              className={WIDGET_CARD_ROW_CLASSNAME}
+              title={
+                otherWorkspace ? `${summary.title} — ${otherWorkspace}` : summary.title
+              }
+            >
+              <MessageSquare
+                className="size-[13px] shrink-0 text-[var(--text-secondary)]"
+                strokeWidth={1.5}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1 truncate">{summary.title}</span>
+              {otherWorkspace ? (
+                <span className="max-w-[110px] shrink truncate font-sans text-[10.5px] text-[var(--text-disabled)]">
+                  {otherWorkspace}
+                </span>
+              ) : null}
+              <span className={WIDGET_CARD_META_CLASSNAME}>
+                {formatRelativeTime(summary.updatedAt)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
 
-  const recentWorkspaceTiles: ReactNode[] = recentWorkspaces.map((workspace) => {
-    const appearance = getWorkspaceRailAppearance(
-      settings.general.workspaceRailAppearances,
-      `${activeServer.id}:${workspace.id}`,
-      { isHome: workspace.id === homeWorkspaceId }
-    );
-    return (
-      <button
-        key={`workspace-${workspace.id}`}
-        type="button"
-        onClick={() => {
-          setStandaloneDraftActive(false);
-          void openWorkspaceById(workspace.id).catch(() => undefined);
-        }}
-        className={TILE_CLASSNAME}
-        title={workspace.root}
-      >
-        <WorkspaceFolderIcon
-          iconName={appearance.icon}
-          color={appearance.color}
-          className="size-[12px] shrink-0"
-          strokeWidth={1.5}
-        />
-        <span className="max-w-[180px] truncate">{workspace.name}</span>
-        {workspace.lastOpenedAt ? (
-          <span className={TILE_META_CLASSNAME}>
-            {formatRelativeTime(workspace.lastOpenedAt)}
-          </span>
-        ) : null}
-      </button>
-    );
-  });
+  const recentActivityCard: ReactNode =
+    recentWorkspaces.length > 0 ? (
+      <div key="recent-activity" className={WIDGET_CARD_CLASSNAME}>
+        {recentWorkspaces.map((workspace) => {
+          const appearance = getWorkspaceRailAppearance(
+            settings.general.workspaceRailAppearances,
+            `${activeServer.id}:${workspace.id}`,
+            { isHome: workspace.id === homeWorkspaceId }
+          );
+          return (
+            <button
+              key={workspace.id}
+              type="button"
+              onClick={() => {
+                setStandaloneDraftActive(false);
+                void openWorkspaceById(workspace.id).catch(() => undefined);
+              }}
+              className={WIDGET_CARD_ROW_CLASSNAME}
+              title={workspace.root}
+            >
+              <WorkspaceFolderIcon
+                iconName={appearance.icon}
+                color={appearance.color}
+                className="size-[13px] shrink-0"
+                strokeWidth={1.5}
+              />
+              <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+              {workspace.lastOpenedAt ? (
+                <span className={WIDGET_CARD_META_CLASSNAME}>
+                  {formatRelativeTime(workspace.lastOpenedAt)}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
 
-  const widgetRows: ReactNode[] = visibleWidgets
+  const widgetNodes: ReactNode[] = visibleWidgets
     .map((id) => {
-      const tiles =
-        id === "shortcuts"
-          ? shortcutTiles
-          : id === "actions"
-            ? actionTiles
-            : id === "recent-chats"
-              ? recentChatTiles
-              : id === "recent-activity"
-                ? recentWorkspaceTiles
-                : [];
-      if (tiles.length === 0) {
-        return null;
+      switch (id) {
+        case "shortcuts":
+          return (
+            <div key="shortcuts" className={PILL_ROW_CLASSNAME}>
+              {shortcutPills}
+            </div>
+          );
+        case "actions":
+          return actionPills.length > 0 ? (
+            <div key="actions" className={PILL_ROW_CLASSNAME}>
+              {actionPills}
+            </div>
+          ) : null;
+        case "recent-chats":
+          return recentChatsCard;
+        case "recent-activity":
+          return recentActivityCard;
+        default:
+          return null;
       }
-      return (
-        <div key={id} className={WIDGET_ROW_CLASSNAME}>
-          {tiles}
-        </div>
-      );
     })
-    .filter((rowNode) => rowNode != null);
+    .filter((node) => node != null);
 
   return (
     <div className="mt-[10px] flex w-full min-w-0 items-start gap-[6px]">
-      <div className="flex min-w-0 flex-1 flex-col gap-[10px]">{widgetRows}</div>
+      <div className="flex min-w-0 flex-1 flex-col gap-[10px]">{widgetNodes}</div>
       <div className="relative shrink-0">
         <button
           ref={customizeButtonRef}
