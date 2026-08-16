@@ -26,6 +26,9 @@ import {
   normalizeAgentShellDesktopLayout,
 } from "@/components/agent/agent-shell-layout";
 import { AgentSidePane } from "@/components/agent/AgentSidePane";
+import { AuroraSceneProvider } from "@/components/agent/AuroraSceneContext";
+import { AuroraShellBackdrop } from "@/components/agent/AuroraBackdrop";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
@@ -66,6 +69,8 @@ function AgentCenterStage({
 
 function AgentLayoutShell() {
   const { activeWorkspaceId, fileTree, loading, sessionReady, workspaceInfo } = useWorkspace();
+  const { settings: globalSettingsForAurora } = useGlobalSettings();
+  const auroraSceneEnabled = globalSettingsForAurora.aurora.enabled;
   const {
     isMobile,
     leftRailCollapsed,
@@ -325,7 +330,16 @@ function AgentLayoutShell() {
     <WorkbenchProvider value={workbench}>
       <HardwareInputProvider>
         <IDEKeyboardLayer>
-          <div className="relative h-screen w-screen overflow-hidden bg-[var(--bg-main)]">
+          <AuroraSceneProvider>
+          {/* `isolate` creates the stacking context that lets the negative-z
+              aurora canvas paint above this root's background but beneath all
+              in-flow shell content (rail, center pane, editor panels). */}
+          <div
+            className="relative isolate h-screen w-screen overflow-hidden bg-[var(--bg-main)]"
+            data-aurora-scene={auroraSceneEnabled ? "on" : undefined}
+            data-aurora-surface={auroraSceneEnabled ? "on" : undefined}
+          >
+            <AuroraShellBackdrop />
             {isMobile ? (
               <MobileAgentShell
                 railOpen={!leftRailCollapsed}
@@ -470,6 +484,7 @@ function AgentLayoutShell() {
               </div>
             )}
           </div>
+          </AuroraSceneProvider>
         </IDEKeyboardLayer>
       </HardwareInputProvider>
     </WorkbenchProvider>

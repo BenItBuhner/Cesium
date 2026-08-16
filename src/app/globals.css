@@ -368,14 +368,32 @@ html.dark .landing-shot-dark {
  * 2. Dark mode lifts the muted text tokens: mid-gray text loses too much
  *    contrast against the colored field.
  */
-[data-aurora-surface="on"] .aurora-glass {
-  background: color-mix(in srgb, var(--agent-card-bg) 78%, transparent);
+/*
+ * Floating chrome over the aurora (composer shell, docks, quick actions):
+ * mostly-opaque fills — darker than the default tokens in dark mode — so
+ * controls and text read as solid cards contrasting against the bright color
+ * field behind them. Light backdrop blur remains for the small translucent
+ * remainder. Everything reverts to stock theming when aurora is off.
+ */
+[data-aurora-surface="on"] .aurora-glass,
+[data-aurora-surface="on"] .chat-composer-surface {
+  background: color-mix(in srgb, var(--agent-card-bg) 92%, transparent);
   -webkit-backdrop-filter: blur(14px) saturate(150%);
   backdrop-filter: blur(14px) saturate(150%);
 }
 
+.dark [data-aurora-surface="on"] .aurora-glass,
+.dark [data-aurora-surface="on"] .chat-composer-surface {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--agent-card-bg) 58%, #04060b) 90%,
+    transparent
+  );
+}
+
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  [data-aurora-surface="on"] .aurora-glass {
+  [data-aurora-surface="on"] .aurora-glass,
+  [data-aurora-surface="on"] .chat-composer-surface {
     background: var(--agent-card-bg);
   }
 }
@@ -386,15 +404,50 @@ html.dark .landing-shot-dark {
   --text-tertiary: #a0a4ae;
 }
 
-/* Composer attach (+) button: translucent over the aurora instead of an
-   opaque dark disc, with a brighter glyph for contrast. */
+/* Composer attach (+) button: darker mostly-opaque fill with a bright glyph. */
 [data-aurora-surface="on"] .composer-attach-plus {
-  background: color-mix(in srgb, var(--agent-plus-button-bg) 45%, transparent);
-  -webkit-backdrop-filter: blur(10px) saturate(140%);
-  backdrop-filter: blur(10px) saturate(140%);
+  background: color-mix(in srgb, var(--agent-plus-button-bg) 85%, transparent);
 }
 .dark [data-aurora-surface="on"] .composer-attach-plus {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--agent-plus-button-bg) 62%, #04060b) 88%,
+    transparent
+  );
   color: #c6cad4;
+}
+
+/*
+ * Shell-wide aurora scene (`data-aurora-scene="on"` on the agent shell root):
+ * one canvas spans the window behind every column, so the panels themselves
+ * become windows onto it. Only the OUTERMOST surface of each column carries a
+ * translucent tint — nested surfaces go fully transparent, because stacked
+ * translucent fills multiply back into an opaque wall. No backdrop-filter on
+ * these large panels: software rasterization of full-height filters is what
+ * previously collapsed frame production on GPU-less machines.
+ */
+[data-aurora-scene="on"] .aurora-center-pane {
+  background: transparent;
+}
+[data-aurora-scene="on"] .aurora-shell-panel {
+  background: color-mix(in srgb, var(--agent-panel-bg) 55%, transparent);
+}
+[data-aurora-scene="on"] .aurora-editor-surface {
+  background: transparent;
+}
+/* Soften the opaque bottom fade so it doesn't read as a solid puddle against
+   the translucent surroundings. */
+[data-aurora-scene="on"] .chat-bottom-fade {
+  opacity: 0.78;
+}
+
+/* Monaco: let the aurora show through the code editor. The gutter, current
+   line, and scrollbar shades keep their theme colors; only the flat page
+   backgrounds go clear. */
+[data-aurora-scene="on"] .monaco-editor,
+[data-aurora-scene="on"] .monaco-editor .margin,
+[data-aurora-scene="on"] .monaco-editor .monaco-editor-background {
+  background-color: transparent !important;
 }
 
 /**

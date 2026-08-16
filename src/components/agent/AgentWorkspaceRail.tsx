@@ -3314,7 +3314,7 @@ export function AgentWorkspaceRail() {
     <>
       {!desktopRailCollapsed ? (
         <div
-          className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
+          className="aurora-shell-panel flex h-full flex-col bg-[var(--agent-panel-bg)]"
         >
           {bulkSelectMode ? (
             <AgentRailBulkSelectBar

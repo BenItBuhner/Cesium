@@ -70,6 +70,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
 import { AuroraBackdrop } from "./AuroraBackdrop";
+import { useAuroraScene } from "./AuroraSceneContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useAuroraMood } from "@/hooks/useAuroraMood";
 import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
@@ -1081,6 +1082,14 @@ export function AgentCenterPane() {
         ? "center"
         : "top"
       : globalSettings.aurora.placement;
+
+  // When the desktop shell hosts a window-spanning backdrop, publish the
+  // scene to it instead of rendering a pane-local canvas.
+  const auroraSceneContext = useAuroraScene();
+  const setAuroraScene = auroraSceneContext?.setScene;
+  useEffect(() => {
+    setAuroraScene?.({ mood: auroraMood, placement: auroraPlacement });
+  }, [setAuroraScene, auroraMood, auroraPlacement]);
   const showConversationTransitionState =
     !optimisticTurn &&
     (conversationSelectionPending ||
@@ -1203,9 +1212,11 @@ export function AgentCenterPane() {
     <div
       ref={paneRootRef}
       data-aurora-surface={globalSettings.aurora.enabled ? "on" : undefined}
-      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
+      className="aurora-center-pane relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
-      <AuroraBackdrop mood={auroraMood} placement={auroraPlacement} />
+      {auroraSceneContext ? null : (
+        <AuroraBackdrop mood={auroraMood} placement={auroraPlacement} />
+      )}
       {showLanding ? (
       <div className="relative z-10 min-h-0 min-w-0 flex-1">
         <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />

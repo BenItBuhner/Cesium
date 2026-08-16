@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useAuroraScene } from "@/components/agent/AuroraSceneContext";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 import { resolveAuroraColors, type AuroraSettingsState } from "@/lib/global-settings";
 import {
@@ -55,6 +56,27 @@ function usePrefersReducedMotion(): boolean {
     subscribeReducedMotion,
     getReducedMotionSnapshot,
     () => false
+  );
+}
+
+/**
+ * Shell-level aurora host: one canvas spanning the whole window behind the
+ * rail, center pane, and editor panels. Renders inside a negative-z wrapper
+ * (the shell root uses `isolate`) so every in-flow panel paints above it.
+ * The conversation pane publishes mood/placement through the scene context.
+ */
+export function AuroraShellBackdrop() {
+  const sceneContext = useAuroraScene();
+  if (!sceneContext) {
+    return null;
+  }
+  return (
+    <div aria-hidden className="absolute inset-0 -z-[1]">
+      <AuroraBackdrop
+        mood={sceneContext.scene.mood}
+        placement={sceneContext.scene.placement}
+      />
+    </div>
   );
 }
 
