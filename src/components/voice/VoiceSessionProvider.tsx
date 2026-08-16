@@ -163,17 +163,35 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const micLevelRef = useRef(0);
   const lastSpokenSeqRef = useRef(0);
 
-  // Pending-turn marker: set when a submit is accepted, cleared when the
-  // speak effect processes the turn's assistant_message_end. Mirrored in a
-  // ref so sibling effects in the same commit see the cleared value.
+  // Pending-reply bookkeeping: each accepted submit increments the counter,
+  // each processed assistant_message_end decrements it. Turns can overlap
+  // (a prompt is ACKed while the previous turn still streams), so a single
+  // marker is not enough — the reconciliation poller below must keep running
+  // until every submitted turn has its reply. Mirrored in refs so sibling
+  // effects in the same commit see fresh values.
   const [awaitingReplySince, setAwaitingReplySince] = useState<number | null>(
     null
   );
   const awaitingReplySinceRef = useRef<number | null>(null);
+  const pendingRepliesRef = useRef(0);
   const markAwaitingReply = useCallback((value: number | null) => {
     awaitingReplySinceRef.current = value;
     setAwaitingReplySince(value);
   }, []);
+  const trackSubmittedTurn = useCallback(() => {
+    pendingRepliesRef.current += 1;
+    markAwaitingReply(Date.now());
+  }, [markAwaitingReply]);
+  const trackProcessedReply = useCallback(() => {
+    pendingRepliesRef.current = Math.max(0, pendingRepliesRef.current - 1);
+    if (pendingRepliesRef.current === 0) {
+      markAwaitingReply(null);
+    }
+  }, [markAwaitingReply]);
+  const resetPendingReplies = useCallback(() => {
+    pendingRepliesRef.current = 0;
+    markAwaitingReply(null);
+  }, [markAwaitingReply]);
 
   const pushTranscript = useCallback(
     (entry: { kind: VoiceTranscriptEntry["kind"]; text: string }) => {
@@ -230,13 +248,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         ? await promptConversationRef.current(boundId, text, attachments)
         : await draftRef.current.handleSubmit(text, attachments);
       if (accepted) {
-        markAwaitingReply(Date.now());
+        trackSubmittedTurn();
       } else {
         pushTranscript({ kind: "error", text: "Send: message was not accepted." });
       }
       return accepted;
     },
-    [markAwaitingReply, pushTranscript]
+    [pushTranscript, trackSubmittedTurn]
   );
   const submitToConversationRef = useRef(submitToConversation);
   submitToConversationRef.current = submitToConversation;
@@ -421,7 +439,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     conversationIdRef.current = null;
     setConversationId(null);
     lastSpokenSeqRef.current = 0;
-    markAwaitingReply(null);
+    resetPendingReplies();
     setTranscript([]);
     setMicError(null);
     // Present the fresh draft chat behind the overlay so minimizing shows
@@ -430,7 +448,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     engine.start();
     setView("full");
     void setupCapture();
-  }, [engine, markAwaitingReply, setupCapture, startNewConversation]);
+  }, [engine, resetPendingReplies, setupCapture, startNewConversation]);
 
   const stop = useCallback(() => {
     engine.stop();
@@ -439,8 +457,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setView("closed");
     conversationIdRef.current = null;
     setConversationId(null);
-    markAwaitingReply(null);
-  }, [engine, markAwaitingReply, teardownCapture]);
+    resetPendingReplies();
+  }, [engine, resetPendingReplies, teardownCapture]);
 
   const minimize = useCallback(() => {
     if (viewRef.current === "full") {
@@ -530,7 +548,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       if (event.seq <= lastSpokenSeqRef.current) continue;
       if (event.kind !== "assistant_message_end") continue;
       lastSpokenSeqRef.current = event.seq;
-      markAwaitingReply(null);
+      trackProcessedReply();
       const text = boundEvents
         .filter(
           (candidate) =>
@@ -553,7 +571,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           .catch(() => {});
       }
     }
-  }, [boundEvents, conversationId, getPlayer, markAwaitingReply, pushTranscript]);
+  }, [boundEvents, conversationId, getPlayer, pushTranscript, trackProcessedReply]);
 
   // ---- Reply reconciliation: close the event-delivery hole ---------------
   // `eventsByConversationId` is fed by socket event batches and by catch-up
@@ -568,12 +586,12 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     if (awaitingReplySince === null || !conversationId) return;
     const pendingSince = awaitingReplySince;
     const reconcile = () => {
-      // A processed reply or a newer submit ends this poller.
+      // All pending replies processed, or a newer submit restarted the poller.
       if (awaitingReplySinceRef.current !== pendingSince) return;
       if (Date.now() - pendingSince > REPLY_RECONCILE_MAX_MS) {
-        // The turn never produced an assistant_message_end (failed/cancelled
-        // or genuinely reply-less); stop polling until the next submit.
-        markAwaitingReply(null);
+        // No assistant_message_end within the window (failed/cancelled or
+        // genuinely reply-less turns); stop polling until the next submit.
+        resetPendingReplies();
         return;
       }
       void syncConversationSnapshot(conversationId).catch(() => undefined);
@@ -583,7 +601,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [
     awaitingReplySince,
     conversationId,
-    markAwaitingReply,
+    resetPendingReplies,
     syncConversationSnapshot,
   ]);
 
