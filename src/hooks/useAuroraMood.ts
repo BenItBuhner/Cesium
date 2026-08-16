@@ -5,7 +5,7 @@ import type { AgentConversationStatus } from "@/lib/agent-types";
 import type { AuroraMood } from "@/lib/aurora/aurora-renderer";
 
 /** How long the completion bloom lingers before easing back to ambient. */
-const COMPLETED_LINGER_MS = 5000;
+const COMPLETED_LINGER_MS = 6000;
 /** How long the failure wash lingers before easing back to ambient. */
 const ERROR_LINGER_MS = 6500;
 
@@ -104,8 +104,13 @@ export function useAuroraMood(input: {
       return;
     }
 
+    // A fast turn can finish before the client ever observes `running`: the
+    // first status after the optimistic handoff is already `idle`. The
+    // optimistic send WAS the active phase, so treat the handoff as active.
     const wasActive =
-      isWorkingStatus(previous) || isWaitingStatus(previous);
+      isWorkingStatus(previous) ||
+      isWaitingStatus(previous) ||
+      (isOptimisticHandoff && previous == null);
     let next: "completed" | "error" | null = null;
     if (failureAppeared || status === "failed") {
       next = "error";

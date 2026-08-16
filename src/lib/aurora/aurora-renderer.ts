@@ -116,12 +116,12 @@ const MOOD_TARGETS: Record<AuroraMood, MoodParams> = {
   completed: {
     flow: 0.75,
     energy: 0.95,
-    luminance: 1.5,
-    bottomGlow: 0.55,
+    luminance: 1.65,
+    bottomGlow: 0.6,
     pulse: 0,
     shimmer: 0.5,
     tint: [167, 243, 208],
-    tintStrength: 0.45,
+    tintStrength: 0.5,
   },
   // Full-strength tint: partial mixes against teal/green palettes cancel into
   // gray-brown mud, so the wash must effectively replace the band hues.
