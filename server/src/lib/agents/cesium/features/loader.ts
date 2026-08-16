@@ -18,7 +18,7 @@ const allLoadedModules = new Set<LoadedCesiumHarnessPluginModule>();
 function parseModuleSpecifiers(raw: string | undefined): string[] {
   const value = raw?.trim();
   if (!value) return [];
-  if (value.startsWith("[")) {
+  if (value.startsWith("[") || value.startsWith("{")) {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
       throw new Error("CESIUM_HARNESS_PLUGIN_MODULES JSON must be an array of strings.");
