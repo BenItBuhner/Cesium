@@ -776,8 +776,8 @@ export function AgentNewChatLanding({
           <div
             className={`aurora-glass mx-[var(--agent-composer-radius)] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
               composerHiddenForExpanded
-                ? "rounded-[var(--radius-card)] border border-[var(--border-card)]"
-                : "-mb-[4px] rounded-t-[var(--radius-card)] rounded-b-none border-x border-t border-[var(--border-card)]"
+                ? "rounded-[var(--agent-composer-radius)] border border-[var(--border-card)]"
+                : "-mb-[4px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)]"
             }`}
           >
             <div className="flex max-w-full flex-wrap items-center gap-[6px]">
