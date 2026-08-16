@@ -70,6 +70,7 @@ import { AgentNewChatLanding } from "./AgentNewChatLanding";
 import { AuroraBackdrop } from "./AuroraBackdrop";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useAuroraMood } from "@/hooks/useAuroraMood";
+import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -1069,6 +1070,16 @@ export function AgentCenterPane() {
     workingOverride: Boolean(optimisticTurn),
     reactToActivity: globalSettings.aurora.reactToActivity,
   });
+
+  // Dynamic placement follows the conversation: centered around the landing
+  // composer on a new chat, drifting to the top once the thread exists. The
+  // renderer glides between the two, riding along with the composer split.
+  const auroraPlacement: AuroraPlacement =
+    globalSettings.aurora.placement === "dynamic"
+      ? showLanding
+        ? "center"
+        : "top"
+      : globalSettings.aurora.placement;
   const showConversationTransitionState =
     !optimisticTurn &&
     (conversationSelectionPending ||
@@ -1184,26 +1195,21 @@ export function AgentCenterPane() {
     </div>
   );
 
-  if (showLanding) {
-    return (
-      <div
-        ref={paneRootRef}
-        className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
-      >
-        <AuroraBackdrop mood={auroraMood} />
-        <div className="relative z-10 min-h-0 min-w-0 flex-1">
-          <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
-        </div>
-      </div>
-    );
-  }
-
+  // Single shared root for both the landing and the conversation views: the
+  // aurora backdrop must not remount across the new-chat commit so its
+  // placement can glide instead of snapping.
   return (
     <div
       ref={paneRootRef}
+      data-aurora-surface={globalSettings.aurora.enabled ? "on" : undefined}
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
-      <AuroraBackdrop mood={auroraMood} />
+      <AuroraBackdrop mood={auroraMood} placement={auroraPlacement} />
+      {showLanding ? (
+      <div className="relative z-10 min-h-0 min-w-0 flex-1">
+        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+      </div>
+      ) : (
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
@@ -1488,7 +1494,7 @@ export function AgentCenterPane() {
           </div>
         ) : null}
       </div>
-
+      )}
     </div>
   );
 }

@@ -351,6 +351,34 @@ html.dark .landing-shot-dark {
 }
 
 /**
+ * Aurora surface adjustments — active only while the aurora backdrop is
+ * enabled (`data-aurora-surface="on"` on the conversation pane root).
+ *
+ * 1. `.aurora-glass` gives docks and quick actions the exact same translucent
+ *    blurred treatment as the composer shell (`.chat-composer-surface`), so
+ *    everything floating over the aurora reads as one consistent material.
+ * 2. Dark mode lifts the muted text tokens: mid-gray text loses too much
+ *    contrast against the colored field.
+ */
+[data-aurora-surface="on"] .aurora-glass {
+  background: color-mix(in srgb, var(--agent-card-bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-aurora-surface="on"] .aurora-glass {
+    background: var(--agent-card-bg);
+  }
+}
+
+.dark [data-aurora-surface="on"] {
+  --text-secondary: #a6aab4;
+  --text-disabled: #7f838d;
+  --text-tertiary: #90949e;
+}
+
+/**
  * Bottom-of-thread fade: sits above the transcript but beneath the composer
  * dock, so text dissolves toward the page bottom while staying partially
  * visible (and blurred) underneath the translucent composer. The layer is an

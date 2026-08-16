@@ -14,6 +14,8 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   AURORA_MAX_CUSTOM_COLORS,
   AURORA_MIN_CUSTOM_COLORS,
+  AURORA_PLACEMENT_IDS,
+  AURORA_PLACEMENT_LABELS,
   AURORA_PRESET_CATALOG,
   type AuroraPresetId,
   type AuroraSettingsState,
@@ -22,6 +24,7 @@ import {
   AURORA_MOODS,
   AURORA_MOOD_LABELS,
   type AuroraMood,
+  type AuroraPlacement,
 } from "@/lib/aurora/aurora-renderer";
 
 function presetGradient(colors: string[]): string {
@@ -44,6 +47,9 @@ export function AuroraSettingsSection() {
   const presetEntries = Object.entries(AURORA_PRESET_CATALOG) as Array<
     [Exclude<AuroraPresetId, "custom">, (typeof AURORA_PRESET_CATALOG)[keyof typeof AURORA_PRESET_CATALOG]]
   >;
+
+  const previewPlacement: AuroraPlacement =
+    aurora.placement === "dynamic" ? "center" : aurora.placement;
 
   return (
     <SettingsSection title="Aurora background">
@@ -90,12 +96,45 @@ export function AuroraSettingsSection() {
               })}
             </div>
             <div className="relative mt-[10px] h-[180px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)]">
-              <AuroraBackdrop mood={previewMood} settingsOverride={aurora} />
+              <AuroraBackdrop
+                mood={previewMood}
+                placement={previewPlacement}
+                settingsOverride={aurora}
+              />
               <div className="pointer-events-none absolute inset-x-0 bottom-[12px] z-10 flex justify-center">
                 <span className="rounded-[var(--radius-pill)] bg-[var(--bg-panel)]/70 px-[10px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] backdrop-blur-sm">
                   {AURORA_MOOD_LABELS[previewMood]}
                 </span>
               </div>
+            </div>
+          </SettingsBlock>
+          <SettingsBlock searchId="aurora-placement">
+            <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+              Placement
+            </p>
+            <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+              Where the aurora sits in the pane. Dynamic centers it around the composer on a new
+            chat and glides it to the top once the conversation starts.
+            </p>
+            <div className="mt-[10px] flex flex-wrap gap-[6px]">
+              {AURORA_PLACEMENT_IDS.map((placementId) => {
+                const selected = aurora.placement === placementId;
+                return (
+                  <button
+                    key={placementId}
+                    type="button"
+                    onClick={() => patchAurora({ placement: placementId })}
+                    aria-pressed={selected}
+                    className={`rounded-[var(--radius-pill)] border px-[12px] py-[5px] font-sans text-[12px] transition-colors ${
+                      selected
+                        ? "border-[var(--accent)] bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
+                        : "border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {AURORA_PLACEMENT_LABELS[placementId]}
+                  </button>
+                );
+              })}
             </div>
           </SettingsBlock>
           <SettingsBlock searchId="aurora-preset">

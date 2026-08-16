@@ -215,6 +215,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row(
     "appearance",
+    "aurora-placement",
+    "Aurora placement",
+    "Where the aurora sits: dynamic, top, center, full pane, or bottom.",
+    ["aurora", "placement", "position", "top", "center", "bottom", "full", "dynamic"]
+  ),
+  row(
+    "appearance",
     "aurora-intensity",
     "Aurora intensity",
     "Overall visibility of the aurora backdrop.",

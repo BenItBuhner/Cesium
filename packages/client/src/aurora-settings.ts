@@ -5,6 +5,36 @@
  * persisted shape, presets, defaults, and normalization.
  */
 
+export const AURORA_PLACEMENT_IDS = [
+  "dynamic",
+  "top",
+  "center",
+  "full",
+  "bottom",
+] as const;
+
+/**
+ * Where the aurora sits in the pane. `dynamic` follows the conversation:
+ * centered around the landing composer on a new chat, drifting to the top
+ * once the conversation starts.
+ */
+export type AuroraPlacementId = (typeof AURORA_PLACEMENT_IDS)[number];
+
+export const AURORA_PLACEMENT_LABELS: Record<AuroraPlacementId, string> = {
+  dynamic: "Dynamic",
+  top: "Top",
+  center: "Center",
+  full: "Full pane",
+  bottom: "Bottom",
+};
+
+export function isAuroraPlacementId(value: unknown): value is AuroraPlacementId {
+  return (
+    typeof value === "string" &&
+    (AURORA_PLACEMENT_IDS as readonly string[]).includes(value)
+  );
+}
+
 export const AURORA_PRESET_IDS = [
   "aurora-borealis",
   "polar-dawn",
@@ -73,6 +103,7 @@ export type AuroraSettingsState = {
   /** Master switch for the animated conversation backdrop. */
   enabled: boolean;
   preset: AuroraPresetId;
+  placement: AuroraPlacementId;
   /** 0..100 — overall visibility. The effect stays subtle even at 100. */
   intensity: number;
   /** 0..100 — animation pace; 50 is the designed speed. */
@@ -91,6 +122,7 @@ export function createDefaultAuroraSettings(): AuroraSettingsState {
   return {
     enabled: true,
     preset: DEFAULT_AURORA_PRESET_ID,
+    placement: "dynamic",
     intensity: 55,
     speed: 50,
     reactToActivity: true,
@@ -138,6 +170,7 @@ export function normalizeAuroraSettings(raw: unknown): AuroraSettingsState {
   return {
     enabled: typeof record.enabled === "boolean" ? record.enabled : defaults.enabled,
     preset: isAuroraPresetId(record.preset) ? record.preset : defaults.preset,
+    placement: isAuroraPlacementId(record.placement) ? record.placement : defaults.placement,
     intensity: clampPercent(record.intensity, defaults.intensity),
     speed: clampPercent(record.speed, defaults.speed),
     reactToActivity:

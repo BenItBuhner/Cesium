@@ -156,6 +156,27 @@ export type AuroraRendererOptions = {
   isDark: boolean;
 };
 
+/** Resolved vertical placement of the aurora within the pane. */
+export type AuroraPlacement = "top" | "center" | "full" | "bottom";
+
+type PlacementParams = {
+  /** Fraction of pane height where the band group centers. */
+  centerY: number;
+  /** Vertical spread of the band group (fraction of height). */
+  spread: number;
+  /** Gaussian sigma of the visibility window around `centerY`. */
+  sigma: number;
+  /** Minimum mask alpha outside the window (1 = no masking). */
+  floor: number;
+};
+
+const PLACEMENT_TARGETS: Record<AuroraPlacement, PlacementParams> = {
+  top: { centerY: 0.14, spread: 0.3, sigma: 0.3, floor: 0.04 },
+  center: { centerY: 0.5, spread: 0.34, sigma: 0.28, floor: 0.04 },
+  full: { centerY: 0.5, spread: 0.8, sigma: 0.85, floor: 0.55 },
+  bottom: { centerY: 0.84, spread: 0.24, sigma: 0.26, floor: 0.03 },
+};
+
 function parseHexColor(hex: string): Rgb {
   const value = hex.replace("#", "");
   const num = Number.parseInt(value, 16);
@@ -196,8 +217,8 @@ function makeSprite(rgb: Rgb): HTMLCanvasElement {
 
 type BandSpec = {
   color: Rgb;
-  /** Ridge height as a fraction of canvas height. */
-  baseY: number;
+  /** -0.5..0.5 position within the band group; scaled by placement spread. */
+  offset: number;
   /** Wave phase offsets so bands never sync up. */
   phase: number;
   /** Alternating drift direction. */
@@ -211,11 +232,9 @@ function buildBands(colors: string[]): BandSpec[] {
     parsed.push([139, 92, 246]);
   }
   const count = parsed.length;
-  // Top-weighted: the aurora hangs from the upper edge and a vertical fade
-  // mask keeps the middle of the pane neutral so content has resting space.
   return parsed.map((color, index) => ({
     color,
-    baseY: 0.08 + (0.3 / Math.max(1, count - 1)) * index,
+    offset: count > 1 ? index / (count - 1) - 0.5 : 0,
     phase: index * 2.39996, // golden angle keeps the waves visually unrelated
     direction: index % 2 === 0 ? 1 : -1,
     alpha: 0.46 - index * 0.04,
@@ -233,6 +252,7 @@ function approach(current: number, target: number, dtMs: number): number {
 
 export type AuroraRenderer = {
   setMood(mood: AuroraMood): void;
+  setPlacement(placement: AuroraPlacement): void;
   setPalette(colors: string[]): void;
   setOptions(options: AuroraRendererOptions): void;
   /** Advance the simulation and paint one frame. `dtMs` since the previous call. */
@@ -243,10 +263,12 @@ export type AuroraRenderer = {
 
 export function createAuroraRenderer(): AuroraRenderer {
   let mood: AuroraMood = "idle";
+  let placement: AuroraPlacement = "top";
   let bands: BandSpec[] = buildBands(["#22e0a6", "#38bdf8", "#8b5cf6", "#d946ef"]);
   let options: AuroraRendererOptions = { intensity: 55, speed: 50, isDark: true };
 
   const params: MoodParams = { ...MOOD_TARGETS.idle, tint: null };
+  const place: PlacementParams = { ...PLACEMENT_TARGETS.top };
   let tintColor: Rgb = [255, 255, 255];
 
   /** Accumulated wave phase; scaling by flow/speed at accumulation time keeps changes seamless. */
@@ -285,6 +307,15 @@ export function createAuroraRenderer(): AuroraRenderer {
     if (target.tint) {
       tintColor = mixRgb(tintColor, target.tint, 1 - Math.exp(-dtMs / SMOOTH_ATTACK_TAU_MS));
     }
+    // Placement glides with a fixed slow constant so moving the whole aurora
+    // (e.g. new chat committing to a conversation) reads as one deliberate
+    // drift rather than a mood-style attack/release.
+    const placeTarget = PLACEMENT_TARGETS[placement];
+    const placeK = 1 - Math.exp(-dtMs / 900);
+    place.centerY += (placeTarget.centerY - place.centerY) * placeK;
+    place.spread += (placeTarget.spread - place.spread) * placeK;
+    place.sigma += (placeTarget.sigma - place.sigma) * placeK;
+    place.floor += (placeTarget.floor - place.floor) * placeK;
     const pace = speedMultiplier();
     flowTime += dtMs * params.flow * pace;
     clockMs += dtMs * pace;
@@ -311,7 +342,7 @@ export function createAuroraRenderer(): AuroraRenderer {
         : band.color;
       const sprite = spriteFor(color);
       const dir = band.direction;
-      const baseY = band.baseY * h;
+      const baseY = (place.centerY + band.offset * place.spread) * h;
       const amp1 = h * 0.075 * params.energy;
       const amp2 = h * 0.04 * params.energy;
       const k1 = (Math.PI * 2) / (w * (1.15 - index * 0.12));
@@ -345,15 +376,20 @@ export function createAuroraRenderer(): AuroraRenderer {
       }
     }
 
-    // Vertical fade: strong along the top, dissolving before mid-pane so the
-    // conversation area stays neutral. Applied before the composer glow.
+    // Vertical visibility window: a gaussian centered on the placement keeps
+    // the rest of the pane neutral so content has resting space. Full-pane
+    // placement raises the floor so the mask nearly disappears. Applied
+    // before the composer glow.
     ctx.globalCompositeOperation = "destination-in";
     ctx.globalAlpha = 1;
     const fade = ctx.createLinearGradient(0, 0, 0, h);
-    fade.addColorStop(0, "rgba(255, 255, 255, 1)");
-    fade.addColorStop(0.42, "rgba(255, 255, 255, 0.8)");
-    fade.addColorStop(0.72, "rgba(255, 255, 255, 0.16)");
-    fade.addColorStop(1, "rgba(255, 255, 255, 0.04)");
+    const twoSigmaSq = 2 * place.sigma * place.sigma;
+    for (let stop = 0; stop <= 8; stop += 1) {
+      const y01 = stop / 8;
+      const gauss = Math.exp(-((y01 - place.centerY) ** 2) / twoSigmaSq);
+      const alpha = Math.min(1, place.floor + (1 - place.floor) * gauss);
+      fade.addColorStop(y01, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+    }
     ctx.fillStyle = fade;
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = "lighter";
@@ -379,6 +415,9 @@ export function createAuroraRenderer(): AuroraRenderer {
     setMood(next) {
       mood = next;
     },
+    setPlacement(next) {
+      placement = next;
+    },
     setPalette(colors) {
       bands = buildBands(colors);
     },
@@ -397,6 +436,11 @@ export function createAuroraRenderer(): AuroraRenderer {
       if (target.tint) {
         tintColor = target.tint;
       }
+      const placeTarget = PLACEMENT_TARGETS[placement];
+      place.centerY = placeTarget.centerY;
+      place.spread = placeTarget.spread;
+      place.sigma = placeTarget.sigma;
+      place.floor = placeTarget.floor;
     },
     render(ctx, width, height, dtMs) {
       step(Math.min(120, Math.max(0, dtMs)));

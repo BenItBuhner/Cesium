@@ -13,7 +13,14 @@ describe("aurora backdrop settings", () => {
     const settings = createDefaultGlobalSettings();
     assert.equal(settings.aurora.enabled, true);
     assert.equal(settings.aurora.preset, "aurora-borealis");
+    assert.equal(settings.aurora.placement, "dynamic");
     assert.equal(settings.aurora.reactToActivity, true);
+  });
+
+  test("preserves an explicit placement and rejects unknown values", () => {
+    assert.equal(normalizeAuroraSettings({ placement: "bottom" }).placement, "bottom");
+    assert.equal(normalizeAuroraSettings({ placement: "full" }).placement, "full");
+    assert.equal(normalizeAuroraSettings({ placement: "sideways" }).placement, "dynamic");
   });
 
   test("settings persisted before the aurora feature normalize to defaults", () => {

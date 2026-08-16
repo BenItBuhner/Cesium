@@ -7,6 +7,7 @@ import { resolveAuroraColors, type AuroraSettingsState } from "@/lib/global-sett
 import {
   createAuroraRenderer,
   type AuroraMood,
+  type AuroraPlacement,
   type AuroraRenderer,
 } from "@/lib/aurora/aurora-renderer";
 
@@ -45,10 +46,12 @@ function usePrefersReducedMotion(): boolean {
  */
 export const AuroraBackdrop = memo(function AuroraBackdrop({
   mood,
+  placement = "top",
   settingsOverride,
   className = "",
 }: {
   mood: AuroraMood;
+  placement?: AuroraPlacement;
   settingsOverride?: AuroraSettingsState;
   className?: string;
 }) {
@@ -93,6 +96,7 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     renderer.setPalette(colorsKey.split(","));
     renderer.setOptions({ intensity: aurora.intensity, speed: aurora.speed, isDark });
     renderer.setMood(mood);
+    renderer.setPlacement(placement);
     if (reducedMotion) {
       renderer.snapToMood();
       paintFrame(0);
@@ -104,6 +108,7 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     aurora.speed,
     isDark,
     mood,
+    placement,
     reducedMotion,
     getRenderer,
     paintFrame,
