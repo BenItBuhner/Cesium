@@ -17,7 +17,16 @@ import com.cesium.shared.generated.CesiumDesignTokens
 import kotlin.math.abs
 
 object CesiumAgentNotification {
-  const val CHANNEL_ID = "cesium-agent-runs"
+  /**
+   * v2: IMPORTANCE_DEFAULT (was LOW). Only IMPORTANCE_MIN is documented as
+   * disqualifying a channel from Android 16 promotion, but several OEM
+   * promotion heuristics rank DEFAULT-importance channels more reliably and
+   * the Live Updates guidance demos use DEFAULT. The channel itself is muted
+   * (no sound / vibration), so progress reposts stay silent either way.
+   * Channel importance cannot be raised in place, hence the new id.
+   */
+  const val CHANNEL_ID = "cesium-agent-runs-v2"
+  const val LEGACY_CHANNEL_ID = "cesium-agent-runs"
   const val ALERT_CHANNEL_ID = "cesium-agent-alerts"
 
   /**
@@ -36,20 +45,24 @@ object CesiumAgentNotification {
   fun ensureChannels(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(NotificationManager::class.java)
-    // Silent progress channel. LOW keeps live-update reposts quiet while still
-    // qualifying for Android 16 promotion (only IMPORTANCE_MIN is excluded).
-    // createNotificationChannel lowers the importance of the pre-existing
-    // DEFAULT channel when the user has not customized it.
+    // Silent-but-DEFAULT progress channel: muting sound/vibration keeps
+    // live-update reposts quiet without dropping to LOW importance, which
+    // some OEM builds rank below the promotion cutoff.
     manager.createNotificationChannel(
       NotificationChannel(
         CHANNEL_ID,
         "Agent runs",
-        NotificationManager.IMPORTANCE_LOW
+        NotificationManager.IMPORTANCE_DEFAULT
       ).apply {
         description = "Ongoing Cesium agent task state"
         setShowBadge(false)
+        setSound(null, null)
+        enableVibration(false)
       }
     )
+    // The pre-v2 LOW-importance channel; posting stopped, so remove it from
+    // the user's notification settings.
+    manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
     manager.createNotificationChannel(
       NotificationChannel(
         ALERT_CHANNEL_ID,
@@ -100,6 +113,14 @@ object CesiumAgentNotification {
       builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
     }
 
+    val chip = resolveChipPresentation(
+      shortText = shortText,
+      startedAt = startedAt,
+      estimatedCompletionAt = estimatedCompletionAt,
+      ongoing = ongoing,
+      now = System.currentTimeMillis()
+    )
+
     if (Build.VERSION.SDK_INT >= 36) {
       applyProgressStyle(
         builder,
@@ -110,8 +131,8 @@ object CesiumAgentNotification {
         progressColors(context)
       )
       builder.setRequestPromotedOngoing(requestPromotion)
-      if (shortText != null && estimatedCompletionAt <= 0L) {
-        builder.setShortCriticalText(shortText)
+      if (chip.shortCriticalText != null) {
+        builder.setShortCriticalText(chip.shortCriticalText)
       }
     } else {
       if (ongoing) {
@@ -122,17 +143,14 @@ object CesiumAgentNotification {
       }
     }
 
-    if (
-      estimatedCompletionAt >= System.currentTimeMillis() + MIN_COUNTDOWN_MS &&
-      Build.VERSION.SDK_INT >= 24
-    ) {
+    if (chip.countdownTo != null && Build.VERSION.SDK_INT >= 24) {
       builder
-        .setWhen(estimatedCompletionAt)
+        .setWhen(chip.countdownTo)
         .setUsesChronometer(true)
         .setChronometerCountDown(true)
-    } else if (startedAt > 0L && ongoing) {
+    } else if (chip.countUpFrom != null) {
       builder
-        .setWhen(startedAt)
+        .setWhen(chip.countUpFrom)
         .setUsesChronometer(true)
       if (Build.VERSION.SDK_INT >= 24) {
         builder.setChronometerCountDown(false)
@@ -153,6 +171,37 @@ object CesiumAgentNotification {
 
   fun canPostPromoted(context: Context): Boolean {
     return NotificationManagerCompat.from(context).canPostPromotedNotifications()
+  }
+
+  /**
+   * Whether the given notification structurally qualifies for Android 16
+   * promotion (ongoing + title + eligible style + promotion requested, no
+   * group summary / custom views / colorization). Ignores the user's
+   * per-app Live Updates permission — pair with [canPostPromoted].
+   */
+  fun hasPromotableCharacteristics(notification: Notification): Boolean {
+    if (Build.VERSION.SDK_INT < 36) return false
+    return try {
+      notification.hasPromotableCharacteristics()
+    } catch (_: Throwable) {
+      false
+    }
+  }
+
+  /**
+   * True when any currently posted Cesium notification was actually promoted
+   * by the system (FLAG_PROMOTED_ONGOING) — the ground truth for "is a live
+   * update rendering right now".
+   */
+  fun isPromotedOngoingPosted(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < 36) return false
+    return try {
+      context.getSystemService(NotificationManager::class.java)
+        .activeNotifications
+        .any { it.notification.flags and Notification.FLAG_PROMOTED_ONGOING != 0 }
+    } catch (_: Throwable) {
+      false
+    }
   }
 
   private fun applyProgressStyle(
@@ -191,6 +240,18 @@ object CesiumAgentNotification {
           style.setProgressSegments(
             listOf(
               NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.goal)
+            )
+          )
+        }
+        // Terminal and any unknown determinate kind get one explicit segment
+        // so every posted ProgressStyle carries a well-formed track instead
+        // of relying on platform defaults.
+        else -> {
+          style.setProgressSegments(
+            listOf(
+              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(
+                if (safeProgress >= safeMax) colors.completed else colors.pending
+              )
             )
           )
         }
@@ -265,8 +326,55 @@ object CesiumAgentNotification {
     }
   }
 
-  private const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
   private const val MAX_PROGRESS_SEGMENTS = 100
+}
+
+internal const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
+
+/**
+ * What occupies the status-bar chip of a promoted live update. Exactly one
+ * time source is active (a countdown to the ETA, or elapsed time since the
+ * run started), and short critical text is set whenever no countdown owns
+ * the chip — previously any ETA (even one below the countdown floor)
+ * suppressed the text, leaving an icon-only chip.
+ */
+internal data class CesiumChipPresentation(
+  /** Chronometer counting down to the estimated completion time. */
+  val countdownTo: Long?,
+  /** Elapsed-time chronometer anchored at the run start. */
+  val countUpFrom: Long?,
+  /** Status-bar chip text; null while a countdown occupies the chip. */
+  val shortCriticalText: String?
+)
+
+internal fun resolveChipPresentation(
+  shortText: String?,
+  startedAt: Long,
+  estimatedCompletionAt: Long,
+  ongoing: Boolean,
+  now: Long
+): CesiumChipPresentation {
+  val text = shortText?.takeIf { it.isNotBlank() }
+  if (estimatedCompletionAt >= now + MIN_COUNTDOWN_MS) {
+    // The countdown owns the chip; short critical text would override it.
+    return CesiumChipPresentation(
+      countdownTo = estimatedCompletionAt,
+      countUpFrom = null,
+      shortCriticalText = null
+    )
+  }
+  if (ongoing && startedAt > 0L) {
+    return CesiumChipPresentation(
+      countdownTo = null,
+      countUpFrom = startedAt,
+      shortCriticalText = text
+    )
+  }
+  return CesiumChipPresentation(
+    countdownTo = null,
+    countUpFrom = null,
+    shortCriticalText = text
+  )
 }
 
 internal data class CesiumProgressColors(

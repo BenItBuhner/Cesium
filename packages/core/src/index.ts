@@ -21,6 +21,7 @@ export * from "./mcp-server-display";
 export * from "./agent-chat";
 export * from "./model-display-name";
 export * from "./mobile-agent-projection";
+export * from "./mobile-bridge";
 export * from "./watch-agent-contract";
 export * from "./orchestration-types";
 export * from "./phone-control";

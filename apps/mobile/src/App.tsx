@@ -22,15 +22,17 @@ import {
   type WebViewProps,
 } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
-import type { MobileAgentProjection } from "@cesium/core";
 import {
   buildMobileBootstrapScript,
   encodeMobileBridgeMessage,
+  MOBILE_BRIDGE_PROTOCOL_VERSION,
   parseMobileBridgeMessage,
+  type MobileAgentProjection,
   type MobileNativeToWebMessage,
   type MobileNativeStatus,
+  type MobileServerConfig,
   type MobileWebToNativeMessage,
-} from "../../../src/lib/mobile-bridge";
+} from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
 import { CesiumPhoneControl } from "./native/CesiumPhoneControl";
@@ -99,20 +101,26 @@ export default function App() {
   }, []);
   sendToWebRef.current = sendToWeb;
 
-  const bootstrapScript = useMemo(
-    () =>
-      `${buildWebErrorBridgeScript()}\n${buildMobileBootstrapScript({
-        baseUrl: serverUrl,
-        label: "This phone",
-        authToken,
-        safeAreaTop,
-        systemColorScheme:
-          systemColorScheme === "light" || systemColorScheme === "dark"
-            ? systemColorScheme
-            : null,
-        runtime,
-      })}`,
+  // The current host config: embedded once into the pre-load bootstrap
+  // (Electron preload analog) and streamed to the live page as
+  // `nativeConfigChanged` messages whenever it changes afterwards.
+  const hostServerConfig = useMemo<MobileServerConfig>(
+    () => ({
+      baseUrl: serverUrl,
+      label: "This phone",
+      authToken,
+      safeAreaTop,
+      systemColorScheme:
+        systemColorScheme === "light" || systemColorScheme === "dark"
+          ? systemColorScheme
+          : null,
+      runtime,
+    }),
     [authToken, runtime, safeAreaTop, serverUrl, systemColorScheme]
+  );
+  const bootstrapScript = useMemo(
+    () => buildMobileBootstrapScript(hostServerConfig),
+    [hostServerConfig]
   );
 
   const lastPhoneControlConfigRef = useRef<string | null>(null);
@@ -191,6 +199,10 @@ export default function App() {
         progressStyleSupported: liveUpdates.progressStyleSupported,
         canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
         notificationPermissionGranted: liveUpdates.notificationPermissionGranted,
+        isSamsung: liveUpdates.isSamsung,
+        promotionRenderSupported: liveUpdates.promotionRenderSupported,
+        hasPromotableCharacteristics: liveUpdates.hasPromotableCharacteristics,
+        promotedNotificationPosted: liveUpdates.promotedNotificationPosted,
       },
       phoneControl,
     };
@@ -230,9 +242,14 @@ export default function App() {
     };
   }, [refreshSafeArea]);
 
+  // Dynamic host state reaches the live page as a typed message instead of
+  // re-injecting the whole bootstrap script. The very first render is covered
+  // by the pre-load bootstrap itself; a message posted before the page's
+  // relay listener exists is simply dropped, which is fine because that page
+  // boots with the same config embedded.
   useEffect(() => {
-    webViewRef.current?.injectJavaScript(bootstrapScript);
-  }, [bootstrapScript]);
+    sendToWeb({ type: "nativeConfigChanged", server: hostServerConfig });
+  }, [hostServerConfig, sendToWeb]);
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -309,6 +326,14 @@ export default function App() {
         return;
       }
       if (message.type === "webReady") {
+        if (
+          message.protocolVersion != null &&
+          message.protocolVersion !== MOBILE_BRIDGE_PROTOCOL_VERSION
+        ) {
+          console.warn(
+            `[Cesium bridge] Protocol mismatch: web ${message.protocolVersion}, native ${MOBILE_BRIDGE_PROTOCOL_VERSION}. Rebuild the workbench assets and the APK together.`
+          );
+        }
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.focusedConversationId,
@@ -333,6 +358,10 @@ export default function App() {
       }
       if (message.type === "openLiveUpdatePromotionSettings") {
         void CesiumLiveUpdates.openPromotionSettings().then(() => sendNativeStatus());
+        return;
+      }
+      if (message.type === "openNowBarSettings") {
+        void CesiumLiveUpdates.openNowBarSettings().then(() => sendNativeStatus());
         return;
       }
       if (message.type === "setPhoneControlEnabled") {
@@ -439,10 +468,8 @@ export default function App() {
           allowUniversalAccessFromFileURLs
           mixedContentMode="always"
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
-          injectedJavaScript={bootstrapScript}
           onLoadEnd={() => {
             setLoadError(null);
-            webViewRef.current?.injectJavaScript(bootstrapScript);
           }}
           onMessage={handleMessage}
           onNavigationStateChange={handleNavigation}
@@ -497,31 +524,6 @@ function toMobileLifecycleState(state: AppStateStatus) {
   return state === "active" || state === "background" || state === "inactive"
     ? state
     : "background";
-}
-
-function buildWebErrorBridgeScript() {
-  return `
-(() => {
-  if (window.__CESIUM_MOBILE_ERROR_BRIDGE__) return true;
-  window.__CESIUM_MOBILE_ERROR_BRIDGE__ = true;
-  const send = (message, source, line) => {
-    try {
-      window.ReactNativeWebView?.postMessage(JSON.stringify({
-        type: "webRuntimeError",
-        message: String(message || "Unknown web runtime error"),
-        source: source || undefined,
-        line: Number.isFinite(line) ? line : undefined
-      }));
-    } catch {}
-  };
-  window.addEventListener("error", (event) => {
-    send(event.message || event.error?.message, event.filename, event.lineno);
-  });
-  window.addEventListener("unhandledrejection", (event) => {
-    send(event.reason?.message || event.reason);
-  });
-  true;
-})();`;
 }
 
 const styles = StyleSheet.create({
