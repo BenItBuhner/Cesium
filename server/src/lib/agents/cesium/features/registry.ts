@@ -48,6 +48,15 @@ function validateDefinition(definition: CesiumFeatureDefinition): void {
   if (new Set(dependencies).size !== dependencies.length) {
     throw new Error(`Cesium feature "${definition.id}" declares a dependency more than once.`);
   }
+  const declaredToolNames = definition.toolNames ?? [];
+  if (
+    new Set(declaredToolNames).size !== declaredToolNames.length ||
+    declaredToolNames.some((name) => !/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(name))
+  ) {
+    throw new Error(
+      `Cesium feature "${definition.id}" toolNames must be unique valid tool identifiers.`
+    );
+  }
   if (definition.versions.length === 0) {
     throw new Error(`Cesium feature "${definition.id}" must provide at least one version.`);
   }
@@ -194,6 +203,7 @@ export function createCesiumFeatureRegistry(
         dependencies: [...(definition.dependencies ?? [])],
         optionalDependencies: [...(definition.optionalDependencies ?? [])],
         failureMode: definition.failureMode ?? "isolate",
+        toolNames: [...(definition.toolNames ?? [])],
         versions: definition.versions.map((version) => ({
           version: version.version,
           label: version.label,
@@ -221,6 +231,16 @@ export function createCesiumFeatureRegistry(
         ) {
           throw new Error(
             `Cesium feature "${definition.id}" v${implementation.version} resolved mismatched module "${featureModule.id}" v${featureModule.version}.`
+          );
+        }
+        if (
+          definition.toolNames &&
+          featureModule.toolNames.some(
+            (name) => !definition.toolNames!.includes(name)
+          )
+        ) {
+          throw new Error(
+            `Cesium feature "${definition.id}" v${implementation.version} contributes a tool not declared in its definition toolNames.`
           );
         }
         const declaredToolNames = new Set(featureModule.toolNames);

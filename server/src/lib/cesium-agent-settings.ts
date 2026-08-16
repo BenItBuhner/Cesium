@@ -798,7 +798,10 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
   const compression = asRecord(record.compression);
   const orchestration = asRecord(record.orchestration);
   const toolPermissions = asRecord(record.toolPermissions);
-  const profiles = normalizeCesiumProfiles(record.profiles);
+  const profiles = normalizeCesiumProfiles(
+    record.profiles,
+    getCesiumFeatureCatalog().flatMap((plugin) => plugin.toolNames)
+  );
   return {
     schemaVersion: 1,
     updatedAt: asNumber(record.updatedAt) ?? defaults.updatedAt,

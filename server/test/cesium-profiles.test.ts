@@ -147,6 +147,25 @@ test("normalizeCesiumProfile drops unknown tools and always re-adds locked core 
   }
 });
 
+test("normalizeCesiumProfile preserves tools declared by harness plugins", () => {
+  const profile = normalizeCesiumProfile(
+    {
+      id: "plugin-profile",
+      name: "Plugin profile",
+      prompt: { base: "minimal", customInstructions: "" },
+      tools: {
+        allowed: ["plugin_lookup", "still_not_a_tool"],
+        mcpServers: "all",
+      },
+    },
+    ["plugin_lookup"]
+  );
+  assert.ok(profile);
+  const allowed = new Set(profile!.tools.allowed as string[]);
+  assert.equal(allowed.has("plugin_lookup"), true);
+  assert.equal(allowed.has("still_not_a_tool"), false);
+});
+
 test("normalizeCesiumProfile rejects records shadowing built-in ids or missing id/name", () => {
   assert.equal(
     normalizeCesiumProfile({ id: "code", name: "Fake Code", tools: { allowed: "all" } }),

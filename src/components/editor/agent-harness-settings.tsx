@@ -2215,6 +2215,11 @@ function CesiumAgentHarnessSettings() {
                       Requires: {feature.dependencies.join(", ")}
                     </span>
                   ) : null}
+                  {feature.toolNames.length > 0 ? (
+                    <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
+                      Tools: {feature.toolNames.join(", ")}
+                    </span>
+                  ) : null}
                 </label>
                 </div>
                 );

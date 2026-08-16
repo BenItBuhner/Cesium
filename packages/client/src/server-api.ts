@@ -2307,6 +2307,7 @@ export type CesiumAgentSettingsPayload = {
     dependencies: string[];
     optionalDependencies: string[];
     failureMode: "isolate" | "fatal";
+    toolNames: string[];
     versions: Array<{
       version: number;
       label: string;

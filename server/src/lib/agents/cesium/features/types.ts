@@ -206,6 +206,8 @@ export type CesiumFeatureDefinition = {
   dependencies?: readonly CesiumHarnessFeatureId[];
   optionalDependencies?: readonly CesiumHarnessFeatureId[];
   failureMode?: CesiumHarnessPluginFailureMode;
+  /** Union of tool names contributed by any version, for profile editors. */
+  toolNames?: readonly string[];
 };
 
 export type CesiumFeatureCatalogEntry = Omit<CesiumFeatureDefinition, "versions"> & {
@@ -215,6 +217,7 @@ export type CesiumFeatureCatalogEntry = Omit<CesiumFeatureDefinition, "versions"
   dependencies: CesiumHarnessFeatureId[];
   optionalDependencies: CesiumHarnessFeatureId[];
   failureMode: CesiumHarnessPluginFailureMode;
+  toolNames: string[];
 };
 
 export type ResolvedCesiumHarness = {
