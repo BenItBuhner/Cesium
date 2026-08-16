@@ -23,6 +23,7 @@ import { mcpRoutes } from "./routes/mcp.js";
 import { mcpBridgeRoutes } from "./routes/mcp-bridge.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { storageRoutes } from "./routes/storage.js";
+import { updateRoutes } from "./routes/updates.js";
 import { usageRoutes } from "./routes/usage.js";
 import { orchestrationRoutes } from "./routes/orchestration.js";
 import { cloudAgentRoutes } from "./routes/cloud-agents.js";
@@ -35,6 +36,7 @@ import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
 import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
+import { startUpdateAutoCheck } from "./lib/updates/update-manager.js";
 import { publicAccessManager, startPublicAccessManager } from "./lib/public-access-manager.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import {
@@ -175,6 +177,7 @@ export function createCesiumApp(): Hono {
   app.route("/", audioRoutes);
   app.route("/", voiceRoutes);
   app.route("/", storageRoutes);
+  app.route("/", updateRoutes);
   app.route("/", usageRoutes);
   return app;
 }
@@ -201,4 +204,5 @@ export function startCesiumBackgroundServices(): void {
   }
   startAgentPromptQueueDrainListener();
   startCloudAgentTaskSyncListener();
+  startUpdateAutoCheck();
 }

@@ -41,7 +41,10 @@ import {
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
-import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import {
+  conversationHasCompletionFailure,
+  isAgentComposerBusy,
+} from "@/lib/agent-completion-error";
 import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
@@ -59,12 +62,18 @@ import {
   captureComposerSplitSource,
   clearComposerSplitSource,
   runComposerSplitAnimation,
+  waitForComposerSplitSettled,
+  waitForComposerSplitStart,
 } from "@/components/chat/composer-split-animation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { AuroraBackdrop } from "./AuroraBackdrop";
+import { useAuroraScene } from "./AuroraSceneContext";
 import { useAgentShellState } from "./AgentShellStateContext";
+import { useAuroraMood } from "@/hooks/useAuroraMood";
+import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -84,12 +93,12 @@ const EMPTY_THREAD_EVENTS: never[] = [];
 /** Synthetic conversation id for the optimistic first-turn view shown before the server ack. */
 const OPTIMISTIC_CONVERSATION_ID = "__optimistic-new-chat__";
 
-/**
- * Hold the selection commit until the composer split animation has finished,
- * so the real conversation view (which remounts MessageList + composer via
- * `key`) never swaps in mid-flight and kills the FLIP transforms.
- */
-const OPTIMISTIC_COMMIT_MIN_MS = 440;
+// The server round-trip and the selection commit are sequenced on the split
+// animation's actual lifecycle (`waitForComposerSplitStart` /
+// `waitForComposerSplitSettled`): the ack processing floods the main thread,
+// so it must not begin before the animation's start frame is committed, and
+// the real conversation view (which remounts MessageList + composer via
+// `key`) must not swap in mid-flight and kill the FLIP transforms.
 
 type OptimisticNewChatTurn = {
   key: number;
@@ -497,6 +506,10 @@ export function AgentCenterPane() {
         createdAt: submittedAt,
       });
       void (async () => {
+        // Let the FLIP's start frame reach the compositor before kicking off
+        // the server round-trip; once started, the transforms run composited
+        // and survive the ack-processing main-thread jank.
+        await waitForComposerSplitStart();
         const created = await createAndPromptConversation(input, text, attachments);
         if (optimisticSubmitSeqRef.current !== key) {
           return;
@@ -515,33 +528,28 @@ export function AgentCenterPane() {
           return;
         }
         void refreshConversationGroups();
-        const commitDelay = Math.max(
-          0,
-          OPTIMISTIC_COMMIT_MIN_MS - (Date.now() - submittedAt)
-        );
-        window.setTimeout(() => {
-          if (optimisticSubmitSeqRef.current !== key) {
-            return;
-          }
-          optimisticPendingRef.current = false;
-          const followUps = optimisticFollowUpsRef.current.splice(0);
-          if (!isDraftConversationSelectedRef.current) {
-            // The user navigated elsewhere while the ack landed; the chat is
-            // in the rail already, so do not yank the selection back.
-            setOptimisticTurn(null);
-            return;
-          }
-          setSelectedConversationId(created.id);
-          for (const followUp of followUps) {
-            void promptConversation(
-              created.id,
-              followUp.text,
-              followUp.attachments,
-              undefined,
-              followUp.delivery
-            );
-          }
-        }, commitDelay);
+        await waitForComposerSplitSettled();
+        if (optimisticSubmitSeqRef.current !== key) {
+          return;
+        }
+        optimisticPendingRef.current = false;
+        const followUps = optimisticFollowUpsRef.current.splice(0);
+        if (!isDraftConversationSelectedRef.current) {
+          // The user navigated elsewhere while the ack landed; the chat is
+          // in the rail already, so do not yank the selection back.
+          setOptimisticTurn(null);
+          return;
+        }
+        setSelectedConversationId(created.id);
+        for (const followUp of followUps) {
+          void promptConversation(
+            created.id,
+            followUp.text,
+            followUp.attachments,
+            undefined,
+            followUp.delivery
+          );
+        }
       })();
       return true;
     },
@@ -1051,6 +1059,37 @@ export function AgentCenterPane() {
   }, [expandedComposerState, setExpandedComposerController]);
 
   const showLanding = isDraftConversationSelected && !conversation && !optimisticTurn;
+
+  const auroraMood = useAuroraMood({
+    conversationKey:
+      selectedConversationId ?? (optimisticTurn ? OPTIMISTIC_CONVERSATION_ID : "__draft__"),
+    status: conversation?.status,
+    hasCompletionFailure: conversationHasCompletionFailure(conversation, rawThreadEvents),
+    hasDockedQuestion: dockedAsk != null,
+    optimisticKey: OPTIMISTIC_CONVERSATION_ID,
+    showLanding,
+    isTyping: composerDraftText.trim().length > 0,
+    workingOverride: Boolean(optimisticTurn),
+    reactToActivity: globalSettings.aurora.reactToActivity,
+  });
+
+  // Dynamic placement follows the conversation: centered around the landing
+  // composer on a new chat, drifting to the top once the thread exists. The
+  // renderer glides between the two, riding along with the composer split.
+  const auroraPlacement: AuroraPlacement =
+    globalSettings.aurora.placement === "dynamic"
+      ? showLanding
+        ? "center"
+        : "top"
+      : globalSettings.aurora.placement;
+
+  // When the desktop shell hosts a window-spanning backdrop, publish the
+  // scene to it instead of rendering a pane-local canvas.
+  const auroraSceneContext = useAuroraScene();
+  const setAuroraScene = auroraSceneContext?.setScene;
+  useEffect(() => {
+    setAuroraScene?.({ mood: auroraMood, placement: auroraPlacement });
+  }, [setAuroraScene, auroraMood, auroraPlacement]);
   const showConversationTransitionState =
     !optimisticTurn &&
     (conversationSelectionPending ||
@@ -1166,22 +1205,23 @@ export function AgentCenterPane() {
     </div>
   );
 
-  if (showLanding) {
-    return (
-      <div
-        ref={paneRootRef}
-        className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
-      >
-        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
-      </div>
-    );
-  }
-
+  // Single shared root for both the landing and the conversation views: the
+  // aurora backdrop must not remount across the new-chat commit so its
+  // placement can glide instead of snapping.
   return (
     <div
       ref={paneRootRef}
-      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
+      data-aurora-surface={globalSettings.aurora.enabled ? "on" : undefined}
+      className="aurora-center-pane relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
     >
+      {auroraSceneContext ? null : (
+        <AuroraBackdrop mood={auroraMood} placement={auroraPlacement} />
+      )}
+      {showLanding ? (
+      <div className="relative z-10 min-h-0 min-w-0 flex-1">
+        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+      </div>
+      ) : (
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
@@ -1466,7 +1506,7 @@ export function AgentCenterPane() {
           </div>
         ) : null}
       </div>
-
+      )}
     </div>
   );
 }

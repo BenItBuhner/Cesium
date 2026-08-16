@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Gradual predictive back: the Android back gesture now streams its progress into the app (native `OnBackPressedCallback` with progressive members registered above React Native's plain callback, forwarded over the WebView bridge as `backStarted` / `backProgressed` / `backCancelled`). The mobile workspace rail and workbench pane follow the finger 1:1 through the existing drawer spring engine, and the full-screen settings view runs a Material-style scale/shift/corner preview — committing pops the layer, cancelling springs it back. Older Androids and 3-button navigation keep the previous discrete behavior.
+
+### Fixed
+
+- In-WebView back handling now works on Android 13–15 with gesture navigation. React Native 0.86 only registers its back callback on Android 16+, so with `enableOnBackInvokedCallback` opted in, every back gesture on 13–15 previously invoked the system default (exit the app) instead of popping open in-app layers. The new always-registered predictive callback intercepts back whenever the app has something to pop.
+
 ## [0.4.0] - 2026-08-10
 
 ### Changed

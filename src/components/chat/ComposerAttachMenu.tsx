@@ -52,7 +52,7 @@ export function ComposerAttachMenu({
           type="button"
           onClick={() => setOpen((v) => !v)}
           disabled={disabled}
-          className="flex size-[var(--d2-composer-plus-size)] shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="composer-attach-plus flex size-[var(--d2-composer-plus-size)] shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Attach files, media, or link"
           aria-expanded={open}
           title="Attach files, media, or link"

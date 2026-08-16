@@ -12,7 +12,10 @@
  * Usage: `captureComposerSplitSource()` synchronously in the submit handler
  * (while the source composer is still mounted), then
  * `runComposerSplitAnimation()` from a layout effect once the optimistic
- * conversation view has rendered.
+ * conversation view has rendered. Submit-side heavy work should sequence on
+ * `waitForComposerSplitStart()` / `waitForComposerSplitSettled()` so the
+ * animation gets a quiet main thread for its start frame and is not
+ * remounted away mid-flight.
  */
 
 type SplitSource = {
@@ -26,6 +29,53 @@ const SOURCE_TTL_MS = 800;
 const SPLIT_EASING = "cubic-bezier(0.24, 0.9, 0.3, 1)";
 const SPLIT_DURATION_MS = 360;
 
+/**
+ * Lifecycle rendezvous for the pending split. Submit-side code can hold heavy
+ * work (server round-trip, real-view commit) until the animation has actually
+ * started / finished, instead of guessing with wall-clock timers. Once the
+ * transforms have started they run on the compositor, so later main-thread
+ * jank no longer freezes them — but the *start* frame needs a quiet main
+ * thread, hence the started gate.
+ */
+let notifyStarted: (() => void) | null = null;
+let notifySettled: (() => void) | null = null;
+let startedPromise: Promise<void> | null = null;
+let settledPromise: Promise<void> | null = null;
+
+function armSplitWaiters(): void {
+  releaseSplitWaiters();
+  startedPromise = new Promise((resolve) => (notifyStarted = resolve));
+  settledPromise = new Promise((resolve) => (notifySettled = resolve));
+}
+
+function releaseSplitWaiters(): void {
+  notifyStarted?.();
+  notifyStarted = null;
+  notifySettled?.();
+  notifySettled = null;
+}
+
+/** Bounded so a hidden tab (no rendering opportunities) can never stall the caller. */
+function withDeadline(promise: Promise<void> | null, ms: number): Promise<void> {
+  if (!promise) {
+    return Promise.resolve();
+  }
+  return Promise.race([
+    promise,
+    new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
+
+/** Resolves once the split animations have started (or won't run at all). */
+export function waitForComposerSplitStart(): Promise<void> {
+  return withDeadline(startedPromise, SOURCE_TTL_MS);
+}
+
+/** Resolves once the split animations have finished/cancelled (or never ran). */
+export function waitForComposerSplitSettled(): Promise<void> {
+  return withDeadline(settledPromise, SOURCE_TTL_MS + 2 * SPLIT_DURATION_MS);
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -38,16 +88,19 @@ export function captureComposerSplitSource(scope?: HTMLElement | null): void {
   const shell = root.querySelector<HTMLElement>("[data-composer-shell]");
   if (!shell) {
     pendingSource = null;
+    releaseSplitWaiters();
     return;
   }
   pendingSource = {
     shellRect: shell.getBoundingClientRect(),
     capturedAt: performance.now(),
   };
+  armSplitWaiters();
 }
 
 export function clearComposerSplitSource(): void {
   pendingSource = null;
+  releaseSplitWaiters();
 }
 
 /**
@@ -58,15 +111,19 @@ export function runComposerSplitAnimation(scope: HTMLElement | null): void {
   const source = pendingSource;
   pendingSource = null;
   if (!source || !scope) {
+    releaseSplitWaiters();
     return;
   }
   if (performance.now() - source.capturedAt > SOURCE_TTL_MS) {
+    releaseSplitWaiters();
     return;
   }
   if (prefersReducedMotion()) {
+    releaseSplitWaiters();
     return;
   }
 
+  const createdAnimations: Animation[] = [];
   const src = source.shellRect;
   const bubble = scope.querySelector<HTMLElement>("[data-user-message-card]");
   const dockShell = scope.querySelector<HTMLElement>(
@@ -79,12 +136,14 @@ export function runComposerSplitAnimation(scope: HTMLElement | null): void {
     const dx = src.left - rect.left;
     const dy = src.top - rect.top;
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      bubble.animate(
-        [
-          { transform: `translate(${dx}px, ${dy}px)` },
-          { transform: "translate(0px, 0px)" },
-        ],
-        { duration: SPLIT_DURATION_MS, easing: SPLIT_EASING }
+      createdAnimations.push(
+        bubble.animate(
+          [
+            { transform: `translate(${dx}px, ${dy}px)` },
+            { transform: "translate(0px, 0px)" },
+          ],
+          { duration: SPLIT_DURATION_MS, easing: SPLIT_EASING }
+        )
       );
     }
   }
@@ -96,13 +155,27 @@ export function runComposerSplitAnimation(scope: HTMLElement | null): void {
     const dx = src.left - rect.left;
     const dy = src.bottom - rect.bottom;
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      dockShell.animate(
-        [
-          { transform: `translate(${dx}px, ${dy}px)` },
-          { transform: "translate(0px, 0px)" },
-        ],
-        { duration: SPLIT_DURATION_MS, easing: SPLIT_EASING }
+      createdAnimations.push(
+        dockShell.animate(
+          [
+            { transform: `translate(${dx}px, ${dy}px)` },
+            { transform: "translate(0px, 0px)" },
+          ],
+          { duration: SPLIT_DURATION_MS, easing: SPLIT_EASING }
+        )
       );
     }
+  }
+
+  if (createdAnimations.length === 0) {
+    releaseSplitWaiters();
+  } else {
+    void Promise.allSettled(createdAnimations.map((a) => a.ready)).then(() => {
+      notifyStarted?.();
+      notifyStarted = null;
+    });
+    void Promise.allSettled(createdAnimations.map((a) => a.finished)).then(() => {
+      releaseSplitWaiters();
+    });
   }
 }

@@ -137,14 +137,15 @@ describe("mobile bridge", () => {
     assert.match(script, /nativeReady/);
     assert.match(script, /"safeAreaTop":24/);
     assert.match(script, /"systemColorScheme":"dark"/);
-    assert.match(script, /opencursor-theme-config/);
-    assert.match(script, /applyStartupTheme/);
-    assert.match(script, /syncLegacyThemeTokens/);
-    assert.match(script, /Array\.prototype\.at/);
-    assert.match(script, /String\.prototype\.replaceAll/);
-    assert.match(script, /structuredClone/);
     assert.match(script, /window\.__CESIUM_MOBILE_NATIVE_READY__ = "\{\\"type\\":\\"nativeReady/);
     assert.doesNotMatch(script, /safeAreaTop":44/);
+    // Polyfills and first-paint theming live in the bundled workbench now
+    // (legacy-webview-polyfills.ts + the asset-copy theme stamp), not in the
+    // injected bootstrap — the bootstrap is a minimal preload analog.
+    assert.doesNotMatch(script, /applyStartupTheme/);
+    assert.doesNotMatch(script, /syncLegacyThemeTokens/);
+    assert.doesNotMatch(script, /Array\.prototype\.at/);
+    assert.doesNotMatch(script, /structuredClone/);
   });
 
   test("bootstrap script does not invent a minimum safe area", () => {

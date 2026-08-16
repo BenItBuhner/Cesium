@@ -77,6 +77,33 @@ function pruneStatusBarPerConversationMap(
 }
 
 /**
+ * Pins the conversation's currently resolved visibility as its own entry
+ * without touching the last-used default. Called when a conversation's status
+ * bar first renders, so the chat keeps the default it was created with even
+ * after later changes made from other chats move the default.
+ */
+export function pinComposerStatusBarVisibilityForConversation<
+  T extends ComposerStatusBarScopeState,
+>(scope: T, conversationId: string | null | undefined): T {
+  if (!conversationId) {
+    return scope;
+  }
+  const byConversation = scope.composerStatusBarVisibilityByConversationId ?? {};
+  if (byConversation[conversationId]) {
+    return scope;
+  }
+  return {
+    ...scope,
+    composerStatusBarVisibilityByConversationId: pruneStatusBarPerConversationMap({
+      ...byConversation,
+      [conversationId]: normalizeComposerStatusBarVisibility(
+        scope.composerStatusBarVisibility
+      ),
+    }),
+  };
+}
+
+/**
  * Records a visibility change: the conversation (when known) keeps its own
  * entry, and the same value becomes the last-used default for new chats.
  */

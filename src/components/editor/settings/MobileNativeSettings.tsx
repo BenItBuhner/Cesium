@@ -47,8 +47,27 @@ export function MobileNativeSettings() {
   const live = status?.liveUpdates;
   const phone = status?.phoneControl;
   const preference = live?.preference ?? "live";
-  const promotionAvailable =
-    live?.progressStyleSupported && live.canPostPromotedNotifications;
+  // Distinguish "the OS can render live updates" (Android 16 QPR1+ status
+  // chip, or Samsung's Now Bar on One UI 8) from "the user allowed them".
+  // Base Android 16 ships the APIs without the rendering UI, so
+  // canPostPromotedNotifications is false there no matter what the user does.
+  const apiSupported = live?.progressStyleSupported === true;
+  const renderSupported = live?.promotionRenderSupported !== false;
+  const promotionGranted = live?.canPostPromotedNotifications === true;
+  const isSamsung = live?.isSamsung === true;
+  const accessDescription = !apiSupported
+    ? "This Android version does not support promoted Live Updates; Cesium falls back to standard live notifications."
+    : !renderSupported
+      ? "This Android 16 build ships the Live Updates APIs without the system UI that renders them (status bar chip arrives with Android 16 QPR1, and Samsung's Now Bar with One UI 8). Standard live notifications are used until a system update."
+      : !promotionGranted
+        ? isSamsung
+          ? "Live Updates are supported but not yet allowed for Cesium. Allow them so agent runs render in Samsung's Now Bar and status bar instead of a plain notification."
+          : "Live Updates are supported but not yet allowed for Cesium. Allow them so agent runs render as a status bar chip and pinned lock-screen card instead of a plain notification."
+        : live?.promotedNotificationPosted
+          ? "Live Updates are allowed and one is rendering right now."
+          : isSamsung
+            ? "Live Updates are allowed for Cesium. Active agent runs render in Samsung's Now Bar (lock screen / AOD) and the status bar."
+            : "Live Updates are allowed for Cesium. Active agent runs render as a status bar chip and pinned lock-screen card.";
 
   return (
     <>
@@ -57,7 +76,7 @@ export function MobileNativeSettings() {
           searchId="mobile-live-update-placement"
           title="Run progress placement"
           description={
-            promotionAvailable
+            apiSupported && renderSupported && promotionGranted
               ? "Android Live Updates show each agent run in the status bar chip, lock screen, and Samsung's Now Bar (One UI 8+)."
               : "Android Live Updates are preferred. This device will automatically fall back to a standard live notification while promoted ongoing activity is unavailable."
           }
@@ -79,28 +98,40 @@ export function MobileNativeSettings() {
           }
         />
         <SettingsRow
+          searchId="mobile-live-update-access"
           title="Live Updates access"
-          description={
-            live?.progressStyleSupported
-              ? live.canPostPromotedNotifications
-                ? "Promoted Live Updates are allowed for Cesium. Samsung's Now Bar picks these up automatically."
-                : "Android supports Live Updates, but promotion is not currently allowed for Cesium; standard live notifications are used instead."
-              : "This Android version does not support promoted Live Updates; Cesium falls back to standard live notifications."
-          }
+          description={accessDescription}
           trailing={
             <button
               type="button"
               className={rowButtonClass}
-              disabled={!live?.progressStyleSupported}
+              disabled={!apiSupported}
               onClick={() =>
                 postMobileBridgeMessage({ type: "openLiveUpdatePromotionSettings" })
               }
             >
-              Manage
+              {apiSupported && renderSupported && !promotionGranted ? "Allow" : "Manage"}
             </button>
           }
-          border={false}
+          border={isSamsung}
         />
+        {isSamsung ? (
+          <SettingsRow
+            searchId="mobile-now-bar-settings"
+            title="Samsung Now Bar"
+            description="One UI renders Cesium's Live Updates in the Now Bar on the lock screen and Always On Display. Make sure the Now Bar is on and Cesium's live notifications are enabled there."
+            trailing={
+              <button
+                type="button"
+                className={rowButtonClass}
+                onClick={() => postMobileBridgeMessage({ type: "openNowBarSettings" })}
+              >
+                Now Bar settings
+              </button>
+            }
+            border={false}
+          />
+        ) : null}
       </SettingsSection>
       <SettingsSection title="Phone & assistant">
         <SettingsRow

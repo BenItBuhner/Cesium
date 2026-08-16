@@ -11,6 +11,8 @@ type CesiumLiveUpdatesModule = {
     preference: LiveUpdateStatus["deliveryPreference"]
   ): Promise<LiveUpdateStatus>;
   openPromotionSettings(): Promise<boolean>;
+  /** Resolves with the settings surface that opened, or null. */
+  openNowBarSettings(): Promise<"nowbar" | "appNotificationSettings" | null>;
   consumeInitialNotificationAction(): Promise<{
     actionId?: string;
     workspaceId?: string;
@@ -66,6 +68,16 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
       return false;
     }
     return nativeModule.openPromotionSettings();
+  },
+  async openNowBarSettings() {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return null;
+    }
+    // Older native builds predate the Now Bar deep link; treat as best effort.
+    if (typeof nativeModule.openNowBarSettings !== "function") {
+      return null;
+    }
+    return nativeModule.openNowBarSettings();
   },
   async consumeInitialNotificationAction() {
     if (Platform.OS !== "android" || !nativeModule) {

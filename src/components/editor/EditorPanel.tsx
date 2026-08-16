@@ -2299,7 +2299,7 @@ export function EditorPanel({
 
   if (!state.split) {
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
+      <div className="aurora-editor-surface flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
         {renderEditorGroup("left", {
           activeTab: leftActive,
           activeTabId: state.leftActiveId,
@@ -2312,7 +2312,7 @@ export function EditorPanel({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
+    <div className="aurora-editor-surface flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
       <Group
         orientation={state.splitOrientation}
         id="editor-split-group"

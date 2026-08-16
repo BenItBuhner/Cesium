@@ -14,8 +14,17 @@ import {
   SettingsLinkRow,
   SettingsRow,
   SettingsSection,
+  settingsSelectTriggerClass,
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import {
+  QUICK_OPEN_SCOPE_IDS,
+  QUICK_OPEN_SCOPE_LABELS,
+  QUICK_SWITCHER_SCOPE_IDS,
+  QUICK_SWITCHER_SCOPE_LABELS,
+  normalizeQuickOpenScope,
+  normalizeQuickSwitcherScope,
+} from "@/lib/quick-open-scopes";
 import { MobileNativeSettings } from "./MobileNativeSettings";
 
 export function GeneralSettingsPanel() {
@@ -114,6 +123,55 @@ export function GeneralSettingsPanel() {
           title="Configure quick actions"
           description="Add, edit, or remove the actions shown on the new chat landing."
           onClick={() => openNav("actions")}
+          border={false}
+        />
+      </SettingsSection>
+      <SettingsSection title="Quick Open & switcher">
+        <SettingsRow
+          searchId="quick-open-default-scope"
+          title="Default Quick Open search"
+          description="What Ctrl/Cmd+P searches when it opens. Cycle other scopes with Tab or the chips, or prefix the query (> commands, @ chats, # settings)."
+          trailing={
+            <select
+              className={settingsSelectTriggerClass}
+              value={general.quickOpenDefaultScope}
+              aria-label="Default Quick Open search scope"
+              onChange={(event) =>
+                patchGeneral({
+                  quickOpenDefaultScope: normalizeQuickOpenScope(event.target.value),
+                })
+              }
+            >
+              {QUICK_OPEN_SCOPE_IDS.map((scope) => (
+                <option key={scope} value={scope}>
+                  {QUICK_OPEN_SCOPE_LABELS[scope]}
+                </option>
+              ))}
+            </select>
+          }
+        />
+        <SettingsRow
+          searchId="quick-switcher-scope"
+          title="Ctrl+Tab switcher cycles"
+          description="What the hold-to-cycle switcher steps through. Editor tabs are always available on their own via the Editor: Quick switch tab shortcuts (Alt+PageUp / Alt+PageDown by default, rebindable)."
+          trailing={
+            <select
+              className={settingsSelectTriggerClass}
+              value={general.quickSwitcherScope}
+              aria-label="Ctrl+Tab switcher scope"
+              onChange={(event) =>
+                patchGeneral({
+                  quickSwitcherScope: normalizeQuickSwitcherScope(event.target.value),
+                })
+              }
+            >
+              {QUICK_SWITCHER_SCOPE_IDS.map((scope) => (
+                <option key={scope} value={scope}>
+                  {QUICK_SWITCHER_SCOPE_LABELS[scope]}
+                </option>
+              ))}
+            </select>
+          }
           border={false}
         />
       </SettingsSection>
