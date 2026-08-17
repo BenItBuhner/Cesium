@@ -576,9 +576,13 @@ export function AgentWorkspaceRail() {
   );
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
+  /* mobile-safe-top-pad is unconditional: the CSS only fires under
+     .opencursor-mobile-native (the phone/tablet WebView), and a landscape
+     phone renders this desktop rail while the translucent status bar still
+     overlays the top — gating on isMobile stripped the inset there. */
   const railTopBarPadClass = `${padRailForWindowChrome
     ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
-    : "px-[11px]"} ${isMobile ? "mobile-safe-top-pad" : ""}`;
+    : "px-[11px]"} mobile-safe-top-pad`;
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const accountAnchorRef = useRef<HTMLButtonElement>(null);

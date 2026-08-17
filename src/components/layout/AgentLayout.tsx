@@ -434,7 +434,7 @@ function AgentLayoutShell() {
                         data-electron-trailing-chrome={
                           electronTrailingChromeForToggle ? "true" : undefined
                         }
-                        className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                        className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
                           padTrailingForWindowChrome
                             ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
                             : "right-[11px]"
