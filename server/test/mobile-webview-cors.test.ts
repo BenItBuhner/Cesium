@@ -12,6 +12,62 @@ describe("Android bundled workbench CORS", () => {
     expect(response.headers.get("access-control-allow-credentials")).toBe("true");
   });
 
+  test("preserves the Android origin when ALLOWED_ORIGINS replaces browser defaults", async () => {
+    const previousAllowedOrigins = process.env.ALLOWED_ORIGINS;
+    const previousAndroidOrigin = process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN;
+    process.env.ALLOWED_ORIGINS = "https://workbench.example";
+    delete process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN;
+    try {
+      const mobileResponse = await createCesiumApp().request("/api/agents/imports/sources", {
+        headers: { Origin: "null" },
+      });
+      expect(mobileResponse.status).toBe(200);
+      expect(mobileResponse.headers.get("access-control-allow-origin")).toBe("null");
+
+      const browserResponse = await createCesiumApp().request("/health", {
+        headers: { Origin: "https://workbench.example" },
+      });
+      expect(browserResponse.headers.get("access-control-allow-origin")).toBe(
+        "https://workbench.example"
+      );
+    } finally {
+      if (previousAllowedOrigins === undefined) {
+        delete process.env.ALLOWED_ORIGINS;
+      } else {
+        process.env.ALLOWED_ORIGINS = previousAllowedOrigins;
+      }
+      if (previousAndroidOrigin === undefined) {
+        delete process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN;
+      } else {
+        process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN = previousAndroidOrigin;
+      }
+    }
+  });
+
+  test("can explicitly disable the opaque Android file origin", async () => {
+    const previousAllowedOrigins = process.env.ALLOWED_ORIGINS;
+    const previousAndroidOrigin = process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN;
+    process.env.ALLOWED_ORIGINS = "https://workbench.example";
+    process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN = "0";
+    try {
+      const response = await createCesiumApp().request("/health", {
+        headers: { Origin: "null" },
+      });
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      if (previousAllowedOrigins === undefined) {
+        delete process.env.ALLOWED_ORIGINS;
+      } else {
+        process.env.ALLOWED_ORIGINS = previousAllowedOrigins;
+      }
+      if (previousAndroidOrigin === undefined) {
+        delete process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN;
+      } else {
+        process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN = previousAndroidOrigin;
+      }
+    }
+  });
+
   test("allows the Vite renderer origins used for mobile development", async () => {
     for (const origin of [
       "http://localhost:5173",

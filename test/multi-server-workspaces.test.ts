@@ -7,6 +7,8 @@ import {
   filterGroupsByWorkspaceScope,
   getRepositoryGroupingKey,
   groupDirectoryWorkspacesByRepository,
+  isNoWorkspaceRailScope,
+  matchesNoWorkspacePickerQuery,
   sortDirectoryWorkspaces,
 } from "../src/lib/multi-server-workspaces.ts";
 
@@ -17,14 +19,17 @@ function workspace(input: {
   name?: string;
   repositoryId?: string;
   lastOpenedAt?: number;
+  kind?: DirectoryWorkspaceRecord["kind"];
+  root?: string;
 }): DirectoryWorkspaceRecord {
   return {
     id: input.id,
     name: input.name ?? input.id,
-    root: `/machines/${input.serverId}/${input.id}`,
+    root: input.root ?? `/machines/${input.serverId}/${input.id}`,
     createdAt: 1,
     updatedAt: 1,
     lastOpenedAt: input.lastOpenedAt ?? 1,
+    kind: input.kind,
     serverId: input.serverId,
     serverLabel: input.serverLabel,
     serverBaseUrl: `https://${input.serverId}.example.test`,
@@ -155,6 +160,61 @@ describe("multi-server workspace organization", () => {
       ["desktop:two"]
     );
     assert.equal(filterGroupsByWorkspaceScope(groups, { type: "all" }).length, 2);
+  });
+
+  test("scopes conversation groups to standalone no-workspace chats", () => {
+    const groups = [
+      {
+        workspace: workspace({
+          id: "one",
+          serverId: "laptop",
+          serverLabel: "Laptop",
+        }),
+        serverId: "laptop",
+        workspaceKey: "laptop:one",
+        conversations: [],
+      },
+      {
+        workspace: workspace({
+          id: "chat-1",
+          serverId: "laptop",
+          serverLabel: "Laptop",
+          kind: "standalone-chat",
+          root: "/tmp/standalone-chats/chat-1",
+        }),
+        serverId: "laptop",
+        workspaceKey: "laptop:chat-1",
+        conversations: [],
+      },
+      {
+        workspace: workspace({
+          id: "chat-2",
+          serverId: "desktop",
+          serverLabel: "Desktop",
+          kind: "standalone-chat",
+          root: "/tmp/standalone-chats/chat-2",
+        }),
+        serverId: "desktop",
+        workspaceKey: "desktop:chat-2",
+        conversations: [],
+      },
+    ] satisfies AgentConversationGroup[];
+    assert.deepEqual(
+      filterGroupsByWorkspaceScope(groups, { type: "no-workspace" }).map(
+        (group) => group.workspaceKey
+      ),
+      ["laptop:chat-1", "desktop:chat-2"]
+    );
+    assert.equal(isNoWorkspaceRailScope({ type: "no-workspace" }), true);
+    assert.equal(isNoWorkspaceRailScope({ type: "all" }), false);
+  });
+
+  test("matches the no-workspace picker row against search text", () => {
+    assert.equal(matchesNoWorkspacePickerQuery(""), true);
+    assert.equal(matchesNoWorkspacePickerQuery("no"), true);
+    assert.equal(matchesNoWorkspacePickerQuery("workspace"), true);
+    assert.equal(matchesNoWorkspacePickerQuery("standalone"), true);
+    assert.equal(matchesNoWorkspacePickerQuery("cesium"), false);
   });
 
   test("sorts deterministically by machine then workspace", () => {

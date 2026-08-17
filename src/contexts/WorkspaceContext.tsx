@@ -76,15 +76,18 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { currentModel } from "@/lib/mock-data";
 
-const HEARTBEAT_INTERVAL_MS = 3_000;
+/** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s — a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
+const HEARTBEAT_INTERVAL_MS = 10_000;
 /** Allow slow pongs, quiet workspaces, and main-thread stalls (heavy chat renders) without killing the FS socket. */
 const PONG_STALE_MS = 90_000;
 /** If the heartbeat timer fires this late, the event loop was probably stalled — do not infer a dead socket from skewed time. */
-const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 12;
-/** Number of consecutive stale heartbeat ticks required before declaring the connection dead. Tolerates several dropped pongs on quiet workspaces. */
-const STALE_TICK_THRESHOLD = 7;
+const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 4;
+/** Number of consecutive stale heartbeat ticks required before declaring the connection dead. Tolerates dropped pongs on quiet workspaces; overall detection window (~PONG_STALE_MS + 3 ticks) matches the old 3s-interval tuning. */
+const STALE_TICK_THRESHOLD = 3;
 /** Ignore startup socket flaps while the client and backend settle. */
 const STARTUP_CONNECTION_NOTIFICATION_GRACE_MS = 10_000;
+/** After returning to the foreground, give the socket this long to quietly re-establish before announcing a disconnect. Resume-time reconnects are expected (Android freezes backgrounded apps), not news. */
+const RESUME_CONNECTION_NOTIFICATION_GRACE_MS = 8_000;
 const RECONNECT_TOAST_MS = 2_000;
 const DISCONNECT_TOAST_MS = 3_000;
 const SESSION_SAVE_DEBOUNCE_MS = 350;
@@ -1495,11 +1498,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       );
       startupDisconnectTimer = window.setTimeout(() => {
         startupDisconnectTimer = null;
-        const pendingMessage = pendingStartupDisconnectMessageRef.current;
-        pendingStartupDisconnectMessageRef.current = null;
-        if (!pendingMessage) {
+        if (!pendingStartupDisconnectMessageRef.current) {
           return;
         }
+        if (document.visibilityState === "hidden") {
+          // Never toast into a hidden page: it auto-dismisses unseen but still
+          // marks the disconnect as "announced", which used to force a
+          // pointless "Reconnected" toast on every resume. Keep it pending;
+          // the foreground handler reschedules with a fresh grace window.
+          return;
+        }
+        if (shouldSuppressConnectionNotifications()) {
+          // Grace was extended (e.g. by a resume) after this timer was set.
+          scheduleStartupDisconnectToast();
+          return;
+        }
+        const pendingMessage = pendingStartupDisconnectMessageRef.current;
+        pendingStartupDisconnectMessageRef.current = null;
         if (!active || !wasDisconnectedRef.current || socket.connected) {
           disconnectToastShownRef.current = false;
           return;
@@ -1513,6 +1528,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (connectionLostHandled) return;
       connectionLostHandled = true;
       wasDisconnectedRef.current = true;
+      if (document.visibilityState === "hidden") {
+        // Expected while backgrounded/hidden (Android freezes the app, the
+        // server reaps idle sockets). Hold the toast; the resume handler
+        // re-arms the grace timer and a quiet reconnect cancels it entirely.
+        pendingStartupDisconnectMessageRef.current = message;
+        disconnectToastShownRef.current = false;
+        return;
+      }
       if (shouldSuppressConnectionNotifications()) {
         pendingStartupDisconnectMessageRef.current = message;
         disconnectToastShownRef.current = false;
@@ -1562,6 +1585,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }),
       socket.onMessage((event) => {
         lastServerContactAt = Date.now();
+        // Any inbound message proves liveness — settle a pending disconnect
+        // (and announce recovery if one was shown) without waiting for the
+        // next heartbeat pong.
+        tryReconnectToast();
 
         if (event.type === "workspace_snapshot") {
           setWorkspaceInfo({
@@ -1588,7 +1615,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         if (event.type === "pong") {
           lastSeenSeqRef.current = Math.max(lastSeenSeqRef.current, event.latestSeq);
-          tryReconnectToast();
           return;
         }
 
@@ -1632,7 +1658,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       // "stale" and force a reconnect + resync that feels like a full UI reload.
       openedAt = Date.now();
       lastServerContactAt = null;
+      // Resume-time reconnects are routine; only announce a disconnect that
+      // survives the grace window (i.e. the backend is genuinely unreachable).
+      connectionNotificationGraceEndsAtRef.current = Math.max(
+        connectionNotificationGraceEndsAtRef.current,
+        Date.now() + RESUME_CONNECTION_NOTIFICATION_GRACE_MS
+      );
+      if (pendingStartupDisconnectMessageRef.current) {
+        scheduleStartupDisconnectToast();
+      }
       if (socket.connected) {
+        // Immediately validates a socket that may have died while hidden: a
+        // dead TCP stream surfaces close/error fast, and the quiet reconnect
+        // lands inside the grace window.
         socket.send({ type: "ping" });
       }
     };

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { AgentConversationGroup, AgentRailConversationSummary } from "../src/lib/agent-types.ts";
-import { groupAgentRailGroups } from "../src/lib/agent-rail-groups.ts";
+import {
+  groupAgentRailGroups,
+  shouldShowAgentRailStandaloneSectionHeader,
+  shouldShowAgentRailWorkspaceGroupHeaders,
+} from "../src/lib/agent-rail-groups.ts";
 import type { WorkspaceRecord } from "../src/lib/types.ts";
 
 function workspace(id: string, name = id): WorkspaceRecord {
@@ -309,5 +313,66 @@ describe("agent rail grouping", () => {
     assert.equal(grouped[0]?.workspace.name, "Needs attention");
     const recent = grouped.find((group) => group.workspace.name === "Recent");
     assert.deepEqual(recent?.conversations.map((item) => item.id), ["failed-read"]);
+  });
+});
+
+describe("agent rail workspace group headers", () => {
+  test("hides the workspace title when a single workspace is scoped", () => {
+    assert.equal(
+      shouldShowAgentRailWorkspaceGroupHeaders({
+        groupBy: "workspace",
+        workspaceGroupCount: 1,
+        standaloneSectionVisible: false,
+      }),
+      false
+    );
+  });
+
+  test("hides the workspace title when all-workspaces has only one group and no chats section", () => {
+    assert.equal(
+      shouldShowAgentRailWorkspaceGroupHeaders({
+        groupBy: "workspace",
+        workspaceGroupCount: 1,
+      }),
+      false
+    );
+  });
+
+  test("keeps workspace titles when multiple workspaces share the list", () => {
+    assert.equal(
+      shouldShowAgentRailWorkspaceGroupHeaders({
+        groupBy: "workspace",
+        workspaceGroupCount: 2,
+        standaloneSectionVisible: false,
+      }),
+      true
+    );
+  });
+
+  test("keeps the workspace title when standalone chats sit beside a single workspace", () => {
+    assert.equal(
+      shouldShowAgentRailWorkspaceGroupHeaders({
+        groupBy: "workspace",
+        workspaceGroupCount: 1,
+        standaloneSectionVisible: true,
+      }),
+      true
+    );
+  });
+
+  test("keeps bucket labels when grouping is not by workspace", () => {
+    assert.equal(
+      shouldShowAgentRailWorkspaceGroupHeaders({
+        groupBy: "priority",
+        workspaceGroupCount: 1,
+        standaloneSectionVisible: false,
+      }),
+      true
+    );
+  });
+
+  test("hides the standalone Chat title when that workspace is scoped", () => {
+    assert.equal(shouldShowAgentRailStandaloneSectionHeader(true), false);
+    assert.equal(shouldShowAgentRailStandaloneSectionHeader(false), true);
   });
 });

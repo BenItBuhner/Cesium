@@ -340,6 +340,21 @@ describe("global settings", () => {
     });
   });
 
+  test("persists a no-workspace rail scope", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          scope: { type: "no-workspace" },
+        },
+      },
+    });
+    assert.deepEqual(settings.general.agentRail.scope, { type: "no-workspace" });
+  });
+
   test("applies named rail view presets", () => {
     const rail = createDefaultGlobalSettings().general.agentRail;
     const inbox = applyAgentRailViewPreset("inbox", rail);

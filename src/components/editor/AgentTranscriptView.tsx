@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -53,6 +53,17 @@ export function AgentTranscriptView({
 
   const parentBusy =
     conversation?.status === "running" || conversation?.status === "awaiting_permission";
+
+  // Stable identity so memoized permission rows don't re-render every flush.
+  const handleResolvePermission = useCallback(
+    (requestId: string, optionId: string) => {
+      if (!liveConversationId) {
+        return;
+      }
+      void answerPermissionForConversation(liveConversationId, requestId, optionId);
+    },
+    [answerPermissionForConversation, liveConversationId]
+  );
 
   const conversationBusy =
     liveConversationId && sessionId?.trim()
@@ -111,13 +122,7 @@ export function AgentTranscriptView({
           workspaceRoot={workspaceInfo?.root ?? null}
           conversationId={workedScopeId}
           conversationBusy={conversationBusy}
-          onResolvePermission={
-            liveConversationId
-              ? (requestId, optionId) => {
-                  void answerPermissionForConversation(liveConversationId, requestId, optionId);
-                }
-              : undefined
-          }
+          onResolvePermission={liveConversationId ? handleResolvePermission : undefined}
         />
       </div>
     </div>

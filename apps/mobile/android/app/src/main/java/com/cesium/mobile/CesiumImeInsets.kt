@@ -50,6 +50,10 @@ private class ImeInsetsCallback(
 
   override fun onApplyWindowInsets(v: View, insets: WindowInsetsCompat): WindowInsetsCompat {
     lastInsets = insets
+    // Every static pass also feeds the top-inset bridge: this is the
+    // event-driven source that keeps the WebView's safe-area CSS variable
+    // correct across background/refocus cycles (see CesiumWindowInsetsHub).
+    CesiumWindowInsetsHub.report(v, insets)
     if (!deferStaticApply) {
       applyImePadding(insets)
     }

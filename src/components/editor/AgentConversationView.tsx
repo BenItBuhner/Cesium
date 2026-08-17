@@ -263,6 +263,14 @@ loadOlderConversationHistory,
     [promptConversation]
   );
 
+  // Stable identity so memoized permission rows don't re-render every flush.
+  const handleResolvePermission = useCallback(
+    (requestId: string, optionId: string) => {
+      void answerPermissionForConversation(conversationId, requestId, optionId);
+    },
+    [answerPermissionForConversation, conversationId]
+  );
+
   const redoFlow = useRedoInlineUserMessage({
     conversation,
     getRedoComposerSeed,
@@ -781,9 +789,7 @@ const showRecentChatsSection =
                 };
               });
             }}
-            onResolvePermission={(requestId, optionId) => {
-              void answerPermissionForConversation(conversationId, requestId, optionId);
-            }}
+            onResolvePermission={handleResolvePermission}
             onForkMessage={redoFlow.handleForkMessage}
             onRedoMessage={redoFlow.handleStartRedoMessage}
             renderUserMessageEditor={redoFlow.renderRedoMessageEditor}

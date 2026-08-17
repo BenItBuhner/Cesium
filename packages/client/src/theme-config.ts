@@ -65,6 +65,11 @@ export type ThemeConfig = {
   editDiffRenderingMode: EditDiffRenderingMode;
   /** Collapse very large pasted text into compact composer reference pills. */
   longPasteReferencesEnabled: boolean;
+  /**
+   * Show the small per-kind glyph (terminal, file, search, …) next to each
+   * agent tool-call row in chat. Off by default for a cleaner transcript.
+   */
+  showToolCallIcons: boolean;
   /** Max height of expanded worked-session tool-call dropdown bodies in chat (px). */
   toolCallDropdownMaxHeightPx: number;
 };
@@ -79,6 +84,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     showFloatingSidebarReveal: false,
     editDiffRenderingMode: "full",
     longPasteReferencesEnabled: true,
+    showToolCallIcons: false,
     toolCallDropdownMaxHeightPx: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
   };
 }
@@ -147,6 +153,7 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
       typeof r.longPasteReferencesEnabled === "boolean"
         ? r.longPasteReferencesEnabled
         : base.longPasteReferencesEnabled,
+    showToolCallIcons: r.showToolCallIcons === true,
     toolCallDropdownMaxHeightPx: normalizeToolCallDropdownMaxHeightPx(
       r.toolCallDropdownMaxHeightPx
     ),

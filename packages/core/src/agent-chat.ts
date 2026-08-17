@@ -4091,6 +4091,107 @@ function projectionOptionsKey(options?: ProjectAgentEventsOptions): string {
   return `${options?.backendId ?? "none"}|${options?.workspaceRoot ?? "none"}`;
 }
 
+/**
+ * Structural equality for projected chat data (plain JSON-ish trees: strings,
+ * numbers, booleans, null/undefined, arrays, plain objects). Used to decide
+ * whether a freshly projected message is observationally identical to the one
+ * from the previous projection so the old object can be reused.
+ */
+function projectedValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a == null || b == null || typeof a !== typeof b) {
+    return false;
+  }
+  if (typeof a !== "object") {
+    return false;
+  }
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== (b as unknown[]).length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i += 1) {
+      if (!projectedValueEqual(a[i], (b as unknown[])[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (Array.isArray(b)) {
+    return false;
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  const bKeys = Object.keys(bRecord);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  for (const key of aKeys) {
+    if (!projectedValueEqual(aRecord[key], bRecord[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Previous projection per conversation+options, used to keep `ChatMessage`
+ * object identity stable across streaming flushes. Every flush replaces the
+ * events array (an exact freshness signal for {@link projectionCacheByEvents}),
+ * which means every flush also produces brand-new message objects — defeating
+ * any `React.memo` on message rows and forcing full re-renders of the whole
+ * transcript. Reconciling against the previous projection restores identity
+ * for the (vast majority of) messages that did not change, so only the rows
+ * that actually changed re-render. Bounded LRU so long sessions with many
+ * conversations don't accumulate stale transcripts.
+ */
+const lastProjectionByConversationKey = new Map<string, ChatMessage[]>();
+const MAX_RECONCILED_PROJECTIONS = 16;
+
+function reconcileProjectedChatMessages(
+  reconcileKey: string,
+  next: ChatMessage[]
+): ChatMessage[] {
+  const previous = lastProjectionByConversationKey.get(reconcileKey);
+  // LRU touch: delete + re-set moves the key to the back of the Map order.
+  lastProjectionByConversationKey.delete(reconcileKey);
+  let result = next;
+  if (previous && previous !== next) {
+    const previousById = new Map<string, ChatMessage>();
+    for (const message of previous) {
+      if (!previousById.has(message.id)) {
+        previousById.set(message.id, message);
+      }
+    }
+    let reusedInPlace = previous.length === next.length;
+    const reconciled: ChatMessage[] = new Array(next.length);
+    for (let i = 0; i < next.length; i += 1) {
+      const fresh = next[i]!;
+      const prior = previousById.get(fresh.id);
+      if (prior && projectedValueEqual(prior, fresh)) {
+        reconciled[i] = prior;
+        if (reusedInPlace && previous[i] !== prior) {
+          reusedInPlace = false;
+        }
+      } else {
+        reconciled[i] = fresh;
+        reusedInPlace = false;
+      }
+    }
+    result = reusedInPlace ? previous : reconciled;
+  }
+  lastProjectionByConversationKey.set(reconcileKey, result);
+  if (lastProjectionByConversationKey.size > MAX_RECONCILED_PROJECTIONS) {
+    const oldestKey = lastProjectionByConversationKey.keys().next().value;
+    if (oldestKey !== undefined) {
+      lastProjectionByConversationKey.delete(oldestKey);
+    }
+  }
+  return result;
+}
+
 export function projectAgentEventsToChatMessages(
   events: AgentStoredEvent[],
   options?: ProjectAgentEventsOptions
@@ -4888,10 +4989,20 @@ for (const turn of turns) {
   }
 }
   const dockedMessages = dockActiveTodoUnderLatestUser(messages);
+  // Reuse identical message objects (and, when nothing changed, the whole
+  // array) from the previous projection of this conversation so streaming
+  // flushes don't invalidate memoized rows for unchanged messages.
+  const reconcileConversationId = events[0]?.conversationId;
+  const reconciledMessages = reconcileConversationId
+    ? reconcileProjectedChatMessages(
+        `${reconcileConversationId}|${optionsKey}`,
+        dockedMessages
+      )
+    : dockedMessages;
   const byOptions = projectionCacheByEvents.get(events) ?? new Map<string, ChatMessage[]>();
-  byOptions.set(optionsKey, dockedMessages);
+  byOptions.set(optionsKey, reconciledMessages);
   projectionCacheByEvents.set(events, byOptions);
-  return dockedMessages;
+  return reconciledMessages;
 }
 
 export function getConversationLatestSeq(

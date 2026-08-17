@@ -694,6 +694,7 @@ export function WorkedSessionCard({
   const entryListMaxHeightPx =
     themeConfig.toolCallDropdownMaxHeightPx ?? TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX;
   const editDiffRenderingMode = themeConfig.editDiffRenderingMode ?? "full";
+  const showToolCallIcons = themeConfig.showToolCallIcons === true;
   const { openExplorerFile } = useOpenInEditor();
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
@@ -1065,6 +1066,7 @@ export function WorkedSessionCard({
                     onOpenToolFile={handleOpenToolFile}
                     horizScrollFadeEdge={gradientVar}
                     editDiffRenderingMode={editDiffRenderingMode}
+                    showToolCallIcons={showToolCallIcons}
                   />
                 ))}
               </div>
@@ -1102,6 +1104,7 @@ function WorkedEntryBlock({
   onOpenToolFile,
   horizScrollFadeEdge,
   editDiffRenderingMode,
+  showToolCallIcons,
 }: {
   entry: WorkedSessionEntry;
   isLiveWorkedTail: boolean;
@@ -1109,6 +1112,7 @@ function WorkedEntryBlock({
   onOpenToolFile: (path: string) => void;
   horizScrollFadeEdge: string;
   editDiffRenderingMode: EditDiffRenderingMode;
+  showToolCallIcons: boolean;
 }) {
   const [visible, setVisible] = useState(false);
   const [rawDetailOpen, setRawDetailOpen] = useState(false);
@@ -1120,7 +1124,7 @@ function WorkedEntryBlock({
 
   return (
     <div
-      className={`transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
+      className={`transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
         visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
       }`}
     >
@@ -1132,7 +1136,8 @@ function WorkedEntryBlock({
         horizScrollFadeEdge,
         rawDetailOpen,
         setRawDetailOpen,
-        editDiffRenderingMode
+        editDiffRenderingMode,
+        showToolCallIcons
       )}
     </div>
   );
@@ -1146,15 +1151,18 @@ function renderEntry(
   horizScrollFadeEdge: string,
   rawDetailOpen: boolean,
   onRawDetailOpenChange: (open: boolean) => void,
-  editDiffRenderingMode: EditDiffRenderingMode
+  editDiffRenderingMode: EditDiffRenderingMode,
+  showToolCallIcons: boolean
 ) {
   switch (entry.kind) {
     case "verbatim":
       return (
         <div className="flex gap-[8px]">
-          <span className="mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-primary)] opacity-90">
-            <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
-          </span>
+          {showToolCallIcons ? (
+            <span className="mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-primary)] opacity-90">
+              <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
+            </span>
+          ) : null}
           <pre className="whitespace-pre-wrap font-mono text-[12px] font-normal leading-relaxed text-[var(--text-primary)]">
             {entry.text}
           </pre>
@@ -1171,9 +1179,11 @@ function renderEntry(
       const exploreExtra = exploreRows.length - explorePreview.length;
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>
-            <FolderOpen className="size-[14px]" strokeWidth={1.5} aria-hidden />
-          </span>
+          {showToolCallIcons ? (
+            <span className={iconWrap}>
+              <FolderOpen className="size-[14px]" strokeWidth={1.5} aria-hidden />
+            </span>
+          ) : null}
           <div className="min-w-0 flex-1">
             <p className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
               {entry.caption ??
@@ -1332,7 +1342,9 @@ function renderEntry(
       ) : null;
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>{toolEntryIcon(entry)}</span>
+          {showToolCallIcons ? (
+            <span className={iconWrap}>{toolEntryIcon(entry)}</span>
+          ) : null}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-[8px]">
               {showRawDetail ? (

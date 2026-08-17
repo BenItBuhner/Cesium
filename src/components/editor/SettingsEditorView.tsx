@@ -51,6 +51,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { BACK_INTENT_PRIORITY } from "@/components/mobile/BackIntentContext";
+import { MobileNavDrawerShell } from "@/components/mobile/MobileNavDrawerShell";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
 import { SettingsPanelErrorBoundary } from "@/components/editor/settings/SettingsPanelErrorBoundary";
 import { SettingsShellChromeContext } from "@/components/editor/settings-ui";
@@ -873,46 +875,45 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   if (isMobile) {
     return (
       <SettingsShellChromeContext.Provider value={shellChrome}>
-      <div className="relative flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
-        {navDrawerOpen ? (
-          <>
-            <div
-              className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
-              onClick={closeMobileDrawer}
-            />
-            <div
-              className="absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
-              style={{ width: `${AGENT_LEFT_RAIL_EXPANDED_WIDTH}px` }}
+      {/* The nav drawer shares the agent shell's swipe/spring physics: swipe
+          right anywhere opens it pinned to the finger, swipe left (or a scrim
+          tap / Android back gesture) closes it. */}
+      <MobileNavDrawerShell
+        open={navDrawerOpen}
+        setOpen={setNavDrawerOpen}
+        backPriority={BACK_INTENT_PRIORITY.settingsNav}
+        drawerWidth={AGENT_LEFT_RAIL_EXPANDED_WIDTH}
+        drawerClassName="border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
+        drawer={navContent}
+      >
+        <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
+          {!navDrawerOpen ? (
+            <button
+              type="button"
+              onClick={() => setNavDrawerOpen(true)}
+              className="mobile-safe-top-offset absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              aria-label="Show settings nav"
             >
-              {navContent}
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setNavDrawerOpen(true)}
-            className="mobile-safe-top-offset absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-            aria-label="Show settings nav"
-          >
-            <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
-          </button>
-        )}
+              <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
+            </button>
+          ) : null}
 
-        <main
-          ref={scrollRootRef}
-          className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
-          onScroll={onMainScroll}
-        >
-          <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
-            {SettingsPanel ? (
-              <SettingsPanelErrorBoundary panelId={resolvedNav}>
-                <SettingsPanel />
-              </SettingsPanelErrorBoundary>
-            ) : null}
-          </div>
-        </main>
-      </div>
+          <main
+            ref={scrollRootRef}
+            className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+            onScroll={onMainScroll}
+          >
+            <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+              <DefaultServerSettingsBanner className="mb-[16px]" />
+              {SettingsPanel ? (
+                <SettingsPanelErrorBoundary panelId={resolvedNav}>
+                  <SettingsPanel />
+                </SettingsPanelErrorBoundary>
+              ) : null}
+            </div>
+          </main>
+        </div>
+      </MobileNavDrawerShell>
       </SettingsShellChromeContext.Provider>
     );
   }
