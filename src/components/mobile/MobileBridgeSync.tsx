@@ -88,6 +88,8 @@ export function MobileBridgeSync() {
     syncConversationSnapshot,
   } = useAgentConversations();
   const previousProjectionRef = useRef<MobileAgentProjection | null>(null);
+  /** Last applied idle state so the bridge lifecycle message and visibilitychange dedupe against each other. */
+  const lastLifecycleIdleRef = useRef<boolean | null>(null);
   const trackedAgentsRef = useRef(
     new Map<string, { previous: MobileAgentProjection; terminalSince: number | null }>()
   );
@@ -314,6 +316,30 @@ export function MobileBridgeSync() {
   }, [projection]);
 
   useEffect(() => {
+    // Applied from BOTH the native lifecycle message and the page's own
+    // visibilitychange. The bridge postMessage races the WebView pause and can
+    // be dropped, which used to leave the idle class stuck and skip the resume
+    // resync; visibilitychange is delivered synchronously by Chromium. Deduped
+    // so whichever signal lands first wins and the other is a no-op.
+    const applyLifecycleIdle = (idle: boolean) => {
+      if (lastLifecycleIdleRef.current === idle) return;
+      lastLifecycleIdleRef.current = idle;
+      document.documentElement.classList.toggle(MOBILE_IDLE_CLASS, idle);
+      if (idle) {
+        void flushWorkspaceSessionNow().catch(() => undefined);
+      } else if (focusedConversationId) {
+        flushAgentSubscription([focusedConversationId]);
+        void syncConversationSnapshot(focusedConversationId, {
+          hydrateRuntime: true,
+        }).catch(() => undefined);
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (!window.ReactNativeWebView) return;
+      applyLifecycleIdle(document.visibilityState === "hidden");
+    };
+
     const onNativeMessage = (event: Event) => {
       const message = (event as CustomEvent<MobileNativeToWebMessage>).detail;
       if (!message) {
@@ -325,16 +351,7 @@ export function MobileBridgeSync() {
       }
 
       if (message.type === "lifecycle") {
-        const idle = message.state !== "active";
-        document.documentElement.classList.toggle(MOBILE_IDLE_CLASS, idle);
-        if (idle) {
-          void flushWorkspaceSessionNow().catch(() => undefined);
-        } else if (focusedConversationId) {
-          flushAgentSubscription([focusedConversationId]);
-          void syncConversationSnapshot(focusedConversationId, {
-            hydrateRuntime: true,
-          }).catch(() => undefined);
-        }
+        applyLifecycleIdle(message.state !== "active");
         return;
       }
 
@@ -392,8 +409,10 @@ export function MobileBridgeSync() {
     };
 
     window.addEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onNativeMessage);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onNativeMessage);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [
     cancelConversation,
