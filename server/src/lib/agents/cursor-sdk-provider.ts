@@ -102,6 +102,58 @@ function withCurrentConfig(
   });
 }
 
+export type CursorSdkSandboxMode = "auto" | "enabled" | "disabled";
+
+export function resolveCursorSdkSandboxMode(
+  configOptions: AgentConfigOption[]
+): CursorSdkSandboxMode {
+  const value = optionValue(configOptions, "sdk_sandbox", "auto");
+  if (value === "enabled") {
+    return "enabled";
+  }
+  if (value === "disabled") {
+    return "disabled";
+  }
+  return "auto";
+}
+
+/**
+ * Maps the Cesium sandbox mode onto the SDK's `local.sandboxOptions`.
+ * "auto" omits the field entirely so the SDK applies its own default
+ * (sandbox only when the user's ~/.cursor/sandbox.json requests it) instead
+ * of force-enabling sandboxing on hosts that cannot support it.
+ */
+export function cursorSdkSandboxOptions(
+  mode: CursorSdkSandboxMode
+): { enabled: boolean } | undefined {
+  if (mode === "enabled") {
+    return { enabled: true };
+  }
+  if (mode === "disabled") {
+    return { enabled: false };
+  }
+  return undefined;
+}
+
+const SANDBOX_UNSUPPORTED_PATTERN = /sandboxing is not supported in this environment/i;
+
+export function isCursorSdkSandboxUnsupportedError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current != null; depth += 1) {
+    const message =
+      current instanceof Error
+        ? current.message
+        : typeof current === "string"
+          ? current
+          : null;
+    if (message && SANDBOX_UNSUPPORTED_PATTERN.test(message)) {
+      return true;
+    }
+    current = current instanceof Error ? current.cause : null;
+  }
+  return false;
+}
+
 function parseSettingSources(value: string): Array<"project" | "user" | "team" | "mdm" | "plugins" | "all"> {
   if (value === "all") {
     return ["all"];
@@ -170,13 +222,16 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     string,
     Pick<Extract<AgentEventInput, { kind: "question" }>, "prompt" | "options" | "allowMultiple">
   >();
+  private sandboxFallbackApplied = false;
 
   private constructor(
-    private readonly agent: SDKAgent,
+    private agent: SDKAgent,
     private readonly callbacks: AgentRuntimeCallbacks,
     private readonly backend: AgentBackendInfo,
     configOptions: AgentConfigOption[],
-    private readonly mcpServers: Record<string, SdkMcpServerConfig>
+    private readonly mcpServers: Record<string, SdkMcpServerConfig>,
+    private readonly sandboxMode: CursorSdkSandboxMode,
+    private readonly resumeUnsandboxed: (agentId: string) => Promise<SDKAgent>
   ) {
     this.sessionId = agent.agentId;
     this.configOptions = configOptions;
@@ -189,9 +244,8 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     }
 
     const configOptions = withCurrentConfig(input.configOptions, input.callbacks.conversation);
-    const sandboxEnabled =
-      process.platform !== "win32" &&
-      optionValue(configOptions, "sdk_sandbox", "enabled") !== "disabled";
+    const sandboxMode = resolveCursorSdkSandboxMode(configOptions);
+    const sandboxOptions = cursorSdkSandboxOptions(sandboxMode);
     const settingSources = parseSettingSources(
       optionValue(configOptions, "setting_sources", "project,user,plugins")
     );
@@ -205,33 +259,36 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     });
     const mcpExport = pluginAttachments.sdkMcp;
     const mcpServers = Object.keys(mcpExport.servers).length > 0 ? mcpExport.servers : undefined;
+    const buildLocalOptions = (override?: { enabled: boolean }) => {
+      const effectiveSandboxOptions = override ?? sandboxOptions;
+      return {
+        cwd: input.callbacks.workspace.root,
+        settingSources,
+        ...(effectiveSandboxOptions ? { sandboxOptions: effectiveSandboxOptions } : {}),
+      };
+    };
     const createOptions = withCursorSdkMode(
       {
         apiKey,
         model,
         name: input.callbacks.conversation.title,
         ...(mcpServers ? { mcpServers } : {}),
-        local: {
-          cwd: input.callbacks.workspace.root,
-          settingSources,
-          sandboxOptions: { enabled: sandboxEnabled },
-        },
+        local: buildLocalOptions(),
       },
       mode
     );
+    const buildResumeOptions = (override?: { enabled: boolean }) =>
+      withCursorSdkMode(
+        {
+          apiKey,
+          model,
+          ...(mcpServers ? { mcpServers } : {}),
+          local: buildLocalOptions(override),
+        },
+        mode
+      );
     const agent = input.loadAgentId
-      ? await Agent.resume(
-          input.loadAgentId,
-          withCursorSdkMode(
-            {
-              apiKey,
-              model,
-              ...(mcpServers ? { mcpServers } : {}),
-              local: { cwd: input.callbacks.workspace.root, settingSources },
-            },
-            mode
-          )
-        )
+      ? await Agent.resume(input.loadAgentId, buildResumeOptions())
       : await Agent.create(createOptions);
 
     const handle = new CursorSdkSessionHandle(
@@ -239,7 +296,9 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       input.callbacks,
       input.backend,
       configOptions,
-      mcpServers ?? {}
+      mcpServers ?? {},
+      sandboxMode,
+      (agentId) => Agent.resume(agentId, buildResumeOptions({ enabled: false }))
     );
     if (mcpExport.skipped.length > 0) {
       await input.callbacks.appendEvents([
@@ -339,6 +398,49 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     if (this.disposed) {
       throw new Error("Cursor SDK session has been disposed.");
     }
+    try {
+      await this.runPrompt(input);
+      return;
+    } catch (error) {
+      const canFallBack =
+        !this.disposed &&
+        this.sandboxMode !== "enabled" &&
+        !this.sandboxFallbackApplied &&
+        isCursorSdkSandboxUnsupportedError(error);
+      if (!canFallBack) {
+        await this.reportPromptFailure(error);
+        throw error;
+      }
+    }
+    // The environment cannot sandbox (missing sandbox helper support, e.g.
+    // containers or restricted VMs). Re-open the same agent with sandboxing
+    // explicitly disabled and retry once instead of failing the whole prompt.
+    this.sandboxFallbackApplied = true;
+    try {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system",
+          level: "warning",
+          text: "Cursor SDK sandboxing is not supported in this environment; continuing without a sandbox.",
+        },
+      ]);
+      const agentId = this.agent.agentId;
+      await this.agent[Symbol.asyncDispose]().catch(() => undefined);
+      this.agent = await this.resumeUnsandboxed(agentId);
+      await this.runPrompt(input);
+    } catch (error) {
+      await this.reportPromptFailure(error);
+      throw error;
+    }
+  }
+
+  private async runPrompt(input: {
+    text: string;
+    userMessageId: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  }): Promise<void> {
     const assistantMessageId = `cursor-sdk-assistant-${randomUUID()}`;
     const modeOption = findPrimaryModeConfigOption(this.configOptions);
     const mode = modeOption?.currentValue ?? this.callbacks.conversation.config.mode;
@@ -579,40 +681,44 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
         pendingPermission: null,
         lastError: result.status === "error" ? result.result ?? "Cursor SDK run failed." : null,
       }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Cursor SDK prompt failed.";
-      // Avoid double-prefixing when the SDK message already names the source.
-      const detail =
-        error instanceof CursorAgentError && !/^Cursor SDK agent error:/i.test(message)
-          ? `Cursor SDK agent error: ${message}`
-          : message;
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "system",
-          level: "error",
-          text: detail,
-        },
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "status",
-          status: "failed",
-          detail,
-        },
-      ]);
-      await this.callbacks.updateConversation((current) => ({
-        ...current,
-        status: "failed",
-        pendingPermission: null,
-        lastError: detail,
-      }));
-      throw error;
     } finally {
       this.activeRun = null;
       this.pendingRequest = null;
     }
+  }
+
+  private async reportPromptFailure(error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : "Cursor SDK prompt failed.";
+    // Avoid double-prefixing when the SDK message already names the source.
+    let detail =
+      error instanceof CursorAgentError && !/^Cursor SDK agent error:/i.test(message)
+        ? `Cursor SDK agent error: ${message}`
+        : message;
+    if (this.sandboxMode === "enabled" && isCursorSdkSandboxUnsupportedError(error)) {
+      detail += ' Set "Local Sandbox" to Auto or Disabled in the Cursor SDK agent options to run without sandboxing.';
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "system",
+        level: "error",
+        text: detail,
+      },
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "failed",
+        detail,
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "failed",
+      pendingPermission: null,
+      lastError: detail,
+    }));
   }
 
   async cancel(): Promise<void> {

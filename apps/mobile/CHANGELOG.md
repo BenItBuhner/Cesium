@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Voice input no longer fails with "Could not start audio source" even when microphone permission is granted. Android WebView's `getUserMedia` audio capture requires the install-time `MODIFY_AUDIO_SETTINGS` permission in addition to `RECORD_AUDIO`; the manifest was missing it, and users cannot grant it from system settings. A regression test now pins both permissions in the manifest.
+
 ## [0.6.0] - 2026-08-17
 
 ### Added
