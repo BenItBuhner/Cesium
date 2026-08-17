@@ -97,6 +97,10 @@ import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWo
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import { getAgentRailWorkspaceKey } from "@/lib/multi-server-workspaces";
 import {
+  shouldShowAgentRailStandaloneSectionHeader,
+  shouldShowAgentRailWorkspaceGroupHeaders,
+} from "@/lib/agent-rail-groups";
+import {
   FOLDER_COLOR_OPTIONS,
   FOLDER_ICON_OPTIONS,
   getFolderIcon,
@@ -764,6 +768,19 @@ export function AgentWorkspaceRail() {
     const named = groups.find((group) => isStandaloneChatWorkspace(group.workspace));
     return named?.workspace.name?.trim() || "Chat";
   }, [groups]);
+
+  const showWorkspaceGroupHeaders = shouldShowAgentRailWorkspaceGroupHeaders({
+    groupBy: agentRailSettings.groupBy,
+    workspaceGroupCount: visibleGroups.length,
+    standaloneSectionVisible: showStandaloneHomeGroup,
+  });
+  const showStandaloneSectionHeader = shouldShowAgentRailStandaloneSectionHeader(
+    Boolean(
+      agentRailSettings.scope?.type === "workspace" &&
+        showStandaloneHomeGroup &&
+        visibleGroups.length === 0
+    )
+  );
 
   const standaloneWorkspaceIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2665,6 +2682,7 @@ export function AgentWorkspaceRail() {
     };
     return (
       <section className="pb-[12px]">
+        {showStandaloneSectionHeader ? (
         <div className="group flex items-center gap-[2px] px-px pb-[4px]">
           <button
             type="button"
@@ -2706,7 +2724,8 @@ export function AgentWorkspaceRail() {
             <Plus className="size-[12px]" strokeWidth={1.5} />
           </button>
         </div>
-        {!isChatsHeaderCollapsed ? (
+        ) : null}
+        {!isChatsHeaderCollapsed || !showStandaloneSectionHeader ? (
           <div
             className="flex flex-col gap-[2px]"
             onDragOver={handleFolderDropTargetDragOver}
@@ -2887,6 +2906,7 @@ export function AgentWorkspaceRail() {
     renameState?.draft,
     settings.general.chatFolders,
     settings.general.chatRootOrderByScope,
+    showStandaloneSectionHeader,
     standaloneChatConversations,
     standaloneHomeLabel,
     toggleFolderCollapsed,
@@ -2951,6 +2971,13 @@ export function AgentWorkspaceRail() {
                   group.workspace.id === activeWorkspaceId
                     ? gitStatus?.currentBranch
                     : group.repository?.currentBranch;
+                if (
+                  !showWorkspaceGroupHeaders &&
+                  group.conversations.length === 0 &&
+                  workspaceFolders.length === 0
+                ) {
+                  return null;
+                }
                 return (
                 <section
                   key={groupKey}
@@ -2960,6 +2987,7 @@ export function AgentWorkspaceRail() {
                     draggingWorkspaceId === groupKey ? "opacity-60" : ""
                   }`}
                 >
+                  {showWorkspaceGroupHeaders ? (
                   <div
                     // Bucket groupings (priority/status/updated/...) render
                     // pseudo-workspaces; dragging them would persist junk
@@ -3027,6 +3055,7 @@ export function AgentWorkspaceRail() {
                       </>
                     ) : null}
                   </div>
+                  ) : null}
                   {editingWorkspaceKey === groupKey ? (
                     <RailIconCustomizePanel
                       title={group.workspace.name}
@@ -3039,7 +3068,7 @@ export function AgentWorkspaceRail() {
                       }
                     />
                   ) : null}
-                  {!isWorkspaceCollapsed ? (
+                  {!isWorkspaceCollapsed || !showWorkspaceGroupHeaders ? (
                     <div
                       className="flex flex-col gap-[2px]"
                       onDragOver={handleFolderDropTargetDragOver}
