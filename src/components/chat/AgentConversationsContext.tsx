@@ -2441,8 +2441,12 @@ loadOlderConversationHistory,
   );
 }
 
+export function useOptionalAgentConversations(): AgentConversationsContextValue | null {
+  return useContext(AgentConversationsContext);
+}
+
 export function useAgentConversations(): AgentConversationsContextValue {
-  const context = useContext(AgentConversationsContext);
+  const context = useOptionalAgentConversations();
   if (!context) {
     throw new Error(
       "useAgentConversations must be used within AgentConversationsProvider"

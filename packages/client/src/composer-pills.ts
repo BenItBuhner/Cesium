@@ -1,6 +1,7 @@
 import {
   DEFAULT_COMPOSER_PILLS_VISIBILITY,
   normalizeComposerPillsVisibility,
+  type AgentStoredEvent,
   type ComposerPillsVisibility,
   type WorkspaceInsights,
 } from "@cesium/core";
@@ -97,13 +98,91 @@ export type ComposerBuiltinPillState = {
   workCount: number;
 };
 
+export type ComposerBackgroundWorkItem = {
+  id: string;
+  title: string;
+};
+
+export type ComposerBackgroundWorkOptions = {
+  /** Conversation open in this composer — never counted as background work. */
+  currentConversationId?: string | null;
+  /**
+   * True while the open conversation itself is mid-turn. Used as a fallback
+   * when insights omit `runningConversationIds` (older payloads / tests).
+   */
+  currentConversationRunning?: boolean;
+  /** Live sub-agents / background scripts from the open conversation's events. */
+  extraWorkCount?: number;
+};
+
+/**
+ * Latest `subagent` event per id wins. Only `running` children count — the
+ * parent/main agent is the thread itself and must not inflate the work pill.
+ */
+export function listRunningSubagentWorkItems(
+  events: readonly AgentStoredEvent[] | null | undefined
+): ComposerBackgroundWorkItem[] {
+  if (!events?.length) {
+    return [];
+  }
+  const latest = new Map<string, { title: string; status: string }>();
+  for (const event of events) {
+    if (event.kind !== "subagent") {
+      continue;
+    }
+    const id = event.subagentId.trim();
+    if (!id) {
+      continue;
+    }
+    latest.set(id, {
+      title: event.title.trim() || "Subagent",
+      status: event.status,
+    });
+  }
+  const items: ComposerBackgroundWorkItem[] = [];
+  for (const [id, item] of latest) {
+    if (item.status === "running") {
+      items.push({ id, title: item.title });
+    }
+  }
+  return items;
+}
+
+/**
+ * Background work for the composer pill: other running chats, cloud tasks,
+ * and extra live children (sub-agents). The open/main conversation is excluded
+ * even when it is itself running.
+ */
+export function countComposerBackgroundWork(
+  insights: WorkspaceInsights | null,
+  options?: ComposerBackgroundWorkOptions
+): number {
+  const currentId = options?.currentConversationId?.trim() || null;
+  const ids = insights?.work.runningConversationIds;
+  let conversationCount: number;
+  if (ids && ids.length > 0) {
+    conversationCount = ids.filter((id) => id !== currentId).length;
+  } else {
+    conversationCount = insights?.work.runningConversations ?? 0;
+    if (currentId && options?.currentConversationRunning) {
+      conversationCount = Math.max(0, conversationCount - 1);
+    }
+  }
+  return (
+    conversationCount +
+    (insights?.work.runningCloudTasks ?? 0) +
+    Math.max(0, options?.extraWorkCount ?? 0)
+  );
+}
+
 /**
  * Dynamic relevance: each built-in pill only renders when its context applies
  * (no git repo → no diff/conflict/sync pills; nothing running → no work pill).
  */
 export function deriveComposerBuiltinPills(
   visibility: ComposerPillsVisibility,
-  insights: WorkspaceInsights | null
+  insights: WorkspaceInsights | null,
+  options?: ComposerBackgroundWorkOptions
 ): ComposerBuiltinPillState {
   const git = insights?.isGitRepo === true;
   const conflicts = git
@@ -115,8 +194,7 @@ export function deriveComposerBuiltinPills(
     (insights!.diff.fileCount > 0 ||
       insights!.diff.totalAdded > 0 ||
       insights!.diff.totalRemoved > 0);
-  const workCount =
-    (insights?.work.runningConversations ?? 0) + (insights?.work.runningCloudTasks ?? 0);
+  const workCount = countComposerBackgroundWork(insights, options);
   return {
     showDiff: visibility.diff && dirtyWithCounts,
     showConflicts: visibility.conflicts && conflicts,
