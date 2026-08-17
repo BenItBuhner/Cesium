@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-17
+
+### Added
+
+- Notification alert settings: completion and needs-input alerts are gated on app foreground state with per-category preferences (default: completions post only while the app is in the background), configurable from mobile Settings. The server also interrupts leftover busy conversations at boot and watchdogs runs whose provider runtime died without settling the turn.
+- Standalone no-workspace chat: fresh installs no longer auto-seed a `default` workspace from `WORKSPACE_ROOT`. The landing composer and Android share-sheet intake submit through the standalone sandbox when no workspace is active, onboarding offers "No workspace — just chat", and deleting the last durable workspace returns to the empty shell instead of a dead workspace id.
+
+### Changed
+
+- Theme-agnostic UI: missing tokens (`--bg-deep`, `--status-{success,warning,error}`, adaptive plus-button aliases) are defined, hardcoded colors across modals / dropdowns / editor / status UI now resolve through theme tokens, and Monaco is driven from those tokens with unique theme names so live preset switches apply.
+- Soft keyboard no longer pans the whole window on SDK 35+ (React Native force-enables edge-to-edge, which made `adjustResize` a no-op). The activity pads its content view by IME height via `WindowInsetsCompat` / `WindowInsetsAnimationCompat`, so the React root and WebView shrink and the workbench reflows above the keyboard.
+- Chat user-turn headers use real CSS `position: sticky` inside each virtual row instead of a JS overlay clone. Android WebView no longer paints a duplicate pinned message (the overlay lagged compositor-driven scroll), and editing a pinned turn mounts one composer.
+- Mobile right workbench drawer uses the same frosted treatment as the left rail.
+- Composer attach menu drops the Link option; pasting an `http(s)` URL into the composer still creates a link pill.
+- Bundled workbench picks up the post-0.5.0 shell: workspace-first agent rail, Chromium 83 layout fallbacks (`inset` longhands + `overflow:hidden` before `overflow:clip` so the absolutely-positioned mobile shell and drawers do not collapse on stock Android 11), theme-token sweep, no-workspace landing, and notification alert settings.
+
+### Fixed
+
+- Settings crash loop and `file://` reload dead-end on the packaged WebView: workspace URL sync no longer rewrites a `file://` document to `/agent` (`net::ERR_FILE_NOT_FOUND`), Reload Cesium returns to the boot document and forces the next launch into new-chat, a panel-scoped error boundary contains Settings render crashes, and malformed update-state payloads no longer take down the Updates panel. The native shell also keeps the Retry UI after a failed load (`onLoad` vs `onLoadEnd`).
+- Stale Live Updates / "Working" notifications: persisted ongoing runs expire on foreground-service restore and reconcile against the authoritative projection set, so orphaned chronometer chips cancel. Projection `startedAt` anchors to the current run after the latest terminal boundary instead of the first running event in the loaded window.
+- Workbench layout on legacy Android WebViews (Chromium 83): without the `inset` / `overflow:clip` fallbacks the mobile shell and drawers collapsed into normal flow; programmatic scroll of the shell is pinned to the origin so focus heuristics cannot drag the UI into parked drawer overflow.
+- Server installers: existing clones retarget the fetch refspec so `git checkout` of the requested branch no longer dies with `pathspec did not match`; both installers build `@cesium/contracts`; the isolated bun installer deletes stale nested `@cesium` copies that shadowed built workspace packages; `callMcpToolRich` wraps the artifacts MCP branch so `tsc` builds (Termux) succeed.
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
