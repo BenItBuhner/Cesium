@@ -122,6 +122,9 @@ jobs:
 
       - name: Comment on pull request
         if: github.event_name == 'pull_request'
+        # Best-effort: a GitHub API hiccup posting the comment must not fail an
+        # otherwise green build.
+        continue-on-error: true
         uses: thollander/actions-comment-pull-request@v3
         with:
           comment-tag: mobile-android-build
