@@ -21,28 +21,14 @@ import {
 } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
-  AGENT_STANDALONE_COMPOSER_DRAFT_ID,
-  agentWorkspaceComposerDraftId,
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
-import {
-  buildDraftModeOptionsForBackend,
-  buildDraftModelOptionsForBackend,
-  resolveDraftModelForBackend,
-} from "@/lib/agent-chat";
-import {
-  DEFAULT_MODE_OPTIONS,
-  resolveCanonicalModeId,
-} from "@/lib/chat-modes";
-import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
+import { useAgentDraftComposer } from "@/hooks/useAgentDraftComposer";
 import type {
-  AgentBackendId,
-  AgentBackendInfo,
   AgentConversationCreateInput,
   AgentImportResult,
 } from "@/lib/agent-types";
@@ -50,11 +36,9 @@ import { ImportConversationDialog } from "./ImportConversationDialog";
 import { NewChatWidgets } from "./NewChatWidgets";
 import { WorkspacePickerMenu, WorkspacePickerRowIcon } from "@/components/agent/rail/WorkspacePickerMenu";
 import type {
-  EditorMode,
   GitBranchInfo,
   GitWorktreeInfo,
   ImageAttachment,
-  ModelInfo,
 } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
@@ -69,29 +53,6 @@ import {
 import { resolveGroupWorkspaceAppearanceKey } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import { sortDirectoryWorkspaces } from "@/lib/multi-server-workspaces";
-
-function pickAvailableBackend(
-  backends: AgentBackendInfo[],
-  preferredBackendId?: AgentBackendId
-): AgentBackendInfo | null {
-  return (
-    backends.find((b) => b.id === preferredBackendId && b.available) ??
-    backends.find((b) => b.available) ??
-    backends[0] ??
-    null
-  );
-}
-
-function branchNameFromPrompt(prompt: string): string {
-  const stem = prompt
-    .replace(/^\/worktree\b/i, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return `cesium/${stem || `agent-${Date.now().toString(36)}`}`;
-}
 
 type BranchPickerItem = {
   key: string;
@@ -122,29 +83,17 @@ export function AgentNewChatLanding({
   ) => boolean;
 }) {
   const {
-    composerDrafts,
-    composerSelections,
-    setComposerSelection,
     setExpandedComposerController,
-    upsertComposerDraft,
     openAgentConversation,
   } = useOpenInEditor();
   const {
-    backends,
-    createAndPromptConversation,
-    createAndPromptStandaloneConversation,
-  } = useAgentConversations();
-  const {
     workspaceSession,
-    updateWorkspaceSession,
-    seedWorkspaceSessionChatDraft,
     openWorkspaceById,
     gitStatus,
     refreshGitStatus,
     initializeGitRepo,
     switchBranch,
     createWorktree,
-    deleteWorktree,
     homeWorkspaceId,
   } = useWorkspace();
   const {
@@ -152,75 +101,42 @@ export function AgentNewChatLanding({
     expandedComposerDraftId,
     groups,
     refreshConversationGroups,
-    setSelectedConversationId,
-    standaloneDraftActive,
     setStandaloneDraftActive,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
 
-  const draftBackend = useMemo(
-    () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
-    [backends, workspaceSession.chat.backendId]
-  );
-  const draftModels = useMemo(
-    () =>
-      draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : [workspaceSession.chat.model],
-    [draftBackend, workspaceSession.chat.model]
-  );
-  const draftModel = useMemo(() => {
-    if (!draftBackend) return workspaceSession.chat.model;
-    const currentModelValue =
-      workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
-    return (
-      draftModels.find((m) => (m.modelValue ?? m.id) === currentModelValue) ??
-      resolveDraftModelForBackend(draftBackend)
-    );
-  }, [draftBackend, draftModels, workspaceSession.chat.model]);
-  const draftModeOptions = useMemo(
-    () =>
-      draftBackend
-        ? buildDraftModeOptionsForBackend(draftBackend)
-        : DEFAULT_MODE_OPTIONS,
-    [draftBackend]
-  );
-  const draftMode = useMemo(
-    () =>
-      resolveCanonicalModeId(
-        String(workspaceSession.chat.mode ?? draftModeOptions[0]?.id ?? "agent"),
-        draftModeOptions
-      ) as EditorMode,
-    [draftModeOptions, workspaceSession.chat.mode]
-  );
+  const {
+    backends,
+    composerDraftId,
+    composerDraftTitle,
+    composerDraftText,
+    composerDraftAttachments,
+    composerDraftCaptures,
+    composerDraftTextReferences,
+    composerDraftLinkReferences,
+    composerSelection,
+    setComposerSelection,
+    upsertComposerDraft,
+    draftBackend,
+    draftModels,
+    draftModel,
+    draftModeOptions,
+    draftMode,
+    setDraftMode,
+    setDraftModel,
+    setDraftBackend,
+    noWorkspaceDraft,
+    handleSubmit,
+  } = useAgentDraftComposer({ onInstantSubmit });
 
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
   );
-  // Standalone chats live in auto-created sandbox workspaces (named "Chat").
-  // When one is active, the draft should present and behave as "No workspace":
-  // never surface the sandbox as a selectable workspace, and send new chats
-  // through the standalone path so each one gets its own sandbox.
-  const activeIsStandaloneChat = Boolean(
-    activeWorkspaceGroup && isStandaloneChatWorkspace(activeWorkspaceGroup.workspace)
-  );
-  const noWorkspaceDraft = standaloneDraftActive || activeIsStandaloneChat;
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
 
-  const composerDraftId = noWorkspaceDraft
-    ? AGENT_STANDALONE_COMPOSER_DRAFT_ID
-    : agentWorkspaceComposerDraftId(activeWorkspaceGroup?.workspace.id);
-  const composerDraftTitle = "Agent prompt";
   useRegisterDesignCaptureComposer(composerDraftId, 9);
-  const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
-  const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
-  const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
-  const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
-  const composerDraftLinkReferences = composerDrafts[composerDraftId]?.linkReferences;
-  const composerSelection = composerSelections[composerDraftId] ?? {
-    start: composerDraftText.length,
-    end: composerDraftText.length,
-  };
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
   const branchPickerRef = useRef<HTMLButtonElement>(null);
   const workspacePickerRef = useRef<HTMLButtonElement>(null);
@@ -232,140 +148,6 @@ export function AgentNewChatLanding({
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
 
-  const setDraftModel = useCallback(
-    (next: ModelInfo) => {
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: updateChatDraftDefault(current.chat, { model: next }),
-      }));
-    },
-    [
-      updateWorkspaceSession,
-    ]
-  );
-
-  const setDraftBackend = useCallback(
-    (nextBackendId: AgentBackendId) => {
-      const nextBackend = pickAvailableBackend(backends, nextBackendId);
-      if (!nextBackend) return;
-      const nextMode =
-        buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
-        workspaceSession.chat.mode;
-      const nextModel = resolveDraftModelForBackend(nextBackend);
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: updateChatDraftDefault(current.chat, {
-          backendId: nextBackend.id,
-          mode: nextMode ?? current.chat.mode,
-          model: nextModel,
-        }),
-      }));
-    },
-    [
-      backends,
-      updateWorkspaceSession,
-      workspaceSession.chat.mode,
-    ]
-  );
-
-  const handleSubmit = useCallback(
-    async (text: string, attachments?: ImageAttachment[]) => {
-      const backend = draftBackend;
-      if (!backend) return false;
-
-      const draftProfileId =
-        backend.id === "cesium-agent"
-          ? workspaceSession.chat.profileId?.trim() || undefined
-          : undefined;
-      if (noWorkspaceDraft) {
-        const created = await createAndPromptStandaloneConversation(
-          {
-            backendId: backend.id,
-            mode: draftMode,
-            modelId: draftModel.modelValue ?? draftModel.id,
-            modelName: draftModel.name,
-            ...(draftProfileId ? { profileId: draftProfileId } : {}),
-          },
-          text,
-          attachments
-        );
-        if (!created) return false;
-        // Carry the chosen backend/mode/model into the fresh sandbox before
-        // opening it, so its session does not reset to default drafts.
-        seedWorkspaceSessionChatDraft(created.workspaceId, {
-          backendId: backend.id,
-          mode: draftMode,
-          model: draftModel,
-        });
-        setStandaloneDraftActive(false);
-        await openWorkspaceById(created.workspaceId);
-        setSelectedConversationId(created.conversation.id);
-        void refreshConversationGroups();
-        return true;
-      }
-
-      const worktreeMatch = text.match(/^\/worktree\b([\s\S]*)$/i);
-      const deleteWorktreeMatch = text.match(/^\/delete-worktree\b/i);
-      if (deleteWorktreeMatch) {
-        const currentWorktree = gitStatus?.worktrees.find((worktree) => worktree.current);
-        if (!currentWorktree) return false;
-        if (currentWorktree.current) {
-          window.alert("Open another checkout first, then delete this worktree from Workspace Studio.");
-          return true;
-        }
-        await deleteWorktree({ path: currentWorktree.path });
-        return true;
-      }
-      const promptText = worktreeMatch ? worktreeMatch[1]?.trim() ?? "" : text;
-      if (worktreeMatch) {
-        if (!promptText) return false;
-        await createWorktree({
-          branch: branchNameFromPrompt(promptText),
-          baseBranch: gitStatus?.currentBranch ?? undefined,
-          newBranch: true,
-        });
-      }
-      const conversationInput: AgentConversationCreateInput = {
-        backendId: backend.id,
-        mode: draftMode,
-        modelId: draftModel.modelValue ?? draftModel.id,
-        modelName: draftModel.name,
-        ...(draftProfileId ? { profileId: draftProfileId } : {}),
-      };
-      if (onInstantSubmit) {
-        return onInstantSubmit(conversationInput, promptText, attachments);
-      }
-      const created = await createAndPromptConversation(
-        conversationInput,
-        promptText,
-        attachments
-      );
-      if (!created) return false;
-      setSelectedConversationId(created.id);
-      void refreshConversationGroups();
-      return true;
-    },
-    [
-      createAndPromptConversation,
-      onInstantSubmit,
-      createAndPromptStandaloneConversation,
-      draftBackend,
-      draftMode,
-      draftModel,
-      createWorktree,
-      deleteWorktree,
-      gitStatus?.currentBranch,
-      gitStatus?.worktrees,
-      noWorkspaceDraft,
-      openWorkspaceById,
-      refreshConversationGroups,
-      seedWorkspaceSessionChatDraft,
-      setSelectedConversationId,
-      setStandaloneDraftActive,
-      workspaceSession.chat.profileId,
-    ]
-  );
-
   const expandedComposerState = useMemo(() => {
     if (expandedComposerDraftId !== composerDraftId) {
       return null;
@@ -374,14 +156,7 @@ export function AgentNewChatLanding({
       draftId: composerDraftId,
       title: composerDraftTitle,
       mode: draftMode,
-      onModeChange: (next: EditorMode) =>
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            mode: next,
-          },
-        })),
+      onModeChange: setDraftMode,
       model: draftModel,
       onModelChange: (next: typeof draftModel) => setDraftModel(next),
       backendId: draftBackend?.id ?? workspaceSession.chat.backendId,
@@ -408,8 +183,8 @@ export function AgentNewChatLanding({
     expandedComposerDraftId,
     handleSubmit,
     setDraftBackend,
+    setDraftMode,
     setDraftModel,
-    updateWorkspaceSession,
     workspaceSession.chat.backendId,
   ]);
 
@@ -752,12 +527,7 @@ export function AgentNewChatLanding({
               <ChatComposer
                 key={composerDraftId}
                 mode={draftMode}
-                onModeChange={(next) => {
-                  updateWorkspaceSession((current) => ({
-                    ...current,
-                    chat: { ...current.chat, mode: next },
-                  }));
-                }}
+                onModeChange={setDraftMode}
                 model={draftModel}
                 onModelChange={(next) => {
                   setDraftModel(next);

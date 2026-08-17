@@ -1640,7 +1640,7 @@ export async function addOrchestrationIssueComment(
 
 export async function transcribeAudio(
   file: File,
-  options?: { language?: string; prompt?: string }
+  options?: { language?: string; prompt?: string; signal?: AbortSignal }
 ): Promise<AudioTranscriptionResult> {
   const form = new FormData();
   form.set("file", file);
@@ -1658,6 +1658,7 @@ export async function transcribeAudio(
     ),
     credentials: "include",
     cache: "no-store",
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
   syncAuthTokenFromResponse(response);
   if (response.status === 401) {

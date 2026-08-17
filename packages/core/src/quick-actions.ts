@@ -169,6 +169,7 @@ export const QUICK_ACTION_UI_COMMANDS = [
   { id: "settings.open", label: "Open settings" },
   { id: "settings.openActions", label: "Open Actions settings" },
   { id: "chat.newConversation", label: "Start a new conversation" },
+  { id: "voice.startAgent", label: "Start voice agent" },
 ] as const;
 
 export type QuickActionUiCommandId = (typeof QUICK_ACTION_UI_COMMANDS)[number]["id"];
@@ -400,6 +401,18 @@ export const QUICK_ACTION_PRESETS: QuickActionPreset[] = [
     icon: "PanelRight",
     kind: "ui",
     uiCommand: "layout.toggleRightPane",
+    visibility: "always",
+    confirm: false,
+    showPill: false,
+    defaultEnabled: false,
+  },
+  {
+    id: "start-voice-agent",
+    label: "Start voice agent",
+    description: "Open the full-screen voice agent session (speech + chat composer).",
+    icon: "AudioLines",
+    kind: "ui",
+    uiCommand: "voice.startAgent",
     visibility: "always",
     confirm: false,
     showPill: false,

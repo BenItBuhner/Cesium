@@ -71,6 +71,7 @@ import { useCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { VoiceSessionDock } from "@/components/voice/VoiceSessionDock";
 import { AuroraBackdrop } from "./AuroraBackdrop";
 import { useAuroraScene } from "./AuroraSceneContext";
 import { CesiumProfileToggle } from "./CesiumProfileToggle";
@@ -1275,6 +1276,7 @@ export function AgentCenterPane() {
       {profileToggleEl}
       <div className="relative z-10 min-h-0 min-w-0 flex-1">
         <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
+        <VoiceSessionDock wrapperClassName="pointer-events-none absolute inset-x-0 bottom-[20px] z-30 flex justify-center px-[12px]" />
       </div>
       </>
       ) : (
@@ -1345,6 +1347,7 @@ export function AgentCenterPane() {
               />
             ) : null}
             <div className="pointer-events-auto chat-bottom-dock">
+              <VoiceSessionDock wrapperClassName="pointer-events-none flex justify-center pb-[6px] pt-[8px] px-0 @min-[481px]:px-[10px]" />
               {dockedAsk && visibleConversationView ? (
                 <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>

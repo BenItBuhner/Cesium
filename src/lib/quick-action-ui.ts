@@ -2,6 +2,7 @@
 
 import type { WorkspaceSessionState } from "@cesium/client";
 import type { IDECommandRunner } from "@/components/ide/IDECommandContext";
+import { dispatchVoiceSessionCommand } from "@/lib/voice-session-events";
 
 export type QuickActionUiContext = {
   /** IDE command runner (null outside the IDE shell). */
@@ -43,6 +44,9 @@ export function executeQuickActionUiCommand(
       return;
     case "chat.newConversation":
       context.runIdeCommand?.("workbench.action.newAgent");
+      return;
+    case "voice.startAgent":
+      dispatchVoiceSessionCommand("start");
       return;
     default:
       return;

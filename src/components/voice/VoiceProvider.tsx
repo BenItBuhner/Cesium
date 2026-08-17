@@ -143,6 +143,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const [memory, setMemory] = useState({ turns: 0, compactions: 0 });
 
   const modeRef = useRef<VoiceMode>("off");
+  /** Bumped when the voice plane turns off/paused; stale turns bail out. */
+  const turnEpochRef = useRef(0);
   const captureRef = useRef<VoiceCapture | null>(null);
   const vadRef = useRef<VadEngine | null>(null);
   const endpointerRef = useRef<Endpointer | null>(null);
@@ -304,6 +306,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     void speakIfAllowed(spoken);
   }, [pushBubble, speakIfAllowed]);
 
+  // Breaks the applyLocalCommand -> setMode -> startCapture ->
+  // handleEndpointerEvents -> enqueueTurn -> applyLocalCommand cycle without
+  // relying on late-bound closure resolution: local commands dispatch through
+  // this ref, assigned once `setMode` exists.
+  const setModeFnRef = useRef<(mode: VoiceMode) => void>(() => {});
+
   const applyLocalCommand = useCallback(
     (utterance: string): boolean => {
       const command = parseLocalVoiceCommand(utterance);
@@ -314,26 +322,24 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           pushBubble({ kind: "system", text: "Stopped.", meta: "local" });
           break;
         case "quiet_mode":
-          setMode("quiet");
+          setModeFnRef.current("quiet");
           pushBubble({ kind: "system", text: "Going quiet — still listening and acting.", meta: "local" });
           break;
         case "active_mode":
-          setMode("active");
+          setModeFnRef.current("active");
           pushBubble({ kind: "system", text: "Voice back on.", meta: "local" });
           break;
         case "pause_listening":
-          setMode("paused");
+          setModeFnRef.current("paused");
           pushBubble({ kind: "system", text: "Paused — microphone off.", meta: "local" });
           break;
         case "resume_listening":
-          setMode("active");
+          setModeFnRef.current("active");
           pushBubble({ kind: "system", text: "Listening again.", meta: "local" });
           break;
       }
       return true;
     },
-    // setMode is declared later in this scope; binding resolves at call time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [getPlayer, pushBubble]
   );
 
@@ -347,6 +353,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }) => {
       let sttMs: number | null = null;
       let text = input.utteranceText ?? "";
+      const epochAtStart = turnEpochRef.current;
+      const stale = () => turnEpochRef.current !== epochAtStart;
       console.debug(
         "[voice] turn start",
         input.source,
@@ -376,6 +384,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         }
         sttMs = Math.round(performance.now() - sttStart);
       }
+      if (stale()) {
+        console.debug("[voice] turn dropped: mode changed during STT");
+        return;
+      }
       if (!text) {
         setActivityBoth(captureRef.current?.isRunning ? "listening" : "idle");
         return;
@@ -402,6 +414,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           mode: modeRef.current === "quiet" ? "quiet" : "active",
         });
         const controllerMs = Math.round(performance.now() - controllerStart);
+        if (stale()) {
+          console.debug("[voice] turn dropped: mode changed during controller");
+          return;
+        }
         console.debug(
           "[voice] controller ok:",
           `${controllerMs}ms`,
@@ -486,6 +502,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         }
         drainDigest();
       } catch (controllerError) {
+        if (stale()) {
+          return;
+        }
         const message =
           controllerError instanceof Error
             ? controllerError.message
@@ -510,8 +529,16 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 
   const enqueueTurn = useCallback(
     (input: Parameters<typeof runUtteranceTurn>[0]) => {
+      const epochAtEnqueue = turnEpochRef.current;
       turnChainRef.current = turnChainRef.current
-        .then(() => runUtteranceTurn(input))
+        .then(() => {
+          // Queued utterances from before a stop/pause never replay.
+          if (turnEpochRef.current !== epochAtEnqueue) {
+            console.debug("[voice] queued turn dropped: stale epoch");
+            return;
+          }
+          return runUtteranceTurn(input);
+        })
         .catch(() => {});
       return turnChainRef.current;
     },
@@ -629,6 +656,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       if (nextMode === "off" || nextMode === "paused") {
+        // Invalidate in-flight turns: STT/controller results from before this
+        // point must not surface bubbles, history, or speech afterwards.
+        turnEpochRef.current += 1;
         void stopCapture();
         playerRef.current?.cancel();
         setActivityBoth("idle");
@@ -650,6 +680,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     },
     [drainDigest, setActivityBoth, startCapture, stopCapture]
   );
+  setModeFnRef.current = setMode;
 
   const sendTextUtterance = useCallback(
     async (text: string) => {

@@ -88,6 +88,7 @@ import {
   dispatchNewChatShortcut,
   dispatchWorkspacePickerShortcut,
 } from "@/lib/chat-ui-shortcut-events";
+import { dispatchVoiceSessionCommand } from "@/lib/voice-session-events";
 import {
   createOrchestrationBoard,
   executeInstalledExtensionCommand,
@@ -111,6 +112,7 @@ type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
 const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "workbench.action.focusChatPlanMode",
   "workbench.action.focusChatAgentMode",
+  "workbench.action.startVoiceAgent",
   "chat.action.openWorkspacePicker",
   "chat.action.openBackendDropdown",
   "chat.action.openModeDropdown",
@@ -952,6 +954,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.newAgent":
           setShellView("agent");
           break;
+        case "workbench.action.startVoiceAgent":
+          dispatchVoiceSessionCommand("start");
+          break;
         case "workbench.action.closeActiveEditor":
           runWithBridge((b) => {
             const s = b.getState();
@@ -1484,6 +1489,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "File: New Agent",
         keybinding: kb("workbench.action.newAgent"),
         run: () => runShortcutCommand("workbench.action.newAgent"),
+      },
+      {
+        id: "workbench.action.startVoiceAgent",
+        label: "Voice: Start Voice Agent",
+        keybinding: kb("workbench.action.startVoiceAgent"),
+        run: () => runShortcutCommand("workbench.action.startVoiceAgent"),
       },
       {
         id: "workbench.action.switchToAgent",

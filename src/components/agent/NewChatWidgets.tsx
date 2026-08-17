@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AudioLines,
   Check,
   Lightbulb,
   LoaderCircle,
@@ -50,7 +51,7 @@ export const NEW_CHAT_WIDGET_LABELS: Record<NewChatWidgetId, string> = {
 };
 
 export const NEW_CHAT_WIDGET_DESCRIPTIONS: Record<NewChatWidgetId, string> = {
-  shortcuts: "Plan-mode and editor-panel quick buttons.",
+  shortcuts: "Plan-mode, voice-agent, and editor-panel quick buttons.",
   actions:
     "Quick actions from Settings → Actions. Commands run in the selected workspace's path.",
   "recent-chats": "Jump back into your most recent conversations.",
@@ -257,6 +258,14 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     );
   }, [settings.keyboardShortcuts.bindings]);
 
+  const voiceAgentShortcutHint = useMemo(() => {
+    return getShortcutDisplayForCommand(
+      settings.keyboardShortcuts.bindings,
+      "workbench.action.startVoiceAgent",
+      detectShortcutPlatform()
+    );
+  }, [settings.keyboardShortcuts.bindings]);
+
   // ── Actions (quick actions run at the active workspace's root) ────────────
   const visibleActions = useMemo(() => {
     if (!actionsWidgetVisible || !actionsLoaded) {
@@ -443,6 +452,28 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
       <span className="truncate">
         Plan new idea{" "}
         <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
+      </span>
+    </button>,
+    <button
+      key="shortcut-voice"
+      type="button"
+      onClick={() => runCommand?.("workbench.action.startVoiceAgent")}
+      className={PILL_CLASSNAME}
+      title={
+        voiceAgentShortcutHint
+          ? `Start a voice agent session (${voiceAgentShortcutHint})`
+          : "Start a voice agent session"
+      }
+    >
+      <AudioLines className={PILL_ICON_CLASSNAME} strokeWidth={1.5} aria-hidden />
+      <span className="truncate">
+        Start voice agent
+        {voiceAgentShortcutHint ? (
+          <span className="text-[var(--text-secondary)]">
+            {" "}
+            ({voiceAgentShortcutHint})
+          </span>
+        ) : null}
       </span>
     </button>,
     <button

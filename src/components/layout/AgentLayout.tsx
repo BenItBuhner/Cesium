@@ -34,6 +34,8 @@ import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWork
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
 import { MobileShareIntake } from "@/components/mobile/MobileShareIntake";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
+import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
+import { VoiceAgentView } from "@/components/voice/VoiceAgentView";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
@@ -319,6 +321,9 @@ function AgentLayoutShell() {
     <WorkbenchProvider value={workbench}>
       <HardwareInputProvider>
         <IDEKeyboardLayer>
+          {/* Portal overlay; mounted inside the keyboard/hardware-input tree so
+              its ChatComposer gets every context the landing composer has. */}
+          <VoiceAgentView />
           <AuroraSceneProvider>
           {/* `isolate` creates the stacking context that lets the negative-z
               aurora canvas paint above this root's background but beneath all
@@ -485,9 +490,11 @@ export function AgentLayout() {
     <WorkbenchContextMenuProvider>
       <EditorBridgeProvider>
         <AgentShellStateProvider>
-          <AgentLayoutShell />
-          <MobileShareIntake />
-          <ExtensionsWorkspaceBridge />
+          <VoiceSessionProvider>
+            <AgentLayoutShell />
+            <MobileShareIntake />
+            <ExtensionsWorkspaceBridge />
+          </VoiceSessionProvider>
         </AgentShellStateProvider>
       </EditorBridgeProvider>
     </WorkbenchContextMenuProvider>
