@@ -4,7 +4,6 @@ import path from "node:path";
 import { invalidate, readThrough } from "../cache/read-through.js";
 import { getStorage } from "../storage/runtime.js";
 import { createWorkspaceId, normalizeWorkspaceRoot } from "./persistence.js";
-import { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
 import {
   annotateWorkspaceKind,
   isStandaloneChatWorkspace,
@@ -23,7 +22,7 @@ export async function getHomeWorkspace(): Promise<WorkspaceRecord | null> {
 
 /**
  * Removes a workspace from storage and fixes the global workspace profile.
- * Refuses the Home workspace entry (same rules as `ensureHomeWorkspace`).
+ * Refuses the Home workspace entry.
  */
 export async function removeWorkspace(workspaceId: string): Promise<void> {
   const home = await getHomeWorkspace();
@@ -113,21 +112,6 @@ export function resolveUserHomeDirectory(): string {
     throw new Error("User home directory is not available on this system.");
   }
   return path.resolve(home);
-}
-
-/**
- * Ensures a workspace entry exists for the current user's home directory.
- * Skips creation when the path is not allowed (e.g. strict WORKSPACE_ALLOWED_ROOTS).
- */
-export async function ensureHomeWorkspace(): Promise<WorkspaceRecord | null> {
-  try {
-    const root = resolveUserHomeDirectory();
-    return await ensureWorkspaceRegistered(root, HOME_WORKSPACE_DISPLAY_NAME, {
-      trackOpen: false,
-    });
-  } catch {
-    return null;
-  }
 }
 
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
@@ -292,17 +276,4 @@ export async function resolveStartupWorkspace(): Promise<WorkspaceRecord | null>
   }
 
   return durable[0] ?? null;
-}
-
-export async function ensureInitialWorkspace(fallbackRoot: string): Promise<WorkspaceRecord> {
-  await ensureHomeWorkspace();
-  const startup = await resolveStartupWorkspace();
-  if (startup) {
-    return startup;
-  }
-  const workspaces = await listWorkspaces();
-  if (workspaces.length > 0) {
-    return workspaces[0]!;
-  }
-  return ensureWorkspaceRegistered(fallbackRoot);
 }

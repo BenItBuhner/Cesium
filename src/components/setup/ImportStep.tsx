@@ -178,7 +178,7 @@ export function ImportStep({
                   </div>
                   <button
                     type="button"
-                    disabled={busyKey !== null || done}
+                    disabled={busyKey !== null || done || !workspaceId}
                     onClick={() => void importSnapshot(snapshot)}
                     className="ml-auto inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[10px] py-[5px] text-[12px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)] disabled:opacity-60"
                   >
@@ -234,7 +234,7 @@ export function ImportStep({
                         </div>
                         <button
                           type="button"
-                          disabled={busyKey !== null || done}
+                          disabled={busyKey !== null || done || !workspaceId}
                           onClick={() => void importHarness(source.backendId, session)}
                           className="ml-auto inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[10px] py-[5px] text-[12px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)] disabled:opacity-60"
                         >
@@ -259,7 +259,12 @@ export function ImportStep({
         <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
           Imports land in workspace “{workspaceName}”.
         </p>
-      ) : null}
+      ) : (
+        <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
+          Imports need a workspace to land in — none exists yet. Create or open
+          one in the workbench first (chatting works without one).
+        </p>
+      )}
       {error ? <p className="text-[12.5px] text-[var(--goal-accent)]">{error}</p> : null}
     </div>
   );
