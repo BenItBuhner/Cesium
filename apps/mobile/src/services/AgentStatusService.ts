@@ -139,6 +139,20 @@ export class AgentStatusService {
     return events.reduce((max, event) => Math.max(max, event.seq), 0);
   }
 
+  getDiagnosticState() {
+    const retainedByConversation = [...this.tracked.values()].map(
+      (entry) => entry.events.length
+    );
+    return {
+      connectionEnabled: this.connectionEnabled,
+      socketReadyState: this.ws?.readyState ?? null,
+      reconnectAttempt: this.reconnectAttempt,
+      trackedConversations: this.tracked.size,
+      retainedEvents: retainedByConversation.reduce((total, count) => total + count, 0),
+      maxRetainedEvents: Math.max(0, ...retainedByConversation),
+    };
+  }
+
   private isTracked(conversationId: string): boolean {
     return this.config?.conversationIds.includes(conversationId) ?? false;
   }

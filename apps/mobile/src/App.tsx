@@ -74,6 +74,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  const appStateRef = useRef(AppState.currentState);
   // Refs so the single hardware-back subscription can read the freshest
   // navigation state without re-subscribing on every WebView update.
   const canGoBackRef = useRef(false);
@@ -96,6 +97,16 @@ export default function App() {
       },
       onConversationRemoved: (conversationId) => {
         void liveUpdatesRef.current.removeConversation(conversationId);
+      },
+      onConnectionState: (state) => {
+        // #region agent log
+        CesiumAndroidRuntime.logDiagnostic(
+          "C",
+          "App.tsx:AgentStatusService.onConnectionState",
+          "Background agent socket state changed",
+          { state }
+        );
+        // #endregion
       },
     })
   );
@@ -312,8 +323,22 @@ export default function App() {
     liveUpdatesRef.current.setAppActive(AppState.currentState === "active");
     void liveUpdatesRef.current.refreshStatus().catch(() => undefined);
     const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
       backgroundCoordinatorRef.current.setAppState(nextState);
       liveUpdatesRef.current.setAppActive(nextState === "active");
+      // #region agent log
+      CesiumAndroidRuntime.logDiagnostic(
+        "B,C,D",
+        "App.tsx:AppState.change",
+        "React Native lifecycle changed",
+        {
+          previousState,
+          nextState,
+          ...agentStatusRef.current.getDiagnosticState(),
+        }
+      );
+      // #endregion
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
         refreshSafeArea();
@@ -607,11 +632,27 @@ export default function App() {
           onError={(event: {
             nativeEvent: { description: string; code?: number; url?: string };
           }) => {
+            // #region agent log
+            CesiumAndroidRuntime.logDiagnostic(
+              "A,E",
+              "App.tsx:WebView.onError",
+              "WebView main-frame load error",
+              { code: event.nativeEvent.code ?? null }
+            );
+            // #endregion
             setLoadError(event.nativeEvent.description);
           }}
           onRenderProcessGone={(event: {
             nativeEvent: { didCrash: boolean; url?: string };
           }) => {
+            // #region agent log
+            CesiumAndroidRuntime.logDiagnostic(
+              "A,B,D",
+              "App.tsx:WebView.onRenderProcessGone",
+              "Android WebView renderer terminated",
+              { didCrash: event.nativeEvent.didCrash }
+            );
+            // #endregion
             const description = event.nativeEvent.didCrash
               ? "Android System WebView crashed. The failed renderer was discarded. Update Android System WebView and, on an emulator, enable hardware acceleration before retrying."
               : "Android stopped the WebView renderer to reclaim resources. The failed renderer was discarded; retry to create a fresh one.";

@@ -15,6 +15,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -28,6 +29,15 @@ class CesiumAndroidRuntimeModule(
   }
 
   override fun getName(): String = "CesiumAndroidRuntime"
+
+  @ReactMethod
+  fun logDiagnostic(json: String) {
+    runCatching {
+      // region agent log
+      CesiumDebugLog.write(reactContext, JSONObject(json))
+      // endregion
+    }
+  }
 
   @ReactMethod
   fun getRuntimeConfig(promise: Promise) {

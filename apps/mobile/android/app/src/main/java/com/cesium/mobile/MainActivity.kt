@@ -1,7 +1,11 @@
 package com.cesium.mobile
 
+import android.app.ActivityManager
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
+import android.os.Debug
+import android.os.PowerManager
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import com.facebook.react.ReactActivity
@@ -10,6 +14,7 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import org.json.JSONObject
 
 class MainActivity : ReactActivity() {
   /**
@@ -64,6 +69,15 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
+    // region agent log
+    CesiumDebugLog.write(
+      this,
+      "E",
+      "MainActivity.kt:onCreate",
+      "Android activity created with prior process exit evidence",
+      previousExitData()
+    )
+    // endregion
     // Edge-to-edge (forced by targetSdk 35+) disables the manifest's
     // `adjustResize`; without this the keyboard pans the window and cuts off
     // the top of the WebView instead of resizing it.
@@ -72,6 +86,55 @@ class MainActivity : ReactActivity() {
     CesiumPredictiveBackHub.enabledSink = predictiveBackEnabledSink
     predictiveBackCallback.isEnabled = CesiumPredictiveBackHub.isInterceptEnabled()
     onBackPressedDispatcher.addCallback(this, predictiveBackCallback)
+  }
+
+  override fun onStart() {
+    super.onStart()
+    // region agent log
+    CesiumDebugLog.write(
+      this,
+      "B,C",
+      "MainActivity.kt:onStart",
+      "Android activity entered visible state",
+      JSONObject().put("interactive", getSystemService(PowerManager::class.java).isInteractive)
+    )
+    // endregion
+  }
+
+  override fun onStop() {
+    super.onStop()
+    // region agent log
+    CesiumDebugLog.write(
+      this,
+      "B,C",
+      "MainActivity.kt:onStop",
+      "Android activity left visible state",
+      JSONObject()
+        .put("changingConfigurations", isChangingConfigurations)
+        .put("finishing", isFinishing)
+    )
+    // endregion
+  }
+
+  override fun onTrimMemory(level: Int) {
+    super.onTrimMemory(level)
+    val runtime = Runtime.getRuntime()
+    val systemMemory = ActivityManager.MemoryInfo()
+    getSystemService(ActivityManager::class.java).getMemoryInfo(systemMemory)
+    // region agent log
+    CesiumDebugLog.write(
+      this,
+      "B,D",
+      "MainActivity.kt:onTrimMemory",
+      "Android delivered memory pressure",
+      JSONObject()
+        .put("level", level)
+        .put("javaHeapUsedBytes", runtime.totalMemory() - runtime.freeMemory())
+        .put("nativePssKb", Debug.getPss())
+        .put("systemAvailMemBytes", systemMemory.availMem)
+        .put("systemLowMemory", systemMemory.lowMemory)
+    )
+    // endregion
   }
 
   override fun onDestroy() {
@@ -95,6 +158,25 @@ class MainActivity : ReactActivity() {
   private fun handleLaunchIntent(intent: Intent?) {
     CesiumNotificationIntentStore.update(intent)
     CesiumShareIntentStore.update(intent)
+  }
+
+  private fun previousExitData(): JSONObject {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+      return JSONObject().put("available", false)
+    }
+    val exit = getSystemService(ActivityManager::class.java)
+      .getHistoricalProcessExitReasons(packageName, 0, 1)
+      .firstOrNull()
+      ?: return JSONObject().put("available", false)
+    return JSONObject()
+      .put("available", true)
+      .put("reason", exit.reason)
+      .put("status", exit.status)
+      .put("importance", exit.importance)
+      .put("pssKb", exit.pss)
+      .put("rssKb", exit.rss)
+      .put("exitTimestamp", exit.timestamp)
+      .put("description", exit.description?.take(200) ?: JSONObject.NULL)
   }
 
   private fun gesturePayload(backEvent: BackEventCompat): WritableMap =

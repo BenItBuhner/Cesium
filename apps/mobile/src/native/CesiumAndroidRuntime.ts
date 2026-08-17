@@ -35,11 +35,26 @@ type CesiumAndroidRuntimeModule = {
   getRuntimeConfig(): Promise<Partial<AndroidRuntimeConfig>>;
   pickImages(allowMultiple: boolean): Promise<PickedAndroidImage[]>;
   consumeSharedPayload(): Promise<Partial<SharedAndroidPayload> | null>;
+  logDiagnostic?(json: string): void;
 };
 
 const nativeModule = NativeModules.CesiumAndroidRuntime as CesiumAndroidRuntimeModule | undefined;
 
 export const CesiumAndroidRuntime = {
+  logDiagnostic(
+    hypothesisId: string,
+    location: string,
+    message: string,
+    data: Record<string, unknown>
+  ) {
+    if (Platform.OS !== "android" || typeof nativeModule?.logDiagnostic !== "function") {
+      return;
+    }
+    nativeModule.logDiagnostic(
+      JSON.stringify({ hypothesisId, location, message, data, timestamp: Date.now() })
+    );
+  },
+
   async getRuntimeConfig(): Promise<AndroidRuntimeConfig | null> {
     if (Platform.OS !== "android" || !nativeModule) {
       return null;
