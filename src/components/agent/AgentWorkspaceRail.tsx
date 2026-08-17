@@ -61,6 +61,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
@@ -257,11 +258,7 @@ function AgentRailConversationListScroll({
   measureKey: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const topFadeRef = useRef<HTMLDivElement>(null);
-  const bottomFadeRef = useRef<HTMLDivElement>(null);
-  const leftFadeRef = useRef<HTMLDivElement>(null);
-  const rightFadeRef = useRef<HTMLDivElement>(null);
-  const fadeStateRef = useRef({
+  const [fade, setFade] = useState({
     top: false,
     bottom: false,
     left: false,
@@ -283,20 +280,14 @@ function AgentRailConversationListScroll({
       left: scrollLeft > 2,
       right: maxScrollX > 2 && scrollLeft < maxScrollX - 2,
     };
-    const prev = fadeStateRef.current;
-    if (
+    setFade((prev) =>
       prev.top === next.top &&
       prev.bottom === next.bottom &&
       prev.left === next.left &&
       prev.right === next.right
-    ) {
-      return;
-    }
-    fadeStateRef.current = next;
-    topFadeRef.current?.toggleAttribute("hidden", !next.top);
-    bottomFadeRef.current?.toggleAttribute("hidden", !next.bottom);
-    leftFadeRef.current?.toggleAttribute("hidden", !next.left);
-    rightFadeRef.current?.toggleAttribute("hidden", !next.right);
+        ? prev
+        : next
+    );
   }, []);
 
   const scheduleUpdateFade = useCallback(() => {
@@ -329,46 +320,13 @@ function AgentRailConversationListScroll({
     };
   }, [scheduleUpdateFade]);
 
-  const edge = "var(--bg-panel)";
-  const gradTop = `linear-gradient(to bottom, ${edge}, transparent)`;
-  const gradBottom = `linear-gradient(to top, ${edge}, transparent)`;
-  const gradLeft = `linear-gradient(to right, ${edge}, transparent)`;
-  const gradRight = `linear-gradient(to left, ${edge}, transparent)`;
-
   return (
     <div className="relative min-h-0 min-w-0 flex-1">
-      <div
-        ref={topFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradTop }}
-        aria-hidden
-      />
-      <div
-        ref={bottomFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradBottom }}
-        aria-hidden
-      />
-      <div
-        ref={leftFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradLeft }}
-        aria-hidden
-      />
-      <div
-        ref={rightFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradRight }}
-        aria-hidden
-      />
       <div
         ref={scrollRef}
         onScroll={scheduleUpdateFade}
         className="hide-scrollbar-y relative z-0 h-full min-h-0 w-full min-w-0 overflow-auto px-[11px] pb-[8px] pt-[12px]"
+        style={scrollEdgeMaskStyle(fade, { size: 28 })}
       >
         {children}
       </div>
