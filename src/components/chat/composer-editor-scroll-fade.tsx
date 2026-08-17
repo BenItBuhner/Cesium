@@ -49,34 +49,3 @@ export function useComposerEditorScrollFade(
 
   return { fade, onScroll: updateFade };
 }
-
-export function ComposerEditorScrollFades({
-  fade,
-  edgeVar = "var(--agent-card-bg)",
-}: {
-  fade: ComposerEditorScrollFade;
-  /** Must match the solid surface behind the scrolling editor (composer pill vs expanded shell). */
-  edgeVar?: string;
-}) {
-  const gradTop = `linear-gradient(to bottom, ${edgeVar}, transparent)`;
-  const gradBottom = `linear-gradient(to top, ${edgeVar}, transparent)`;
-
-  return (
-    <>
-      {fade.top ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
-          style={{ backgroundImage: gradTop }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.bottom ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
-          style={{ backgroundImage: gradBottom }}
-          aria-hidden
-        />
-      ) : null}
-    </>
-  );
-}

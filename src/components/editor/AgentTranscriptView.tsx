@@ -118,7 +118,6 @@ export function AgentTranscriptView({
           messages={displayMessages}
           stickyUserHeader={false}
           scrollRootRef={scrollRootRef}
-          workedSessionSurface="editor"
           workspaceRoot={workspaceInfo?.root ?? null}
           conversationId={workedScopeId}
           conversationBusy={conversationBusy}

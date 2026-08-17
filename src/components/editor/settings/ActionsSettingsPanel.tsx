@@ -226,7 +226,7 @@ export function ActionsSettingsPanel() {
         <SettingsRow
           searchId="actions-pill-work"
           title="Background work"
-          description="Show a live pill while other agents, cloud tasks, or terminals are running in this workspace."
+          description="Show a live pill while other chats, sub-agents, cloud tasks, or terminals are running. The conversation you are in is not counted."
           trailing={
             <ToggleSwitch
               checked={pillDefaults.work}

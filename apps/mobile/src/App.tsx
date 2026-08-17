@@ -37,6 +37,7 @@ import {
 } from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { CesiumAndroidRuntime } from "./native/CesiumAndroidRuntime";
+import { CesiumIOSRuntime } from "./native/CesiumIOSRuntime";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
 import {
   CesiumPredictiveBack,
@@ -48,15 +49,23 @@ import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
+import {
+  backgroundAgentConversationIds,
+  shouldForwardProjectionCatchUp,
+} from "./services/nativeServiceConfig";
 
 const INITIAL_CONFIG = readLaunchUrlConfig();
 // react-native-webview 14.0.1 accidentally defaults its public class generic to
 // `undefined`, which makes JSX props resolve to `never` under TypeScript 5.9.
 // Runtime exports are correct; keep the workaround local until upstream fixes
 // the declaration.
-const AndroidWebView = WebView as unknown as React.ComponentType<
+const ShellWebView = WebView as unknown as React.ComponentType<
   WebViewProps & React.RefAttributes<WebViewType>
 >;
+// WKWebView only grants a file:// page access to subresources under an
+// explicitly allowed root; the bundled workbench lives inside the .app.
+const IOS_BUNDLE_READ_ACCESS_URL =
+  Platform.OS === "ios" ? (CesiumIOSRuntime.getBundleRootUrl() ?? undefined) : undefined;
 
 export default function App() {
   const systemColorScheme = useColorScheme();
@@ -74,6 +83,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  const appStateRef = useRef(AppState.currentState);
   /** Timestamps of recent renderer-crash auto-restarts (for backoff to the error screen). */
   const rendererCrashRestartsRef = useRef<number[]>([]);
   // Refs so the single hardware-back subscription can read the freshest
@@ -88,13 +98,18 @@ export default function App() {
   const agentStatusRef = useRef(
     new AgentStatusService({
       onProjection: (projection) => {
-        void liveUpdatesRef.current.update(projection);
-        sendToWebRef.current?.({
-          type: "resumeCatchUp",
-          workspaceId: projection.workspaceId,
-          conversationId: projection.conversationId,
-          lastEventSeq: projection.lastEventSeq,
-        });
+        // Socket projections are deferred to the web bridge while it is
+        // actively syncing — two sources deriving the same run differently
+        // must not fight over one notification.
+        void liveUpdatesRef.current.updateFromSocket(projection);
+        if (shouldForwardProjectionCatchUp(appStateRef.current)) {
+          sendToWebRef.current?.({
+            type: "resumeCatchUp",
+            workspaceId: projection.workspaceId,
+            conversationId: projection.conversationId,
+            lastEventSeq: projection.lastEventSeq,
+          });
+        }
       },
       onConversationRemoved: (conversationId) => {
         void liveUpdatesRef.current.removeConversation(conversationId);
@@ -153,13 +168,7 @@ export default function App() {
       nextAuthToken = authTokenRef.current,
       nextServerUrl = serverUrlRef.current
     ) => {
-      const conversationIds = [
-        ...new Set(
-          [nextFocused.conversationId, ...nextFocused.activeConversationIds].filter(
-            (id): id is string => typeof id === "string" && id.length > 0
-          )
-        ),
-      ];
+      const conversationIds = backgroundAgentConversationIds(nextFocused);
       agentStatusRef.current.updateConfig({
         serverBaseUrl: nextServerUrl,
         workspaceId: nextFocused.workspaceId,
@@ -259,10 +268,12 @@ export default function App() {
       CesiumPhoneControl.getStatus().catch(() => null),
     ]);
     liveUpdatesRef.current.setAlertPreferences(liveUpdates.alertPreferences);
+    liveUpdatesRef.current.setDisplayPreferences(liveUpdates.displayPreferences);
     const status: MobileNativeStatus = {
       liveUpdates: {
         preference: liveUpdates.deliveryPreference,
         alertPreferences: liveUpdates.alertPreferences,
+        displayPreferences: liveUpdates.displayPreferences,
         sdkInt: liveUpdates.sdkInt,
         progressStyleSupported: liveUpdates.progressStyleSupported,
         canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
@@ -336,6 +347,7 @@ export default function App() {
     liveUpdatesRef.current.setAppActive(AppState.currentState === "active");
     void liveUpdatesRef.current.refreshStatus().catch(() => undefined);
     const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      appStateRef.current = nextState;
       backgroundCoordinatorRef.current.setAppState(nextState);
       liveUpdatesRef.current.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
@@ -500,6 +512,13 @@ export default function App() {
         );
         return;
       }
+      if (message.type === "setNotificationDisplayPreferences") {
+        liveUpdatesRef.current.setDisplayPreferences(message.preferences);
+        void CesiumLiveUpdates.setDisplayPreferences(message.preferences).then(() =>
+          sendNativeStatus()
+        );
+        return;
+      }
       if (message.type === "openLiveUpdatePromotionSettings") {
         void CesiumLiveUpdates.openPromotionSettings().then(() => sendNativeStatus());
         return;
@@ -609,7 +628,7 @@ export default function App() {
         translucent
       />
       {webViewAvailable ? (
-        <AndroidWebView
+        <ShellWebView
           key={reloadKey}
           ref={webViewRef}
           testID="cesium-mobile-webview"
@@ -618,6 +637,7 @@ export default function App() {
           allowFileAccess
           allowFileAccessFromFileURLs
           allowUniversalAccessFromFileURLs
+          allowingReadAccessToURL={IOS_BUNDLE_READ_ACCESS_URL}
           mixedContentMode="always"
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
           // onLoad only fires for successful loads. onLoadEnd fires after
@@ -664,6 +684,18 @@ export default function App() {
             }
             rendererCrashRestartsRef.current = recentRestarts;
             setLoadError(description);
+          }}
+          onContentProcessDidTerminate={() => {
+            // iOS analog of onRenderProcessGone: WebKit reclaimed the content
+            // process (memory pressure or a crash). Discard and offer a retry.
+            webViewRef.current = null;
+            canGoBackRef.current = false;
+            webCanHandleBackRef.current = false;
+            syncBackIntercept();
+            setWebViewAvailable(false);
+            setLoadError(
+              "iOS stopped the WebView content process to reclaim resources. Retry to create a fresh one."
+            );
           }}
           javaScriptEnabled
           domStorageEnabled

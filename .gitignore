@@ -159,6 +159,11 @@ apps/mobile/android/.gradle/
 apps/mobile/android/.kotlin/
 apps/mobile/android/local.properties
 apps/mobile/node_modules/
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+apps/mobile/ios/DerivedData/
+apps/mobile/ios/.xcode.env.local
+apps/mobile/ios/**/xcuserdata/
 
 artifacts/browser/
 

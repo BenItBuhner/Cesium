@@ -10,10 +10,13 @@ import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES,
+  DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES,
   MOBILE_BRIDGE_MESSAGE_EVENT,
   postMobileBridgeMessage,
   type MobileLiveUpdatePreference,
   type MobileNotificationAlertMode,
+  type MobileNotificationEtaMode,
+  type MobileNotificationMultiAgentMode,
   type MobileNativeStatus,
   type MobileNativeToWebMessage,
 } from "@/lib/mobile-bridge";
@@ -36,6 +39,17 @@ const INTERVENTION_ALERT_OPTIONS = [
   { value: "background", label: "Alert only when the app is in the background" },
   { value: "off", label: "Silent" },
 ] satisfies Array<{ value: MobileNotificationAlertMode; label: string }>;
+
+const ETA_MODE_OPTIONS = [
+  { value: "goal", label: "Goal runs only (recommended)" },
+  { value: "always", label: "All runs" },
+  { value: "off", label: "Never" },
+] satisfies Array<{ value: MobileNotificationEtaMode; label: string }>;
+
+const MULTI_AGENT_OPTIONS = [
+  { value: "separate", label: "A notification per agent" },
+  { value: "combined", label: "One combined notification" },
+] satisfies Array<{ value: MobileNotificationMultiAgentMode; label: string }>;
 
 export function MobileNativeSettings() {
   const [available, setAvailable] = useState(false);
@@ -70,6 +84,16 @@ export function MobileNativeSettings() {
     postMobileBridgeMessage({
       type: "setNotificationAlertPreferences",
       preferences: { ...alertPreferences, [key]: value },
+    });
+  const displayPreferences =
+    live?.displayPreferences ?? DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES;
+  const setDisplayPreference = (
+    key: "eta" | "multiAgent",
+    value: MobileNotificationEtaMode | MobileNotificationMultiAgentMode
+  ) =>
+    postMobileBridgeMessage({
+      type: "setNotificationDisplayPreferences",
+      preferences: { ...displayPreferences, [key]: value },
     });
   // Distinguish "the OS can render live updates" (Android 16 QPR1+ status
   // chip, or Samsung's Now Bar on One UI 8) from "the user allowed them".
@@ -136,6 +160,45 @@ export function MobileNativeSettings() {
             >
               {apiSupported && renderSupported && !promotionGranted ? "Allow" : "Manage"}
             </button>
+          }
+        />
+        <SettingsRow
+          searchId="mobile-eta-mode"
+          title="Time estimates"
+          description="Todo plans show their step progression — their extrapolated time estimates swing wildly with each task's complexity. Goals run long enough for a time-remaining estimate to be meaningful."
+          trailing={
+            <SettingsThemeSelect
+              className="w-full max-w-[min(100%,340px)]"
+              triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,340px)]`}
+              value={displayPreferences.eta}
+              options={ETA_MODE_OPTIONS}
+              onChange={(value) =>
+                setDisplayPreference("eta", value as MobileNotificationEtaMode)
+              }
+              ariaLabel="Time estimates in run notifications"
+              placement="below"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="mobile-multi-agent-style"
+          title="Multiple agents"
+          description="With several agents running at once, either keep a live notification per agent or fold them into one combined notification with aggregate progress. A single running agent always shows its full detail."
+          trailing={
+            <SettingsThemeSelect
+              className="w-full max-w-[min(100%,340px)]"
+              triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,340px)]`}
+              value={displayPreferences.multiAgent}
+              options={MULTI_AGENT_OPTIONS}
+              onChange={(value) =>
+                setDisplayPreference(
+                  "multiAgent",
+                  value as MobileNotificationMultiAgentMode
+                )
+              }
+              ariaLabel="Multiple agent notification style"
+              placement="below"
+            />
           }
         />
         <SettingsRow

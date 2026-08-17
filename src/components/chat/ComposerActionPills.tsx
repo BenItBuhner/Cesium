@@ -42,12 +42,15 @@ import {
 import {
   deriveComposerBuiltinPills,
   formatDiffPillLabel,
+  listRunningSubagentWorkItems,
   resolveComposerPillsVisibility,
   withComposerPillsVisibility,
+  type ComposerBackgroundWorkItem,
   type ComposerPillsVisibility,
 } from "@/lib/composer-pills";
 import type { AgentConversationStatus } from "@/lib/agent-types";
 import { isAgentCesiumTurnActive } from "@/lib/agent-chat";
+import { useOptionalAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceInsights, requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
 import { runQuickAction, useQuickActionsConfig } from "@/lib/quick-actions";
@@ -190,17 +193,46 @@ function DiffPopoverContent({ insights }: { insights: WorkspaceInsights }) {
   );
 }
 
-function WorkPopoverContent({ insights }: { insights: WorkspaceInsights }) {
+function WorkItemRow({ title }: { title: string }) {
+  return (
+    <li className="flex items-center gap-[6px]">
+      <LoaderCircle className="size-[11px] shrink-0 animate-spin text-[var(--accent)]" strokeWidth={2} aria-hidden />
+      <span className="min-w-0 truncate">{title}</span>
+    </li>
+  );
+}
+
+function WorkPopoverContent({
+  insights,
+  currentConversationId,
+  extraItems,
+}: {
+  insights: WorkspaceInsights;
+  currentConversationId?: string | null;
+  extraItems: ComposerBackgroundWorkItem[];
+}) {
   const { work } = insights;
+  const currentId = currentConversationId?.trim() || null;
+  const otherConversations = work.runningConversationTitles
+    .map((title, index) => ({
+      id: work.runningConversationIds?.[index] ?? `conversation-${index}`,
+      title,
+    }))
+    .filter((item) => item.id !== currentId);
+  const extraIds = new Set(extraItems.map((item) => item.id));
+  const uniqueExtraItems = extraItems.filter(
+    (item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index
+  );
+  const conversationItems = otherConversations.filter((item) => !extraIds.has(item.id));
   return (
     <div className="space-y-[6px] font-sans text-[11.5px] text-[var(--text-secondary)]">
-      {work.runningConversationTitles.length > 0 ? (
-        <ul className="space-y-[2px]" aria-label="Working agents">
-          {work.runningConversationTitles.map((title, index) => (
-            <li key={index} className="flex items-center gap-[6px]">
-              <LoaderCircle className="size-[11px] shrink-0 animate-spin text-[var(--accent)]" strokeWidth={2} aria-hidden />
-              <span className="min-w-0 truncate">{title}</span>
-            </li>
+      {conversationItems.length > 0 || uniqueExtraItems.length > 0 ? (
+        <ul className="space-y-[2px]" aria-label="Background work">
+          {conversationItems.map((item) => (
+            <WorkItemRow key={item.id} title={item.title} />
+          ))}
+          {uniqueExtraItems.map((item) => (
+            <WorkItemRow key={item.id} title={item.title} />
           ))}
         </ul>
       ) : null}
@@ -274,6 +306,8 @@ export function ComposerActionPills({
   const { activeWorkspaceId, workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { effectiveActions, loaded } = useQuickActionsConfig();
   const runCommandRunner = useIDECommandRunner();
+  const agentConversations = useOptionalAgentConversations();
+  const eventsByConversationId = agentConversations?.eventsByConversationId;
 
   const conversationRunning =
     conversationStatus != null && isAgentCesiumTurnActive(conversationStatus);
@@ -288,7 +322,19 @@ export function ComposerActionPills({
     enabled: anyPillsEnabled,
   });
 
-  const builtin = deriveComposerBuiltinPills(visibility, insights);
+  const liveSubagents = useMemo(
+    () =>
+      conversationId
+        ? listRunningSubagentWorkItems(eventsByConversationId?.[conversationId])
+        : [],
+    [conversationId, eventsByConversationId]
+  );
+
+  const builtin = deriveComposerBuiltinPills(visibility, insights, {
+    currentConversationId: conversationId,
+    currentConversationRunning: conversationRunning,
+    extraWorkCount: liveSubagents.length,
+  });
 
   const visibleActions = useMemo(() => {
     if (!visibility.actions || !loaded) {
@@ -596,7 +642,11 @@ export function ComposerActionPills({
             </button>
             {openPopover?.kind === "work" ? (
               <StatPopover title="Background work" onClose={() => setOpenPopover(null)}>
-                <WorkPopoverContent insights={insights} />
+                <WorkPopoverContent
+                  insights={insights}
+                  currentConversationId={conversationId}
+                  extraItems={liveSubagents}
+                />
               </StatPopover>
             ) : null}
           </div>

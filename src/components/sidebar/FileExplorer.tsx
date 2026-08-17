@@ -40,6 +40,7 @@ import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 import { SidebarAppMenu } from "./SidebarAppMenu";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 
 type SidebarView = "explorer" | "search" | "scm" | "extensions";
 
@@ -1094,27 +1095,10 @@ export function FileExplorer() {
               {workspaceInfo?.name ?? "Workspace"}
             </p>
             <div className="relative min-h-0 min-w-0 flex-1">
-              {explorerFade.top ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage: "linear-gradient(to bottom, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
-              {explorerFade.bottom ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage: "linear-gradient(to top, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
               <div
                 ref={scrollRootRef}
                 className="hide-scrollbar-y h-full min-h-0 overflow-y-auto"
+                style={scrollEdgeMaskStyle(explorerFade)}
                 onScroll={(event) => {
                   updateExplorerFade();
                   const nextScrollTop = event.currentTarget.scrollTop;

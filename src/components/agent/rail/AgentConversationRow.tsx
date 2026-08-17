@@ -14,6 +14,7 @@ import {
   CirclePause,
   LoaderCircle,
   MessageCircleQuestion,
+  Moon,
   MoreVertical,
   ShieldAlert,
   Square,
@@ -154,6 +155,7 @@ export function AgentConversationRow({
   onOverflowMenu,
   onEditValueChange,
   onSelect,
+  onToggleSettled,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -187,6 +189,8 @@ export function AgentConversationRow({
   onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
+  /** Small settle toggle on the row card; settled rows sink until a new prompt. */
+  onToggleSettled?: (conversation: AgentRailConversationSummary) => void;
   onDragStart?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragEnd?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragOver?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
@@ -237,6 +241,7 @@ export function AgentConversationRow({
   }
   const hasDetailLine = detailText != null;
 
+  const settled = conversation.settledAt != null;
   const rowHighlighted = bulkSelectMode ? bulkSelected : selected;
   const rowClassName = `flex w-full gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left select-none ${
     hasDetailLine
@@ -247,7 +252,11 @@ export function AgentConversationRow({
   } ${bulkSelectMode && bulkSelected ? "ring-1 ring-[var(--border-subtle)]" : ""}`;
 
   const titleClassName = `truncate font-sans text-[14px] font-normal ${
-    rowHighlighted ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+    rowHighlighted
+      ? "text-[var(--text-primary)]"
+      : settled
+        ? "text-[var(--text-disabled)]"
+        : "text-[var(--text-secondary)]"
   }`;
 
   const statusIcon = bulkSelectMode ? (
@@ -436,6 +445,34 @@ export function AgentConversationRow({
           </>
         )}
       </button>
+      {onToggleSettled && !bulkSelectMode ? (
+        <button
+          type="button"
+          data-perf="agent-rail-row-settle"
+          className={`flex size-[22px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] ${
+            settled ? "" : "rail-settle-hit"
+          }`}
+          aria-label={
+            settled
+              ? `Unsettle ${conversation.title}`
+              : `Settle ${conversation.title}`
+          }
+          aria-pressed={settled}
+          title={settled ? "Settled · click to unsettle" : "Settle conversation"}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggleSettled(conversation);
+          }}
+        >
+          <Moon
+            className="size-[13px]"
+            strokeWidth={1.6}
+            fill={settled ? "currentColor" : "none"}
+            aria-hidden
+          />
+        </button>
+      ) : null}
       {showOverflowMenu && onOverflowMenu ? (
         <button
           type="button"

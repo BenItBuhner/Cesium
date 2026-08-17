@@ -564,6 +564,11 @@ export type AgentConversationRecord = {
   lastError: string | null;
   experimental: boolean;
   archivedAt: number | null;
+  /**
+   * User-facing "settled" flag: settled conversations sink to the bottom of
+   * the rail. Cleared automatically when the user sends a new prompt.
+   */
+  settledAt?: number | null;
   lastReadSeq: number;
   /** Set when the conversation was triggered from an external source. */
   origin?: AgentConversationOrigin | null;
@@ -636,6 +641,8 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
 
 export type AgentConversationMetadataPatch = {
   archived?: boolean;
+  /** Toggle the user-facing "settled" state; sending a prompt auto-clears it. */
+  settled?: boolean;
   lastReadSeq?: number;
 };
 

@@ -516,6 +516,7 @@ export class AgentRuntimeManager {
       lastError: null,
       experimental: Boolean(backend.experimental),
       archivedAt: input.archived ? now : null,
+      settledAt: null,
       ...(input.origin ? { origin: input.origin } : {}),
       lastReadSeq: 0,
       queuedPrompts: [],
@@ -1177,6 +1178,11 @@ export class AgentRuntimeManager {
       } else if (patch.archived === false) {
         next = { ...next, archivedAt: null };
       }
+      if (patch.settled === true) {
+        next = { ...next, settledAt: Date.now() };
+      } else if (patch.settled === false) {
+        next = { ...next, settledAt: null };
+      }
       if (typeof patch.lastReadSeq === "number" && Number.isFinite(patch.lastReadSeq)) {
         const v = Math.floor(patch.lastReadSeq);
         next = {
@@ -1234,6 +1240,14 @@ export class AgentRuntimeManager {
     let record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    if (record.settledAt != null) {
+      // A new user prompt always unsettles the conversation (covers both the
+      // start-turn and queued-while-running paths below).
+      record = await updateConversationRecord(workspace.id, conversationId, (current) => ({
+        ...current,
+        settledAt: null,
+      }));
     }
     const clientEventId = options?.clientEventId?.trim();
     const clientMessageId = options?.clientMessageId?.trim();

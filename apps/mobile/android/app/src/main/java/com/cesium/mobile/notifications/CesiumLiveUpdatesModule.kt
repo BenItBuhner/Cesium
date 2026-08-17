@@ -80,6 +80,35 @@ internal fun normalizeAlertMode(value: String?, default: String): String =
   }
 
 /**
+ * Which runs may surface a time estimate. "goal" (default) restricts the ETA
+ * countdown to goal runs — todo plans are short and their per-task complexity
+ * varies too much for extrapolated estimates to mean anything, so those runs
+ * show the todo progression instead.
+ */
+internal const val ETA_MODE_GOAL = "goal"
+internal const val ETA_MODE_ALWAYS = "always"
+internal const val ETA_MODE_OFF = "off"
+
+internal fun normalizeEtaMode(value: String?): String =
+  when (value) {
+    ETA_MODE_GOAL,
+    ETA_MODE_ALWAYS,
+    ETA_MODE_OFF -> value
+    else -> ETA_MODE_GOAL
+  }
+
+/** Concurrent runs: one notification each, or a single aggregated one. */
+internal const val MULTI_AGENT_SEPARATE = "separate"
+internal const val MULTI_AGENT_COMBINED = "combined"
+
+internal fun normalizeMultiAgentMode(value: String?): String =
+  when (value) {
+    MULTI_AGENT_SEPARATE,
+    MULTI_AGENT_COMBINED -> value
+    else -> MULTI_AGENT_SEPARATE
+  }
+
+/**
  * Whether this Android build actually RENDERS promoted live updates.
  * Base Android 16 (SDK 36.0) shipped the Live Update APIs without the
  * system UI: canPostPromotedNotifications() reports false and no status-bar
@@ -224,6 +253,23 @@ class CesiumLiveUpdatesModule(
   }
 
   @ReactMethod
+  fun setDisplayPreferences(preferences: ReadableMap, promise: Promise) {
+    val eta = normalizeEtaMode(
+      if (preferences.hasKey("eta")) preferences.getString("eta") else null
+    )
+    val multiAgent = normalizeMultiAgentMode(
+      if (preferences.hasKey("multiAgent")) preferences.getString("multiAgent") else null
+    )
+    reactContext
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_ETA_MODE, eta)
+      .putString(KEY_MULTI_AGENT_MODE, multiAgent)
+      .apply()
+    promise.resolve(statusMap())
+  }
+
+  @ReactMethod
   fun setAlertPreferences(preferences: ReadableMap, promise: Promise) {
     val completion = normalizeAlertMode(
       if (preferences.hasKey("completion")) preferences.getString("completion") else null,
@@ -346,6 +392,13 @@ class CesiumLiveUpdatesModule(
         putString("intervention", interventionAlertMode())
       }
     )
+    putMap(
+      "displayPreferences",
+      Arguments.createMap().apply {
+        putString("eta", etaMode())
+        putString("multiAgent", multiAgentMode())
+      }
+    )
     // Promotion diagnostics: whether this Android build can render promoted
     // live updates at all, whether our notifications structurally qualify,
     // and whether one is promoted right now.
@@ -428,6 +481,18 @@ class CesiumLiveUpdatesModule(
       DEFAULT_INTERVENTION_ALERT_MODE
     )
 
+  private fun etaMode(): String =
+    normalizeEtaMode(
+      reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        .getString(KEY_ETA_MODE, null)
+    )
+
+  private fun multiAgentMode(): String =
+    normalizeMultiAgentMode(
+      reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        .getString(KEY_MULTI_AGENT_MODE, null)
+    )
+
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
     return if (Build.VERSION.SDK_INT >= 24) {
@@ -443,6 +508,8 @@ class CesiumLiveUpdatesModule(
     private const val LEGACY_KEY_DELIVERY_PREFERENCE = "delivery-preference"
     private const val KEY_COMPLETION_ALERT_MODE = "alert-mode-completion"
     private const val KEY_INTERVENTION_ALERT_MODE = "alert-mode-intervention"
+    private const val KEY_ETA_MODE = "display-eta-mode"
+    private const val KEY_MULTI_AGENT_MODE = "display-multi-agent"
   }
 }
 

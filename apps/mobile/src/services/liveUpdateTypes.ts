@@ -6,6 +6,12 @@ export type LiveUpdatePayload = {
   workspaceId?: string | null;
   conversationId?: string | null;
   startedAt?: number | null;
+  /**
+   * Estimated completion timestamp, present only when the eta display
+   * preference allows it for this run kind. Informational: the native chip
+   * never renders a countdown; the estimate surfaces as body text.
+   */
+  estimatedCompletionAt?: number | null;
   progressKind: "todo" | "goal" | "indeterminate" | "terminal";
   progressLabel?: string | null;
   progress?: number;
@@ -15,6 +21,7 @@ export type LiveUpdatePayload = {
   todoTotal?: number;
   todoCurrentIndex?: number | null;
   goalProgressPercent?: number;
+  estimatedRemainingSeconds?: number | null;
   intervention?: "permission" | "question" | null;
   ongoing?: boolean;
   cancellable?: boolean;
@@ -47,6 +54,36 @@ export const DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES: LiveUpdateAlertPreferences =
   intervention: "always",
 };
 
+/**
+ * Which runs may surface a time estimate (a "~Nm left" body hint — the
+ * status chip never counts down):
+ * "goal"   — goal runs only. Goals are long-horizon, so an estimate carries
+ *            real signal; todo plans are short and per-task complexity makes
+ *            their extrapolated estimates useless noise. Todo runs show the
+ *            todo progression instead.
+ * "always" — every run with an estimate, todo plans included.
+ * "off"    — never; all runs show progression and elapsed time only.
+ */
+export type LiveUpdateEtaMode = "goal" | "always" | "off";
+
+/**
+ * How concurrent agent runs present:
+ * "separate" — one live notification per run.
+ * "combined" — a single aggregated live notification whenever two or more
+ *              runs are active (a lone run keeps its full detail view).
+ */
+export type LiveUpdateMultiAgentMode = "separate" | "combined";
+
+export type LiveUpdateDisplayPreferences = {
+  eta: LiveUpdateEtaMode;
+  multiAgent: LiveUpdateMultiAgentMode;
+};
+
+export const DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES: LiveUpdateDisplayPreferences = {
+  eta: "goal",
+  multiAgent: "separate",
+};
+
 export type LiveUpdateStatus = {
   sdkInt: number;
   progressStyleSupported: boolean;
@@ -56,6 +93,8 @@ export type LiveUpdateStatus = {
   deliveryPreference: LiveUpdateDeliveryPreference;
   /** Absent on native builds that predate configurable alert behavior. */
   alertPreferences?: LiveUpdateAlertPreferences;
+  /** Absent on native builds that predate configurable display behavior. */
+  displayPreferences?: LiveUpdateDisplayPreferences;
   /** Device manufacturer is Samsung (Now Bar renders live updates). */
   isSamsung?: boolean;
   /**

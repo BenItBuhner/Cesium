@@ -51,6 +51,31 @@
  * never reveals these on phones. The max-width override also covers Chrome
  * device emulation, where the host mouse still reports any-pointer: fine.
  */
+/*
+ * Rail settle (moon) toggles follow the same pattern as tab close controls:
+ * always visible + tappable on touch / no-hover devices, hover-revealed on
+ * fine-pointer desktops. A settled row's toggle is rendered without this
+ * class, so it stays visible everywhere as the state indicator.
+ */
+.rail-settle-hit {
+  pointer-events: auto;
+  opacity: 0.6;
+}
+
+@media (any-hover: hover) and (any-pointer: fine) {
+  .rail-settle-hit {
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .group:hover .rail-settle-hit,
+  .group:focus-within .rail-settle-hit,
+  .rail-settle-hit:focus-visible {
+    pointer-events: auto;
+    opacity: 1;
+  }
+}
+
 .tab-close-hit {
   pointer-events: auto;
   opacity: 1;
@@ -440,12 +465,6 @@ html.dark .landing-shot-dark {
 [data-aurora-scene="on"] .aurora-editor-surface {
   background: transparent;
 }
-/* Soften the opaque bottom fade so it doesn't read as a solid puddle against
-   the translucent surroundings. */
-[data-aurora-scene="on"] .chat-bottom-fade {
-  opacity: 0.78;
-}
-
 /* Monaco: let the aurora show through the code editor. The gutter, current
    line, and scrollbar shades keep their theme colors; only the flat page
    backgrounds go clear. */
@@ -453,32 +472,6 @@ html.dark .landing-shot-dark {
 [data-aurora-scene="on"] .monaco-editor .margin,
 [data-aurora-scene="on"] .monaco-editor .monaco-editor-background {
   background-color: transparent !important;
-}
-
-/**
- * Bottom-of-thread fade: sits above the transcript but beneath the composer
- * dock, so text dissolves toward the page bottom while staying partially
- * visible (and blurred) underneath the translucent composer. The layer is an
- * absolutely-positioned child of the dock wrapper and extends 56px above it,
- * so it automatically tracks the dock height. `--chat-fade-surface` matches
- * the pane background (`--bg-main` for the agent stage, `--bg-panel` for the
- * editor chat).
- */
-.chat-bottom-fade {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  top: -64px;
-  pointer-events: none;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 96%, transparent) 0%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 82%, transparent) 30%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 46%, transparent) 62%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 16%, transparent) 84%,
-    transparent 100%
-  );
 }
 
 /**

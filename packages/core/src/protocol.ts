@@ -493,6 +493,11 @@ export type AgentConversationRecord = {
   experimental: boolean;
   /** Server-owned archive flag; null = visible in the default rail. */
   archivedAt: number | null;
+  /**
+   * Server-owned "settled" flag. Settled conversations sink to the bottom of
+   * the rail; a new user prompt automatically clears the flag ("unsettles").
+   */
+  settledAt?: number | null;
   lastReadSeq: number;
   /** FIFO follow-up prompts while a turn is running; owned by the server. */
   queuedPrompts: QueuedChatPrompt[];
@@ -572,6 +577,8 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
 
 export type AgentConversationMetadataPatch = {
   archived?: boolean;
+  /** Toggle the user-facing "settled" state; sending a prompt auto-clears it. */
+  settled?: boolean;
   lastReadSeq?: number;
 };
 
@@ -599,6 +606,8 @@ export type AgentRailConversationSummary = Pick<
   hasPendingPermission: boolean;
   /** Optional: older servers omit these richer status fields. */
   hasPendingQuestion?: boolean;
+  /** Set when the user marked the conversation as settled; a new prompt clears it. */
+  settledAt?: number | null;
   /** Short human title of the pending permission request (e.g. "Run terminal command"). */
   pendingPermissionTitle?: string | null;
   /** First line of the last error, truncated for rail display. */

@@ -157,7 +157,6 @@ export function ServerPickerPopover({
     >
       <VerticalFadedScroll
         measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}`}
-        edgeColorVar="var(--bg-panel)"
         scrollClassName="hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
       >
         {servers.map((server, index) => {

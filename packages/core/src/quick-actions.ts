@@ -56,9 +56,16 @@ export type WorkspaceInsights = {
     conflictsResolved: boolean;
   };
   work: {
-    /** Running/paused/awaiting agent conversations in this workspace. */
+    /**
+     * Running/paused/awaiting agent conversations in this workspace.
+     * The composer work pill excludes the open conversation — that agent is
+     * already visible in the thread — and only treats *other* chats, spawned
+     * sub-agents, and cloud tasks as background work.
+     */
     runningConversations: number;
     runningConversationTitles: string[];
+    /** Parallel to `runningConversationTitles`; used to exclude the open chat. */
+    runningConversationIds?: string[];
     aliveTerminals: number;
     runningCloudTasks: number;
   };
@@ -79,6 +86,7 @@ export function createEmptyWorkspaceInsights(): WorkspaceInsights {
     work: {
       runningConversations: 0,
       runningConversationTitles: [],
+      runningConversationIds: [],
       aliveTerminals: 0,
       runningCloudTasks: 0,
     },

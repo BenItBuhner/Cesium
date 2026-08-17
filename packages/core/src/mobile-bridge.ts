@@ -64,11 +64,43 @@ export const DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES: MobileNotificationAl
     intervention: "always",
   };
 
+/**
+ * Which runs may show a time estimate (ETA countdown / "~Nm left"):
+ * "goal"   — goal runs only (default). Goals are long-horizon, so an ETA
+ *            carries signal; todo-plan estimates extrapolate across tasks of
+ *            wildly uneven complexity and are noise — those runs show the
+ *            todo progression instead.
+ * "always" — every run with an estimate.
+ * "off"    — never; progression and elapsed time only.
+ */
+export type MobileNotificationEtaMode = "goal" | "always" | "off";
+
+/**
+ * How concurrent agent runs present on the phone:
+ * "separate" — one live notification per run.
+ * "combined" — a single aggregated live notification while two or more runs
+ *              are active (a lone run keeps its full detail).
+ */
+export type MobileNotificationMultiAgentMode = "separate" | "combined";
+
+export type MobileNotificationDisplayPreferences = {
+  eta: MobileNotificationEtaMode;
+  multiAgent: MobileNotificationMultiAgentMode;
+};
+
+export const DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES: MobileNotificationDisplayPreferences =
+  {
+    eta: "goal",
+    multiAgent: "separate",
+  };
+
 export type MobileNativeStatus = {
   liveUpdates: {
     preference: MobileLiveUpdatePreference;
     /** Absent on native shells that predate configurable alert behavior. */
     alertPreferences?: MobileNotificationAlertPreferences;
+    /** Absent on native shells that predate configurable display behavior. */
+    displayPreferences?: MobileNotificationDisplayPreferences;
     sdkInt: number;
     progressStyleSupported: boolean;
     canPostPromotedNotifications: boolean;
@@ -200,6 +232,10 @@ export type MobileWebToNativeMessage =
       type: "setNotificationAlertPreferences";
       preferences: MobileNotificationAlertPreferences;
     }
+  | {
+      type: "setNotificationDisplayPreferences";
+      preferences: MobileNotificationDisplayPreferences;
+    }
   | { type: "openLiveUpdatePromotionSettings" }
   /** Best-effort deep link into Samsung's Now Bar settings. */
   | { type: "openNowBarSettings" }
@@ -287,6 +323,44 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
   const serializedReadyMessage = JSON.stringify(JSON.stringify(readyMessage));
   return `
 (() => {
+  // WebKit (iOS WKWebView) refuses history.pushState/replaceState URLs that
+  // change anything but query/fragment on file: pages; Chromium allows path
+  // changes and the workbench relies on that. Retry with the real pathname
+  // plus the intended query + hash, and never let URL sync crash the page.
+  // Runs at documentStart, before any workbench module, and shadows the
+  // window.history instance so it wins regardless of prototype behavior.
+  if (window.location.protocol === "file:" && !window.__CESIUM_MOBILE_HISTORY_GUARD__) {
+    window.__CESIUM_MOBILE_HISTORY_GUARD__ = true;
+    for (const method of ["pushState", "replaceState"]) {
+      const original = window.history[method].bind(window.history);
+      const patched = (state, unused, url) => {
+        if (url == null) return original(state, unused, url);
+        try {
+          return original(state, unused, url);
+        } catch (error) {
+          try {
+            const resolved = new URL(String(url), window.location.href);
+            return original(
+              state,
+              unused,
+              window.location.pathname + resolved.search + resolved.hash
+            );
+          } catch (fallbackError) {
+            return undefined;
+          }
+        }
+      };
+      try {
+        Object.defineProperty(window.history, method, {
+          configurable: true,
+          writable: true,
+          value: patched,
+        });
+      } catch (defineError) {
+        try { window.history[method] = patched; } catch (assignError) {}
+      }
+    }
+  }
   const server = ${payload};
   window.__CESIUM_MOBILE_SERVER__ = server;
   window.cesiumMobile = {

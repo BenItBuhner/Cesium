@@ -3,7 +3,7 @@ import {
   isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@cesium/core";
-import type { LiveUpdatePayload } from "./liveUpdateTypes";
+import type { LiveUpdateEtaMode, LiveUpdatePayload } from "./liveUpdateTypes";
 
 /**
  * Stable identity for a single agent run: one conversation can host many
@@ -13,9 +13,22 @@ export function getLiveUpdateRunKey(projection: MobileAgentProjection): string {
   return `${projection.conversationId}:${projection.startedAt ?? projection.updatedAt}`;
 }
 
+export type LiveUpdatePayloadOptions = {
+  /**
+   * Which progress kinds may carry a time estimate. Defaults to "goal":
+   * goal runs are long enough for an ETA to mean something, while todo
+   * estimates extrapolate wildly across tasks of uneven complexity — those
+   * runs show their todo progression instead. The estimate surfaces as a
+   * "~Nm left" body hint only; the status chip never counts down.
+   */
+  etaMode?: LiveUpdateEtaMode;
+};
+
 export function toLiveUpdatePayload(
-  projection: MobileAgentProjection
+  projection: MobileAgentProjection,
+  options: LiveUpdatePayloadOptions = {}
 ): LiveUpdatePayload {
+  const etaMode = options.etaMode ?? "goal";
   const active = isMobileAgentRunActive(projection.status);
   const runKey = getLiveUpdateRunKey(projection);
   if (!active) {
@@ -57,10 +70,12 @@ export function toLiveUpdatePayload(
 
   const goal = projection.goalProgress;
   if (goal) {
-    // Goals keep a soft "~5m left" hint in the body text: goal percent moves
-    // steadily enough that the extrapolation is meaningful there. It is
-    // deliberately NOT a live countdown chip anymore.
-    const remaining = formatRemainingTime(goal.estimatedRemainingMs);
+    // Goals are long-running; their ETA carries signal (unless disabled).
+    // It is a soft "~Nm left" hint in the body text, never a countdown chip.
+    const includeEta = etaMode !== "off";
+    const remaining = includeEta
+      ? formatRemainingTime(goal.estimatedRemainingMs)
+      : null;
     return {
       runKey,
       title: projection.title || "Cesium agent",
@@ -72,12 +87,16 @@ export function toLiveUpdatePayload(
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
+      estimatedCompletionAt: includeEta ? goal.estimatedCompletionAt : null,
       progressKind: "goal",
       progressLabel: `${goal.percent}%`,
       progress: goal.percent,
       progressMax: 100,
       indeterminate: false,
       goalProgressPercent: goal.percent,
+      estimatedRemainingSeconds: includeEta
+        ? toRemainingSeconds(goal.estimatedRemainingMs)
+        : null,
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
@@ -87,19 +106,28 @@ export function toLiveUpdatePayload(
 
   const todo = projection.todoProgress;
   if (todo) {
-    // Todo lists are too volatile to estimate, so no ETA anywhere: the chip
-    // shows the completed/total fraction and the chronometer counts up.
     const progressLabel = `${todo.completed}/${todo.total}`;
+    // Todo estimates extrapolate across tasks of wildly uneven complexity —
+    // by default the notification shows the todo progression, not an ETA.
+    // The chip shows the completed/total fraction and the chronometer
+    // counts up; opting in to etaMode "always" adds a "~Nm left" body hint.
+    const includeEta = etaMode === "always";
+    const remaining = includeEta
+      ? formatRemainingTime(todo.estimatedRemainingMs)
+      : null;
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body:
+      body: withRemainingTime(
         projection.currentActivity ||
-        `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
+          `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
+        remaining
+      ),
       shortText: statusChip ?? progressLabel,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
+      estimatedCompletionAt: includeEta ? todo.estimatedCompletionAt : null,
       progressKind: "todo",
       progressLabel,
       progress: todo.completed,
@@ -108,6 +136,9 @@ export function toLiveUpdatePayload(
       todoCompleted: todo.completed,
       todoTotal: todo.total,
       todoCurrentIndex: todo.currentIndex,
+      estimatedRemainingSeconds: includeEta
+        ? toRemainingSeconds(todo.estimatedRemainingMs)
+        : null,
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
@@ -150,6 +181,10 @@ function terminalLabel(status: MobileAgentProjection["status"]): string {
     default:
       return "Agent run ended";
   }
+}
+
+function toRemainingSeconds(value: number | null): number | null {
+  return value == null ? null : Math.max(0, Math.round(value / 1000));
 }
 
 function formatRemainingTime(value: number | null): string | null {
