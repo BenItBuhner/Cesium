@@ -79,6 +79,8 @@ export default function App() {
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
   const appStateRef = useRef(AppState.currentState);
+  /** Timestamps of recent renderer-crash auto-restarts (for backoff to the error screen). */
+  const rendererCrashRestartsRef = useRef<number[]>([]);
   // Refs so the single hardware-back subscription can read the freshest
   // navigation state without re-subscribing on every WebView update.
   const canGoBackRef = useRef(false);
@@ -195,8 +197,24 @@ export default function App() {
   const refreshSafeArea = useCallback(() => {
     void CesiumWindowInsets.getInsets()
       .then((insets) => setSafeAreaTop(insets.safeAreaTop))
-      .catch(() => setSafeAreaTop(0));
+      .catch(() => {
+        // Insets are momentarily unreadable while the window re-attaches
+        // (backgrounding, screenshot/edit/return). Keep the last known value:
+        // regressing to 0 here used to pin the workbench's top chrome under
+        // the status bar until the process was killed.
+      });
   }, []);
+
+  // Resampling ladder shared by mount and resume: the very first reads after
+  // a window (re-)attach can race the inset dispatch, so retry on a short
+  // backoff instead of trusting a single sample.
+  const safeAreaRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const refreshSafeAreaWithRetries = useCallback(() => {
+    safeAreaRetryTimersRef.current.forEach(clearTimeout);
+    safeAreaRetryTimersRef.current = [0, 250, 1000].map((delay) =>
+      setTimeout(refreshSafeArea, delay)
+    );
+  }, [refreshSafeArea]);
 
   const consumeNotificationAction = useCallback(async () => {
     const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
@@ -284,14 +302,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshSafeArea();
+    refreshSafeAreaWithRetries();
     const dimensions = Dimensions.addEventListener("change", refreshSafeArea);
-    const timers = [0, 250, 1000].map((delay) => setTimeout(refreshSafeArea, delay));
+    // Push path: native re-emits from the window's own inset dispatch, which
+    // always follows a resume/re-attach — the authoritative recovery signal
+    // when every polled read raced the window state.
+    const insetsSubscription = CesiumWindowInsets.addChangeListener((snapshot) =>
+      setSafeAreaTop(snapshot.safeAreaTop)
+    );
     return () => {
       dimensions.remove();
-      timers.forEach(clearTimeout);
+      insetsSubscription?.remove();
+      safeAreaRetryTimersRef.current.forEach(clearTimeout);
     };
-  }, [refreshSafeArea]);
+  }, [refreshSafeArea, refreshSafeAreaWithRetries]);
 
   // Dynamic host state reaches the live page as a typed message instead of
   // re-injecting the whole bootstrap script. The very first render is covered
@@ -318,7 +342,7 @@ export default function App() {
       liveUpdatesRef.current.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
-        refreshSafeArea();
+        refreshSafeAreaWithRetries();
         void consumeNotificationAction();
         void consumeSharePayload();
       }
@@ -334,7 +358,7 @@ export default function App() {
       agentStatusRef.current.close();
       void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, consumeSharePayload, refreshSafeArea, sendToWeb]);
+  }, [consumeNotificationAction, consumeSharePayload, refreshSafeAreaWithRetries, sendToWeb]);
 
   useEffect(() => {
     // A single, stable subscription. The Android back intent is resolved in
@@ -622,6 +646,25 @@ export default function App() {
             webCanHandleBackRef.current = false;
             syncBackIntercept();
             setWebViewAvailable(false);
+            // Recover automatically instead of dead-ending on the error
+            // screen: a renderer kill (usually the OS reclaiming memory) is
+            // transient, and a fresh renderer restores the session from the
+            // server. Back off to the manual Retry screen if it keeps dying.
+            const now = Date.now();
+            const recentRestarts = rendererCrashRestartsRef.current.filter(
+              (at) => now - at < 3 * 60_000
+            );
+            if (recentRestarts.length < 2) {
+              recentRestarts.push(now);
+              rendererCrashRestartsRef.current = recentRestarts;
+              setLoadError(null);
+              setTimeout(() => {
+                setReloadKey((current) => current + 1);
+                setWebViewAvailable(true);
+              }, 250);
+              return;
+            }
+            rendererCrashRestartsRef.current = recentRestarts;
             setLoadError(description);
           }}
           javaScriptEnabled

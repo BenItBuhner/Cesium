@@ -188,7 +188,6 @@ import {
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
 import {
-  CESIUM_MAX_TOOL_ITERATIONS,
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
   DEFAULT_GREP_RESULTS,
@@ -1002,12 +1001,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       let usedToolResultChars = 0;
       let completedToolCallCount = 0;
       for (let iteration = 0; ; iteration += 1) {
-        if (iteration >= CESIUM_MAX_TOOL_ITERATIONS) {
-          throw new Error(
-            `Cesium stopped after ${CESIUM_MAX_TOOL_ITERATIONS} tool-response iterations to avoid an infinite tool loop. ` +
-              "Send a follow-up prompt to continue from the current state."
-          );
-        }
         if (this.cancelled) {
           return;
         }

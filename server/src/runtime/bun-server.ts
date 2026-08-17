@@ -53,6 +53,10 @@ type BunServeOptions = {
   idleTimeout: number;
   fetch(request: Request, server: BunServer): Response | Promise<Response | undefined> | undefined;
   websocket: {
+    /** Auto-ping clients so quiet-but-alive connections reset the idle timer. */
+    sendPings?: boolean;
+    /** Seconds without inbound frames (messages or pongs) before the socket is reaped. */
+    idleTimeout?: number;
     open(ws: BunServerWebSocket): void;
     message(ws: BunServerWebSocket, message: string | Buffer): void;
     close(ws: BunServerWebSocket): void;
@@ -191,6 +195,16 @@ export function startBunServer(): void {
       return app.fetch(request);
     },
     websocket: {
+      // Protocol-level pings are answered by the client's network stack even
+      // while a WebView renderer is paused or a browser tab is throttled, so
+      // quiet-but-alive clients are kept open instead of idle-reaped. The
+      // idle timeout then only reaps peers that stopped answering pings
+      // (frozen/killed Android processes, vanished tabs); 240s gives briefly
+      // backgrounded mobile clients a wide window to resume without a
+      // teardown + reconnect cycle. (Bun defaults: sendPings on, 120s idle.)
+      sendPings: true,
+      idleTimeout:
+        Number.parseInt(process.env.BUN_WS_IDLE_TIMEOUT_SECONDS ?? "", 10) || 240,
       open(ws) {
         attachSocket(ws);
       },

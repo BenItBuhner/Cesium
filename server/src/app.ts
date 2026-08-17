@@ -71,6 +71,8 @@ export const serverConfig: CesiumServerConfig = (() => {
 })();
 
 export function createCesiumApp(): Hono {
+  const allowAndroidFileOrigin =
+    process.env.OPENCURSOR_ALLOW_ANDROID_FILE_ORIGIN?.trim() !== "0";
   const defaultAllowedOrigins = [
     `http://${serverConfig.publicHost}:3000`,
     "http://localhost:3000",
@@ -78,18 +80,20 @@ export function createCesiumApp(): Hono {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://10.0.2.2:5173",
-    // The production Android app loads the exact Vite workbench from
-    // file:///android_asset/workbench/index.html. Android WebView serializes
-    // that file document's Origin header as the literal string "null".
-    // Universal file access is intentionally limited to this bundled shell.
-    "null",
+    ...(allowAndroidFileOrigin ? ["null"] : []),
   ];
-  const allowedOrigins = (
-    process.env.ALLOWED_ORIGINS ?? defaultAllowedOrigins.join(",")
-  )
-    .split(",")
+  const configuredAllowedOrigins = process.env.ALLOWED_ORIGINS
+    ?.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const allowedOrigins = [
+    ...(configuredAllowedOrigins ?? defaultAllowedOrigins),
+    // The production Android app loads the bundled workbench from
+    // file:///android_asset/workbench/index.html, whose Origin is "null".
+    // Preserve that one native-shell origin when a self-hosted deployment
+    // replaces the browser allowlist. It can be explicitly disabled above.
+    ...(configuredAllowedOrigins && allowAndroidFileOrigin ? ["null"] : []),
+  ].filter((origin, index, origins) => origins.indexOf(origin) === index);
   const relaxPrivateLanCors = shouldRelaxPrivateLanCors(
     serverConfig.publicHost,
     allowedOrigins

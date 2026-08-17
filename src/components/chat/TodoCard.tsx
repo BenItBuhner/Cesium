@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Ban, Check, Circle, LoaderCircle, Maximize2, Minimize2 } from "lucide-react";
 import type { TodoItem } from "@/lib/types";
 import { CollapsibleHeight } from "./CollapsibleHeight";
@@ -162,7 +162,8 @@ function minimizedTodoSummary(todos: TodoItem[], label: string): string {
   return label;
 }
 
-export function TodoCard({
+/** Memoized: todo arrays keep object identity across streaming flushes. */
+export const TodoCard = memo(function TodoCard({
   label,
   todos,
   meldUserAbove = false,
@@ -259,4 +260,4 @@ export function TodoCard({
       {body}
     </div>
   );
-}
+});

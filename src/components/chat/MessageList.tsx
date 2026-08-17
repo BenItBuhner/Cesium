@@ -62,6 +62,9 @@ function olderGateReleaseScrollTopPx(prefetchPx: number): number {
 
 /** Max automatic "fill the viewport" history rounds per conversation (burst prefetch at bottom). */
 const OLDER_AUTO_FILL_MAX_ROUNDS = 8;
+
+/** Stable fallback so a missing session map doesn't churn prop identity every render. */
+const EMPTY_WORKED_MAP: Record<string, boolean> = {};
 /** Minimum excess scroll height (beyond viewport) before we stop auto-prefetching at the bottom. */
 function olderMinBottomSlackPx(root: HTMLDivElement): number {
   const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
@@ -461,7 +464,7 @@ export function MessageList({
     };
   }, [flushPersistedScrollTop]);
 
-  const workedMap = workspaceSession.chat.workedSessionOpenByScopedId ?? {};
+  const workedMap = workspaceSession.chat.workedSessionOpenByScopedId ?? EMPTY_WORKED_MAP;
   const setWorkedOpen = useCallback(
     (scopedKey: string, open: boolean) => {
       updateWorkspaceSession((current) => {

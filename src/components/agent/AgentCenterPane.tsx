@@ -1211,6 +1211,17 @@ export function AgentCenterPane() {
         }
       : optimisticConversationView ??
         (showConversationTransitionState ? stableConversationView : null);
+  const visibleConversationId = visibleConversationView?.conversationId ?? null;
+  // Stable identity so memoized permission rows don't re-render every flush.
+  const handleResolvePermission = useCallback(
+    (requestId: string, optionId: string) => {
+      if (!visibleConversationId) {
+        return;
+      }
+      void answerPermissionForConversation(visibleConversationId, requestId, optionId);
+    },
+    [answerPermissionForConversation, visibleConversationId]
+  );
 
   // Run the split FLIP right after the optimistic view is in the DOM: the
   // user-message card and docked shell are translated from the captured
@@ -1317,13 +1328,7 @@ export function AgentCenterPane() {
                       }
                 );
               }}
-              onResolvePermission={(requestId, optionId) => {
-                void answerPermissionForConversation(
-                  visibleConversationView.conversationId,
-                  requestId,
-                  optionId
-                );
-              }}
+              onResolvePermission={handleResolvePermission}
               onForkMessage={redoFlow.handleForkMessage}
               onRedoMessage={redoFlow.handleStartRedoMessage}
               renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
