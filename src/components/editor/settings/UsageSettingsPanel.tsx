@@ -327,7 +327,7 @@ function TimeSeriesChart({
   kind,
   height = 168,
   yMax,
-  color = "var(--accent-strong)",
+  color = "var(--accent)",
   formatValue,
   formatTime,
   tooltipExtra,
@@ -608,8 +608,8 @@ function Sparkline({ points, nowMs }: { points: UsageSeriesPoint[]; nowMs: numbe
     <div ref={containerRef} className="h-[36px] w-full" aria-hidden>
       {width > 0 && path.line ? (
         <svg width={width} height={height} className="block">
-          <path d={path.area} fill="var(--accent-strong)" opacity={0.1} />
-          <path d={path.line} fill="none" stroke="var(--accent-strong)" strokeWidth={1.4} />
+          <path d={path.area} fill="var(--accent)" opacity={0.1} />
+          <path d={path.line} fill="none" stroke="var(--accent)" strokeWidth={1.4} />
         </svg>
       ) : null}
     </div>
@@ -708,7 +708,7 @@ function LimitWindowPanel({
   const windowTokens = !isPercent ? (chartData[chartData.length - 1]?.value ?? 0) : 0;
   const chartColor = isPercent
     ? meterColor(limitWindow.usedPercent ?? 0)
-    : "var(--accent-strong)";
+    : "var(--accent)";
 
   return (
     <div className="flex flex-col gap-[4px]">
@@ -851,7 +851,7 @@ function ModelBreakdownRows({ report }: { report: ProviderUsageReport }) {
           </span>
           <div className="h-[5px] min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--border-subtle)]">
             <div
-              className="h-full rounded-full bg-[var(--accent-strong)] opacity-80"
+              className="h-full rounded-full bg-[var(--accent)] opacity-80"
               style={{ width: `${Math.max(2, (model.totalTokens / max) * 100)}%` }}
             />
           </div>

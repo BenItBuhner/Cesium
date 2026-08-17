@@ -9,9 +9,11 @@ import {
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
+  DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES,
   MOBILE_BRIDGE_MESSAGE_EVENT,
   postMobileBridgeMessage,
   type MobileLiveUpdatePreference,
+  type MobileNotificationAlertMode,
   type MobileNativeStatus,
   type MobileNativeToWebMessage,
 } from "@/lib/mobile-bridge";
@@ -22,6 +24,18 @@ const MOBILE_LIVE_UPDATE_OPTIONS = [
   { value: "basic", label: "Standard notification only" },
   { value: "off", label: "Off" },
 ] satisfies Array<{ value: MobileLiveUpdatePreference; label: string }>;
+
+const COMPLETION_ALERT_OPTIONS = [
+  { value: "always", label: "Always notify" },
+  { value: "background", label: "Only when the app is in the background" },
+  { value: "off", label: "Never" },
+] satisfies Array<{ value: MobileNotificationAlertMode; label: string }>;
+
+const INTERVENTION_ALERT_OPTIONS = [
+  { value: "always", label: "Always alert" },
+  { value: "background", label: "Alert only when the app is in the background" },
+  { value: "off", label: "Silent" },
+] satisfies Array<{ value: MobileNotificationAlertMode; label: string }>;
 
 export function MobileNativeSettings() {
   const [available, setAvailable] = useState(false);
@@ -47,6 +61,16 @@ export function MobileNativeSettings() {
   const live = status?.liveUpdates;
   const phone = status?.phoneControl;
   const preference = live?.preference ?? "live";
+  const alertPreferences =
+    live?.alertPreferences ?? DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES;
+  const setAlertPreference = (
+    key: "completion" | "intervention",
+    value: MobileNotificationAlertMode
+  ) =>
+    postMobileBridgeMessage({
+      type: "setNotificationAlertPreferences",
+      preferences: { ...alertPreferences, [key]: value },
+    });
   // Distinguish "the OS can render live updates" (Android 16 QPR1+ status
   // chip, or Samsung's Now Bar on One UI 8) from "the user allowed them".
   // Base Android 16 ships the APIs without the rendering UI, so
@@ -112,6 +136,42 @@ export function MobileNativeSettings() {
             >
               {apiSupported && renderSupported && !promotionGranted ? "Allow" : "Manage"}
             </button>
+          }
+        />
+        <SettingsRow
+          searchId="mobile-completion-alerts"
+          title="Agent finished notifications"
+          description="When an agent run completes, fails, or is cancelled. By default nothing is posted while you are inside the app — you are already watching it finish."
+          trailing={
+            <SettingsThemeSelect
+              className="w-full max-w-[min(100%,340px)]"
+              triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,340px)]`}
+              value={alertPreferences.completion}
+              options={COMPLETION_ALERT_OPTIONS}
+              onChange={(value) =>
+                setAlertPreference("completion", value as MobileNotificationAlertMode)
+              }
+              ariaLabel="Agent finished notifications"
+              placement="below"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="mobile-intervention-alerts"
+          title="Needs-input alerts"
+          description="Sound and heads-up when an agent asks a question or requests permission. The live notification itself always stays up to date."
+          trailing={
+            <SettingsThemeSelect
+              className="w-full max-w-[min(100%,340px)]"
+              triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,340px)]`}
+              value={alertPreferences.intervention}
+              options={INTERVENTION_ALERT_OPTIONS}
+              onChange={(value) =>
+                setAlertPreference("intervention", value as MobileNotificationAlertMode)
+              }
+              ariaLabel="Needs-input alerts"
+              placement="below"
+            />
           }
           border={isSamsung}
         />

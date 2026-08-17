@@ -181,7 +181,7 @@ function ProviderConnectionCard({
           {connection ? (
             <button
               type="button"
-              className={`${rowButtonClass} !text-red-400`}
+              className={`${rowButtonClass} !text-[var(--status-error)]`}
               disabled={busy}
               onClick={() => void onDisconnect()}
             >
@@ -416,7 +416,7 @@ export function CloudAgentsSettingsPanel() {
         </p>
       ) : null}
       {error ? (
-        <p className="mb-[12px] rounded-[var(--radius-tab)] border border-red-500/30 bg-red-500/10 px-[10px] py-[6px] font-sans text-[12px] text-red-400">
+        <p className="mb-[12px] rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--status-error)]">
           {error}
         </p>
       ) : null}
@@ -638,7 +638,7 @@ export function CloudAgentsSettingsPanel() {
                   ) : null}
                   <button
                     type="button"
-                    className={`${rowButtonClass} !px-[8px] !py-[3px] !text-red-400`}
+                    className={`${rowButtonClass} !px-[8px] !py-[3px] !text-[var(--status-error)]`}
                     disabled={busy}
                     aria-label="Remove routing rule"
                     onClick={() =>
@@ -768,11 +768,11 @@ export function CloudAgentsSettingsPanel() {
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-[8px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
                   <span className="min-w-0 truncate">{task.title}</span>
-                  <span className={`${tagClass} ${task.status === "failed" ? "!text-red-400" : ""}`}>
+                  <span className={`${tagClass} ${task.status === "failed" ? "!text-[var(--status-error)]" : ""}`}>
                     {task.status === "failed" ? "Failed" : "Not dispatched"}
                   </span>
                   {task.unverified ? (
-                    <span className={`${tagClass} !text-amber-400`}>unverified</span>
+                    <span className={`${tagClass} !text-[var(--status-warning)]`}>unverified</span>
                   ) : null}
                 </p>
                 <p className="mt-[2px] flex flex-wrap items-center gap-[5px] font-sans text-[11px] text-[var(--text-secondary)]">
@@ -806,7 +806,7 @@ export function CloudAgentsSettingsPanel() {
                 </button>
                 <button
                   type="button"
-                  className={`${rowButtonClass} !text-red-400`}
+                  className={`${rowButtonClass} !text-[var(--status-error)]`}
                   disabled={busy}
                   aria-label="Delete assignment"
                   onClick={() =>

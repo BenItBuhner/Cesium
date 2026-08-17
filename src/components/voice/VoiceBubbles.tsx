@@ -18,7 +18,8 @@ const KIND_STYLES: Record<VoiceBubbleKind, string> = {
     "bg-[var(--bg-card)] text-[var(--text-secondary)] border border-dashed border-[var(--border-card)]",
   system:
     "bg-transparent text-[var(--text-secondary)] border border-transparent italic",
-  error: "bg-red-500/10 text-red-500 border border-red-500/30",
+  error:
+    "bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] text-[var(--status-error)] border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)]",
 };
 
 export function VoiceBubbles({

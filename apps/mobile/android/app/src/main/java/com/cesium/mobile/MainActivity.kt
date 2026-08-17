@@ -64,6 +64,10 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
+    // Edge-to-edge (forced by targetSdk 35+) disables the manifest's
+    // `adjustResize`; without this the keyboard pans the window and cuts off
+    // the top of the WebView instead of resizing it.
+    CesiumImeInsets.install(this)
     handleLaunchIntent(intent)
     CesiumPredictiveBackHub.enabledSink = predictiveBackEnabledSink
     predictiveBackCallback.isEnabled = CesiumPredictiveBackHub.isInterceptEnabled()

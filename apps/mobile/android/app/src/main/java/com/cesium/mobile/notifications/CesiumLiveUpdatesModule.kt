@@ -57,6 +57,29 @@ internal fun isSamsungDevice(manufacturer: String?): Boolean =
   manufacturer?.trim()?.equals("samsung", ignoreCase = true) == true
 
 /**
+ * Alert behavior modes for agent notifications: surface always, only while
+ * the app is in the background, or never. Enforcement lives in the JS
+ * controller (it knows the AppState); native only persists the choice.
+ */
+internal const val ALERT_MODE_ALWAYS = "always"
+internal const val ALERT_MODE_BACKGROUND = "background"
+internal const val ALERT_MODE_OFF = "off"
+
+/** Completions default to background-only: finishing while the user is inside the app stays quiet. */
+internal const val DEFAULT_COMPLETION_ALERT_MODE = ALERT_MODE_BACKGROUND
+
+/** Needs-input alerts default to always: a blocked agent needs the user either way. */
+internal const val DEFAULT_INTERVENTION_ALERT_MODE = ALERT_MODE_ALWAYS
+
+internal fun normalizeAlertMode(value: String?, default: String): String =
+  when (value) {
+    ALERT_MODE_ALWAYS,
+    ALERT_MODE_BACKGROUND,
+    ALERT_MODE_OFF -> value
+    else -> default
+  }
+
+/**
  * Whether this Android build actually RENDERS promoted live updates.
  * Base Android 16 (SDK 36.0) shipped the Live Update APIs without the
  * system UI: canPostPromotedNotifications() reports false and no status-bar
@@ -201,6 +224,38 @@ class CesiumLiveUpdatesModule(
   }
 
   @ReactMethod
+  fun setAlertPreferences(preferences: ReadableMap, promise: Promise) {
+    val completion = normalizeAlertMode(
+      if (preferences.hasKey("completion")) preferences.getString("completion") else null,
+      DEFAULT_COMPLETION_ALERT_MODE
+    )
+    val intervention = normalizeAlertMode(
+      if (preferences.hasKey("intervention")) preferences.getString("intervention") else null,
+      DEFAULT_INTERVENTION_ALERT_MODE
+    )
+    reactContext
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_COMPLETION_ALERT_MODE, completion)
+      .putString(KEY_INTERVENTION_ALERT_MODE, intervention)
+      .apply()
+    promise.resolve(statusMap())
+  }
+
+  /**
+   * Run keys of every natively persisted ongoing run. The JS controller
+   * reconciles these against its authoritative projection set and stops any
+   * stale leftovers (e.g. runs restored by the foreground service for agents
+   * that finished while the app process was dead).
+   */
+  @ReactMethod
+  fun getActiveRunKeys(promise: Promise) {
+    val array = Arguments.createArray()
+    CesiumLiveUpdateStateStore.activeRunKeys(reactContext).forEach { array.pushString(it) }
+    promise.resolve(array)
+  }
+
+  @ReactMethod
   fun openPromotionSettings(promise: Promise) {
     if (Build.VERSION.SDK_INT < 36) {
       promise.resolve(false)
@@ -284,6 +339,13 @@ class CesiumLiveUpdatesModule(
     putBoolean("notificationPermissionGranted", notificationsEnabled())
     putBoolean("suppressedByDismissal", suppressedByDismissal)
     putString("deliveryPreference", deliveryPreference())
+    putMap(
+      "alertPreferences",
+      Arguments.createMap().apply {
+        putString("completion", completionAlertMode())
+        putString("intervention", interventionAlertMode())
+      }
+    )
     // Promotion diagnostics: whether this Android build can render promoted
     // live updates at all, whether our notifications structurally qualify,
     // and whether one is promoted right now.
@@ -352,6 +414,20 @@ class CesiumLiveUpdatesModule(
     return LIVE_UPDATE_PREFERENCE_LIVE
   }
 
+  private fun completionAlertMode(): String =
+    normalizeAlertMode(
+      reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        .getString(KEY_COMPLETION_ALERT_MODE, null),
+      DEFAULT_COMPLETION_ALERT_MODE
+    )
+
+  private fun interventionAlertMode(): String =
+    normalizeAlertMode(
+      reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        .getString(KEY_INTERVENTION_ALERT_MODE, null),
+      DEFAULT_INTERVENTION_ALERT_MODE
+    )
+
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
     return if (Build.VERSION.SDK_INT >= 24) {
@@ -365,6 +441,8 @@ class CesiumLiveUpdatesModule(
     private const val PREFERENCES = "cesium-live-update-preferences"
     private const val KEY_DELIVERY_PREFERENCE = "delivery-preference-v2"
     private const val LEGACY_KEY_DELIVERY_PREFERENCE = "delivery-preference"
+    private const val KEY_COMPLETION_ALERT_MODE = "alert-mode-completion"
+    private const val KEY_INTERVENTION_ALERT_MODE = "alert-mode-intervention"
   }
 }
 

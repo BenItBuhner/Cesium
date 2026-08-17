@@ -236,7 +236,7 @@ export function ImportConversationDialog({
               </div>
             ) : null}
             {sourcesError ? (
-              <div className="px-[6px] py-[8px] font-sans text-[12px] text-red-400">
+              <div className="px-[6px] py-[8px] font-sans text-[12px] text-[var(--status-error)]">
                 {sourcesError}
               </div>
             ) : null}
@@ -253,7 +253,7 @@ export function ImportConversationDialog({
                   className={`flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left transition-colors ${
                     active
                       ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] hover:text-[var(--text-primary)]"
                   } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
                 >
                   <AgentBackendIcon backendId={source.backendId} className="size-[15px] shrink-0" />
@@ -261,7 +261,7 @@ export function ImportConversationDialog({
                     {source.label}
                   </span>
                   {source.available ? (
-                    <span className="shrink-0 rounded-[var(--radius-pill)] bg-white/[0.07] px-[6px] py-[1px] font-sans text-[11px] text-[var(--text-secondary)]">
+                    <span className="shrink-0 rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[6px] py-[1px] font-sans text-[11px] text-[var(--text-secondary)]">
                       {source.sessionCount}
                     </span>
                   ) : null}
@@ -300,7 +300,7 @@ export function ImportConversationDialog({
                   placeholder={
                     selectedSource ? `Search ${selectedSource.label} sessions…` : "Search sessions…"
                   }
-                  className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[5px] pl-[26px] pr-[8px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent-border)]"
+                  className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[5px] pl-[26px] pr-[8px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
                 />
               </div>
             </div>
@@ -313,7 +313,7 @@ export function ImportConversationDialog({
                 </div>
               ) : null}
               {sessionsError ? (
-                <div className="px-[6px] py-[8px] font-sans text-[12px] text-red-400">
+                <div className="px-[6px] py-[8px] font-sans text-[12px] text-[var(--status-error)]">
                   {sessionsError}
                 </div>
               ) : null}
@@ -330,7 +330,7 @@ export function ImportConversationDialog({
                 return (
                   <div
                     key={session.id}
-                    className="group flex w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[8px] py-[7px] transition-colors hover:bg-white/[0.05]"
+                    className="group flex w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[8px] py-[7px] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)]"
                   >
                     <div className="flex min-w-0 flex-1 flex-col gap-[1px]">
                       <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
@@ -356,7 +356,7 @@ export function ImportConversationDialog({
                           onClose();
                         }}
                         title="Already imported — stays in sync with the harness automatically"
-                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-white/[0.06] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Check className="size-[12px]" strokeWidth={2} />
                         Open
@@ -382,7 +382,7 @@ export function ImportConversationDialog({
             </div>
 
             {importError ? (
-              <div className="border-t border-[var(--palette-divider)] px-[12px] py-[8px] font-sans text-[12px] text-red-400">
+              <div className="border-t border-[var(--palette-divider)] px-[12px] py-[8px] font-sans text-[12px] text-[var(--status-error)]">
                 {importError}
               </div>
             ) : null}

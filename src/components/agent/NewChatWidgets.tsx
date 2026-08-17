@@ -162,7 +162,7 @@ function ActionResultPopover({
   return (
     <div
       ref={ref}
-      className="absolute bottom-[calc(100%+7px)] left-0 z-50 max-h-[320px] w-[min(420px,calc(100vw-24px))] overflow-auto rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px] shadow-[0_18px_50px_rgba(0,0,0,0.35)]"
+      className="absolute bottom-[calc(100%+7px)] left-0 z-50 max-h-[320px] w-[min(420px,calc(100vw-24px))] overflow-auto rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px] shadow-[var(--palette-shadow)]"
     >
       <div className="mb-[8px] flex items-center justify-between gap-[10px]">
         <div className="font-sans text-[12px] font-semibold text-[var(--text-primary)]">

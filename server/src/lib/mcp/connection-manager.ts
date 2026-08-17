@@ -341,12 +341,14 @@ export async function callMcpToolRich(input: {
     if (!(await isBuiltInArtifactsMcpEnabled(input.workspaceId))) {
       throw new Error("Artifacts MCP is disabled for this workspace.");
     }
-    return await callBuiltInArtifactTool({
-      workspaceId: input.workspaceId,
-      workspaceRoot: input.workspaceRoot,
-      toolName: input.toolName,
-      arguments: input.arguments,
-    });
+    return {
+      text: await callBuiltInArtifactTool({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+        toolName: input.toolName,
+        arguments: input.arguments,
+      }),
+    };
   }
   const config = await getMcpServer(input.workspaceId, serverId);
   if (!config || !config.enabled) {

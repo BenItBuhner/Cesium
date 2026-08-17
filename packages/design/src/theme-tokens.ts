@@ -16,6 +16,7 @@ export type ThemeTokens = {
   "--bg-card-hover": string;
   "--bg-tab-active": string;
   "--bg-tab-inactive": string;
+  "--bg-deep": string;
   "--border-card": string;
   "--border-subtle": string;
   "--text-primary": string;
@@ -24,6 +25,9 @@ export type ThemeTokens = {
   "--accent": string;
   "--accent-dark": string;
   "--accent-bg": string;
+  "--status-success": string;
+  "--status-warning": string;
+  "--status-error": string;
   "--plan-accent": string;
   "--plan-accent-dark": string;
   "--plan-accent-bg": string;
@@ -93,6 +97,7 @@ const TOKEN_KEYS = [
   "--bg-card-hover",
   "--bg-tab-active",
   "--bg-tab-inactive",
+  "--bg-deep",
   "--border-card",
   "--border-subtle",
   "--text-primary",
@@ -101,6 +106,9 @@ const TOKEN_KEYS = [
   "--accent",
   "--accent-dark",
   "--accent-bg",
+  "--status-success",
+  "--status-warning",
+  "--status-error",
   "--plan-accent",
   "--plan-accent-dark",
   "--plan-accent-bg",
@@ -176,6 +184,7 @@ export const THEME_TOKEN_GROUPS: { title: string; keys: ThemeTokenKey[] }[] = [
       "--bg-card-hover",
       "--bg-tab-active",
       "--bg-tab-inactive",
+      "--bg-deep",
     ],
   },
   {
@@ -194,6 +203,9 @@ export const THEME_TOKEN_GROUPS: { title: string; keys: ThemeTokenKey[] }[] = [
       "--accent",
       "--accent-dark",
       "--accent-bg",
+      "--status-success",
+      "--status-warning",
+      "--status-error",
       "--plan-accent",
       "--plan-accent-dark",
       "--plan-accent-bg",
@@ -276,6 +288,7 @@ export const DEFAULT_THEME_TOKENS_LIGHT: ThemeTokens = {
   "--bg-card-hover": "#f2f2f2",
   "--bg-tab-active": "#f6f6f6",
   "--bg-tab-inactive": "rgba(246, 246, 246, 0.55)",
+  "--bg-deep": "color-mix(in srgb, var(--bg-main) 96%, #000000 4%)",
   "--border-card": "#eaeaea",
   "--border-subtle": "#eaeaea",
   "--text-primary": "#1a1a1a",
@@ -284,6 +297,9 @@ export const DEFAULT_THEME_TOKENS_LIGHT: ThemeTokens = {
   "--accent": "#1a1a1a",
   "--accent-dark": "#333333",
   "--accent-bg": "rgba(0, 0, 0, 0.08)",
+  "--status-success": "#1a7f37",
+  "--status-warning": "#9a6700",
+  "--status-error": "#cf222e",
   "--plan-accent": "#9a7f1a",
   "--plan-accent-dark": "#7d6615",
   "--plan-accent-bg": "#ebe4d0",
@@ -354,6 +370,7 @@ export const DEFAULT_THEME_TOKENS_DARK: ThemeTokens = {
   "--bg-card-hover": "#2a2a2a",
   "--bg-tab-active": "#141414",
   "--bg-tab-inactive": "rgba(20, 20, 20, 0.35)",
+  "--bg-deep": "color-mix(in srgb, var(--bg-main) 72%, #000000 28%)",
   "--border-card": "#383838",
   "--border-subtle": "#242424",
   "--text-primary": "#ffffff",
@@ -362,6 +379,9 @@ export const DEFAULT_THEME_TOKENS_DARK: ThemeTokens = {
   "--accent": "#ffffff",
   "--accent-dark": "#e8e8e8",
   "--accent-bg": "rgba(255, 255, 255, 0.1)",
+  "--status-success": "#4ade80",
+  "--status-warning": "#f59e0b",
+  "--status-error": "#e5484d",
   "--plan-accent": "#c2a738",
   "--plan-accent-dark": "#b79e38",
   "--plan-accent-bg": "#494639",

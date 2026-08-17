@@ -161,7 +161,7 @@ export function EditorTab({
       <div className="relative mr-[6px] flex size-[22px] shrink-0 items-center justify-center">
         {tab.dirty ? (
           <span
-            className="tab-dirty-dot pointer-events-none size-[8px] rounded-full bg-white"
+            className="tab-dirty-dot pointer-events-none size-[8px] rounded-full bg-[var(--text-primary)]"
             aria-hidden
           />
         ) : null}

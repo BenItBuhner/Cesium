@@ -325,7 +325,7 @@ export function ComposerStatusBar({
                 ) : null}
               </button>
               {goalSummaryOpen ? (
-                <div className="absolute bottom-[calc(100%+7px)] right-0 z-50 max-h-[360px] w-[min(440px,calc(100vw-24px))] overflow-auto rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px] shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+                <div className="absolute bottom-[calc(100%+7px)] right-0 z-50 max-h-[360px] w-[min(440px,calc(100vw-24px))] overflow-auto rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px] shadow-[var(--palette-shadow)]">
                   <div className="mb-[10px] flex items-center justify-between gap-[12px]">
                     <div>
                       <div className="font-sans text-[12px] font-semibold text-[var(--text-primary)]">

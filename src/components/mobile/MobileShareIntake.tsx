@@ -13,6 +13,7 @@ import {
   BACK_INTENT_PRIORITY,
   useBackHandler,
 } from "@/components/mobile/BackIntentContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { uploadAttachments } from "@/lib/server-api";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
@@ -73,6 +74,7 @@ export function MobileShareIntake() {
     standaloneDraftActive,
     startNewConversation,
   } = useAgentShellState();
+  const { activeWorkspaceId } = useWorkspace();
   const { upsertComposerDraft } = useOpenInEditor();
   const [payload, setPayload] = useState<MobileSharePayload | null>(null);
   const [busy, setBusy] = useState(false);
@@ -177,6 +179,7 @@ export function MobileShareIntake() {
           // in the composer the landing actually renders.
           const draftId =
             standaloneDraftActive ||
+            !activeWorkspaceId ||
             (activeWorkspaceGroup != null &&
               isStandaloneChatWorkspace(activeWorkspaceGroup.workspace))
               ? AGENT_STANDALONE_COMPOSER_DRAFT_ID
@@ -192,6 +195,7 @@ export function MobileShareIntake() {
     },
     [
       activeWorkspaceGroup,
+      activeWorkspaceId,
       applyToDraft,
       busy,
       openConversationSummary,
@@ -280,7 +284,7 @@ export function MobileShareIntake() {
         </div>
 
         {error ? (
-          <div className="border-b border-[var(--border-subtle)] px-[16px] py-[8px] text-[12px] text-red-400">
+          <div className="border-b border-[var(--border-subtle)] px-[16px] py-[8px] text-[12px] text-[var(--status-error)]">
             {error}
           </div>
         ) : null}

@@ -792,7 +792,7 @@ function CustomProviderModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/45 p-[16px]"
+      className="fixed inset-0 z-[10060] flex items-center justify-center bg-[var(--palette-backdrop)] p-[16px]"
       role="presentation"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -1111,7 +1111,7 @@ function ProfileEditorModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/45 p-[16px]"
+      className="fixed inset-0 z-[10060] flex items-center justify-center bg-[var(--palette-backdrop)] p-[16px]"
       role="presentation"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -2251,7 +2251,7 @@ function CesiumAgentHarnessSettings() {
                 return (
                 <div
                   key={feature.id}
-                  className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-[10px]"
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] p-[10px]"
                 >
                   <label className="flex items-start justify-between gap-[12px]">
                     <span>
@@ -2334,7 +2334,7 @@ function CesiumAgentHarnessSettings() {
                     disabled={busy || !enabled}
                     rows={3}
                     spellCheck={false}
-                    className="resize-y rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-[9px] py-[7px] font-mono text-[11px] text-[var(--text-primary)]"
+                    className="resize-y rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-deep)] px-[9px] py-[7px] font-mono text-[11px] text-[var(--text-primary)]"
                     onBlur={(event) => {
                       try {
                         const parsed = JSON.parse(event.currentTarget.value) as unknown;
@@ -2374,7 +2374,7 @@ function CesiumAgentHarnessSettings() {
                     type="number"
                     min={1}
                     max={60000}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.pluginHookTimeoutMs ?? 5000}
                     disabled={busy}
                     onChange={(event) => {
@@ -2398,7 +2398,7 @@ function CesiumAgentHarnessSettings() {
                     type="number"
                     min={1}
                     max={86400}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.waitMaxSeconds ?? 86400}
                     disabled={busy}
                     onChange={(event) => {
@@ -2426,7 +2426,7 @@ function CesiumAgentHarnessSettings() {
                   <input
                     type="number"
                     min={1000}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.waitAgentDefaultTimeoutMs ?? 30000}
                     disabled={busy}
                     onChange={(event) => {
@@ -2454,7 +2454,7 @@ function CesiumAgentHarnessSettings() {
                   <input
                     type="number"
                     min={1}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.waitAgentMinTimeoutMs ?? 1000}
                     disabled={busy}
                     onChange={(event) => {
@@ -2483,7 +2483,7 @@ function CesiumAgentHarnessSettings() {
                     type="number"
                     min={1000}
                     max={3600000}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.waitAgentMaxTimeoutMs ?? 1_800_000}
                     disabled={busy}
                     onChange={(event) => {
@@ -2515,7 +2515,7 @@ function CesiumAgentHarnessSettings() {
                     type="number"
                     min={1}
                     max={64}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
                     value={settings.harness?.limits.maxConcurrentSubagents ?? 8}
                     disabled={busy}
                     onChange={(event) => {

@@ -96,7 +96,7 @@ function InlineCodeAndBold({ text }: { text: string }): ReactNode {
       return (
         <code
           key={idx}
-          className="rounded-[3px] bg-white/[0.08] px-[4px] py-[1px] font-mono text-[12px] text-[#a5d6a7]"
+          className="rounded-[3px] bg-[var(--accent-bg)] px-[4px] py-[1px] font-mono text-[12px] text-[var(--ask-accent)]"
         >
           {part.slice(1, -1)}
         </code>

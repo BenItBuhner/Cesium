@@ -1477,27 +1477,6 @@ export function ChatComposer({
     ]
   );
 
-  const promptAttachLink = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.prompt("Attach a link (https://…)");
-    if (!raw) return;
-    const token = createLinkReferenceToken(raw);
-    if (!token) {
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "warning",
-        title: "Invalid link",
-        message: "Enter a full http(s) URL to attach.",
-        autoDismissMs: 5000,
-        compact: true,
-      });
-      return;
-    }
-    const next = replaceSelection(valueRef.current, selectionRef.current, token);
-    setComposerValue(next.value);
-    setComposerSelection(next.selection);
-  }, [createLinkReferenceToken, pushNotification, setComposerSelection, setComposerValue]);
-
   const flashComposerError = useCallback(
   (message: string) => {
     pushNotification({
@@ -3711,7 +3690,7 @@ const handleNativeComposerKeyDown = useCallback(
         ) : pendingVoiceRecording ? (
           <RotateCcw
             className={`size-[14px] shrink-0 ${
-              isPrimary ? primaryIconClassName : "text-amber-500"
+              isPrimary ? primaryIconClassName : "text-[var(--status-warning)]"
             }`}
             strokeWidth={1.75}
             aria-hidden
@@ -3730,7 +3709,6 @@ const handleNativeComposerKeyDown = useCallback(
         disabled={configLocked}
         onPickFiles={() => anyFileInputRef.current?.click()}
         onPickMedia={() => fileInputRef.current?.click()}
-        onAttachLink={promptAttachLink}
       />
     );
 
@@ -4377,7 +4355,6 @@ const handleNativeComposerKeyDown = useCallback(
             variant="icon"
             onPickFiles={() => anyFileInputRef.current?.click()}
             onPickMedia={() => fileInputRef.current?.click()}
-            onAttachLink={promptAttachLink}
           />
           <input
             ref={fileInputRef}

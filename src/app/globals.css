@@ -127,6 +127,11 @@
 :root {
   /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
   --editor-window-chrome-tab-inset: 72px;
+  /*
+   * `--text-tertiary` is only overridden by the dark Aurora glass surface
+   * (below); alias it to a real token here so usages resolve on every theme.
+   */
+  --text-tertiary: var(--text-disabled);
 }
 
 * {
@@ -536,30 +541,38 @@ html.dark .landing-shot-dark {
 /**
  * Mobile drawers (left workspace rail / right workbench pane).
  *
- * The left rail drawer is translucent with a backdrop blur: the dimmed chat
- * glows through, which keeps the narrow phone layout feeling like one layered
+ * Both drawers are translucent with a backdrop blur: the dimmed chat glows
+ * through, which keeps the narrow phone layout feeling like one layered
  * surface instead of a hard context switch. The rail's own root paints the
  * opaque panel background, so the direct child override makes it transparent
- * only inside the drawer. The right pane stays opaque: it hosts editors, web
- * previews and terminals that need maximum contrast and it usually covers the
- * full viewport anyway.
+ * only inside the drawer. The right pane's surface stack is deeper: the side
+ * pane root and the editor surface both paint full-bleed fills (opaque
+ * normally, translucent-without-blur under the aurora scene), so those two
+ * are cleared explicitly for the frost to show through. Narrow bands like
+ * the tab strip keep their own fills for contrast.
  */
-.mobile-left-drawer-surface {
+.mobile-left-drawer-surface,
+.mobile-right-drawer-surface {
   background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
   backdrop-filter: blur(22px) saturate(160%);
 }
 
-.mobile-left-drawer-surface > * {
+.mobile-left-drawer-surface > *,
+.mobile-right-drawer-surface .agent-side-pane,
+.mobile-right-drawer-surface .aurora-editor-surface {
   background: transparent !important;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .mobile-left-drawer-surface {
+  .mobile-left-drawer-surface,
+  .mobile-right-drawer-surface {
     background: var(--bg-panel);
   }
 
-  .mobile-left-drawer-surface > * {
+  .mobile-left-drawer-surface > *,
+  .mobile-right-drawer-surface .agent-side-pane,
+  .mobile-right-drawer-surface .aurora-editor-surface {
     background: var(--bg-panel) !important;
   }
 }

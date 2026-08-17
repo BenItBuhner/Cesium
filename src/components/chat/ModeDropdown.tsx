@@ -275,7 +275,7 @@ export function ModeDropdown({
                     onModeChange?.(opt.id);
                     setOpen(false);
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06]"
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-[var(--accent-bg)]"
                 >
                   <Icon
                     className="size-[15px] shrink-0"

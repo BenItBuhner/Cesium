@@ -334,6 +334,49 @@ export async function openEngineWorkspace(
   return body.workspace;
 }
 
+/**
+ * Starts a first conversation with no workspace at all: the engine spins up an
+ * ephemeral standalone-chat sandbox. This is the onboarding fallback when the
+ * user does not care to create or open a workspace.
+ */
+export async function createEngineStandaloneConversationWithPrompt(
+  baseUrl: string,
+  input: {
+    backendId: string;
+    modelId?: string;
+    modelName?: string;
+    text: string;
+  }
+): Promise<{ conversationId: string; title: string; workspaceId: string }> {
+  const response = await engineFetch(
+    baseUrl,
+    "/api/agents/conversations/standalone/create-and-prompt",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        conversation: {
+          backendId: input.backendId,
+          ...(input.modelId ? { modelId: input.modelId } : {}),
+          ...(input.modelName ? { modelName: input.modelName } : {}),
+        },
+        text: input.text,
+      }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const body = (await response.json()) as {
+    snapshot: { conversation: { id: string; title: string } };
+    workspace: { id: string };
+  };
+  return {
+    conversationId: body.snapshot.conversation.id,
+    title: body.snapshot.conversation.title,
+    workspaceId: body.workspace.id,
+  };
+}
+
 export async function createEngineConversationWithPrompt(
   baseUrl: string,
   workspaceId: string,

@@ -12,6 +12,7 @@
   --bg-card-hover: #f2f2f2;
   --bg-tab-active: #f6f6f6;
   --bg-tab-inactive: rgba(246, 246, 246, 0.55);
+  --bg-deep: color-mix(in srgb, var(--bg-main) 96%, #000000 4%);
   --border-card: #eaeaea;
   --border-subtle: #eaeaea;
   --text-primary: #1a1a1a;
@@ -20,6 +21,9 @@
   --accent: #1a1a1a;
   --accent-dark: #333333;
   --accent-bg: rgba(0, 0, 0, 0.08);
+  --status-success: #1a7f37;
+  --status-warning: #9a6700;
+  --status-error: #cf222e;
   --plan-accent: #9a7f1a;
   --plan-accent-dark: #7d6615;
   --plan-accent-bg: #ebe4d0;
@@ -93,9 +97,9 @@
   --d2-composer-send-size: 24px;
   --d2-card-border-width: 1px;
   --d2-rail-control-size: 18px;
-  --agent-plus-button-bg: #eaeaea;
-  --agent-plus-button-bg-hover: #e0e0e0;
-  --agent-plus-button-icon: #767676;
+  --agent-plus-button-bg: color-mix(in srgb, var(--text-primary) 6%, var(--bg-main) 94%);
+  --agent-plus-button-bg-hover: color-mix(in srgb, var(--text-primary) 11%, var(--bg-main) 89%);
+  --agent-plus-button-icon: var(--text-secondary);
   --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 68%, #737373 32%);
   --tab-unread-completion-dot: #4a76a8;
 }
@@ -109,6 +113,7 @@ html.dark {
   --bg-card-hover: #2a2a2a;
   --bg-tab-active: #141414;
   --bg-tab-inactive: rgba(20, 20, 20, 0.35);
+  --bg-deep: color-mix(in srgb, var(--bg-main) 72%, #000000 28%);
   --border-card: #383838;
   --border-subtle: #242424;
   --text-primary: #ffffff;
@@ -117,6 +122,9 @@ html.dark {
   --accent: #ffffff;
   --accent-dark: #e8e8e8;
   --accent-bg: rgba(255, 255, 255, 0.1);
+  --status-success: #4ade80;
+  --status-warning: #f59e0b;
+  --status-error: #e5484d;
   --plan-accent: #c2a738;
   --plan-accent-dark: #b79e38;
   --plan-accent-bg: #494639;
@@ -175,8 +183,8 @@ html.dark {
   --palette-icon-css: #d4d4d4;
   --palette-icon-ts: #519aba;
   --palette-icon-fallback: #7f7f7f;
-  --agent-plus-button-bg: #303030;
-  --agent-plus-button-bg-hover: #3a3a3a;
+  --agent-plus-button-bg: color-mix(in srgb, var(--text-primary) 11%, var(--bg-main) 89%);
+  --agent-plus-button-bg-hover: color-mix(in srgb, var(--text-primary) 16%, var(--bg-main) 84%);
   --agent-plus-button-icon: var(--text-secondary);
   --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
   --tab-unread-completion-dot: #6b9fd4;
@@ -191,6 +199,7 @@ html.dark {
   --color-bg-card-hover: var(--bg-card-hover);
   --color-bg-tab-active: var(--bg-tab-active);
   --color-bg-tab-inactive: var(--bg-tab-inactive);
+  --color-bg-deep: var(--bg-deep);
   --color-border-card: var(--border-card);
   --color-border-subtle: var(--border-subtle);
   --color-text-primary: var(--text-primary);
@@ -199,6 +208,9 @@ html.dark {
   --color-accent: var(--accent);
   --color-accent-dark: var(--accent-dark);
   --color-accent-bg: var(--accent-bg);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
   --color-plan-accent: var(--plan-accent);
   --color-plan-accent-dark: var(--plan-accent-dark);
   --color-plan-accent-bg: var(--plan-accent-bg);

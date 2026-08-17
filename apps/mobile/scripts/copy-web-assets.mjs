@@ -24,6 +24,55 @@ const flattenCascadeLayers = {
   },
 };
 
+// Chromium 83 (Android 11 WebView) predates the `inset` family of shorthands
+// (Chromium 87) and `overflow: clip` (Chromium 90). Without `inset`, Tailwind
+// utilities like `inset-0` are dropped and absolutely-positioned shells and
+// drawers collapse into normal flow. Without `clip`, overflow falls back to
+// `visible` and off-canvas panes create scrollable overflow. Emit longhand /
+// `hidden` fallbacks; modern engines keep the later original declarations.
+const INSET_LONGHANDS = {
+  inset: ["top", "right", "bottom", "left"],
+  "inset-block": ["top", "bottom"],
+  "inset-inline": ["left", "right"],
+};
+const legacyWebViewFallbacks = {
+  postcssPlugin: "cesium-legacy-webview-fallbacks",
+  Declaration(decl) {
+    if (decl.__cesiumLegacyHandled) return;
+    decl.__cesiumLegacyHandled = true;
+    const sides = INSET_LONGHANDS[decl.prop];
+    if (sides) {
+      const v = decl.value.trim().split(/\s+(?![^(]*\))/);
+      if (v.length >= 1 && v.length <= 4) {
+        // `inset` expands like margin (t r b l); the -block/-inline forms
+        // take at most two values (start, end). Assume horizontal-tb LTR.
+        const bySide =
+          decl.prop === "inset"
+            ? { top: v[0], right: v[1] ?? v[0], bottom: v[2] ?? v[0], left: v[3] ?? v[1] ?? v[0] }
+            : decl.prop === "inset-block"
+              ? { top: v[0], bottom: v[1] ?? v[0] }
+              : { left: v[0], right: v[1] ?? v[0] };
+        for (const side of sides) {
+          const clone = decl.clone({ prop: side, value: bySide[side] });
+          clone.__cesiumLegacyHandled = true;
+          decl.before(clone);
+        }
+      }
+      return;
+    }
+    if (
+      (decl.prop === "overflow" ||
+        decl.prop === "overflow-x" ||
+        decl.prop === "overflow-y") &&
+      /\bclip\b/.test(decl.value)
+    ) {
+      const clone = decl.clone({ value: decl.value.replace(/\bclip\b/g, "hidden") });
+      clone.__cesiumLegacyHandled = true;
+      decl.before(clone);
+    }
+  },
+};
+
 async function ensureBuiltSource() {
   try {
     if ((await stat(source)).isDirectory()) return;
@@ -59,7 +108,7 @@ for (const filename of await readdir(assetsDir)) {
   if (!filename.endsWith(".css")) continue;
   const cssPath = resolve(assetsDir, filename);
   const sourceCss = await readFile(cssPath, "utf8");
-  const result = await postcss([flattenCascadeLayers]).process(sourceCss, {
+  const result = await postcss([flattenCascadeLayers, legacyWebViewFallbacks]).process(sourceCss, {
     from: cssPath,
     to: cssPath,
   });

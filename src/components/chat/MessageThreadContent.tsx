@@ -7,12 +7,11 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
   type RefObject,
 } from "react";
 import { StickyChatHeader } from "./StickyChatHeader";
-import { CHAT_STICKY_RAIL_INSET_PX, getChatStickyRailInsetPx } from "./chat-sticky-rail";
+import { getChatStickyRailInsetPx } from "./chat-sticky-rail";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
@@ -69,187 +68,6 @@ const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
   "turn-footer",
 ]);
 
-type ChatVirtualItem = {
-  index: number;
-  start: number;
-  size: number;
-  end: number;
-};
-
-export function findVirtualStickyUserTurn(
-  segments: MessageThreadSegment[],
-  virtualItems: readonly ChatVirtualItem[],
-  scrollTop: number,
-  railInsetPx = getChatStickyRailInsetPx()
-): number | null {
-  const anchor = scrollTop + railInsetPx;
-  let activeIndex: number | null = null;
-  let activeStart = -Infinity;
-
-  for (const item of virtualItems) {
-    const segment = segments[item.index];
-    if (segment?.type !== "turn") {
-      continue;
-    }
-    const end = item.end ?? item.start + item.size;
-    if (item.start <= anchor && end > anchor && item.start >= activeStart) {
-      activeIndex = item.index;
-      activeStart = item.start;
-    }
-  }
-
-  return activeIndex;
-}
-
-function useStickyScrollTop(
-  enabled: boolean,
-  scrollRootRef: RefObject<HTMLElement | null> | undefined
-): number {
-  const [scrollTop, setScrollTop] = useState(0);
-  const rafRef = useRef<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (!enabled || !scrollRootRef) {
-      setScrollTop(0);
-      return;
-    }
-
-    const root = scrollRootRef.current;
-    if (!root) {
-      return;
-    }
-
-    const syncNow = () => {
-      setScrollTop((current) => {
-        const next = Math.round(root.scrollTop);
-        return current === next ? current : next;
-      });
-    };
-    const scheduleSync = () => {
-      if (rafRef.current != null) {
-        return;
-      }
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        syncNow();
-      });
-    };
-
-    syncNow();
-    root.addEventListener("scroll", scheduleSync, { passive: true });
-    window.addEventListener("resize", scheduleSync);
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleSync);
-    resizeObserver?.observe(root);
-
-    return () => {
-      root.removeEventListener("scroll", scheduleSync);
-      window.removeEventListener("resize", scheduleSync);
-      resizeObserver?.disconnect();
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [enabled, scrollRootRef]);
-
-  return scrollTop;
-}
-
-function VirtualStickyUserHeader({
-  turn,
-  messages,
-  pushUpPx = 0,
-  onRedoMessage,
-  renderUserMessageEditor,
-  editingUserMessageId,
-  composerDraftId,
-}: {
-  turn: UserTurnSegment;
-  messages: ChatMessage[];
-  pushUpPx?: number;
-  onRedoMessage?: (message: ChatMessage) => void;
-  renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
-  editingUserMessageId?: string | null;
-  composerDraftId?: string | null;
-}) {
-  const userMsg = messages[turn.userIndex];
-  if (!userMsg || userMsg.type !== "user") {
-    return null;
-  }
-
-  const userMessage =
-    editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
-      renderUserMessageEditor(userMsg)
-    ) : (
-      <UserMessage
-        content={userMsg.content}
-        segments={userMsg.segments}
-        attachments={userMsg.attachments}
-        showReplyCue={userMsg.showReplyCue}
-        highlight={userMsg.isHandoffMessage}
-        composerDraftId={composerDraftId}
-        onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
-      />
-    );
-
-  return (
-    <div
-      data-chat-message-id={userMsg.id}
-      data-electron-no-drag
-      className="sticky z-30 h-0 transition-[top] duration-75"
-      style={{
-        top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px - ${pushUpPx}px)`,
-      }}
-    >
-      <div className="pb-[10px]" data-electron-no-drag>
-        {turn.userKind === "user_todo" ? (
-          <div className="flex flex-col">
-            {userMessage}
-            {messages[turn.todoIndex]?.type === "todo" ? (
-              <TodoCard
-                label={messages[turn.todoIndex]?.todoLabel ?? "Todo list"}
-                todos={messages[turn.todoIndex]?.todos ?? []}
-                meldUserAbove
-                embeddedInSticky
-              />
-            ) : (
-              <TodoStatusCard content={messages[turn.todoIndex]?.content ?? ""} meldUserAbove />
-            )}
-          </div>
-        ) : (
-          userMessage
-        )}
-      </div>
-    </div>
-  );
-}
-
-function smoothstep01(t: number): number {
-  const x = Math.min(1, Math.max(0, t));
-  return x * x * (3 - 2 * x);
-}
-
-function virtualStickyPushPx(
-  activeIndex: number | null,
-  segments: MessageThreadSegment[],
-  virtualItems: readonly ChatVirtualItem[],
-  scrollTop: number
-): number {
-  if (activeIndex == null) return 0;
-  const nextTurnIndex = segments.findIndex(
-    (segment, index) => index > activeIndex && segment.type === "turn"
-  );
-  if (nextTurnIndex < 0) return 0;
-  const nextItem = virtualItems.find((item) => item.index === nextTurnIndex);
-  if (!nextItem) return 0;
-  const pushZonePx = 220;
-  const anchor = scrollTop + getChatStickyRailInsetPx();
-  const dist = nextItem.start - anchor;
-  if (dist >= pushZonePx) return 0;
-  return Math.round(smoothstep01((pushZonePx - dist) / pushZonePx) * 90);
-}
-
 export function workedSessionScopedKey(conversationId: string, messageId: string): string {
   return `${conversationId}::${messageId}`;
 }
@@ -299,7 +117,8 @@ export interface MessageThreadContentProps {
   workspaceRoot?: string | null;
   /**
    * Window long threads with @tanstack/react-virtual. Turn blocks use `top` (not `transform`) so
-   * inner `position: sticky` can use the main scrollport.
+   * each turn's `position: sticky` user header pins against the main scrollport, clamped inside
+   * its own absolutely-positioned row (which is the header's containing block).
    */
   virtualize?: boolean;
   /** Callback when user clicks the fork button on a user message. messageId is the ChatMessage.id. */
@@ -414,15 +233,21 @@ export function MessageThreadContent({
     }
   }, []);
 
-  const useVirtualStickyOverlay =
-    !!stickyUserHeader && virtualize && messages.length >= 16 && scrollRootRef != null;
-  const useInlineStickyHeaders = !!stickyUserHeader && !useVirtualStickyOverlay;
+  const useVirtualList = virtualize && messages.length >= 16 && scrollRootRef != null;
+
+  /**
+   * Non-virtual threads stack every turn in one flow parent, so older headers must be pushed
+   * off with scroll-driven math. Virtual rows are each their own containing block: CSS clamps
+   * the sticky header inside its turn and hands off to the next turn natively (and entirely on
+   * the compositor, which keeps slow WebViews in sync), so no push math is needed there.
+   */
+  const useScriptedStickyPush = !!stickyUserHeader && !useVirtualList;
 
   const pushFor = useChatStickyPush(
     scrollRootRef,
     stickyElMapRef,
     messages,
-    useInlineStickyHeaders
+    useScriptedStickyPush
   );
 
   const lastWorkedSessionIndex = useMemo(
@@ -773,7 +598,7 @@ export function MessageThreadContent({
         );
         return (
           <StickyChatHeader
-            enabled={useInlineStickyHeaders}
+            enabled={!!stickyUserHeader}
             stackOrder={stackOrder}
             pushUpPx={pushFor(stackOrder)}
             registerStickyEl={registerStickyEl}
@@ -804,7 +629,7 @@ export function MessageThreadContent({
       );
       return (
         <StickyChatHeader
-          enabled={useInlineStickyHeaders}
+          enabled={!!stickyUserHeader}
           stackOrder={stackOrder}
           pushUpPx={pushFor(stackOrder)}
           registerStickyEl={registerStickyEl}
@@ -822,7 +647,7 @@ export function MessageThreadContent({
       pushFor,
       registerStickyEl,
       renderUserMessageEditor,
-      useInlineStickyHeaders,
+      stickyUserHeader,
     ]
   );
 
@@ -850,9 +675,6 @@ export function MessageThreadContent({
     },
     [renderMessageAtIndex, renderUserTurnHeader]
   );
-
-  const useVirtualList =
-    virtualize && messages.length >= 16 && scrollRootRef != null;
 
   const virtualizer = useVirtualizer({
     count: useVirtualList ? segments.length : 0,
@@ -1021,33 +843,6 @@ export function MessageThreadContent({
   ]);
 
   const virtualItems = useVirtualList ? virtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS;
-  const virtualStickyScrollTop = useStickyScrollTop(
-    useVirtualStickyOverlay && useVirtualList,
-    scrollRootRef
-  );
-  const activeVirtualStickyIndex = useMemo(
-    () =>
-      useVirtualStickyOverlay && useVirtualList
-        ? findVirtualStickyUserTurn(segments, virtualItems, virtualStickyScrollTop)
-        : null,
-    [segments, useVirtualList, useVirtualStickyOverlay, virtualItems, virtualStickyScrollTop]
-  );
-  const activeVirtualStickyTurn =
-    activeVirtualStickyIndex == null
-      ? null
-      : segments[activeVirtualStickyIndex]?.type === "turn"
-        ? segments[activeVirtualStickyIndex]
-        : null;
-  const activeVirtualStickyPushPx = useMemo(
-    () =>
-      virtualStickyPushPx(
-        activeVirtualStickyIndex,
-        segments,
-        virtualItems,
-        virtualStickyScrollTop
-      ),
-    [activeVirtualStickyIndex, segments, virtualItems, virtualStickyScrollTop]
-  );
 
   if (useVirtualList) {
     return (
@@ -1055,17 +850,6 @@ export function MessageThreadContent({
         className="relative w-full"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
       >
-        {activeVirtualStickyTurn ? (
-          <VirtualStickyUserHeader
-            turn={activeVirtualStickyTurn}
-            messages={messages}
-            pushUpPx={activeVirtualStickyPushPx}
-            onRedoMessage={onRedoMessage}
-            renderUserMessageEditor={renderUserMessageEditor}
-            editingUserMessageId={editingUserMessageId}
-            composerDraftId={composerDraftId}
-          />
-        ) : null}
         {virtualItems.map((item) => {
           const seg = segments[item.index];
           if (!seg) {

@@ -37,9 +37,38 @@ export type MobileLifecycleState = "active" | "background" | "inactive";
  */
 export type MobileLiveUpdatePreference = "live" | "basic" | "off";
 
+/**
+ * When a live-notification alert may make noise / appear at all:
+ * "always"     — regardless of app state.
+ * "background" — only while the app is not in the foreground; agents
+ *                completing while the user is looking at the app stay quiet.
+ * "off"        — never.
+ */
+export type MobileNotificationAlertMode = "always" | "background" | "off";
+
+/**
+ * Per-category alert behavior for agent live notifications.
+ * `completion` controls whether the terminal (finished/failed/cancelled)
+ * notification is posted at all; `intervention` controls whether
+ * needs-input transitions alert (the ongoing notification itself always
+ * stays current).
+ */
+export type MobileNotificationAlertPreferences = {
+  completion: MobileNotificationAlertMode;
+  intervention: MobileNotificationAlertMode;
+};
+
+export const DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES: MobileNotificationAlertPreferences =
+  {
+    completion: "background",
+    intervention: "always",
+  };
+
 export type MobileNativeStatus = {
   liveUpdates: {
     preference: MobileLiveUpdatePreference;
+    /** Absent on native shells that predate configurable alert behavior. */
+    alertPreferences?: MobileNotificationAlertPreferences;
     sdkInt: number;
     progressStyleSupported: boolean;
     canPostPromotedNotifications: boolean;
@@ -167,6 +196,10 @@ export type MobileWebToNativeMessage =
   | { type: "webRuntimeError"; message: string; source?: string; line?: number }
   | { type: "getMobileNativeStatus" }
   | { type: "setLiveUpdatePreference"; preference: MobileLiveUpdatePreference }
+  | {
+      type: "setNotificationAlertPreferences";
+      preferences: MobileNotificationAlertPreferences;
+    }
   | { type: "openLiveUpdatePromotionSettings" }
   /** Best-effort deep link into Samsung's Now Bar settings. */
   | { type: "openNowBarSettings" }

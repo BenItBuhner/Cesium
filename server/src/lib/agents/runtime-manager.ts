@@ -1827,6 +1827,16 @@ export class AgentRuntimeManager {
     await this.disposeRuntimeIfUnused(record);
   }
 
+  /**
+   * Whether an in-process provider runtime currently exists for this
+   * conversation. Runs cannot survive without one: a conversation persisted
+   * as busy with no live runtime (crashed provider, server restart) is stuck
+   * and must be reconciled to a terminal status.
+   */
+  hasLiveRuntime(conversationId: string): boolean {
+    return this.runtimes.has(conversationId);
+  }
+
   async disposeRuntime(conversationId: string): Promise<void> {
     this.clearIdleDisposeTimer(conversationId);
     const runtime = this.runtimes.get(conversationId);

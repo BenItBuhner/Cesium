@@ -34,6 +34,10 @@ import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
+import {
+  reconcileStaleAgentRunsOnBoot,
+  startStaleAgentRunWatchdog,
+} from "./lib/agents/stale-run-reconciler.js";
 import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
 import { startUpdateAutoCheck } from "./lib/updates/update-manager.js";
@@ -208,5 +212,18 @@ export function startCesiumBackgroundServices(): void {
   startUpdateAutoCheck();
   if (process.env.NODE_ENV !== "test") {
     startCesiumTriggerScheduler();
+  }
+  // The reconciler mutates persisted conversations, so it must never run
+  // inside test processes that boot the app (NODE_TEST_CONTEXT is set by the
+  // node:test runner even when NODE_ENV is not).
+  if (process.env.NODE_ENV !== "test" && !process.env.NODE_TEST_CONTEXT) {
+    // Conversations persisted as busy by a previous server process are stuck
+    // (runtimes are in-memory only); interrupt them so clients stop showing
+    // an eternal "Working" state, then keep watching for runs whose provider
+    // runtime dies without settling the turn.
+    void reconcileStaleAgentRunsOnBoot().catch((error) => {
+      console.error("[agent-reconcile] boot sweep failed:", error);
+    });
+    startStaleAgentRunWatchdog();
   }
 }

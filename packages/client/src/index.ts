@@ -31,6 +31,7 @@ export * from "./global-settings";
 export * from "./aurora-settings";
 export * from "./rail-fetch";
 export * from "./server-api";
+export * from "./update-status";
 export * from "./preferences";
 export * from "./preferences-dom";
 export * from "./platform-feature-flags";

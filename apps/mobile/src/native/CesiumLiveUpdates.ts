@@ -1,5 +1,10 @@
 import { NativeModules, Platform } from "react-native";
-import type { LiveUpdatePayload, LiveUpdateStatus } from "../services/liveUpdateTypes";
+import {
+  DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES,
+  type LiveUpdateAlertPreferences,
+  type LiveUpdatePayload,
+  type LiveUpdateStatus,
+} from "../services/liveUpdateTypes";
 
 type CesiumLiveUpdatesModule = {
   startOrUpdate(payload: LiveUpdatePayload): Promise<LiveUpdateStatus>;
@@ -10,6 +15,11 @@ type CesiumLiveUpdatesModule = {
   setDeliveryPreference(
     preference: LiveUpdateStatus["deliveryPreference"]
   ): Promise<LiveUpdateStatus>;
+  setAlertPreferences(
+    preferences: LiveUpdateAlertPreferences
+  ): Promise<LiveUpdateStatus>;
+  /** Run keys persisted natively as ongoing (restorable) runs. */
+  getActiveRunKeys(): Promise<string[]>;
   openPromotionSettings(): Promise<boolean>;
   /** Resolves with the settings surface that opened, or null. */
   openNowBarSettings(): Promise<"nowbar" | "appNotificationSettings" | null>;
@@ -63,6 +73,26 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
     }
     return nativeModule.setDeliveryPreference(preference);
   },
+  async setAlertPreferences(preferences) {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return { ...fallbackStatus(), alertPreferences: preferences };
+    }
+    // Older native builds predate configurable alerts; treat as best effort.
+    if (typeof nativeModule.setAlertPreferences !== "function") {
+      return { ...fallbackStatus(), alertPreferences: preferences };
+    }
+    return nativeModule.setAlertPreferences(preferences);
+  },
+  async getActiveRunKeys() {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return [];
+    }
+    // Older native builds predate stale-run reconciliation; treat as best effort.
+    if (typeof nativeModule.getActiveRunKeys !== "function") {
+      return [];
+    }
+    return nativeModule.getActiveRunKeys();
+  },
   async openPromotionSettings() {
     if (Platform.OS !== "android" || !nativeModule) {
       return false;
@@ -95,5 +125,6 @@ function fallbackStatus(): LiveUpdateStatus {
     notificationPermissionGranted: false,
     suppressedByDismissal: false,
     deliveryPreference: "live",
+    alertPreferences: DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES,
   };
 }

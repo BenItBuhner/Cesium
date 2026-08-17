@@ -193,7 +193,7 @@ function IssueCard({
             </button>
             <button
               type="button"
-              className={`${smallButtonClass} text-[var(--error-text,var(--text-secondary))]`}
+              className={`${smallButtonClass} text-[var(--status-error)]`}
               onClick={() => {
                 if (window.confirm(`Delete issue "${issue.title}"?`)) {
                   onDelete();
@@ -233,8 +233,8 @@ function IssueCard({
         </ul>
       ) : null}
       {issue.columnId === "blocked" ? (
-        <div className="mt-[8px] rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--warning,#d8a028)_35%,var(--border-card))] bg-[color-mix(in_srgb,var(--warning,#d8a028)_8%,var(--bg-card))] px-[8px] py-[7px]">
-          <p className="font-sans text-[10px] font-semibold uppercase tracking-[0.05em] text-[var(--warning,#b77b00)]">
+        <div className="mt-[8px] rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--status-warning)_35%,var(--border-card))] bg-[color-mix(in_srgb,var(--status-warning)_8%,var(--bg-card))] px-[8px] py-[7px]">
+          <p className="font-sans text-[10px] font-semibold uppercase tracking-[0.05em] text-[var(--status-warning)]">
             Why this is blocked
           </p>
           <p className="mt-[3px] whitespace-pre-wrap font-sans text-[11px] leading-snug text-[var(--text-secondary)]">
@@ -450,7 +450,7 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
           </p>
         </div>
         {error ? (
-          <p className="max-w-[360px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--error-text,var(--text-primary))]">
+          <p className="max-w-[360px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--status-error)]">
             {error}
           </p>
         ) : null}

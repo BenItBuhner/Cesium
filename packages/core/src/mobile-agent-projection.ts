@@ -95,7 +95,12 @@ export function deriveMobileAgentProjection(
     active &&
     previous != null &&
     sameConversation &&
-    isTerminalProjectionStatus(previous.status);
+    (isTerminalProjectionStatus(previous.status) ||
+      // The previous projection may be a stale snapshot from before a
+      // reconnect: if a terminal boundary landed after it, whatever is
+      // active now is a NEW run and must not inherit the old start time
+      // (that is how notifications end up with hours-old elapsed timers).
+      hasTerminalStatusAfter(sortedEvents, previous.lastEventSeq));
   const startedAt =
     sameConversation && previous.startedAt && !startsAfterPreviousRun
       ? previous.startedAt
@@ -169,14 +174,49 @@ function isTerminalProjectionStatus(status: MobileAgentProjection["status"]): bo
   );
 }
 
+function isTerminalEventStatus(status: string): boolean {
+  return (
+    status === "idle" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
+}
+
+function hasTerminalStatusAfter(events: AgentStoredEvent[], afterSeq: number): boolean {
+  return events.some(
+    (event) =>
+      event.seq > afterSeq &&
+      event.kind === "status" &&
+      isTerminalEventStatus(event.status)
+  );
+}
+
+/**
+ * Start time of the CURRENT run. One conversation hosts many runs over time;
+ * the loaded event window can span several of them, so the scan is bounded to
+ * events after the latest terminal status boundary. Picking the first
+ * "running" event of the whole window (the old behavior) anchored the
+ * notification chronometer to a long-finished run, producing wildly stale
+ * elapsed timers.
+ */
 function findRunStartedAt(events: AgentStoredEvent[], afterSeq: number): number | null {
   const runEvents = events.filter((event) => event.seq > afterSeq);
-  const runningStatus = runEvents.find(
+  let boundaryIndex = -1;
+  for (let i = runEvents.length - 1; i >= 0; i--) {
+    const event = runEvents[i];
+    if (event?.kind === "status" && isTerminalEventStatus(event.status)) {
+      boundaryIndex = i;
+      break;
+    }
+  }
+  const currentRunEvents = boundaryIndex >= 0 ? runEvents.slice(boundaryIndex + 1) : runEvents;
+  const runningStatus = currentRunEvents.find(
     (event) => event.kind === "status" && event.status === "running"
   );
   return (
     runningStatus?.createdAt ??
-    runEvents.find((event) => event.kind === "user_message")?.createdAt ??
+    currentRunEvents.find((event) => event.kind === "user_message")?.createdAt ??
     null
   );
 }

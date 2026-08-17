@@ -103,7 +103,11 @@ class CesiumForegroundService : Service() {
   }
 
   private fun restoreRuns(): Int {
-    val runs = CesiumLiveUpdateStateStore.loadRuns(this)
+    // A restore happens with no JS layer alive to correct state, so only
+    // recently updated runs come back; anything older is a stale leftover
+    // whose elapsed chronometer would tick on for an agent that already
+    // finished. The workbench reposts live runs as soon as it reconnects.
+    val runs = CesiumLiveUpdateStateStore.loadRuns(this, RESTORE_MAX_AGE_MS)
     if (runs.isEmpty()) {
       stopSelf()
       return START_NOT_STICKY
@@ -167,5 +171,8 @@ class CesiumForegroundService : Service() {
     const val ACTION_UPDATE = "com.cesium.mobile.agent.UPDATE"
     const val ACTION_STOP = "com.cesium.mobile.agent.STOP"
     const val ACTION_STOP_RUN = "com.cesium.mobile.agent.STOP_RUN"
+
+    /** Maximum age of a persisted run for the process-restart restore path. */
+    const val RESTORE_MAX_AGE_MS = 30L * 60L * 1000L
   }
 }

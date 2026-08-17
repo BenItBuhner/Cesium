@@ -87,6 +87,7 @@ export function AgentNewChatLanding({
     openAgentConversation,
   } = useOpenInEditor();
   const {
+    workspaceInfo,
     workspaceSession,
     openWorkspaceById,
     gitStatus,
@@ -475,7 +476,12 @@ export function AgentNewChatLanding({
                 <span className="max-w-[260px] min-w-0 shrink truncate">
                   {noWorkspaceDraft
                     ? "No workspace"
-                    : (activeWorkspaceGroup?.workspace.name ?? "Select workspace")}
+                    : // The rail-derived group can lag behind a freshly created /
+                      // opened workspace (cached rail payload); the active
+                      // workspace's own name is always current.
+                      (activeWorkspaceGroup?.workspace.name ??
+                        workspaceInfo?.name ??
+                        "Select workspace")}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>

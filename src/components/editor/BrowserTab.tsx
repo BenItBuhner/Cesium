@@ -1654,7 +1654,7 @@ export function BrowserTab({
       </div>
       {consoleError ? (
         <div
-          className="shrink-0 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--danger,#f48771)_18%,transparent)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)]"
+          className="shrink-0 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--status-error)_18%,transparent)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)]"
           role="alert"
         >
           Browser console unavailable: {consoleError}

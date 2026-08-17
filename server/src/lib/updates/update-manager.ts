@@ -64,12 +64,81 @@ let applyInFlight = false;
 let checkInFlight: Promise<PersistedUpdateState> | null = null;
 let autoCheckTimer: ReturnType<typeof setInterval> | null = null;
 
+const UPDATE_CHANNEL_IDS: readonly CesiumUpdateChannelId[] = [
+  "app",
+  "server",
+  "desktop",
+  "mobile",
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Coerce one persisted release into the current schema, or drop it. The state
+ * file survives self-updates in both directions (this install kind exists so
+ * servers can update themselves), so `update-state.json` may have been written
+ * by a build whose release schema differs — most dangerously a release without
+ * `assets`, which crashes clients that render `release.assets.length`.
+ */
+export function sanitizePersistedRelease(
+  value: unknown,
+  fallbackChannel: CesiumUpdateChannelId
+): CesiumUpdateRelease | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.tag !== "string" || typeof value.version !== "string") {
+    return null;
+  }
+  const channel = UPDATE_CHANNEL_IDS.includes(value.channel as CesiumUpdateChannelId)
+    ? (value.channel as CesiumUpdateChannelId)
+    : fallbackChannel;
+  const assets = (Array.isArray(value.assets) ? value.assets : [])
+    .filter(isRecord)
+    .filter(
+      (asset) =>
+        typeof asset.name === "string" && typeof asset.downloadUrl === "string"
+    )
+    .map((asset) => ({
+      name: asset.name as string,
+      size: typeof asset.size === "number" && Number.isFinite(asset.size) ? asset.size : 0,
+      downloadUrl: asset.downloadUrl as string,
+      contentType: typeof asset.contentType === "string" ? asset.contentType : null,
+    }));
+  return {
+    channel,
+    tag: value.tag,
+    version: value.version,
+    name: typeof value.name === "string" ? value.name : null,
+    prerelease: value.prerelease === true,
+    publishedAt: typeof value.publishedAt === "string" ? value.publishedAt : null,
+    htmlUrl: typeof value.htmlUrl === "string" ? value.htmlUrl : null,
+    notes: typeof value.notes === "string" ? value.notes : null,
+    assets,
+  };
+}
+
+function sanitizePersistedChannels(
+  value: unknown
+): Partial<Record<CesiumUpdateChannelId, CesiumUpdateRelease>> {
+  if (!isRecord(value)) return {};
+  const channels: Partial<Record<CesiumUpdateChannelId, CesiumUpdateRelease>> = {};
+  for (const channelId of UPDATE_CHANNEL_IDS) {
+    const release = sanitizePersistedRelease(value[channelId], channelId);
+    if (release) {
+      channels[channelId] = release;
+    }
+  }
+  return channels;
+}
+
 async function loadState(): Promise<PersistedUpdateState> {
   if (cachedState) return cachedState;
   const raw = await readJsonFile<Partial<PersistedUpdateState>>(STATE_FILE, {});
   cachedState = {
     ...DEFAULT_STATE,
     ...raw,
+    channels: sanitizePersistedChannels(raw.channels),
     settings: { ...DEFAULT_UPDATE_SETTINGS, ...(raw.settings ?? {}) },
   };
   return cachedState;

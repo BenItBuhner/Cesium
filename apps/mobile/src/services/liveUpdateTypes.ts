@@ -31,6 +31,24 @@ export type LiveUpdatePayload = {
 
 export type LiveUpdateDeliveryPreference = "live" | "basic" | "off";
 
+/**
+ * When an alerting update may surface: always, only while the app is in the
+ * background, or never. `completion` gates the terminal notification itself
+ * (a user looking at the app already watched the agent finish); `intervention`
+ * only gates the alert sound/heads-up — the ongoing notification still updates.
+ */
+export type LiveUpdateAlertMode = "always" | "background" | "off";
+
+export type LiveUpdateAlertPreferences = {
+  completion: LiveUpdateAlertMode;
+  intervention: LiveUpdateAlertMode;
+};
+
+export const DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES: LiveUpdateAlertPreferences = {
+  completion: "background",
+  intervention: "always",
+};
+
 export type LiveUpdateStatus = {
   sdkInt: number;
   progressStyleSupported: boolean;
@@ -38,6 +56,8 @@ export type LiveUpdateStatus = {
   notificationPermissionGranted: boolean;
   suppressedByDismissal: boolean;
   deliveryPreference: LiveUpdateDeliveryPreference;
+  /** Absent on native builds that predate configurable alert behavior. */
+  alertPreferences?: LiveUpdateAlertPreferences;
   /** Device manufacturer is Samsung (Now Bar renders live updates). */
   isSamsung?: boolean;
   /**

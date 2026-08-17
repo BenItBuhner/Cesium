@@ -121,7 +121,7 @@ function WorkedTodoStatusIcon({ status }: { status: TodoItem["status"] }) {
     );
   }
   if (status === "blocked") {
-    return <Ban className="size-[13px] shrink-0 text-[#f59e0b]" strokeWidth={1.5} aria-hidden />;
+    return <Ban className="size-[13px] shrink-0 text-[var(--status-warning)]" strokeWidth={1.5} aria-hidden />;
   }
   return (
     <Circle className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} aria-hidden />
@@ -144,7 +144,7 @@ function WorkedTodoChecklist({ todos }: { todos: TodoItem[] }) {
             }`}
           >
             {todo.status === "blocked" ? (
-              <span className="mr-[5px] text-[#f59e0b]">Blocked:</span>
+              <span className="mr-[5px] text-[var(--status-warning)]">Blocked:</span>
             ) : null}
             {todo.text}
           </span>
@@ -174,13 +174,13 @@ const toolStatusClass: Record<
   pending:
     "border-[color-mix(in_srgb,var(--border-card)_80%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_82%,transparent)] text-[var(--text-secondary)]",
   running:
-    "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent-text)]",
+    "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]",
   completed:
-    "border-[color-mix(in_srgb,#4ade80_35%,transparent)] bg-[color-mix(in_srgb,#4ade80_12%,transparent)] text-[#86efac]",
+    "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]",
   failed:
-    "border-[color-mix(in_srgb,#fb7185_35%,transparent)] bg-[color-mix(in_srgb,#fb7185_12%,transparent)] text-[#fda4af]",
+    "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_12%,transparent)] text-[var(--status-error)]",
   cancelled:
-    "border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_12%,transparent)] text-[#fcd34d]",
+    "border-[color-mix(in_srgb,var(--status-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] text-[var(--status-warning)]",
 };
 
 function isToolEntryActive(entry: WorkedSessionEntry): boolean {
@@ -1295,9 +1295,9 @@ function renderEntry(
           : active
             ? "text-[var(--text-primary)]"
             : entry.status === "failed"
-              ? "text-[#fda4af]"
+              ? "text-[var(--status-error)]"
               : entry.status === "cancelled"
-                ? "text-[#fcd34d]"
+                ? "text-[var(--status-warning)]"
                 : "text-[var(--text-primary)]";
       const titleClass = `font-sans text-[13px] font-normal leading-snug ${titleTone}`;
       const extraDetail = toolBlockDetail(entry);
