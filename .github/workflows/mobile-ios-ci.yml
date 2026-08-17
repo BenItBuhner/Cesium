@@ -129,6 +129,10 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
 
+          # Host-side probe of the exact endpoint the workbench hits first, so a
+          # backend-side failure is distinguishable from an in-WebView one.
+          curl -is -m 5 http://127.0.0.1:9100/api/auth/status -H "Origin: null" | head -5 || true
+
           xcrun simctl install "$UDID" "$APP_PATH"
           LAUNCH_OUTPUT=$(xcrun simctl launch "$UDID" com.cesium.mobile)
           echo "$LAUNCH_OUTPUT"
@@ -137,7 +141,7 @@ jobs:
           mkdir -p dist/mobile-ios
           sleep 20
           xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_early.png
-          sleep 40
+          sleep 25
           if ! ps -p "$APP_PID" > /dev/null; then
             echo "Cesium crashed on the simulator (pid $APP_PID is gone)." >&2
             ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
@@ -146,8 +150,30 @@ jobs:
             done
             exit 1
           fi
+          echo "Cesium is alive on the simulator (pid $APP_PID) after 45s."
+
+          # Relaunch once everything is warm (simulator, WebKit caches, backend)
+          # so the final screenshot shows a clean boot instead of any first-boot
+          # races, then give the workbench time to connect and render.
+          xcrun simctl terminate "$UDID" com.cesium.mobile || true
+          sleep 3
+          RELAUNCH_OUTPUT=$(xcrun simctl launch "$UDID" com.cesium.mobile)
+          echo "$RELAUNCH_OUTPUT"
+          RELAUNCH_PID="${RELAUNCH_OUTPUT##*: }"
+          sleep 35
+          if ! ps -p "$RELAUNCH_PID" > /dev/null; then
+            echo "Cesium crashed on relaunch (pid $RELAUNCH_PID is gone)." >&2
+            exit 1
+          fi
           xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_workbench.png
-          echo "Cesium is alive on the simulator (pid $APP_PID) after 60s."
+          echo "Cesium is alive on the simulator (pid $RELAUNCH_PID) after relaunch."
+
+          # App-side diagnostics for the artifact bundle: RN forwards workbench
+          # console warnings (e.g. the WebView diagnostic bridge) into os_log.
+          xcrun simctl spawn "$UDID" log show --last 4m \
+            --predicate 'process == "CesiumMobile"' --style compact \
+            > dist/mobile-ios/cesium_ios_app.log 2>/dev/null || true
+          grep -i "cesium webview\|auth request\|load failed" dist/mobile-ios/cesium_ios_app.log | head -40 || true
 
       - name: Prepare app artifact
         run: |

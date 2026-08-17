@@ -4,10 +4,13 @@ import { CesiumIOSRuntime } from "./native/CesiumIOSRuntime";
 import { createLaunchUrlConfig } from "./services/launchConfig";
 
 // Android emulators reach the host through the 10.0.2.2 alias; the iOS
-// simulator shares the host network stack, so plain localhost works there.
-// Physical devices point at a LAN/Tailscale server via in-app configuration.
+// simulator shares the host network stack, so host loopback works there.
+// Numeric 127.0.0.1 on purpose (like Android's numeric alias): "localhost"
+// resolves to ::1 first on Apple platforms and an IPv4-only server leaves the
+// WebKit network process hanging instead of falling back. Physical devices
+// point at a LAN/Tailscale server via in-app configuration.
 export const DEFAULT_ANDROID_SERVER_URL = "http://10.0.2.2:9100";
-export const DEFAULT_IOS_SERVER_URL = "http://localhost:9100";
+export const DEFAULT_IOS_SERVER_URL = "http://127.0.0.1:9100";
 export const DEFAULT_SERVER_URL =
   Platform.OS === "ios" ? DEFAULT_IOS_SERVER_URL : DEFAULT_ANDROID_SERVER_URL;
 
