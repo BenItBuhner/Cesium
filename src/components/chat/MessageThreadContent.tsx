@@ -603,6 +603,8 @@ export function MessageThreadContent({
             pushUpPx={pushFor(stackOrder)}
             registerStickyEl={registerStickyEl}
             dataChatMessageId={userMsg.id}
+            scrollRootRef={scrollRootRef}
+            surface={workedSessionSurface}
           >
             {block}
           </StickyChatHeader>
@@ -634,6 +636,8 @@ export function MessageThreadContent({
           pushUpPx={pushFor(stackOrder)}
           registerStickyEl={registerStickyEl}
           dataChatMessageId={userMsg.id}
+          scrollRootRef={scrollRootRef}
+          surface={workedSessionSurface}
         >
           {inner}
         </StickyChatHeader>
@@ -647,7 +651,9 @@ export function MessageThreadContent({
       pushFor,
       registerStickyEl,
       renderUserMessageEditor,
+      scrollRootRef,
       stickyUserHeader,
+      workedSessionSurface,
     ]
   );
 
