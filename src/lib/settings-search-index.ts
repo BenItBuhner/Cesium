@@ -600,6 +600,20 @@ const MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row(
     "general",
+    "mobile-completion-alerts",
+    "Agent finished notifications",
+    "Choose whether agents that finish, fail, or are cancelled post a notification: always, only while the app is in the background, or never.",
+    ["completion", "finished", "done", "alert", "notification", "background", "foreground"]
+  ),
+  row(
+    "general",
+    "mobile-intervention-alerts",
+    "Needs-input alerts",
+    "Choose when an agent asking a question or requesting permission makes noise: always, only in the background, or silent.",
+    ["permission", "question", "input", "alert", "heads-up", "sound", "silent"]
+  ),
+  row(
+    "general",
     "mobile-now-bar-settings",
     "Samsung Now Bar",
     "Open Samsung's Now Bar settings where Cesium's live notifications appear on the lock screen and AOD.",

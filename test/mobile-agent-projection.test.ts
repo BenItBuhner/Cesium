@@ -209,6 +209,107 @@ describe("mobile agent projection", () => {
     assert.equal(secondRun.startedAt, 3_100);
   });
 
+  test("anchors a fresh derive to the current run, not the first run in the window", () => {
+    // A reloaded client derives with no previous projection but a window that
+    // spans several runs. The chronometer must anchor to the CURRENT run's
+    // start (after the last terminal boundary), not a long-finished one.
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "old-running",
+        conversationId: "c1",
+        createdAt: 10_000,
+        kind: "status",
+        status: "running",
+      },
+      {
+        seq: 2,
+        eventId: "old-idle",
+        conversationId: "c1",
+        createdAt: 20_000,
+        kind: "status",
+        status: "idle",
+      },
+      {
+        seq: 3,
+        eventId: "new-user",
+        conversationId: "c1",
+        createdAt: 500_000,
+        kind: "user_message",
+        messageId: "m2",
+        content: "Again",
+      },
+      {
+        seq: 4,
+        eventId: "new-running",
+        conversationId: "c1",
+        createdAt: 500_100,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const projection = deriveMobileAgentProjection(
+      createConversation({ status: "running", updatedAt: 500_100, lastEventSeq: 4 }),
+      events,
+      { now: 500_500 }
+    );
+    assert.equal(projection.startedAt, 500_100);
+    assert.equal(projection.elapsedMs, 400);
+  });
+
+  test("drops a stale previous start when a terminal boundary landed after it", () => {
+    // The previous projection can be a pre-disconnect snapshot that still
+    // says "running". If the caught-up events show that run ended and a new
+    // one began, the old startedAt must not leak into the new run.
+    const stalePrevious = deriveMobileAgentProjection(
+      createConversation({ status: "running", updatedAt: 1_100, lastEventSeq: 1 }),
+      [
+        {
+          seq: 1,
+          eventId: "first-running",
+          conversationId: "c1",
+          createdAt: 1_100,
+          kind: "status",
+          status: "running",
+        },
+      ],
+      { now: 1_500 }
+    );
+    const caughtUpEvents: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "first-running",
+        conversationId: "c1",
+        createdAt: 1_100,
+        kind: "status",
+        status: "running",
+      },
+      {
+        seq: 2,
+        eventId: "first-idle",
+        conversationId: "c1",
+        createdAt: 2_000,
+        kind: "status",
+        status: "idle",
+      },
+      {
+        seq: 3,
+        eventId: "second-running",
+        conversationId: "c1",
+        createdAt: 900_000,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const next = deriveMobileAgentProjection(
+      createConversation({ status: "running", updatedAt: 900_000, lastEventSeq: 3 }),
+      caughtUpEvents,
+      { now: 900_400, previous: stalePrevious }
+    );
+    assert.equal(next.startedAt, 900_000);
+    assert.equal(next.elapsedMs, 400);
+  });
+
   test("uses the record update time when retrying a terminal run without new events", () => {
     const failed = deriveMobileAgentProjection(
       createConversation({

@@ -240,9 +240,11 @@ export default function App() {
       CesiumLiveUpdates.getPromotionStatus(),
       CesiumPhoneControl.getStatus().catch(() => null),
     ]);
+    liveUpdatesRef.current.setAlertPreferences(liveUpdates.alertPreferences);
     const status: MobileNativeStatus = {
       liveUpdates: {
         preference: liveUpdates.deliveryPreference,
+        alertPreferences: liveUpdates.alertPreferences,
         sdkInt: liveUpdates.sdkInt,
         progressStyleSupported: liveUpdates.progressStyleSupported,
         canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
@@ -305,8 +307,13 @@ export default function App() {
         () => undefined
       );
     }
+    // Seed the controller with the real app state and the persisted alert
+    // preferences (refreshStatus absorbs them) before any projection lands.
+    liveUpdatesRef.current.setAppActive(AppState.currentState === "active");
+    void liveUpdatesRef.current.refreshStatus().catch(() => undefined);
     const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       backgroundCoordinatorRef.current.setAppState(nextState);
+      liveUpdatesRef.current.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
         refreshSafeArea();
@@ -458,6 +465,13 @@ export default function App() {
       }
       if (message.type === "setLiveUpdatePreference") {
         void CesiumLiveUpdates.setDeliveryPreference(message.preference).then(() =>
+          sendNativeStatus()
+        );
+        return;
+      }
+      if (message.type === "setNotificationAlertPreferences") {
+        liveUpdatesRef.current.setAlertPreferences(message.preferences);
+        void CesiumLiveUpdates.setAlertPreferences(message.preferences).then(() =>
           sendNativeStatus()
         );
         return;
