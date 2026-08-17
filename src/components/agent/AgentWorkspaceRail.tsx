@@ -3374,7 +3374,7 @@ export function AgentWorkspaceRail() {
     pinnedRailConversations.length > 0 ||
     standaloneChatConversations.length > 0 ||
     visibleGroups.length > 0 ||
-    railSectionOrder.includes("chats");
+    showStandaloneHomeGroup;
 
   return (
     <>
