@@ -720,7 +720,6 @@ const showRecentChatsSection =
           <MessageList
             key={conversationId}
             messages={scrollMessages}
-            surface="editor"
             contentClassName={EDITOR_CHAT_CONTENT_CLASS}
             conversationId={conversationId}
             composerDraftId={composerDraftId}

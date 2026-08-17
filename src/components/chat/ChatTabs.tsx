@@ -11,9 +11,9 @@ import {
 } from "react";
 import { LoaderCircle, Plus, X } from "lucide-react";
 import {
-  HorizontalScrollFadeOverlays,
   useHorizontalScrollFade,
 } from "@/components/chat/HorizontalFadedScroll";
+import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -187,10 +187,6 @@ export function ChatTabs({
       data-electron-drag-host
     >
       <div className="relative flex min-w-0 flex-1">
-        <HorizontalScrollFadeOverlays
-          fade={stripScrollFade}
-          edgeColorVar="var(--bg-panel)"
-        />
         <div
           ref={stripRef}
           role="tablist"
@@ -199,6 +195,7 @@ export function ChatTabs({
           onDrop={handleStripDrop}
           onContextMenu={handleStripContextMenu}
           className="relative z-0 hide-scrollbar-x flex min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] px-[4px] py-[2px]"
+          style={scrollEdgeMaskStyle(stripScrollFade, { size: 28 })}
         >
         {tabs.map((tab) => {
           const ind = agentTabIndicators?.[tab.id];

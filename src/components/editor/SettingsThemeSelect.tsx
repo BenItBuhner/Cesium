@@ -118,7 +118,6 @@ export function SettingsThemeSelect({
             <div className="min-h-0">
               <VerticalFadedScroll
                 measureKey={`${options.length}:${value}`}
-                edgeColorVar="var(--bg-panel)"
                 scrollClassName="hide-scrollbar-y max-h-full min-h-0 overflow-y-auto overscroll-contain py-[4px]"
                 scrollStyle={{ maxHeight: position.maxHeight }}
               >

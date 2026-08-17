@@ -4,6 +4,7 @@ import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 import { LinkAttachmentPill, guessFaviconUrlFromPageUrl } from "./LinkAttachmentPill";
 import { MessageTextSelectionCite } from "./MessageTextSelectionCite";
+import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 
 interface UserMessageProps {
   content?: string;
@@ -124,7 +125,14 @@ export function UserMessage({
         } ${compactSingleLine ? "flex min-h-[24px] items-center" : ""} ${
           !displayOnly && overflowing ? "cursor-pointer" : ""
         }`}
-        style={expanded ? undefined : { maxHeight: 100 }}
+        style={
+          expanded
+            ? undefined
+            : {
+                maxHeight: 100,
+                ...scrollEdgeMaskStyle({ bottom: overflowing }, { bottomSize: 28 }),
+              }
+        }
       >
         <MessageTextSelectionCite
           composerDraftId={composerDraftId}
@@ -257,12 +265,6 @@ export function UserMessage({
         )}
         </MessageTextSelectionCite>
 
-        {!expanded && overflowing ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-[28px] bg-gradient-to-b from-transparent to-[var(--bg-card)]"
-            aria-hidden
-          />
-        ) : null}
       </div>
 
       {!displayOnly && showReplyCue !== false && onRedo ? (
