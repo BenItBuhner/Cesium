@@ -32,10 +32,16 @@ export type AgentRailGroupByMode = "workspace" | "priority";
 /** Retired group-by modes; persisted values migrate to `workspace`. */
 const LEGACY_AGENT_RAIL_GROUP_BY = new Set(["repository", "server", "updated", "status"]);
 
-export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
+export type AgentRailSectionId =
+  | "attention"
+  | "running"
+  | "pinned"
+  | "chats"
+  | "workspaces";
 
 export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
   "attention",
+  "running",
   "pinned",
   "chats",
   "workspaces",
@@ -312,7 +318,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         hiddenServerIds: [],
         showIcons: true,
         rowDetail: "balanced",
-        sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+        sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
         hiddenSections: [],
         scope: { type: "all" },
       },
@@ -534,6 +540,7 @@ function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
   for (const value of raw) {
     if (
       value !== "attention" &&
+      value !== "running" &&
       value !== "pinned" &&
       value !== "chats" &&
       value !== "workspaces"
@@ -579,7 +586,7 @@ export function applyAgentRailViewPreset(
   current: AgentRailSettingsState
 ): AgentRailSettingsState {
   const homeSections = (current.hiddenSections ?? []).filter(
-    (id) => id !== "attention" && id !== "pinned"
+    (id) => id !== "attention" && id !== "running" && id !== "pinned"
   );
   switch (preset) {
     case "inbox":
@@ -638,6 +645,10 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   // in its default slot (the very top), not appended at the bottom.
   if (!ordered.includes("attention")) {
     ordered.unshift("attention");
+  }
+  // Same for the running section: default slot is right below Needs attention.
+  if (!ordered.includes("running")) {
+    ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
   }
   const sectionOrder: AgentRailSectionId[] = [
     ...ordered,

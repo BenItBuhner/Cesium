@@ -8,6 +8,7 @@ import {
   FolderPlus,
   GitBranchPlus,
   ListFilter,
+  LoaderCircle,
   MessageSquare,
   PanelLeftClose,
   Pin,
@@ -120,6 +121,7 @@ import {
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 const ATTENTION_SECTION_WORKSPACE_ID = "__agentAttention__";
+const RUNNING_SECTION_WORKSPACE_ID = "__agentRunning__";
 const CHATS_SECTION_WORKSPACE_ID = STANDALONE_CHATS_FOLDER_SCOPE;
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
 const AGENT_RAIL_FOLDER_DRAG_TYPE = "application/x-opencursor-agent-chat-folder";
@@ -514,8 +516,11 @@ export function AgentWorkspaceRail() {
     applyOptimisticRailTitle,
     archiveConversation,
     unarchiveConversation,
+    settleConversation,
+    unsettleConversation,
     pinnedRailConversations,
     attentionRailConversations,
+    runningRailConversations,
     pinConversation,
     unpinConversation,
     railFilterToggles,
@@ -833,6 +838,7 @@ export function AgentWorkspaceRail() {
     hidden.add("chats");
     if (agentRailSettings.groupBy === "priority") {
       hidden.add("attention");
+      hidden.add("running");
     }
     return order.filter((id) => !hidden.has(id));
   }, [
@@ -1658,6 +1664,17 @@ export function AgentWorkspaceRail() {
         badge: "needs attention",
       });
     }
+    for (const c of runningRailConversations) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      items.push({
+        id: c.id,
+        title: c.title,
+        updatedAt: c.updatedAt,
+        detail: railWorkspaceNameById.get(c.workspaceId) ?? "Running",
+        badge: "running",
+      });
+    }
     for (const c of pinnedRailConversations) {
       if (seen.has(c.id)) continue;
       seen.add(c.id);
@@ -1690,6 +1707,7 @@ export function AgentWorkspaceRail() {
     groups,
     pinnedRailConversations,
     railWorkspaceNameById,
+    runningRailConversations,
   ]);
 
   const visibleConversationIds = useMemo(() => {
@@ -1705,8 +1723,11 @@ export function AgentWorkspaceRail() {
     for (const conversation of attentionRailConversations) {
       ids.add(conversation.id);
     }
+    for (const conversation of runningRailConversations) {
+      ids.add(conversation.id);
+    }
     return ids;
-  }, [attentionRailConversations, groups, pinnedRailConversations]);
+  }, [attentionRailConversations, groups, pinnedRailConversations, runningRailConversations]);
 
   useEffect(() => {
     if (!renameState || visibleConversationIds.has(renameState.conversationId)) {
@@ -1717,9 +1738,12 @@ export function AgentWorkspaceRail() {
 
   const handleSearchSelect = useCallback(
     (conversationId: string) => {
-      const pinnedMatch = pinnedRailConversations.find((c) => c.id === conversationId);
-      if (pinnedMatch) {
-        void openConversationSummary(pinnedMatch);
+      const elevatedMatch =
+        pinnedRailConversations.find((c) => c.id === conversationId) ??
+        attentionRailConversations.find((c) => c.id === conversationId) ??
+        runningRailConversations.find((c) => c.id === conversationId);
+      if (elevatedMatch) {
+        void openConversationSummary(elevatedMatch);
         return;
       }
       for (const group of groups) {
@@ -1730,7 +1754,13 @@ export function AgentWorkspaceRail() {
         }
       }
     },
-    [groups, openConversationSummary, pinnedRailConversations]
+    [
+      attentionRailConversations,
+      groups,
+      openConversationSummary,
+      pinnedRailConversations,
+      runningRailConversations,
+    ]
   );
 
   const handleConversationSelect = useCallback(
@@ -1741,6 +1771,15 @@ export function AgentWorkspaceRail() {
       }
     },
     [isMobile, openConversationSummary, toggleLeftRailCollapsed]
+  );
+
+  const handleToggleSettled = useCallback(
+    (conversation: AgentRailConversationSummary) => {
+      void (conversation.settledAt != null
+        ? unsettleConversation(conversation)
+        : settleConversation(conversation));
+    },
+    [settleConversation, unsettleConversation]
   );
 
   const exitBulkSelect = useCallback(() => {
@@ -2216,6 +2255,16 @@ export function AgentWorkspaceRail() {
         },
         {
           type: "item",
+          id: conversation.settledAt != null ? "unsettle" : "settle",
+          label: conversation.settledAt != null ? "Unsettle" : "Settle",
+          onSelect: () => {
+            void (conversation.settledAt != null
+              ? unsettleConversation(conversation)
+              : settleConversation(conversation));
+          },
+        },
+        {
+          type: "item",
           id: conversation.archivedAt != null ? "unarchive" : "archive",
           label: conversation.archivedAt != null ? "Restore from Archive" : "Archive",
           onSelect: () => {
@@ -2282,8 +2331,10 @@ export function AgentWorkspaceRail() {
       resolveConversationFolderScope,
       servers,
       settings.general.chatFolders,
+      settleConversation,
       unarchiveConversation,
       unpinConversation,
+      unsettleConversation,
     ]
   );
 
@@ -2425,6 +2476,7 @@ export function AgentWorkspaceRail() {
                   }
                   handleConversationSelect(conversation);
                 }}
+                onToggleSettled={handleToggleSettled}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2458,6 +2510,7 @@ export function AgentWorkspaceRail() {
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
+    handleToggleSettled,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2465,6 +2518,128 @@ export function AgentWorkspaceRail() {
     railRowDetail,
     railWorkspaceNameById,
     renameState,
+    toggleWorkspaceCollapsed,
+    updateConversationRenameDraft,
+  ]);
+
+  const runningSection: ReactNode = useMemo(() => {
+    // Actively working agents: the user will most likely return to these, so
+    // they get a dedicated home right below Needs attention.
+    if (runningRailConversations.length === 0) {
+      return null;
+    }
+    const isRunningHeaderCollapsed = collapsedWorkspaceIds.has(
+      RUNNING_SECTION_WORKSPACE_ID
+    );
+    const machineIds = new Set(
+      runningRailConversations.map((conversation) => conversation.serverId ?? "local")
+    );
+    const showMachine = machineIds.size > 1;
+    return (
+      <section className="pb-[12px]">
+        <div className="group flex items-center gap-[2px] px-px pb-[4px]">
+          <button
+            type="button"
+            onClick={() => toggleWorkspaceCollapsed(RUNNING_SECTION_WORKSPACE_ID)}
+            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
+          >
+            <span className="relative grid size-[10px] shrink-0 place-items-center">
+              <LoaderCircle
+                className="col-start-1 row-start-1 size-[10px] animate-spin text-[var(--accent)] group-hover/wshead:opacity-0"
+                strokeWidth={2}
+              />
+              <ChevronRight
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                  isRunningHeaderCollapsed ? "" : "rotate-90"
+                }`}
+                strokeWidth={2}
+              />
+            </span>
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
+              Running
+            </span>
+            <span className="shrink-0 rounded-full bg-[var(--accent-bg)] px-[5px] font-mono text-[9px] font-medium leading-[14px] text-[var(--accent)]">
+              {runningRailConversations.length}
+            </span>
+          </button>
+        </div>
+        {!isRunningHeaderCollapsed ? (
+          <div className="flex flex-col gap-[2px]">
+            {runningRailConversations.map((conversation, index) => {
+              const runningRowSection: RailConversationRowSection = {
+                workspaceId: RUNNING_SECTION_WORKSPACE_ID,
+                orderedConversations: runningRailConversations,
+              };
+              const railKey = getRailConversationKey(conversation);
+              return (
+              <AgentConversationRow
+                key={`running:${conversation.conversationKey ?? conversation.id}`}
+                conversation={conversation}
+                detail={railRowDetail === "compact" ? "compact" : "expanded"}
+                detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
+                now={railNow}
+                unreadCompletion={isConversationUnread(conversation)}
+                acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
+                showMachineBadge={showMachine}
+                rowIndex={index}
+                selected={isConversationChatSelected(conversation)}
+                bulkSelectMode={bulkSelectMode}
+                bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
+                editing={renameState?.conversationId === conversation.id}
+                editValue={renameState?.draft}
+                onBeginRename={() => beginConversationRename(conversation)}
+                onEditValueChange={updateConversationRenameDraft}
+                onCommitRename={commitConversationRename}
+                onCancelRename={cancelConversationRename}
+                onSelect={(event) => {
+                  if (bulkSelectMode) {
+                    handleBulkRowClick(event, conversation, runningRowSection);
+                    return;
+                  }
+                  handleConversationSelect(conversation);
+                }}
+                onToggleSettled={handleToggleSettled}
+                onContextMenu={(e, currentConversation) =>
+                  handleConversationContextMenu(e, currentConversation, {
+                    inPinnedSection: false,
+                    orderedConversations: runningRailConversations,
+                  })
+                }
+                showOverflowMenu={experimentalIpadCustomButtons}
+                onOverflowMenu={(anchor) =>
+                  handleConversationOverflowMenu(conversation, anchor, {
+                    inPinnedSection: false,
+                    orderedConversations: runningRailConversations,
+                  })
+                }
+              />
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
+    );
+  }, [
+    beginConversationRename,
+    bulkSelectMode,
+    bulkSelectedKeys,
+    cancelConversationRename,
+    collapsedWorkspaceIds,
+    commitConversationRename,
+    experimentalIpadCustomButtons,
+    handleBulkRowClick,
+    handleConversationContextMenu,
+    handleConversationOverflowMenu,
+    handleConversationSelect,
+    handleToggleSettled,
+    isConversationAcknowledgedFailed,
+    isConversationChatSelected,
+    isConversationUnread,
+    railNow,
+    railRowDetail,
+    railWorkspaceNameById,
+    renameState,
+    runningRailConversations,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
   ]);
@@ -2533,6 +2708,7 @@ export function AgentWorkspaceRail() {
                     }
                     handleConversationSelect(conversation);
                   }}
+                  onToggleSettled={handleToggleSettled}
                   onContextMenu={(e, currentConversation) =>
                     handleConversationContextMenu(e, currentConversation, {
                       inPinnedSection: true,
@@ -2565,6 +2741,8 @@ export function AgentWorkspaceRail() {
     handleBulkRowClick,
     handleConversationSelect,
     handleConversationContextMenu,
+    handleToggleSettled,
+    isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
     pinnedRailConversations,
@@ -2625,6 +2803,7 @@ export function AgentWorkspaceRail() {
             }
             handleConversationSelect(conversation);
           }}
+          onToggleSettled={handleToggleSettled}
           onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
           onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
           onDragOver={
@@ -2879,6 +3058,8 @@ export function AgentWorkspaceRail() {
     handleFolderDropTargetDragOver,
     handleFolderReorderDrop,
     handleNewStandaloneChat,
+    handleToggleSettled,
+    isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
     railNow,
@@ -3181,6 +3362,7 @@ export function AgentWorkspaceRail() {
                                           }
                                           handleConversationSelect(conversation);
                                         }}
+                                        onToggleSettled={handleToggleSettled}
                                         onDragStart={
                                           bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
@@ -3264,6 +3446,7 @@ export function AgentWorkspaceRail() {
                                 }
                                 handleConversationSelect(conversation);
                               }}
+                              onToggleSettled={handleToggleSettled}
                               onDragStart={
                                 bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
@@ -3321,6 +3504,8 @@ export function AgentWorkspaceRail() {
     for (const sectionId of railSectionOrder) {
       if (sectionId === "attention") {
         if (attentionSection) nodes.push(<div key="attention">{attentionSection}</div>);
+      } else if (sectionId === "running") {
+        if (runningSection) nodes.push(<div key="running">{runningSection}</div>);
       } else if (sectionId === "pinned") {
         if (pinnedSection) nodes.push(<div key="pinned">{pinnedSection}</div>);
       } else if (sectionId === "workspaces") {
@@ -3338,6 +3523,7 @@ export function AgentWorkspaceRail() {
     chatsSection,
     pinnedSection,
     railSectionOrder,
+    runningSection,
     showStandaloneHomeGroup,
     workspaceGroupsSection,
   ]);

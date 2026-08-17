@@ -92,7 +92,7 @@ describe("global settings", () => {
       hiddenServerIds: [],
       showIcons: true,
       rowDetail: "balanced",
-      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+      sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],
       scope: { type: "all" },
     });
@@ -172,7 +172,7 @@ describe("global settings", () => {
       hiddenServerIds: ["server-b"],
       showIcons: true,
       rowDetail: "balanced",
-      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+      sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],
       scope: { type: "all" },
     });
@@ -207,6 +207,7 @@ describe("global settings", () => {
     });
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "attention",
+      "running",
       "chats",
       "pinned",
       "workspaces",
@@ -231,6 +232,7 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "pinned",
       "attention",
+      "running",
       "chats",
       "workspaces",
     ]);

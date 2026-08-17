@@ -56,8 +56,12 @@ const PRESET_OPTIONS: Array<{ value: AgentRailViewPreset; label: string }> = [
   { value: "compact", label: "Compact" },
 ];
 
-const SECTION_LABELS: Record<Extract<AgentRailSectionId, "attention" | "pinned">, string> = {
+const SECTION_LABELS: Record<
+  Extract<AgentRailSectionId, "attention" | "running" | "pinned">,
+  string
+> = {
   attention: "Needs attention",
+  running: "Running",
   pinned: "Pinned",
 };
 
@@ -272,9 +276,10 @@ export function AgentRailFilterMenuPortal({
         <div className={popoverMenuSeparatorClass} />
         <div className={popoverMenuSectionLabelClass}>Sections</div>
         <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-          {(["attention", "pinned"] as const).map((sectionId) => {
+          {(["attention", "running", "pinned"] as const).map((sectionId) => {
             const hidden = hiddenSections.includes(sectionId);
-            const foldedByPriority = priorityMode && sectionId === "attention";
+            const foldedByPriority =
+              priorityMode && (sectionId === "attention" || sectionId === "running");
             return (
               <label
                 key={sectionId}

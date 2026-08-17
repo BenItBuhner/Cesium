@@ -3,6 +3,7 @@ export {
   AGENT_RAIL_PRIORITY_BUCKETS,
   AGENT_RAIL_PRIORITY_BUCKET_LABELS,
   AGENT_RAIL_ROW_DETAIL_MODES,
+  agentRailConversationIsSettled,
   agentRailConversationNeedsAttention,
   compareAgentRailByStatusPriority,
   formatAgentRailRelativeTime,

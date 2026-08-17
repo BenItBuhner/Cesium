@@ -177,6 +177,58 @@ describe("agent rail status", () => {
     assert.equal(isAgentRailRowDetailMode(undefined), false);
   });
 
+  test("settled sinks below everything and quiets failures/review", () => {
+    // Settled idle/stopped/paused rows report the settled kind.
+    assert.equal(getAgentRailStatusKind(summary({ settledAt: 5_000 })), "settled");
+    assert.equal(
+      getAgentRailStatusKind(summary({ status: "cancelled", settledAt: 5_000 })),
+      "settled"
+    );
+    assert.equal(
+      getAgentRailStatusKind(summary({ status: "paused", settledAt: 5_000 })),
+      "settled"
+    );
+    // Settling acknowledges a failure and clears review status.
+    assert.equal(
+      getAgentRailStatusKind(summary({ status: "failed", settledAt: 5_000 })),
+      "settled"
+    );
+    assert.equal(
+      agentRailConversationNeedsAttention(summary({ status: "failed", settledAt: 5_000 })),
+      false
+    );
+    assert.equal(
+      getAgentRailStatusKind(summary({ settledAt: 5_000 }), { unreadCompletion: true }),
+      "settled"
+    );
+    // Blocked-on-user and live work still surface on the row itself.
+    assert.equal(
+      getAgentRailStatusKind(summary({ hasPendingPermission: true, settledAt: 5_000 })),
+      "permission"
+    );
+    assert.equal(
+      getAgentRailStatusKind(summary({ status: "running", settledAt: 5_000 })),
+      "running"
+    );
+    // Settled rows sort after unsettled ones regardless of recency.
+    const settledFresh = summary({ id: "s", settledAt: 5_000, updatedAt: 999 });
+    const idleStale = summary({ id: "i", updatedAt: 1 });
+    const ordered = [settledFresh, idleStale].sort((a, b) =>
+      compareAgentRailByStatusPriority(a, b)
+    );
+    assert.deepEqual(
+      ordered.map((c) => c.id),
+      ["i", "s"]
+    );
+    // Settled info is quiet: muted tone, no callout, no attention.
+    const info = getAgentRailStatusInfo(summary({ settledAt: 5_000 }));
+    assert.equal(info.kind, "settled");
+    assert.equal(info.tone, "muted");
+    assert.equal(info.description, null);
+    assert.equal(info.needsAttention, false);
+    assert.equal(info.active, false);
+  });
+
   test("priority buckets: attention, active, review, recent", () => {
     assert.equal(
       getAgentRailPriorityBucket(summary({ hasPendingPermission: true })),
@@ -200,5 +252,22 @@ describe("agent rail status", () => {
     assert.equal(getAgentRailPriorityBucket(summary({ status: "paused" })), "recent");
     assert.equal(getAgentRailPriorityBucket(summary({ status: "cancelled" })), "recent");
     assert.equal(getAgentRailPriorityBucket(summary()), "recent");
+  });
+
+  test("priority buckets: settled conversations get their own bottom bucket", () => {
+    assert.equal(getAgentRailPriorityBucket(summary({ settledAt: 5_000 })), "settled");
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ status: "failed", settledAt: 5_000 })),
+      "settled"
+    );
+    // Live/blocked states are never buried in the settled bucket.
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ status: "running", settledAt: 5_000 })),
+      "active"
+    );
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ hasPendingPermission: true, settledAt: 5_000 })),
+      "attention"
+    );
   });
 });
