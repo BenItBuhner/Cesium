@@ -16,7 +16,8 @@ export type AgentRailStatusKind =
   | "paused"
   | "done_unread"
   | "stopped"
-  | "idle";
+  | "idle"
+  | "settled";
 
 /** Visual tone; maps onto existing theme tokens in the row component. */
 export type AgentRailStatusTone =
@@ -52,7 +53,17 @@ const STATUS_PRIORITY: Record<AgentRailStatusKind, number> = {
   done_unread: 6,
   stopped: 7,
   idle: 8,
+  // Explicitly settled by the user: always ranks below everything else until
+  // a new prompt unsettles the conversation.
+  settled: 9,
 };
+
+/** True when the user marked the conversation settled (and nothing cleared it since). */
+export function agentRailConversationIsSettled(
+  conversation: Pick<AgentRailConversationSummary, "settledAt">
+): boolean {
+  return conversation.settledAt != null;
+}
 
 export type AgentRailStatusContext = {
   /** True when the conversation finished a turn the user has not viewed yet. */
@@ -65,7 +76,7 @@ export type AgentRailStatusContext = {
 export function agentRailConversationNeedsAttention(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
   >,
   ctx?: AgentRailStatusContext
 ): boolean {
@@ -78,7 +89,8 @@ export function agentRailConversationNeedsAttention(
     return true;
   }
   if (conversation.status === "failed") {
-    return !ctx?.acknowledgedFailure;
+    // Settling a failed conversation acknowledges the failure.
+    return !ctx?.acknowledgedFailure && !agentRailConversationIsSettled(conversation);
   }
   return false;
 }
@@ -86,19 +98,24 @@ export function agentRailConversationNeedsAttention(
 export function getAgentRailStatusKind(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailStatusKind {
+  const settled = agentRailConversationIsSettled(conversation);
+  // Blocked-on-user states always surface, settled or not: the agent cannot
+  // proceed without a decision, and answering/prompting unsettles anyway.
   if (conversation.hasPendingPermission || conversation.status === "awaiting_permission") {
     return "permission";
   }
   if (conversation.hasPendingQuestion === true || conversation.status === "awaiting_question") {
     return "question";
   }
-  if (conversation.status === "failed" && !ctx?.acknowledgedFailure) {
+  if (conversation.status === "failed" && !ctx?.acknowledgedFailure && !settled) {
     return "failed";
   }
+  // Live work keeps its spinner on the row even when settled; elevation into
+  // the Running section is suppressed separately (agent-rail-elevate).
   if (conversation.status === "running") {
     return "running";
   }
@@ -106,7 +123,11 @@ export function getAgentRailStatusKind(
     return "pausing";
   }
   if (conversation.status === "paused") {
-    return "paused";
+    return settled ? "settled" : "paused";
+  }
+  if (settled) {
+    // Settling also clears review status: the user has decided they're done.
+    return "settled";
   }
   if (ctx?.unreadCompletion) {
     return "done_unread";
@@ -125,6 +146,7 @@ export function getAgentRailStatusInfo(
     | "hasPendingQuestion"
     | "pendingPermissionTitle"
     | "lastErrorSummary"
+    | "settledAt"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailStatusInfo {
@@ -164,6 +186,10 @@ export function getAgentRailStatusInfo(
       return { ...base, tone: "accent", description: "Finished" };
     case "stopped":
       return { ...base, tone: "muted", description: null };
+    case "settled":
+      // Quiet on purpose: settled rows should take up as little room as
+      // possible. The row's settle toggle is the visible state cue.
+      return { ...base, tone: "muted", description: null };
     default:
       return { ...base, tone: "muted", description: null };
   }
@@ -173,11 +199,11 @@ export function getAgentRailStatusInfo(
 export function compareAgentRailByStatusPriority(
   a: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "updatedAt" | "id"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "updatedAt" | "id"
   >,
   b: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "updatedAt" | "id"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "updatedAt" | "id"
   >,
   ctx?: {
     unreadCompletionByConversationId?: Record<string, true>;
@@ -243,6 +269,7 @@ export const AGENT_RAIL_PRIORITY_BUCKETS = [
   "active",
   "review",
   "recent",
+  "settled",
 ] as const;
 
 /**
@@ -257,12 +284,13 @@ export const AGENT_RAIL_PRIORITY_BUCKET_LABELS: Record<AgentRailPriorityBucket, 
   active: "Running",
   review: "Review",
   recent: "Recent",
+  settled: "Settled",
 };
 
 export function getAgentRailPriorityBucket(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailPriorityBucket {
@@ -277,6 +305,8 @@ export function getAgentRailPriorityBucket(
       return "active";
     case "done_unread":
       return "review";
+    case "settled":
+      return "settled";
     default:
       return "recent";
   }

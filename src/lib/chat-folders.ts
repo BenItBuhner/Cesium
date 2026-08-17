@@ -16,6 +16,26 @@ export function compareConversationsByRecency<T extends { updatedAt: number; tit
   return b.updatedAt - a.updatedAt || a.title.localeCompare(b.title);
 }
 
+/**
+ * Stable partition: settled conversations always sink below unsettled ones,
+ * with both partitions keeping their existing relative order. Applies on top
+ * of recency and custom drag orders alike (a new prompt unsettles the row and
+ * restores its normal placement).
+ */
+export function sinkSettledConversations<T extends { settledAt?: number | null }>(
+  conversations: T[]
+): T[] {
+  if (!conversations.some((conversation) => conversation.settledAt != null)) {
+    return conversations;
+  }
+  const unsettled: T[] = [];
+  const settled: T[] = [];
+  for (const conversation of conversations) {
+    (conversation.settledAt != null ? settled : unsettled).push(conversation);
+  }
+  return [...unsettled, ...settled];
+}
+
 export function getChatFoldersForScope(
   folders: ChatFolderState[],
   scopeId: string
@@ -26,12 +46,14 @@ export function getChatFoldersForScope(
 }
 
 /** Order conversations by an explicit id list; unknown ids append by recency. */
-export function orderConversationsByIds<T extends { id: string; updatedAt: number; title: string }>(
+export function orderConversationsByIds<
+  T extends { id: string; updatedAt: number; title: string; settledAt?: number | null },
+>(
   conversations: T[],
   orderedIds: readonly string[] | undefined
 ): T[] {
   if (!orderedIds || orderedIds.length === 0) {
-    return [...conversations].sort(compareConversationsByRecency);
+    return sinkSettledConversations([...conversations].sort(compareConversationsByRecency));
   }
   const byId = new Map(conversations.map((conversation) => [conversation.id, conversation]));
   const seen = new Set<string>();
@@ -47,11 +69,11 @@ export function orderConversationsByIds<T extends { id: string; updatedAt: numbe
   const rest = conversations
     .filter((conversation) => !seen.has(conversation.id))
     .sort(compareConversationsByRecency);
-  return [...ordered, ...rest];
+  return sinkSettledConversations([...ordered, ...rest]);
 }
 
 export function partitionConversationsByFolders<
-  T extends { id: string; updatedAt: number; title: string },
+  T extends { id: string; updatedAt: number; title: string; settledAt?: number | null },
 >(
   conversations: T[],
   folders: ChatFolderState[],
@@ -78,7 +100,7 @@ export function partitionConversationsByFolders<
     const items = folder.conversationIds
       .map((conversationId) => conversationsById.get(conversationId))
       .filter((conversation): conversation is T => Boolean(conversation));
-    folderConversations.set(folder.id, items);
+    folderConversations.set(folder.id, sinkSettledConversations(items));
   }
 
   const rootConversations = orderConversationsByIds(

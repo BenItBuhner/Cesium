@@ -20,6 +20,10 @@ export function normalizeConversationRecord(
       typeof record.archivedAt === "number" && Number.isFinite(record.archivedAt)
         ? record.archivedAt
         : null,
+    settledAt:
+      typeof record.settledAt === "number" && Number.isFinite(record.settledAt)
+        ? record.settledAt
+        : null,
     lastReadSeq:
       typeof record.lastReadSeq === "number" && Number.isFinite(record.lastReadSeq)
         ? Math.max(0, Math.min(record.lastEventSeq, Math.floor(record.lastReadSeq)))

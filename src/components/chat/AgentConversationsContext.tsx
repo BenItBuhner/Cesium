@@ -1410,6 +1410,8 @@ const executePrompt = useCallback(
           ? {
               ...currentConversation,
               status: "running",
+              // Sending a new message always unsettles the conversation.
+              settledAt: null,
               updatedAt: Math.max(currentConversation.updatedAt + 1, Date.now()),
             }
           : null;
