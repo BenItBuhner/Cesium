@@ -48,7 +48,10 @@ import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
-import { backgroundAgentConversationIds } from "./services/nativeServiceConfig";
+import {
+  backgroundAgentConversationIds,
+  shouldForwardProjectionCatchUp,
+} from "./services/nativeServiceConfig";
 
 const INITIAL_CONFIG = readLaunchUrlConfig();
 // react-native-webview 14.0.1 accidentally defaults its public class generic to
@@ -75,6 +78,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  const appStateRef = useRef(AppState.currentState);
   // Refs so the single hardware-back subscription can read the freshest
   // navigation state without re-subscribing on every WebView update.
   const canGoBackRef = useRef(false);
@@ -88,12 +92,14 @@ export default function App() {
     new AgentStatusService({
       onProjection: (projection) => {
         void liveUpdatesRef.current.update(projection);
-        sendToWebRef.current?.({
-          type: "resumeCatchUp",
-          workspaceId: projection.workspaceId,
-          conversationId: projection.conversationId,
-          lastEventSeq: projection.lastEventSeq,
-        });
+        if (shouldForwardProjectionCatchUp(appStateRef.current)) {
+          sendToWebRef.current?.({
+            type: "resumeCatchUp",
+            workspaceId: projection.workspaceId,
+            conversationId: projection.conversationId,
+            lastEventSeq: projection.lastEventSeq,
+          });
+        }
       },
       onConversationRemoved: (conversationId) => {
         void liveUpdatesRef.current.removeConversation(conversationId);
@@ -307,6 +313,7 @@ export default function App() {
     liveUpdatesRef.current.setAppActive(AppState.currentState === "active");
     void liveUpdatesRef.current.refreshStatus().catch(() => undefined);
     const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      appStateRef.current = nextState;
       backgroundCoordinatorRef.current.setAppState(nextState);
       liveUpdatesRef.current.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });

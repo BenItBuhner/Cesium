@@ -20,3 +20,12 @@ export function backgroundAgentConversationIds(
     ),
   ];
 }
+
+/**
+ * Background projections update native notifications directly. Forwarding
+ * them into a suspended WebView would wake its bridge and trigger a redundant
+ * snapshot hydration; foreground resume already performs that reconciliation.
+ */
+export function shouldForwardProjectionCatchUp(appState: string): boolean {
+  return appState === "active";
+}

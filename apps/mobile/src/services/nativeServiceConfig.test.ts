@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { backgroundAgentConversationIds } from "./nativeServiceConfig";
+import {
+  backgroundAgentConversationIds,
+  shouldForwardProjectionCatchUp,
+} from "./nativeServiceConfig";
 
 test("idle focused conversations do not keep the background socket alive", () => {
   assert.deepEqual(
@@ -30,4 +33,11 @@ test("an active focused conversation remains subscribed", () => {
     }),
     ["running"]
   );
+});
+
+test("projection catch-up never wakes a background WebView", () => {
+  assert.equal(shouldForwardProjectionCatchUp("background"), false);
+  assert.equal(shouldForwardProjectionCatchUp("inactive"), false);
+  assert.equal(shouldForwardProjectionCatchUp("unknown"), false);
+  assert.equal(shouldForwardProjectionCatchUp("active"), true);
 });
