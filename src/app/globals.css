@@ -409,6 +409,47 @@ html.dark .landing-shot-dark {
   --text-tertiary: #a0a4ae;
 }
 
+/**
+ * Sticky user-turn veil — rendered ONLY while a user header is pinned, masking
+ * the reply rows scrolling beneath it. Flat surfaces paint the exact pane color
+ * (seamless, no gradients); over the aurora it uses the same glass material as
+ * the composer shell so the pinned block reads as one consistent floating bar.
+ */
+.chat-sticky-veil {
+  background: var(--chat-sticky-surface, var(--bg-main));
+  /* Soft dissolve on the trailing edge so content never meets a hard line. */
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - 12px), transparent);
+}
+
+/*
+ * Over the aurora the veil must stay see-through — the blur does the masking,
+ * the light tint only knocks residual contrast down. A mostly-opaque fill here
+ * reads as a dead slab that blocks the color field behind the whole column.
+ */
+[data-aurora-surface="on"] .chat-sticky-veil,
+[data-aurora-scene="on"] .chat-sticky-veil {
+  background: color-mix(in srgb, var(--agent-card-bg) 60%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+
+.dark [data-aurora-surface="on"] .chat-sticky-veil,
+.dark [data-aurora-scene="on"] .chat-sticky-veil {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--agent-card-bg) 70%, #04060b) 60%,
+    transparent
+  );
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-aurora-surface="on"] .chat-sticky-veil,
+  [data-aurora-scene="on"] .chat-sticky-veil {
+    background: var(--agent-card-bg);
+  }
+}
+
 /* Composer attach (+) button: darker mostly-opaque fill with a bright glyph. */
 [data-aurora-surface="on"] .composer-attach-plus {
   background: color-mix(in srgb, var(--agent-plus-button-bg) 85%, transparent);

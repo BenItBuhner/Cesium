@@ -4,10 +4,14 @@ import {
   useRef,
   useState,
   useLayoutEffect,
+  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import { CHAT_STICKY_RAIL_INSET_PX } from "./chat-sticky-rail";
+import {
+  CHAT_STICKY_RAIL_INSET_PX,
+  getChatStickyRailInsetPx,
+} from "./chat-sticky-rail";
 
 /** Hard ceiling (px) for user + melded todo to stay sticky. */
 const MAX_STICKY_HEIGHT_PX = 560;
@@ -42,9 +46,9 @@ interface StickyChatHeaderProps {
   registerStickyEl?: (order: number, el: HTMLDivElement | null) => void;
   /** User `ChatMessage.id` for scroll restore / anchor queries on the sticky root. */
   dataChatMessageId?: string;
-  /** Scrollport; sizes the sticky allowance so the pinned block cannot eat the whole pane. */
+  /** Scrollport; sizes the sticky allowance and anchors pinned-state detection. */
   scrollRootRef?: RefObject<HTMLElement | null>;
-  /** Chat surface behind the thread; the pinned block paints it to cleanly mask rows scrolling beneath. */
+  /** Chat surface behind the thread; the veil paints it while the header is pinned. */
   surface?: "panel" | "editor";
   children: ReactNode;
 }
@@ -52,6 +56,11 @@ interface StickyChatHeaderProps {
 /**
  * Each user prompt (+ optional melded todo row) uses `position: sticky` with `top` driven by
  * `pushUpPx` so the previous turn slides out progressively instead of being covered by z-index.
+ *
+ * While (and only while) the header is actually pinned, a `.chat-sticky-veil` layer masks the
+ * rows scrolling beneath it; at flow position nothing extra is painted, so the thread stays
+ * untouched over flat and aurora surfaces alike. Pinned-state detection uses a zero-net-height
+ * sentinel at the header's flow top + IntersectionObserver (no scroll listeners).
  */
 export function StickyChatHeader({
   enabled,
@@ -64,7 +73,9 @@ export function StickyChatHeader({
   children,
 }: StickyChatHeaderProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [allowSticky, setAllowSticky] = useState(true);
+  const [stuck, setStuck] = useState(false);
 
   useLayoutEffect(() => {
     if (!enabled) {
@@ -92,6 +103,35 @@ export function StickyChatHeader({
     return () => ro.disconnect();
   }, [enabled, scrollRootRef]);
 
+  useLayoutEffect(() => {
+    if (!enabled) {
+      setStuck((current) => (current ? false : current));
+      return;
+    }
+    const sentinel = sentinelRef.current;
+    const root = scrollRootRef?.current ?? null;
+    if (!sentinel || !root) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        // Pinned = the flow-top sentinel has crossed above the rail line (not merely
+        // scrolled out below the viewport).
+        const rootTop = entry.rootBounds?.top ?? 0;
+        const next = !entry.isIntersecting && entry.boundingClientRect.top < rootTop;
+        setStuck((current) => (current === next ? current : next));
+      },
+      {
+        root,
+        rootMargin: `-${getChatStickyRailInsetPx() + 1}px 0px 0px 0px`,
+        threshold: 0,
+      }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [enabled, scrollRootRef]);
+
   function setRefs(el: HTMLDivElement | null) {
     ref.current = el;
     registerStickyEl?.(stackOrder, el);
@@ -109,57 +149,56 @@ export function StickyChatHeader({
     );
   }
 
-  const surfaceColor = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
-
   return (
-    <div
-      ref={setRefs}
-      data-chat-message-id={dataChatMessageId}
-      // While stuck, this element's rect reports the pinned position, not the flow position;
-      // scroll anchor/navigation math uses this marker to resolve the true flow top instead.
-      data-chat-sticky-header=""
-      data-electron-no-drag
-      style={
-        allowSticky
-          ? {
-              top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px - ${pushUpPx}px)`,
+    <>
+      {/* Flow-top marker for pinned detection. The negative margin cancels the 1px box plus
+          the segment's 10px column gap, so the header's layout is byte-identical with or
+          without the sentinel. */}
+      <div
+        ref={sentinelRef}
+        aria-hidden
+        className="h-[1px] w-full shrink-0 -mb-[11px]"
+      />
+      <div
+        ref={setRefs}
+        data-chat-message-id={dataChatMessageId}
+        // While stuck, this element's rect reports the pinned position, not the flow position;
+        // scroll anchor/navigation math uses this marker to resolve the true flow top instead.
+        data-chat-sticky-header=""
+        data-electron-no-drag
+        style={
+          allowSticky
+            ? {
+                top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px - ${pushUpPx}px)`,
+              }
+            : undefined
+        }
+        className={
+          allowSticky
+            ? "sticky z-10 shrink-0 bg-transparent pb-[10px] transition-[top] duration-75"
+            : // pb-[10px] must match the sticky branch: measure() reads this
+              // element's scrollHeight against the sticky allowance, so a
+              // state-dependent padding makes heights near the cap bistable.
+              "relative z-10 shrink-0 bg-transparent pb-[10px]"
+        }
+      >
+        {allowSticky && stuck ? (
+          <div
+            aria-hidden
+            className="chat-sticky-veil pointer-events-none absolute inset-x-0 bottom-0 z-[-1]"
+            style={
+              {
+                // Reach the scrollport's top edge so nothing peeks through the rail gap
+                // above the pinned bubble.
+                top: `calc(-1 * (var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px))`,
+                "--chat-sticky-surface":
+                  surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)",
+              } as CSSProperties
             }
-          : undefined
-      }
-      className={
-        allowSticky
-          ? "sticky z-10 shrink-0 bg-transparent pb-[10px] transition-[top] duration-75"
-          : // pb-[10px] must match the sticky branch: measure() reads this
-            // element's scrollHeight against the sticky allowance, so a
-            // state-dependent padding makes heights near the cap bistable.
-            "relative z-10 shrink-0 bg-transparent pb-[10px]"
-      }
-    >
-      {allowSticky ? (
-        // Opaque backdrop across the full sticky footprint (rail gap above, todo side
-        // gutters, pb strip). Without it, rows sliding under the pinned block bleed
-        // through the transparent slivers as clipped text fragments. z-[-1] keeps it
-        // under the bubble/todo (this element is a stacking context via z-10) while
-        // the whole block still paints above the scrolling tail.
-        <>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-[10px] z-[-1]"
-            style={{
-              top: -CHAT_STICKY_RAIL_INSET_PX,
-              backgroundColor: surfaceColor,
-            }}
           />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-[-1] h-[10px]"
-            style={{
-              backgroundImage: `linear-gradient(to bottom, ${surfaceColor}, transparent)`,
-            }}
-          />
-        </>
-      ) : null}
-      {children}
-    </div>
+        ) : null}
+        {children}
+      </div>
+    </>
   );
 }
