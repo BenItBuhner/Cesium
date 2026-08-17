@@ -48,6 +48,7 @@ import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
+import { backgroundAgentConversationIds } from "./services/nativeServiceConfig";
 
 const INITIAL_CONFIG = readLaunchUrlConfig();
 // react-native-webview 14.0.1 accidentally defaults its public class generic to
@@ -151,13 +152,7 @@ export default function App() {
       nextAuthToken = authTokenRef.current,
       nextServerUrl = serverUrlRef.current
     ) => {
-      const conversationIds = [
-        ...new Set(
-          [nextFocused.conversationId, ...nextFocused.activeConversationIds].filter(
-            (id): id is string => typeof id === "string" && id.length > 0
-          )
-        ),
-      ];
+      const conversationIds = backgroundAgentConversationIds(nextFocused);
       agentStatusRef.current.updateConfig({
         serverBaseUrl: nextServerUrl,
         workspaceId: nextFocused.workspaceId,
