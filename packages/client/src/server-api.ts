@@ -4,6 +4,7 @@ import type {
   GlobalSettingsState,
   RememberedAgentPermissionRule,
 } from "./global-settings";
+import { normalizeUpdateStatusPayload } from "./update-status";
 import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
@@ -3063,25 +3064,31 @@ export type UpdateApplyCallbacks = {
 
 /** Cached update status — no network on the server side. */
 export async function fetchUpdateStatus(): Promise<CesiumUpdateStatusPayload> {
-  return request(`/api/updates/status`, undefined, { skipWorkspaceHeader: true });
+  return normalizeUpdateStatusPayload(
+    await request(`/api/updates/status`, undefined, { skipWorkspaceHeader: true })
+  );
 }
 
 /** Refresh all update feeds (GitHub releases, npm registry, git remote) now. */
 export async function checkForUpdates(): Promise<CesiumUpdateStatusPayload> {
-  return request(
-    `/api/updates/check`,
-    { method: "POST" },
-    { skipWorkspaceHeader: true }
+  return normalizeUpdateStatusPayload(
+    await request(
+      `/api/updates/check`,
+      { method: "POST" },
+      { skipWorkspaceHeader: true }
+    )
   );
 }
 
 export async function saveUpdateSettings(
   patch: Partial<CesiumUpdateSettings>
 ): Promise<CesiumUpdateStatusPayload> {
-  return request(
-    `/api/updates/settings`,
-    { method: "PUT", body: JSON.stringify(patch) },
-    { skipWorkspaceHeader: true }
+  return normalizeUpdateStatusPayload(
+    await request(
+      `/api/updates/settings`,
+      { method: "PUT", body: JSON.stringify(patch) },
+      { skipWorkspaceHeader: true }
+    )
   );
 }
 
@@ -5042,6 +5049,53 @@ export type UsageOverviewResponse = {
   providers: ProviderUsageReport[];
 };
 
+const EMPTY_USAGE_TOTALS: UsageTotals = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+  costUsd: null,
+  sessions: 0,
+  requests: 0,
+};
+
+/**
+ * Coerce a usage overview from the wire into the shape the Usage panel
+ * dereferences. Older or mid-upgrade servers (e.g. a self-updated Termux
+ * install) can omit per-provider arrays, which otherwise crashes rendering.
+ */
+function normalizeUsageOverview(raw: UsageOverviewResponse): UsageOverviewResponse {
+  const providers = Array.isArray(raw?.providers) ? raw.providers : [];
+  return {
+    generatedAt:
+      typeof raw?.generatedAt === "string" ? raw.generatedAt : new Date().toISOString(),
+    lookbackDays: typeof raw?.lookbackDays === "number" ? raw.lookbackDays : 0,
+    providers: providers
+      .filter((provider): provider is ProviderUsageReport =>
+        Boolean(provider && typeof provider === "object")
+      )
+      .map((provider) => ({
+        ...provider,
+        id: typeof provider.id === "string" ? provider.id : "unknown",
+        label: typeof provider.label === "string" ? provider.label : "Unknown",
+        available: provider.available === true,
+        limitWindows: Array.isArray(provider.limitWindows) ? provider.limitWindows : [],
+        limitSnapshots: Array.isArray(provider.limitSnapshots)
+          ? provider.limitSnapshots
+          : [],
+        totals:
+          provider.totals && typeof provider.totals === "object"
+            ? provider.totals
+            : EMPTY_USAGE_TOTALS,
+        days: Array.isArray(provider.days) ? provider.days : [],
+        series: Array.isArray(provider.series) ? provider.series : [],
+        models: Array.isArray(provider.models) ? provider.models : [],
+      })),
+  };
+}
+
 export async function fetchUsageOverview(options?: {
   days?: number;
   refresh?: boolean;
@@ -5055,9 +5109,11 @@ export async function fetchUsageOverview(options?: {
     params.set("refresh", "1");
   }
   const query = params.toString();
-  return request<UsageOverviewResponse>(
-    `/api/usage/overview${query ? `?${query}` : ""}`,
-    options?.signal ? { signal: options.signal } : undefined,
-    { skipWorkspaceHeader: true, cache: "no-store" }
+  return normalizeUsageOverview(
+    await request<UsageOverviewResponse>(
+      `/api/usage/overview${query ? `?${query}` : ""}`,
+      options?.signal ? { signal: options.signal } : undefined,
+      { skipWorkspaceHeader: true, cache: "no-store" }
+    )
   );
 }

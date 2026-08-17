@@ -80,6 +80,9 @@ function ReleaseRow({
   const publishedLabel = release.publishedAt
     ? new Date(release.publishedAt).toLocaleDateString()
     : null;
+  // Releases round-trip through the server's persisted update state, which can
+  // have been written by a build with a different schema — never assume shape.
+  const assets = Array.isArray(release.assets) ? release.assets : [];
   return (
     <SettingsRow
       title={`${label} — ${release.tag}`}
@@ -96,8 +99,8 @@ function ReleaseRow({
       description={[
         release.name && release.name !== release.tag ? release.name : null,
         publishedLabel ? `Published ${publishedLabel}` : null,
-        release.assets.length > 0
-          ? `${release.assets.length} asset${release.assets.length === 1 ? "" : "s"}`
+        assets.length > 0
+          ? `${assets.length} asset${assets.length === 1 ? "" : "s"}`
           : null,
       ]
         .filter(Boolean)
@@ -105,7 +108,7 @@ function ReleaseRow({
       border={border}
       trailing={
         <div className="flex items-center gap-[8px]">
-          {release.assets.slice(0, 2).map((asset) => (
+          {assets.slice(0, 2).map((asset) => (
             <a
               key={asset.name}
               className={rowButtonClass}

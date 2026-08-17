@@ -492,6 +492,92 @@ describe("update routes", () => {
 });
 
 // ---------------------------------------------------------------------------
+// persisted state sanitization (schema drift across self-updates)
+// ---------------------------------------------------------------------------
+
+describe("persisted update state sanitization", () => {
+  test("sanitizePersistedRelease coerces schema drift and drops junk", () => {
+    // Release written by a build without the `assets` field.
+    const legacy = manager.sanitizePersistedRelease(
+      { channel: "server", tag: "server-v0.4.0", version: "0.4.0" },
+      "server"
+    );
+    assert.ok(legacy);
+    assert.deepEqual(legacy.assets, []);
+    assert.equal(legacy.name, null);
+
+    // Junk asset entries are dropped, valid ones normalized.
+    const mixed = manager.sanitizePersistedRelease(
+      {
+        channel: "mobile",
+        tag: "mobile-v0.5.0",
+        version: "0.5.0",
+        assets: [
+          null,
+          "garbage",
+          { name: "app.apk", downloadUrl: "https://example.test/app.apk", size: "big" },
+        ],
+      },
+      "mobile"
+    );
+    assert.equal(mixed?.assets.length, 1);
+    assert.equal(mixed?.assets[0]?.name, "app.apk");
+    assert.equal(mixed?.assets[0]?.size, 0);
+
+    // Unusable releases are dropped instead of crashing clients later.
+    assert.equal(manager.sanitizePersistedRelease(null, "app"), null);
+    assert.equal(manager.sanitizePersistedRelease("v1.0.0", "app"), null);
+    assert.equal(manager.sanitizePersistedRelease({ tag: "v1.0.0" }, "app"), null);
+    // Unknown channel id falls back to the bucket it was stored under.
+    assert.equal(
+      manager.sanitizePersistedRelease(
+        { channel: "flying-toaster", tag: "v1.0.0", version: "1.0.0" },
+        "app"
+      )?.channel,
+      "app"
+    );
+  });
+
+  test("a poisoned update-state.json no longer reaches the status payload", async () => {
+    process.env.CESIUM_INSTALL_KIND = "termux-server";
+    // Simulate state written by a divergent server build: one release missing
+    // `assets` entirely, one that is not even an object.
+    await fs.mkdir(path.join(TEST_DATA_DIR, "profile"), { recursive: true });
+    await fs.writeFile(
+      path.join(TEST_DATA_DIR, "profile", "update-state.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        settings: { autoCheck: true, includePrereleases: false, dismissedVersion: null },
+        lastCheckedAt: Date.now(),
+        channels: {
+          server: { channel: "server", tag: "server-v0.4.0", version: "0.4.0" },
+          app: "corrupted-entry",
+        },
+        githubError: null,
+        npm: null,
+        git: null,
+      })
+    );
+    manager.resetUpdateStateCacheForTests();
+
+    const response = await updateRoutes.request("/api/updates/status");
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as {
+      latest: { assets: unknown[] } | null;
+      channels: Record<string, { assets: unknown[] } | undefined>;
+    };
+    // The assets-less release is served with a real (empty) assets array...
+    assert.ok(Array.isArray(payload.channels.server?.assets));
+    assert.deepEqual(payload.channels.server?.assets, []);
+    assert.ok(Array.isArray(payload.latest?.assets));
+    // ...and the corrupted channel entry is gone entirely.
+    assert.equal(payload.channels.app, undefined);
+
+    manager.resetUpdateStateCacheForTests();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // git feed + git-pull self-update against a real local fixture repo
 // ---------------------------------------------------------------------------
 

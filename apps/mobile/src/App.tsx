@@ -582,7 +582,10 @@ export default function App() {
           allowUniversalAccessFromFileURLs
           mixedContentMode="always"
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
-          onLoadEnd={() => {
+          // onLoad only fires for successful loads. onLoadEnd fires after
+          // failures too, which used to clear the error right after onError
+          // set it — leaving the stock WebView error page with no Retry UI.
+          onLoad={() => {
             setLoadError(null);
           }}
           onMessage={handleMessage}
