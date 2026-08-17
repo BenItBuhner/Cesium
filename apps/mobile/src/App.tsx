@@ -622,6 +622,12 @@ export default function App() {
             setWebViewAvailable(false);
             setLoadError(description);
           }}
+          // Android defaults to OVER_SCROLL_ALWAYS, which plays the edge
+          // effect (stretch on 12+, glow before) on every fling — even on
+          // screens with nothing to scroll, like the new-chat landing. The
+          // workbench root never scrolls; real scrolling lives in inner web
+          // panes, which Android never decorates with the edge effect.
+          overScrollMode="never"
           javaScriptEnabled
           domStorageEnabled
           sharedCookiesEnabled
