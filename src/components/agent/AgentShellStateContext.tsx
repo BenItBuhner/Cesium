@@ -60,6 +60,10 @@ import {
 } from "@/lib/agent-rail-pins";
 import { resolveAgentRightPaneOpen } from "@/lib/agent-right-pane";
 import {
+  resolveLeftRailCollapsed,
+  shouldRestorePersistedLeftRailCollapsed,
+} from "@/lib/agent-left-rail";
+import {
   AGENT_CONVERSATION_DELETED_EVENT,
   AGENT_CONVERSATION_UPSERTED_EVENT,
   dispatchAgentConversationUpserted,
@@ -576,7 +580,13 @@ export function AgentShellStateProvider({
   const [standaloneDraftActive, setStandaloneDraftActive] = useState(false);
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
-  const [sharedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState(false);
+  const [persistedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState<
+    boolean | null
+  >(null);
+  const sharedLeftRailCollapsed = resolveLeftRailCollapsed({
+    isMobile,
+    persistedLeftRailCollapsed,
+  });
   const [draftRightPaneOpenScope, setDraftRightPaneOpenScope] = useState<string | null>(null);
   const [sharedAgentShellDesktopLayout, setSharedAgentShellDesktopLayoutState] =
     useState<Record<string, number> | null>(null);
@@ -1202,21 +1212,24 @@ export function AgentShellStateProvider({
 
   // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
   // after that — session layout changes when switching workspaces and must not clobber user prefs.
+  // Mobile ignores a stored "rail open" flag: the drawer covers the viewport, so a fresh
+  // session (sign-in, new server, new WebView) should land on the new-chat page.
   useLayoutEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
     const snapshot = readAgentShellSharedSnapshot();
-    if (!snapshot) {
-      return;
-    }
-    if (typeof snapshot.leftRailCollapsed === "boolean") {
-      setSharedLeftRailCollapsedState(snapshot.leftRailCollapsed);
-    }
-    if (snapshot.agentShellDesktopLayout != null) {
+    if (snapshot?.agentShellDesktopLayout != null) {
       setSharedAgentShellDesktopLayoutState(snapshot.agentShellDesktopLayout);
     }
-  }, []);
+    if (!shouldRestorePersistedLeftRailCollapsed(isMobile)) {
+      setSharedLeftRailCollapsedState(null);
+      return;
+    }
+    if (typeof snapshot?.leftRailCollapsed === "boolean") {
+      setSharedLeftRailCollapsedState(snapshot.leftRailCollapsed);
+    }
+  }, [isMobile]);
 
   useEffect(() => {
     if (!sessionReady || !activeWorkspaceId || typeof window === "undefined") {
@@ -1234,7 +1247,9 @@ export function AgentShellStateProvider({
     if (fallbackLayout == null) {
       return;
     }
-    setSharedLeftRailCollapsedState(nextLeftRailCollapsed);
+    if (shouldRestorePersistedLeftRailCollapsed(isMobile)) {
+      setSharedLeftRailCollapsedState(nextLeftRailCollapsed);
+    }
     setSharedAgentShellDesktopLayoutState(fallbackLayout);
     writeAgentShellSharedSnapshot({
       leftRailCollapsed: nextLeftRailCollapsed,
@@ -1242,6 +1257,7 @@ export function AgentShellStateProvider({
     });
   }, [
     activeWorkspaceId,
+    isMobile,
     sessionReady,
     workspaceSession.agentView.agentShellDesktopLayout,
     workspaceSession.agentView.leftRailCollapsed,
@@ -1709,10 +1725,15 @@ export function AgentShellStateProvider({
       },
     }));
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
+    if (isMobile) {
+      setLeftRailCollapsed(true);
+    }
   }, [
     activeWorkspaceId,
+    isMobile,
     replaceConversationIdInLocation,
     resetComposerDraft,
+    setLeftRailCollapsed,
     updateWorkspaceSession,
   ]);
 

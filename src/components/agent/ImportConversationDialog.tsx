@@ -70,42 +70,43 @@ export function ImportConversationDialog({
   const [query, setQuery] = useState("");
   const [importingSessionId, setImportingSessionId] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [compactPane, setCompactPane] = useState<"sources" | "sessions">("sources");
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  const loadSources = useCallback(async () => {
     setSources(null);
     setSourcesError(null);
     setSelectedBackendId(null);
     setSessions(null);
     setQuery("");
     setImportError(null);
-    let cancelled = false;
-    listAgentImportSources()
-      .then((result) => {
-        if (cancelled) {
-          return;
-        }
-        setSources(result.sources);
-        const firstAvailable =
-          result.sources.find((source) => source.available && source.sessionCount > 0) ??
-          result.sources.find((source) => source.available) ??
-          null;
-        if (firstAvailable) {
-          setSelectedBackendId(firstAvailable.backendId);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setSourcesError(error instanceof Error ? error.message : "Failed to load import sources.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
+    try {
+      const result = await listAgentImportSources();
+      setSources(result.sources);
+      const firstAvailable =
+        result.sources.find((source) => source.available && source.sessionCount > 0) ??
+        result.sources.find((source) => source.available) ??
+        null;
+      if (firstAvailable) {
+        setSelectedBackendId(firstAvailable.backendId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load import sources.";
+      setSourcesError(
+        message === "Failed to fetch"
+          ? "Couldn’t reach the Cesium server. Check the connection and the server’s mobile origin settings."
+          : message
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setCompactPane("sources");
+    void loadSources();
+  }, [open, loadSources]);
 
   const loadSessions = useCallback(async (backendId: AgentBackendId) => {
     setSessionsLoading(true);
@@ -189,7 +190,10 @@ export function ImportConversationDialog({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[10050] flex items-start justify-center px-4 pt-[8vh]" role="presentation">
+    <div
+      className="fixed inset-0 z-[10050] flex items-stretch justify-center p-[8px] sm:items-start sm:px-4 sm:pt-[8vh]"
+      role="presentation"
+    >
       <div
         className="absolute inset-0 bg-[var(--palette-backdrop)]"
         aria-hidden
@@ -205,30 +209,32 @@ export function ImportConversationDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Import conversation"
-        className="relative flex h-[min(560px,80vh)] w-[min(860px,94vw)] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-2xl"
+        className="relative flex h-full max-h-[680px] w-full max-w-[860px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-2xl sm:h-[min(680px,84dvh)] sm:w-[min(860px,94vw)]"
       >
-        <div className="flex items-center justify-between gap-[8px] border-b border-[var(--palette-divider)] px-[14px] py-[10px]">
+        <div className="flex items-start justify-between gap-[12px] border-b border-[var(--palette-divider)] px-[14px] py-[12px] sm:items-center sm:py-[10px]">
           <div className="flex min-w-0 flex-col gap-[2px]">
             <h2 className="font-sans text-[14px] font-semibold text-[var(--text-primary)]">
               Import conversation
             </h2>
-            <p className="font-sans text-[12px] text-[var(--text-secondary)]">
-              Migrate a session from another agent harness. The native session is preserved
-              verbatim, keeps resuming in its original harness, and stays in sync automatically.
+            <p className="max-w-[680px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              Import a session stored on this server. It keeps its native history, resumes in its
+              original harness, and stays in sync automatically.
             </p>
           </div>
           <button
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="flex size-[26px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            className="flex size-[36px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] sm:size-[28px]"
           >
             <X className="size-[14px]" strokeWidth={1.8} />
           </button>
         </div>
 
         <div className="flex min-h-0 flex-1">
-          <div className="flex w-[240px] shrink-0 flex-col gap-[2px] overflow-y-auto border-r border-[var(--palette-divider)] p-[8px]">
+          <div
+            className={`${compactPane === "sources" ? "flex" : "hidden"} min-w-0 flex-1 flex-col gap-[4px] overflow-y-auto p-[10px] lg:flex lg:w-[260px] lg:flex-none lg:border-r lg:border-[var(--palette-divider)] lg:p-[8px]`}
+          >
             {sources === null && !sourcesError ? (
               <div className="flex items-center gap-[6px] px-[6px] py-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
                 <Loader2 className="size-[13px] animate-spin" strokeWidth={1.8} />
@@ -236,8 +242,18 @@ export function ImportConversationDialog({
               </div>
             ) : null}
             {sourcesError ? (
-              <div className="px-[6px] py-[8px] font-sans text-[12px] text-[var(--status-error)]">
-                {sourcesError}
+              <div className="flex flex-col items-start gap-[10px] rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--status-error)_28%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_8%,transparent)] px-[10px] py-[10px]">
+                <p className="font-sans text-[12px] leading-relaxed text-[var(--status-error)]">
+                  {sourcesError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void loadSources()}
+                  className="flex min-h-[36px] items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent-bg)] px-[12px] font-sans text-[12px] text-[var(--text-primary)] transition-opacity hover:opacity-85"
+                >
+                  <RefreshCw className="size-[13px]" strokeWidth={1.8} />
+                  Try again
+                </button>
               </div>
             ) : null}
             {sources?.map((source) => {
@@ -248,20 +264,31 @@ export function ImportConversationDialog({
                   key={source.backendId}
                   type="button"
                   disabled={disabled}
-                  onClick={() => setSelectedBackendId(source.backendId)}
+                  onClick={() => {
+                    setSelectedBackendId(source.backendId);
+                    setCompactPane("sessions");
+                  }}
                   title={source.reason ?? source.label}
-                  className={`flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left transition-colors ${
+                  className={`flex min-h-[48px] w-full items-start gap-[9px] rounded-[var(--radius-tab)] px-[10px] py-[8px] text-left transition-colors lg:min-h-0 lg:px-[8px] lg:py-[7px] ${
                     active
                       ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
                       : "text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] hover:text-[var(--text-primary)]"
                   } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
                 >
-                  <AgentBackendIcon backendId={source.backendId} className="size-[15px] shrink-0" />
-                  <span className="min-w-0 flex-1 truncate font-sans text-[13px]">
-                    {source.label}
+                  <AgentBackendIcon
+                    backendId={source.backendId}
+                    className="mt-[2px] size-[16px] shrink-0"
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                    <span className="truncate font-sans text-[13px]">{source.label}</span>
+                    <span className="line-clamp-2 font-sans text-[11px] leading-[1.35] text-[var(--text-secondary)]">
+                      {source.available
+                        ? `${source.sessionCount} session${source.sessionCount === 1 ? "" : "s"} found`
+                        : (source.reason ?? "No local session storage found.")}
+                    </span>
                   </span>
                   {source.available ? (
-                    <span className="shrink-0 rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[6px] py-[1px] font-sans text-[11px] text-[var(--text-secondary)]">
+                    <span className="mt-[1px] shrink-0 rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[6px] py-[1px] font-sans text-[11px] text-[var(--text-secondary)]">
                       {source.sessionCount}
                     </span>
                   ) : null}
@@ -269,29 +296,37 @@ export function ImportConversationDialog({
               );
             })}
             {sources?.every((source) => !source.available) ? (
-              <p className="px-[6px] py-[8px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                No harness session storage detected on this machine yet. Create a conversation
-                with Claude Code, Codex, OpenCode, Gemini CLI, or Pi first, then re-open this
-                dialog.
+              <p className="px-[8px] py-[10px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                No harness session storage was detected on the connected server. The paths checked
+                for each harness are shown above.
               </p>
             ) : null}
           </div>
 
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex items-center gap-[8px] border-b border-[var(--palette-divider)] px-[12px] py-[8px]">
+          <div
+            className={`${compactPane === "sessions" ? "flex" : "hidden"} min-w-0 flex-1 flex-col lg:flex`}
+          >
+            <div className="flex items-center gap-[6px] border-b border-[var(--palette-divider)] px-[10px] py-[8px] sm:gap-[8px] sm:px-[12px]">
+              <button
+                type="button"
+                aria-label="Choose another harness"
+                title="Choose another harness"
+                onClick={() => setCompactPane("sources")}
+                className="flex size-[38px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] lg:hidden"
+              >
+                <ArrowLeft className="size-[16px]" strokeWidth={1.8} />
+              </button>
               {selectedBackendId ? (
                 <button
                   type="button"
                   aria-label="Reload sessions"
                   title="Reload sessions"
                   onClick={() => void loadSessions(selectedBackendId)}
-                  className="flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                  className="flex size-[38px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] lg:size-[26px]"
                 >
-                  <RefreshCw className="size-[13px]" strokeWidth={1.8} />
+                  <RefreshCw className="size-[14px]" strokeWidth={1.8} />
                 </button>
-              ) : (
-                <ArrowLeft className="size-[13px] text-transparent" strokeWidth={1.8} />
-              )}
+              ) : null}
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-[8px] top-1/2 size-[13px] -translate-y-1/2 text-[var(--text-disabled)]" strokeWidth={1.8} />
                 <input
@@ -300,7 +335,7 @@ export function ImportConversationDialog({
                   placeholder={
                     selectedSource ? `Search ${selectedSource.label} sessions…` : "Search sessions…"
                   }
-                  className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[5px] pl-[26px] pr-[8px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
+                  className="min-h-[38px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[5px] pl-[28px] pr-[8px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)] lg:min-h-0"
                 />
               </div>
             </div>
@@ -330,10 +365,10 @@ export function ImportConversationDialog({
                 return (
                   <div
                     key={session.id}
-                    className="group flex w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[8px] py-[7px] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)]"
+                    className="group flex min-h-[60px] w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[8px] transition-colors hover:bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] sm:gap-[10px]"
                   >
-                    <div className="flex min-w-0 flex-1 flex-col gap-[1px]">
-                      <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
+                    <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                      <span className="line-clamp-2 font-sans text-[13px] leading-[1.35] text-[var(--text-primary)] sm:truncate">
                         {session.title}
                       </span>
                       <span className="truncate font-sans text-[11px] text-[var(--text-secondary)]">
@@ -341,10 +376,12 @@ export function ImportConversationDialog({
                           session.cwd,
                           formatRelativeTime(session.updatedAt),
                           `${session.messageCount} message${session.messageCount === 1 ? "" : "s"}`,
-                          session.id,
                         ]
                           .filter(Boolean)
                           .join(" · ")}
+                      </span>
+                      <span className="hidden truncate font-mono text-[10px] text-[var(--text-disabled)] sm:block">
+                        {session.id}
                       </span>
                     </div>
                     {alreadyImported ? (
@@ -356,7 +393,7 @@ export function ImportConversationDialog({
                           onClose();
                         }}
                         title="Already imported — stays in sync with the harness automatically"
-                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex min-h-[40px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] px-[11px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Check className="size-[12px]" strokeWidth={2} />
                         Open
@@ -366,7 +403,7 @@ export function ImportConversationDialog({
                         type="button"
                         disabled={busy || importingSessionId !== null}
                         onClick={() => void handleImport(session)}
-                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex min-h-[40px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[11px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {busy ? (
                           <Loader2 className="size-[12px] animate-spin" strokeWidth={1.8} />

@@ -43,6 +43,7 @@ import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX } from "@/lib/theme-config";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
 import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
+import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 import { PermissionRequestCard } from "./PermissionRequestCard";
 import type { ChatMessage, TodoItem, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
 import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
@@ -201,7 +202,6 @@ interface WorkedSessionCardProps {
   /** Seeds uncontrolled initial open when parent does not pass `open`. */
   defaultOpen?: boolean;
   loading?: boolean;
-  surface?: "panel" | "editor";
   /**
    * When false, header/tool loading shimmer only reflects local `loading` / active tools,
    * not “superseded” sessions after permission or a newer worked block.
@@ -681,7 +681,6 @@ export function WorkedSessionCard({
   onOpenChange,
   defaultOpen = false,
   loading = false,
-  surface = "panel",
   isLiveWorkedTail = true,
   workspaceRoot = null,
   toolDetailsInWorkedCard = true,
@@ -694,6 +693,7 @@ export function WorkedSessionCard({
   const entryListMaxHeightPx =
     themeConfig.toolCallDropdownMaxHeightPx ?? TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX;
   const editDiffRenderingMode = themeConfig.editDiffRenderingMode ?? "full";
+  const showToolCallIcons = themeConfig.showToolCallIcons === true;
   const { openExplorerFile } = useOpenInEditor();
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
@@ -718,7 +718,6 @@ export function WorkedSessionCard({
     entries.some((entry) => entry.kind === "compression");
   const isWorkingPlaceholder =
     showLoadingState && entries.length === 0 && !isContextCompression;
-  const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
   const inlineEditEntries =
     !preferInside && standaloneHighlighted ? [standaloneHighlighted] : [];
   const hasCollapsibleEntries =
@@ -1041,7 +1040,13 @@ export function WorkedSessionCard({
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
               className={`${contentRail ? "ml-[2px] border-l border-[var(--border-subtle)] pl-[10px]" : ""} overflow-y-auto hide-scrollbar-y`}
-              style={{ maxHeight: entryListMaxHeightPx }}
+              style={{
+                maxHeight: entryListMaxHeightPx,
+                ...scrollEdgeMaskStyle(
+                  { top: showTopGrad, bottom: showBottomGrad },
+                  { size: 28 }
+                ),
+              }}
             >
               <div ref={contentMeasureRef} className="flex flex-col gap-[14px]">
                 {isContextCompression && entries.length === 0 ? (
@@ -1063,24 +1068,12 @@ export function WorkedSessionCard({
                     isLiveWorkedTail={isLiveWorkedTail}
                     workspaceRoot={workspaceRoot}
                     onOpenToolFile={handleOpenToolFile}
-                    horizScrollFadeEdge={gradientVar}
                     editDiffRenderingMode={editDiffRenderingMode}
+                    showToolCallIcons={showToolCallIcons}
                   />
                 ))}
               </div>
             </div>
-            {showTopGrad ? (
-              <div
-                className={`pointer-events-none absolute inset-x-0 top-[10px] ${contentRail ? "ml-[2px]" : ""} h-[28px] z-[1] bg-gradient-to-b to-transparent`}
-                style={{ backgroundImage: `linear-gradient(to bottom, ${gradientVar}, transparent)` }}
-              />
-            ) : null}
-            {showBottomGrad ? (
-              <div
-                className={`pointer-events-none absolute inset-x-0 bottom-0 ${contentRail ? "ml-[2px]" : ""} h-[28px] z-[1] bg-gradient-to-b from-transparent`}
-                style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${gradientVar})` }}
-              />
-            ) : null}
           </div>
           {embeddedPermissionEl ? (
             <div
@@ -1100,15 +1093,15 @@ function WorkedEntryBlock({
   isLiveWorkedTail,
   workspaceRoot,
   onOpenToolFile,
-  horizScrollFadeEdge,
   editDiffRenderingMode,
+  showToolCallIcons,
 }: {
   entry: WorkedSessionEntry;
   isLiveWorkedTail: boolean;
   workspaceRoot: string | null;
   onOpenToolFile: (path: string) => void;
-  horizScrollFadeEdge: string;
   editDiffRenderingMode: EditDiffRenderingMode;
+  showToolCallIcons: boolean;
 }) {
   const [visible, setVisible] = useState(false);
   const [rawDetailOpen, setRawDetailOpen] = useState(false);
@@ -1120,7 +1113,7 @@ function WorkedEntryBlock({
 
   return (
     <div
-      className={`transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
+      className={`transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
         visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
       }`}
     >
@@ -1129,10 +1122,10 @@ function WorkedEntryBlock({
         isLiveWorkedTail,
         workspaceRoot,
         onOpenToolFile,
-        horizScrollFadeEdge,
         rawDetailOpen,
         setRawDetailOpen,
-        editDiffRenderingMode
+        editDiffRenderingMode,
+        showToolCallIcons
       )}
     </div>
   );
@@ -1143,18 +1136,20 @@ function renderEntry(
   isLiveWorkedTail: boolean,
   workspaceRoot: string | null,
   onOpenToolFile: (path: string) => void,
-  horizScrollFadeEdge: string,
   rawDetailOpen: boolean,
   onRawDetailOpenChange: (open: boolean) => void,
-  editDiffRenderingMode: EditDiffRenderingMode
+  editDiffRenderingMode: EditDiffRenderingMode,
+  showToolCallIcons: boolean
 ) {
   switch (entry.kind) {
     case "verbatim":
       return (
         <div className="flex gap-[8px]">
-          <span className="mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-primary)] opacity-90">
-            <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
-          </span>
+          {showToolCallIcons ? (
+            <span className="mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-primary)] opacity-90">
+              <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
+            </span>
+          ) : null}
           <pre className="whitespace-pre-wrap font-mono text-[12px] font-normal leading-relaxed text-[var(--text-primary)]">
             {entry.text}
           </pre>
@@ -1171,9 +1166,11 @@ function renderEntry(
       const exploreExtra = exploreRows.length - explorePreview.length;
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>
-            <FolderOpen className="size-[14px]" strokeWidth={1.5} aria-hidden />
-          </span>
+          {showToolCallIcons ? (
+            <span className={iconWrap}>
+              <FolderOpen className="size-[14px]" strokeWidth={1.5} aria-hidden />
+            </span>
+          ) : null}
           <div className="min-w-0 flex-1">
             <p className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
               {entry.caption ??
@@ -1332,7 +1329,9 @@ function renderEntry(
       ) : null;
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>{toolEntryIcon(entry)}</span>
+          {showToolCallIcons ? (
+            <span className={iconWrap}>{toolEntryIcon(entry)}</span>
+          ) : null}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-[8px]">
               {showRawDetail ? (
@@ -1365,7 +1364,6 @@ function renderEntry(
             {extraDetail ? (
               <HorizontalFadedScroll
                 scrollClassName="hide-scrollbar-x mt-[4px] overflow-x-auto font-mono text-[12px] font-normal leading-relaxed text-[var(--text-secondary)] whitespace-pre"
-                edgeColorVar={horizScrollFadeEdge}
                 measureKey={extraDetail}
               >
                 {extraDetail}

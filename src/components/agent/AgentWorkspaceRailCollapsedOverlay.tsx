@@ -28,7 +28,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
 
   return (
     <div
-      className={`agent-rail-collapsed-overlay-enter pointer-events-none absolute top-[11px] z-[50] ${
+      className={`agent-rail-collapsed-overlay-enter mobile-safe-top-offset pointer-events-none absolute top-[11px] z-[50] ${
         padForWindowChrome
           ? "left-0 pl-[var(--editor-window-chrome-tab-inset)]"
           : "left-[11px]"

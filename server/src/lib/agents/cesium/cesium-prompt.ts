@@ -10,7 +10,6 @@ export const CESIUM_SYSTEM_PROMPT = buildCesiumBaseSystemPrompt();
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 /** Slow third-party hosts (Cerebras, Nvidia NIM, etc.) can take a long time on large tool prompts. */
 export const CESIUM_RESPONSE_WARNING_MS = 10 * 60 * 1000;
-export const CESIUM_MAX_TOOL_ITERATIONS = 80;
 export const CESIUM_TOOL_RESULT_MODEL_MAX_CHARS = 12_000;
 export const CESIUM_TOOL_RESULT_MODEL_TOTAL_MAX_CHARS = 96_000;
 export const HISTORY_TURN_LIMIT = 250;

@@ -61,6 +61,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
@@ -95,7 +96,15 @@ import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-even
 import { agentRecordToRailSummary } from "@/lib/agent-rail-patch";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
-import { getAgentRailWorkspaceKey } from "@/lib/multi-server-workspaces";
+import {
+  getAgentRailWorkspaceKey,
+  isNoWorkspaceRailScope,
+  NO_WORKSPACE_PICKER_LABEL,
+} from "@/lib/multi-server-workspaces";
+import {
+  shouldShowAgentRailStandaloneSectionHeader,
+  shouldShowAgentRailWorkspaceGroupHeaders,
+} from "@/lib/agent-rail-groups";
 import {
   FOLDER_COLOR_OPTIONS,
   FOLDER_ICON_OPTIONS,
@@ -257,11 +266,7 @@ function AgentRailConversationListScroll({
   measureKey: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const topFadeRef = useRef<HTMLDivElement>(null);
-  const bottomFadeRef = useRef<HTMLDivElement>(null);
-  const leftFadeRef = useRef<HTMLDivElement>(null);
-  const rightFadeRef = useRef<HTMLDivElement>(null);
-  const fadeStateRef = useRef({
+  const [fade, setFade] = useState({
     top: false,
     bottom: false,
     left: false,
@@ -283,20 +288,14 @@ function AgentRailConversationListScroll({
       left: scrollLeft > 2,
       right: maxScrollX > 2 && scrollLeft < maxScrollX - 2,
     };
-    const prev = fadeStateRef.current;
-    if (
+    setFade((prev) =>
       prev.top === next.top &&
       prev.bottom === next.bottom &&
       prev.left === next.left &&
       prev.right === next.right
-    ) {
-      return;
-    }
-    fadeStateRef.current = next;
-    topFadeRef.current?.toggleAttribute("hidden", !next.top);
-    bottomFadeRef.current?.toggleAttribute("hidden", !next.bottom);
-    leftFadeRef.current?.toggleAttribute("hidden", !next.left);
-    rightFadeRef.current?.toggleAttribute("hidden", !next.right);
+        ? prev
+        : next
+    );
   }, []);
 
   const scheduleUpdateFade = useCallback(() => {
@@ -329,46 +328,13 @@ function AgentRailConversationListScroll({
     };
   }, [scheduleUpdateFade]);
 
-  const edge = "var(--bg-panel)";
-  const gradTop = `linear-gradient(to bottom, ${edge}, transparent)`;
-  const gradBottom = `linear-gradient(to top, ${edge}, transparent)`;
-  const gradLeft = `linear-gradient(to right, ${edge}, transparent)`;
-  const gradRight = `linear-gradient(to left, ${edge}, transparent)`;
-
   return (
     <div className="relative min-h-0 min-w-0 flex-1">
-      <div
-        ref={topFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradTop }}
-        aria-hidden
-      />
-      <div
-        ref={bottomFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradBottom }}
-        aria-hidden
-      />
-      <div
-        ref={leftFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradLeft }}
-        aria-hidden
-      />
-      <div
-        ref={rightFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradRight }}
-        aria-hidden
-      />
       <div
         ref={scrollRef}
         onScroll={scheduleUpdateFade}
         className="hide-scrollbar-y relative z-0 h-full min-h-0 w-full min-w-0 overflow-auto px-[11px] pb-[8px] pt-[12px]"
+        style={scrollEdgeMaskStyle(fade, { size: 28 })}
       >
         {children}
       </div>
@@ -508,6 +474,7 @@ export function AgentWorkspaceRail() {
     startNewConversation,
     startNewChatInWorkspace,
     startStandaloneChat,
+    setStandaloneDraftActive,
     toggleLeftRailCollapsed,
     openConversationSummary,
     refreshConversationGroups,
@@ -570,10 +537,19 @@ export function AgentWorkspaceRail() {
     [acknowledgedFailureByConversationId]
   );
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
-  /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
+  /**
+   * Window-chrome inset is only for the collapse/search/new-chat row (and bulk
+   * bar) sitting under iPadOS traffic lights. The workspace picker is on the
+   * next row and must keep the normal rail gutter — tab inset is not a sidebar
+   * indent.
+   */
+  /* mobile-safe-top-pad is unconditional: the CSS only fires under
+     .opencursor-mobile-native (the phone/tablet WebView), and a landscape
+     phone renders this desktop rail while the translucent status bar still
+     overlays the top — gating on isMobile stripped the inset there. */
   const railTopBarPadClass = `${padRailForWindowChrome
     ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
-    : "px-[11px]"} ${isMobile ? "mobile-safe-top-pad" : ""}`;
+    : "px-[11px]"} mobile-safe-top-pad`;
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const accountAnchorRef = useRef<HTMLButtonElement>(null);
@@ -711,7 +687,8 @@ export function AgentWorkspaceRail() {
     railFilterActive ||
     agentRailSettings.groupBy !== "workspace" ||
     railRowDetail !== "balanced" ||
-    (agentRailSettings.scope?.type === "workspace");
+    agentRailSettings.scope?.type === "workspace" ||
+    isNoWorkspaceRailScope(agentRailSettings.scope);
 
   const visibleGroups = useMemo(() => {
     const seenKeys = new Set<string>();
@@ -748,7 +725,7 @@ export function AgentWorkspaceRail() {
       return false;
     }
     const scope = agentRailSettings.scope;
-    if (!scope || scope.type === "all") {
+    if (!scope || scope.type === "all" || isNoWorkspaceRailScope(scope)) {
       return true;
     }
     if (scope.type !== "workspace") {
@@ -764,6 +741,19 @@ export function AgentWorkspaceRail() {
     const named = groups.find((group) => isStandaloneChatWorkspace(group.workspace));
     return named?.workspace.name?.trim() || "Chat";
   }, [groups]);
+
+  const showWorkspaceGroupHeaders = shouldShowAgentRailWorkspaceGroupHeaders({
+    groupBy: agentRailSettings.groupBy,
+    workspaceGroupCount: visibleGroups.length,
+    standaloneSectionVisible: showStandaloneHomeGroup,
+  });
+  const showStandaloneSectionHeader = shouldShowAgentRailStandaloneSectionHeader(
+    Boolean(
+      agentRailSettings.scope?.type === "workspace" &&
+        showStandaloneHomeGroup &&
+        visibleGroups.length === 0
+    )
+  );
 
   const standaloneWorkspaceIds = useMemo(() => {
     const ids = new Set<string>();
@@ -955,8 +945,14 @@ export function AgentWorkspaceRail() {
     patchAgentRailSettings({ scope: { type: "all" } });
   }, [patchAgentRailSettings]);
 
+  const handleRailNoWorkspace = useCallback(() => {
+    patchAgentRailSettings({ scope: { type: "no-workspace" } });
+    setStandaloneDraftActive(true);
+  }, [patchAgentRailSettings, setStandaloneDraftActive]);
+
   const handleRailWorkspaceSelect = useCallback(
     (workspace: DirectoryWorkspaceRecord) => {
+      setStandaloneDraftActive(false);
       patchAgentRailSettings({
         scope: { type: "workspace", workspaceKey: workspace.workspaceKey },
       });
@@ -974,6 +970,7 @@ export function AgentWorkspaceRail() {
       openWorkspaceById,
       patchAgentRailSettings,
       setActiveServer,
+      setStandaloneDraftActive,
     ]
   );
 
@@ -2665,6 +2662,7 @@ export function AgentWorkspaceRail() {
     };
     return (
       <section className="pb-[12px]">
+        {showStandaloneSectionHeader ? (
         <div className="group flex items-center gap-[2px] px-px pb-[4px]">
           <button
             type="button"
@@ -2706,7 +2704,8 @@ export function AgentWorkspaceRail() {
             <Plus className="size-[12px]" strokeWidth={1.5} />
           </button>
         </div>
-        {!isChatsHeaderCollapsed ? (
+        ) : null}
+        {!isChatsHeaderCollapsed || !showStandaloneSectionHeader ? (
           <div
             className="flex flex-col gap-[2px]"
             onDragOver={handleFolderDropTargetDragOver}
@@ -2887,6 +2886,7 @@ export function AgentWorkspaceRail() {
     renameState?.draft,
     settings.general.chatFolders,
     settings.general.chatRootOrderByScope,
+    showStandaloneSectionHeader,
     standaloneChatConversations,
     standaloneHomeLabel,
     toggleFolderCollapsed,
@@ -2951,6 +2951,13 @@ export function AgentWorkspaceRail() {
                   group.workspace.id === activeWorkspaceId
                     ? gitStatus?.currentBranch
                     : group.repository?.currentBranch;
+                if (
+                  !showWorkspaceGroupHeaders &&
+                  group.conversations.length === 0 &&
+                  workspaceFolders.length === 0
+                ) {
+                  return null;
+                }
                 return (
                 <section
                   key={groupKey}
@@ -2960,6 +2967,7 @@ export function AgentWorkspaceRail() {
                     draggingWorkspaceId === groupKey ? "opacity-60" : ""
                   }`}
                 >
+                  {showWorkspaceGroupHeaders ? (
                   <div
                     // Bucket groupings (priority/status/updated/...) render
                     // pseudo-workspaces; dragging them would persist junk
@@ -3027,6 +3035,7 @@ export function AgentWorkspaceRail() {
                       </>
                     ) : null}
                   </div>
+                  ) : null}
                   {editingWorkspaceKey === groupKey ? (
                     <RailIconCustomizePanel
                       title={group.workspace.name}
@@ -3039,7 +3048,7 @@ export function AgentWorkspaceRail() {
                       }
                     />
                   ) : null}
-                  {!isWorkspaceCollapsed ? (
+                  {!isWorkspaceCollapsed || !showWorkspaceGroupHeaders ? (
                     <div
                       className="flex flex-col gap-[2px]"
                       onDragOver={handleFolderDropTargetDragOver}
@@ -3361,7 +3370,7 @@ export function AgentWorkspaceRail() {
     pinnedRailConversations.length > 0 ||
     standaloneChatConversations.length > 0 ||
     visibleGroups.length > 0 ||
-    railSectionOrder.includes("chats");
+    showStandaloneHomeGroup;
 
   return (
     <>
@@ -3420,7 +3429,7 @@ export function AgentWorkspaceRail() {
             </div>
           )}
           {!bulkSelectMode ? (
-            <div className={`shrink-0 pb-[4px] pt-[6px] ${railTopBarPadClass}`} data-electron-no-drag>
+            <div className="shrink-0 px-[11px] pb-[4px] pt-[6px]" data-electron-no-drag>
               <button
                 ref={workspacePickerAnchorRef}
                 type="button"
@@ -3434,7 +3443,13 @@ export function AgentWorkspaceRail() {
                 aria-expanded={workspacePickerOpen}
                 aria-haspopup="dialog"
               >
-                {agentRailSettings.scope?.type === "workspace" && scopedDirectoryWorkspace ? (
+                {isNoWorkspaceRailScope(agentRailSettings.scope) ? (
+                  <MessageSquare
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                ) : agentRailSettings.scope?.type === "workspace" && scopedDirectoryWorkspace ? (
                   <WorkspacePickerRowIcon
                     appearances={workspaceRailAppearances}
                     workspaceKey={scopedDirectoryWorkspace.workspaceKey}
@@ -3452,9 +3467,11 @@ export function AgentWorkspaceRail() {
                   />
                 )}
                 <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-                  {agentRailSettings.scope?.type === "workspace"
-                    ? (scopedDirectoryWorkspace?.name ?? "Workspace")
-                    : "All workspaces"}
+                  {isNoWorkspaceRailScope(agentRailSettings.scope)
+                    ? NO_WORKSPACE_PICKER_LABEL
+                    : agentRailSettings.scope?.type === "workspace"
+                      ? (scopedDirectoryWorkspace?.name ?? "Workspace")
+                      : "All workspaces"}
                 </span>
                 <ChevronDown
                   className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -3659,9 +3676,14 @@ export function AgentWorkspaceRail() {
                   })
                 : null)
         }
-        allSelected={agentRailSettings.scope?.type !== "workspace"}
+        allSelected={
+          !isNoWorkspaceRailScope(agentRailSettings.scope) &&
+          agentRailSettings.scope?.type !== "workspace"
+        }
+        noWorkspaceSelected={isNoWorkspaceRailScope(agentRailSettings.scope)}
         showAllWorkspacesOption
         onSelectAll={handleRailAllWorkspaces}
+        onSelectNoWorkspace={handleRailNoWorkspace}
         onSelectWorkspace={handleRailWorkspaceSelect}
       />
 

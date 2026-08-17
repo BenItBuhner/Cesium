@@ -440,12 +440,6 @@ html.dark .landing-shot-dark {
 [data-aurora-scene="on"] .aurora-editor-surface {
   background: transparent;
 }
-/* Soften the opaque bottom fade so it doesn't read as a solid puddle against
-   the translucent surroundings. */
-[data-aurora-scene="on"] .chat-bottom-fade {
-  opacity: 0.78;
-}
-
 /* Monaco: let the aurora show through the code editor. The gutter, current
    line, and scrollbar shades keep their theme colors; only the flat page
    backgrounds go clear. */
@@ -453,32 +447,6 @@ html.dark .landing-shot-dark {
 [data-aurora-scene="on"] .monaco-editor .margin,
 [data-aurora-scene="on"] .monaco-editor .monaco-editor-background {
   background-color: transparent !important;
-}
-
-/**
- * Bottom-of-thread fade: sits above the transcript but beneath the composer
- * dock, so text dissolves toward the page bottom while staying partially
- * visible (and blurred) underneath the translucent composer. The layer is an
- * absolutely-positioned child of the dock wrapper and extends 56px above it,
- * so it automatically tracks the dock height. `--chat-fade-surface` matches
- * the pane background (`--bg-main` for the agent stage, `--bg-panel` for the
- * editor chat).
- */
-.chat-bottom-fade {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  top: -64px;
-  pointer-events: none;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 96%, transparent) 0%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 82%, transparent) 30%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 46%, transparent) 62%,
-    color-mix(in srgb, var(--chat-fade-surface, var(--bg-main)) 16%, transparent) 84%,
-    transparent 100%
-  );
 }
 
 /**
@@ -577,6 +545,36 @@ html.dark .landing-shot-dark {
   }
 }
 
+/*
+ * Touch devices (phones, tablets, Android WebView): backdrop-filter re-blurs
+ * the pixels underneath on EVERY frame the content behind changes — i.e. on
+ * every scroll frame under the composer dock and continuously during drawer
+ * drags. On mobile GPUs (and worse, software-composited WebViews) that alone
+ * can halve frame rate. Swap the frosted glass for near-opaque fills; the
+ * visual difference on a small screen is negligible, the performance
+ * difference is not. Selector list mirrors the blur rules above (including
+ * the `.dark`-scoped aurora variants) so these later declarations win at
+ * equal-or-greater specificity.
+ */
+@media (pointer: coarse) {
+  .chat-composer-surface,
+  [data-aurora-surface="on"] .aurora-glass,
+  [data-aurora-surface="on"] .chat-composer-surface,
+  .dark [data-aurora-surface="on"] .aurora-glass,
+  .dark [data-aurora-surface="on"] .chat-composer-surface {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: color-mix(in srgb, var(--agent-card-bg) 96%, transparent);
+  }
+
+  .mobile-left-drawer-surface,
+  .mobile-right-drawer-surface {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: color-mix(in srgb, var(--bg-panel) 97%, transparent);
+  }
+}
+
 :root {
   --context-usage-system: #9ca3af;
   --context-usage-tools: #6366f1;
@@ -618,6 +616,13 @@ html.dark .landing-shot-dark {
 
 .opencursor-mobile-native .mobile-safe-top-scroll {
   scroll-padding-top: var(--opencursor-mobile-safe-area-top) !important;
+}
+
+.opencursor-mobile-native .mobile-safe-top-gap {
+  /* Blocks with their own 8px breathing room at the top of a full-bleed pane
+     (the capability-profile toggle above the agent landing) add the safe area
+     to that gap instead of replacing it. */
+  padding-top: calc(var(--opencursor-mobile-safe-area-top) + 8px) !important;
 }
 
 .opencursor-mobile-idle *,

@@ -21,6 +21,7 @@ import {
 } from "@/lib/chat-scroll-anchor";
 import type { ChatMessage } from "@/lib/types";
 import type { ChatScrollAnchor } from "@/lib/workspace-session";
+import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 
 export type MessageListScrollPersistMeta = {
   pinnedToBottom: boolean;
@@ -61,6 +62,9 @@ function olderGateReleaseScrollTopPx(prefetchPx: number): number {
 
 /** Max automatic "fill the viewport" history rounds per conversation (burst prefetch at bottom). */
 const OLDER_AUTO_FILL_MAX_ROUNDS = 8;
+
+/** Stable fallback so a missing session map doesn't churn prop identity every render. */
+const EMPTY_WORKED_MAP: Record<string, boolean> = {};
 /** Minimum excess scroll height (beyond viewport) before we stop auto-prefetching at the bottom. */
 function olderMinBottomSlackPx(root: HTMLDivElement): number {
   const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
@@ -80,7 +84,6 @@ interface MessageListProps {
   renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
   editingUserMessageId?: string | null;
   bottomDockVisible?: boolean;
-  surface?: "panel" | "editor";
   contentClassName?: string;
   conversationId?: string;
   conversationBusy?: boolean;
@@ -102,7 +105,6 @@ export function MessageList({
   renderUserMessageEditor,
   editingUserMessageId,
   bottomDockVisible = true,
-  surface = "panel",
   contentClassName,
   conversationId,
   conversationBusy = false,
@@ -462,7 +464,7 @@ export function MessageList({
     };
   }, [flushPersistedScrollTop]);
 
-  const workedMap = workspaceSession.chat.workedSessionOpenByScopedId ?? {};
+  const workedMap = workspaceSession.chat.workedSessionOpenByScopedId ?? EMPTY_WORKED_MAP;
   const setWorkedOpen = useCallback(
     (scopedKey: string, open: boolean) => {
       updateWorkspaceSession((current) => {
@@ -490,7 +492,6 @@ export function MessageList({
       messages={messages}
       stickyUserHeader
       scrollRootRef={scrollRootRef}
-      workedSessionSurface={surface}
       virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
       onForkMessage={onForkMessage}
@@ -536,9 +537,16 @@ export function MessageList({
     scrollRootRef,
     fadeMeasureKey
   );
-  const scrollFadeEdgeVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
-  const scrollFadeGradTop = `linear-gradient(to bottom, ${scrollFadeEdgeVar}, transparent)`;
-  const scrollFadeGradBottom = `linear-gradient(to top, ${scrollFadeEdgeVar}, transparent)`;
+  const scrollMaskStyle = scrollEdgeMaskStyle(
+    {
+      top: fade.top,
+      bottom: fade.bottom || bottomDockVisible,
+    },
+    {
+      topSize: 28,
+      bottomSize: bottomDockVisible ? 64 : 28,
+    }
+  );
 
   /**
    * Horizontal scroll inset follows the **pane** width (`@container`), not the viewport.
@@ -558,6 +566,7 @@ export function MessageList({
         className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain [overflow-anchor:none] ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
           bottomDockVisible ? "pb-[clamp(160px,24vh,240px)]" : "pb-[14px]"
         }`}
+        style={scrollMaskStyle}
         onScroll={(event) => {
           const root = event.currentTarget;
           updateScrollFade();
@@ -584,20 +593,6 @@ export function MessageList({
           }
         }}
       >
-        {fade.top ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[28px]"
-            style={{ backgroundImage: scrollFadeGradTop }}
-            aria-hidden
-          />
-        ) : null}
-        {fade.bottom ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[28px]"
-            style={{ backgroundImage: scrollFadeGradBottom }}
-            aria-hidden
-          />
-        ) : null}
         <div className={`relative z-[2] ${innerClass}`}>
           {loadingOlderHistory ? (
             <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">

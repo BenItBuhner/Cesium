@@ -101,6 +101,30 @@ describe("theme config", () => {
     );
   });
 
+  test("hides tool call icons by default and honors an explicit opt-in", () => {
+    assert.equal(createDefaultThemeConfig().showToolCallIcons, false);
+    assert.equal(
+      normalizeThemeConfig({ schemaVersion: 1, appearance: "system" }).showToolCallIcons,
+      false
+    );
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        showToolCallIcons: true,
+      }).showToolCallIcons,
+      true
+    );
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        showToolCallIcons: "yes",
+      }).showToolCallIcons,
+      false
+    );
+  });
+
   test("clamps tool call dropdown max height", () => {
     assert.equal(normalizeToolCallDropdownMaxHeightPx(50), TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX);
     assert.equal(normalizeToolCallDropdownMaxHeightPx(9999), TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX);
