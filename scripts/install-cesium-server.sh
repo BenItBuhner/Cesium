@@ -290,11 +290,18 @@ export npm_config_audit=false
     --ignore-scripts \
     --no-save
   "$BUN_BIN" run --cwd packages/core build
+  # The server imports @cesium/contracts, whose package exports point at
+  # dist/ — build it or the server fails to resolve the module at runtime.
+  "$BUN_BIN" run --cwd packages/contracts build
   rm -f server/node_modules/cesium
 )
 
 if [[ ! -f "$SOURCE_DIR/packages/core/dist/index.js" ]]; then
   printf 'Core build did not produce packages/core/dist/index.js.\n' >&2
+  exit 1
+fi
+if [[ ! -f "$SOURCE_DIR/packages/contracts/dist/index.js" ]]; then
+  printf 'Contracts build did not produce packages/contracts/dist/index.js.\n' >&2
   exit 1
 fi
 if [[ ! -f "$SOURCE_DIR/server/src/runtime/bun-server.ts" ]]; then

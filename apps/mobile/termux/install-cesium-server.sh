@@ -117,7 +117,7 @@ if [[ ! -f packages/core/dist/index.js ]]; then
   exit 1
 fi
 
-printf 'Installing cesium-server...\n'
+printf 'Installing cesium-server dependencies...\n'
 (
   cd server
   # --no-workspaces: use server/package-lock.json in isolation (kept in sync
@@ -127,6 +127,30 @@ printf 'Installing cesium-server...\n'
   # espeak TTS engine installed above.
   npm ci --no-workspaces --omit=optional
   rm -f node_modules/cesium
+)
+
+printf 'Building @cesium/contracts...\n'
+# The server compiles against @cesium/contracts (a file: dependency) whose
+# package exports point at dist/, so it must be built before the server's tsc
+# run. It cannot npm-install standalone here: its "@cesium/core" dependency is
+# a workspace version, not a registry package (the npm @cesium scope belongs
+# to CesiumJS). Wire its two deps up via symlinks to what this lean install
+# already provides, then compile with the server's TypeScript.
+(
+  cd packages/contracts
+  mkdir -p node_modules/@cesium
+  ln -sfn ../../../core node_modules/@cesium/core
+  ln -sfn ../../../server/node_modules/zod node_modules/zod
+  ../../server/node_modules/.bin/tsc -p tsconfig.json
+)
+if [[ ! -f packages/contracts/dist/index.js ]]; then
+  printf 'Contracts build did not produce packages/contracts/dist/index.js.\n' >&2
+  exit 1
+fi
+
+printf 'Building cesium-server...\n'
+(
+  cd server
   unset npm_config_ignore_scripts
   npm run build
 )
