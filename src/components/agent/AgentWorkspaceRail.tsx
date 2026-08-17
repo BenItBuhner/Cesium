@@ -95,7 +95,11 @@ import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-even
 import { agentRecordToRailSummary } from "@/lib/agent-rail-patch";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
-import { getAgentRailWorkspaceKey } from "@/lib/multi-server-workspaces";
+import {
+  getAgentRailWorkspaceKey,
+  isNoWorkspaceRailScope,
+  NO_WORKSPACE_PICKER_LABEL,
+} from "@/lib/multi-server-workspaces";
 import {
   FOLDER_COLOR_OPTIONS,
   FOLDER_ICON_OPTIONS,
@@ -508,6 +512,7 @@ export function AgentWorkspaceRail() {
     startNewConversation,
     startNewChatInWorkspace,
     startStandaloneChat,
+    setStandaloneDraftActive,
     toggleLeftRailCollapsed,
     openConversationSummary,
     refreshConversationGroups,
@@ -711,7 +716,8 @@ export function AgentWorkspaceRail() {
     railFilterActive ||
     agentRailSettings.groupBy !== "workspace" ||
     railRowDetail !== "balanced" ||
-    (agentRailSettings.scope?.type === "workspace");
+    agentRailSettings.scope?.type === "workspace" ||
+    isNoWorkspaceRailScope(agentRailSettings.scope);
 
   const visibleGroups = useMemo(() => {
     const seenKeys = new Set<string>();
@@ -748,7 +754,7 @@ export function AgentWorkspaceRail() {
       return false;
     }
     const scope = agentRailSettings.scope;
-    if (!scope || scope.type === "all") {
+    if (!scope || scope.type === "all" || isNoWorkspaceRailScope(scope)) {
       return true;
     }
     if (scope.type !== "workspace") {
@@ -955,8 +961,14 @@ export function AgentWorkspaceRail() {
     patchAgentRailSettings({ scope: { type: "all" } });
   }, [patchAgentRailSettings]);
 
+  const handleRailNoWorkspace = useCallback(() => {
+    patchAgentRailSettings({ scope: { type: "no-workspace" } });
+    setStandaloneDraftActive(true);
+  }, [patchAgentRailSettings, setStandaloneDraftActive]);
+
   const handleRailWorkspaceSelect = useCallback(
     (workspace: DirectoryWorkspaceRecord) => {
+      setStandaloneDraftActive(false);
       patchAgentRailSettings({
         scope: { type: "workspace", workspaceKey: workspace.workspaceKey },
       });
@@ -974,6 +986,7 @@ export function AgentWorkspaceRail() {
       openWorkspaceById,
       patchAgentRailSettings,
       setActiveServer,
+      setStandaloneDraftActive,
     ]
   );
 
@@ -3361,7 +3374,7 @@ export function AgentWorkspaceRail() {
     pinnedRailConversations.length > 0 ||
     standaloneChatConversations.length > 0 ||
     visibleGroups.length > 0 ||
-    railSectionOrder.includes("chats");
+    showStandaloneHomeGroup;
 
   return (
     <>
@@ -3434,7 +3447,13 @@ export function AgentWorkspaceRail() {
                 aria-expanded={workspacePickerOpen}
                 aria-haspopup="dialog"
               >
-                {agentRailSettings.scope?.type === "workspace" && scopedDirectoryWorkspace ? (
+                {isNoWorkspaceRailScope(agentRailSettings.scope) ? (
+                  <MessageSquare
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                ) : agentRailSettings.scope?.type === "workspace" && scopedDirectoryWorkspace ? (
                   <WorkspacePickerRowIcon
                     appearances={workspaceRailAppearances}
                     workspaceKey={scopedDirectoryWorkspace.workspaceKey}
@@ -3452,9 +3471,11 @@ export function AgentWorkspaceRail() {
                   />
                 )}
                 <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-                  {agentRailSettings.scope?.type === "workspace"
-                    ? (scopedDirectoryWorkspace?.name ?? "Workspace")
-                    : "All workspaces"}
+                  {isNoWorkspaceRailScope(agentRailSettings.scope)
+                    ? NO_WORKSPACE_PICKER_LABEL
+                    : agentRailSettings.scope?.type === "workspace"
+                      ? (scopedDirectoryWorkspace?.name ?? "Workspace")
+                      : "All workspaces"}
                 </span>
                 <ChevronDown
                   className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -3659,9 +3680,14 @@ export function AgentWorkspaceRail() {
                   })
                 : null)
         }
-        allSelected={agentRailSettings.scope?.type !== "workspace"}
+        allSelected={
+          !isNoWorkspaceRailScope(agentRailSettings.scope) &&
+          agentRailSettings.scope?.type !== "workspace"
+        }
+        noWorkspaceSelected={isNoWorkspaceRailScope(agentRailSettings.scope)}
         showAllWorkspacesOption
         onSelectAll={handleRailAllWorkspaces}
+        onSelectNoWorkspace={handleRailNoWorkspace}
         onSelectWorkspace={handleRailWorkspaceSelect}
       />
 

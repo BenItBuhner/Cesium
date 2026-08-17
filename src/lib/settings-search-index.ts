@@ -265,6 +265,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row(
     "appearance",
+    "tool-call-icons",
+    "Tool call icons",
+    "Show a small glyph (terminal, file, search) next to each agent tool call in chat; off by default.",
+    ["tool call", "icons", "glyph", "terminal", "worked session", "transcript"]
+  ),
+  row(
+    "appearance",
     "minimal-edit-diff",
     "Minimal edit diff",
     "Show file edits as added and removed line counts instead of the full inline diff.",

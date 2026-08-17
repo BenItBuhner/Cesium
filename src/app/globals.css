@@ -620,6 +620,13 @@ html.dark .landing-shot-dark {
   scroll-padding-top: var(--opencursor-mobile-safe-area-top) !important;
 }
 
+.opencursor-mobile-native .mobile-safe-top-gap {
+  /* Blocks with their own 8px breathing room at the top of a full-bleed pane
+     (the capability-profile toggle above the agent landing) add the safe area
+     to that gap instead of replacing it. */
+  padding-top: calc(var(--opencursor-mobile-safe-area-top) + 8px) !important;
+}
+
 .opencursor-mobile-idle *,
 .opencursor-mobile-idle *::before,
 .opencursor-mobile-idle *::after {
