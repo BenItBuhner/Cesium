@@ -26,7 +26,41 @@ type TrackedRun = {
   runKey: string;
   signature: string;
   projection: MobileAgentProjection;
+  startedAt: number | null;
 };
+
+/**
+ * How long a web-bridge projection sync keeps the native agent socket's
+ * projections suppressed. Web syncs are throttled to 500ms, so anything
+ * this stale means the WebView is frozen or gone and the socket must own
+ * the notifications.
+ */
+export const WEB_SYNC_FRESH_MS = 10_000;
+
+/** Volatile ETA fields only budge the dedupe signature once per bucket. */
+const ETA_SIGNATURE_BUCKET_MS = 60_000;
+
+/**
+ * Dedupe signature for a payload. `estimatedCompletionAt` (and its seconds
+ * mirror) embed "now" and therefore differ on every derivation tick even
+ * when nothing visible changed; posting each tick re-rendered the live
+ * notification every 500ms. Bucketing them keeps reposts down to real
+ * content changes (progress, body text, alerts) plus at most one repost
+ * per minute of ETA drift. The posted payload itself keeps precise values.
+ */
+export function getLiveUpdateSignature(payload: LiveUpdatePayload): string {
+  return JSON.stringify({
+    ...payload,
+    estimatedCompletionAt:
+      payload.estimatedCompletionAt == null
+        ? null
+        : Math.round(payload.estimatedCompletionAt / ETA_SIGNATURE_BUCKET_MS),
+    estimatedRemainingSeconds:
+      payload.estimatedRemainingSeconds == null
+        ? null
+        : Math.round(payload.estimatedRemainingSeconds / 60),
+  });
+}
 
 /**
  * An update should alert (sound / heads-up) exactly when the agent starts
@@ -74,8 +108,12 @@ export class LiveUpdateController {
   private appActive = true;
   private alertPreferences: LiveUpdateAlertPreferences =
     DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES;
+  private lastWebSyncAt = 0;
 
-  constructor(private readonly native: LiveUpdatesNative) {}
+  constructor(
+    private readonly native: LiveUpdatesNative,
+    private readonly now: () => number = Date.now
+  ) {}
 
   setAppActive(active: boolean) {
     this.appActive = active;
@@ -97,15 +135,17 @@ export class LiveUpdateController {
       return;
     }
     const conversationId = projection.conversationId;
-    const runKey = getLiveUpdateRunKey(projection);
-    let tracked = this.runs.get(conversationId) ?? null;
-    if (tracked && tracked.runKey !== runKey) {
-      // A new run started in this conversation; retire the previous run's
-      // notification so the fresh one replaces it cleanly.
-      this.runs.delete(conversationId);
-      await this.native.stopRun(tracked.runKey).catch(() => undefined);
-      tracked = null;
-    }
+    const tracked = this.runs.get(conversationId) ?? null;
+    // Run identity is STICKY while a conversation is tracked. The web bridge
+    // and the native agent socket derive `startedAt` from different event
+    // windows (the socket only sees a head snapshot), so they routinely
+    // disagree on the derived run key for the very same run. Honoring every
+    // derived key cancelled + reposted the notification (a new notification
+    // id is hashed from the key) each time the sources alternated — a rapid
+    // visible close/reopen loop. The first tracked key owns the notification
+    // until the run leaves tracking through a terminal update; a genuinely
+    // new run then starts fresh with its own key.
+    const runKey = tracked?.runKey ?? getLiveUpdateRunKey(projection);
 
     const active = isMobileAgentRunActive(projection.status);
     if (!active && !tracked) {
@@ -114,7 +154,18 @@ export class LiveUpdateController {
       return;
     }
 
+    // Pin the chronometer anchor: the earliest known start of the run is the
+    // most accurate (later values are `updatedAt` fallbacks from sources with
+    // truncated event windows). Without this the elapsed timer jumps whenever
+    // the update source changes.
+    const startedAt =
+      tracked?.startedAt != null && projection.startedAt != null
+        ? Math.min(tracked.startedAt, projection.startedAt)
+        : tracked?.startedAt ?? projection.startedAt ?? null;
+
     const payload = toLiveUpdatePayload(projection);
+    payload.runKey = runKey;
+    payload.startedAt = startedAt;
     let alert = computeLiveUpdateAlert(tracked?.projection ?? null, projection);
     if (!active && alert) {
       // Terminal notification. Honor the completion preference: when it must
@@ -133,12 +184,12 @@ export class LiveUpdateController {
       alert = isAlertAllowed(this.alertPreferences.intervention, this.appActive);
     }
     payload.alert = alert;
-    const signature = JSON.stringify(payload);
+    const signature = getLiveUpdateSignature(payload);
     if (tracked?.signature !== signature) {
       this.status = await this.native.startOrUpdate(payload);
     }
     if (active) {
-      this.runs.set(conversationId, { runKey, signature, projection });
+      this.runs.set(conversationId, { runKey, signature, projection, startedAt });
     } else {
       // The final notification stays visible for the user; only internal
       // tracking ends here.
@@ -154,6 +205,7 @@ export class LiveUpdateController {
    * controller instance never tracked.
    */
   async updateAll(projections: MobileAgentProjection[]) {
+    this.lastWebSyncAt = this.now();
     const seen = new Set<string>();
     for (const projection of projections) {
       if (!projection?.conversationId) continue;
@@ -166,6 +218,24 @@ export class LiveUpdateController {
       await this.native.stopRun(tracked.runKey).catch(() => undefined);
     }
     await this.reconcileNativeRuns();
+  }
+
+  /**
+   * Projection updates from the native agent socket. While the web bridge is
+   * actively syncing full projection sets, the web layer is the single source
+   * of truth: socket projections are derived from a much smaller event window
+   * and would fight the web's over content and identity — the exact ping-pong
+   * that made notifications flicker. The socket takes over automatically once
+   * web syncs go quiet (WebView frozen or process gone).
+   */
+  async updateFromSocket(projection: MobileAgentProjection | null) {
+    if (
+      this.lastWebSyncAt > 0 &&
+      this.now() - this.lastWebSyncAt < WEB_SYNC_FRESH_MS
+    ) {
+      return;
+    }
+    await this.update(projection);
   }
 
   /**

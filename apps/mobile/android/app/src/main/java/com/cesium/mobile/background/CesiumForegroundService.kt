@@ -49,10 +49,15 @@ class CesiumForegroundService : Service() {
 
     if (extras.getBoolean("ongoing", true)) {
       CesiumLiveUpdateStateStore.saveRun(this, extras)
-      if (!foregroundActive || anchorRunKey == null || anchorRunKey == runKey) {
+      if (!foregroundActive) {
+        // First ongoing run anchors the service.
         startAsForeground(id, notification)
         anchorRunKey = runKey
       } else {
+        // Update in place — including the anchor. Re-running startForeground
+        // for every progress tick makes Android 16 Live Updates / Samsung
+        // Now Bar re-materialize the chip instead of updating it; notify()
+        // with the same id updates the foreground notification just as well.
         notificationManager().notify(id, notification)
       }
       return START_STICKY

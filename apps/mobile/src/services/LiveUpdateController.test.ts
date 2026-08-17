@@ -3,7 +3,9 @@ import test from "node:test";
 import type { MobileAgentProjection } from "@cesium/core";
 import {
   LiveUpdateController,
+  WEB_SYNC_FRESH_MS,
   computeLiveUpdateAlert,
+  getLiveUpdateSignature,
   type LiveUpdatesNative,
 } from "./LiveUpdateController";
 import type { LiveUpdatePayload, LiveUpdateStatus } from "./liveUpdateTypes";
@@ -229,15 +231,164 @@ test("ignores runs that finished before they were ever tracked", async () => {
   assert.equal(native.posted.length, 0);
 });
 
-test("a new run in the same conversation retires the previous notification", async () => {
+test("an active run keeps its notification identity when the derived key drifts", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
 
+  // The web bridge and the native agent socket derive different startedAt
+  // values for the same run (different event windows). The tracked key must
+  // stay sticky — cancelling + reposting under a new hashed id is the
+  // close/reopen flicker this guards against.
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 99, currentActivity: "Later" })
+  );
+
+  assert.deepEqual(native.stoppedRuns, []);
+  assert.equal(native.posted.length, 2);
+  assert.deepEqual(
+    native.posted.map((payload) => payload.runKey),
+    ["a:10", "a:10"]
+  );
+});
+
+test("the elapsed anchor pins to the earliest known start of the run", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+
+  // A socket-derived projection falls back to `updatedAt` (later than the
+  // true start); a web-derived one later reports the real start event.
+  await controller.update(projection({ conversationId: "a", startedAt: 500 }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 10, currentActivity: "Real start" })
+  );
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 500, currentActivity: "Fallback again" })
+  );
+
+  assert.deepEqual(
+    native.posted.map((payload) => payload.startedAt),
+    [500, 10, 10]
+  );
+});
+
+test("a new run after a terminal boundary starts a fresh notification", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setAppActive(false);
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 10, status: "completed" })
+  );
   await controller.update(projection({ conversationId: "a", startedAt: 99 }));
 
-  assert.deepEqual(native.stoppedRuns, ["a:10"]);
-  assert.equal(native.posted[1]?.runKey, "a:99");
+  assert.deepEqual(
+    native.posted.map((payload) => payload.runKey),
+    ["a:10", "a:10", "a:99"]
+  );
+  assert.deepEqual(native.stoppedRuns, []);
+});
+
+test("terminal updates replace the ongoing notification even when the derived key drifted", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setAppActive(false);
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  // Terminal projection derived from a source that lost the start event.
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 999, status: "completed" })
+  );
+
+  // Same key => same native notification id => the final state replaces the
+  // ongoing notification instead of leaving a zombie behind.
+  assert.deepEqual(
+    native.posted.map((payload) => payload.runKey),
+    ["a:10", "a:10"]
+  );
+  assert.equal(native.posted[1]?.ongoing, false);
+});
+
+test("socket projections are suppressed while web bridge syncs are fresh", async () => {
+  const native = new FakeNative();
+  let nowMs = 100_000;
+  const controller = new LiveUpdateController(native, () => nowMs);
+
+  await controller.updateAll([projection({ conversationId: "a", startedAt: 10 })]);
+  // The backgrounded WebView is still alive and syncing; the socket derives
+  // a conflicting projection for the same run. It must be dropped.
+  await controller.updateFromSocket(
+    projection({ conversationId: "a", startedAt: 500, currentActivity: "Socket view" })
+  );
+  assert.equal(native.posted.length, 1);
+
+  // Web syncs go quiet (WebView frozen); the socket takes over.
+  nowMs += WEB_SYNC_FRESH_MS + 1;
+  await controller.updateFromSocket(
+    projection({ conversationId: "a", startedAt: 500, currentActivity: "Socket view" })
+  );
+  assert.equal(native.posted.length, 2);
+  // Identity and elapsed anchor survive the source handover.
+  assert.equal(native.posted[1]?.runKey, "a:10");
+  assert.equal(native.posted[1]?.startedAt, 10);
+});
+
+test("socket projections flow before the first web sync", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native, () => 100_000);
+
+  await controller.updateFromSocket(projection({ conversationId: "a", startedAt: 10 }));
+
+  assert.equal(native.posted.length, 1);
+});
+
+test("volatile ETA drift does not repost the notification", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  const withEta = (estimatedCompletionAt: number) =>
+    projection({
+      conversationId: "a",
+      startedAt: 10,
+      goalProgress: {
+        percent: 40,
+        headline: "Compiling",
+        runtimeMs: 60_000,
+        estimatedRemainingMs: 90_000,
+        estimatedCompletionAt,
+      },
+    });
+
+  await controller.update(withEta(1_000_000));
+  // Same state re-derived 500ms later: only the now-anchored ETA moved.
+  await controller.update(withEta(1_000_500));
+  // A full minute of drift is a real change and may repost.
+  await controller.update(withEta(1_090_000));
+
+  assert.equal(native.posted.length, 2);
+});
+
+test("getLiveUpdateSignature ignores sub-minute ETA jitter only", () => {
+  const base = {
+    runKey: "a:10",
+    title: "Agent run",
+    body: "Working",
+    progressKind: "goal" as const,
+    estimatedCompletionAt: 1_000_000,
+    estimatedRemainingSeconds: 90,
+  };
+  assert.equal(
+    getLiveUpdateSignature(base),
+    getLiveUpdateSignature({ ...base, estimatedCompletionAt: 1_000_500 })
+  );
+  assert.notEqual(
+    getLiveUpdateSignature(base),
+    getLiveUpdateSignature({ ...base, estimatedCompletionAt: 1_090_000 })
+  );
+  assert.notEqual(
+    getLiveUpdateSignature(base),
+    getLiveUpdateSignature({ ...base, body: "Next step" })
+  );
 });
 
 test("updateAll reconciles away runs that no longer exist", async () => {

@@ -86,7 +86,10 @@ export default function App() {
   const agentStatusRef = useRef(
     new AgentStatusService({
       onProjection: (projection) => {
-        void liveUpdatesRef.current.update(projection);
+        // Socket projections are deferred to the web bridge while it is
+        // actively syncing — two sources deriving the same run differently
+        // must not fight over one notification.
+        void liveUpdatesRef.current.updateFromSocket(projection);
         sendToWebRef.current?.({
           type: "resumeCatchUp",
           workspaceId: projection.workspaceId,
