@@ -37,6 +37,7 @@ import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-dr
 import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
 import { startUpdateAutoCheck } from "./lib/updates/update-manager.js";
+import { startCesiumTriggerScheduler } from "./lib/agents/trigger-scheduler.js";
 import { publicAccessManager, startPublicAccessManager } from "./lib/public-access-manager.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import {
@@ -205,4 +206,7 @@ export function startCesiumBackgroundServices(): void {
   startAgentPromptQueueDrainListener();
   startCloudAgentTaskSyncListener();
   startUpdateAutoCheck();
+  if (process.env.NODE_ENV !== "test") {
+    startCesiumTriggerScheduler();
+  }
 }

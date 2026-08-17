@@ -2360,6 +2360,63 @@ export async function fetchCesiumAgentSettings(): Promise<{
   });
 }
 
+export type CesiumAgentTriggerPayload = {
+  id: string;
+  workspaceId: string;
+  workspaceName?: string;
+  name: string;
+  enabled: boolean;
+  schedule:
+    | { kind: "cron"; expression: string }
+    | { kind: "interval"; everyMs: number }
+    | { kind: "once"; atMs: number };
+  prompt: string;
+  profileId?: string;
+  mode?: string;
+  modelId?: string;
+  modelName?: string;
+  createdAt: number;
+  updatedAt: number;
+  nextRunAt: number | null;
+  lastFiredAt?: number;
+  lastConversationId?: string;
+  runCount: number;
+  maxRuns?: number;
+};
+
+export async function fetchCesiumAgentTriggers(): Promise<{
+  triggers: CesiumAgentTriggerPayload[];
+}> {
+  return request<{ triggers: CesiumAgentTriggerPayload[] }>("/api/agents/triggers", {
+    method: "GET",
+  });
+}
+
+export async function patchCesiumAgentTrigger(input: {
+  workspaceId: string;
+  triggerId: string;
+  enabled: boolean;
+}): Promise<{ trigger: CesiumAgentTriggerPayload }> {
+  return request<{ trigger: CesiumAgentTriggerPayload }>(
+    `/api/agents/triggers/${encodeURIComponent(input.triggerId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId: input.workspaceId, enabled: input.enabled }),
+    }
+  );
+}
+
+export async function deleteCesiumAgentTrigger(input: {
+  workspaceId: string;
+  triggerId: string;
+}): Promise<{ trigger: CesiumAgentTriggerPayload }> {
+  return request<{ trigger: CesiumAgentTriggerPayload }>(
+    `/api/agents/triggers/${encodeURIComponent(input.triggerId)}?workspaceId=${encodeURIComponent(input.workspaceId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function patchCesiumAgentSettings(
   patch: Partial<
     Pick<
