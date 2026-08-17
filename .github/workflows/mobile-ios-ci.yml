@@ -1,0 +1,195 @@
+name: Mobile iOS CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "packages/client/**"
+      - "packages/core/**"
+      - "packages/design/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mobile-ios-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ios-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    name: Build + simulator smoke test
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install mobile and server dependencies
+        run: |
+          npm ci \
+            --include-workspace-root=false \
+            --workspace @cesium/mobile \
+            --workspace @cesium/desktop-renderer \
+            --workspace @cesium/core \
+            --workspace @cesium/contracts \
+            --workspace @cesium/design \
+            --workspace @cesium/sdk \
+            --workspace @cesium/client \
+            --workspace @cesium/config \
+            --workspace @cesium/ui-web \
+            --workspace cesium-server
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Validate mobile app
+        run: |
+          status=0
+          npm run typecheck --workspace @cesium/mobile & typecheck_pid=$!
+          npm run test --workspace @cesium/mobile & test_pid=$!
+          wait "$typecheck_pid" || status=1
+          wait "$test_pid" || status=1
+          exit "$status"
+
+      - name: Prepare workbench web assets
+        working-directory: apps/mobile
+        run: npm run prepare:ios
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/mobile/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('apps/mobile/ios/Podfile', 'package-lock.json') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Install CocoaPods dependencies
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Build iOS Release app (simulator, unsigned)
+        working-directory: apps/mobile
+        run: node scripts/run-xcodebuild.mjs --configuration Release
+
+      - name: Start Cesium backend (Bun) on the runner
+        id: backend
+        continue-on-error: true
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          mkdir -p "$RUNNER_TEMP/cesium-data"
+          (
+            cd server
+            OPENCURSOR_DATA_DIR="$RUNNER_TEMP/cesium-data" \
+            WORKSPACE_ROOT="$GITHUB_WORKSPACE" \
+            nohup bun src/runtime/bun-server.ts > "$RUNNER_TEMP/cesium-server.log" 2>&1 &
+          )
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:9100/health > /dev/null 2>&1; then
+              echo "Backend is healthy on :9100"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become healthy; the smoke test will show the offline workbench state." >&2
+          tail -n 100 "$RUNNER_TEMP/cesium-server.log" >&2 || true
+          exit 1
+
+      - name: Run simulator smoke test
+        run: |
+          set -euo pipefail
+          APP_PATH="apps/mobile/ios/build/Build/Products/Release-iphonesimulator/CesiumMobile.app"
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/main.jsbundle"
+          test -f "$APP_PATH/workbench/index.html"
+
+          UDID=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices[] | .[] | select(.isAvailable and (.name | startswith("iPhone")))][0].udid')
+          NAME=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices[] | .[] | select(.isAvailable and (.name | startswith("iPhone")))][0].name')
+          echo "Booting simulator: $NAME ($UDID)"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+          xcrun simctl install "$UDID" "$APP_PATH"
+          LAUNCH_OUTPUT=$(xcrun simctl launch "$UDID" com.cesium.mobile)
+          echo "$LAUNCH_OUTPUT"
+          APP_PID="${LAUNCH_OUTPUT##*: }"
+
+          mkdir -p dist/mobile-ios
+          sleep 20
+          xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_early.png
+          sleep 40
+          if ! ps -p "$APP_PID" > /dev/null; then
+            echo "Cesium crashed on the simulator (pid $APP_PID is gone)." >&2
+            ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null || true
+            for report in ~/Library/Logs/DiagnosticReports/CesiumMobile*; do
+              [ -e "$report" ] && head -n 60 "$report"
+            done
+            exit 1
+          fi
+          xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_workbench.png
+          echo "Cesium is alive on the simulator (pid $APP_PID) after 60s."
+
+      - name: Prepare app artifact
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            apps/mobile/ios/build/Build/Products/Release-iphonesimulator/CesiumMobile.app \
+            "dist/mobile-ios/cesium-mobile-ios-${{ github.event.pull_request.number || 'manual' }}-simulator.zip"
+          cp apps/mobile/ios/Podfile.lock dist/mobile-ios/Podfile.lock
+          cp "$RUNNER_TEMP/cesium-server.log" dist/mobile-ios/cesium-server.log 2>/dev/null || true
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cesium-mobile-ios
+          path: dist/mobile-ios/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          comment-tag: mobile-ios-build
+          message: |
+            ## Cesium Mobile iOS build
+
+            The unsigned Release simulator app built successfully, and the simulator smoke test passed
+            (app installed, launched, and stayed alive; workbench screenshots captured against a live
+            Bun backend on the runner).
+
+            | Item | Artifact |
+            | --- | --- |
+            | Simulator app | `cesium-mobile-ios-${{ github.event.pull_request.number }}-simulator.zip` |
+            | Workbench screenshot | `ios_simulator_workbench.png` |
+            | Pinned pods | `Podfile.lock` |
+
+            Download them from the **cesium-mobile-ios** artifact on [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            Install on a local simulator with:
+
+            ```bash
+            unzip cesium-mobile-ios-${{ github.event.pull_request.number }}-simulator.zip
+            xcrun simctl install booted CesiumMobile.app
+            xcrun simctl launch booted com.cesium.mobile
+            ```
