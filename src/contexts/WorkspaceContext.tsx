@@ -20,6 +20,7 @@ import type {
   WorkspaceWindowRecord,
   WorkspaceRecord,
 } from "@/lib/types";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
   cloneWorkspaceFromGit,
   createWorkspaceGitWorktree,
@@ -1200,12 +1201,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         result.homeWorkspaceId
       );
       if (workspaceId === activeWorkspaceId) {
+        const durable = result.workspaces.filter(
+          (w) => !isStandaloneChatWorkspace(w)
+        );
         const fallback =
-          result.workspaces.find((w) => w.id === result.homeWorkspaceId) ??
-          result.workspaces[0] ??
+          durable.find((w) => w.id === result.homeWorkspaceId) ??
+          durable[0] ??
           null;
         if (fallback) {
           await loadWorkspaceState(fallback);
+        } else {
+          // Last durable workspace removed: return to the no-workspace shell
+          // instead of keeping the session pointed at a dead workspace id.
+          setServerWorkspace(null);
+          setFileTree(null);
+          setTerminals([]);
+          setWorkspaceWindows([]);
+          skipNextSessionSaveRef.current = true;
+          setWorkspaceSession(createSessionDefaults());
+          setSessionReady(false);
+          setLoading(false);
         }
       }
     },
@@ -1214,6 +1229,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyWorkspaceListingUpdate,
       flushWorkspaceSessionNow,
       loadWorkspaceState,
+      setServerWorkspace,
     ]
   );
 
@@ -1254,9 +1270,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           bootstrapResult.recentWorkspaceIds,
           bootstrapResult.homeWorkspaceId
         );
+        // Never auto-open a standalone-chat sandbox at boot: with no durable
+        // workspace the shell starts in the no-workspace state and sandboxes
+        // stay reachable through the rail.
         const startupWorkspace = bootstrapResult.workspaces.find(
           (workspace) => workspace.id === bootstrapResult.startupWorkspaceId
-        ) ?? bootstrapResult.workspaces[0];
+        ) ?? bootstrapResult.workspaces.find(
+          (workspace) => !isStandaloneChatWorkspace(workspace)
+        );
         if (!startupWorkspace) {
           setLoading(false);
           return;

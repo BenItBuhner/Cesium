@@ -8,12 +8,20 @@ import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
   bootstrapEngineWorkspaces,
   createEngineConversationWithPrompt,
+  createEngineStandaloneConversationWithPrompt,
   exportEngineConversationSnapshot,
   listEngineBackends,
   openEngineWorkspace,
   type EngineBackendInfo,
   type EngineWorkspace,
 } from "@/lib/onboarding/engine-api";
+
+/**
+ * Sentinel select value for chatting without any workspace. A fresh install
+ * has zero registered workspaces on purpose; the conversation then runs in an
+ * ephemeral standalone-chat sandbox instead of requiring folder setup.
+ */
+const NO_WORKSPACE_VALUE = "__none__";
 
 /**
  * Step 4 — start your first conversation: pick a workspace folder, choose an
@@ -53,7 +61,9 @@ export function FirstChatStep({
       ]);
       setWorkspaces(workspaceResult.workspaces);
       setWorkspaceId(
-        workspaceResult.defaultWorkspaceId ?? workspaceResult.workspaces[0]?.id ?? ""
+        workspaceResult.defaultWorkspaceId ??
+          workspaceResult.workspaces[0]?.id ??
+          NO_WORKSPACE_VALUE
       );
       const available = backendResult.backends.filter((backend) => backend.available);
       setBackends(available);
@@ -74,29 +84,39 @@ export function FirstChatStep({
     }
     setPhase("sending");
     try {
-      let targetWorkspaceId = workspaceId;
+      let targetWorkspaceId =
+        workspaceId === NO_WORKSPACE_VALUE ? "" : workspaceId;
       if (customRoot.trim()) {
         const workspace = await openEngineWorkspace(baseUrl, customRoot.trim());
         targetWorkspaceId = workspace.id;
       }
-      if (!targetWorkspaceId) {
-        throw new Error("Pick a workspace folder first.");
-      }
       const backend = backends.find((entry) => entry.id === backendId);
-      const result = await createEngineConversationWithPrompt(
-        baseUrl,
-        targetWorkspaceId,
-        {
-          backendId,
-          ...(backend ? { modelId: backend.defaultModelId } : {}),
-          ...(backend ? { modelName: backend.defaultModelName } : {}),
-          text: prompt.trim(),
-        }
-      );
+      const promptInput = {
+        backendId,
+        ...(backend ? { modelId: backend.defaultModelId } : {}),
+        ...(backend ? { modelName: backend.defaultModelName } : {}),
+        text: prompt.trim(),
+      };
+      let result: { conversationId: string; title: string };
+      let conversationWorkspaceId = targetWorkspaceId;
+      if (targetWorkspaceId) {
+        result = await createEngineConversationWithPrompt(
+          baseUrl,
+          targetWorkspaceId,
+          promptInput
+        );
+      } else {
+        const standalone = await createEngineStandaloneConversationWithPrompt(
+          baseUrl,
+          promptInput
+        );
+        result = standalone;
+        conversationWorkspaceId = standalone.workspaceId;
+      }
       setConversation({
         id: result.conversationId,
         title: result.title,
-        workspaceId: targetWorkspaceId,
+        workspaceId: conversationWorkspaceId,
       });
       setPhase("started");
       onStarted();
@@ -207,6 +227,7 @@ export function FirstChatStep({
             }}
             className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px] py-[9px] text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           >
+            <option value={NO_WORKSPACE_VALUE}>No workspace — just chat</option>
             {(workspaces ?? []).map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
                 {workspace.name} — {workspace.root}

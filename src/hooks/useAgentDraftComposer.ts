@@ -89,6 +89,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     createAndPromptStandaloneConversation,
   } = useAgentConversations();
   const {
+    activeWorkspaceId,
     workspaceSession,
     updateWorkspaceSession,
     seedWorkspaceSessionChatDraft,
@@ -143,10 +144,13 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
 
   // Standalone chats live in auto-created sandbox workspaces (named "Chat").
   // When one is active, the draft should present and behave as "No workspace".
+  // A fresh install has no registered workspaces at all; that state uses the
+  // same standalone path so the first chat works without any workspace setup.
   const activeIsStandaloneChat = Boolean(
     activeWorkspaceGroup && isStandaloneChatWorkspace(activeWorkspaceGroup.workspace)
   );
-  const noWorkspaceDraft = standaloneDraftActive || activeIsStandaloneChat;
+  const noWorkspaceDraft =
+    standaloneDraftActive || activeIsStandaloneChat || !activeWorkspaceId;
 
   const composerDraftId = noWorkspaceDraft
     ? AGENT_STANDALONE_COMPOSER_DRAFT_ID

@@ -80,6 +80,7 @@ import {
   forkAgentConversation,
   handoffAgentConversation,
   listAgentConversations,
+  listCrossWorkspaceAgentConversations,
   pauseAgentConversation,
   promptAgentConversation,
   resumeAgentConversation,
@@ -1887,7 +1888,20 @@ busy,
       setBootstrapped(false);
       socketRef.current?.disconnect();
       socketRef.current = null;
-      return;
+      // Fresh installs run without any workspace, but the landing composer
+      // still needs the backend catalog to submit standalone (no-workspace)
+      // chats. `/api/agents/conversations/all` serves it workspace-free.
+      let cancelled = false;
+      void listCrossWorkspaceAgentConversations({ limit: 1 })
+        .then((result) => {
+          if (!cancelled) {
+            setBackends(result.backends);
+          }
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
     }
 
     let cancelled = false;

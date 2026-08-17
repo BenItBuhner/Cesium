@@ -705,6 +705,11 @@ export function EditorPanel({
       if (document.visibilityState === "hidden") {
         return;
       }
+      // Browser-control tabs are workspace-scoped; polling without an active
+      // workspace (fresh no-workspace install) would just 500 on every tick.
+      if (!activeWorkspaceId) {
+        return;
+      }
       const result = await listBrowserControlTabs().catch(() => null);
       if (cancelled || !result) return;
       const snapshot = stateRef.current;
@@ -793,7 +798,7 @@ export function EditorPanel({
       if (timer != null) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [activeWorkspaceId]);
 
   const openFilePalette = useCallback(() => {
     runCommand?.("palette.quickOpen");

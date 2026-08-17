@@ -654,7 +654,7 @@ export function WorkspaceStudioModal({
                   onChange={setRepoUrl}
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
-                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                   ariaLabel="Git remote URL"
                   autoFocus
                 />
@@ -667,7 +667,7 @@ export function WorkspaceStudioModal({
                   onChange={setCloneFolderName}
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
-                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                   ariaLabel="Clone folder name"
                 />
               </label>
@@ -679,7 +679,7 @@ export function WorkspaceStudioModal({
                   onChange={setCloneParent}
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
-                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                   ariaLabel="Parent directory for clone"
                 />
               </label>
@@ -687,7 +687,7 @@ export function WorkspaceStudioModal({
                 type="button"
                 disabled={cloneBusy}
                 onClick={() => void handleClone()}
-                className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
               >
                 {cloneBusy ? "Cloning…" : "Clone and open"}
               </button>
@@ -762,7 +762,7 @@ export function WorkspaceStudioModal({
                   type="button"
                   disabled={!browseCurrent || browseBusy || browseOpenBusy}
                   onClick={() => void handleOpenBrowseFolder()}
-                  className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-40"
+                  className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-40"
                 >
                   {browseOpenBusy ? "Opening…" : "Open this folder"}
                 </button>
@@ -843,7 +843,7 @@ export function WorkspaceStudioModal({
                   onChange={setNewFolderParent}
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
-                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                   ariaLabel="Parent directory for new workspace"
                 />
               </label>
@@ -855,7 +855,7 @@ export function WorkspaceStudioModal({
                   onChange={setNewFolderName}
                   onNativeKeyDown={() => {}}
                   surfaceKind="palette"
-                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                  className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                   ariaLabel="New workspace name"
                   autoFocus
                 />
@@ -864,7 +864,7 @@ export function WorkspaceStudioModal({
                 type="button"
                 disabled={newFolderBusy}
                 onClick={() => void handleNewFolder()}
-                className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
               >
                 {newFolderBusy ? "Creating…" : "Create and open"}
               </button>
@@ -913,7 +913,7 @@ export function WorkspaceStudioModal({
                     void handleSshProbeConnect();
                   }}
                 >
-                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
+                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
                     Enter a host and continue. We will try your SSH agent first, then ask for a
                     password or key path only if the host requires one.
                   </div>
@@ -925,7 +925,7 @@ export function WorkspaceStudioModal({
                       onChange={setSshTarget}
                       onNativeKeyDown={() => {}}
                       surfaceKind="palette"
-                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                       ariaLabel="SSH target"
                       autoFocus
                     />
@@ -938,7 +938,7 @@ export function WorkspaceStudioModal({
                       onChange={setSshPort}
                       onNativeKeyDown={() => {}}
                       surfaceKind="palette"
-                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                       ariaLabel="SSH port"
                     />
                   </label>
@@ -962,7 +962,7 @@ export function WorkspaceStudioModal({
                       </button>
                     </div>
                     {sshAuthError ? (
-                      <div className="mt-2 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">
+                      <div className="mt-2 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">
                         Connection failed: {sshAuthError}
                       </div>
                     ) : null}
@@ -978,7 +978,7 @@ export function WorkspaceStudioModal({
                             value={sshPassword}
                             onChange={(event) => setSshPassword(event.target.value)}
                             placeholder="SSH password when required"
-                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                             aria-label="SSH password"
                           />
                         </label>
@@ -992,7 +992,7 @@ export function WorkspaceStudioModal({
                             onChange={setSshKeyPath}
                             onNativeKeyDown={() => {}}
                             surfaceKind="palette"
-                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                             ariaLabel="SSH key path"
                           />
                         </label>
@@ -1002,7 +1002,7 @@ export function WorkspaceStudioModal({
                   <button
                     type="submit"
                     disabled={sshProbeBusy}
-                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
                   >
                     {sshProbeBusy ? "Connecting…" : "Connect to host"}
                   </button>
@@ -1025,7 +1025,7 @@ export function WorkspaceStudioModal({
                       </span>
                     ) : null}
                   </div>
-                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
+                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
                     Mirrors a remote folder into a local sandbox workspace and keeps edits synced
                     with push/pull commands. Activities below affect the SSH host—not this machine&apos;s local folder browser.
                   </div>
@@ -1122,7 +1122,7 @@ export function WorkspaceStudioModal({
                           onChange={setSshNewDirectoryName}
                           onNativeKeyDown={() => {}}
                           surfaceKind="palette"
-                          className="box-border min-w-0 flex-1 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[12px] outline-none"
+                          className="box-border min-w-0 flex-1 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[12px] outline-none"
                           ariaLabel="New remote folder name"
                         />
                         <button
@@ -1131,7 +1131,7 @@ export function WorkspaceStudioModal({
                             sshBrowseBusy || sshRemoteCloneBusy || !sshNewDirectoryName.trim()
                           }
                           onClick={() => void handleSshCreateDirectory()}
-                          className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-1.5 text-[11px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                          className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-1.5 text-[11px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
                         >
                           Create
                         </button>
@@ -1156,7 +1156,7 @@ export function WorkspaceStudioModal({
                           onChange={setSshRemoteRepoUrl}
                           onNativeKeyDown={() => {}}
                           surfaceKind="palette"
-                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                           ariaLabel="Remote git clone URL"
                         />
                       </label>
@@ -1170,7 +1170,7 @@ export function WorkspaceStudioModal({
                           onChange={setSshRemoteCloneFolderName}
                           onNativeKeyDown={() => {}}
                           surfaceKind="palette"
-                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                           ariaLabel="Remote clone folder name"
                         />
                       </label>
@@ -1178,7 +1178,7 @@ export function WorkspaceStudioModal({
                         type="button"
                         disabled={sshRemoteCloneBusy || !sshRemoteRepoUrl.trim()}
                         onClick={() => void handleSshRemoteClone()}
-                        className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                        className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
                       >
                         {sshRemoteCloneBusy ? "Cloning…" : "Clone into current folder"}
                       </button>
@@ -1195,7 +1195,7 @@ export function WorkspaceStudioModal({
                       onChange={setSshRemotePath}
                       onNativeKeyDown={() => {}}
                       surfaceKind="palette"
-                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 font-mono text-[12px] outline-none"
                       ariaLabel="Remote folder for workspace mirror"
                     />
                   </label>
@@ -1210,7 +1210,7 @@ export function WorkspaceStudioModal({
                         onChange={setSshWorkspaceName}
                         onNativeKeyDown={() => {}}
                         surfaceKind="palette"
-                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                         ariaLabel="SSH workspace name"
                       />
                     </label>
@@ -1224,7 +1224,7 @@ export function WorkspaceStudioModal({
                         onChange={setSshMirrorName}
                         onNativeKeyDown={() => {}}
                         surfaceKind="palette"
-                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)] px-2 py-1.5 text-[13px] outline-none"
                         ariaLabel="SSH local mirror folder"
                       />
                     </label>
@@ -1266,7 +1266,7 @@ export function WorkspaceStudioModal({
                     type="button"
                     disabled={sshBusy}
                     onClick={() => void handleSshWorkspace()}
-                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-main)] disabled:opacity-50"
                   >
                     {sshBusy ? "Syncing…" : "Mirror & open workspace"}
                   </button>

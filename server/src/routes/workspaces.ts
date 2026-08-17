@@ -1,6 +1,5 @@
 import path from "node:path";
 import { Hono } from "hono";
-import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
 import { cloneGitRepository } from "../lib/git-workspace.js";
 import { buildRepositoryInfoByWorkspace } from "../lib/agents/rail-payload.js";
 import {
@@ -25,8 +24,6 @@ import {
 } from "../lib/ssh-workspaces.js";
 import {
   createWorkspace,
-  ensureHomeWorkspace,
-  ensureInitialWorkspace,
   ensureWorkspaceRegistered,
   getHomeWorkspace,
   getWorkspaceById,
@@ -85,22 +82,15 @@ const sessionCoalescer = new WriteCoalescer<{
   await saveWorkspaceSession(workspaceId, session);
 }, 50);
 
-function resolveInitialWorkspaceRoot(): string {
-  const configuredRoot = process.env.WORKSPACE_ROOT?.trim();
-  if (configuredRoot) {
-    return path.resolve(configuredRoot);
-  }
-
-  return resolveRepoRootFromProcessCwd();
-}
-
 async function homeWorkspaceIdPayload(): Promise<{ homeWorkspaceId: string | null }> {
   const home = await getHomeWorkspace();
   return { homeWorkspaceId: home?.id ?? null };
 }
 
+// Fresh installs boot with an empty registry on purpose: the workbench runs
+// without a workspace (standalone chats) until the user explicitly creates,
+// opens, or clones one. Never auto-seed "default"/Home entries here.
 workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
-  await ensureInitialWorkspace(resolveInitialWorkspaceRoot());
   const workspaces = await listWorkspaces();
   const [profile, startupWorkspace, homePayload, repositoryInfoByWorkspaceId] = await Promise.all([
     getWorkspaceProfile(),
@@ -121,7 +111,6 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
 });
 
 workspaceRoutes.get("/api/workspaces", async (c) => {
-  await ensureHomeWorkspace();
   const workspaces = await listWorkspaces();
   const [profile, homePayload, repositoryInfoByWorkspaceId] = await Promise.all([
     getWorkspaceProfile(),
