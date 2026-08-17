@@ -18,6 +18,11 @@ import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen, type QuickOpenTabItem } from "./QuickOpen";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
 import { WorkspaceStudioModal } from "./WorkspaceStudioModal";
+import {
+  isOpenWorkspaceStudioEvent,
+  OPEN_WORKSPACE_STUDIO_EVENT,
+  type WorkspaceStudioOpenMode,
+} from "@/lib/workspace-studio-events";
 import { WorkspaceWindowsModal } from "./WorkspaceWindowsModal";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
@@ -203,7 +208,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [folderPromptValue, setFolderPromptValue] = useState("");
   const [workspaceStudioOpen, setWorkspaceStudioOpen] = useState(false);
   const [workspaceStudioMode, setWorkspaceStudioMode] = useState<
-    "clone" | "browse" | "newfolder" | "remove"
+    WorkspaceStudioOpenMode | "remove"
   >("clone");
   const [browserPromptOpen, setBrowserPromptOpen] = useState(false);
   const [browserPromptValue, setBrowserPromptValue] = useState(
@@ -491,6 +496,19 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     setPalette("closed");
     setWorkspaceStudioMode("clone");
     setWorkspaceStudioOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const onOpenStudio = (event: Event) => {
+      if (!isOpenWorkspaceStudioEvent(event)) {
+        return;
+      }
+      setPalette("closed");
+      setWorkspaceStudioMode(event.detail.mode);
+      setWorkspaceStudioOpen(true);
+    };
+    window.addEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
+    return () => window.removeEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
   }, []);
 
   const promptToRemoveWorkspace = useCallback(() => {

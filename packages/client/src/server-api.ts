@@ -2218,6 +2218,32 @@ export type CesiumOAuthProviderStatus = {
   description?: string;
 };
 
+export type CesiumProfilePromptBase = "code" | "work" | "minimal";
+
+export type CesiumAgentProfilePayload = {
+  id: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+  prompt: {
+    base: CesiumProfilePromptBase;
+    customInstructions: string;
+  };
+  tools: {
+    allowed: "all" | string[];
+    mcpServers: "all" | string[];
+  };
+  permissionOverrides: Partial<
+    Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">
+  >;
+};
+
+export type CesiumProfileToolGroupPayload = {
+  id: string;
+  label: string;
+  tools: string[];
+};
+
 export type CesiumAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
@@ -2249,12 +2275,22 @@ export type CesiumAgentSettingsPayload = {
     description: string;
   }>;
   harness: {
-    features: Record<string, { version: number }> & {
+    features: Record<
+      string,
+      {
+        version: number;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      }
+    > & {
       subagents: {
         version: 1 | 2;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
       };
     };
     limits: {
+      pluginHookTimeoutMs: number;
       waitMaxSeconds: number;
       waitAgentDefaultTimeoutMs: number;
       waitAgentMinTimeoutMs: number;
@@ -2267,6 +2303,13 @@ export type CesiumAgentSettingsPayload = {
     label: string;
     description: string;
     defaultVersion: number;
+    apiVersion?: 1;
+    enabledByDefault: boolean;
+    priority: number;
+    dependencies: string[];
+    optionalDependencies: string[];
+    failureMode: "isolate" | "fatal";
+    toolNames: string[];
     versions: Array<{
       version: number;
       label: string;
@@ -2282,6 +2325,15 @@ export type CesiumAgentSettingsPayload = {
   providerKeys: CesiumProviderKeyStatus[];
   oauthProviders: CesiumOAuthProviderStatus[];
   customProviders: CesiumCustomProvider[];
+  /** Custom profiles only (persisted). */
+  profiles: CesiumAgentProfilePayload[];
+  defaultProfileId: string;
+  /** Built-in presets plus custom profiles, in picker order. */
+  profileCatalog: CesiumAgentProfilePayload[];
+  /** Grouped tool inventory for profile editors. */
+  profileToolGroups: CesiumProfileToolGroupPayload[];
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
 };
 
 export type CesiumModelCatalogEntry = {
@@ -2309,6 +2361,63 @@ export async function fetchCesiumAgentSettings(): Promise<{
   });
 }
 
+export type CesiumAgentTriggerPayload = {
+  id: string;
+  workspaceId: string;
+  workspaceName?: string;
+  name: string;
+  enabled: boolean;
+  schedule:
+    | { kind: "cron"; expression: string }
+    | { kind: "interval"; everyMs: number }
+    | { kind: "once"; atMs: number };
+  prompt: string;
+  profileId?: string;
+  mode?: string;
+  modelId?: string;
+  modelName?: string;
+  createdAt: number;
+  updatedAt: number;
+  nextRunAt: number | null;
+  lastFiredAt?: number;
+  lastConversationId?: string;
+  runCount: number;
+  maxRuns?: number;
+};
+
+export async function fetchCesiumAgentTriggers(): Promise<{
+  triggers: CesiumAgentTriggerPayload[];
+}> {
+  return request<{ triggers: CesiumAgentTriggerPayload[] }>("/api/agents/triggers", {
+    method: "GET",
+  });
+}
+
+export async function patchCesiumAgentTrigger(input: {
+  workspaceId: string;
+  triggerId: string;
+  enabled: boolean;
+}): Promise<{ trigger: CesiumAgentTriggerPayload }> {
+  return request<{ trigger: CesiumAgentTriggerPayload }>(
+    `/api/agents/triggers/${encodeURIComponent(input.triggerId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId: input.workspaceId, enabled: input.enabled }),
+    }
+  );
+}
+
+export async function deleteCesiumAgentTrigger(input: {
+  workspaceId: string;
+  triggerId: string;
+}): Promise<{ trigger: CesiumAgentTriggerPayload }> {
+  return request<{ trigger: CesiumAgentTriggerPayload }>(
+    `/api/agents/triggers/${encodeURIComponent(input.triggerId)}?workspaceId=${encodeURIComponent(input.workspaceId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function patchCesiumAgentSettings(
   patch: Partial<
     Pick<
@@ -2323,6 +2432,8 @@ export async function patchCesiumAgentSettings(
       | "harness"
       | "toolPermissions"
       | "customProviders"
+      | "profiles"
+      | "defaultProfileId"
     >
   >
 ): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {

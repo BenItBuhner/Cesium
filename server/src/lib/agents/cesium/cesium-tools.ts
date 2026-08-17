@@ -558,6 +558,108 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "memory",
+    description:
+      "Curated persistent memory across conversations. save durable user preferences, facts, constraints, and decisions; search or list before re-asking the user; forget stale or wrong entries. Scope user is cross-workspace, workspace is project-local. Keep entries short and never save secrets.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["save", "search", "list", "forget"] },
+        content: {
+          type: "string",
+          description: "Memory text to save (required for save). Keep it one short factual sentence.",
+        },
+        category: {
+          type: "string",
+          enum: ["preference", "fact", "constraint", "decision"],
+          description: "Kind of entry when saving. Defaults to fact.",
+        },
+        scope: {
+          type: "string",
+          enum: ["user", "workspace"],
+          description: "Where the entry lives. Defaults to workspace for save; both scopes for search/list.",
+        },
+        id: {
+          type: "string",
+          description: "Entry id: update an existing entry on save, or the entry to forget.",
+        },
+        query: { type: "string", description: "Search terms (required for search)." },
+        limit: { type: "number", description: "Max results for search/list (default 10, max 50)." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "skill",
+    description:
+      "Author and manage Agent Skills (agentskills.io SKILL.md standard). create documents a reusable procedure under .agents/skills/<id>/SKILL.md; update/delete manage agent-authored skills; list catalogs every discovered skill; read returns a skill's full SKILL.md. Authored skills appear in the agent-skills/ mirror immediately. Write a skill when you finish a non-obvious multi-step procedure worth repeating.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "update", "list", "read", "delete"] },
+        id: {
+          type: "string",
+          description: "Skill id/slug (required for update, read, delete; optional for create — defaults to a slug of name).",
+        },
+        name: { type: "string", description: "Human skill name (required for create)." },
+        description: {
+          type: "string",
+          description: "One-to-two sentence trigger description: when should this skill be used? (required for create, max 500 chars).",
+        },
+        instructions: {
+          type: "string",
+          description: "Markdown body of the skill: steps, commands, caveats (required for create, max 24000 chars).",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "schedule",
+    description:
+      "Manage scheduled triggers that wake the agent proactively: each fire creates a fresh conversation with the stored prompt under a chosen profile/mode. create needs name, prompt, and exactly one of cron (5-field expression), everyMinutes, or atMs; list/pause/resume/delete/run manage existing triggers (run fires one immediately). The scheduler ticks every 30 seconds while the Cesium server runs.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list", "update", "pause", "resume", "delete", "run"],
+        },
+        id: { type: "string", description: "Trigger id (required for update/pause/resume/delete/run)." },
+        name: { type: "string", description: "Short trigger name (required for create, max 80 chars)." },
+        prompt: {
+          type: "string",
+          description: "User-message text injected when the trigger fires (required for create, max 4000 chars).",
+        },
+        cron: {
+          type: "string",
+          description: '5-field cron expression in server-local time, e.g. "0 9 * * mon-fri".',
+        },
+        everyMinutes: {
+          type: "number",
+          description: "Interval schedule in minutes (min 1).",
+        },
+        atMs: {
+          type: "number",
+          description: "One-shot schedule: epoch milliseconds of the single fire time.",
+        },
+        profileId: {
+          type: "string",
+          description: "Capability profile for spawned conversations (defaults to the settings default).",
+        },
+        mode: {
+          type: "string",
+          description: "Conversation mode for spawned conversations (default agent).",
+        },
+        maxRuns: { type: "number", description: "Optional run cap; the trigger disables itself after this many fires." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
@@ -902,7 +1004,13 @@ export function googleTools(tools?: CesiumToolDefinition[]) {
   ];
 }
 
-export function toolKind(name: string): string {
+export function toolKind(
+  name: string,
+  definition?: CesiumToolDefinition
+): string {
+  if (definition?.kind?.trim()) {
+    return definition.kind.trim();
+  }
   switch (name) {
     case "read_file":
       return "read";
@@ -956,6 +1064,11 @@ export function toolKind(name: string): string {
     case "read_conversation":
     case "search_conversations":
       return "search";
+    case "memory":
+      return "memory";
+    case "skill":
+    case "schedule":
+      return "other";
     case "switch_branch":
     case "create_worktree":
       return "terminal";
@@ -1024,7 +1137,17 @@ export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory)
   }
 }
 
-export function toolTitle(name: string, args: Record<string, unknown>): string {
+export function toolTitle(
+  name: string,
+  args: Record<string, unknown>,
+  definition?: CesiumToolDefinition
+): string {
+  if (typeof definition?.title === "function") {
+    return definition.title(args);
+  }
+  if (typeof definition?.title === "string" && definition.title.trim()) {
+    return definition.title.trim();
+  }
   switch (name) {
     case "read_file":
       return `Read ${asString(args.path) ?? "file"}`;
@@ -1051,6 +1174,35 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
     }
     case "grep":
       return `Grep ${asString(args.pattern) ?? "workspace"}`;
+    case "memory": {
+      const action = asString(args.action) ?? "use";
+      if (action === "save") {
+        return `Memory save ${asString(args.category) ?? "fact"}`;
+      }
+      if (action === "search") {
+        return `Memory search ${asString(args.query) ?? ""}`.trim();
+      }
+      if (action === "forget") {
+        return `Memory forget ${asString(args.id) ?? "entry"}`;
+      }
+      return "Memory list";
+    }
+    case "skill": {
+      const action = asString(args.action) ?? "use";
+      if (action === "list") {
+        return "List skills";
+      }
+      const target = asString(args.id) ?? asString(args.name) ?? "skill";
+      return `Skill ${action} ${target}`.trim();
+    }
+    case "schedule": {
+      const action = asString(args.action) ?? "manage";
+      if (action === "list") {
+        return "List triggers";
+      }
+      const target = asString(args.name) ?? asString(args.id) ?? "trigger";
+      return `Schedule ${action} ${target}`.trim();
+    }
     case "todo":
       return "Update todos";
     case "create_plan":

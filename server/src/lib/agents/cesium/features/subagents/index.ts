@@ -1,5 +1,11 @@
-import { createSubagentsV1Module } from "./v1-tools.js";
-import { createSubagentsV2Module } from "./v2-tools.js";
+import {
+  SUBAGENTS_V1_TOOL_NAMES,
+  createSubagentsV1Module,
+} from "./v1-tools.js";
+import {
+  SUBAGENTS_V2_TOOL_NAMES,
+  createSubagentsV2Module,
+} from "./v2-tools.js";
 import type {
   CesiumFeatureDefinition,
   CesiumFeatureModule,
@@ -27,6 +33,7 @@ export const SUBAGENTS_FEATURE_DEFINITION: CesiumFeatureDefinition = {
   label: "Subagents",
   description:
     "Delegation engine used to hand focused work to child agents while the parent coordinates.",
+  toolNames: [...new Set([...SUBAGENTS_V1_TOOL_NAMES, ...SUBAGENTS_V2_TOOL_NAMES])],
   defaultVersion: 1,
   versions: [
     {

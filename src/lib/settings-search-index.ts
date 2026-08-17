@@ -164,6 +164,42 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
   ),
+  section("general", "new-chat-widgets", "New chat widgets", "landing tiles home"),
+  row(
+    "general",
+    "new-chat-widget-shortcuts",
+    "Shortcuts",
+    "Plan-mode and editor-panel quick buttons on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "plan"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-actions",
+    "Actions",
+    "Quick actions on the new chat landing, run in the selected workspace's path.",
+    ["new chat", "landing", "widget", "tiles", "quick actions"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-recent-chats",
+    "Recent chats",
+    "Recent conversation tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "conversations", "history"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-recent-activity",
+    "Recent activity",
+    "Recently opened workspace tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "workspaces", "recents"]
+  ),
+  row(
+    "general",
+    "new-chat-widget-actions-link",
+    "Configure quick actions",
+    "Add, edit, or remove the actions shown on the new chat landing.",
+    ["new chat", "landing", "actions"]
+  ),
   section("general", "quick-open", "Quick Open & switcher", "palette search"),
   row(
     "general",

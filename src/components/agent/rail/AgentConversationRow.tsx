@@ -165,6 +165,7 @@ export function AgentConversationRow({
   showOverflowMenu = false,
   showMachineBadge = false,
   unreadCompletion = false,
+  acknowledgedFailure = false,
 }: {
   conversation: AgentRailConversationSummary;
   /** Row density; `balanced` grows a detail line only when the row needs one. */
@@ -197,6 +198,7 @@ export function AgentConversationRow({
   showOverflowMenu?: boolean;
   showMachineBadge?: boolean;
   unreadCompletion?: boolean;
+  acknowledgedFailure?: boolean;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -211,7 +213,10 @@ export function AgentConversationRow({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
-  const statusInfo = getAgentRailStatusInfo(conversation, { unreadCompletion });
+  const statusInfo = getAgentRailStatusInfo(conversation, {
+    unreadCompletion,
+    acknowledgedFailure,
+  });
 
   const relativeTime =
     now != null ? formatAgentRailRelativeTime(conversation.updatedAt, now) : null;
@@ -281,7 +286,9 @@ export function AgentConversationRow({
         ? `Imported from your cloud context${
             origin.sourceServerName ? ` · ${origin.sourceServerName}` : ""
           }`
-        : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
+        : origin.kind === "trigger"
+          ? `Fired by scheduled trigger${origin.triggerName ? ` "${origin.triggerName}"` : ""}`
+          : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
     : undefined;
 
   const handleContextMenu = onContextMenu

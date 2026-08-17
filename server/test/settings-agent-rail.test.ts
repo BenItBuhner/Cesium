@@ -65,9 +65,12 @@ test("agent rail view settings survive a save/read round-trip", async () => {
   assert.deepEqual(persisted.general.agentRail.hiddenSections, ["chats"]);
 });
 
-test("machine grouping is preserved rather than rewritten to workspace", async () => {
+test("retired group-by modes migrate to workspace", async () => {
   const settings = await store.getGlobalSettings();
-  settings.general.agentRail = { ...settings.general.agentRail, groupBy: "server" };
+  settings.general.agentRail = {
+    ...settings.general.agentRail,
+    groupBy: "server" as never,
+  };
 
   const response = await settingsRoutes.request("/api/settings/global", {
     method: "PUT",
@@ -77,7 +80,7 @@ test("machine grouping is preserved rather than rewritten to workspace", async (
   assert.equal(response.status, 200);
 
   const persisted = await store.getGlobalSettings();
-  assert.equal(persisted.general.agentRail.groupBy, "server");
+  assert.equal(persisted.general.agentRail.groupBy, "workspace");
 });
 
 test("legacy persisted agent rail settings gain migrated defaults", async () => {

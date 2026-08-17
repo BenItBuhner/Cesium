@@ -209,6 +209,12 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       const backend = draftBackend;
       if (!backend) return false;
 
+      // Capability profile (Code / Work / custom presets) rides along for the
+      // built-in agent only; other backends do not understand profile ids.
+      const draftProfileId =
+        backend.id === "cesium-agent"
+          ? workspaceSession.chat.profileId?.trim() || undefined
+          : undefined;
       if (noWorkspaceDraft) {
         const created = await createAndPromptStandaloneConversation(
           {
@@ -216,6 +222,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
             mode: draftMode,
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
+            ...(draftProfileId ? { profileId: draftProfileId } : {}),
           },
           text,
           attachments
@@ -266,6 +273,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         mode: draftMode,
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
+        ...(draftProfileId ? { profileId: draftProfileId } : {}),
       };
       if (onInstantSubmit) {
         return onInstantSubmit(conversationInput, promptText, attachments);
@@ -299,6 +307,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       seedWorkspaceSessionChatDraft,
       setSelectedConversationId,
       setStandaloneDraftActive,
+      workspaceSession.chat.profileId,
     ]
   );
 

@@ -36,6 +36,8 @@ export {
   type MobileAgentProjectionMessage,
   type MobileAgentProjectionsMessage,
   type MobileNativeToWebMessage,
+  type MobileSharedItem,
+  type MobileSharePayload,
   type MobileWebToNativeMessage,
 } from "@cesium/core";
 

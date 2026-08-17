@@ -56,6 +56,9 @@ function originMergeKey(
   if (origin.kind === "cloud-snapshot") {
     return `cloud-snapshot:${origin.snapshotKey}`;
   }
+  if (origin.kind === "trigger") {
+    return `trigger:${origin.triggerId}:${origin.firedAt}`;
+  }
   return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 

@@ -98,8 +98,14 @@ import {
 } from "@/lib/rail-fetch";
 import {
   filterGroupsByMachine,
+  filterGroupsByWorkspaceScope,
   getRepositoryGroupingKey,
 } from "@/lib/multi-server-workspaces";
+import {
+  collectAttentionConversations,
+  stripAttentionFromPinned,
+  stripElevatedFromGroups,
+} from "@/lib/agent-rail-elevate";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
@@ -138,13 +144,23 @@ function buildAgentRailCycleOrder(input: {
   activeWorkspaceId: string | null;
   groups: AgentConversationGroup[];
   pinnedRailConversations: AgentRailConversationSummary[];
+  attentionRailConversations: AgentRailConversationSummary[];
   collapsedWorkspaceIds: Set<string>;
 }): AgentRailConversationSummary[] {
-  const { activeWorkspaceId, groups, pinnedRailConversations, collapsedWorkspaceIds } = input;
+  const {
+    activeWorkspaceId,
+    groups,
+    pinnedRailConversations,
+    attentionRailConversations,
+    collapsedWorkspaceIds,
+  } = input;
   const visibleGroups = groups.filter(
     (group) => group.workspace.id === activeWorkspaceId || group.conversations.length > 0
   );
   const out: AgentRailConversationSummary[] = [];
+  if (!collapsedWorkspaceIds.has("__agentAttention__")) {
+    out.push(...attentionRailConversations);
+  }
   if (!collapsedWorkspaceIds.has(AGENT_RAIL_CYCLE_PINNED_SECTION_ID)) {
     out.push(...pinnedRailConversations);
   }
@@ -240,6 +256,7 @@ type AgentShellStateContextValue = {
   archiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   unarchiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   pinnedRailConversations: AgentRailConversationSummary[];
+  attentionRailConversations: AgentRailConversationSummary[];
   pinConversation: (conversationId: string) => void;
   unpinConversation: (conversationId: string) => void;
   railFilterToggles: AgentRailFilterToggleState;
@@ -248,6 +265,8 @@ type AgentShellStateContextValue = {
   clearRailFilters: () => void;
   /** Conversations whose finished turn the user has not opened yet. */
   unreadCompletionByConversationId: Record<string, true> | undefined;
+  /** Failed runs the user has already viewed. */
+  acknowledgedFailureByConversationId: Record<string, true> | undefined;
   /** Real workspace names keyed by workspace id (survives rail regrouping). */
   railWorkspaceNameById: Map<string, string>;
   isMobile: boolean;
@@ -913,20 +932,28 @@ export function AgentShellStateProvider({
     [groups, settings.general.agentRail.hiddenServerIds]
   );
 
+  const scopedMachineGroups = useMemo(
+    () => filterGroupsByWorkspaceScope(visibleMachineGroups, settings.general.agentRail.scope),
+    [settings.general.agentRail.scope, visibleMachineGroups]
+  );
+
   const groupedByRailMode = useMemo(
     () =>
       groupAgentRailGroups(
-        visibleMachineGroups,
+        scopedMachineGroups,
         settings.general.agentRail.groupBy,
         Date.now(),
         {
           unreadCompletionByConversationId:
             workspaceSession.chat.unreadChatCompletionByConversationId,
+          acknowledgedFailureByConversationId:
+            workspaceSession.chat.acknowledgedFailureByConversationId,
         }
       ),
     [
       settings.general.agentRail.groupBy,
-      visibleMachineGroups,
+      scopedMachineGroups,
+      workspaceSession.chat.acknowledgedFailureByConversationId,
       workspaceSession.chat.unreadChatCompletionByConversationId,
     ]
   );
@@ -959,8 +986,8 @@ export function AgentShellStateProvider({
     () =>
       settings.general.agentRail.groupBy === "workspace"
         ? groupedByRailMode
-        : groupAgentRailGroups(visibleMachineGroups, "workspace"),
-    [groupedByRailMode, settings.general.agentRail.groupBy, visibleMachineGroups]
+        : groupAgentRailGroups(scopedMachineGroups, "workspace"),
+    [groupedByRailMode, settings.general.agentRail.groupBy, scopedMachineGroups]
   );
 
   const activeWorkspaceGroup = useMemo(
@@ -1942,8 +1969,14 @@ export function AgentShellStateProvider({
       pinnedConversationIds: pinnedConversationIdSet,
       unreadCompletionByConversationId:
         workspaceSession.chat.unreadChatCompletionByConversationId,
+      acknowledgedFailureByConversationId:
+        workspaceSession.chat.acknowledgedFailureByConversationId,
     }),
-    [pinnedConversationIdSet, workspaceSession.chat.unreadChatCompletionByConversationId]
+    [
+      pinnedConversationIdSet,
+      workspaceSession.chat.acknowledgedFailureByConversationId,
+      workspaceSession.chat.unreadChatCompletionByConversationId,
+    ]
   );
 
   const filteredGroups = useMemo(
@@ -1957,7 +1990,7 @@ export function AgentShellStateProvider({
     [orderedGroups, railFilterMatchContext, railFilterToggles]
   );
 
-  const pinnedRailConversations = useMemo(() => {
+  const pinnedRailConversationsUnstripped = useMemo(() => {
     const byId = new Map<string, AgentRailConversationSummary>();
     for (const group of orderedGroups) {
       for (const c of group.conversations) {
@@ -1974,13 +2007,48 @@ export function AgentShellStateProvider({
       });
   }, [orderedGroups, pinnedAgentConversationIds, railFilterMatchContext, railFilterToggles]);
 
+  const attentionRailConversations = useMemo(() => {
+    const hidden = new Set(settings.general.agentRail.hiddenSections ?? []);
+    if (settings.general.agentRail.groupBy === "priority" || hidden.has("attention")) {
+      return [];
+    }
+    return collectAttentionConversations(
+      filteredGroups,
+      pinnedRailConversationsUnstripped,
+      {
+        unreadCompletionByConversationId:
+          workspaceSession.chat.unreadChatCompletionByConversationId,
+        acknowledgedFailureByConversationId:
+          workspaceSession.chat.acknowledgedFailureByConversationId,
+      }
+    );
+  }, [
+    filteredGroups,
+    pinnedRailConversationsUnstripped,
+    settings.general.agentRail.groupBy,
+    settings.general.agentRail.hiddenSections,
+    workspaceSession.chat.acknowledgedFailureByConversationId,
+    workspaceSession.chat.unreadChatCompletionByConversationId,
+  ]);
+
+  const attentionConversationIds = useMemo(
+    () => new Set(attentionRailConversations.map((conversation) => conversation.id)),
+    [attentionRailConversations]
+  );
+
+  const pinnedRailConversations = useMemo(
+    () => stripAttentionFromPinned(pinnedRailConversationsUnstripped, attentionConversationIds),
+    [attentionConversationIds, pinnedRailConversationsUnstripped]
+  );
+
   const groupsForRail = useMemo(
     () =>
-      filteredGroups.map((group) => ({
-        ...group,
-        conversations: group.conversations.filter((c) => !pinnedConversationIdSet.has(c.id)),
-      })),
-    [filteredGroups, pinnedConversationIdSet]
+      stripElevatedFromGroups(
+        filteredGroups,
+        attentionConversationIds,
+        pinnedConversationIdSet
+      ),
+    [attentionConversationIds, filteredGroups, pinnedConversationIdSet]
   );
 
   // Derived from the raw (pre-regrouping) groups so the attention section can
@@ -2032,6 +2100,44 @@ export function AgentShellStateProvider({
     return () => document.removeEventListener("visibilitychange", clearIfSeen);
   }, [selectedConversationId, unreadCompletionMap, updateWorkspaceSession]);
 
+  const acknowledgedFailureMap = workspaceSession.chat.acknowledgedFailureByConversationId;
+  useEffect(() => {
+    if (
+      !selectedConversationId ||
+      selectedConversationSummary?.id !== selectedConversationId ||
+      selectedConversationSummary.status !== "failed" ||
+      acknowledgedFailureMap?.[selectedConversationId]
+    ) {
+      return;
+    }
+    const ackIfSeen = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const acked = current.chat.acknowledgedFailureByConversationId ?? {};
+        if (acked[selectedConversationId]) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            acknowledgedFailureByConversationId: { ...acked, [selectedConversationId]: true },
+          },
+        };
+      });
+    };
+    ackIfSeen();
+    document.addEventListener("visibilitychange", ackIfSeen);
+    return () => document.removeEventListener("visibilitychange", ackIfSeen);
+  }, [
+    acknowledgedFailureMap,
+    selectedConversationId,
+    selectedConversationSummary,
+    updateWorkspaceSession,
+  ]);
+
   const agentSwitcherCandidates = useMemo(() => {
     const items: AgentSwitcherCandidate[] = [];
     const seen = new Set<string>();
@@ -2055,7 +2161,11 @@ export function AgentShellStateProvider({
         badge:
           summary.status === "running"
             ? "running"
-            : agentRailConversationNeedsAttention(summary)
+            : agentRailConversationNeedsAttention(summary, {
+                acknowledgedFailure: Boolean(
+                  workspaceSession.chat.acknowledgedFailureByConversationId?.[summary.id]
+                ),
+              })
               ? "needs attention"
               : undefined,
       });
@@ -2094,7 +2204,12 @@ export function AgentShellStateProvider({
     }
 
     return items;
-  }, [activeServer.id, pinnedAgentConversationIds, workspaceShapedGroups]);
+  }, [
+    activeServer.id,
+    pinnedAgentConversationIds,
+    workspaceSession.chat.acknowledgedFailureByConversationId,
+    workspaceShapedGroups,
+  ]);
 
   const agentSwitcherItems = useMemo(() => {
     const mruIds = settings.general.agentConversationMruByServer[activeServer.id] ?? [];
@@ -2128,6 +2243,7 @@ export function AgentShellStateProvider({
         activeWorkspaceId,
         groups: groupsForRail,
         pinnedRailConversations,
+        attentionRailConversations,
         collapsedWorkspaceIds: collapsed,
       });
       const currentId = isDraftConversationSelected ? null : selectedConversationId;
@@ -2143,6 +2259,7 @@ export function AgentShellStateProvider({
       isDraftConversationSelected,
       openConversationSummary,
       pinnedRailConversations,
+      attentionRailConversations,
       selectedConversationId,
     ]
   );
@@ -2190,6 +2307,7 @@ export function AgentShellStateProvider({
       archiveConversation,
       unarchiveConversation,
       pinnedRailConversations,
+      attentionRailConversations,
       pinConversation,
       unpinConversation,
       railFilterToggles,
@@ -2198,6 +2316,8 @@ export function AgentShellStateProvider({
       clearRailFilters,
       unreadCompletionByConversationId:
         workspaceSession.chat.unreadChatCompletionByConversationId,
+      acknowledgedFailureByConversationId:
+        workspaceSession.chat.acknowledgedFailureByConversationId,
       railWorkspaceNameById,
       isMobile,
     }),
@@ -2224,6 +2344,7 @@ export function AgentShellStateProvider({
       setStandaloneDraftActive,
       pinConversation,
       pinnedRailConversations,
+      attentionRailConversations,
       railFilterActive,
       railFilterToggles,
       railLoading,
@@ -2250,6 +2371,7 @@ export function AgentShellStateProvider({
       updateSidePaneEditorSession,
       sharedLeftRailCollapsed,
       workspaceSession.chat.unreadChatCompletionByConversationId,
+      workspaceSession.chat.acknowledgedFailureByConversationId,
       railWorkspaceNameById,
     ]
   );

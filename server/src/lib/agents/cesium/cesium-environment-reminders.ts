@@ -12,6 +12,8 @@ export type CesiumEnvironmentReminderSnapshot = {
   timeZone?: string;
   modelId?: string;
   modelName?: string;
+  profileId?: string;
+  profileName?: string;
 };
 
 export function formatCesiumDateLabel(
@@ -59,6 +61,8 @@ export function cesiumEnvironmentReminderSnapshot(input: {
   timeZone?: string | null;
   modelId?: string | null;
   modelName?: string | null;
+  profileId?: string | null;
+  profileName?: string | null;
 }): CesiumEnvironmentReminderSnapshot {
   const modelId = input.modelId?.trim() || undefined;
   const modelName = modelId
@@ -70,6 +74,8 @@ export function cesiumEnvironmentReminderSnapshot(input: {
     timeZone: input.timeZone?.trim() || undefined,
     modelId,
     modelName,
+    profileId: input.profileId?.trim() || undefined,
+    profileName: input.profileName?.trim() || undefined,
   };
 }
 
@@ -97,6 +103,8 @@ export function latestCesiumEnvironmentReminderSnapshot(
       timeZone,
       modelId,
       modelName,
+      profileId: asString(snapshot?.profileId) ?? asString(raw?.profileId),
+      profileName: asString(snapshot?.profileName),
     });
   }
   return null;
@@ -162,6 +170,18 @@ export function cesiumEnvironmentChangeNotice(input: {
       resolveModelDisplayName(undefined, currentModelId);
     lines.push(
       `- The user switched the active model from ${fromName} to ${toName}. You are now ${toName}.`
+    );
+  }
+
+  const previousProfileId = previous.profileId?.trim();
+  const currentProfileId = input.current.profileId?.trim();
+  if (previousProfileId && currentProfileId && previousProfileId !== currentProfileId) {
+    const fromName = previous.profileName?.trim() || previousProfileId;
+    const toName = input.current.profileName?.trim() || currentProfileId;
+    lines.push(
+      `- The user switched the active agent profile from ${fromName} to ${toName}. ` +
+        "Your system prompt and available tool surface were regenerated for the new profile; " +
+        "follow the profile summary in this reminder and do not carry capability assumptions forward from the previous profile."
     );
   }
 

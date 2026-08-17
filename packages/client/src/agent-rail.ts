@@ -126,6 +126,7 @@ export function isRenderableAgentRailConversation(
 export type AgentRailFilterMatchContext = {
   pinnedConversationIds: Set<string>;
   unreadCompletionByConversationId: Record<string, true> | undefined;
+  acknowledgedFailureByConversationId?: Record<string, true>;
 };
 
 /**
@@ -157,7 +158,13 @@ export function matchesAgentRailMultiFilter(
   if (toggles.running && conversation.status !== "running") {
     return false;
   }
-  if (toggles.needs_attention && !agentRailConversationNeedsAttention(conversation)) {
+  if (
+    toggles.needs_attention &&
+    !agentRailConversationNeedsAttention(conversation, {
+      acknowledgedFailure: Boolean(ctx.acknowledgedFailureByConversationId?.[conversation.id]),
+      unreadCompletion: Boolean(ctx.unreadCompletionByConversationId?.[conversation.id]),
+    })
+  ) {
     return false;
   }
   if (toggles.pinned && !isPinned) {

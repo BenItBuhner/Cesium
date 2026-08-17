@@ -32,6 +32,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
+import { MobileShareIntake } from "@/components/mobile/MobileShareIntake";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
 import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
 import { VoiceAgentView } from "@/components/voice/VoiceAgentView";
@@ -491,6 +492,7 @@ export function AgentLayout() {
         <AgentShellStateProvider>
           <VoiceSessionProvider>
             <AgentLayoutShell />
+            <MobileShareIntake />
             <ExtensionsWorkspaceBridge />
           </VoiceSessionProvider>
         </AgentShellStateProvider>

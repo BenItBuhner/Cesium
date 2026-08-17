@@ -24,20 +24,45 @@ export type {
   CesiumSubagentsVersion,
   CesiumToolDefinition,
   ResolvedCesiumHarness,
+  CesiumHarnessModelRequest,
+  CesiumHarnessPlugin,
+  CesiumHarnessPluginCatalogEntry,
+  CesiumHarnessPluginContext,
+  CesiumHarnessPluginDefinition,
+  CesiumHarnessPluginFailureMode,
+  CesiumHarnessPluginHooks,
+  CesiumHarnessPluginResolveContext,
+  CesiumHarnessPluginVersionDefinition,
+  CesiumHarnessTurnInput,
+  CesiumHarnessTurnOutcome,
 } from "./types.js";
 export {
   createCesiumFeatureRegistry,
   type CesiumFeatureRegistry,
 } from "./registry.js";
+export {
+  CesiumHarnessPluginRuntime,
+  type CesiumHarnessPluginDiagnostic,
+  type CesiumHarnessPluginRuntimeContext,
+  type CesiumHarnessPluginRuntimeOptions,
+} from "./runtime.js";
+export {
+  loadCesiumHarnessPluginModules,
+  loadCesiumHarnessPluginModulesFromEnv,
+  resetLoadedCesiumHarnessPluginModulesForTests,
+  type LoadedCesiumHarnessPluginModule,
+} from "./loader.js";
 
 export {
   DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+  DEFAULT_PLUGIN_HOOK_TIMEOUT_MS,
   DEFAULT_SUBAGENTS_VERSION,
   DEFAULT_WAIT_AGENT_DEFAULT_TIMEOUT_MS,
   DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS,
   DEFAULT_WAIT_AGENT_MIN_TIMEOUT_MS,
   DEFAULT_WAIT_MAX_SECONDS,
   HARD_MAX_WAIT_AGENT_TIMEOUT_MS,
+  HARD_MAX_PLUGIN_HOOK_TIMEOUT_MS,
   defaultHarnessLimits,
   defaultHarnessSettings,
   mergeHarnessSettings,
@@ -67,9 +92,14 @@ export function registerCesiumFeatureDefinition(
   return CESIUM_FEATURE_REGISTRY.register(definition);
 }
 
+/** Preferred registration API; the feature name remains as a compatibility alias. */
+export const registerCesiumHarnessPlugin = registerCesiumFeatureDefinition;
+
 export function getCesiumFeatureCatalog() {
   return CESIUM_FEATURE_REGISTRY.catalog();
 }
+
+export const getCesiumHarnessPluginCatalog = getCesiumFeatureCatalog;
 
 /**
  * Resolve the active harness feature stack from settings.
@@ -119,6 +149,7 @@ export function resolveCesiumHarness(
     tools,
     toolNames: new Set(tools.map((tool) => tool.name)),
     subagentsVersion: features.subagentsVersion,
+    registryRevision: registry.revision(),
   };
 }
 

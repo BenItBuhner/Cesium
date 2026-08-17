@@ -423,8 +423,16 @@ export type CesiumAgentSettingsPublic = {
     description: string;
   }>;
   harness: {
-    features: Record<string, { version: number }>;
+    features: Record<
+      string,
+      {
+        version: number;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      }
+    >;
     limits: {
+      pluginHookTimeoutMs: number;
       waitMaxSeconds: number;
       waitAgentDefaultTimeoutMs: number;
       waitAgentMinTimeoutMs: number;
@@ -437,6 +445,13 @@ export type CesiumAgentSettingsPublic = {
     label: string;
     description: string;
     defaultVersion: number;
+    apiVersion?: 1;
+    enabledByDefault: boolean;
+    priority: number;
+    dependencies: string[];
+    optionalDependencies: string[];
+    failureMode: "isolate" | "fatal";
+    toolNames: string[];
     versions: Array<{
       version: number;
       label: string;
@@ -459,4 +474,31 @@ export type CesiumAgentSettingsPublic = {
       supportsImages?: boolean;
     }>;
   }>;
+  /** Custom capability profiles (persisted). */
+  profiles: CesiumAgentProfile[];
+  defaultProfileId: string;
+  /** Built-in Code/Work presets plus custom profiles, in picker order. */
+  profileCatalog: CesiumAgentProfile[];
+  /** Grouped tool inventory for profile editors. */
+  profileToolGroups: Array<{ id: string; label: string; tools: string[] }>;
+  /** Tools every profile keeps regardless of allowlist. */
+  profileLockedTools: string[];
+};
+
+export type CesiumAgentProfile = {
+  id: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+  prompt: {
+    base: "code" | "work" | "minimal";
+    customInstructions: string;
+  };
+  tools: {
+    allowed: "all" | string[];
+    mcpServers: "all" | string[];
+  };
+  permissionOverrides: Partial<
+    Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">
+  >;
 };

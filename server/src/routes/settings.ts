@@ -449,11 +449,20 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     orchestration?: Record<string, unknown>;
     modes?: { enabled?: Record<string, boolean> };
     harness?: {
-      features?: Record<string, { version?: number | string }>;
+      features?: Record<
+        string,
+        {
+          version?: number | string;
+          enabled?: boolean;
+          config?: Record<string, unknown>;
+        }
+      >;
       limits?: Record<string, unknown>;
     };
     toolPermissions?: Record<string, unknown>;
     customProviders?: CesiumCustomProvider[];
+    profiles?: unknown[];
+    defaultProfileId?: string;
   }>();
   const settings = await patchCesiumAgentSettings({
     ...(body.defaultProviderKeyId !== undefined
@@ -492,7 +501,14 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(body.harness
       ? {
           harness: body.harness as {
-            features?: Record<string, { version?: number | string }>;
+            features?: Record<
+              string,
+              {
+                version?: number | string;
+                enabled?: boolean;
+                config?: Record<string, unknown>;
+              }
+            >;
             limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
           },
         }
@@ -501,6 +517,16 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }
       : {}),
     ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
+    ...(Array.isArray(body.profiles)
+      ? {
+          profiles: body.profiles as Parameters<
+            typeof patchCesiumAgentSettings
+          >[0]["profiles"],
+        }
+      : {}),
+    ...(typeof body.defaultProfileId === "string"
+      ? { defaultProfileId: body.defaultProfileId }
+      : {}),
   });
   return c.json({ ok: true, settings });
 });

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  buildCesiumBaseSystemPrompt,
   formatGitSummaryForPrompt,
   type BuildCesiumSystemPromptInput,
   type McpServerSummary,
@@ -46,13 +47,54 @@ import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
-import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
+import {
+  applyCesiumProfileExclusionsToModePolicy,
+  buildCesiumModeReminder,
+} from "./cesium-mode-reminders.js";
 import {
   normalizeCesiumMode,
   normalizeCesiumToolName,
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
 } from "./cesium-mode-policy.js";
+import {
+  CESIUM_CODE_PROFILE,
+  filterCesiumToolsForProfile,
+  listCesiumProfileExcludedTools,
+  resolveCesiumProfile,
+  resolveCesiumProfileToolPolicy,
+  summarizeCesiumProfileToolSurface,
+  type CesiumAgentProfile,
+} from "./cesium-profiles.js";
+import {
+  forgetCesiumMemoryEntry,
+  formatCesiumMemoryEntry,
+  listCesiumMemoryEntries,
+  renderCesiumMemorySnapshot,
+  saveCesiumMemoryEntry,
+  searchCesiumMemoryEntries,
+  type CesiumMemoryCategory,
+  type CesiumMemoryScope,
+} from "./cesium-memory.js";
+import {
+  createAuthoredSkill,
+  deleteAuthoredSkill,
+  listAuthorableSkills,
+  readSkillById,
+  updateAuthoredSkill,
+} from "./cesium-skill-authoring.js";
+import {
+  attachCesiumTriggerConversation,
+  createCesiumTrigger,
+  deleteCesiumTrigger,
+  formatCesiumTrigger,
+  formatTriggerPromptPreamble,
+  listCesiumTriggers,
+  markCesiumTriggerFired,
+  normalizeTriggerSchedule,
+  updateCesiumTrigger,
+  type CesiumTriggerSchedule,
+} from "./cesium-triggers.js";
 import {
   isOrchestrationPermissionCategory,
   isPersistentPermissionOptionId,
@@ -63,7 +105,7 @@ import {
   writeCesiumPlanFile,
 } from "./cesium-plan-files.js";
 import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
-import { refreshWorkspaceSkillsMirror } from "./skills-mirror.js";
+import { refreshWorkspaceSkillsMirror, slugifySkillId } from "./skills-mirror.js";
 import {
   appendGoalSnapshot,
   blockGoal,
@@ -175,9 +217,13 @@ import {
   toolTitle,
 } from "./cesium/cesium-tools.js";
 import {
+  CESIUM_FEATURE_REGISTRY,
+  CesiumHarnessPluginRuntime,
   harnessFeatureReminder,
   isSubagentsV2ToolName,
+  loadCesiumHarnessPluginModulesFromEnv,
   SubagentsV2Runtime,
+  type CesiumHarnessTurnOutcome,
   type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
@@ -460,6 +506,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
+  private harnessSignature = "";
+  private pluginRuntime: CesiumHarnessPluginRuntime | null = null;
+  /** Active capability profile (Code by default); refreshed with the harness each turn. */
+  private activeProfile: CesiumAgentProfile = CESIUM_CODE_PROFILE;
   private subagentsV2: SubagentsV2Runtime | null = null;
 
   constructor(
@@ -482,6 +532,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (mode) {
       this.configOptions = updateConfigOption(this.configOptions, "mode", mode);
     }
+    // Conversations created before capability profiles existed have no
+    // "profile" config option; backfill it from the current catalog so the
+    // picker and setConfigOption("profile", …) work on resumed sessions.
+    if (!this.configOptions.some((option) => option.id === "profile")) {
+      const freshOptions = await createCesiumAgentConfigOptions().catch(() => null);
+      const profileOption = freshOptions?.find((option) => option.id === "profile");
+      if (profileOption) {
+        const modeIndex = this.configOptions.findIndex((option) => option.id === "mode");
+        const next = [...this.configOptions];
+        next.splice(modeIndex >= 0 ? modeIndex + 1 : next.length, 0, profileOption);
+        this.configOptions = next;
+      }
+    }
+    const profileId = this.callbacks.conversation.config.profileId?.trim();
+    if (profileId) {
+      this.configOptions = updateConfigOption(this.configOptions, "profile", profileId);
+    }
+    await this.refreshHarnessFromSettings();
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: this.sessionId,
@@ -553,6 +621,55 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return normalizeCesiumMode(String(raw));
   }
 
+  /** Profile id selected on this conversation, or null to use the settings default. */
+  private currentProfileId(): string | null {
+    const raw = this.configOptions.find((option) => option.id === "profile")?.currentValue;
+    if (typeof raw === "string" && raw.trim()) {
+      return raw.trim();
+    }
+    return this.callbacks.conversation.config.profileId?.trim() || null;
+  }
+
+  /** Profile-resolved base system prompt (persona + verbatim profile instructions). */
+  private profileSystemPrompt(): string {
+    return buildCesiumBaseSystemPrompt({
+      base: this.activeProfile.prompt.base,
+      customInstructions: this.activeProfile.prompt.customInstructions,
+    });
+  }
+
+  /**
+   * Tool schemas advertised to the model: the resolved harness filtered to the
+   * active profile envelope. Unlike mode policy, excluded tools are hidden
+   * from the model entirely.
+   */
+  private advertisedTools(): CesiumToolDefinition[] {
+    return filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
+  }
+
+  /** Whether the active profile exposes the curated `memory` tool. */
+  private profileIncludesMemory(): boolean {
+    return (
+      this.activeProfile.tools.allowed === "all" ||
+      this.activeProfile.tools.allowed.includes("memory")
+    );
+  }
+
+  /** Curated-memory snapshot for the per-turn reminder, or null when hidden/empty. */
+  private async resolveMemorySnapshot(): Promise<string | null> {
+    if (!this.profileIncludesMemory()) {
+      return null;
+    }
+    try {
+      const entries = await listCesiumMemoryEntries({
+        workspaceId: this.callbacks.workspace.id,
+      });
+      return renderCesiumMemorySnapshot(entries) || null;
+    } catch {
+      return null;
+    }
+  }
+
   private createAssistantStreamSink(
     messageId: string,
     iteration: number
@@ -590,8 +707,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.resumeWaiter = null;
     this.releaseResumeAck();
     this.activeUserMessageId = input.userMessageId;
+    let pluginOutcome: CesiumHarnessTurnOutcome = { status: "cancelled" };
     const assistantMessageId = `cesium-assistant-${randomUUID()}`;
-    await this.callbacks.appendEvents([
+    try {
+      await this.refreshHarnessFromSettings();
+      const pluginTurnInput = await this.pluginRuntime?.turnStart({
+        text: input.text,
+        userMessageId: input.userMessageId,
+        attachments: input.attachments,
+        isRetry: input.isRetry,
+        clientTimezone: input.clientTimezone,
+      });
+      if (pluginTurnInput) {
+        input = { ...input, ...pluginTurnInput };
+      }
+      await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
@@ -606,7 +736,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       lastError: null,
       providerSessionId: this.sessionId,
     }));
-    try {
       const modelId = optionValue(
         this.configOptions,
         "model",
@@ -710,8 +839,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         promptContext.modelName ?? this.callbacks.conversation.config.modelName,
         modelId
       );
-      this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
-      await this.refreshHarnessFromSettings();
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const previousEvents = previousSnapshot?.events ?? [];
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
@@ -738,6 +865,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           timeZone,
           modelId,
           modelName: promptContext.modelName,
+          profileId: this.activeProfile.id,
+          profileName: this.activeProfile.name,
         },
         previousUserMessageAt: previousUserMessageCreatedAt(
           previousEvents,
@@ -759,10 +888,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
           .catch(() => undefined);
       }
       const featureReminder = harnessFeatureReminder(this.harness);
+      const memorySnapshot = await this.resolveMemorySnapshot();
       const reminderText = [
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
+          profileName: this.activeProfile.name,
+          profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
+          profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
+          memorySnapshot,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
           dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
           gitSummary: promptContext.gitSummary ?? "not a git repository",
@@ -804,6 +938,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
               timeZone,
               modelId,
               modelName: promptContext.modelName,
+              profileId: this.activeProfile.id,
+              profileName: this.activeProfile.name,
             },
           },
         },
@@ -880,6 +1016,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
           return;
         }
         const assistantStream = this.createAssistantStreamSink(assistantMessageId, iteration);
+        let modelRequest = {
+          modelId: String(modelId),
+          iteration,
+          messages: [...modelHistory, ...toolResultMessages],
+          tools: this.advertisedTools(),
+        };
+        modelRequest =
+          (await this.pluginRuntime?.beforeModel(modelRequest)) ?? modelRequest;
+        modelRequest = {
+          ...modelRequest,
+          messages:
+            (await this.pluginRuntime?.transformMessages(modelRequest.messages)) ??
+            modelRequest.messages,
+        };
         let result: CesiumAdapterResult | null = null;
         try {
           result = await this.runAdapterWithWarning(
@@ -889,9 +1039,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
               baseUrl: auth.baseUrl,
               providerId: auth.providerId,
               oauth: auth.oauth,
-              modelId,
-              messages: [...modelHistory, ...toolResultMessages],
-              tools: this.harness.tools,
+              modelId: modelRequest.modelId,
+              messages: modelRequest.messages,
+              tools: modelRequest.tools,
             },
             iteration,
             {
@@ -905,6 +1055,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (!result) {
           throw new Error("Cesium streaming adapter did not produce a result.");
         }
+        result = (await this.pluginRuntime?.afterModel(result)) ?? result;
         if (result.toolRequests.length === 0) {
           if (isEmptyCesiumAdapterResult(result)) {
             throw new Error(
@@ -915,6 +1066,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           }
           history.push({ role: "assistant", content: result.text });
           await this.finishAssistant(assistantMessageId, result.raw);
+          pluginOutcome = { status: "completed" };
           return;
         }
         toolResultMessages.push({
@@ -981,6 +1133,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         error instanceof Error
           ? error.message
           : String(error);
+      pluginOutcome = { status: "failed", error: message };
       console.warn("[cesium-agent] turn failed:", message);
       if (this.isGoalMode()) {
         await pauseGoal({
@@ -1013,6 +1166,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         pendingQuestion: null,
       }));
     } finally {
+      if (this.cancelled) {
+        pluginOutcome = { status: "cancelled" };
+      }
+      await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
   }
@@ -1233,6 +1390,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.configOptions = updateConfigOption(this.configOptions, configId, value);
     const modelOption = this.configOptions.find((option) => option.id === "model");
     const modeOption = this.configOptions.find((option) => option.id === "mode");
+    const profileOption = this.configOptions.find((option) => option.id === "profile");
     await this.callbacks.updateConversation((current) => ({
       ...current,
       configOptions: this.configOptions,
@@ -1246,6 +1404,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
           configId === "mode"
             ? value
             : (modeOption?.currentValue ?? current.config.mode),
+        profileId:
+          configId === "profile"
+            ? value
+            : (profileOption?.currentValue ?? current.config.profileId),
       },
     }));
   }
@@ -1370,6 +1532,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.releaseResumeAck();
     this.subagentsV2?.dispose();
     this.subagentsV2 = null;
+    await this.pluginRuntime?.dispose();
+    this.pluginRuntime = null;
     for (const permission of this.pendingPermissions.values()) {
       permission.reject(new Error("Cesium session disposed."));
     }
@@ -1383,8 +1547,61 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async refreshHarnessFromSettings(): Promise<void> {
+    await loadCesiumHarnessPluginModulesFromEnv(
+      CESIUM_FEATURE_REGISTRY,
+      this.callbacks.workspace.root
+    );
     const settings = await getCesiumAgentSettings();
-    this.harness = resolveCesiumTools(settings.harness);
+    this.activeProfile = resolveCesiumProfile({
+      profileId: this.currentProfileId(),
+      customProfiles: settings.profiles,
+      defaultProfileId: settings.defaultProfileId,
+    });
+    const signature = JSON.stringify({
+      harness: settings.harness,
+      registryRevision: CESIUM_FEATURE_REGISTRY.revision(),
+    });
+    if (signature !== this.harnessSignature) {
+      await this.pluginRuntime?.dispose();
+      this.harness = resolveCesiumTools(settings.harness);
+      this.harnessSignature = signature;
+      this.pluginRuntime = new CesiumHarnessPluginRuntime({
+        modules: this.harness.modules,
+        hookTimeoutMs: this.harness.settings.limits.pluginHookTimeoutMs,
+        context: () => ({
+          sessionId: this.sessionId,
+          conversationId: this.callbacks.conversation.id,
+          workspaceId: this.callbacks.workspace.id,
+          workspaceRoot: this.callbacks.workspace.root,
+          mode: this.currentMode(),
+          modelId: String(
+            optionValue(
+              this.configOptions,
+              "model",
+              this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
+            )
+          ),
+        }),
+        onDiagnostic: async (diagnostic) => {
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "system",
+              level: "warning",
+              text:
+                `Harness plugin ${diagnostic.pluginId}@${diagnostic.pluginVersion} ` +
+                `failed in ${diagnostic.hook}: ${diagnostic.message}`,
+              raw: { harnessPluginDiagnostic: diagnostic },
+            },
+          ]);
+        },
+      });
+      await this.pluginRuntime.start();
+    }
+    this.activeSystemPrompt =
+      (await this.pluginRuntime?.transformSystemPrompt(this.profileSystemPrompt())) ??
+      this.profileSystemPrompt();
     if (this.harness.subagentsVersion === 2) {
       const runtime = this.ensureSubagentsV2();
       runtime.updateLimits(this.harness.settings.limits);
@@ -1442,8 +1659,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private buildSubagentToolset(agentPath: string | null): CesiumSubagentToolset {
     const includeCollaboration = agentPath != null && this.harness.subagentsVersion === 2;
+    // Children inherit the parent profile's capability envelope: a Work parent
+    // cannot spawn a terminal-wielding child.
     const definitions = subagentToolDefinitions({
-      hostTools: this.harness.tools,
+      hostTools: this.advertisedTools(),
       includeCollaboration,
     });
     return createSubagentToolset({
@@ -1463,6 +1682,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // Direct browser tools are policy/permission-equivalent to calling the
     // built-in browser MCP server through call_mcp_tool.
     const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
+    const profilePolicy = resolveCesiumProfileToolPolicy({
+      profile: this.activeProfile,
+      toolName: name,
+      arguments: args,
+    });
+    if (!profilePolicy.allowed) {
+      throw new Error(
+        profilePolicy.reason ?? `Tool ${name} is blocked by the active agent profile.`
+      );
+    }
     const policy = resolveCesiumModeToolPolicy({
       mode: this.currentMode(),
       toolName: policyToolName,
@@ -1743,6 +1972,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
     }
 
+    // Profile permission overrides beat settings-level toolPermissions: deny
+    // hard-blocks, allow skips the prompt, absent falls through to the cascade.
+    const profileOverride = this.activeProfile.permissionOverrides[input.permission];
+    if (profileOverride === "deny") {
+      throw new Error(
+        `${input.title} blocked by the active "${this.activeProfile.name}" agent profile.`
+      );
+    }
+    if (profileOverride === "allow") {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Allowed ${input.title} by the "${this.activeProfile.name}" agent profile.`,
+        },
+      ]);
+      return;
+    }
+
     const [settings, globalSettings] = await Promise.all([
       getCesiumAgentSettings(),
       getGlobalSettings().catch(() => null),
@@ -1872,6 +2122,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async executeTool(request: CesiumToolRequest): Promise<string> {
+    request = (await this.pluginRuntime?.beforeTool(request)) ?? request;
     const effectiveRequest =
       request.name === "call_mcp_tool"
         ? {
@@ -1879,7 +2130,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
             arguments: normalizeCesiumToolRequestArguments(request.name, request.arguments),
           }
         : request;
-    const title = toolTitle(effectiveRequest.name, effectiveRequest.arguments);
+    const toolDefinition = this.harness.tools.find(
+      (tool) => tool.name === effectiveRequest.name
+    );
+    const title = toolTitle(
+      effectiveRequest.name,
+      effectiveRequest.arguments,
+      toolDefinition
+    );
     const mcpServerForTool =
       effectiveRequest.name === "call_mcp_tool"
         ? await getMcpServer(
@@ -1893,7 +2151,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       kind: "tool_call",
       toolCallId: effectiveRequest.id,
       title,
-      toolKind: toolKind(effectiveRequest.name),
+      toolKind: toolKind(effectiveRequest.name, toolDefinition),
       status: "in_progress",
       detail: safeJson(effectiveRequest.arguments),
       pluginId: mcpServerForTool?.pluginId,
@@ -1904,10 +2162,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
     await this.callbacks.appendEvents([callEvent]);
     try {
       let result: string;
-      const policy = resolveCesiumModeToolPolicy({
-        mode: this.currentMode(),
+      // Layer 1: hard capability boundary from the active profile (also gates
+      // call_mcp_tool serverIds). Layer 2: mode posture policy.
+      const profilePolicy = resolveCesiumProfileToolPolicy({
+        profile: this.activeProfile,
         toolName: request.name,
+        arguments: effectiveRequest.arguments,
       });
+      if (!profilePolicy.allowed) {
+        throw new Error(
+          profilePolicy.reason ?? `Tool ${request.name} is blocked by the active agent profile.`
+        );
+      }
+      const currentMode = this.currentMode();
+      const allowedModes = toolDefinition?.allowedModes;
+      if (
+        Array.isArray(allowedModes) &&
+        !allowedModes.map((mode) => normalizeCesiumMode(mode)).includes(currentMode)
+      ) {
+        throw new Error(
+          `Tool ${effectiveRequest.name} is not enabled in ${currentMode} mode.`
+        );
+      }
+      const policy =
+        allowedModes === "read-only" && currentMode === "ask"
+          ? { allowed: true }
+          : resolveCesiumModeToolPolicy({
+              mode: currentMode,
+              toolName: effectiveRequest.name,
+            });
       if (!policy.allowed) {
         throw new Error(policy.reason ?? `Tool ${request.name} is blocked in the active mode.`);
       }
@@ -1938,10 +2221,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
       const featureExecutor = this.harness.modules.find(
         (featureModule) =>
-          featureModule.executeTool && featureModule.toolNames.includes(request.name)
+          featureModule.executeTool &&
+          featureModule.toolNames.includes(effectiveRequest.name)
       );
       if (featureExecutor?.executeTool) {
-        result = await featureExecutor.executeTool(request.name, request.arguments);
+        result = await featureExecutor.executeTool(
+          effectiveRequest.name,
+          effectiveRequest.arguments
+        );
       } else {
         const toolName = normalizeCesiumToolName(request.name);
         switch (toolName) {
@@ -2060,6 +2347,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "search_conversations":
           result = await this.toolSearchConversations(request.arguments);
           break;
+        case "memory":
+          result = await this.toolMemory(request.arguments);
+          break;
+        case "skill":
+          result = await this.toolSkill(request.arguments);
+          break;
+        case "schedule":
+          result = await this.toolSchedule(request.arguments);
+          break;
         case "switch_branch":
           result = await this.toolSwitchBranch(request.arguments);
           break;
@@ -2106,16 +2402,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
-      const refinedTitle = this.refinedToolTitles.get(request.id);
-      this.refinedToolTitles.delete(request.id);
+      result =
+        (await this.pluginRuntime?.afterTool(effectiveRequest, result)) ?? result;
+      const refinedTitle = this.refinedToolTitles.get(effectiveRequest.id);
+      this.refinedToolTitles.delete(effectiveRequest.id);
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
           kind: "tool_call_update",
-          toolCallId: request.id,
+          toolCallId: effectiveRequest.id,
           title: refinedTitle ?? title,
-          toolKind: toolKind(request.name),
+          toolKind: toolKind(effectiveRequest.name, toolDefinition),
           status: "completed",
           detail: result,
           raw: { request: effectiveRequest, result },
@@ -2123,16 +2421,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]);
       return result;
     } catch (error) {
-      this.refinedToolTitles.delete(request.id);
+      await this.pluginRuntime?.toolError(effectiveRequest, error);
+      this.refinedToolTitles.delete(effectiveRequest.id);
       if (error instanceof PermissionRefusedToolCallError) {
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
             kind: "tool_call_update",
-            toolCallId: request.id,
+            toolCallId: effectiveRequest.id,
             title,
-            toolKind: toolKind(request.name),
+            toolKind: toolKind(effectiveRequest.name, toolDefinition),
             status: "completed",
             detail: error.message,
             raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
@@ -2146,9 +2445,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
           kind: "tool_call_update",
-          toolCallId: request.id,
+          toolCallId: effectiveRequest.id,
           title,
-          toolKind: toolKind(request.name),
+          toolKind: toolKind(effectiveRequest.name, toolDefinition),
           status: failed.status,
           detail: failed.detail,
           raw: { request: effectiveRequest, error: failed.detail },
@@ -2867,13 +3166,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const reason = asString(args.reason)?.trim() || undefined;
     await this.setConfigOption("mode", targetMode);
-    const policy = summarizeCesiumModeToolPolicy(targetMode);
+    const policy = applyCesiumProfileExclusionsToModePolicy(
+      summarizeCesiumModeToolPolicy(targetMode),
+      listCesiumProfileExcludedTools(this.activeProfile),
+      this.activeProfile.name
+    );
     const reminderText = buildCesiumModeReminder({
       mode: targetMode,
       modelName: resolveModelDisplayName(
         this.callbacks.conversation.config.modelName,
         this.callbacks.conversation.config.modelId || "configured model"
       ),
+      profileName: this.activeProfile.name,
+      profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
+      profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
       workspaceRoot: this.callbacks.workspace.root,
       dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
@@ -2963,7 +3269,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       workspaceRoot: this.callbacks.workspace.root,
     });
     const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-    this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+    this.activeSystemPrompt = this.profileSystemPrompt();
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
   }
 
@@ -3766,7 +4072,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ? `\n\nYou MUST respond with ONLY valid JSON matching this JSON Schema (no markdown fences):\n${JSON.stringify(request.schema, null, 2)}`
       : "\n\nYour final text response is returned verbatim to the orchestration script as the agent() result. Prefer concise structured text.";
     const system = [
-      CESIUM_SYSTEM_PROMPT,
+      this.activeSystemPrompt,
       "You are a subagent spawned by a Cesium Workflow orchestration script.",
       "Complete the assigned task. Do not spawn additional workflows or subagents.",
       schemaHint,
@@ -4001,7 +4307,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           {
             role: "system",
             content:
-              `${CESIUM_SYSTEM_PROMPT}\n\nYou are a child subagent. Do not spawn additional subagents.` +
+              `${this.activeSystemPrompt}\n\nYou are a child subagent. Do not spawn additional subagents.` +
               (toolGuidance ? `\n\n${toolGuidance}` : ""),
           },
           { role: "user", content: instructions },
@@ -4147,6 +4453,313 @@ class CesiumSessionHandle implements AgentSessionHandle {
       conversationId: asString(args.conversationId),
       maxResults: asNumber(args.maxResults),
     });
+  }
+
+  /** Curated persistent memory: save/search/list/forget over bounded JSON stores. */
+  private async toolMemory(args: Record<string, unknown>): Promise<string> {
+    const action = asString(args.action)?.trim().toLowerCase();
+    const workspaceId = this.callbacks.workspace.id;
+    const rawScope = asString(args.scope)?.trim().toLowerCase();
+    const scope: CesiumMemoryScope | undefined =
+      rawScope === "user" || rawScope === "workspace" ? rawScope : undefined;
+    switch (action) {
+      case "save": {
+        const content = asString(args.content)?.trim();
+        if (!content) {
+          throw new Error("memory.content is required for save.");
+        }
+        const rawCategory = asString(args.category)?.trim().toLowerCase();
+        const category: CesiumMemoryCategory =
+          rawCategory === "preference" ||
+          rawCategory === "constraint" ||
+          rawCategory === "decision"
+            ? rawCategory
+            : "fact";
+        const entry = await saveCesiumMemoryEntry({
+          workspaceId,
+          scope: scope ?? "workspace",
+          category,
+          content,
+          sourceConversationId: this.callbacks.conversation.id,
+          id: asString(args.id)?.trim() || undefined,
+        });
+        return `Saved memory entry.\n${formatCesiumMemoryEntry(entry)}`;
+      }
+      case "search": {
+        const query = asString(args.query)?.trim();
+        if (!query) {
+          throw new Error("memory.query is required for search.");
+        }
+        const entries = await searchCesiumMemoryEntries({
+          workspaceId,
+          query,
+          scope,
+          limit: asNumber(args.limit),
+        });
+        if (entries.length === 0) {
+          return `No memory entries match "${query}".`;
+        }
+        return [
+          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} match "${query}":`,
+          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
+        ].join("\n");
+      }
+      case "list": {
+        const limit = Math.min(Math.max(asNumber(args.limit) ?? 10, 1), 50);
+        const entries = (await listCesiumMemoryEntries({ workspaceId, scope })).slice(0, limit);
+        if (entries.length === 0) {
+          return scope
+            ? `No memory entries saved in the ${scope} scope yet.`
+            : "No memory entries saved yet.";
+        }
+        return [
+          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} (most recent first):`,
+          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
+        ].join("\n");
+      }
+      case "forget": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("memory.id is required for forget.");
+        }
+        const removed = await forgetCesiumMemoryEntry({ workspaceId, id });
+        if (!removed) {
+          return `No memory entry with id ${id}. Use memory list to see current entries.`;
+        }
+        return `Forgot memory entry.\n${formatCesiumMemoryEntry(removed)}`;
+      }
+      default:
+        throw new Error('memory.action must be one of "save", "search", "list", "forget".');
+    }
+  }
+
+  /** Agent Skills authoring: create/update/list/read/delete SKILL.md documents. */
+  private async toolSkill(args: Record<string, unknown>): Promise<string> {
+    const action = asString(args.action)?.trim().toLowerCase();
+    const workspaceRoot = this.callbacks.workspace.root;
+    switch (action) {
+      case "create": {
+        const name = asString(args.name)?.trim();
+        const description = asString(args.description)?.trim();
+        const instructions = asString(args.instructions)?.trim();
+        if (!name || !description || !instructions) {
+          throw new Error("skill.create requires name, description, and instructions.");
+        }
+        const created = await createAuthoredSkill({
+          workspaceRoot,
+          name,
+          description,
+          instructions,
+          id: asString(args.id)?.trim() || undefined,
+        });
+        return (
+          `Created skill "${created.name}" (id: ${created.id}) at ${created.relativePath}. ` +
+          "It is mirrored under agent-skills/ and will appear in the skills list from the next turn."
+        );
+      }
+      case "update": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("skill.id is required for update.");
+        }
+        const updated = await updateAuthoredSkill({
+          workspaceRoot,
+          id,
+          name: asString(args.name)?.trim() || undefined,
+          description: asString(args.description)?.trim() || undefined,
+          instructions: asString(args.instructions)?.trim() || undefined,
+        });
+        return `Updated skill "${updated.name}" (id: ${updated.id}) at ${updated.relativePath}.`;
+      }
+      case "list": {
+        const skills = await listAuthorableSkills(workspaceRoot);
+        if (skills.length === 0) {
+          return "No skills discovered in this workspace yet. Use skill create to author one.";
+        }
+        return [
+          `${skills.length} skill${skills.length === 1 ? "" : "s"} discovered:`,
+          ...skills.map(
+            (skill) =>
+              `- ${skill.name} (id: ${slugifySkillId(skill.name)}) — ${skill.description} [${
+                skill.authored ? "agent-authored" : `read-only: ${skill.source}`
+              }]`
+          ),
+        ].join("\n");
+      }
+      case "read": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("skill.id is required for read.");
+        }
+        const { skill, markdown } = await readSkillById({ workspaceRoot, id });
+        return `# ${skill.relativePath}\n\n${markdown}`;
+      }
+      case "delete": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("skill.id is required for delete.");
+        }
+        const removed = await deleteAuthoredSkill({ workspaceRoot, id });
+        return `Deleted skill "${removed.name}" (id: ${removed.id}).`;
+      }
+      default:
+        throw new Error(
+          'skill.action must be one of "create", "update", "list", "read", "delete".'
+        );
+    }
+  }
+
+  /** Scheduled triggers: the agent's proactive wake-ups (cron/interval/once). */
+  private async toolSchedule(args: Record<string, unknown>): Promise<string> {
+    const action = asString(args.action)?.trim().toLowerCase();
+    const workspaceId = this.callbacks.workspace.id;
+    const parseScheduleArgs = (): CesiumTriggerSchedule => {
+      const cron = asString(args.cron)?.trim();
+      const everyMinutes = asNumber(args.everyMinutes);
+      const atMs = asNumber(args.atMs);
+      const provided = [cron, everyMinutes, atMs].filter(
+        (value) => value !== undefined && value !== null && value !== ""
+      );
+      if (provided.length !== 1) {
+        throw new Error(
+          "Provide exactly one of schedule.cron, schedule.everyMinutes, or schedule.atMs."
+        );
+      }
+      if (cron) {
+        return normalizeTriggerSchedule({ kind: "cron", expression: cron });
+      }
+      if (everyMinutes != null) {
+        return normalizeTriggerSchedule({ kind: "interval", everyMs: everyMinutes * 60_000 });
+      }
+      return normalizeTriggerSchedule({ kind: "once", atMs: atMs! });
+    };
+    switch (action) {
+      case "create": {
+        const name = asString(args.name)?.trim();
+        const prompt = asString(args.prompt)?.trim();
+        if (!name || !prompt) {
+          throw new Error("schedule.create requires name and prompt.");
+        }
+        const trigger = await createCesiumTrigger({
+          workspaceId,
+          name,
+          prompt,
+          schedule: parseScheduleArgs(),
+          profileId:
+            asString(args.profileId)?.trim() || this.currentProfileId() || undefined,
+          mode: asString(args.mode)?.trim() || undefined,
+          // Pin the creating conversation's model so scheduled fires never
+          // fall back to an unconfigured provider default.
+          modelId: this.callbacks.conversation.config.modelId || undefined,
+          modelName: this.callbacks.conversation.config.modelName || undefined,
+          maxRuns: asNumber(args.maxRuns) ?? undefined,
+          sourceConversationId: this.callbacks.conversation.id,
+        });
+        return `Created trigger.\n${formatCesiumTrigger(trigger)}`;
+      }
+      case "list": {
+        const triggers = await listCesiumTriggers(workspaceId);
+        if (triggers.length === 0) {
+          return "No scheduled triggers in this workspace. Use schedule create to add one.";
+        }
+        return [
+          `${triggers.length} trigger${triggers.length === 1 ? "" : "s"}:`,
+          ...triggers.map((trigger) => formatCesiumTrigger(trigger)),
+        ].join("\n");
+      }
+      case "update": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("schedule.id is required for update.");
+        }
+        const hasScheduleInput =
+          asString(args.cron)?.trim() || asNumber(args.everyMinutes) != null || asNumber(args.atMs) != null;
+        const updated = await updateCesiumTrigger({
+          workspaceId,
+          id,
+          patch: {
+            ...(asString(args.name)?.trim() ? { name: asString(args.name)!.trim() } : {}),
+            ...(asString(args.prompt)?.trim() ? { prompt: asString(args.prompt)!.trim() } : {}),
+            ...(asString(args.profileId) !== undefined
+              ? { profileId: asString(args.profileId)?.trim() }
+              : {}),
+            ...(asString(args.mode) !== undefined ? { mode: asString(args.mode)?.trim() } : {}),
+            ...(asNumber(args.maxRuns) != null ? { maxRuns: asNumber(args.maxRuns)! } : {}),
+            ...(hasScheduleInput ? { schedule: parseScheduleArgs() } : {}),
+          },
+        });
+        return `Updated trigger.\n${formatCesiumTrigger(updated)}`;
+      }
+      case "pause":
+      case "resume": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error(`schedule.id is required for ${action}.`);
+        }
+        const updated = await updateCesiumTrigger({
+          workspaceId,
+          id,
+          patch: { enabled: action === "resume" },
+        });
+        return `${action === "resume" ? "Resumed" : "Paused"} trigger.\n${formatCesiumTrigger(updated)}`;
+      }
+      case "delete": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("schedule.id is required for delete.");
+        }
+        const removed = await deleteCesiumTrigger({ workspaceId, id });
+        if (!removed) {
+          return `No trigger with id ${id}. Use schedule list to see current triggers.`;
+        }
+        return `Deleted trigger "${removed.name}" (id: ${removed.id}).`;
+      }
+      case "run": {
+        const id = asString(args.id)?.trim();
+        if (!id) {
+          throw new Error("schedule.id is required for run.");
+        }
+        const triggers = await listCesiumTriggers(workspaceId);
+        const trigger = triggers.find((entry) => entry.id === id);
+        if (!trigger) {
+          return `No trigger with id ${id}. Use schedule list to see current triggers.`;
+        }
+        const firedAt = Date.now();
+        const marked = await markCesiumTriggerFired({ workspaceId, id, firedAt });
+        const { agentRuntimeManager } = await import("./runtime-manager.js");
+        const snapshot = await agentRuntimeManager.createConversationWithPrompt(
+          this.callbacks.workspace,
+          {
+            backendId: "cesium-agent",
+            ...(trigger.mode ? { mode: trigger.mode } : {}),
+            ...(trigger.profileId ? { profileId: trigger.profileId } : {}),
+            ...(trigger.modelId ? { modelId: trigger.modelId } : {}),
+            ...(trigger.modelName ? { modelName: trigger.modelName } : {}),
+            title: `⏰ ${trigger.name}`,
+            origin: {
+              kind: "trigger",
+              triggerId: trigger.id,
+              triggerName: trigger.name,
+              firedAt,
+            },
+          },
+          { text: formatTriggerPromptPreamble(trigger, firedAt) }
+        );
+        await attachCesiumTriggerConversation({
+          workspaceId,
+          id,
+          conversationId: snapshot.conversation.id,
+        }).catch(() => null);
+        return (
+          `Fired trigger "${trigger.name}" now -> conversation ${snapshot.conversation.id}.` +
+          (marked && !marked.enabled ? " The trigger is now disabled (run cap reached)." : "")
+        );
+      }
+      default:
+        throw new Error(
+          'schedule.action must be one of "create", "list", "update", "pause", "resume", "delete", "run".'
+        );
+    }
   }
 
   /**

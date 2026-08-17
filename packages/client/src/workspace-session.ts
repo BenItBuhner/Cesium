@@ -325,6 +325,11 @@ export type ChatSessionState = {
   mode: EditorMode;
   model: ModelInfo;
   backendId: AgentBackendId;
+  /**
+   * Cesium capability profile for new-chat drafts ("code", "work", or a custom
+   * profile id). Persisted conversations bind their profile via config options.
+   */
+  profileId?: string;
   scrollTopByTabId: Record<string, number>;
   /** Message-anchored scroll (syncs across devices via workspace session). */
   scrollAnchorByTabId?: Record<string, ChatScrollAnchor>;
@@ -346,6 +351,8 @@ export type ChatSessionState = {
   dismissedPlanEventByConversationId?: Record<string, string>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
+  /** Failed runs the user has viewed; key present means drop from Needs attention. */
+  acknowledgedFailureByConversationId?: Record<string, true>;
   /**
    * Composer footer: repo / branch / Goal progress / context visibility
    * toggles. This is the "last used" default inherited by new conversations.
@@ -510,6 +517,7 @@ export function createDefaultWorkspaceSession(
       dismissedCompletionErrorKeyByConversationId: {},
       dismissedPlanEventByConversationId: {},
       unreadChatCompletionByConversationId: {},
+      acknowledgedFailureByConversationId: {},
       composerStatusBarVisibility: { ...DEFAULT_COMPOSER_STATUS_BAR_VISIBILITY },
       composerStatusBarVisibilityByConversationId: {},
       composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY },
@@ -973,6 +981,11 @@ export function mergeWorkspaceSessionFromImport(
         typeof r.chat.unreadChatCompletionByConversationId === "object"
           ? r.chat.unreadChatCompletionByConversationId
           : current.chat.unreadChatCompletionByConversationId ?? {},
+      acknowledgedFailureByConversationId:
+        r.chat?.acknowledgedFailureByConversationId &&
+        typeof r.chat.acknowledgedFailureByConversationId === "object"
+          ? r.chat.acknowledgedFailureByConversationId
+          : current.chat.acknowledgedFailureByConversationId ?? {},
       composerStatusBarVisibility: normalizeComposerStatusBarVisibility(
         r.chat?.composerStatusBarVisibility ?? current.chat.composerStatusBarVisibility
       ),
