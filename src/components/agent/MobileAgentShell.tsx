@@ -673,7 +673,7 @@ export function MobileAgentShell({
       <div
         ref={rightPaneRef}
         data-mobile-drawer="right"
-        className="absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
+        className="mobile-right-drawer-surface absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
         style={{
           width: rightPaneWidthCss,
           transform: rightOpen ? "translate3d(0, 0, 0)" : "translate3d(100%, 0, 0)",
