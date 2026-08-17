@@ -72,6 +72,19 @@ class CesiumLiveUpdatesPreferenceTest {
   }
 
   @Test
+  fun alertModesNormalizeToTheirCategoryDefaults() {
+    // Completions default to background-only so in-app finishes stay quiet.
+    assertEquals(ALERT_MODE_BACKGROUND, normalizeAlertMode(null, DEFAULT_COMPLETION_ALERT_MODE))
+    assertEquals(ALERT_MODE_BACKGROUND, normalizeAlertMode("bogus", DEFAULT_COMPLETION_ALERT_MODE))
+    // Needs-input alerts default to always.
+    assertEquals(ALERT_MODE_ALWAYS, normalizeAlertMode(null, DEFAULT_INTERVENTION_ALERT_MODE))
+    // Valid values round-trip unchanged.
+    assertEquals(ALERT_MODE_ALWAYS, normalizeAlertMode(ALERT_MODE_ALWAYS, DEFAULT_COMPLETION_ALERT_MODE))
+    assertEquals(ALERT_MODE_BACKGROUND, normalizeAlertMode(ALERT_MODE_BACKGROUND, DEFAULT_INTERVENTION_ALERT_MODE))
+    assertEquals(ALERT_MODE_OFF, normalizeAlertMode(ALERT_MODE_OFF, DEFAULT_COMPLETION_ALERT_MODE))
+  }
+
+  @Test
   fun legacyStoredValuesMigrateWithoutFlippingUserIntent() {
     // Old "nowbar" requested promotion with fallback — that is now "live".
     assertEquals(

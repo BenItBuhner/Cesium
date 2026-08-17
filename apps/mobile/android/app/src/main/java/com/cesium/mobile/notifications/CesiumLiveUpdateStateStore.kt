@@ -47,6 +47,9 @@ object CesiumLiveUpdateStateStore {
     "promote"
   )
 
+  /** JSON-only bookkeeping field: when the run entry was last written. */
+  private const val SAVED_AT_KEY = "savedAt"
+
   fun saveRun(context: Context, extras: Bundle) {
     val runKey = extras.getString("runKey")
     if (runKey.isNullOrBlank()) return
@@ -55,7 +58,10 @@ object CesiumLiveUpdateStateStore {
       return
     }
     val runs = readRuns(context)
-    runs.put(runKey, bundleToJson(extras))
+    runs.put(
+      runKey,
+      bundleToJson(extras).put(SAVED_AT_KEY, System.currentTimeMillis())
+    )
     writeRuns(context, runs)
   }
 
@@ -67,12 +73,33 @@ object CesiumLiveUpdateStateStore {
     writeRuns(context, runs)
   }
 
-  fun loadRuns(context: Context): List<Bundle> {
+  /**
+   * Loads persisted ongoing runs. When [maxAgeMs] is given (the restore
+   * path), entries that have not been re-saved within that window are pruned
+   * instead of loaded: nothing has been keeping them current, so restoring
+   * them would resurrect a notification whose chronometer ticks forever for
+   * an agent run that most likely already finished. Entries written by builds
+   * that predate the savedAt stamp are treated as stale for the same reason.
+   */
+  fun loadRuns(context: Context, maxAgeMs: Long? = null): List<Bundle> {
     val runs = readRuns(context)
+    val now = System.currentTimeMillis()
     val result = mutableListOf<Bundle>()
+    val expiredKeys = mutableListOf<String>()
     runs.keys().forEach { key ->
       val json = runs.optJSONObject(key) ?: return@forEach
+      if (maxAgeMs != null) {
+        val savedAt = json.optLong(SAVED_AT_KEY, 0L)
+        if (savedAt <= 0L || now - savedAt > maxAgeMs) {
+          expiredKeys.add(key)
+          return@forEach
+        }
+      }
       result.add(jsonToBundle(json))
+    }
+    if (expiredKeys.isNotEmpty()) {
+      expiredKeys.forEach { runs.remove(it) }
+      writeRuns(context, runs)
     }
     // Oldest run first so the restored foreground anchor is stable.
     result.sortBy { it.getLong("startedAt", Long.MAX_VALUE) }
