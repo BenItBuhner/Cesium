@@ -165,15 +165,17 @@ export const DESIGN_2_SURFACE_ALIASES = {
     "--d2-rail-control-size": "18px",
   },
   light: {
-    "--agent-plus-button-bg": "#eaeaea",
-    "--agent-plus-button-bg-hover": "#e0e0e0",
-    "--agent-plus-button-icon": "#767676",
+    // Derived from surface/text tokens so non-default light presets (sepia,
+    // sakura, …) tint the control instead of getting a fixed neutral gray.
+    "--agent-plus-button-bg": "color-mix(in srgb, var(--text-primary) 6%, var(--bg-main) 94%)",
+    "--agent-plus-button-bg-hover": "color-mix(in srgb, var(--text-primary) 11%, var(--bg-main) 89%)",
+    "--agent-plus-button-icon": "var(--text-secondary)",
     "--tab-agent-attention-dot": "color-mix(in srgb, var(--plan-accent) 68%, #737373 32%)",
     "--tab-unread-completion-dot": "#4a76a8",
   },
   dark: {
-    "--agent-plus-button-bg": "#303030",
-    "--agent-plus-button-bg-hover": "#3a3a3a",
+    "--agent-plus-button-bg": "color-mix(in srgb, var(--text-primary) 11%, var(--bg-main) 89%)",
+    "--agent-plus-button-bg-hover": "color-mix(in srgb, var(--text-primary) 16%, var(--bg-main) 84%)",
     "--agent-plus-button-icon": "var(--text-secondary)",
     "--tab-agent-attention-dot": "color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%)",
     "--tab-unread-completion-dot": "#6b9fd4",
