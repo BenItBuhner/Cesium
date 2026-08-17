@@ -162,6 +162,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const bargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const micLevelRef = useRef(0);
   const lastSpokenSeqRef = useRef(0);
+  // Guards the injectAudio dev hook against overlapping injections (e.g. an
+  // automation harness re-firing the call while the previous clip still plays).
+  const injectLockUntilRef = useRef(0);
 
   // Pending-reply bookkeeping: each accepted submit increments the counter,
   // each processed assistant_message_end decrements it. Turns can overlap
@@ -627,8 +630,17 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         captureRef.current?.injectPcm16k(samples);
       },
       injectAudio: async (data: ArrayBuffer) => {
+        if (Date.now() < injectLockUntilRef.current) {
+          console.warn(
+            "[voice] injectAudio ignored: previous injection's audio timeline is still active"
+          );
+          return;
+        }
         const pcm = await decodeToPcm16k(data);
-        captureRef.current?.injectPcm16k(pcm);
+        if (!captureRef.current) return;
+        captureRef.current.injectPcm16k(pcm);
+        injectLockUntilRef.current =
+          Date.now() + (pcm.length / VOICE_SAMPLE_RATE) * 1000 + 2000;
       },
       getState: () => ({
         view: viewRef.current,
