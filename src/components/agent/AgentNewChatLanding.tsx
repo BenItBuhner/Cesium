@@ -52,7 +52,10 @@ import {
 } from "@/lib/chat-ui-shortcut-events";
 import { resolveGroupWorkspaceAppearanceKey } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
-import { sortDirectoryWorkspaces } from "@/lib/multi-server-workspaces";
+import {
+  NO_WORKSPACE_PICKER_LABEL,
+  sortDirectoryWorkspaces,
+} from "@/lib/multi-server-workspaces";
 
 type BranchPickerItem = {
   key: string;
@@ -434,22 +437,7 @@ export function AgentNewChatLanding({
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
         <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
-          {/*
-           * Same chrome family as the cards docked above the chat composer
-           * (AskQuestionCard / dockedComposerCardFrame): top-rounded, open
-           * bottom, card fill + border. Inset by `--agent-composer-radius`
-           * so the card's square bottom corners land on the flat part of
-           * the composer's top edge instead of poking past its curve.
-           * `-mb-[4px]` cancels the column `gap-[2px]` plus the composer's
-           * empty-top `mt-[2px]` so the card sits flush on the composer edge.
-           */}
-          <div
-            className={`aurora-glass mx-[var(--agent-composer-radius)] flex min-w-0 flex-col overflow-hidden bg-[var(--bg-card)] p-[6px] ${
-              composerHiddenForExpanded
-                ? "rounded-[var(--agent-composer-radius)] border border-[var(--border-card)]"
-                : "-mb-[4px] rounded-t-[var(--agent-composer-radius)] rounded-b-none border-x border-t border-[var(--border-card)]"
-            }`}
-          >
+          <div className="w-fit max-w-full self-start">
             <div className="flex max-w-full flex-wrap items-center gap-[6px]">
               <button
                 ref={workspacePickerRef}
@@ -475,7 +463,7 @@ export function AgentNewChatLanding({
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
                   {noWorkspaceDraft
-                    ? "No workspace"
+                    ? NO_WORKSPACE_PICKER_LABEL
                     : // The rail-derived group can lag behind a freshly created /
                       // opened workspace (cached rail payload); the active
                       // workspace's own name is always current.
@@ -608,6 +596,8 @@ export function AgentNewChatLanding({
         homeWorkspaceId={homeWorkspaceId}
         activeServerId={activeServer.id}
         selectedWorkspaceKey={noWorkspaceDraft ? null : activeWorkspaceAppearanceKey}
+        noWorkspaceSelected={noWorkspaceDraft}
+        onSelectNoWorkspace={() => setStandaloneDraftActive(true)}
         onSelectWorkspace={(workspace) => {
           setStandaloneDraftActive(false);
           if (workspace.serverId !== activeServer.id) {

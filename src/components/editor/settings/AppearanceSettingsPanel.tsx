@@ -221,6 +221,23 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
+          searchId="tool-call-icons"
+          title="Tool call icons"
+          description="Show a small glyph (terminal, file, search, …) next to each agent tool call in chat. Off by default for a cleaner transcript."
+          trailing={
+            <ToggleSwitch
+              checked={themeConfig.showToolCallIcons}
+              onChange={(value) =>
+                setThemeConfig({
+                  ...themeConfig,
+                  showToolCallIcons: value,
+                })
+              }
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
           searchId="minimal-edit-diff"
           title="Minimal edit diff"
           description="Show file edits as a single line with added and removed line counts instead of the full inline diff."
