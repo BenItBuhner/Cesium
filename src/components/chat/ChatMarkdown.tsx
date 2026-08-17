@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { matchArtifactEmbedLine } from "@/lib/artifact-embed";
 import { ArtifactCard } from "./ArtifactCard";
 
@@ -340,8 +340,169 @@ function renderHeading(level: 1 | 2 | 3 | 4 | 5 | 6, text: string) {
   );
 }
 
-export function ChatMarkdown({ source }: { source: string }) {
-  const blocks = parseMarkdown(source);
+/**
+ * Value equality for parsed blocks. Parsing recreates every block object on
+ * each streaming flush, so the memoized block component compares contents
+ * instead of identity — only the block whose text actually changed (almost
+ * always the trailing one mid-stream) re-renders its inline nodes and DOM.
+ */
+function markdownBlocksEqual(a: MarkdownBlock, b: MarkdownBlock): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a.type !== b.type) {
+    return false;
+  }
+  switch (a.type) {
+    case "heading":
+      return (
+        b.type === "heading" && a.level === b.level && a.text === b.text
+      );
+    case "paragraph":
+      return b.type === "paragraph" && a.text === b.text;
+    case "code":
+      return (
+        b.type === "code" && a.language === b.language && a.content === b.content
+      );
+    case "list":
+      return (
+        b.type === "list" &&
+        a.ordered === b.ordered &&
+        a.items.length === b.items.length &&
+        a.items.every((item, i) => item === b.items[i])
+      );
+    case "hr":
+      return true;
+    case "table":
+      return (
+        b.type === "table" &&
+        a.headers.length === b.headers.length &&
+        a.headers.every((h, i) => h === b.headers[i]) &&
+        a.rows.length === b.rows.length &&
+        a.rows.every(
+          (row, i) =>
+            row.length === b.rows[i]!.length &&
+            row.every((cell, j) => cell === b.rows[i]![j])
+        )
+      );
+    case "blockquote":
+      return (
+        b.type === "blockquote" &&
+        a.lines.length === b.lines.length &&
+        a.lines.every((line, i) => line === b.lines[i])
+      );
+    case "artifact":
+      return b.type === "artifact" && a.artifactId === b.artifactId;
+    default:
+      return false;
+  }
+}
+
+const MarkdownBlockView = memo(
+  function MarkdownBlockView({ block }: { block: MarkdownBlock }) {
+    switch (block.type) {
+      case "heading":
+        return <div>{renderHeading(block.level, block.text)}</div>;
+      case "paragraph":
+        return (
+          <p className="whitespace-normal break-words">
+            {renderInlineWithBreaks(block.text)}
+          </p>
+        );
+      case "code":
+        return (
+          <div className="overflow-hidden rounded-[10px] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_78%,black_22%)]">
+            {block.language ? (
+              <div className="border-b border-[var(--border-card)] px-[10px] py-[6px] font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                {block.language}
+              </div>
+            ) : null}
+            <pre className="overflow-x-auto px-[12px] py-[10px] font-mono text-[12px] leading-[1.65] text-[var(--text-primary)]">
+              {block.content}
+            </pre>
+          </div>
+        );
+      case "list":
+        if (block.ordered) {
+          return (
+            <ol className="ml-[1.15em] list-outside list-decimal space-y-[4px] pl-[0.4em] marker:text-[var(--text-secondary)]">
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex} className="break-words pl-[2px]">
+                  {renderInlineWithBreaks(item)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        return (
+          <ul className="space-y-[6px]">
+            {block.items.map((item, itemIndex) => (
+              <li key={itemIndex} className="flex items-start gap-[8px]">
+                <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
+                <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
+              </li>
+            ))}
+          </ul>
+        );
+      case "hr":
+        return (
+          <div className="border-t border-[color-mix(in_srgb,var(--border-card)_75%,transparent)] pt-[2px]" />
+        );
+      case "table":
+        return (
+          <div className="overflow-x-auto rounded-[10px] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_60%,transparent)]">
+            <table className="min-w-full border-collapse text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)]">
+                  {block.headers.map((header, cellIndex) => (
+                    <th
+                      key={cellIndex}
+                      className="px-[10px] py-[8px] font-semibold text-[var(--text-primary)]"
+                    >
+                      {renderInline(header)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, rowIndex) => (
+                  <tr
+                    key={rowIndex}
+                    className="border-t border-[color-mix(in_srgb,var(--border-card)_65%,transparent)]"
+                  >
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={cellIndex}
+                        className="px-[10px] py-[8px] align-top text-[var(--text-secondary)]"
+                      >
+                        {renderInlineWithBreaks(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      case "blockquote":
+        return (
+          <blockquote className="border-l-2 border-[var(--accent)] pl-[12px] text-[var(--text-secondary)]">
+            {block.lines.map((line, lineIndex) => (
+              <p key={lineIndex}>{renderInlineWithBreaks(line)}</p>
+            ))}
+          </blockquote>
+        );
+      case "artifact":
+        return <ArtifactCard artifactId={block.artifactId} />;
+      default:
+        return null;
+    }
+  },
+  (prev, next) => markdownBlocksEqual(prev.block, next.block)
+);
+
+export const ChatMarkdown = memo(function ChatMarkdown({ source }: { source: string }) {
+  const blocks = useMemo(() => parseMarkdown(source), [source]);
   // Stable keys for artifact embeds across streaming re-parses: block indexes
   // shift as text streams in, but "nth occurrence of artifact X" does not, so
   // the live iframe never remounts mid-stream.
@@ -350,127 +511,14 @@ export function ChatMarkdown({ source }: { source: string }) {
   return (
     <div className="min-w-0 space-y-[10px] px-[1px] font-sans text-[14px] leading-[1.6] text-[var(--text-primary)]">
       {blocks.map((block, index) => {
-        switch (block.type) {
-          case "heading":
-            return <div key={index}>{renderHeading(block.level, block.text)}</div>;
-          case "paragraph":
-            return (
-              <p key={index} className="whitespace-normal break-words">
-                {renderInlineWithBreaks(block.text)}
-              </p>
-            );
-          case "code":
-            return (
-              <div
-                key={index}
-                className="overflow-hidden rounded-[10px] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_78%,black_22%)]"
-              >
-                {block.language ? (
-                  <div className="border-b border-[var(--border-card)] px-[10px] py-[6px] font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                    {block.language}
-                  </div>
-                ) : null}
-                <pre className="overflow-x-auto px-[12px] py-[10px] font-mono text-[12px] leading-[1.65] text-[var(--text-primary)]">
-                  {block.content}
-                </pre>
-              </div>
-            );
-          case "list":
-            if (block.ordered) {
-              return (
-                <ol
-                  key={index}
-                  className="ml-[1.15em] list-outside list-decimal space-y-[4px] pl-[0.4em] marker:text-[var(--text-secondary)]"
-                >
-                  {block.items.map((item, itemIndex) => (
-                    <li key={itemIndex} className="break-words pl-[2px]">
-                      {renderInlineWithBreaks(item)}
-                    </li>
-                  ))}
-                </ol>
-              );
-            }
-            return (
-              <ul key={index} className="space-y-[6px]">
-                {block.items.map((item, itemIndex) => (
-                  <li key={itemIndex} className="flex items-start gap-[8px]">
-                    <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
-                    <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
-                  </li>
-                ))}
-              </ul>
-            );
-          case "hr":
-            return (
-              <div
-                key={index}
-                className="border-t border-[color-mix(in_srgb,var(--border-card)_75%,transparent)] pt-[2px]"
-              />
-            );
-          case "table":
-            return (
-              <div
-                key={index}
-                className="overflow-x-auto rounded-[10px] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_60%,transparent)]"
-              >
-                <table className="min-w-full border-collapse text-left text-[13px]">
-                  <thead>
-                    <tr className="border-b border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)]">
-                      {block.headers.map((header, cellIndex) => (
-                        <th
-                          key={cellIndex}
-                          className="px-[10px] py-[8px] font-semibold text-[var(--text-primary)]"
-                        >
-                          {renderInline(header)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {block.rows.map((row, rowIndex) => (
-                      <tr
-                        key={rowIndex}
-                        className="border-t border-[color-mix(in_srgb,var(--border-card)_65%,transparent)]"
-                      >
-                        {row.map((cell, cellIndex) => (
-                          <td
-                            key={cellIndex}
-                            className="px-[10px] py-[8px] align-top text-[var(--text-secondary)]"
-                          >
-                            {renderInlineWithBreaks(cell)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          case "blockquote":
-            return (
-              <blockquote
-                key={index}
-                className="border-l-2 border-[var(--accent)] pl-[12px] text-[var(--text-secondary)]"
-              >
-                {block.lines.map((line, lineIndex) => (
-                  <p key={lineIndex}>{renderInlineWithBreaks(line)}</p>
-                ))}
-              </blockquote>
-            );
-          case "artifact": {
-            const occurrence = artifactOccurrence.get(block.artifactId) ?? 0;
-            artifactOccurrence.set(block.artifactId, occurrence + 1);
-            return (
-              <ArtifactCard
-                key={`artifact-${block.artifactId}-${occurrence}`}
-                artifactId={block.artifactId}
-              />
-            );
-          }
-          default:
-            return null;
+        let key: string | number = index;
+        if (block.type === "artifact") {
+          const occurrence = artifactOccurrence.get(block.artifactId) ?? 0;
+          artifactOccurrence.set(block.artifactId, occurrence + 1);
+          key = `artifact-${block.artifactId}-${occurrence}`;
         }
+        return <MarkdownBlockView key={key} block={block} />;
       })}
     </div>
   );
-}
+});

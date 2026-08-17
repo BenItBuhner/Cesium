@@ -1120,7 +1120,7 @@ function WorkedEntryBlock({
 
   return (
     <div
-      className={`transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
+      className={`transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
         visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
       }`}
     >

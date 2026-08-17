@@ -74,6 +74,8 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  /** Timestamps of recent renderer-crash auto-restarts (for backoff to the error screen). */
+  const rendererCrashRestartsRef = useRef<number[]>([]);
   // Refs so the single hardware-back subscription can read the freshest
   // navigation state without re-subscribing on every WebView update.
   const canGoBackRef = useRef(false);
@@ -620,6 +622,25 @@ export default function App() {
             webCanHandleBackRef.current = false;
             syncBackIntercept();
             setWebViewAvailable(false);
+            // Recover automatically instead of dead-ending on the error
+            // screen: a renderer kill (usually the OS reclaiming memory) is
+            // transient, and a fresh renderer restores the session from the
+            // server. Back off to the manual Retry screen if it keeps dying.
+            const now = Date.now();
+            const recentRestarts = rendererCrashRestartsRef.current.filter(
+              (at) => now - at < 3 * 60_000
+            );
+            if (recentRestarts.length < 2) {
+              recentRestarts.push(now);
+              rendererCrashRestartsRef.current = recentRestarts;
+              setLoadError(null);
+              setTimeout(() => {
+                setReloadKey((current) => current + 1);
+                setWebViewAvailable(true);
+              }, 250);
+              return;
+            }
+            rendererCrashRestartsRef.current = recentRestarts;
             setLoadError(description);
           }}
           javaScriptEnabled
