@@ -1270,9 +1270,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           bootstrapResult.recentWorkspaceIds,
           bootstrapResult.homeWorkspaceId
         );
+        // Never auto-open a standalone-chat sandbox at boot: with no durable
+        // workspace the shell starts in the no-workspace state and sandboxes
+        // stay reachable through the rail.
         const startupWorkspace = bootstrapResult.workspaces.find(
           (workspace) => workspace.id === bootstrapResult.startupWorkspaceId
-        ) ?? bootstrapResult.workspaces[0];
+        ) ?? bootstrapResult.workspaces.find(
+          (workspace) => !isStandaloneChatWorkspace(workspace)
+        );
         if (!startupWorkspace) {
           setLoading(false);
           return;
