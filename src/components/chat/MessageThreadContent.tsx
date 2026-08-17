@@ -210,7 +210,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
   onWorkedSessionOpenChange,
   loading,
   isLiveWorkedTail,
-  surface,
   workspaceRoot,
   embeddedPermission,
   onResolvePermission,
@@ -223,7 +222,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
   onWorkedSessionOpenChange?: (scopedKey: string, open: boolean) => void;
   loading: boolean;
   isLiveWorkedTail: boolean;
-  surface: "panel" | "editor";
   workspaceRoot: string | null;
   embeddedPermission: ChatMessage | null;
   onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
@@ -247,7 +245,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
       defaultOpen={message.workedDefaultOpen}
       loading={loading}
       isLiveWorkedTail={isLiveWorkedTail}
-      surface={surface}
       workspaceRoot={workspaceRoot}
       toolDetailsInWorkedCard
       embeddedPermission={embeddedPermission}
