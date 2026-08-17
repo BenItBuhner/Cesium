@@ -178,6 +178,13 @@ export type AgentRailSettingsState = {
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /**
+   * Opt-in "Settled" mode. When enabled, rows grow a small settle toggle and
+   * settled conversations sink to the bottom until a new prompt unsettles
+   * them. When disabled, no settle controls render and any persisted settled
+   * flags are ignored.
+   */
+  settledMode: boolean;
   /** Per-row detail density: compact, auto (smart), or expanded. */
   rowDetail: AgentRailRowDetailMode;
   /**
@@ -317,6 +324,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
+        settledMode: false,
         rowDetail: "balanced",
         sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
         hiddenSections: [],
@@ -666,6 +674,8 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    settledMode:
+      typeof record.settledMode === "boolean" ? record.settledMode : defaults.settledMode,
     rowDetail: isAgentRailRowDetailMode(record.rowDetail)
       ? record.rowDetail
       : // Pre-release name for the balanced mode; migrate quietly.

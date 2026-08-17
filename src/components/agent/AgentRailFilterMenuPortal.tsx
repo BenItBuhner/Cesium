@@ -124,6 +124,9 @@ type AgentRailFilterMenuPortalProps = {
   setGroupBy: (mode: AgentRailGroupByMode) => void;
   showIcons: boolean;
   setShowIcons: (value: boolean) => void;
+  /** Opt-in Settled mode: reveals per-row settle toggles when enabled. */
+  settledMode: boolean;
+  setSettledMode: (value: boolean) => void;
   rowDetail: AgentRailRowDetailMode;
   setRowDetail: (mode: AgentRailRowDetailMode) => void;
   hiddenSections: AgentRailSectionId[];
@@ -144,6 +147,8 @@ export function AgentRailFilterMenuPortal({
   setGroupBy,
   showIcons,
   setShowIcons,
+  settledMode,
+  setSettledMode,
   rowDetail,
   setRowDetail,
   hiddenSections,
@@ -312,6 +317,21 @@ export function AgentRailFilterMenuPortal({
             />
             <span className="min-w-0 flex-1">Workspace icons</span>
           </label>
+          <label
+            className="flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+            title="Adds a settle toggle to conversation rows. Settled chats sink to the bottom until a new message unsettles them."
+          >
+            <input
+              type="checkbox"
+              checked={settledMode}
+              onChange={(ev) => setSettledMode(ev.target.checked)}
+              className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
+            />
+            <span className="min-w-0 flex-1">Settled mode</span>
+          </label>
+          {settledMode ? (
+            <HintLine text="Settled chats sink to the bottom; a new message unsettles them." />
+          ) : null}
         </div>
 
         <div className={popoverMenuSeparatorClass} />

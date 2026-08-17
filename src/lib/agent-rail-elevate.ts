@@ -166,6 +166,29 @@ export function stripElevatedFromGroups(
 }
 
 /**
+ * Settled mode is opt-in. When it is off, persisted settled flags must have
+ * zero effect anywhere (no sinking, no attention suppression, no filled
+ * moons), so the shell strips them before any derivation runs.
+ */
+export function clearSettledInGroups(
+  groups: AgentConversationGroup[]
+): AgentConversationGroup[] {
+  if (
+    !groups.some((group) =>
+      group.conversations.some((conversation) => conversation.settledAt != null)
+    )
+  ) {
+    return groups;
+  }
+  return groups.map((group) => ({
+    ...group,
+    conversations: group.conversations.map((conversation) =>
+      conversation.settledAt != null ? { ...conversation, settledAt: null } : conversation
+    ),
+  }));
+}
+
+/**
  * Stable partition: settled conversations sink below everything else in their
  * home group while both partitions keep their existing relative order.
  */

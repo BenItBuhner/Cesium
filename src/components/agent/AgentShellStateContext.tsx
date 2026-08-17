@@ -102,6 +102,7 @@ import {
   getRepositoryGroupingKey,
 } from "@/lib/multi-server-workspaces";
 import {
+  clearSettledInGroups,
   collectAttentionConversations,
   collectRunningConversations,
   sinkSettledInGroups,
@@ -265,6 +266,8 @@ type AgentShellStateContextValue = {
   /** Mark a conversation settled (sinks to the bottom until a new prompt unsettles it). */
   settleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   unsettleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  /** Opt-in Settled mode; settle controls render only while enabled. */
+  settledModeEnabled: boolean;
   pinnedRailConversations: AgentRailConversationSummary[];
   attentionRailConversations: AgentRailConversationSummary[];
   /** Actively working agents, elevated into their own cross-workspace section. */
@@ -940,9 +943,19 @@ export function AgentShellStateProvider({
     void refreshConversationGroupsWithState();
   }, [activeServer.id, refreshConversationGroupsWithState]);
 
+  const settledModeEnabled = settings.general.agentRail.settledMode === true;
+
+  // Settled mode is opt-in: with the mode off, persisted settled flags are
+  // stripped up front so no downstream derivation (sinking, elevation,
+  // status kinds, row toggles) ever sees them.
+  const settledAwareGroups = useMemo(
+    () => (settledModeEnabled ? groups : clearSettledInGroups(groups)),
+    [groups, settledModeEnabled]
+  );
+
   const visibleMachineGroups = useMemo(
-    () => filterGroupsByMachine(groups, settings.general.agentRail.hiddenServerIds),
-    [groups, settings.general.agentRail.hiddenServerIds]
+    () => filterGroupsByMachine(settledAwareGroups, settings.general.agentRail.hiddenServerIds),
+    [settledAwareGroups, settings.general.agentRail.hiddenServerIds]
   );
 
   const scopedMachineGroups = useMemo(
@@ -2440,6 +2453,7 @@ export function AgentShellStateProvider({
       unarchiveConversation,
       settleConversation,
       unsettleConversation,
+      settledModeEnabled,
       pinnedRailConversations,
       attentionRailConversations,
       runningRailConversations,
@@ -2483,6 +2497,7 @@ export function AgentShellStateProvider({
       runningRailConversations,
       settleConversation,
       unsettleConversation,
+      settledModeEnabled,
       railFilterActive,
       railFilterToggles,
       railLoading,

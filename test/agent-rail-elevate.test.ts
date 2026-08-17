@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { AgentConversationGroup, AgentRailConversationSummary } from "../src/lib/agent-types.ts";
 import {
+  clearSettledInGroups,
   collectAttentionConversations,
   collectRunningConversations,
   conversationHasAttentionHome,
@@ -161,5 +162,22 @@ describe("agent rail elevate", () => {
       { workspace: workspace("ws2"), conversations: [b, d] },
     ];
     assert.equal(sinkSettledInGroups(untouched)[0], untouched[0]);
+  });
+
+  test("clearSettledInGroups neutralizes settled flags when the mode is off", () => {
+    const settled = conversation("s", "ws", { settledAt: 10, status: "failed" });
+    const idle = conversation("i", "ws");
+    const groups: AgentConversationGroup[] = [
+      { workspace: workspace("ws"), conversations: [settled, idle] },
+    ];
+    const cleared = clearSettledInGroups(groups);
+    assert.equal(cleared[0]?.conversations[0]?.settledAt, null);
+    // With the flag stripped, the failure surfaces in Needs attention again.
+    assert.equal(conversationHasAttentionHome(cleared[0]!.conversations[0]!), true);
+    // Nothing settled: pass-through by reference.
+    const untouched: AgentConversationGroup[] = [
+      { workspace: workspace("ws2"), conversations: [idle] },
+    ];
+    assert.equal(clearSettledInGroups(untouched), untouched);
   });
 });

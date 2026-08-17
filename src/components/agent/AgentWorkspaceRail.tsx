@@ -518,6 +518,7 @@ export function AgentWorkspaceRail() {
     unarchiveConversation,
     settleConversation,
     unsettleConversation,
+    settledModeEnabled,
     pinnedRailConversations,
     attentionRailConversations,
     runningRailConversations,
@@ -1782,6 +1783,10 @@ export function AgentWorkspaceRail() {
     [settleConversation, unsettleConversation]
   );
 
+  // Settle controls only exist while the opt-in Settled mode is enabled;
+  // rows receive no handler (and render no toggle) otherwise.
+  const railSettleHandler = settledModeEnabled ? handleToggleSettled : undefined;
+
   const exitBulkSelect = useCallback(() => {
     setBulkSelectMode(false);
     setBulkSectionId(null);
@@ -2253,16 +2258,20 @@ export function AgentWorkspaceRail() {
               orderedConversations,
             }),
         },
-        {
-          type: "item",
-          id: conversation.settledAt != null ? "unsettle" : "settle",
-          label: conversation.settledAt != null ? "Unsettle" : "Settle",
-          onSelect: () => {
-            void (conversation.settledAt != null
-              ? unsettleConversation(conversation)
-              : settleConversation(conversation));
-          },
-        },
+        ...(settledModeEnabled
+          ? [
+              {
+                type: "item" as const,
+                id: conversation.settledAt != null ? "unsettle" : "settle",
+                label: conversation.settledAt != null ? "Unsettle" : "Settle",
+                onSelect: () => {
+                  void (conversation.settledAt != null
+                    ? unsettleConversation(conversation)
+                    : settleConversation(conversation));
+                },
+              },
+            ]
+          : []),
         {
           type: "item",
           id: conversation.archivedAt != null ? "unarchive" : "archive",
@@ -2332,6 +2341,7 @@ export function AgentWorkspaceRail() {
       servers,
       settings.general.chatFolders,
       settleConversation,
+      settledModeEnabled,
       unarchiveConversation,
       unpinConversation,
       unsettleConversation,
@@ -2476,7 +2486,7 @@ export function AgentWorkspaceRail() {
                   }
                   handleConversationSelect(conversation);
                 }}
-                onToggleSettled={handleToggleSettled}
+                onToggleSettled={railSettleHandler}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2510,7 +2520,7 @@ export function AgentWorkspaceRail() {
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
-    handleToggleSettled,
+    railSettleHandler,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2598,7 +2608,7 @@ export function AgentWorkspaceRail() {
                   }
                   handleConversationSelect(conversation);
                 }}
-                onToggleSettled={handleToggleSettled}
+                onToggleSettled={railSettleHandler}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2631,7 +2641,7 @@ export function AgentWorkspaceRail() {
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
-    handleToggleSettled,
+    railSettleHandler,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2708,7 +2718,7 @@ export function AgentWorkspaceRail() {
                     }
                     handleConversationSelect(conversation);
                   }}
-                  onToggleSettled={handleToggleSettled}
+                  onToggleSettled={railSettleHandler}
                   onContextMenu={(e, currentConversation) =>
                     handleConversationContextMenu(e, currentConversation, {
                       inPinnedSection: true,
@@ -2741,7 +2751,7 @@ export function AgentWorkspaceRail() {
     handleBulkRowClick,
     handleConversationSelect,
     handleConversationContextMenu,
-    handleToggleSettled,
+    railSettleHandler,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2803,7 +2813,7 @@ export function AgentWorkspaceRail() {
             }
             handleConversationSelect(conversation);
           }}
-          onToggleSettled={handleToggleSettled}
+          onToggleSettled={railSettleHandler}
           onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
           onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
           onDragOver={
@@ -3058,7 +3068,7 @@ export function AgentWorkspaceRail() {
     handleFolderDropTargetDragOver,
     handleFolderReorderDrop,
     handleNewStandaloneChat,
-    handleToggleSettled,
+    railSettleHandler,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -3362,7 +3372,7 @@ export function AgentWorkspaceRail() {
                                           }
                                           handleConversationSelect(conversation);
                                         }}
-                                        onToggleSettled={handleToggleSettled}
+                                        onToggleSettled={railSettleHandler}
                                         onDragStart={
                                           bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
@@ -3446,7 +3456,7 @@ export function AgentWorkspaceRail() {
                                 }
                                 handleConversationSelect(conversation);
                               }}
-                              onToggleSettled={handleToggleSettled}
+                              onToggleSettled={railSettleHandler}
                               onDragStart={
                                 bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
@@ -3874,6 +3884,8 @@ export function AgentWorkspaceRail() {
         setGroupBy={setAgentRailGroupBy}
         showIcons={agentRailSettings.showIcons}
         setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
+        settledMode={agentRailSettings.settledMode === true}
+        setSettledMode={(value) => patchAgentRailSettings({ settledMode: value })}
         rowDetail={railRowDetail}
         setRowDetail={(mode) => patchAgentRailSettings({ rowDetail: mode })}
         hiddenSections={agentRailSettings.hiddenSections ?? []}
