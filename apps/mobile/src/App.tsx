@@ -244,10 +244,12 @@ export default function App() {
       CesiumPhoneControl.getStatus().catch(() => null),
     ]);
     liveUpdatesRef.current.setAlertPreferences(liveUpdates.alertPreferences);
+    liveUpdatesRef.current.setDisplayPreferences(liveUpdates.displayPreferences);
     const status: MobileNativeStatus = {
       liveUpdates: {
         preference: liveUpdates.deliveryPreference,
         alertPreferences: liveUpdates.alertPreferences,
+        displayPreferences: liveUpdates.displayPreferences,
         sdkInt: liveUpdates.sdkInt,
         progressStyleSupported: liveUpdates.progressStyleSupported,
         canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
@@ -475,6 +477,13 @@ export default function App() {
       if (message.type === "setNotificationAlertPreferences") {
         liveUpdatesRef.current.setAlertPreferences(message.preferences);
         void CesiumLiveUpdates.setAlertPreferences(message.preferences).then(() =>
+          sendNativeStatus()
+        );
+        return;
+      }
+      if (message.type === "setNotificationDisplayPreferences") {
+        liveUpdatesRef.current.setDisplayPreferences(message.preferences);
+        void CesiumLiveUpdates.setDisplayPreferences(message.preferences).then(() =>
           sendNativeStatus()
         );
         return;

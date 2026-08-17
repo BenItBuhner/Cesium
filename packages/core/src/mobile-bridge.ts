@@ -64,11 +64,43 @@ export const DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES: MobileNotificationAl
     intervention: "always",
   };
 
+/**
+ * Which runs may show a time estimate (ETA countdown / "~Nm left"):
+ * "goal"   — goal runs only (default). Goals are long-horizon, so an ETA
+ *            carries signal; todo-plan estimates extrapolate across tasks of
+ *            wildly uneven complexity and are noise — those runs show the
+ *            todo progression instead.
+ * "always" — every run with an estimate.
+ * "off"    — never; progression and elapsed time only.
+ */
+export type MobileNotificationEtaMode = "goal" | "always" | "off";
+
+/**
+ * How concurrent agent runs present on the phone:
+ * "separate" — one live notification per run.
+ * "combined" — a single aggregated live notification while two or more runs
+ *              are active (a lone run keeps its full detail).
+ */
+export type MobileNotificationMultiAgentMode = "separate" | "combined";
+
+export type MobileNotificationDisplayPreferences = {
+  eta: MobileNotificationEtaMode;
+  multiAgent: MobileNotificationMultiAgentMode;
+};
+
+export const DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES: MobileNotificationDisplayPreferences =
+  {
+    eta: "goal",
+    multiAgent: "separate",
+  };
+
 export type MobileNativeStatus = {
   liveUpdates: {
     preference: MobileLiveUpdatePreference;
     /** Absent on native shells that predate configurable alert behavior. */
     alertPreferences?: MobileNotificationAlertPreferences;
+    /** Absent on native shells that predate configurable display behavior. */
+    displayPreferences?: MobileNotificationDisplayPreferences;
     sdkInt: number;
     progressStyleSupported: boolean;
     canPostPromotedNotifications: boolean;
@@ -199,6 +231,10 @@ export type MobileWebToNativeMessage =
   | {
       type: "setNotificationAlertPreferences";
       preferences: MobileNotificationAlertPreferences;
+    }
+  | {
+      type: "setNotificationDisplayPreferences";
+      preferences: MobileNotificationDisplayPreferences;
     }
   | { type: "openLiveUpdatePromotionSettings" }
   /** Best-effort deep link into Samsung's Now Bar settings. */

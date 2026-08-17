@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { MobileAgentProjection } from "@cesium/core";
 import {
+  COMBINED_RUN_KEY,
   LiveUpdateController,
   WEB_SYNC_FRESH_MS,
   computeLiveUpdateAlert,
@@ -417,6 +418,135 @@ test("updateAll cancels natively persisted runs left over from a dead process", 
   // The tracked run survives; the ghost's notification is stopped.
   assert.deepEqual(native.stoppedRuns, ["ghost:123"]);
   assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
+});
+
+function todoProgress(completed: number, total: number) {
+  return {
+    total,
+    completed,
+    blocked: 0,
+    pending: total - completed - 1,
+    inProgress: 1,
+    currentIndex: completed + 1,
+    percent: Math.round((completed / total) * 100),
+    estimatedRemainingMs: null,
+    estimatedCompletionAt: null,
+  };
+}
+
+test("combined mode folds concurrent runs into one aggregated notification", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
+
+  await controller.update(
+    projection({
+      conversationId: "a",
+      startedAt: 10,
+      title: "Fix build",
+      todoProgress: todoProgress(2, 5),
+    })
+  );
+  // A lone run keeps its full per-run detail.
+  assert.equal(native.posted[0]?.runKey, "a:10");
+
+  await controller.update(
+    projection({
+      conversationId: "b",
+      startedAt: 20,
+      title: "Write docs",
+      todoProgress: todoProgress(1, 3),
+    })
+  );
+  // The individual notification folds into the aggregate.
+  assert.deepEqual(native.stoppedRuns, ["a:10"]);
+  const combined = native.posted.at(-1);
+  assert.equal(combined?.runKey, COMBINED_RUN_KEY);
+  assert.equal(combined?.title, "2 agents running");
+  assert.equal(combined?.body, "Fix build 2/5 · Write docs 1/3");
+  // Aggregate todo progression across runs; never a time estimate.
+  assert.equal(combined?.progressKind, "todo");
+  assert.equal(combined?.progress, 3);
+  assert.equal(combined?.progressMax, 8);
+  assert.equal(combined?.shortText, "3/8");
+  assert.equal(combined?.estimatedCompletionAt, undefined);
+  // Elapsed anchors at the earliest running agent.
+  assert.equal(combined?.startedAt, 10);
+});
+
+test("combined notification unfolds to per-run detail when one agent finishes", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setAppActive(false);
+  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(projection({ conversationId: "b", startedAt: 20 }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 10, status: "completed" })
+  );
+
+  // The finished run posts its own terminal notification under its sticky
+  // key, the aggregate is retired, and the survivor regains full detail.
+  const terminal = native.posted.find((payload) => payload.ongoing === false);
+  assert.equal(terminal?.runKey, "a:10");
+  assert.ok(native.stoppedRuns.includes(COMBINED_RUN_KEY));
+  assert.equal(native.posted.at(-1)?.runKey, "b:20");
+  assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
+});
+
+test("combined notification surfaces needs-input with the blocked run's conversation", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(projection({ conversationId: "b", startedAt: 20 }));
+  await controller.update(
+    projection({
+      conversationId: "a",
+      startedAt: 10,
+      status: "awaiting_permission",
+      pendingIntervention: "permission",
+    })
+  );
+
+  const combined = native.posted.at(-1);
+  assert.equal(combined?.runKey, COMBINED_RUN_KEY);
+  assert.equal(combined?.alert, true);
+  assert.equal(combined?.intervention, "permission");
+  assert.equal(combined?.conversationId, "a");
+  assert.match(combined?.body ?? "", /^1 agent needs input · /);
+});
+
+test("separate mode is untouched by combined bookkeeping", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(projection({ conversationId: "b", startedAt: 20 }));
+
+  assert.deepEqual(
+    native.posted.map((payload) => payload.runKey),
+    ["a:10", "b:20"]
+  );
+  assert.deepEqual(native.stoppedRuns, []);
+});
+
+test("refreshStatus absorbs natively persisted display preferences", async () => {
+  const native = new FakeNative();
+  native.getPromotionStatus = async () => ({
+    ...status(),
+    displayPreferences: { eta: "always", multiAgent: "combined" },
+  });
+  const controller = new LiveUpdateController(native);
+
+  await controller.refreshStatus();
+
+  assert.deepEqual(controller.getDisplayPreferences(), {
+    eta: "always",
+    multiAgent: "combined",
+  });
 });
 
 test("refreshStatus absorbs natively persisted alert preferences", async () => {

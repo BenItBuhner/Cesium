@@ -85,6 +85,25 @@ class CesiumLiveUpdatesPreferenceTest {
   }
 
   @Test
+  fun etaModeDefaultsToGoalOnlyAndUnknownValuesNormalizeToIt() {
+    // Todo estimates are noise; only goal runs surface an ETA by default.
+    assertEquals(ETA_MODE_GOAL, normalizeEtaMode(null))
+    assertEquals(ETA_MODE_GOAL, normalizeEtaMode(""))
+    assertEquals(ETA_MODE_GOAL, normalizeEtaMode("bogus"))
+    assertEquals(ETA_MODE_GOAL, normalizeEtaMode(ETA_MODE_GOAL))
+    assertEquals(ETA_MODE_ALWAYS, normalizeEtaMode(ETA_MODE_ALWAYS))
+    assertEquals(ETA_MODE_OFF, normalizeEtaMode(ETA_MODE_OFF))
+  }
+
+  @Test
+  fun multiAgentModeDefaultsToSeparateNotifications() {
+    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode(null))
+    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode("bogus"))
+    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode(MULTI_AGENT_SEPARATE))
+    assertEquals(MULTI_AGENT_COMBINED, normalizeMultiAgentMode(MULTI_AGENT_COMBINED))
+  }
+
+  @Test
   fun legacyStoredValuesMigrateWithoutFlippingUserIntent() {
     // Old "nowbar" requested promotion with fallback — that is now "live".
     assertEquals(
