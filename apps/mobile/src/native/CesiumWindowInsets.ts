@@ -30,6 +30,14 @@ export const CesiumWindowInsets = {
    * last known value instead of treating a failure as "no inset".
    */
   async getInsets(): Promise<WindowInsetsSnapshot> {
+    if (Platform.OS === "ios") {
+      // The iOS shell reports safe-area insets from its own runtime module.
+      // Imported lazily to keep this module dependency-free on Android.
+      // Failures reject (not zero) so callers keep their last known value,
+      // matching the Android contract above.
+      const { CesiumIOSRuntime } = await import("./CesiumIOSRuntime");
+      return normalizeSnapshot(await CesiumIOSRuntime.getInsets());
+    }
     if (!available || !nativeModule) {
       return fallbackInsets();
     }

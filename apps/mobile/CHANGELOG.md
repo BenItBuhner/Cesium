@@ -1,10 +1,16 @@
 # Changelog
 
-All notable changes to the Cesium native Android app (`@cesium/mobile`) are documented here.
+All notable changes to the Cesium native mobile apps (`@cesium/mobile`) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases are tagged as `mobile-vX.Y.Z` on GitHub.
 
 ## [Unreleased]
+
+### Added
+
+- Native iOS app (React Native 0.86, `apps/mobile/ios`): the same shared shell (`src/App.tsx`) now runs on iOS. WKWebView loads the identical bundled workbench folder the APK ships (referenced straight from the Android assets copy, so both platforms stay pixel-identical per release), the bridge protocol is unchanged (it already listened on both `window` and `document`), and a new `CesiumIOSRuntime` native module supplies the bundled-workbench file URL, the `.app` read-access root, and safe-area insets. Android-only capabilities (Live Updates, predictive back, phone control, Wear companion, share intake) degrade gracefully through their existing platform guards. iOS defaults to `http://127.0.0.1:9100` (the simulator shares the host loopback; numeric on purpose, since `localhost` resolves to `::1` first on Apple platforms and hangs against IPv4-only servers); WebKit content-process termination gets the same retry surface as an Android renderer crash.
+- WebKit `file:` history guard: iOS WebKit throws a SecurityError when `history.pushState`/`replaceState` changes anything but query/fragment on `file:` pages (Chromium allows path changes, which Electron and the APK rely on). The renderer polyfills and the native documentStart bootstrap now retry such calls with the real bundle pathname plus the intended query + hash, so the workbench's Next-style router works identically on all shells.
+- Mobile iOS CI (`mobile-ios-ci.yml`): macOS runner builds the unsigned Release simulator app with CocoaPods + xcodebuild, boots an iPhone simulator, starts a real Bun backend plus a deterministic mock LLM provider on the runner, launches Cesium, asserts the process survives a warm relaunch, drives a standalone agent chat run end-to-end (streamed-reply assertion + live UI screenshot), and uploads the workbench screenshots plus the zipped `.app` as artifacts.
 
 ### Fixed
 

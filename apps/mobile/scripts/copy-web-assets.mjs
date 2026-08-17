@@ -5,6 +5,11 @@ import { buildMobileFirstPaintThemeScript } from "@cesium/core";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const source = resolve(repoRoot, "apps/desktop-renderer/dist");
+// Single processed copy shared by both mobile shells: Android bundles it as an
+// APK asset, and the iOS Xcode project references this same folder as a blue
+// folder resource (see ios/CesiumMobile.xcodeproj), so it lands in the .app
+// as workbench/ too. The Chromium-83 compatibility transforms below are
+// harmless no-ops for modern WKWebView.
 const target = resolve(import.meta.dirname, "../android/app/src/main/assets/workbench");
 const flattenCascadeLayers = {
   postcssPlugin: "cesium-flatten-cascade-layers",
