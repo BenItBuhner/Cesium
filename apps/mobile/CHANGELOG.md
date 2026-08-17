@@ -6,13 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-17
+
 ### Added
 
 - Gradual predictive back: the Android back gesture now streams its progress into the app (native `OnBackPressedCallback` with progressive members registered above React Native's plain callback, forwarded over the WebView bridge as `backStarted` / `backProgressed` / `backCancelled`). The mobile workspace rail and workbench pane follow the finger 1:1 through the existing drawer spring engine, and the full-screen settings view runs a Material-style scale/shift/corner preview — committing pops the layer, cancelling springs it back. Older Androids and 3-button navigation keep the previous discrete behavior.
+- Android share-sheet intake: share text, links, and files from other apps into a new or existing chat. The intake sheet is WebView-83-safe (stock Android 11), drains shares that arrive while Cesium is already foreground, and still opens when the only shared item was unreadable or oversized so the skip notice is visible.
+
+### Changed
+
+- Live Updates now actually render as a status-bar chip / Now Bar promotion: silent `IMPORTANCE_DEFAULT` channel (`cesium-agent-runs-v2`), chip text that stays populated when no countdown owns it, explicit ProgressStyle segments for terminal/unknown kinds, promote-flag + native preference combined (not overridden), and per-device Settings copy (Android 16 vs QPR1+ vs Samsung Now Bar) plus a best-effort Now Bar settings deep link.
+- WebView bridge protocol moved to `@cesium/core` with a version handshake; polyfills ship in the renderer bundle; first-paint theme is stamped into the Android asset copy.
+- Bundled workbench picks up the post-0.4.0 shell: full-screen voice agent sessions (launch surfaces + hardened lifecycle), customizable new-chat landing, settings account/breadcrumb shell, Aurora Borealis conversation backdrop, GitHub/npm update panel, mobile swipe gestures / instant chat spawn, agent capability profiles, harness OAuth / Grok Build device login, and the PR review tab.
 
 ### Fixed
 
 - In-WebView back handling now works on Android 13–15 with gesture navigation. React Native 0.86 only registers its back callback on Android 16+, so with `enableOnBackInvokedCallback` opted in, every back gesture on 13–15 previously invoked the system default (exit the app) instead of popping open in-app layers. The new always-registered predictive callback intercepts back whenever the app has something to pop.
+- Live Updates chip presentation no longer leaves an empty status-bar chip on short ETAs; the notifyDirectly fallback persists run state for service restore.
 
 ## [0.4.0] - 2026-08-10
 
