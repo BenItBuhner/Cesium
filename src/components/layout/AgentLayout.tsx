@@ -37,7 +37,6 @@ import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWor
 import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
 import { VoiceAgentView } from "@/components/voice/VoiceAgentView";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
 function AgentShellResizeHandle() {
@@ -81,14 +80,11 @@ function AgentLayoutShell() {
     setRightPaneOpen,
     toggleRightPaneOpen,
   } = useAgentShellState();
-  const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
 
   // Android back gestures for the mobile rail drawer and right pane are
   // registered inside MobileAgentShell, where the drawer motion engine lives —
   // that lets the predictive back gesture drive the drawers frame by frame.
-  const padTrailingForWindowChrome =
-    experimentalIpadWindowedTabInset && !isMobile && !rightPaneOpen;
   const electronTrailingChromeForToggle =
     isDesktopApp && !isMobile && !rightPaneOpen;
 
@@ -371,11 +367,7 @@ function AgentLayoutShell() {
                     data-electron-trailing-chrome={
                       electronTrailingChromeForToggle ? "true" : undefined
                     }
-                    className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
-                      padTrailingForWindowChrome
-                        ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
-                        : "right-[11px]"
-                    }`}
+                    className="mobile-safe-top-offset absolute top-[11px] right-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
                     aria-label="Show workbench pane"
                   >
                     <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
@@ -434,11 +426,7 @@ function AgentLayoutShell() {
                         data-electron-trailing-chrome={
                           electronTrailingChromeForToggle ? "true" : undefined
                         }
-                        className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
-                          padTrailingForWindowChrome
-                            ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
-                            : "right-[11px]"
-                        }`}
+                        className="mobile-safe-top-offset absolute top-[11px] right-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
                       aria-label="Show workbench pane"
                     >
                       <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
