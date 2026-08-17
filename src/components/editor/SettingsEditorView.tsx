@@ -877,11 +877,11 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         {navDrawerOpen ? (
           <>
             <div
-              className="absolute inset-0 z-30 bg-black/40"
+              className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
               onClick={closeMobileDrawer}
             />
             <div
-              className="absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[0_0_40px_rgba(0,0,0,0.35)]"
+              className="absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
               style={{ width: `${AGENT_LEFT_RAIL_EXPANDED_WIDTH}px` }}
             >
               {navContent}

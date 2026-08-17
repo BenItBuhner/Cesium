@@ -6,6 +6,7 @@ import type { editor as MonacoEditor } from "monaco-editor";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   cutMonacoSelectedText,
@@ -661,52 +662,165 @@ function defineExtensionMonacoTheme(monaco: Monaco, theme: LoadedExtensionTheme)
   }
 }
 
-function defineCesiumThemes(monaco: Monaco) {
-  monaco.editor.defineTheme("cesium-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: [],
-    colors: {
-      "editor.background": "#191919",
-      "editor.foreground": "#ffffff",
-      "editor.lineHighlightBackground": "#1e1e1e",
-      "editor.selectionBackground": "#404040",
-      "editorCursor.foreground": "#ffffff",
-      "editor.inactiveSelectionBackground": "#393939",
-      "editorLineNumber.foreground": "#5b5b5b",
-      "editorLineNumber.activeForeground": "#6f6f6f",
-      "editorGutter.background": "#191919",
-      "editorWidget.background": "#1e1e1e",
-      "editorWidget.border": "#505050",
-      "scrollbar.shadow": "#00000000",
-      "scrollbarSlider.background": "#50505050",
-      "scrollbarSlider.hoverBackground": "#50505080",
-      "scrollbarSlider.activeBackground": "#505050a0",
-    },
-  });
+/** Static fallbacks (default light/dark palettes) used before the DOM tokens are readable. */
+const CESIUM_MONACO_FALLBACK_COLORS: Record<"dark" | "light", Record<string, string>> = {
+  dark: {
+    "editor.background": "#191919",
+    "editor.foreground": "#ffffff",
+    "editor.lineHighlightBackground": "#1e1e1e",
+    "editor.selectionBackground": "#404040",
+    "editorCursor.foreground": "#ffffff",
+    "editor.inactiveSelectionBackground": "#393939",
+    "editorLineNumber.foreground": "#5b5b5b",
+    "editorLineNumber.activeForeground": "#6f6f6f",
+    "editorGutter.background": "#191919",
+    "editorWidget.background": "#1e1e1e",
+    "editorWidget.border": "#505050",
+    "scrollbar.shadow": "#00000000",
+    "scrollbarSlider.background": "#50505050",
+    "scrollbarSlider.hoverBackground": "#50505080",
+    "scrollbarSlider.activeBackground": "#505050a0",
+  },
+  light: {
+    "editor.background": "#fafafa",
+    "editor.foreground": "#1a1a1a",
+    "editor.lineHighlightBackground": "#f0f0f0",
+    "editor.selectionBackground": "#c4c4c466",
+    "editorCursor.foreground": "#1a1a1a",
+    "editor.inactiveSelectionBackground": "#e6e6e6",
+    "editorLineNumber.foreground": "#9a9a9a",
+    "editorLineNumber.activeForeground": "#5c5c5c",
+    "editorGutter.background": "#fafafa",
+    "editorWidget.background": "#f0f0f0",
+    "editorWidget.border": "#c4c4c4",
+    "scrollbar.shadow": "#00000000",
+    "scrollbarSlider.background": "#c4c4c466",
+    "scrollbarSlider.hoverBackground": "#c4c4c499",
+    "scrollbarSlider.activeBackground": "#c4c4c4cc",
+  },
+};
 
-  monaco.editor.defineTheme("cesium-light", {
-    base: "vs",
-    inherit: true,
-    rules: [],
-    colors: {
-      "editor.background": "#fafafa",
-      "editor.foreground": "#1a1a1a",
-      "editor.lineHighlightBackground": "#f0f0f0",
-      "editor.selectionBackground": "#c4c4c466",
-      "editorCursor.foreground": "#1a1a1a",
-      "editor.inactiveSelectionBackground": "#e6e6e6",
-      "editorLineNumber.foreground": "#9a9a9a",
-      "editorLineNumber.activeForeground": "#5c5c5c",
-      "editorGutter.background": "#fafafa",
-      "editorWidget.background": "#f0f0f0",
-      "editorWidget.border": "#c4c4c4",
-      "scrollbar.shadow": "#00000000",
-      "scrollbarSlider.background": "#c4c4c466",
-      "scrollbarSlider.hoverBackground": "#c4c4c499",
-      "scrollbarSlider.activeBackground": "#c4c4c4cc",
-    },
-  });
+function channelToHexPair(channel: number): string {
+  return Math.round(Math.min(255, Math.max(0, channel)))
+    .toString(16)
+    .padStart(2, "0");
+}
+
+/**
+ * Parses the computed serializations browsers emit for resolved colors —
+ * `rgb(…)`, `rgba(…)`, and `color(srgb …)` (Chromium's `color-mix` output) —
+ * into the `#rrggbb`/`#rrggbbaa` form Monaco themes require.
+ */
+function computedColorToHex(computed: string): string | null {
+  const rgbMatch = computed.match(
+    /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)$/
+  );
+  if (rgbMatch) {
+    const [, r, g, b, a] = rgbMatch;
+    let hex = `#${channelToHexPair(Number(r))}${channelToHexPair(Number(g))}${channelToHexPair(Number(b))}`;
+    if (a !== undefined) {
+      const alpha = a.endsWith("%") ? Number(a.slice(0, -1)) / 100 : Number(a);
+      if (alpha < 1) hex += channelToHexPair(alpha * 255);
+    }
+    return hex;
+  }
+  const srgbMatch = computed.match(
+    /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/
+  );
+  if (srgbMatch) {
+    const [, r, g, b, a] = srgbMatch;
+    let hex = `#${channelToHexPair(Number(r) * 255)}${channelToHexPair(Number(g) * 255)}${channelToHexPair(Number(b) * 255)}`;
+    if (a !== undefined) {
+      const alpha = a.endsWith("%") ? Number(a.slice(0, -1)) / 100 : Number(a);
+      if (alpha < 1) hex += channelToHexPair(alpha * 255);
+    }
+    return hex;
+  }
+  return null;
+}
+
+/**
+ * Resolves an arbitrary CSS color expression (including `var()` and
+ * `color-mix()`) against the live document theme, returning Monaco-safe hex.
+ */
+function resolveCssColorToHex(expression: string, fallback: string): string {
+  if (typeof document === "undefined" || !document.body) {
+    return fallback;
+  }
+  const probe = document.createElement("span");
+  probe.style.display = "none";
+  probe.style.color = expression;
+  document.body.appendChild(probe);
+  const computed = getComputedStyle(probe).color;
+  probe.remove();
+  return computedColorToHex(computed) ?? fallback;
+}
+
+/**
+ * Derives Monaco editor colors from the document's resolved theme tokens so
+ * the code editor follows every builtin preset and custom theme instead of a
+ * fixed light/dark palette. Only the active appearance branch is derivable
+ * from the DOM. Returns null outside the browser.
+ */
+function deriveCesiumMonacoColorsFromDom(isDark: boolean): Record<string, string> | null {
+  if (typeof document === "undefined" || !document.body) {
+    return null;
+  }
+  const fallback = CESIUM_MONACO_FALLBACK_COLORS[isDark ? "dark" : "light"];
+  const c = (expression: string, key: string) =>
+    resolveCssColorToHex(expression, fallback[key] ?? "#000000");
+  const mixOnBg = (percent: number) =>
+    `color-mix(in srgb, var(--text-primary) ${percent}%, var(--bg-main) ${100 - percent}%)`;
+  return {
+    "editor.background": c("var(--bg-main)", "editor.background"),
+    "editor.foreground": c("var(--text-primary)", "editor.foreground"),
+    "editor.lineHighlightBackground": c(mixOnBg(5), "editor.lineHighlightBackground"),
+    "editor.selectionBackground": c(mixOnBg(24), "editor.selectionBackground"),
+    "editorCursor.foreground": c("var(--text-primary)", "editorCursor.foreground"),
+    "editor.inactiveSelectionBackground": c(mixOnBg(13), "editor.inactiveSelectionBackground"),
+    "editorLineNumber.foreground": c("var(--text-disabled)", "editorLineNumber.foreground"),
+    "editorLineNumber.activeForeground": c("var(--text-secondary)", "editorLineNumber.activeForeground"),
+    "editorGutter.background": c("var(--bg-main)", "editorGutter.background"),
+    "editorWidget.background": c("var(--bg-card)", "editorWidget.background"),
+    "editorWidget.border": c("var(--border-card)", "editorWidget.border"),
+    "scrollbar.shadow": "#00000000",
+    "scrollbarSlider.background": c(
+      "color-mix(in srgb, var(--text-primary) 20%, transparent)",
+      "scrollbarSlider.background"
+    ),
+    "scrollbarSlider.hoverBackground": c(
+      "color-mix(in srgb, var(--text-primary) 32%, transparent)",
+      "scrollbarSlider.hoverBackground"
+    ),
+    "scrollbarSlider.activeBackground": c(
+      "color-mix(in srgb, var(--text-primary) 42%, transparent)",
+      "scrollbarSlider.activeBackground"
+    ),
+  };
+}
+
+/**
+ * Monaco does not restyle an already-active theme when it is redefined under
+ * the same name, so every derived palette gets a unique name keyed off its
+ * background/foreground and the `theme` prop switches to it.
+ */
+function cesiumMonacoThemeName(isDark: boolean, colors: Record<string, string>): string {
+  const key = `${colors["editor.background"] ?? ""}${colors["editor.foreground"] ?? ""}`.replace(
+    /[^0-9a-zA-Z]/g,
+    ""
+  );
+  return `cesium-${isDark ? "dark" : "light"}-${key.toLowerCase()}`;
+}
+
+function defineCesiumThemes(monaco: Monaco) {
+  for (const branch of ["dark", "light"] as const) {
+    monaco.editor.defineTheme(branch === "dark" ? "cesium-dark" : "cesium-light", {
+      base: branch === "dark" ? "vs-dark" : "vs",
+      inherit: true,
+      rules: [],
+      colors: { ...CESIUM_MONACO_FALLBACK_COLORS[branch] },
+    });
+  }
 }
 
 function hasLanguage(monaco: Monaco, id: string): boolean {
@@ -904,6 +1018,7 @@ export function CodeEditor({
   const extensionDocPathRef = useRef<string | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
   const isDark = useHtmlDarkClass();
+  const { themeConfig } = useTheme();
   const [extensionTheme, setExtensionTheme] = useState<LoadedExtensionTheme | null>(() =>
     getActiveExtensionTheme()
   );
@@ -917,11 +1032,10 @@ export function CodeEditor({
   const extensionThemeActive = Boolean(
     vscodeExtensionsBeta && extensionTheme && extensionThemeIsDark(extensionTheme) === isDark
   );
+  const [dynamicMonacoTheme, setDynamicMonacoTheme] = useState<string | null>(null);
   const monacoTheme = extensionThemeActive
     ? EXTENSION_MONACO_THEME
-    : isDark
-      ? "cesium-dark"
-      : "cesium-light";
+    : (dynamicMonacoTheme ?? (isDark ? "cesium-dark" : "cesium-light"));
   const editorLanguage = useMemo(
     () => resolveEditorLanguageId(language, filePath),
     [filePath, language]
@@ -1010,14 +1124,31 @@ export function CodeEditor({
   useEffect(() => {
     const m = monacoRef.current;
     if (!m) return;
-    if (extensionThemeActive && extensionTheme) {
-      if (!defineExtensionMonacoTheme(m, extensionTheme)) {
-        m.editor.setTheme(isDark ? "cesium-dark" : "cesium-light");
-        return;
-      }
+    if (
+      extensionThemeActive &&
+      extensionTheme &&
+      defineExtensionMonacoTheme(m, extensionTheme)
+    ) {
+      m.editor.setTheme(EXTENSION_MONACO_THEME);
+      return;
     }
-    m.editor.setTheme(monacoTheme);
-  }, [editorInstance, extensionTheme, extensionThemeActive, isDark, monacoTheme]);
+    // Re-derive the builtin Monaco theme from the live CSS tokens so preset
+    // and custom theme changes (same appearance branch) restyle the editor.
+    const colors = deriveCesiumMonacoColorsFromDom(isDark);
+    if (!colors) {
+      m.editor.setTheme(isDark ? "cesium-dark" : "cesium-light");
+      return;
+    }
+    const themeName = cesiumMonacoThemeName(isDark, colors);
+    m.editor.defineTheme(themeName, {
+      base: isDark ? "vs-dark" : "vs",
+      inherit: true,
+      rules: [],
+      colors,
+    });
+    setDynamicMonacoTheme(themeName);
+    m.editor.setTheme(themeName);
+  }, [editorInstance, extensionTheme, extensionThemeActive, isDark, themeConfig]);
 
   // Live editor context sync: keeps the extension host's activeTextEditor,
   // documents, and selection in step with what the user is actually doing.

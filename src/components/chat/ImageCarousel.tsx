@@ -125,7 +125,7 @@ export function ImageCarousel({ images, onRemove, onRetry, size = "compact", rea
           return (
             <div
               key={attachment.localId}
-              className="group relative shrink-0 overflow-hidden rounded-[var(--radius-sm)]"
+              className="group relative shrink-0 overflow-hidden rounded-[var(--radius-tab)]"
               style={{ width: dimension, height: dimension }}
             >
               <img
@@ -150,7 +150,7 @@ export function ImageCarousel({ images, onRemove, onRetry, size = "compact", rea
         return (
           <div
             key={attachment.localId}
-            className="group relative flex shrink-0 items-center gap-[8px] rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px]"
+            className="group relative flex shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px]"
             style={{ width: fileCardWidth, height: dimension }}
             title={attachment.name}
           >

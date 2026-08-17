@@ -34,14 +34,17 @@ export function ToggleSwitch({
         width: d.w,
         background: checked
           ? variant === "green"
-            ? "#22c55e"
-            : "#2563eb"
+            ? "var(--status-success)"
+            : "var(--accent)"
           : "var(--border-card)",
       }}
     >
       <span
-        className="block rounded-full bg-white shadow"
+        className="block rounded-full shadow"
         style={{
+          // Contrast against the track in every theme: `--accent` can be
+          // white (default dark), so a fixed white knob would disappear.
+          background: checked ? "var(--bg-main)" : "var(--text-primary)",
           width: d.knob,
           height: d.knob,
           transform: checked

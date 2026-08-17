@@ -37,7 +37,7 @@ export function AgentMain() {
               <div className="flex min-w-0 items-center gap-[11px]">
                 <button
                   type="button"
-                  className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text-primary)]"
+                  className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                   aria-label="Add context"
                 >
                   <Plus className="size-[16px]" strokeWidth={1.5} aria-hidden />

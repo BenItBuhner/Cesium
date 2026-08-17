@@ -171,7 +171,7 @@ export function VoiceOrbMenu({
             ? ` · ${memory.compactions} compaction${memory.compactions === 1 ? "" : "s"}`
             : ""}
         </div>
-        {error ? <div className="text-red-500">{error}</div> : null}
+        {error ? <div className="text-[var(--status-error)]">{error}</div> : null}
       </div>
     </div>
   );

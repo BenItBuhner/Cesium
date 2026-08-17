@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 import { formatAgentRunDuration } from "@/lib/format-agent-run-duration";
 
 const actionButtonClass =
-  "inline-flex size-[26px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border-focus)]";
+  "inline-flex size-[26px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]";
 
 interface TurnCompletionFooterProps {
   durationMs: number;

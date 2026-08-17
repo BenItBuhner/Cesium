@@ -651,14 +651,14 @@ export function MobileAgentShell({
         <>
           <div
             ref={scrimRef}
-            className="absolute inset-0 z-30 bg-black/40"
+            className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
             style={{ opacity: 0, pointerEvents: "none" }}
             onClick={() => setRailOpen(false)}
           />
           <div
             ref={leftDrawerRef}
             data-mobile-drawer="left"
-            className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[0_0_40px_rgba(0,0,0,0.35)]"
+            className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
             style={{
               width: `${railWidth}px`,
               transform: "translate3d(-100%, 0, 0)",

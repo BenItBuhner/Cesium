@@ -2064,7 +2064,7 @@ export function EditorPanel({
             </span>
             <button
               type="button"
-              className="text-[var(--accent-fg)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+              className="text-[var(--accent)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
               onClick={() => {
                 void readFile(tab.filePath!, { full: true })
                   .then((result) => dispatch(fileContentLoadAction(tab.id, result)))

@@ -249,7 +249,7 @@ export function VoiceOrb() {
     mode === "off" ? (
       <MicOff className="size-3 text-[var(--text-secondary)]" />
     ) : mode === "paused" ? (
-      <Pause className="size-3 text-amber-600" />
+      <Pause className="size-3 text-[var(--status-warning)]" />
     ) : mode === "quiet" ? (
       <VolumeX className="size-3 text-sky-600" />
     ) : (
@@ -306,7 +306,7 @@ export function VoiceOrb() {
         ) : null}
         {error ? (
           <span
-            className="absolute -top-1 left-0 size-2.5 rounded-full bg-red-500"
+            className="absolute -top-1 left-0 size-2.5 rounded-full bg-[var(--status-error)]"
             title={error}
           />
         ) : null}

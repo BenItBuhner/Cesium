@@ -76,7 +76,7 @@ export function ComposerAutocomplete({
             aria-selected={i === selectedIndex}
             onMouseEnter={() => onHighlight(i)}
             onClick={() => onSelect(item)}
-            className={`flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left transition-colors hover:bg-white/[0.06] ${i === selectedIndex ? "bg-white/[0.06]" : ""}`}
+            className={`flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left transition-colors hover:bg-[var(--accent-bg)] ${i === selectedIndex ? "bg-[var(--accent-bg)]" : ""}`}
           >
             <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[var(--radius-checkbox)] border border-[var(--border-card)] font-sans text-[9px] font-medium text-[var(--text-primary)]">
               {hotkeyLetter(i)}

@@ -47,7 +47,7 @@ export function SessionConfigOptionDropdown({
         title={option.description ?? label}
         onClick={() => setOpen((v) => !v)}
         className="flex max-w-[140px] items-center gap-[4px] rounded-[var(--radius-pill)] px-[6px] py-[1px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ background: "var(--bg-input)" }}
+        style={{ background: "var(--bg-deep)" }}
       >
         <SlidersHorizontal
           className="size-[11px] shrink-0 text-[var(--text-secondary)]"
@@ -99,7 +99,7 @@ export function SessionConfigOptionDropdown({
                       onChange(opt.value);
                       setOpen(false);
                     }}
-                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06]"
+                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-[var(--accent-bg)]"
                   >
                     <span
                       className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
