@@ -591,6 +591,75 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "skill",
+    description:
+      "Author and manage Agent Skills (agentskills.io SKILL.md standard). create documents a reusable procedure under .agents/skills/<id>/SKILL.md; update/delete manage agent-authored skills; list catalogs every discovered skill; read returns a skill's full SKILL.md. Authored skills appear in the agent-skills/ mirror immediately. Write a skill when you finish a non-obvious multi-step procedure worth repeating.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "update", "list", "read", "delete"] },
+        id: {
+          type: "string",
+          description: "Skill id/slug (required for update, read, delete; optional for create — defaults to a slug of name).",
+        },
+        name: { type: "string", description: "Human skill name (required for create)." },
+        description: {
+          type: "string",
+          description: "One-to-two sentence trigger description: when should this skill be used? (required for create, max 500 chars).",
+        },
+        instructions: {
+          type: "string",
+          description: "Markdown body of the skill: steps, commands, caveats (required for create, max 24000 chars).",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "schedule",
+    description:
+      "Manage scheduled triggers that wake the agent proactively: each fire creates a fresh conversation with the stored prompt under a chosen profile/mode. create needs name, prompt, and exactly one of cron (5-field expression), everyMinutes, or atMs; list/pause/resume/delete/run manage existing triggers (run fires one immediately). The scheduler ticks every 30 seconds while the Cesium server runs.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list", "update", "pause", "resume", "delete", "run"],
+        },
+        id: { type: "string", description: "Trigger id (required for update/pause/resume/delete/run)." },
+        name: { type: "string", description: "Short trigger name (required for create, max 80 chars)." },
+        prompt: {
+          type: "string",
+          description: "User-message text injected when the trigger fires (required for create, max 4000 chars).",
+        },
+        cron: {
+          type: "string",
+          description: '5-field cron expression in server-local time, e.g. "0 9 * * mon-fri".',
+        },
+        everyMinutes: {
+          type: "number",
+          description: "Interval schedule in minutes (min 1).",
+        },
+        atMs: {
+          type: "number",
+          description: "One-shot schedule: epoch milliseconds of the single fire time.",
+        },
+        profileId: {
+          type: "string",
+          description: "Capability profile for spawned conversations (defaults to the settings default).",
+        },
+        mode: {
+          type: "string",
+          description: "Conversation mode for spawned conversations (default agent).",
+        },
+        maxRuns: { type: "number", description: "Optional run cap; the trigger disables itself after this many fires." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
@@ -991,6 +1060,9 @@ export function toolKind(name: string): string {
       return "search";
     case "memory":
       return "memory";
+    case "skill":
+    case "schedule":
+      return "other";
     case "switch_branch":
     case "create_worktree":
       return "terminal";
@@ -1098,6 +1170,22 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
         return `Memory forget ${asString(args.id) ?? "entry"}`;
       }
       return "Memory list";
+    }
+    case "skill": {
+      const action = asString(args.action) ?? "use";
+      if (action === "list") {
+        return "List skills";
+      }
+      const target = asString(args.id) ?? asString(args.name) ?? "skill";
+      return `Skill ${action} ${target}`.trim();
+    }
+    case "schedule": {
+      const action = asString(args.action) ?? "manage";
+      if (action === "list") {
+        return "List triggers";
+      }
+      const target = asString(args.name) ?? asString(args.id) ?? "trigger";
+      return `Schedule ${action} ${target}`.trim();
     }
     case "todo":
       return "Update todos";

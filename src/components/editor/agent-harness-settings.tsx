@@ -27,6 +27,9 @@ import {
   discoverCesiumProviderModels,
   fetchClaudeCodeSdkSettings,
   fetchCesiumAgentSettings,
+  fetchCesiumAgentTriggers,
+  patchCesiumAgentTrigger,
+  deleteCesiumAgentTrigger,
   fetchCesiumModelCatalog,
   fetchCursorSdkCredentialStatus,
   fetchGrokBuildLogin,
@@ -46,6 +49,7 @@ import {
   type ClaudeCodeSdkSettingsPayload,
   type CesiumAgentProfilePayload,
   type CesiumAgentSettingsPayload,
+  type CesiumAgentTriggerPayload,
   type CesiumCustomProvider,
   type CesiumProfilePromptBase,
   type CesiumProfileToolGroupPayload,
@@ -1349,6 +1353,16 @@ function CesiumAgentHarnessSettings() {
     open: boolean;
     draft: CesiumAgentProfilePayload | null;
   }>({ open: false, draft: null });
+  const [triggers, setTriggers] = useState<CesiumAgentTriggerPayload[] | null>(null);
+
+  const refreshTriggers = useCallback(() => {
+    fetchCesiumAgentTriggers()
+      .then((payload) => setTriggers(payload.triggers))
+      .catch(() => setTriggers([]));
+  }, []);
+  useEffect(() => {
+    refreshTriggers();
+  }, [refreshTriggers]);
 
   const providerOptions = useMemo(
     () => buildProviderOptionsFromCatalog(catalog),
@@ -2128,6 +2142,99 @@ function CesiumAgentHarnessSettings() {
                   </div>
                 );
               })}
+            </div>
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
+            <div className="flex flex-wrap items-center justify-between gap-[10px]">
+              <SettingsSubsectionHeading>Scheduled triggers</SettingsSubsectionHeading>
+              <button
+                type="button"
+                className={rowButtonClass}
+                onClick={refreshTriggers}
+              >
+                Refresh
+              </button>
+            </div>
+            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              The agent&apos;s proactive plane: cron, interval, and one-shot triggers created with
+              the <code className="font-mono text-[11px]">schedule</code> tool. Each fire spawns a
+              fresh conversation with the stored prompt under the trigger&apos;s profile. The
+              scheduler ticks every 30 seconds while the server runs.
+            </p>
+            <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
+              {triggers == null ? (
+                <p className="py-[6px] font-sans text-[12px] text-[var(--text-disabled)]">
+                  Loading triggers…
+                </p>
+              ) : triggers.length === 0 ? (
+                <p className="py-[6px] font-sans text-[12px] text-[var(--text-disabled)]">
+                  No scheduled triggers yet. Ask the agent to schedule one, e.g. “every weekday at
+                  9am, summarize new conversations”.
+                </p>
+              ) : (
+                triggers.map((trigger) => {
+                  const scheduleSummary =
+                    trigger.schedule.kind === "cron"
+                      ? `cron "${trigger.schedule.expression}"`
+                      : trigger.schedule.kind === "interval"
+                        ? `every ${Math.round(trigger.schedule.everyMs / 60000)}m`
+                        : `once at ${new Date(trigger.schedule.atMs).toLocaleString()}`;
+                  return (
+                    <div
+                      key={`${trigger.workspaceId}:${trigger.id}`}
+                      className="flex items-center justify-between gap-[12px] py-[10px] first:pt-0 last:pb-0"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                          {trigger.name}
+                          <span className={tagClass}>{scheduleSummary}</span>
+                          {!trigger.enabled ? <span className={tagClass}>paused</span> : null}
+                          {trigger.profileId ? (
+                            <span className={tagClass}>profile: {trigger.profileId}</span>
+                          ) : null}
+                        </p>
+                        <p className="mt-[3px] truncate font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                          {trigger.prompt}
+                        </p>
+                        <p className="mt-[3px] font-sans text-[11px] text-[var(--text-disabled)]">
+                          {trigger.workspaceName ? `${trigger.workspaceName} · ` : ""}
+                          runs: {trigger.runCount}
+                          {trigger.maxRuns != null ? `/${trigger.maxRuns}` : ""} · next:{" "}
+                          {trigger.nextRunAt ? new Date(trigger.nextRunAt).toLocaleString() : "none"}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-[6px]">
+                        <button
+                          type="button"
+                          className={rowButtonClass}
+                          onClick={() => {
+                            void patchCesiumAgentTrigger({
+                              workspaceId: trigger.workspaceId,
+                              triggerId: trigger.id,
+                              enabled: !trigger.enabled,
+                            }).then(refreshTriggers);
+                          }}
+                        >
+                          {trigger.enabled ? "Pause" : "Resume"}
+                        </button>
+                        <button
+                          type="button"
+                          className={rowButtonClass}
+                          onClick={() => {
+                            void deleteCesiumAgentTrigger({
+                              workspaceId: trigger.workspaceId,
+                              triggerId: trigger.id,
+                            }).then(refreshTriggers);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </HarnessDetailBlock>
 

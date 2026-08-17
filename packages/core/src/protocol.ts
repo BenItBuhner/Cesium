@@ -463,6 +463,15 @@ export type AgentConversationOrigin =
       sourceUpdatedAt?: number | null;
       /** When the snapshot was last materialized on this engine. */
       importedAt: number;
+    }
+  | {
+      kind: "trigger";
+      /** Scheduled trigger that spawned this conversation. */
+      triggerId: string;
+      /** Trigger display name at fire time. */
+      triggerName?: string;
+      /** When the trigger fired. */
+      firedAt: number;
     };
 
 export type AgentConversationRecord = {

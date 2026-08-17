@@ -110,6 +110,16 @@ export const CESIUM_PROFILE_TOOL_GROUPS: readonly CesiumProfileToolGroup[] = [
     tools: ["memory"],
   },
   {
+    id: "skills",
+    label: "Skills",
+    tools: ["skill"],
+  },
+  {
+    id: "automation",
+    label: "Automation & Triggers",
+    tools: ["schedule"],
+  },
+  {
     id: "git",
     label: "Git & Worktrees",
     tools: ["switch_branch", "create_worktree"],
@@ -173,6 +183,9 @@ const WORK_PROFILE_ALLOWED_TOOLS: string[] = [
   "read_conversation",
   "search_conversations",
   "memory",
+  // Self-improvement and proactivity (Hermes parity).
+  "skill",
+  "schedule",
   // Planning and durable execution.
   "create_plan",
   "update_plan",
