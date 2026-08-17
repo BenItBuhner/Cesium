@@ -4,6 +4,25 @@ import type {
 } from "@/lib/agent-types";
 import type { AgentRailScope, WorkspaceSortMode } from "@/lib/global-settings";
 import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
+import { isStandaloneChatWorkspace } from "@/lib/types";
+
+export const NO_WORKSPACE_PICKER_LABEL = "No workspace";
+
+export function isNoWorkspaceRailScope(
+  scope: AgentRailScope | undefined
+): boolean {
+  return scope?.type === "no-workspace";
+}
+
+export function matchesNoWorkspacePickerQuery(query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return true;
+  }
+  return ["no workspace", "standalone", "standalone chat", "none"].some((haystack) =>
+    haystack.includes(q)
+  );
+}
 
 export function getRepositoryGroupingKey(input: {
   repository?: AgentRailRepositoryInfo;
@@ -45,6 +64,9 @@ export function filterGroupsByWorkspaceScope(
 ): AgentConversationGroup[] {
   if (!scope || scope.type === "all") {
     return groups;
+  }
+  if (scope.type === "no-workspace") {
+    return groups.filter((group) => isStandaloneChatWorkspace(group.workspace));
   }
   const wanted = scope.workspaceKey;
   return groups.filter(
