@@ -212,6 +212,11 @@ export function startCesiumBackgroundServices(): void {
   startUpdateAutoCheck();
   if (process.env.NODE_ENV !== "test") {
     startCesiumTriggerScheduler();
+  }
+  // The reconciler mutates persisted conversations, so it must never run
+  // inside test processes that boot the app (NODE_TEST_CONTEXT is set by the
+  // node:test runner even when NODE_ENV is not).
+  if (process.env.NODE_ENV !== "test" && !process.env.NODE_TEST_CONTEXT) {
     // Conversations persisted as busy by a previous server process are stuck
     // (runtimes are in-memory only); interrupt them so clients stop showing
     // an eternal "Working" state, then keep watching for runs whose provider
