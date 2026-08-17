@@ -104,4 +104,46 @@ if (globalThis.crypto && !globalThis.crypto.randomUUID) {
     });
 }
 
+/**
+ * WebKit (the iOS WKWebView) throws a SecurityError when
+ * history.pushState/replaceState changes anything but query or fragment on a
+ * `file:` page; Chromium (Electron, Android WebView) allows same-origin path
+ * changes and the workbench's Next-style router relies on that. The bundled
+ * renderer is a single page that only ever reads `location.search` back, so
+ * on hosts that refuse a path change we retry with the real bundle pathname
+ * plus the intended query + hash. Chromium hosts never hit the fallback.
+ */
+if (typeof window !== "undefined" && window.location.protocol === "file:") {
+  const patchHistoryMethod = (method: "pushState" | "replaceState") => {
+    const original = History.prototype[method];
+    Object.defineProperty(History.prototype, method, {
+      configurable: true,
+      writable: true,
+      value: function patchedHistoryMethod(
+        this: History,
+        state: unknown,
+        unused: string,
+        url?: string | URL | null
+      ) {
+        if (url == null) {
+          return original.call(this, state, unused, url);
+        }
+        try {
+          return original.call(this, state, unused, url);
+        } catch {
+          const resolved = new URL(String(url), window.location.href);
+          return original.call(
+            this,
+            state,
+            unused,
+            `${window.location.pathname}${resolved.search}${resolved.hash}`
+          );
+        }
+      },
+    });
+  };
+  patchHistoryMethod("pushState");
+  patchHistoryMethod("replaceState");
+}
+
 export {};
