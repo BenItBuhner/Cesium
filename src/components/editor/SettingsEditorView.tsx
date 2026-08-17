@@ -52,6 +52,7 @@ import {
   Zap,
 } from "lucide-react";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
+import { SettingsPanelErrorBoundary } from "@/components/editor/settings/SettingsPanelErrorBoundary";
 import { SettingsShellChromeContext } from "@/components/editor/settings-ui";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -904,7 +905,11 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
             <DefaultServerSettingsBanner className="mb-[16px]" />
-            {SettingsPanel ? <SettingsPanel /> : null}
+            {SettingsPanel ? (
+              <SettingsPanelErrorBoundary panelId={resolvedNav}>
+                <SettingsPanel />
+              </SettingsPanelErrorBoundary>
+            ) : null}
           </div>
         </main>
       </div>
@@ -950,7 +955,11 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
             <DefaultServerSettingsBanner className="mb-[16px]" />
-            {SettingsPanel ? <SettingsPanel /> : null}
+            {SettingsPanel ? (
+              <SettingsPanelErrorBoundary panelId={resolvedNav}>
+                <SettingsPanel />
+              </SettingsPanelErrorBoundary>
+            ) : null}
           </div>
         </main>
       </Panel>

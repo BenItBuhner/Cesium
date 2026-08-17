@@ -604,6 +604,42 @@ export function MobileAgentShell({
     };
   }, [setRailOpen, setRightOpen]);
 
+  // Legacy WebViews (Chromium < 90, e.g. Android 11) do not implement
+  // `overflow: clip`, so the class on the shell falls back to `visible` and
+  // the parked drawers' overflow propagates to the outer `overflow-hidden`
+  // app shell — which IS programmatically scrollable, letting focus/scroll
+  // heuristics drag the whole UI sideways off-screen. Fall back to
+  // `overflow: hidden` on the shell and pin any scroll back to the origin.
+  useEffect(() => {
+    if (typeof CSS !== "undefined" && CSS.supports?.("overflow", "clip")) {
+      return;
+    }
+    const shell = shellRef.current;
+    if (!shell) {
+      return;
+    }
+    shell.style.overflow = "hidden";
+    const guarded = [shell, shell.parentElement].filter(
+      (el): el is HTMLElement => el != null
+    );
+    const pin = (el: HTMLElement) => {
+      if (el.scrollLeft !== 0) el.scrollLeft = 0;
+      if (el.scrollTop !== 0) el.scrollTop = 0;
+    };
+    const listeners = guarded.map((el) => {
+      const onScroll = () => pin(el);
+      el.addEventListener("scroll", onScroll, { passive: true });
+      pin(el);
+      return () => el.removeEventListener("scroll", onScroll);
+    });
+    return () => {
+      for (const remove of listeners) {
+        remove();
+      }
+      shell.style.overflow = "";
+    };
+  }, []);
+
   return (
     // `overflow-clip` (not `hidden`): the parked right pane translated +100%
     // would otherwise create horizontal scrollable overflow that focus/scroll
@@ -637,7 +673,7 @@ export function MobileAgentShell({
       <div
         ref={rightPaneRef}
         data-mobile-drawer="right"
-        className="absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
+        className="mobile-right-drawer-surface absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
         style={{
           width: rightPaneWidthCss,
           transform: rightOpen ? "translate3d(0, 0, 0)" : "translate3d(100%, 0, 0)",

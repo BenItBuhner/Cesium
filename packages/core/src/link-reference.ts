@@ -2,7 +2,7 @@
  * Shared token/serialization format for attached URL links in the composer.
  *
  * Flow:
- *   1. Paste / attach menu inserts a compact `⟦link:<id>⟧` token and stores
+ *   1. Paste inserts a compact `⟦link:<id>⟧` token and stores
  *      metadata (`draft.linkReferences[id]`) with the URL plus a resolved
  *      page title + favicon.
  *   2. `ChatComposer` expands each token into markdown `[title](url)` on

@@ -75,6 +75,9 @@ export function StickyChatHeader({
     <div
       ref={setRefs}
       data-chat-message-id={dataChatMessageId}
+      // While stuck, this element's rect reports the pinned position, not the flow position;
+      // scroll anchor/navigation math uses this marker to resolve the true flow top instead.
+      data-chat-sticky-header=""
       data-electron-no-drag
       style={
         allowSticky

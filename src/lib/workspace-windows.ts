@@ -13,13 +13,23 @@ import {
 export const FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL =
   "__workspace_window_fresh__";
 
-/** Next web workbench lives at `/agent`; desktop file renderer keeps its current file path. */
+/** Next web workbench lives at `/agent`; file-based renderers keep their current file path. */
 export type WorkspaceScopedRoute = string;
 
-function isDesktopFileRenderer(): boolean {
+/**
+ * Any `file://` document (Electron desktop, the Android WebView bundle, or a
+ * dist build opened straight from disk) must never have its pathname rewritten
+ * to a server route: `history.replaceState` happily records `file:///agent`,
+ * and the next hard reload then fails with `net::ERR_FILE_NOT_FOUND` because
+ * no such file exists on disk. Only http(s) documents use `/agent`.
+ */
+function isFileProtocolRenderer(): boolean {
+  return typeof window !== "undefined" && window.location.protocol === "file:";
+}
+
+function isElectronRenderer(): boolean {
   return (
     typeof window !== "undefined" &&
-    window.location.protocol === "file:" &&
     Boolean(
       (
         window as Window & {
@@ -31,11 +41,16 @@ function isDesktopFileRenderer(): boolean {
 }
 
 function defaultWorkspaceRoute(): WorkspaceScopedRoute {
-  if (isDesktopFileRenderer()) {
+  if (isFileProtocolRenderer()) {
     const path = window.location.pathname || "/";
     // Before the desktop shim navigates, pathname can still be the packaged
     // `index.html` path — using that as a URL base breaks `new URL(route, base)`.
-    if (path.endsWith(".html") || path.includes("desktop-renderer")) {
+    // Only Electron remaps `/agent` back to the bundle; other file renderers
+    // (Android WebView) must keep the on-disk path or reloads 404.
+    if (
+      isElectronRenderer() &&
+      (path.endsWith(".html") || path.includes("desktop-renderer"))
+    ) {
       return WORKSPACE_ROUTE;
     }
     return path;
@@ -46,7 +61,7 @@ function defaultWorkspaceRoute(): WorkspaceScopedRoute {
 export function normalizeWorkspaceScopedRoute(
   pathname: string | null | undefined
 ): WorkspaceScopedRoute {
-  if (isDesktopFileRenderer()) {
+  if (isFileProtocolRenderer()) {
     return pathname || window.location.pathname || "/";
   }
   return WORKSPACE_ROUTE;
