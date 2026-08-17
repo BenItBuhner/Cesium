@@ -18,8 +18,9 @@
  *
  * Gesture rules (deliberately conservative so content interactions never
  * fight the shell):
- * - Right pane open: no swipe gestures at all — it hosts web pages, files and
- *   terminals the user is actively touching.
+ * - Right pane open: swipe right pulls the rail in over it with the same
+ *   drag physics as on the chat page; leftward swipes stay with the pane's
+ *   content (web pages, files and terminals the user is actively touching).
  * - Left rail open: swipe left anywhere closes it.
  * - Main chat with nothing open: swipe right opens the rail; swipe left opens
  *   the workbench pane (when a real conversation is selected).
@@ -436,13 +437,16 @@ export function MobileAgentShell({
     const resolveAction = (direction: DrawerSide): SwipeAction | null => {
       const leftProgress = leftMotionRef.current?.progress ?? 0;
       const rightProgress = rightMotionRef.current?.progress ?? 0;
-      if (rightProgress > 0.01) {
-        // The workbench pane owns the screen: swipes must keep interacting
-        // with its content (web pages, files), never close it.
-        return null;
-      }
       if (leftProgress > 0.01) {
+        // The rail is the top-most drawer wherever it is open (over the chat
+        // or over the workbench pane), so it always claims the closing swipe.
         return direction === "left" ? "close-left" : null;
+      }
+      if (rightProgress > 0.01) {
+        // The workbench pane owns leftward swipes (web pages, files,
+        // terminals the user is actively touching), but a rightward swipe
+        // pulls the rail in over it — same gesture as on the chat page.
+        return direction === "right" ? "open-left" : null;
       }
       if (direction === "right") {
         return "open-left";
@@ -649,16 +653,19 @@ export function MobileAgentShell({
 
       {leftMounted ? (
         <>
+          {/* The rail is a modal drawer that outranks everything in the shell,
+              including the open right pane (a z-40 later sibling), so the
+              scrim and drawer sit above that tier. */}
           <div
             ref={scrimRef}
-            className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
+            className="absolute inset-0 z-[45] bg-[var(--palette-backdrop)]"
             style={{ opacity: 0, pointerEvents: "none" }}
             onClick={() => setRailOpen(false)}
           />
           <div
             ref={leftDrawerRef}
             data-mobile-drawer="left"
-            className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
+            className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-50 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
             style={{
               width: `${railWidth}px`,
               transform: "translate3d(-100%, 0, 0)",
