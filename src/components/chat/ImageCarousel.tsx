@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, RotateCw, X } from "lucide-react";
+import { edgeFadeMaskStyle } from "@/components/ui/scroll-edge-fade";
 import type { ImageAttachmentState } from "@/lib/types";
 import { ImagePreviewOverlay } from "./ImagePreviewOverlay";
 import {
@@ -118,7 +119,10 @@ export function ImageCarousel({ images, onRemove, onRetry, size = "compact", rea
       <div
         ref={containerRef}
         className="hide-scrollbar-x flex gap-[8px] overflow-x-auto"
-        style={{ paddingBottom: "2px" }}
+        style={{
+          paddingBottom: "2px",
+          ...edgeFadeMaskStyle({ left: showLeftFade, right: showRightFade }, 32),
+        }}
       >
       {images.map((attachment) => {
         if (isImageEntry(attachment)) {
@@ -173,18 +177,6 @@ export function ImageCarousel({ images, onRemove, onRetry, size = "compact", rea
         );
       })}
       </div>
-      {showLeftFade && (
-        <div
-          className="pointer-events-none absolute left-0 top-0 z-[1] w-[32px] bg-gradient-to-r from-[var(--bg-card)] to-transparent"
-          style={{ height: dimension }}
-        />
-      )}
-      {showRightFade && (
-        <div
-          className="pointer-events-none absolute right-0 top-0 z-[1] w-[32px] bg-gradient-to-l from-[var(--bg-card)] to-transparent"
-          style={{ height: dimension }}
-        />
-      )}
       {previewImage && (
         <ImagePreviewOverlay
           open

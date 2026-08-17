@@ -103,7 +103,6 @@ export function ComposerSlashMenu({
         wrapperClassName="flex min-h-0 flex-1 flex-col"
         scrollRef={listRef}
         measureKey={`${sections.length}:${flatItems.length}:${selectedIndex}`}
-        edgeColorVar="var(--bg-panel)"
         scrollClassName="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
       >
         <div className={popoverMenuListClass}>

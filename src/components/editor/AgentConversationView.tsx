@@ -7,7 +7,12 @@ import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
-import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
+import {
+  CHAT_BOTTOM_DOCK_HEIGHT_VAR,
+  MessageList,
+  type MessageListScrollPersistMeta,
+} from "@/components/chat/MessageList";
+import { useHeightCssVarRef } from "@/components/ui/scroll-edge-fade";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -422,6 +427,8 @@ loadOlderConversationHistory,
     end: composerDraftText.length,
   };
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
+  /** Publishes the dock height so the thread's bottom dissolve can track it. */
+  const dockHeightVarRef = useHeightCssVarRef(CHAT_BOTTOM_DOCK_HEIGHT_VAR);
 
   const recentConversations = useMemo(
     () =>
@@ -712,7 +719,6 @@ const showRecentChatsSection =
           <MessageList
             key={conversationId}
             messages={scrollMessages}
-            surface="editor"
             contentClassName={EDITOR_CHAT_CONTENT_CLASS}
             conversationId={conversationId}
             composerDraftId={composerDraftId}
@@ -791,7 +797,10 @@ const showRecentChatsSection =
             bottomDockVisible={!composerHiddenForExpanded}
           />
           {!composerHiddenForExpanded ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+            <div
+              ref={dockHeightVarRef}
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-30"
+            >
               <div className="pointer-events-auto chat-bottom-dock">
                 {recentChatsSection ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>

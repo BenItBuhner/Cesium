@@ -8,13 +8,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
-import { MessageList } from "@/components/chat/MessageList";
+import { CHAT_BOTTOM_DOCK_HEIGHT_VAR, MessageList } from "@/components/chat/MessageList";
+import { useHeightCssVarRef } from "@/components/ui/scroll-edge-fade";
 import { PlanReviewDock, type DockedPlanFile } from "@/components/chat/PlanReviewDock";
 import {
   modelChoiceToOverride,
@@ -527,6 +527,8 @@ export function AgentCenterPane() {
    * shell slides down to its docked spot at the bottom.
    */
   const paneRootRef = useRef<HTMLDivElement | null>(null);
+  /** Publishes the dock height so the thread's bottom dissolve can track it. */
+  const dockHeightVarRef = useHeightCssVarRef(CHAT_BOTTOM_DOCK_HEIGHT_VAR);
   const [optimisticTurn, setOptimisticTurn] = useState<OptimisticNewChatTurn | null>(null);
   const optimisticSubmitSeqRef = useRef(0);
   const optimisticPendingRef = useRef(false);
@@ -1286,7 +1288,6 @@ export function AgentCenterPane() {
             <MessageList
               key={visibleConversationView.conversationId}
               messages={visibleConversationView.messages}
-              surface="editor"
               contentClassName={AGENT_CENTER_CONTENT_CLASS}
               conversationId={visibleConversationView.conversationId}
               composerDraftId={composerDraftId}
@@ -1338,14 +1339,10 @@ export function AgentCenterPane() {
         )}
 
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-            {visibleConversationView ? (
-              <div
-                aria-hidden
-                className="chat-bottom-fade"
-                style={{ "--chat-fade-surface": "var(--bg-main)" } as CSSProperties}
-              />
-            ) : null}
+          <div
+            ref={dockHeightVarRef}
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-30"
+          >
             <div className="pointer-events-auto chat-bottom-dock">
               <VoiceSessionDock wrapperClassName="pointer-events-none flex justify-center pb-[6px] pt-[8px] px-0 @min-[481px]:px-[10px]" />
               {dockedAsk && visibleConversationView ? (

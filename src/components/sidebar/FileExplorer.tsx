@@ -14,6 +14,7 @@ import { Blocks, Files, GitBranch, Search, type LucideIcon } from "lucide-react"
 import dynamic from "next/dynamic";
 import { ExtensionIcon } from "@/components/extensions/ExtensionIcon";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
+import { edgeFadeMaskStyle } from "@/components/ui/scroll-edge-fade";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
@@ -1094,27 +1095,10 @@ export function FileExplorer() {
               {workspaceInfo?.name ?? "Workspace"}
             </p>
             <div className="relative min-h-0 min-w-0 flex-1">
-              {explorerFade.top ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage: "linear-gradient(to bottom, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
-              {explorerFade.bottom ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage: "linear-gradient(to top, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
               <div
                 ref={scrollRootRef}
                 className="hide-scrollbar-y h-full min-h-0 overflow-y-auto"
+                style={edgeFadeMaskStyle(explorerFade, 24)}
                 onScroll={(event) => {
                   updateExplorerFade();
                   const nextScrollTop = event.currentTarget.scrollTop;

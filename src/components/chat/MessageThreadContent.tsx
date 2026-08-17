@@ -99,7 +99,6 @@ export interface MessageThreadContentProps {
   stickyUserHeader?: boolean;
   /** Scrollport for progressive "push previous user up" math (main chat only). */
   scrollRootRef?: RefObject<HTMLElement | null>;
-  workedSessionSurface?: "panel" | "editor";
   /** When a subagent row has `subagentTranscript`, clicking opens this. */
   onOpenSubagent?: (payload: {
     title: string;
@@ -160,7 +159,6 @@ export function MessageThreadContent({
   messages,
   stickyUserHeader = false,
   scrollRootRef,
-  workedSessionSurface = "panel",
   onOpenSubagent,
   onResolvePermission,
   conversationId,
@@ -474,7 +472,6 @@ export function MessageThreadContent({
                 defaultOpen={msg.workedDefaultOpen}
                 loading={chainLoading}
                 isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
-                surface={workedSessionSurface}
                 workspaceRoot={workspaceRoot}
                 toolDetailsInWorkedCard
                 embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
@@ -553,7 +550,6 @@ export function MessageThreadContent({
       settledTurnContext,
       skipPermissionMessageIndex,
       workedSessionOpenByScopedId,
-      workedSessionSurface,
       workspaceRoot,
     ]
   );

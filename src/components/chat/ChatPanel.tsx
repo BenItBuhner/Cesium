@@ -9,12 +9,16 @@ import {
   useState,
   useDeferredValue,
   useSyncExternalStore,
-  type CSSProperties,
   type MouseEvent,
 } from "react";
 import { Search } from "lucide-react";
 import { ChatTabs } from "./ChatTabs";
-import { MessageList, type MessageListScrollPersistMeta } from "./MessageList";
+import {
+  CHAT_BOTTOM_DOCK_HEIGHT_VAR,
+  MessageList,
+  type MessageListScrollPersistMeta,
+} from "./MessageList";
+import { useHeightCssVarRef } from "@/components/ui/scroll-edge-fade";
 import { ChatComposer } from "./ChatComposer";
 import { ComposerQueueDock } from "./ComposerQueueDock";
 import { AgentCompletionErrorDock } from "./AgentCompletionErrorDock";
@@ -2479,6 +2483,8 @@ const cancelPromptForDraft = useCallback(
   );
 
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
+  /** Publishes the dock height so the thread's bottom dissolve can track it. */
+  const dockHeightVarRef = useHeightCssVarRef(CHAT_BOTTOM_DOCK_HEIGHT_VAR);
 
   const composer = (
     <ChatComposer
@@ -2730,12 +2736,10 @@ const cancelPromptForDraft = useCallback(
           bottomDockVisible={!composerHiddenForExpanded}
         />
           {!composerHiddenForExpanded ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-              <div
-                aria-hidden
-                className="chat-bottom-fade"
-                style={{ "--chat-fade-surface": "var(--bg-panel)" } as CSSProperties}
-              />
+            <div
+              ref={dockHeightVarRef}
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-30"
+            >
               <div className="pointer-events-auto chat-bottom-dock">
                 {recentChatsSection ? (
                   <div className="pt-[8px]">{recentChatsSection}</div>
