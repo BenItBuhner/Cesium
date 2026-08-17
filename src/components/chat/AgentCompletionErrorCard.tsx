@@ -66,7 +66,6 @@ export function AgentCompletionErrorCard({
         <div className="mb-[8px] min-w-0">
           <HorizontalFadedScroll
             scrollClassName="hide-scrollbar-x max-h-[72px] overflow-x-auto overflow-y-auto py-[2px] font-mono text-[10.5px] leading-tight text-[var(--text-secondary)] whitespace-pre"
-            edgeColorVar="var(--bg-card)"
             measureKey={error.detail}
           >
             {error.detail}

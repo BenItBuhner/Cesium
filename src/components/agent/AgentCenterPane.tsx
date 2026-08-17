@@ -8,7 +8,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
@@ -1297,7 +1296,6 @@ export function AgentCenterPane() {
             <MessageList
               key={visibleConversationView.conversationId}
               messages={visibleConversationView.messages}
-              surface="editor"
               contentClassName={AGENT_CENTER_CONTENT_CLASS}
               conversationId={visibleConversationView.conversationId}
               composerDraftId={composerDraftId}
@@ -1344,13 +1342,6 @@ export function AgentCenterPane() {
 
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-            {visibleConversationView ? (
-              <div
-                aria-hidden
-                className="chat-bottom-fade"
-                style={{ "--chat-fade-surface": "var(--bg-main)" } as CSSProperties}
-              />
-            ) : null}
             <div className="pointer-events-auto chat-bottom-dock">
               <VoiceSessionDock wrapperClassName="pointer-events-none flex justify-center pb-[6px] pt-[8px] px-0 @min-[481px]:px-[10px]" />
               {dockedAsk && visibleConversationView ? (
