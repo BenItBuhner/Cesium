@@ -182,18 +182,21 @@ jobs:
           # foreground while the run streams, so the follow-up screenshot also
           # shows the workbench receiving the run live over its WebSocket.
           if curl -fsS http://127.0.0.1:9100/health > /dev/null 2>&1; then
-            WORKSPACE_ID=$(curl -fsS http://127.0.0.1:9100/api/workspaces | jq -r '.workspaces[0].id // empty')
-            if [ -z "$WORKSPACE_ID" ]; then
-              echo "No workspace was bootstrapped by the app; cannot run the chat check." >&2
+            # Fresh installs are workspace-less by design (PR #152), so drive
+            # the standalone chat flow — the same "New chat without a
+            # workspace" path the composer offers on first launch. It creates
+            # its own ephemeral workspace and returns it for polling.
+            CREATED=$(curl -fsS -X POST http://127.0.0.1:9100/api/agents/conversations/standalone/create-and-prompt \
+              -H "Content-Type: application/json" \
+              -d '{"conversation":{"backendId":"cesium-agent","modelId":"mock/kimi-k3","mode":"agent"},"text":"Reply with exactly the phrase \"Cesium iOS end-to-end PASS\" and nothing else."}')
+            CID=$(printf '%s' "$CREATED" | jq -r '.snapshot.conversation.id // empty')
+            WORKSPACE_ID=$(printf '%s' "$CREATED" | jq -r '.workspace.id // empty')
+            if [ -z "$CID" ] || [ -z "$WORKSPACE_ID" ]; then
+              echo "Standalone create-and-prompt did not return a conversation/workspace:" >&2
+              printf '%s\n' "$CREATED" | head -c 800 >&2
               exit 1
             fi
-            echo "Prompting a mock/kimi-k3 agent run in workspace $WORKSPACE_ID"
-            CID=$(curl -fsS -X POST http://127.0.0.1:9100/api/agents/conversations/create-and-prompt \
-              -H "Content-Type: application/json" \
-              -H "x-opencursor-workspace-id: $WORKSPACE_ID" \
-              -d '{"conversation":{"backendId":"cesium-agent","modelId":"mock/kimi-k3","mode":"agent"},"text":"Reply with exactly the phrase \"Cesium iOS end-to-end PASS\" and nothing else."}' \
-              | jq -r '.snapshot.conversation.id')
-            echo "Conversation: $CID"
+            echo "Conversation: $CID (standalone workspace $WORKSPACE_ID)"
             REPLY=""
             for _ in $(seq 1 12); do
               sleep 5
