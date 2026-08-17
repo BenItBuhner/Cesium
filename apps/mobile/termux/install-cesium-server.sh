@@ -67,9 +67,26 @@ DEBIAN_FRONTEND=noninteractive apt install -y \
 
 mkdir -p "$CESIUM_HOME" "$STATE_DIR" "$PROJECTS_DIR/default"
 if [[ -d "$SOURCE_DIR/.git" ]]; then
+  # The clone below is single-branch: its fetch refspec only covers the branch
+  # it was created from. If this run targets a different branch (an earlier
+  # install used CESIUM_REPO_BRANCH, or the checkout was left detached), there
+  # is no local $REPO_BRANCH and no origin/$REPO_BRANCH, so a bare
+  # `git checkout $REPO_BRANCH` dies with "pathspec ... did not match any
+  # file(s) known to git". Retarget the refspec first so origin/$REPO_BRANCH
+  # always exists after the fetch, then create the local branch if missing.
+  git -C "$SOURCE_DIR" remote set-branches origin "$REPO_BRANCH"
   git -C "$SOURCE_DIR" fetch origin "$REPO_BRANCH"
-  git -C "$SOURCE_DIR" checkout "$REPO_BRANCH"
-  git -C "$SOURCE_DIR" pull --ff-only origin "$REPO_BRANCH"
+  if git -C "$SOURCE_DIR" show-ref --verify --quiet "refs/heads/$REPO_BRANCH"; then
+    git -C "$SOURCE_DIR" checkout "$REPO_BRANCH"
+    if ! git -C "$SOURCE_DIR" merge --ff-only "refs/remotes/origin/$REPO_BRANCH"; then
+      printf 'The checkout at %s has diverged from origin/%s.\n' "$SOURCE_DIR" "$REPO_BRANCH" >&2
+      printf 'Remove it and rerun this installer for a fresh clone:\n' >&2
+      printf '  rm -rf %s\n' "$SOURCE_DIR" >&2
+      exit 1
+    fi
+  else
+    git -C "$SOURCE_DIR" checkout -B "$REPO_BRANCH" "refs/remotes/origin/$REPO_BRANCH"
+  fi
 else
   git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$SOURCE_DIR"
 fi
@@ -100,7 +117,7 @@ if [[ ! -f packages/core/dist/index.js ]]; then
   exit 1
 fi
 
-printf 'Installing cesium-server...\n'
+printf 'Installing cesium-server dependencies...\n'
 (
   cd server
   # --no-workspaces: use server/package-lock.json in isolation (kept in sync
@@ -110,6 +127,30 @@ printf 'Installing cesium-server...\n'
   # espeak TTS engine installed above.
   npm ci --no-workspaces --omit=optional
   rm -f node_modules/cesium
+)
+
+printf 'Building @cesium/contracts...\n'
+# The server compiles against @cesium/contracts (a file: dependency) whose
+# package exports point at dist/, so it must be built before the server's tsc
+# run. It cannot npm-install standalone here: its "@cesium/core" dependency is
+# a workspace version, not a registry package (the npm @cesium scope belongs
+# to CesiumJS). Wire its two deps up via symlinks to what this lean install
+# already provides, then compile with the server's TypeScript.
+(
+  cd packages/contracts
+  mkdir -p node_modules/@cesium
+  ln -sfn ../../../core node_modules/@cesium/core
+  ln -sfn ../../../server/node_modules/zod node_modules/zod
+  ../../server/node_modules/.bin/tsc -p tsconfig.json
+)
+if [[ ! -f packages/contracts/dist/index.js ]]; then
+  printf 'Contracts build did not produce packages/contracts/dist/index.js.\n' >&2
+  exit 1
+fi
+
+printf 'Building cesium-server...\n'
+(
+  cd server
   unset npm_config_ignore_scripts
   npm run build
 )

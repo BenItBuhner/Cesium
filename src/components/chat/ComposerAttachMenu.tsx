@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
-import { ImageIcon, Link2, Paperclip, Plus } from "lucide-react";
+import { ImageIcon, Paperclip, Plus } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 
@@ -11,8 +11,6 @@ interface ComposerAttachMenuProps {
   onPickMedia: () => void;
   /** Opens the OS picker accepting any file type. */
   onPickFiles: () => void;
-  /** Prompts for / attaches a URL as a title+favicon link pill. */
-  onAttachLink?: () => void;
   disabled?: boolean;
   /** `plus` renders the round docked + button; `icon` the flat toolbar glyph. */
   variant: "plus" | "icon";
@@ -21,14 +19,12 @@ interface ComposerAttachMenuProps {
 
 /**
  * Attach button for the chat composer. Instead of jumping straight into an
- * image-only OS picker, it pops a small Files / Media / Link menu: Media keeps the
- * classic image picker, Files accepts absolutely anything, Link resolves a URL
- * into a title + favicon pill.
+ * image-only OS picker, it pops a small Files / Media menu: Media keeps the
+ * classic image picker, Files accepts absolutely anything.
  */
 export function ComposerAttachMenu({
   onPickMedia,
   onPickFiles,
-  onAttachLink,
   disabled = false,
   variant,
   popoverPlacement = "above",
@@ -53,9 +49,9 @@ export function ComposerAttachMenu({
           onClick={() => setOpen((v) => !v)}
           disabled={disabled}
           className="composer-attach-plus flex size-[var(--d2-composer-plus-size)] shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label="Attach files, media, or link"
+          aria-label="Attach files or media"
           aria-expanded={open}
-          title="Attach files, media, or link"
+          title="Attach files or media"
         >
           <Plus className="size-[14px] shrink-0" strokeWidth={2} aria-hidden />
         </button>
@@ -65,9 +61,9 @@ export function ComposerAttachMenu({
           onClick={() => setOpen((v) => !v)}
           disabled={disabled}
           className="-m-[4px] touch-manipulation p-[4px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="Attach files, media, or link"
+          aria-label="Attach files or media"
           aria-expanded={open}
-          title="Attach files, media, or link"
+          title="Attach files or media"
         >
           <Paperclip className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
         </button>
@@ -115,21 +111,6 @@ export function ComposerAttachMenu({
                 </span>
               </span>
             </button>
-            {onAttachLink ? (
-              <button
-                type="button"
-                onClick={() => pick(onAttachLink)}
-                className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] outline-none transition-colors hover:bg-[var(--accent-bg)] focus-visible:bg-[var(--accent-bg)]"
-              >
-                <Link2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.6} aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block leading-[16px]">Link</span>
-                  <span className="block text-[10.5px] leading-[14px] text-[var(--text-secondary)]">
-                    Attach a URL with title
-                  </span>
-                </span>
-              </button>
-            ) : null}
           </div>,
           document.body
         )}

@@ -250,9 +250,26 @@ fi
 
 if [[ -d "$SOURCE_DIR/.git" ]]; then
   printf 'Updating Cesium source...\n'
+  # The clone below is single-branch: its fetch refspec only covers the branch
+  # it was created from. If this run targets a different branch (an earlier
+  # install used CESIUM_REPO_BRANCH, or the checkout was left detached), there
+  # is no local $REPO_BRANCH and no origin/$REPO_BRANCH, so a bare
+  # `git checkout $REPO_BRANCH` dies with "pathspec ... did not match any
+  # file(s) known to git". Retarget the refspec first so origin/$REPO_BRANCH
+  # always exists after the fetch, then create the local branch if missing.
+  git -C "$SOURCE_DIR" remote set-branches origin "$REPO_BRANCH"
   git -C "$SOURCE_DIR" fetch origin "$REPO_BRANCH"
-  git -C "$SOURCE_DIR" checkout "$REPO_BRANCH"
-  git -C "$SOURCE_DIR" pull --ff-only origin "$REPO_BRANCH"
+  if git -C "$SOURCE_DIR" show-ref --verify --quiet "refs/heads/$REPO_BRANCH"; then
+    git -C "$SOURCE_DIR" checkout "$REPO_BRANCH"
+    if ! git -C "$SOURCE_DIR" merge --ff-only "refs/remotes/origin/$REPO_BRANCH"; then
+      printf 'The checkout at %s has diverged from origin/%s.\n' "$SOURCE_DIR" "$REPO_BRANCH" >&2
+      printf 'Remove it and rerun this installer for a fresh clone:\n' >&2
+      printf '  rm -rf %s\n' "$SOURCE_DIR" >&2
+      exit 1
+    fi
+  else
+    git -C "$SOURCE_DIR" checkout -B "$REPO_BRANCH" "refs/remotes/origin/$REPO_BRANCH"
+  fi
 else
   printf 'Downloading Cesium source...\n'
   rm -rf "$SOURCE_DIR"
@@ -273,11 +290,25 @@ export npm_config_audit=false
     --ignore-scripts \
     --no-save
   "$BUN_BIN" run --cwd packages/core build
+  # The server imports @cesium/contracts, whose package exports point at
+  # dist/ — build it or the server fails to resolve the module at runtime.
+  "$BUN_BIN" run --cwd packages/contracts build
   rm -f server/node_modules/cesium
+  # bun materializes the server's file:../packages/* dependencies as nested
+  # copies taken at install time — before the packages were built — so a
+  # dist-less @cesium/core copy under server/node_modules shadows the built
+  # workspace package and the server dies with "Cannot find module
+  # '@cesium/core/...'". Remove the nested copies; imports then resolve
+  # through the root workspace symlinks, which point at the built packages.
+  rm -rf server/node_modules/@cesium
 )
 
 if [[ ! -f "$SOURCE_DIR/packages/core/dist/index.js" ]]; then
   printf 'Core build did not produce packages/core/dist/index.js.\n' >&2
+  exit 1
+fi
+if [[ ! -f "$SOURCE_DIR/packages/contracts/dist/index.js" ]]; then
+  printf 'Contracts build did not produce packages/contracts/dist/index.js.\n' >&2
   exit 1
 fi
 if [[ ! -f "$SOURCE_DIR/server/src/runtime/bun-server.ts" ]]; then
