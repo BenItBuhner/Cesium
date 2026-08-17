@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 
@@ -15,7 +15,8 @@ interface ActivityLabelProps {
   settled?: boolean;
 }
 
-export function ActivityLabel({
+/** Memoized: props are primitives/stable arrays across streaming flushes. */
+export const ActivityLabel = memo(function ActivityLabel({
   label,
   detail,
   files,
@@ -91,4 +92,4 @@ export function ActivityLabel({
       </CollapsibleHeight>
     </div>
   );
-}
+});

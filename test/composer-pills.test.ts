@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   DEFAULT_COMPOSER_PILLS_VISIBILITY,
+  countComposerBackgroundWork,
   deriveComposerBuiltinPills,
+  listRunningSubagentWorkItems,
   normalizeComposerPillsVisibility,
   resolveComposerPillsVisibility,
   withComposerPillsVisibility,
 } from "../src/lib/composer-pills.ts";
+import type { AgentStoredEvent } from "../src/lib/agent-types.ts";
 import {
   createEmptyWorkspaceInsights,
   isQuickActionVisibleInContext,
@@ -143,6 +146,7 @@ describe("composer built-in pill dynamics", () => {
       work: {
         runningConversations: 1,
         runningConversationTitles: ["Refactor"],
+        runningConversationIds: ["conv-other"],
         aliveTerminals: 0,
         runningCloudTasks: 1,
       },
@@ -150,6 +154,112 @@ describe("composer built-in pill dynamics", () => {
     const state = deriveComposerBuiltinPills(DEFAULT_COMPOSER_PILLS_VISIBILITY, working);
     assert.equal(state.showWork, true);
     assert.equal(state.workCount, 2);
+  });
+
+  test("work pill ignores the open conversation even when it is running", () => {
+    const onlyCurrent = insightsWith({
+      work: {
+        runningConversations: 1,
+        runningConversationTitles: ["Current chat"],
+        runningConversationIds: ["conv-current"],
+        aliveTerminals: 0,
+        runningCloudTasks: 0,
+      },
+    });
+    const hidden = deriveComposerBuiltinPills(DEFAULT_COMPOSER_PILLS_VISIBILITY, onlyCurrent, {
+      currentConversationId: "conv-current",
+      currentConversationRunning: true,
+    });
+    assert.equal(hidden.showWork, false);
+    assert.equal(hidden.workCount, 0);
+
+    const withSibling = insightsWith({
+      work: {
+        runningConversations: 2,
+        runningConversationTitles: ["Current chat", "Sibling"],
+        runningConversationIds: ["conv-current", "conv-sibling"],
+        aliveTerminals: 0,
+        runningCloudTasks: 0,
+      },
+    });
+    const sibling = deriveComposerBuiltinPills(DEFAULT_COMPOSER_PILLS_VISIBILITY, withSibling, {
+      currentConversationId: "conv-current",
+      currentConversationRunning: true,
+    });
+    assert.equal(sibling.showWork, true);
+    assert.equal(sibling.workCount, 1);
+  });
+
+  test("work pill counts live sub-agents on the open conversation", () => {
+    const idleInsights = insightsWith({
+      work: {
+        runningConversations: 1,
+        runningConversationTitles: ["Current chat"],
+        runningConversationIds: ["conv-current"],
+        aliveTerminals: 0,
+        runningCloudTasks: 0,
+      },
+    });
+    const state = deriveComposerBuiltinPills(DEFAULT_COMPOSER_PILLS_VISIBILITY, idleInsights, {
+      currentConversationId: "conv-current",
+      currentConversationRunning: true,
+      extraWorkCount: 2,
+    });
+    assert.equal(state.showWork, true);
+    assert.equal(state.workCount, 2);
+  });
+
+  test("countComposerBackgroundWork falls back to subtracting a running current chat", () => {
+    const insights = insightsWith({
+      work: {
+        runningConversations: 1,
+        runningConversationTitles: ["Current chat"],
+        runningConversationIds: [],
+        aliveTerminals: 0,
+        runningCloudTasks: 0,
+      },
+    });
+    assert.equal(
+      countComposerBackgroundWork(insights, {
+        currentConversationId: "conv-current",
+        currentConversationRunning: true,
+      }),
+      0
+    );
+  });
+});
+
+describe("live subagent work items", () => {
+  const event = (
+    id: string,
+    title: string,
+    status: "running" | "completed" | "failed"
+  ): AgentStoredEvent => ({
+    seq: 1,
+    eventId: `${id}-${status}`,
+    conversationId: "conv-current",
+    createdAt: 1,
+    kind: "subagent",
+    subagentId: id,
+    title,
+    status,
+    transcript: [],
+  });
+
+  test("keeps the latest status per subagent and drops finished children", () => {
+    const items = listRunningSubagentWorkItems([
+      event("child-a", "Explore auth", "running"),
+      event("child-b", "Write tests", "running"),
+      event("child-b", "Write tests", "completed"),
+      event("child-a", "Explore auth", "running"),
+    ]);
+    assert.deepEqual(items, [{ id: "child-a", title: "Explore auth" }]);
+  });
+
+  test("returns an empty list when no sub-agents are running", () => {
+    assert.deepEqual(listRunningSubagentWorkItems([]), []);
+    assert.deepEqual(listRunningSubagentWorkItems(undefined), []);
+    assert.deepEqual(listRunningSubagentWorkItems([event("child-a", "Done", "completed")]), []);
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -141,6 +142,122 @@ export interface MessageThreadContentProps {
 
 /** Stable identity for the non-virtualized case so downstream memos don't re-fire every render. */
 const EMPTY_VIRTUAL_ITEMS: never[] = [];
+
+/**
+ * Memoized rows. Projection reconciliation (`projectAgentEventsToChatMessages`)
+ * keeps `ChatMessage` object identity stable across streaming flushes, so a
+ * shallow prop comparison skips re-rendering every row whose message did not
+ * change. Callbacks that would otherwise be fresh inline closures each render
+ * are built inside the wrappers from stable handler props.
+ */
+const UserMessageRow = memo(function UserMessageRow({
+  message,
+  composerDraftId,
+  onRedoMessage,
+}: {
+  message: ChatMessage;
+  composerDraftId?: string | null;
+  onRedoMessage?: (message: ChatMessage) => void;
+}) {
+  const onRedo = useMemo(
+    () => (onRedoMessage ? () => onRedoMessage(message) : undefined),
+    [message, onRedoMessage]
+  );
+  return (
+    <UserMessage
+      content={message.content}
+      segments={message.segments}
+      attachments={message.attachments}
+      showReplyCue={message.showReplyCue}
+      highlight={message.isHandoffMessage}
+      composerDraftId={composerDraftId}
+      onRedo={onRedo}
+    />
+  );
+});
+
+const PermissionRequestRow = memo(function PermissionRequestRow({
+  message,
+  onResolvePermission,
+}: {
+  message: ChatMessage;
+  onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
+}) {
+  const handleSelect = useCallback(
+    (optionId: string) => {
+      if (!message.permissionRequestId) {
+        return;
+      }
+      onResolvePermission?.(message.permissionRequestId, optionId, message.permissionDetail);
+    },
+    [message, onResolvePermission]
+  );
+  return (
+    <PermissionRequestCard
+      title={message.permissionTitle ?? "Permission required"}
+      detail={message.permissionDetail}
+      options={message.permissionOptions ?? []}
+      resolved={message.permissionResolved}
+      selectedOptionId={message.permissionSelectedOptionId}
+      onSelect={handleSelect}
+    />
+  );
+});
+
+const WorkedSessionRow = memo(function WorkedSessionRow({
+  message,
+  scopedKey,
+  open,
+  onWorkedSessionOpenChange,
+  loading,
+  isLiveWorkedTail,
+  surface,
+  workspaceRoot,
+  embeddedPermission,
+  onResolvePermission,
+  contentRail,
+  settled,
+}: {
+  message: ChatMessage;
+  scopedKey: string | null;
+  open: boolean | undefined;
+  onWorkedSessionOpenChange?: (scopedKey: string, open: boolean) => void;
+  loading: boolean;
+  isLiveWorkedTail: boolean;
+  surface: "panel" | "editor";
+  workspaceRoot: string | null;
+  embeddedPermission: ChatMessage | null;
+  onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
+  contentRail: boolean;
+  settled: boolean;
+}) {
+  const handleOpenChange = useMemo(
+    () =>
+      scopedKey != null && onWorkedSessionOpenChange
+        ? (value: boolean) => onWorkedSessionOpenChange(scopedKey, value)
+        : undefined,
+    [scopedKey, onWorkedSessionOpenChange]
+  );
+  return (
+    <WorkedSessionCard
+      label={message.workedLabel!}
+      entries={message.workedEntries!}
+      highlightedEntry={message.workedHighlightedEntry}
+      open={open}
+      onOpenChange={handleOpenChange}
+      defaultOpen={message.workedDefaultOpen}
+      loading={loading}
+      isLiveWorkedTail={isLiveWorkedTail}
+      surface={surface}
+      workspaceRoot={workspaceRoot}
+      toolDetailsInWorkedCard
+      embeddedPermission={embeddedPermission}
+      onResolvePermission={onResolvePermission}
+      contentRail={contentRail}
+      settled={settled}
+    />
+  );
+});
 
 export function scrollTopForVirtualUserTurnAnchor(
   segments: MessageThreadSegment[],
@@ -394,22 +511,9 @@ export function MessageThreadContent({
           }
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="relative z-[3] min-w-0 w-full">
-              <PermissionRequestCard
-                title={msg.permissionTitle ?? "Permission required"}
-                detail={msg.permissionDetail}
-                options={msg.permissionOptions ?? []}
-                resolved={msg.permissionResolved}
-                selectedOptionId={msg.permissionSelectedOptionId}
-                onSelect={(optionId) => {
-                  if (!msg.permissionRequestId) {
-                    return;
-                  }
-                  onResolvePermission?.(
-                    msg.permissionRequestId,
-                    optionId,
-                    msg.permissionDetail
-                  );
-                }}
+              <PermissionRequestRow
+                message={msg}
+                onResolvePermission={onResolvePermission}
               />
             </div>
           );
@@ -450,7 +554,6 @@ export function MessageThreadContent({
             conversationBusy &&
             shouldKeepWorkedSessionLoading(messages, i);
           let openProp: boolean | undefined;
-          let onOpenChange: ((v: boolean) => void) | undefined;
           if (scopedKey != null && onWorkedSessionOpenChange) {
             openProp =
               stored !== undefined
@@ -458,25 +561,19 @@ export function MessageThreadContent({
                 : isTailForExpandDefault && msg.workedDefaultOpen !== false
                   ? true
                   : false;
-            onOpenChange = (v: boolean) => {
-              onWorkedSessionOpenChange(scopedKey, v);
-            };
           }
           const isSettledWork = isSettledWorkIndex(i, settledTurnContext);
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="relative z-[2] min-w-0 w-full">
-              <WorkedSessionCard
-                label={msg.workedLabel!}
-                entries={msg.workedEntries!}
-                highlightedEntry={msg.workedHighlightedEntry}
+              <WorkedSessionRow
+                message={msg}
+                scopedKey={scopedKey}
                 open={openProp}
-                onOpenChange={onOpenChange}
-                defaultOpen={msg.workedDefaultOpen}
+                onWorkedSessionOpenChange={onWorkedSessionOpenChange}
                 loading={chainLoading}
                 isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
                 surface={workedSessionSurface}
                 workspaceRoot={workspaceRoot}
-                toolDetailsInWorkedCard
                 embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
                 onResolvePermission={onResolvePermission}
                 contentRail={!isSettledWork}
@@ -583,14 +680,10 @@ export function MessageThreadContent({
             {editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
               renderUserMessageEditor(userMsg)
             ) : (
-              <UserMessage
-                content={userMsg.content}
-                segments={userMsg.segments}
-                attachments={userMsg.attachments}
-                showReplyCue={userMsg.showReplyCue}
-                highlight={userMsg.isHandoffMessage}
+              <UserMessageRow
+                message={userMsg}
                 composerDraftId={composerDraftId}
-                onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
+                onRedoMessage={onRedoMessage}
               />
             )}
             {todoBlock}
@@ -616,14 +709,10 @@ export function MessageThreadContent({
         editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
           renderUserMessageEditor(userMsg)
         ) : (
-          <UserMessage
-            content={userMsg.content}
-            segments={userMsg.segments}
-            attachments={userMsg.attachments}
-            showReplyCue={userMsg.showReplyCue}
-            highlight={userMsg.isHandoffMessage}
+          <UserMessageRow
+            message={userMsg}
             composerDraftId={composerDraftId}
-            onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
+            onRedoMessage={onRedoMessage}
           />
         )
       );

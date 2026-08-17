@@ -14,6 +14,27 @@ import {
 
 /** Background effect — 30fps is plenty and halves the paint work. */
 const FRAME_INTERVAL_MS = 1000 / 30;
+/**
+ * Touch devices and low-core machines composite the full-window canvas layer
+ * on every tick; 20fps keeps the drift readable while cutting that constant
+ * GPU/CPU tax by a third on the hardware that feels it most.
+ */
+const LOW_POWER_FRAME_INTERVAL_MS = 1000 / 20;
+
+let lowPowerDisplayCache: boolean | null = null;
+function isLowPowerDisplay(): boolean {
+  if (lowPowerDisplayCache === null) {
+    const coarsePointer =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const lowConcurrency =
+      typeof navigator !== "undefined" &&
+      (navigator.hardwareConcurrency ?? 8) <= 4;
+    lowPowerDisplayCache = coarsePointer || lowConcurrency;
+  }
+  return lowPowerDisplayCache;
+}
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
 const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
@@ -236,11 +257,14 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     }
     let raf = 0;
     let last = performance.now();
+    const frameIntervalMs = isLowPowerDisplay()
+      ? LOW_POWER_FRAME_INTERVAL_MS
+      : FRAME_INTERVAL_MS;
 
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
       const dt = now - last;
-      if (dt < FRAME_INTERVAL_MS) {
+      if (dt < frameIntervalMs) {
         return;
       }
       last = now;

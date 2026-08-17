@@ -48,29 +48,58 @@ abstract class BaseReconnectSocket<TMessage> {
   private state: ConnectionState = "idle";
   private mobilePaused = false;
   private mobileLifecycleBound = false;
-  private readonly mobileSuspendedSockets = new WeakSet<WebSocket>();
   private readonly onMobileLifecycle = (event: Event) => {
     const detail = (event as CustomEvent<{ type?: string; state?: string }>).detail;
     if (detail?.type !== "lifecycle") return;
     if (detail.state === "active") {
-      if (!this.mobilePaused) return;
-      this.mobilePaused = false;
-      if (!this.manuallyClosed) {
-        this.connect();
-      }
+      this.resumeFromMobileBackground();
       return;
     }
     if (detail.state !== "background" && detail.state !== "inactive") return;
+    this.suspendForMobileBackground();
+  };
+  // The bridge lifecycle message rides a `postMessage` that races the WebView
+  // pause and is sometimes dropped; Chromium delivers `visibilitychange`
+  // synchronously before pausing the renderer, so it is the reliable signal.
+  // Both funnel into the same idempotent suspend/resume.
+  private readonly onMobileVisibility = () => {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+      this.suspendForMobileBackground();
+      return;
+    }
+    this.resumeFromMobileBackground();
+  };
+
+  /**
+   * Backgrounded: stop reconnect attempts (battery), but keep an open socket.
+   * The server's protocol-level pings are answered by the network stack even
+   * while the renderer is paused, so short backgrounds usually keep the
+   * connection alive and resume needs no reconnect at all. If the socket dies
+   * while hidden (process frozen, server idle-reap), the close is swallowed
+   * quietly and `resumeFromMobileBackground` reconnects.
+   */
+  private suspendForMobileBackground(): void {
+    if (this.mobilePaused) return;
     this.mobilePaused = true;
     this.clearReconnectTimer();
-    const socket = this.ws;
-    this.ws = null;
-    if (socket) {
-      this.mobileSuspendedSockets.add(socket);
+  }
+
+  private resumeFromMobileBackground(): void {
+    if (!this.mobilePaused) return;
+    this.mobilePaused = false;
+    if (this.manuallyClosed) return;
+    if (
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
     }
-    socket?.close();
-    this.setState("closed");
-  };
+    // Fresh backoff: a resume-time reconnect should be immediate, not tail an
+    // exponential delay accumulated before the app was backgrounded.
+    this.reconnectAttempt = 0;
+    this.connect();
+  }
 
   constructor(protected readonly url: string | (() => string)) {}
 
@@ -83,6 +112,8 @@ abstract class BaseReconnectSocket<TMessage> {
     this.bindMobileLifecycle();
     this.clearReconnectTimer();
     if (this.mobilePaused) {
+      // Resuming reconnects on its own; opening sockets while backgrounded
+      // only burns battery.
       this.setState("closed");
       return;
     }
@@ -140,11 +171,15 @@ abstract class BaseReconnectSocket<TMessage> {
       if (this.ws === ws) {
         this.ws = null;
       }
-      if (this.mobileSuspendedSockets.delete(ws)) {
+      if (this.mobilePaused) {
+        // Expected while backgrounded (frozen process, server idle-reap).
+        // Stay quiet — no disconnect notifications, no reconnect churn — and
+        // let the resume path reconnect when the app is visible again.
+        this.setState("closed");
         return;
       }
       this.listeners.close.forEach((listener) => listener());
-      if (!this.manuallyClosed && !this.mobilePaused) {
+      if (!this.manuallyClosed) {
         this.scheduleReconnect();
         return;
       }
@@ -152,6 +187,7 @@ abstract class BaseReconnectSocket<TMessage> {
     });
 
     ws.addEventListener("error", (event) => {
+      if (this.mobilePaused) return;
       this.listeners.error.forEach((listener) => listener(event));
     });
   }
@@ -170,15 +206,17 @@ abstract class BaseReconnectSocket<TMessage> {
     };
     if (!mobileWindow.ReactNativeWebView) return;
     this.mobileLifecycleBound = true;
-    this.mobilePaused = document.documentElement.classList.contains(
-      "opencursor-mobile-idle"
-    );
+    this.mobilePaused =
+      document.documentElement.classList.contains("opencursor-mobile-idle") ||
+      document.visibilityState === "hidden";
     window.addEventListener("cesium:mobile-bridge-message", this.onMobileLifecycle);
+    document.addEventListener("visibilitychange", this.onMobileVisibility);
   }
 
   private unbindMobileLifecycle(): void {
     if (!this.mobileLifecycleBound || typeof window === "undefined") return;
     window.removeEventListener("cesium:mobile-bridge-message", this.onMobileLifecycle);
+    document.removeEventListener("visibilitychange", this.onMobileVisibility);
     this.mobileLifecycleBound = false;
   }
 
