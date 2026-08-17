@@ -27,6 +27,11 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import {
+  applyEdgeFadeMask,
+  horizontalFadeState,
+  verticalFadeState,
+} from "@/components/ui/scroll-edge-fade";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
@@ -247,7 +252,9 @@ const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
 
 /**
  * Only the conversation list scrolls; rail header + account row stay outside this node.
- * Fades sit in the list viewport (same idea as HorizontalFadedScroll / tool rows).
+ * Edge fades are a `mask-image` applied straight to the list scrollport (kept
+ * out of React state — direct style writes on scroll, same perf posture as the
+ * old hidden-attribute overlay toggling).
  */
 function AgentRailConversationListScroll({
   children,
@@ -257,10 +264,6 @@ function AgentRailConversationListScroll({
   measureKey: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const topFadeRef = useRef<HTMLDivElement>(null);
-  const bottomFadeRef = useRef<HTMLDivElement>(null);
-  const leftFadeRef = useRef<HTMLDivElement>(null);
-  const rightFadeRef = useRef<HTMLDivElement>(null);
   const fadeStateRef = useRef({
     top: false,
     bottom: false,
@@ -274,14 +277,9 @@ function AgentRailConversationListScroll({
     if (!el) {
       return;
     }
-    const { scrollTop, scrollLeft, scrollWidth, clientWidth, scrollHeight, clientHeight } = el;
-    const maxScrollX = scrollWidth - clientWidth;
-    const maxScrollY = scrollHeight - clientHeight;
     const next = {
-      top: scrollTop > 2,
-      bottom: maxScrollY > 2 && scrollTop < maxScrollY - 2,
-      left: scrollLeft > 2,
-      right: maxScrollX > 2 && scrollLeft < maxScrollX - 2,
+      ...verticalFadeState(el),
+      ...horizontalFadeState(el),
     };
     const prev = fadeStateRef.current;
     if (
@@ -293,10 +291,7 @@ function AgentRailConversationListScroll({
       return;
     }
     fadeStateRef.current = next;
-    topFadeRef.current?.toggleAttribute("hidden", !next.top);
-    bottomFadeRef.current?.toggleAttribute("hidden", !next.bottom);
-    leftFadeRef.current?.toggleAttribute("hidden", !next.left);
-    rightFadeRef.current?.toggleAttribute("hidden", !next.right);
+    applyEdgeFadeMask(el, next);
   }, []);
 
   const scheduleUpdateFade = useCallback(() => {
@@ -329,42 +324,8 @@ function AgentRailConversationListScroll({
     };
   }, [scheduleUpdateFade]);
 
-  const edge = "var(--bg-panel)";
-  const gradTop = `linear-gradient(to bottom, ${edge}, transparent)`;
-  const gradBottom = `linear-gradient(to top, ${edge}, transparent)`;
-  const gradLeft = `linear-gradient(to right, ${edge}, transparent)`;
-  const gradRight = `linear-gradient(to left, ${edge}, transparent)`;
-
   return (
     <div className="relative min-h-0 min-w-0 flex-1">
-      <div
-        ref={topFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradTop }}
-        aria-hidden
-      />
-      <div
-        ref={bottomFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
-        style={{ backgroundImage: gradBottom }}
-        aria-hidden
-      />
-      <div
-        ref={leftFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradLeft }}
-        aria-hidden
-      />
-      <div
-        ref={rightFadeRef}
-        hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
-        style={{ backgroundImage: gradRight }}
-        aria-hidden
-      />
       <div
         ref={scrollRef}
         onScroll={scheduleUpdateFade}

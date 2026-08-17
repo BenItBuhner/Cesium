@@ -81,9 +81,9 @@ function ComposerDockHeightOverlayButton({
   );
 }
 import {
-  ComposerEditorScrollFades,
-  useComposerEditorScrollFade,
-} from "./composer-editor-scroll-fade";
+  edgeFadeMaskStyle,
+  useVerticalScrollEdgeFade,
+} from "@/components/ui/scroll-edge-fade";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -3616,8 +3616,9 @@ const handleNativeComposerKeyDown = useCallback(
     dockComposerHeightExpanded,
   ].join("\0");
 
-  const { fade: composerEditorFade, onScroll: onComposerEditorScroll } =
-    useComposerEditorScrollFade(editorRef, composerScrollFadeKey);
+  const { fade: composerEditorFade, update: onComposerEditorScroll } =
+    useVerticalScrollEdgeFade(editorRef, composerScrollFadeKey);
+  const composerEditorFadeStyle = edgeFadeMaskStyle(composerEditorFade);
 
   const voiceButtonLabel =
     recordingState === "recording"
@@ -3867,7 +3868,6 @@ const handleNativeComposerKeyDown = useCallback(
             key="editor-wrapper"
             className="relative min-w-0 flex-1"
           >
-            <ComposerEditorScrollFades fade={composerEditorFade} />
             {composerHeightOverlayButton}
             {showFloatingPlaceholder && (
               <span
@@ -3976,6 +3976,7 @@ const handleNativeComposerKeyDown = useCallback(
               className={`whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} min-h-[18px] overflow-y-auto ${
                 showComposerHeightOverlay ? dockEditorMaxHeightClass : COMPOSER_DOCK_MAX_HEIGHT_DEFAULT
               }`}
+              style={composerEditorFadeStyle}
               role={menu ? "combobox" : "textbox"}
               aria-label="Chat input"
               aria-expanded={menu ? true : undefined}
@@ -4111,12 +4112,6 @@ const handleNativeComposerKeyDown = useCallback(
             isExpanded ? "flex min-h-0 flex-1 flex-col" : ""
           }`}
         >
-        <ComposerEditorScrollFades
-          fade={composerEditorFade}
-          edgeVar={
-            isExpanded ? "var(--bg-main)" : "var(--agent-card-bg)"
-          }
-        />
         {composerHeightOverlayButton}
         {showFloatingPlaceholder && (
           <span
@@ -4229,6 +4224,7 @@ const handleNativeComposerKeyDown = useCallback(
                   showComposerHeightOverlay ? dockEditorMaxHeightClass : COMPOSER_DOCK_MAX_HEIGHT_DEFAULT
                 }`
           }`}
+          style={composerEditorFadeStyle}
           role={menu ? "combobox" : "textbox"}
           aria-label="Chat input"
           aria-expanded={menu ? true : undefined}

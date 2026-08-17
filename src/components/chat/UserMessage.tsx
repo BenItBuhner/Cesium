@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { AtSign, CornerUpLeft, FileText, LayoutTemplate, MessageSquare, MousePointerSquareDashed } from "lucide-react";
+import { edgeFadeMaskStyle } from "@/components/ui/scroll-edge-fade";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 import { LinkAttachmentPill, guessFaviconUrlFromPageUrl } from "./LinkAttachmentPill";
@@ -124,7 +125,14 @@ export function UserMessage({
         } ${compactSingleLine ? "flex min-h-[24px] items-center" : ""} ${
           !displayOnly && overflowing ? "cursor-pointer" : ""
         }`}
-        style={expanded ? undefined : { maxHeight: 100 }}
+        style={
+          expanded
+            ? undefined
+            : {
+                maxHeight: 100,
+                ...(overflowing ? edgeFadeMaskStyle({ bottom: true }) : undefined),
+              }
+        }
       >
         <MessageTextSelectionCite
           composerDraftId={composerDraftId}
@@ -256,13 +264,6 @@ export function UserMessage({
           </p>
         )}
         </MessageTextSelectionCite>
-
-        {!expanded && overflowing ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-[28px] bg-gradient-to-b from-transparent to-[var(--bg-card)]"
-            aria-hidden
-          />
-        ) : null}
       </div>
 
       {!displayOnly && showReplyCue !== false && onRedo ? (

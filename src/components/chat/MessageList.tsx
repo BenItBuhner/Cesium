@@ -7,12 +7,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
-import { useComposerEditorScrollFade } from "./composer-editor-scroll-fade";
 import { MessageThreadContent } from "./MessageThreadContent";
 import { UserMessageTicker } from "./UserMessageTicker";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  useVerticalScrollEdgeFade,
+  type VerticalScrollFadeState,
+} from "@/components/ui/scroll-edge-fade";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   findChatScrollAnchor,
@@ -59,6 +63,51 @@ function olderGateReleaseScrollTopPx(prefetchPx: number): number {
   return Math.max(380, prefetchPx - 480);
 }
 
+/**
+ * CSS var (published on the pane root by the composer dock wrapper via
+ * `useHeightCssVarRef`) carrying the live dock height, so the thread's bottom
+ * dissolve can track the dock as it grows and shrinks.
+ */
+export const CHAT_BOTTOM_DOCK_HEIGHT_VAR = "--chat-bottom-dock-h";
+
+/**
+ * Mask for the thread scrollport: a 28px top edge fade once scrolled, plus a
+ * bottom treatment. While the composer dock is visible the bottom is a tall
+ * dissolve that tracks the dock height and keeps the transcript faintly
+ * visible (~4% alpha) beneath the translucent dock — replacing the old
+ * `.chat-bottom-fade` surface-colored overlay, which read as an opaque bar
+ * over the aurora backdrop. With no dock, a plain 28px edge fade applies
+ * while more content sits below. Fading the content's own alpha keeps the
+ * treatment theme-agnostic: whatever paints behind the thread shows through.
+ */
+function threadEdgeFadeMaskStyle(
+  fade: VerticalScrollFadeState,
+  dockVisible: boolean
+): CSSProperties {
+  if (!fade.top && !fade.bottom && !dockVisible) {
+    return {};
+  }
+  const stops: string[] = [];
+  stops.push(fade.top ? "transparent, black 28px" : "black");
+  if (dockVisible) {
+    const zone = `(var(${CHAT_BOTTOM_DOCK_HEIGHT_VAR}, 0px) + 64px)`;
+    // Same dissolve profile as the old `.chat-bottom-fade` gradient.
+    stops.push(
+      `black calc(100% - ${zone})`,
+      `rgb(0 0 0 / 0.84) calc(100% - ${zone} * 0.84)`,
+      `rgb(0 0 0 / 0.54) calc(100% - ${zone} * 0.62)`,
+      `rgb(0 0 0 / 0.18) calc(100% - ${zone} * 0.30)`,
+      "rgb(0 0 0 / 0.04) 100%"
+    );
+  } else if (fade.bottom) {
+    stops.push("black calc(100% - 28px)", "transparent");
+  } else {
+    stops.push("black");
+  }
+  const image = `linear-gradient(to bottom, ${stops.join(", ")})`;
+  return { maskImage: image, WebkitMaskImage: image };
+}
+
 /** Max automatic "fill the viewport" history rounds per conversation (burst prefetch at bottom). */
 const OLDER_AUTO_FILL_MAX_ROUNDS = 8;
 /** Minimum excess scroll height (beyond viewport) before we stop auto-prefetching at the bottom. */
@@ -80,7 +129,6 @@ interface MessageListProps {
   renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
   editingUserMessageId?: string | null;
   bottomDockVisible?: boolean;
-  surface?: "panel" | "editor";
   contentClassName?: string;
   conversationId?: string;
   conversationBusy?: boolean;
@@ -102,7 +150,6 @@ export function MessageList({
   renderUserMessageEditor,
   editingUserMessageId,
   bottomDockVisible = true,
-  surface = "panel",
   contentClassName,
   conversationId,
   conversationBusy = false,
@@ -490,7 +537,6 @@ export function MessageList({
       messages={messages}
       stickyUserHeader
       scrollRootRef={scrollRootRef}
-      workedSessionSurface={surface}
       virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
       onForkMessage={onForkMessage}
@@ -532,13 +578,14 @@ export function MessageList({
       : "pt-[10px]";
 
   const fadeMeasureKey = `${messages.length}:${bottomDockVisible ? 1 : 0}:${loadingOlderHistory ? 1 : 0}`;
-  const { fade, onScroll: updateScrollFade } = useComposerEditorScrollFade(
+  const { fade, update: updateScrollFade } = useVerticalScrollEdgeFade(
     scrollRootRef,
     fadeMeasureKey
   );
-  const scrollFadeEdgeVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
-  const scrollFadeGradTop = `linear-gradient(to bottom, ${scrollFadeEdgeVar}, transparent)`;
-  const scrollFadeGradBottom = `linear-gradient(to top, ${scrollFadeEdgeVar}, transparent)`;
+  const scrollMaskStyle = useMemo(
+    () => threadEdgeFadeMaskStyle(fade, bottomDockVisible),
+    [fade, bottomDockVisible]
+  );
 
   /**
    * Horizontal scroll inset follows the **pane** width (`@container`), not the viewport.
@@ -558,6 +605,7 @@ export function MessageList({
         className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain [overflow-anchor:none] ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
           bottomDockVisible ? "pb-[clamp(160px,24vh,240px)]" : "pb-[14px]"
         }`}
+        style={scrollMaskStyle}
         onScroll={(event) => {
           const root = event.currentTarget;
           updateScrollFade();
@@ -584,20 +632,6 @@ export function MessageList({
           }
         }}
       >
-        {fade.top ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[28px]"
-            style={{ backgroundImage: scrollFadeGradTop }}
-            aria-hidden
-          />
-        ) : null}
-        {fade.bottom ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[28px]"
-            style={{ backgroundImage: scrollFadeGradBottom }}
-            aria-hidden
-          />
-        ) : null}
         <div className={`relative z-[2] ${innerClass}`}>
           {loadingOlderHistory ? (
             <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">

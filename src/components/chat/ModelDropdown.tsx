@@ -25,6 +25,7 @@ import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHoverCapable } from "@/hooks/useHoverCapable";
 import { usePopover } from "@/hooks/usePopover";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { edgeFadeMaskStyle } from "@/components/ui/scroll-edge-fade";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
@@ -1091,28 +1092,14 @@ export function ModelDropdown({
                 />
               </div>
               <div className="relative min-h-0 flex-1">
-                {modelListFade.top ? (
-                  <div
-                    className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
-                    style={{
-                      backgroundImage: "linear-gradient(to bottom, var(--bg-panel), transparent)",
-                    }}
-                    aria-hidden
-                  />
-                ) : null}
-                {modelListFade.bottom ? (
-                  <div
-                    className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
-                    style={{
-                      backgroundImage: "linear-gradient(to top, var(--bg-panel), transparent)",
-                    }}
-                    aria-hidden
-                  />
-                ) : null}
                 <div
                   ref={listRef}
                   className="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto overscroll-contain px-[4px] py-[4px]"
-                  style={{ maxHeight: listMaxHeight, overscrollBehaviorY: "contain" }}
+                  style={{
+                    maxHeight: listMaxHeight,
+                    overscrollBehaviorY: "contain",
+                    ...edgeFadeMaskStyle(modelListFade, 24),
+                  }}
                   onScroll={updateModelListFade}
                   onWheel={(e) => {
                     const el = e.currentTarget;
@@ -1316,29 +1303,10 @@ export function ModelDropdown({
               Harnesses
             </span>
             <div className="relative min-h-0 min-w-0">
-              {harnessListFade.top ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(to bottom, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
-              {harnessListFade.bottom ? (
-                <div
-                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(to top, var(--bg-panel), transparent)",
-                  }}
-                  aria-hidden
-                />
-              ) : null}
               <div
                 ref={harnessListRef}
                 className="hide-scrollbar-y max-h-[min(268px,calc(100vh-80px))] min-h-0 overflow-y-auto overscroll-contain px-[4px] py-[2px]"
+                style={edgeFadeMaskStyle(harnessListFade, 24)}
                 onScroll={updateHarnessListFade}
               >
               {(backends ?? []).map((backend) => {
