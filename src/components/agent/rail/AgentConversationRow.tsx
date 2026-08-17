@@ -449,10 +449,8 @@ export function AgentConversationRow({
         <button
           type="button"
           data-perf="agent-rail-row-settle"
-          className={`flex size-[22px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] ${
-            settled
-              ? "text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              : "text-[var(--text-secondary)] opacity-0 pointer-events-none hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
+          className={`flex size-[22px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] ${
+            settled ? "" : "rail-settle-hit"
           }`}
           aria-label={
             settled
