@@ -579,7 +579,12 @@ export function AgentWorkspaceRail() {
     [acknowledgedFailureByConversationId]
   );
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
-  /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
+  /**
+   * Window-chrome inset is only for the collapse/search/new-chat row (and bulk
+   * bar) sitting under iPadOS traffic lights. The workspace picker is on the
+   * next row and must keep the normal rail gutter — tab inset is not a sidebar
+   * indent.
+   */
   const railTopBarPadClass = `${padRailForWindowChrome
     ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
     : "px-[11px]"} ${isMobile ? "mobile-safe-top-pad" : ""}`;
@@ -3462,7 +3467,7 @@ export function AgentWorkspaceRail() {
             </div>
           )}
           {!bulkSelectMode ? (
-            <div className={`shrink-0 pb-[4px] pt-[6px] ${railTopBarPadClass}`} data-electron-no-drag>
+            <div className="shrink-0 px-[11px] pb-[4px] pt-[6px]" data-electron-no-drag>
               <button
                 ref={workspacePickerAnchorRef}
                 type="button"
