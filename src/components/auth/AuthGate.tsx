@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { LockKeyhole, LogOut, RefreshCw, Server } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { resolveAuthPresentation } from "@/lib/auth-presentation";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
 import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
@@ -17,6 +18,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     loginPending,
     error,
     connectionError,
+    serverConfirmedSignedOut,
     login,
     logout,
     refreshAuthStatus,
@@ -28,6 +30,35 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [manageServersOpen, setManageServersOpen] = useState(false);
   const activeServerHealth = serverStatusById[activeServer.id]?.health ?? "unknown";
   const activeServerRequiresAuth = activeServerHealth === "auth_required";
+  /**
+   * Server id the workbench has already been rendered for. While it matches
+   * the active server, transient signals (a timed-out status check, a health
+   * probe flapping to `auth_required`, `ready` dipping during a re-check)
+   * must not unmount the tree — that wipes all in-memory UI state and looks
+   * exactly like the app randomly reloading. Only a server-confirmed
+   * sign-out (or switching to a different server) may bring the gate back.
+   */
+  const latchedServerIdRef = useRef<string | null>(null);
+
+  const presentation = resolveAuthPresentation({
+    ready,
+    enabled,
+    authenticated,
+    connectionError: Boolean(connectionError),
+    activeServerRequiresAuth,
+    serverConfirmedSignedOut,
+    workbenchLatched: latchedServerIdRef.current === activeServer.id,
+  });
+
+  useEffect(() => {
+    if (presentation === "workbench") {
+      latchedServerIdRef.current = activeServer.id;
+    } else if (presentation === "gate") {
+      // The gate only appears for confirmed sign-outs or pre-latch failures;
+      // either way the latch is stale now.
+      latchedServerIdRef.current = null;
+    }
+  }, [activeServer.id, presentation]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -35,7 +66,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setPassword("");
   };
 
-  if (!ready) {
+  if (presentation === "splash") {
     return (
       <div className="mobile-safe-top-content flex h-dvh min-h-0 items-center justify-center overflow-y-auto overscroll-contain bg-[var(--bg-main)] px-4 py-4 max-[480px]:pl-[max(12px,env(safe-area-inset-left,0px))] max-[480px]:pr-[max(12px,env(safe-area-inset-right,0px))] sm:px-6">
         <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] px-4 py-3 font-sans text-[13px] text-[var(--text-secondary)] shadow-[var(--palette-shadow)] sm:px-5 sm:py-4">
@@ -45,7 +76,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if ((!enabled && !activeServerRequiresAuth && !connectionError) || authenticated) {
+  if (presentation === "workbench") {
     return <>{children}</>;
   }
 

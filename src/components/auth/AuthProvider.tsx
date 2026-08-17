@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -36,13 +37,25 @@ type AuthContextValue = {
   loginPending: boolean;
   error: string | null;
   connectionError: string | null;
+  /** An actual auth-status response has been received for the active server. */
+  hasServerStatus: boolean;
+  /**
+   * The latest *server response* said auth is enabled and this client is not
+   * authenticated. Network failures never set this — only real HTTP answers.
+   */
+  serverConfirmedSignedOut: boolean;
   refreshAuthStatus: () => Promise<void>;
   login: (input: LoginInput) => Promise<boolean>;
   logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const AUTH_REQUEST_TIMEOUT_MS = 4_000;
+// Generous on purpose: a PWA resuming on iPad/Android regularly needs several
+// seconds for the radio to wake and the socket to be usable again. The old 4s
+// budget produced spurious "Check Cesium server" screens on every resume.
+const AUTH_REQUEST_TIMEOUT_MS = 8_000;
+/** One silent retry before surfacing a boot connection error. */
+const AUTH_STATUS_RETRY_DELAY_MS = 1_500;
 
 async function fetchAuth(
   serverBaseUrl: string,
@@ -81,6 +94,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loginPending, setLoginPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [hasServerStatus, setHasServerStatus] = useState(false);
+  const [serverConfirmedSignedOut, setServerConfirmedSignedOut] = useState(false);
+  /**
+   * Server id whose auth status has been resolved (successfully or not) at
+   * least once. Re-checks for the same server — including rendezvous base-URL
+   * re-resolves — must not tear the UI back down to the boot splash.
+   */
+  const resolvedServerIdRef = useRef<string | null>(null);
+  /** Server id for which a real auth-status response has been received. */
+  const serverStatusServerIdRef = useRef<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
     const resolvedBaseUrl = resolveClientServerBaseUrl();
@@ -99,9 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(message);
     }
     const payload = (await response.json()) as AuthStatusResponse;
+    serverStatusServerIdRef.current = activeServer.id;
+    setHasServerStatus(true);
     setEnabled(payload.enabled);
     setAuthenticated(payload.authenticated);
     setSession(payload.session);
+    setServerConfirmedSignedOut(payload.enabled && !payload.authenticated);
     if (!payload.enabled) {
       clearStoredAuth(activeServer.baseUrl);
     } else if (payload.authenticated) {
@@ -114,38 +140,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setError(null);
     setConnectionError(null);
-  }, [activeServer.baseUrl]);
+  }, [activeServer.baseUrl, activeServer.id]);
 
   useEffect(() => {
     let cancelled = false;
+
+    // Switching to a *different server* is a real context change: forget what
+    // we knew and show the splash while the new server is checked. A base-URL
+    // update for the same server (rendezvous re-resolve) keeps everything up.
+    if (
+      resolvedServerIdRef.current !== null &&
+      resolvedServerIdRef.current !== activeServer.id
+    ) {
+      resolvedServerIdRef.current = null;
+      serverStatusServerIdRef.current = null;
+      setHasServerStatus(false);
+      setServerConfirmedSignedOut(false);
+    }
+    const isRecheck = resolvedServerIdRef.current === activeServer.id;
+
     const hasCachedSession = Boolean(getStoredSessionToken(activeServer.baseUrl));
-    if (!hasCachedSession) {
+    if (!hasCachedSession && !isRecheck) {
       setReady(false);
     }
-    void refreshAuthStatus()
-      .catch((nextError) => {
+
+    const applyNetworkFailure = (nextError: unknown) => {
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : "Failed to determine authentication status.";
+      if (serverStatusServerIdRef.current === activeServer.id) {
+        // This server already answered before; a failed re-check is a
+        // connectivity blip, not an auth decision. Keep the session state and
+        // let the workspace layer own the disconnect UX.
+        setConnectionError(message);
+        return;
+      }
+      setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
+      setAuthenticated(false);
+      setSession(null);
+      setError(null);
+      setConnectionError(message);
+    };
+
+    void (async () => {
+      try {
+        await refreshAuthStatus();
+      } catch (firstError) {
         if (cancelled) {
           return;
         }
-        setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
-        setAuthenticated(false);
-        setSession(null);
-        const message =
-          nextError instanceof Error
-            ? nextError.message
-            : "Failed to determine authentication status.";
-        setError(null);
-        setConnectionError(message);
-      })
-      .finally(() => {
+        // Cold boots and PWA resumes routinely lose the very first request
+        // while the network stack wakes up. Retry once before surfacing the
+        // failure and (potentially) blocking the UI on a connection screen.
+        await new Promise((resolve) =>
+          setTimeout(resolve, AUTH_STATUS_RETRY_DELAY_MS)
+        );
+        if (cancelled) {
+          return;
+        }
+        try {
+          await refreshAuthStatus();
+        } catch (retryError) {
+          if (cancelled) {
+            return;
+          }
+          applyNetworkFailure(retryError ?? firstError);
+        }
+      } finally {
         if (!cancelled) {
+          resolvedServerIdRef.current = activeServer.id;
           setReady(true);
         }
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [activeServer.baseUrl, refreshAuthStatus]);
+  }, [activeServer.baseUrl, activeServer.id, refreshAuthStatus]);
 
   const login = useCallback(
     async (input: LoginInput) => {
@@ -177,6 +249,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setError(message);
           if (response.status === 401) {
             clearStoredAuth(activeServer.baseUrl);
+            serverStatusServerIdRef.current = activeServer.id;
+            setHasServerStatus(true);
+            setServerConfirmedSignedOut(true);
           }
           return false;
         }
@@ -188,6 +263,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           activeServer.baseUrl
         );
         updateStoredAuthSession(payload.session, activeServer.baseUrl);
+        serverStatusServerIdRef.current = activeServer.id;
+        setHasServerStatus(true);
+        setServerConfirmedSignedOut(false);
         setEnabled(true);
         setAuthenticated(true);
         setSession(payload.session);
@@ -206,7 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoginPending(false);
       }
     },
-    [activeServer.baseUrl]
+    [activeServer.baseUrl, activeServer.id]
   );
 
   const logout = useCallback(async () => {
@@ -227,6 +305,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setConnectionError(null);
       if (enabled) {
         setEnabled(true);
+        // An explicit logout is the user confirming the signed-out state; the
+        // gate must come back even though the workbench was latched open.
+        setServerConfirmedSignedOut(true);
       }
     }
   }, [activeServer.baseUrl, enabled]);
@@ -235,11 +316,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ready,
       enabled,
-        authenticated,
-        connectionError,
-        session,
-        loginPending,
-        error,
+      authenticated,
+      connectionError,
+      session,
+      loginPending,
+      error,
+      hasServerStatus,
+      serverConfirmedSignedOut,
       refreshAuthStatus,
       login,
       logout,
@@ -249,11 +332,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       connectionError,
       enabled,
       error,
+      hasServerStatus,
       login,
       loginPending,
       logout,
       ready,
       refreshAuthStatus,
+      serverConfirmedSignedOut,
       session,
     ]
   );
