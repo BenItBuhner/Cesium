@@ -152,8 +152,6 @@ const DEFAULT_EDITOR_SPLIT_LAYOUT: Record<string, number> = {
   [EDITOR_SPLIT_PANEL_IDS.right]: 50,
 };
 
-const EDITOR_WINDOW_CHROME_TAB_INSET_PX = 72;
-
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
 }
@@ -2158,16 +2156,8 @@ export function EditorPanel({
       !isMobile &&
       editorLeadingWindowControlsVisible &&
       group === "left";
-    const padTrailingForWindowChrome =
-      experimentalIpadWindowedTabInset &&
-      !isMobile &&
-      editorTrailingWindowControlsVisible &&
-      group === paneCloseSlotGroup;
     const trailingSpacerWidthPx =
-      group === paneCloseSlotGroup
-        ? (reserveTrailingPaneCloseSlot ? 18 : 0) +
-          (padTrailingForWindowChrome ? EDITOR_WINDOW_CHROME_TAB_INSET_PX : 0)
-        : 0;
+      group === paneCloseSlotGroup && reserveTrailingPaneCloseSlot ? 18 : 0;
     const electronTrailingChromeOnActions =
       isDesktopApp &&
       !isMobile &&

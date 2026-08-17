@@ -14,9 +14,9 @@ import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Columns2, Globe, MoreVertical, Plus, Rows2, Terminal } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import {
-  HorizontalScrollFadeOverlays,
   useHorizontalScrollFade,
 } from "@/components/chat/HorizontalFadedScroll";
+import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
@@ -402,10 +402,6 @@ export function EditorTabs({
       data-electron-drag-host
     >
       <div className="relative flex min-h-[36px] min-w-0 flex-1">
-        <HorizontalScrollFadeOverlays
-          fade={stripScrollFade}
-          edgeColorVar="var(--bg-panel)"
-        />
         <div
           ref={stripRef}
           className={`relative z-0 hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] py-[2px] pr-[2px] ${
@@ -413,6 +409,7 @@ export function EditorTabs({
               ? "pl-[var(--editor-window-chrome-tab-inset)]"
               : "pl-[2px]"
           }`}
+          style={scrollEdgeMaskStyle(stripScrollFade, { size: 28 })}
           onScroll={updateStripScrollFade}
           onDragOver={handleStripDragOver}
           onDrop={handleStripDrop}

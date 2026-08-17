@@ -100,7 +100,6 @@ export interface MessageThreadContentProps {
   stickyUserHeader?: boolean;
   /** Scrollport for progressive "push previous user up" math (main chat only). */
   scrollRootRef?: RefObject<HTMLElement | null>;
-  workedSessionSurface?: "panel" | "editor";
   /** When a subagent row has `subagentTranscript`, clicking opens this. */
   onOpenSubagent?: (payload: {
     title: string;
@@ -211,7 +210,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
   onWorkedSessionOpenChange,
   loading,
   isLiveWorkedTail,
-  surface,
   workspaceRoot,
   embeddedPermission,
   onResolvePermission,
@@ -224,7 +222,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
   onWorkedSessionOpenChange?: (scopedKey: string, open: boolean) => void;
   loading: boolean;
   isLiveWorkedTail: boolean;
-  surface: "panel" | "editor";
   workspaceRoot: string | null;
   embeddedPermission: ChatMessage | null;
   onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
@@ -248,7 +245,6 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
       defaultOpen={message.workedDefaultOpen}
       loading={loading}
       isLiveWorkedTail={isLiveWorkedTail}
-      surface={surface}
       workspaceRoot={workspaceRoot}
       toolDetailsInWorkedCard
       embeddedPermission={embeddedPermission}
@@ -277,7 +273,6 @@ export function MessageThreadContent({
   messages,
   stickyUserHeader = false,
   scrollRootRef,
-  workedSessionSurface = "panel",
   onOpenSubagent,
   onResolvePermission,
   conversationId,
@@ -572,7 +567,6 @@ export function MessageThreadContent({
                 onWorkedSessionOpenChange={onWorkedSessionOpenChange}
                 loading={chainLoading}
                 isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
-                surface={workedSessionSurface}
                 workspaceRoot={workspaceRoot}
                 embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
                 onResolvePermission={onResolvePermission}
@@ -650,7 +644,6 @@ export function MessageThreadContent({
       settledTurnContext,
       skipPermissionMessageIndex,
       workedSessionOpenByScopedId,
-      workedSessionSurface,
       workspaceRoot,
     ]
   );

@@ -76,7 +76,6 @@ export const PermissionRequestCard = memo(function PermissionRequestCard({
             <div className="mt-[6px]">
               <HorizontalFadedScroll
                 scrollClassName="hide-scrollbar-x overflow-x-auto py-[2px] font-mono text-[12px] leading-tight text-[var(--text-primary)] opacity-90 whitespace-pre"
-                edgeColorVar="var(--bg-card)"
                 measureKey={detail}
               >
                 {detail}
