@@ -194,8 +194,24 @@ export default function App() {
   const refreshSafeArea = useCallback(() => {
     void CesiumWindowInsets.getInsets()
       .then((insets) => setSafeAreaTop(insets.safeAreaTop))
-      .catch(() => setSafeAreaTop(0));
+      .catch(() => {
+        // Insets are momentarily unreadable while the window re-attaches
+        // (backgrounding, screenshot/edit/return). Keep the last known value:
+        // regressing to 0 here used to pin the workbench's top chrome under
+        // the status bar until the process was killed.
+      });
   }, []);
+
+  // Resampling ladder shared by mount and resume: the very first reads after
+  // a window (re-)attach can race the inset dispatch, so retry on a short
+  // backoff instead of trusting a single sample.
+  const safeAreaRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const refreshSafeAreaWithRetries = useCallback(() => {
+    safeAreaRetryTimersRef.current.forEach(clearTimeout);
+    safeAreaRetryTimersRef.current = [0, 250, 1000].map((delay) =>
+      setTimeout(refreshSafeArea, delay)
+    );
+  }, [refreshSafeArea]);
 
   const consumeNotificationAction = useCallback(async () => {
     const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
@@ -283,14 +299,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshSafeArea();
+    refreshSafeAreaWithRetries();
     const dimensions = Dimensions.addEventListener("change", refreshSafeArea);
-    const timers = [0, 250, 1000].map((delay) => setTimeout(refreshSafeArea, delay));
+    // Push path: native re-emits from the window's own inset dispatch, which
+    // always follows a resume/re-attach — the authoritative recovery signal
+    // when every polled read raced the window state.
+    const insetsSubscription = CesiumWindowInsets.addChangeListener((snapshot) =>
+      setSafeAreaTop(snapshot.safeAreaTop)
+    );
     return () => {
       dimensions.remove();
-      timers.forEach(clearTimeout);
+      insetsSubscription?.remove();
+      safeAreaRetryTimersRef.current.forEach(clearTimeout);
     };
-  }, [refreshSafeArea]);
+  }, [refreshSafeArea, refreshSafeAreaWithRetries]);
 
   // Dynamic host state reaches the live page as a typed message instead of
   // re-injecting the whole bootstrap script. The very first render is covered
@@ -316,7 +338,7 @@ export default function App() {
       liveUpdatesRef.current.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
-        refreshSafeArea();
+        refreshSafeAreaWithRetries();
         void consumeNotificationAction();
         void consumeSharePayload();
       }
@@ -332,7 +354,7 @@ export default function App() {
       agentStatusRef.current.close();
       void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, consumeSharePayload, refreshSafeArea, sendToWeb]);
+  }, [consumeNotificationAction, consumeSharePayload, refreshSafeAreaWithRetries, sendToWeb]);
 
   useEffect(() => {
     // A single, stable subscription. The Android back intent is resolved in
