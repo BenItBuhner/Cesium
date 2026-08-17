@@ -737,9 +737,24 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
       id: "sdk_sandbox",
       name: "Local Sandbox",
       category: "permission",
-      currentValue: process.platform === "win32" ? "disabled" : "enabled",
+      // "auto" defers to the Cursor SDK's own default (sandbox only when the
+      // user's ~/.cursor/sandbox.json requests it) and falls back to running
+      // unsandboxed when the environment cannot sandbox at all. Forcing
+      // "enabled" on hosts without sandbox support (containers, VMs without
+      // user namespaces, Windows) makes every run fail out of the box.
+      currentValue: "auto",
       options: [
-        { value: "enabled", name: "Enabled" },
+        {
+          value: "auto",
+          name: "Auto",
+          description:
+            "Use the Cursor SDK default; run unsandboxed when sandboxing is unsupported.",
+        },
+        {
+          value: "enabled",
+          name: "Enabled",
+          description: "Require sandboxing; runs fail where it is unsupported.",
+        },
         { value: "disabled", name: "Disabled" },
       ],
     },
