@@ -757,52 +757,59 @@ function resolveCssColorToHex(expression: string, fallback: string): string {
 }
 
 /**
- * Redefines the active `cesium-dark` / `cesium-light` Monaco theme from the
- * document's resolved theme tokens so the code editor follows every builtin
- * preset and custom theme instead of a fixed light/dark palette. Only the
- * active appearance branch is derivable from the DOM; the inactive branch
- * keeps its static fallback until it becomes active.
+ * Derives Monaco editor colors from the document's resolved theme tokens so
+ * the code editor follows every builtin preset and custom theme instead of a
+ * fixed light/dark palette. Only the active appearance branch is derivable
+ * from the DOM. Returns null outside the browser.
  */
-function defineCesiumThemeFromDom(monaco: Monaco, isDark: boolean): void {
-  if (typeof document === "undefined") {
-    return;
+function deriveCesiumMonacoColorsFromDom(isDark: boolean): Record<string, string> | null {
+  if (typeof document === "undefined" || !document.body) {
+    return null;
   }
   const fallback = CESIUM_MONACO_FALLBACK_COLORS[isDark ? "dark" : "light"];
   const c = (expression: string, key: string) =>
     resolveCssColorToHex(expression, fallback[key] ?? "#000000");
   const mixOnBg = (percent: number) =>
     `color-mix(in srgb, var(--text-primary) ${percent}%, var(--bg-main) ${100 - percent}%)`;
-  monaco.editor.defineTheme(isDark ? "cesium-dark" : "cesium-light", {
-    base: isDark ? "vs-dark" : "vs",
-    inherit: true,
-    rules: [],
-    colors: {
-      "editor.background": c("var(--bg-main)", "editor.background"),
-      "editor.foreground": c("var(--text-primary)", "editor.foreground"),
-      "editor.lineHighlightBackground": c(mixOnBg(5), "editor.lineHighlightBackground"),
-      "editor.selectionBackground": c(mixOnBg(24), "editor.selectionBackground"),
-      "editorCursor.foreground": c("var(--text-primary)", "editorCursor.foreground"),
-      "editor.inactiveSelectionBackground": c(mixOnBg(13), "editor.inactiveSelectionBackground"),
-      "editorLineNumber.foreground": c("var(--text-disabled)", "editorLineNumber.foreground"),
-      "editorLineNumber.activeForeground": c("var(--text-secondary)", "editorLineNumber.activeForeground"),
-      "editorGutter.background": c("var(--bg-main)", "editorGutter.background"),
-      "editorWidget.background": c("var(--bg-card)", "editorWidget.background"),
-      "editorWidget.border": c("var(--border-card)", "editorWidget.border"),
-      "scrollbar.shadow": "#00000000",
-      "scrollbarSlider.background": c(
-        "color-mix(in srgb, var(--text-primary) 20%, transparent)",
-        "scrollbarSlider.background"
-      ),
-      "scrollbarSlider.hoverBackground": c(
-        "color-mix(in srgb, var(--text-primary) 32%, transparent)",
-        "scrollbarSlider.hoverBackground"
-      ),
-      "scrollbarSlider.activeBackground": c(
-        "color-mix(in srgb, var(--text-primary) 42%, transparent)",
-        "scrollbarSlider.activeBackground"
-      ),
-    },
-  });
+  return {
+    "editor.background": c("var(--bg-main)", "editor.background"),
+    "editor.foreground": c("var(--text-primary)", "editor.foreground"),
+    "editor.lineHighlightBackground": c(mixOnBg(5), "editor.lineHighlightBackground"),
+    "editor.selectionBackground": c(mixOnBg(24), "editor.selectionBackground"),
+    "editorCursor.foreground": c("var(--text-primary)", "editorCursor.foreground"),
+    "editor.inactiveSelectionBackground": c(mixOnBg(13), "editor.inactiveSelectionBackground"),
+    "editorLineNumber.foreground": c("var(--text-disabled)", "editorLineNumber.foreground"),
+    "editorLineNumber.activeForeground": c("var(--text-secondary)", "editorLineNumber.activeForeground"),
+    "editorGutter.background": c("var(--bg-main)", "editorGutter.background"),
+    "editorWidget.background": c("var(--bg-card)", "editorWidget.background"),
+    "editorWidget.border": c("var(--border-card)", "editorWidget.border"),
+    "scrollbar.shadow": "#00000000",
+    "scrollbarSlider.background": c(
+      "color-mix(in srgb, var(--text-primary) 20%, transparent)",
+      "scrollbarSlider.background"
+    ),
+    "scrollbarSlider.hoverBackground": c(
+      "color-mix(in srgb, var(--text-primary) 32%, transparent)",
+      "scrollbarSlider.hoverBackground"
+    ),
+    "scrollbarSlider.activeBackground": c(
+      "color-mix(in srgb, var(--text-primary) 42%, transparent)",
+      "scrollbarSlider.activeBackground"
+    ),
+  };
+}
+
+/**
+ * Monaco does not restyle an already-active theme when it is redefined under
+ * the same name, so every derived palette gets a unique name keyed off its
+ * background/foreground and the `theme` prop switches to it.
+ */
+function cesiumMonacoThemeName(isDark: boolean, colors: Record<string, string>): string {
+  const key = `${colors["editor.background"] ?? ""}${colors["editor.foreground"] ?? ""}`.replace(
+    /[^0-9a-zA-Z]/g,
+    ""
+  );
+  return `cesium-${isDark ? "dark" : "light"}-${key.toLowerCase()}`;
 }
 
 function defineCesiumThemes(monaco: Monaco) {
@@ -1025,11 +1032,10 @@ export function CodeEditor({
   const extensionThemeActive = Boolean(
     vscodeExtensionsBeta && extensionTheme && extensionThemeIsDark(extensionTheme) === isDark
   );
+  const [dynamicMonacoTheme, setDynamicMonacoTheme] = useState<string | null>(null);
   const monacoTheme = extensionThemeActive
     ? EXTENSION_MONACO_THEME
-    : isDark
-      ? "cesium-dark"
-      : "cesium-light";
+    : (dynamicMonacoTheme ?? (isDark ? "cesium-dark" : "cesium-light"));
   const editorLanguage = useMemo(
     () => resolveEditorLanguageId(language, filePath),
     [filePath, language]
@@ -1118,19 +1124,31 @@ export function CodeEditor({
   useEffect(() => {
     const m = monacoRef.current;
     if (!m) return;
-    if (extensionThemeActive && extensionTheme) {
-      if (!defineExtensionMonacoTheme(m, extensionTheme)) {
-        defineCesiumThemeFromDom(m, isDark);
-        m.editor.setTheme(isDark ? "cesium-dark" : "cesium-light");
-        return;
-      }
-    } else {
-      // Re-derive the builtin Monaco theme from the live CSS tokens so preset
-      // and custom theme changes (same appearance branch) restyle the editor.
-      defineCesiumThemeFromDom(m, isDark);
+    if (
+      extensionThemeActive &&
+      extensionTheme &&
+      defineExtensionMonacoTheme(m, extensionTheme)
+    ) {
+      m.editor.setTheme(EXTENSION_MONACO_THEME);
+      return;
     }
-    m.editor.setTheme(monacoTheme);
-  }, [editorInstance, extensionTheme, extensionThemeActive, isDark, monacoTheme, themeConfig]);
+    // Re-derive the builtin Monaco theme from the live CSS tokens so preset
+    // and custom theme changes (same appearance branch) restyle the editor.
+    const colors = deriveCesiumMonacoColorsFromDom(isDark);
+    if (!colors) {
+      m.editor.setTheme(isDark ? "cesium-dark" : "cesium-light");
+      return;
+    }
+    const themeName = cesiumMonacoThemeName(isDark, colors);
+    m.editor.defineTheme(themeName, {
+      base: isDark ? "vs-dark" : "vs",
+      inherit: true,
+      rules: [],
+      colors,
+    });
+    setDynamicMonacoTheme(themeName);
+    m.editor.setTheme(themeName);
+  }, [editorInstance, extensionTheme, extensionThemeActive, isDark, themeConfig]);
 
   // Live editor context sync: keeps the extension host's activeTextEditor,
   // documents, and selection in step with what the user is actually doing.
