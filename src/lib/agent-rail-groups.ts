@@ -223,3 +223,28 @@ export function groupAgentRailGroups(
     conversations: [...group.conversations].sort((a, b) => b.updatedAt - a.updatedAt),
   }));
 }
+
+/**
+ * Workspace titles in the rail are section dividers. Hide them when the
+ * picker already names the only workspace on screen — a scoped selection, or
+ * a single remaining group with no sibling workspace/standalone sections.
+ * Priority/status/date buckets keep their labels even when only one exists.
+ */
+export function shouldShowAgentRailWorkspaceGroupHeaders(input: {
+  groupBy: AgentRailGroupByInput;
+  workspaceGroupCount: number;
+  standaloneSectionVisible?: boolean;
+}): boolean {
+  if (input.groupBy !== "workspace") {
+    return true;
+  }
+  if (input.workspaceGroupCount > 1) {
+    return true;
+  }
+  return Boolean(input.standaloneSectionVisible && input.workspaceGroupCount >= 1);
+}
+
+/** Hide the standalone "Chat" title when the picker is already scoped to it. */
+export function shouldShowAgentRailStandaloneSectionHeader(scopedToStandalone: boolean): boolean {
+  return !scopedToStandalone;
+}
