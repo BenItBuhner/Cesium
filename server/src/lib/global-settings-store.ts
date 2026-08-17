@@ -128,6 +128,7 @@ export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces"
 export type AgentRailRowDetailMode = "compact" | "balanced" | "expanded";
 export type AgentRailScope =
   | { type: "all" }
+  | { type: "no-workspace" }
   | { type: "workspace"; workspaceKey: string };
 
 const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
@@ -618,6 +619,9 @@ function normalizeAgentRailScope(raw: unknown): AgentRailScope {
     return { type: "all" };
   }
   const record = raw as { type?: unknown; workspaceKey?: unknown };
+  if (record.type === "no-workspace") {
+    return { type: "no-workspace" };
+  }
   if (
     record.type === "workspace" &&
     typeof record.workspaceKey === "string" &&

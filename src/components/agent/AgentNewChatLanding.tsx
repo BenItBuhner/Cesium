@@ -52,7 +52,10 @@ import {
 } from "@/lib/chat-ui-shortcut-events";
 import { resolveGroupWorkspaceAppearanceKey } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
-import { sortDirectoryWorkspaces } from "@/lib/multi-server-workspaces";
+import {
+  NO_WORKSPACE_PICKER_LABEL,
+  sortDirectoryWorkspaces,
+} from "@/lib/multi-server-workspaces";
 
 type BranchPickerItem = {
   key: string;
@@ -460,7 +463,7 @@ export function AgentNewChatLanding({
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
                   {noWorkspaceDraft
-                    ? "No workspace"
+                    ? NO_WORKSPACE_PICKER_LABEL
                     : // The rail-derived group can lag behind a freshly created /
                       // opened workspace (cached rail payload); the active
                       // workspace's own name is always current.
@@ -593,6 +596,8 @@ export function AgentNewChatLanding({
         homeWorkspaceId={homeWorkspaceId}
         activeServerId={activeServer.id}
         selectedWorkspaceKey={noWorkspaceDraft ? null : activeWorkspaceAppearanceKey}
+        noWorkspaceSelected={noWorkspaceDraft}
+        onSelectNoWorkspace={() => setStandaloneDraftActive(true)}
         onSelectWorkspace={(workspace) => {
           setStandaloneDraftActive(false);
           if (workspace.serverId !== activeServer.id) {
