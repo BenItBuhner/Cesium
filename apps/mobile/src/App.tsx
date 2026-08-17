@@ -37,6 +37,7 @@ import {
 } from "@cesium/core";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { CesiumAndroidRuntime } from "./native/CesiumAndroidRuntime";
+import { CesiumIOSRuntime } from "./native/CesiumIOSRuntime";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
 import {
   CesiumPredictiveBack,
@@ -54,9 +55,13 @@ const INITIAL_CONFIG = readLaunchUrlConfig();
 // `undefined`, which makes JSX props resolve to `never` under TypeScript 5.9.
 // Runtime exports are correct; keep the workaround local until upstream fixes
 // the declaration.
-const AndroidWebView = WebView as unknown as React.ComponentType<
+const ShellWebView = WebView as unknown as React.ComponentType<
   WebViewProps & React.RefAttributes<WebViewType>
 >;
+// WKWebView only grants a file:// page access to subresources under an
+// explicitly allowed root; the bundled workbench lives inside the .app.
+const IOS_BUNDLE_READ_ACCESS_URL =
+  Platform.OS === "ios" ? (CesiumIOSRuntime.getBundleRootUrl() ?? undefined) : undefined;
 
 export default function App() {
   const systemColorScheme = useColorScheme();
@@ -571,7 +576,7 @@ export default function App() {
         translucent
       />
       {webViewAvailable ? (
-        <AndroidWebView
+        <ShellWebView
           key={reloadKey}
           ref={webViewRef}
           testID="cesium-mobile-webview"
@@ -580,6 +585,7 @@ export default function App() {
           allowFileAccess
           allowFileAccessFromFileURLs
           allowUniversalAccessFromFileURLs
+          allowingReadAccessToURL={IOS_BUNDLE_READ_ACCESS_URL}
           mixedContentMode="always"
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
           onLoadEnd={() => {
@@ -604,6 +610,18 @@ export default function App() {
             syncBackIntercept();
             setWebViewAvailable(false);
             setLoadError(description);
+          }}
+          onContentProcessDidTerminate={() => {
+            // iOS analog of onRenderProcessGone: WebKit reclaimed the content
+            // process (memory pressure or a crash). Discard and offer a retry.
+            webViewRef.current = null;
+            canGoBackRef.current = false;
+            webCanHandleBackRef.current = false;
+            syncBackIntercept();
+            setWebViewAvailable(false);
+            setLoadError(
+              "iOS stopped the WebView content process to reclaim resources. Retry to create a fresh one."
+            );
           }}
           javaScriptEnabled
           domStorageEnabled

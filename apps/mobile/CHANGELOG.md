@@ -1,10 +1,15 @@
 # Changelog
 
-All notable changes to the Cesium native Android app (`@cesium/mobile`) are documented here.
+All notable changes to the Cesium native mobile apps (`@cesium/mobile`) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases are tagged as `mobile-vX.Y.Z` on GitHub.
 
 ## [Unreleased]
+
+### Added
+
+- Native iOS app (React Native 0.86, `apps/mobile/ios`): the same shared shell (`src/App.tsx`) now runs on iOS. WKWebView loads the identical bundled workbench folder the APK ships (referenced straight from the Android assets copy, so both platforms stay pixel-identical per release), the bridge protocol is unchanged (it already listened on both `window` and `document`), and a new `CesiumIOSRuntime` native module supplies the bundled-workbench file URL, the `.app` read-access root, and safe-area insets. Android-only capabilities (Live Updates, predictive back, phone control, Wear companion, share intake) degrade gracefully through their existing platform guards. iOS defaults to `http://localhost:9100` (simulator shares the host network); WebKit content-process termination gets the same retry surface as an Android renderer crash.
+- Mobile iOS CI (`mobile-ios-ci.yml`): macOS runner builds the unsigned Release simulator app with CocoaPods + xcodebuild, boots an iPhone simulator, starts a real Bun backend on the runner, launches Cesium, asserts the process stays alive, and uploads a workbench screenshot plus the zipped `.app` as artifacts.
 
 ## [0.5.0] - 2026-08-17
 

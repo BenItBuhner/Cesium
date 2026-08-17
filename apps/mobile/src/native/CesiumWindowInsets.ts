@@ -14,6 +14,16 @@ const nativeModule = NativeModules.CesiumWindowInsets as CesiumWindowInsetsModul
 
 export const CesiumWindowInsets = {
   async getInsets(): Promise<WindowInsetsSnapshot> {
+    if (Platform.OS === "ios") {
+      // The iOS shell reports safe-area insets from its own runtime module.
+      // Imported lazily to keep this module dependency-free on Android.
+      const { CesiumIOSRuntime } = await import("./CesiumIOSRuntime");
+      try {
+        return await CesiumIOSRuntime.getInsets();
+      } catch {
+        return fallbackInsets();
+      }
+    }
     if (Platform.OS !== "android" || !nativeModule) {
       return fallbackInsets();
     }
