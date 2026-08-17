@@ -1,11 +1,25 @@
 import type { ChatScrollAnchor } from "@/lib/workspace-session";
 
+/**
+ * A `position: sticky` user header reports its pinned rect while stuck, not its flow position.
+ * Inside a virtualized thread the header sits at the very top of its row wrapper
+ * (`[data-index]`), which never sticks, so the row's rect is an exact flow-position proxy.
+ * Outside virtual rows (short threads) fall back to the element itself; its stuck offset is
+ * bounded by the scripted push-off there.
+ */
+function flowPositionElementFor(el: Element): Element {
+  if (!(el instanceof HTMLElement) || el.dataset.chatStickyHeader == null) {
+    return el;
+  }
+  return el.closest("[data-index]") ?? el;
+}
+
 export function contentTopOfElementInScrollRoot(
   el: Element,
   scrollRoot: HTMLElement
 ): number {
   const rootRect = scrollRoot.getBoundingClientRect();
-  const elRect = el.getBoundingClientRect();
+  const elRect = flowPositionElementFor(el).getBoundingClientRect();
   return elRect.top - rootRect.top + scrollRoot.scrollTop;
 }
 
@@ -16,18 +30,11 @@ function selectorForChatMessageId(id: string): string {
   return `[data-chat-message-id="${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
 }
 
-/**
- * Virtual sticky headers duplicate the active user message id outside the measured row.
- * Prefer the copy inside a virtual row so navigation resolves to the turn's real content offset.
- */
 export function findChatMessageElement(
   scrollRoot: HTMLElement,
   messageId: string
 ): HTMLElement | null {
-  const matches = Array.from(
-    scrollRoot.querySelectorAll<HTMLElement>(selectorForChatMessageId(messageId))
-  );
-  return matches.find((element) => element.closest("[data-index]")) ?? matches[0] ?? null;
+  return scrollRoot.querySelector<HTMLElement>(selectorForChatMessageId(messageId));
 }
 
 /**
