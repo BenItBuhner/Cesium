@@ -480,7 +480,7 @@ export function ExtensionSurfaceFrame({
       {socketStatus === "polling" ? (
         <div
           title="Realtime connection lost — running on polling fallback"
-          className="absolute left-[8px] top-[8px] z-10 inline-flex items-center gap-[4px] rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[6px] py-[2px] font-sans text-[10px] text-[var(--warning,#fbbf24)]"
+          className="absolute left-[8px] top-[8px] z-10 inline-flex items-center gap-[4px] rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[6px] py-[2px] font-sans text-[10px] text-[var(--status-warning)]"
         >
           <WifiOff size={10} />
           fallback

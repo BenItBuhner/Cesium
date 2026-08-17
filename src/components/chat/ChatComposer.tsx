@@ -3711,7 +3711,7 @@ const handleNativeComposerKeyDown = useCallback(
         ) : pendingVoiceRecording ? (
           <RotateCcw
             className={`size-[14px] shrink-0 ${
-              isPrimary ? primaryIconClassName : "text-amber-500"
+              isPrimary ? primaryIconClassName : "text-[var(--status-warning)]"
             }`}
             strokeWidth={1.75}
             aria-hidden

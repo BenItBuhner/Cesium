@@ -195,7 +195,7 @@ export function BackendDropdown({
                   <div
                     title={detail}
                     className={`flex w-full items-center gap-[4px] px-[8px] py-[2px] transition-colors ${
-                      unavailable ? "opacity-55" : "hover:bg-white/[0.06]"
+                      unavailable ? "opacity-55" : "hover:bg-[var(--accent-bg)]"
                     }`}
                   >
                     <button

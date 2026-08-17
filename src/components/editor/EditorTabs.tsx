@@ -488,7 +488,7 @@ export function EditorTabs({
                     e.stopPropagation();
                     onTabGroupContextMenu?.(e, g.id);
                   }}
-                  className={`flex shrink-0 items-center gap-[4px] rounded-l-[var(--radius-tab)] px-[8px] font-sans text-[12px] transition-colors hover:bg-white/[0.06] ${
+                  className={`flex shrink-0 items-center gap-[4px] rounded-l-[var(--radius-tab)] px-[8px] font-sans text-[12px] transition-colors hover:bg-[var(--accent-bg)] ${
                     groupActive ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
                   }`}
                   aria-expanded={!g.collapsed}
@@ -562,7 +562,7 @@ export function EditorTabs({
                 onOpenFilePalette();
                 closeAddMenu();
               }}
-              className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+              className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               aria-label="Open file"
             >
               <Plus className="size-[18px]" strokeWidth={1.5} aria-hidden />
@@ -571,7 +571,7 @@ export function EditorTabs({
               <button
                 type="button"
                 onClick={() => setAddMenuOpen((o) => !o)}
-                className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+                className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                 aria-label="More new tab options"
                 aria-expanded={addMenuOpen}
                 aria-haspopup="menu"
@@ -585,7 +585,7 @@ export function EditorTabs({
           <button
             type="button"
             onClick={splitActive ? onJoinGroups : onSplitRight}
-            className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+            className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             aria-label={splitActive ? "Join editor groups" : "Split editor to the right"}
             aria-pressed={splitActive}
           >
@@ -597,7 +597,7 @@ export function EditorTabs({
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
-            className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+            className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             aria-label="Editor group actions"
             aria-expanded={menuOpen}
             aria-haspopup="menu"

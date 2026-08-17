@@ -280,7 +280,7 @@ export function MobileShareIntake() {
         </div>
 
         {error ? (
-          <div className="border-b border-[var(--border-subtle)] px-[16px] py-[8px] text-[12px] text-red-400">
+          <div className="border-b border-[var(--border-subtle)] px-[16px] py-[8px] text-[12px] text-[var(--status-error)]">
             {error}
           </div>
         ) : null}

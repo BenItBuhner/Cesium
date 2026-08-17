@@ -253,7 +253,7 @@ function renderInline(text: string): ReactNode[] {
             href={linkMatch[2]}
             target="_blank"
             rel="noreferrer"
-            className="text-[var(--accent-text)] underline decoration-[color-mix(in_srgb,var(--accent-text)_40%,transparent)] underline-offset-[3px]"
+            className="text-[var(--accent)] underline decoration-[color-mix(in_srgb,var(--accent)_40%,transparent)] underline-offset-[3px]"
           >
             {renderInline(linkMatch[1])}
           </a>

@@ -87,7 +87,7 @@ function ReleaseRow({
         <>
           {release.prerelease ? <span className={tagClass}>pre-release</span> : null}
           {isNewer ? (
-            <span className={`${tagClass} text-[var(--accent-strong)]`}>
+            <span className={`${tagClass} text-[var(--accent)]`}>
               update available
             </span>
           ) : null}
@@ -363,7 +363,7 @@ export function UpdatesSettingsPanel() {
               <span
                 className={`font-sans text-[12px] ${
                   status.git.updateAvailable
-                    ? "text-[var(--accent-strong)]"
+                    ? "text-[var(--accent)]"
                     : "text-[var(--text-secondary)]"
                 }`}
               >
@@ -395,7 +395,7 @@ export function UpdatesSettingsPanel() {
               <span
                 className={`font-sans text-[12px] ${
                   status.npm.updateAvailable
-                    ? "text-[var(--accent-strong)]"
+                    ? "text-[var(--accent)]"
                     : "text-[var(--text-secondary)]"
                 }`}
               >

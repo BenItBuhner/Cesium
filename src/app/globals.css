@@ -127,6 +127,11 @@
 :root {
   /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
   --editor-window-chrome-tab-inset: 72px;
+  /*
+   * `--text-tertiary` is only overridden by the dark Aurora glass surface
+   * (below); alias it to a real token here so usages resolve on every theme.
+   */
+  --text-tertiary: var(--text-disabled);
 }
 
 * {

@@ -390,7 +390,7 @@ export function StorageSettingsPanel() {
             {progressPercent !== null ? (
               <div className="mt-[8px] h-[4px] w-full overflow-hidden rounded-full bg-[var(--border-subtle)]">
                 <div
-                  className="h-full bg-[var(--accent-strong)] transition-[width]"
+                  className="h-full bg-[var(--accent)] transition-[width]"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>

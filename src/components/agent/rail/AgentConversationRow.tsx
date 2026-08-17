@@ -30,7 +30,7 @@ import { integrationIconLabel } from "@/lib/integration-icons";
 
 const DETAIL_TONE_CLASSES: Record<AgentRailStatusInfo["tone"], string> = {
   attention: "text-[var(--plan-accent)]",
-  error: "text-red-400",
+  error: "text-[var(--status-error)]",
   active: "text-[var(--text-secondary)]",
   accent: "text-[var(--text-secondary)]",
   muted: "text-[var(--text-disabled)]",
@@ -60,7 +60,7 @@ function ConversationStatusGlyph({
       statusInfo.kind === "permission" || statusInfo.kind === "question"
         ? "bg-[var(--plan-accent)]"
         : statusInfo.kind === "failed"
-          ? "bg-red-400"
+          ? "bg-[var(--status-error)]"
           : selected
             ? "bg-[var(--text-primary)]"
             : "bg-[var(--text-disabled)]";
@@ -90,7 +90,7 @@ function ConversationStatusGlyph({
     case "failed":
       return (
         <CircleAlert
-          className="size-[14px] shrink-0 text-red-400"
+          className="size-[14px] shrink-0 text-[var(--status-error)]"
           strokeWidth={1.8}
           aria-hidden
         />
