@@ -6,7 +6,6 @@ export type LiveUpdatePayload = {
   workspaceId?: string | null;
   conversationId?: string | null;
   startedAt?: number | null;
-  estimatedCompletionAt?: number | null;
   progressKind: "todo" | "goal" | "indeterminate" | "terminal";
   progressLabel?: string | null;
   progress?: number;
@@ -16,7 +15,6 @@ export type LiveUpdatePayload = {
   todoTotal?: number;
   todoCurrentIndex?: number | null;
   goalProgressPercent?: number;
-  estimatedRemainingSeconds?: number | null;
   intervention?: "permission" | "question" | null;
   ongoing?: boolean;
   cancellable?: boolean;

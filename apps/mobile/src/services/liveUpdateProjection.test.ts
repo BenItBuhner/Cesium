@@ -22,7 +22,7 @@ const baseProjection: MobileAgentProjection = {
   goalProgress: null,
 };
 
-test("maps todo progress and estimated completion", () => {
+test("todo runs surface the completed/total fraction and never an ETA", () => {
   const payload = toLiveUpdatePayload({
     ...baseProjection,
     todoProgress: {
@@ -42,9 +42,35 @@ test("maps todo progress and estimated completion", () => {
   assert.equal(payload.progress, 1);
   assert.equal(payload.progressMax, 4);
   assert.equal(payload.progressLabel, "1/4");
-  assert.equal(payload.estimatedCompletionAt, 240_000);
-  assert.equal(payload.body, "Implement notifications · ~3m left");
+  assert.equal(payload.shortText, "1/4");
+  // Even with a derived estimate available, todo payloads carry no ETA:
+  // the chip shows the fraction and the chronometer counts up.
+  assert.equal("estimatedCompletionAt" in payload, false);
+  assert.equal(payload.body, "Implement notifications");
   assert.equal(payload.promote, true);
+});
+
+test("pending intervention outranks the todo fraction in the chip", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "awaiting_permission",
+    pendingIntervention: "permission",
+    todoProgress: {
+      total: 4,
+      completed: 1,
+      blocked: 0,
+      pending: 2,
+      inProgress: 1,
+      currentIndex: 2,
+      percent: 25,
+      estimatedRemainingMs: null,
+      estimatedCompletionAt: null,
+    },
+  });
+
+  assert.equal(payload.progressKind, "todo");
+  assert.equal(payload.shortText, "INPUT");
+  assert.equal(payload.progressLabel, "1/4");
 });
 
 test("prioritizes Goal percentage over todo progress", () => {
@@ -74,7 +100,11 @@ test("prioritizes Goal percentage over todo progress", () => {
   assert.equal(payload.progress, 62);
   assert.equal(payload.progressMax, 100);
   assert.equal(payload.progressLabel, "62%");
+  assert.equal(payload.shortText, "62%");
+  // The remaining-time hint stays in the body for goals, but no ETA field
+  // is sent for the notification chip to count down against.
   assert.equal(payload.body, "Goal verification · ~2m left");
+  assert.equal("estimatedCompletionAt" in payload, false);
 });
 
 test("uses an indeterminate Live Update before structured progress exists", () => {

@@ -85,7 +85,6 @@ object CesiumAgentNotification {
     val progress = extras.getInt("progress", 0)
     val indeterminate = extras.getBoolean("indeterminate", true)
     val startedAt = extras.getLong("startedAt", System.currentTimeMillis())
-    val estimatedCompletionAt = extras.getLong("estimatedCompletionAt", 0L)
     val ongoing = extras.getBoolean("ongoing", true)
     val alert = extras.getBoolean("alert", false)
     val requestPromotion = extras.getBoolean("promote", false) && ongoing
@@ -116,9 +115,7 @@ object CesiumAgentNotification {
     val chip = resolveChipPresentation(
       shortText = shortText,
       startedAt = startedAt,
-      estimatedCompletionAt = estimatedCompletionAt,
-      ongoing = ongoing,
-      now = System.currentTimeMillis()
+      ongoing = ongoing
     )
 
     if (Build.VERSION.SDK_INT >= 36) {
@@ -143,12 +140,7 @@ object CesiumAgentNotification {
       }
     }
 
-    if (chip.countdownTo != null && Build.VERSION.SDK_INT >= 24) {
-      builder
-        .setWhen(chip.countdownTo)
-        .setUsesChronometer(true)
-        .setChronometerCountDown(true)
-    } else if (chip.countUpFrom != null) {
+    if (chip.countUpFrom != null) {
       builder
         .setWhen(chip.countUpFrom)
         .setUsesChronometer(true)
@@ -329,49 +321,34 @@ object CesiumAgentNotification {
   private const val MAX_PROGRESS_SEGMENTS = 100
 }
 
-internal const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
-
 /**
- * What occupies the status-bar chip of a promoted live update. Exactly one
- * time source is active (a countdown to the ETA, or elapsed time since the
- * run started), and short critical text is set whenever no countdown owns
- * the chip — previously any ETA (even one below the countdown floor)
- * suppressed the text, leaving an icon-only chip.
+ * What occupies the status-bar chip of a promoted live update. Concrete
+ * progress text (todo fraction "3/7", goal percent, or a status word like
+ * DONE/INPUT) always owns the chip when present; the elapsed-time
+ * chronometer is only the fallback face for runs with nothing better to
+ * show. ETA countdowns were removed on purpose: extrapolated completion
+ * times for volatile todo lists were wrong often enough to be noise.
  */
 internal data class CesiumChipPresentation(
-  /** Chronometer counting down to the estimated completion time. */
-  val countdownTo: Long?,
   /** Elapsed-time chronometer anchored at the run start. */
   val countUpFrom: Long?,
-  /** Status-bar chip text; null while a countdown occupies the chip. */
+  /** Status-bar chip text; shown in preference to the chronometer. */
   val shortCriticalText: String?
 )
 
 internal fun resolveChipPresentation(
   shortText: String?,
   startedAt: Long,
-  estimatedCompletionAt: Long,
-  ongoing: Boolean,
-  now: Long
+  ongoing: Boolean
 ): CesiumChipPresentation {
   val text = shortText?.takeIf { it.isNotBlank() }
-  if (estimatedCompletionAt >= now + MIN_COUNTDOWN_MS) {
-    // The countdown owns the chip; short critical text would override it.
-    return CesiumChipPresentation(
-      countdownTo = estimatedCompletionAt,
-      countUpFrom = null,
-      shortCriticalText = null
-    )
-  }
   if (ongoing && startedAt > 0L) {
     return CesiumChipPresentation(
-      countdownTo = null,
       countUpFrom = startedAt,
       shortCriticalText = text
     )
   }
   return CesiumChipPresentation(
-    countdownTo = null,
     countUpFrom = null,
     shortCriticalText = text
   )

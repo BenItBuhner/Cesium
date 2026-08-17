@@ -39,8 +39,19 @@ export function toLiveUpdatePayload(
     };
   }
 
+  // Important run states (needs input / review) outrank routine progress
+  // text in the status chip so the user sees "INPUT" instead of "3/7" the
+  // moment an agent is waiting on them.
+  const statusChip =
+    projection.pendingIntervention == null
+      ? null
+      : getMobileNotificationChip(projection.status);
+
   const goal = projection.goalProgress;
   if (goal) {
+    // Goals keep a soft "~5m left" hint in the body text: goal percent moves
+    // steadily enough that the extrapolation is meaningful there. It is
+    // deliberately NOT a live countdown chip anymore.
     const remaining = formatRemainingTime(goal.estimatedRemainingMs);
     return {
       runKey,
@@ -49,18 +60,16 @@ export function toLiveUpdatePayload(
         goal.headline || projection.currentActivity || "Goal is running",
         remaining
       ),
-      shortText: `${goal.percent}%`,
+      shortText: statusChip ?? `${goal.percent}%`,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
-      estimatedCompletionAt: goal.estimatedCompletionAt,
       progressKind: "goal",
       progressLabel: `${goal.percent}%`,
       progress: goal.percent,
       progressMax: 100,
       indeterminate: false,
       goalProgressPercent: goal.percent,
-      estimatedRemainingSeconds: toRemainingSeconds(goal.estimatedRemainingMs),
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
@@ -70,20 +79,19 @@ export function toLiveUpdatePayload(
 
   const todo = projection.todoProgress;
   if (todo) {
+    // Todo lists are too volatile to estimate, so no ETA anywhere: the chip
+    // shows the completed/total fraction and the chronometer counts up.
     const progressLabel = `${todo.completed}/${todo.total}`;
-    const remaining = formatRemainingTime(todo.estimatedRemainingMs);
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: withRemainingTime(
-        projection.currentActivity || `Task ${todo.currentIndex ?? todo.completed + 1}`,
-        remaining
-      ),
-      shortText: progressLabel,
+      body:
+        projection.currentActivity ||
+        `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
+      shortText: statusChip ?? progressLabel,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
-      estimatedCompletionAt: todo.estimatedCompletionAt,
       progressKind: "todo",
       progressLabel,
       progress: todo.completed,
@@ -92,7 +100,6 @@ export function toLiveUpdatePayload(
       todoCompleted: todo.completed,
       todoTotal: todo.total,
       todoCurrentIndex: todo.currentIndex,
-      estimatedRemainingSeconds: toRemainingSeconds(todo.estimatedRemainingMs),
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
@@ -104,10 +111,7 @@ export function toLiveUpdatePayload(
     runKey,
     title: projection.title || "Cesium agent",
     body: projection.currentActivity || "Agent is working",
-    shortText:
-      projection.pendingIntervention == null
-        ? null
-        : getMobileNotificationChip(projection.status),
+    shortText: statusChip,
     workspaceId: projection.workspaceId,
     conversationId: projection.conversationId,
     startedAt: projection.startedAt,
@@ -138,10 +142,6 @@ function terminalLabel(status: MobileAgentProjection["status"]): string {
     default:
       return "Agent run ended";
   }
-}
-
-function toRemainingSeconds(value: number | null): number | null {
-  return value == null ? null : Math.max(0, Math.round(value / 1000));
 }
 
 function formatRemainingTime(value: number | null): string | null {
