@@ -15,6 +15,8 @@
 export const BACK_INTENT_PRIORITY = {
   /** Modals, palettes, dialogs, dropdowns — anything rendered on top of everything. */
   overlay: 100,
+  /** Mobile settings-nav drawer (rides on top of the full-screen settings view). */
+  settingsNav: 45,
   /** Full-screen settings view. */
   settings: 40,
   /** Mobile left workspace-rail drawer (a modal overlay with a full backdrop). */
