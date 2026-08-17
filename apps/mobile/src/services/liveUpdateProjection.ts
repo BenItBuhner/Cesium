@@ -3,7 +3,7 @@ import {
   isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@cesium/core";
-import type { LiveUpdatePayload } from "./liveUpdateTypes";
+import type { LiveUpdateEtaMode, LiveUpdatePayload } from "./liveUpdateTypes";
 
 /**
  * Stable identity for a single agent run: one conversation can host many
@@ -13,9 +13,21 @@ export function getLiveUpdateRunKey(projection: MobileAgentProjection): string {
   return `${projection.conversationId}:${projection.startedAt ?? projection.updatedAt}`;
 }
 
+export type LiveUpdatePayloadOptions = {
+  /**
+   * Which progress kinds may carry a time estimate. Defaults to "goal":
+   * goal runs are long enough for an ETA to mean something, while todo
+   * estimates extrapolate wildly across tasks of uneven complexity — those
+   * runs show their todo progression instead.
+   */
+  etaMode?: LiveUpdateEtaMode;
+};
+
 export function toLiveUpdatePayload(
-  projection: MobileAgentProjection
+  projection: MobileAgentProjection,
+  options: LiveUpdatePayloadOptions = {}
 ): LiveUpdatePayload {
+  const etaMode = options.etaMode ?? "goal";
   const active = isMobileAgentRunActive(projection.status);
   const runKey = getLiveUpdateRunKey(projection);
   if (!active) {
@@ -41,7 +53,11 @@ export function toLiveUpdatePayload(
 
   const goal = projection.goalProgress;
   if (goal) {
-    const remaining = formatRemainingTime(goal.estimatedRemainingMs);
+    // Goals are long-running; their ETA carries signal (unless disabled).
+    const includeEta = etaMode !== "off";
+    const remaining = includeEta
+      ? formatRemainingTime(goal.estimatedRemainingMs)
+      : null;
     return {
       runKey,
       title: projection.title || "Cesium agent",
@@ -53,14 +69,16 @@ export function toLiveUpdatePayload(
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
-      estimatedCompletionAt: goal.estimatedCompletionAt,
+      estimatedCompletionAt: includeEta ? goal.estimatedCompletionAt : null,
       progressKind: "goal",
       progressLabel: `${goal.percent}%`,
       progress: goal.percent,
       progressMax: 100,
       indeterminate: false,
       goalProgressPercent: goal.percent,
-      estimatedRemainingSeconds: toRemainingSeconds(goal.estimatedRemainingMs),
+      estimatedRemainingSeconds: includeEta
+        ? toRemainingSeconds(goal.estimatedRemainingMs)
+        : null,
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
@@ -71,7 +89,14 @@ export function toLiveUpdatePayload(
   const todo = projection.todoProgress;
   if (todo) {
     const progressLabel = `${todo.completed}/${todo.total}`;
-    const remaining = formatRemainingTime(todo.estimatedRemainingMs);
+    // Todo estimates extrapolate across tasks of wildly uneven complexity —
+    // by default the notification shows the todo progression, not an ETA.
+    // Without estimatedCompletionAt the native chip falls back to the
+    // "completed/total" text plus the elapsed count-up chronometer.
+    const includeEta = etaMode === "always";
+    const remaining = includeEta
+      ? formatRemainingTime(todo.estimatedRemainingMs)
+      : null;
     return {
       runKey,
       title: projection.title || "Cesium agent",
@@ -83,7 +108,7 @@ export function toLiveUpdatePayload(
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
-      estimatedCompletionAt: todo.estimatedCompletionAt,
+      estimatedCompletionAt: includeEta ? todo.estimatedCompletionAt : null,
       progressKind: "todo",
       progressLabel,
       progress: todo.completed,
@@ -92,7 +117,9 @@ export function toLiveUpdatePayload(
       todoCompleted: todo.completed,
       todoTotal: todo.total,
       todoCurrentIndex: todo.currentIndex,
-      estimatedRemainingSeconds: toRemainingSeconds(todo.estimatedRemainingMs),
+      estimatedRemainingSeconds: includeEta
+        ? toRemainingSeconds(todo.estimatedRemainingMs)
+        : null,
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,
