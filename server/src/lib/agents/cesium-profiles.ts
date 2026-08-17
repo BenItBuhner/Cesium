@@ -278,7 +278,10 @@ const PERMISSION_OVERRIDE_CATEGORIES: readonly AgentPermissionCategory[] = [
   "switchMode",
 ];
 
-function normalizeToolAllowlist(raw: unknown): "all" | string[] {
+function normalizeToolAllowlist(
+  raw: unknown,
+  additionalKnownTools: ReadonlySet<string>
+): "all" | string[] {
   if (raw === "all") {
     return "all";
   }
@@ -288,7 +291,10 @@ function normalizeToolAllowlist(raw: unknown): "all" | string[] {
   const seen = new Set<string>();
   for (const entry of raw) {
     const name = asTrimmedString(entry);
-    if (name && CESIUM_KNOWN_PROFILE_TOOLS.has(name)) {
+    if (
+      name &&
+      (CESIUM_KNOWN_PROFILE_TOOLS.has(name) || additionalKnownTools.has(name))
+    ) {
       seen.add(name);
     }
   }
@@ -316,7 +322,10 @@ function normalizeMcpServerAllowlist(raw: unknown): "all" | string[] {
  * Normalize one persisted custom profile. Returns null when the record is
  * unusable (missing id/name or shadowing a built-in id).
  */
-export function normalizeCesiumProfile(raw: unknown): CesiumAgentProfile | null {
+export function normalizeCesiumProfile(
+  raw: unknown,
+  additionalKnownTools: readonly string[] = []
+): CesiumAgentProfile | null {
   const record = asRecord(raw);
   const id = asTrimmedString(record?.id);
   const name = asTrimmedString(record?.name);
@@ -351,21 +360,24 @@ export function normalizeCesiumProfile(raw: unknown): CesiumAgentProfile | null 
       customInstructions: rawInstructions.slice(0, MAX_PROFILE_INSTRUCTIONS_CHARS),
     },
     tools: {
-      allowed: normalizeToolAllowlist(tools?.allowed),
+      allowed: normalizeToolAllowlist(tools?.allowed, new Set(additionalKnownTools)),
       mcpServers: normalizeMcpServerAllowlist(tools?.mcpServers),
     },
     permissionOverrides,
   };
 }
 
-export function normalizeCesiumProfiles(raw: unknown): CesiumAgentProfile[] {
+export function normalizeCesiumProfiles(
+  raw: unknown,
+  additionalKnownTools: readonly string[] = []
+): CesiumAgentProfile[] {
   if (!Array.isArray(raw)) {
     return [];
   }
   const seenIds = new Set<string>();
   const profiles: CesiumAgentProfile[] = [];
   for (const entry of raw) {
-    const profile = normalizeCesiumProfile(entry);
+    const profile = normalizeCesiumProfile(entry, additionalKnownTools);
     if (!profile || seenIds.has(profile.id)) {
       continue;
     }

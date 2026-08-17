@@ -449,7 +449,14 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     orchestration?: Record<string, unknown>;
     modes?: { enabled?: Record<string, boolean> };
     harness?: {
-      features?: Record<string, { version?: number | string }>;
+      features?: Record<
+        string,
+        {
+          version?: number | string;
+          enabled?: boolean;
+          config?: Record<string, unknown>;
+        }
+      >;
       limits?: Record<string, unknown>;
     };
     toolPermissions?: Record<string, unknown>;
@@ -494,7 +501,14 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(body.harness
       ? {
           harness: body.harness as {
-            features?: Record<string, { version?: number | string }>;
+            features?: Record<
+              string,
+              {
+                version?: number | string;
+                enabled?: boolean;
+                config?: Record<string, unknown>;
+              }
+            >;
             limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
           },
         }

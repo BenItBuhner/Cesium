@@ -2239,19 +2239,54 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
-            <SettingsSubsectionHeading>Harness features</SettingsSubsectionHeading>
+            <SettingsSubsectionHeading>Harness plugins</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-              Registered feature layers can contribute versioned tools and prompt behavior without
-              changing the core turn loop.
+              Versioned plugins can contribute tools, prompts, lifecycle hooks, and model or tool
+              middleware without changing the core turn loop.
             </p>
             <div className="mt-[12px] grid gap-[12px]">
-              {settings.harnessCatalog.map((feature) => (
-                <label key={feature.id} className="flex flex-col gap-[5px]">
-                  <SettingsFieldLabel>{feature.label} implementation</SettingsFieldLabel>
+              {settings.harnessCatalog.map((feature) => {
+                const selection = settings.harness.features[feature.id];
+                const enabled = selection?.enabled ?? feature.enabledByDefault;
+                return (
+                <div
+                  key={feature.id}
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-[10px]"
+                >
+                  <label className="flex items-start justify-between gap-[12px]">
+                    <span>
+                      <SettingsFieldLabel>{feature.label}</SettingsFieldLabel>
+                      <span className="mt-[2px] block font-mono text-[10px] text-[var(--text-tertiary)]">
+                        {feature.id} · API v{feature.apiVersion ?? 1} · {feature.failureMode}
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={busy}
+                      onChange={(event) =>
+                        void patchSettings({
+                          harness: {
+                            features: {
+                              ...settings.harness.features,
+                              [feature.id]: {
+                                version: selection?.version ?? feature.defaultVersion,
+                                enabled: event.target.checked,
+                                ...(selection?.config ? { config: selection.config } : {}),
+                              },
+                            },
+                            limits: { ...settings.harness.limits },
+                          },
+                        })
+                      }
+                      aria-label={`Enable ${feature.label} harness plugin`}
+                    />
+                  </label>
+                  <label className="mt-[8px] flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>Implementation</SettingsFieldLabel>
                   <SettingsThemeSelect
                     value={String(
-                      settings.harness.features[feature.id]?.version ??
-                        feature.defaultVersion
+                      selection?.version ?? feature.defaultVersion
                     )}
                     options={feature.versions.map((version) => ({
                       value: String(version.version),
@@ -2264,6 +2299,8 @@ function CesiumAgentHarnessSettings() {
                             ...settings.harness.features,
                             [feature.id]: {
                               version: Number(value),
+                              enabled,
+                              ...(selection?.config ? { config: selection.config } : {}),
                             },
                           },
                           limits: {
@@ -2275,14 +2312,86 @@ function CesiumAgentHarnessSettings() {
                     ariaLabel={`${feature.label} implementation`}
                     className="w-full max-w-none"
                     triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
-                    disabled={busy}
+                    disabled={busy || !enabled}
                   />
                   <span className="font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
                     {feature.description}
                   </span>
+                  {feature.dependencies.length > 0 ? (
+                    <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
+                      Requires: {feature.dependencies.join(", ")}
+                    </span>
+                  ) : null}
+                  {feature.toolNames.length > 0 ? (
+                    <span className="font-mono text-[10px] text-[var(--text-tertiary)]">
+                      Tools: {feature.toolNames.join(", ")}
+                    </span>
+                  ) : null}
+                  <SettingsFieldLabel>Configuration (JSON)</SettingsFieldLabel>
+                  <textarea
+                    key={`${feature.id}-${JSON.stringify(selection?.config ?? {})}`}
+                    defaultValue={JSON.stringify(selection?.config ?? {}, null, 2)}
+                    disabled={busy || !enabled}
+                    rows={3}
+                    spellCheck={false}
+                    className="resize-y rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-[9px] py-[7px] font-mono text-[11px] text-[var(--text-primary)]"
+                    onBlur={(event) => {
+                      try {
+                        const parsed = JSON.parse(event.currentTarget.value) as unknown;
+                        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                          throw new Error("Configuration must be a JSON object.");
+                        }
+                        event.currentTarget.setCustomValidity("");
+                        void patchSettings({
+                          harness: {
+                            features: {
+                              ...settings.harness.features,
+                              [feature.id]: {
+                                version: selection?.version ?? feature.defaultVersion,
+                                enabled,
+                                config: parsed as Record<string, unknown>,
+                              },
+                            },
+                            limits: { ...settings.harness.limits },
+                          },
+                        });
+                      } catch {
+                        event.currentTarget.setCustomValidity(
+                          "Enter a valid JSON object."
+                        );
+                        event.currentTarget.reportValidity();
+                      }
+                    }}
+                  />
                 </label>
-              ))}
+                </div>
+                );
+              })}
               <div className="grid gap-[12px] md:grid-cols-2">
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>Plugin hook timeout (ms)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60000}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.pluginHookTimeoutMs ?? 5000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const pluginHookTimeoutMs = Number(event.target.value);
+                      if (!Number.isFinite(pluginHookTimeoutMs)) return;
+                      void patchSettings({
+                        harness: {
+                          features: { ...(settings.harness?.features ?? {}) },
+                          limits: {
+                            ...(settings.harness?.limits ?? {}),
+                            pluginHookTimeoutMs,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
                 <label className="flex flex-col gap-[5px]">
                   <SettingsFieldLabel>Wait tool max (seconds)</SettingsFieldLabel>
                   <input

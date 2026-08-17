@@ -2274,12 +2274,22 @@ export type CesiumAgentSettingsPayload = {
     description: string;
   }>;
   harness: {
-    features: Record<string, { version: number }> & {
+    features: Record<
+      string,
+      {
+        version: number;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      }
+    > & {
       subagents: {
         version: 1 | 2;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
       };
     };
     limits: {
+      pluginHookTimeoutMs: number;
       waitMaxSeconds: number;
       waitAgentDefaultTimeoutMs: number;
       waitAgentMinTimeoutMs: number;
@@ -2292,6 +2302,13 @@ export type CesiumAgentSettingsPayload = {
     label: string;
     description: string;
     defaultVersion: number;
+    apiVersion?: 1;
+    enabledByDefault: boolean;
+    priority: number;
+    dependencies: string[];
+    optionalDependencies: string[];
+    failureMode: "isolate" | "fatal";
+    toolNames: string[];
     versions: Array<{
       version: number;
       label: string;

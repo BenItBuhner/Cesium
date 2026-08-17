@@ -1004,7 +1004,13 @@ export function googleTools(tools?: CesiumToolDefinition[]) {
   ];
 }
 
-export function toolKind(name: string): string {
+export function toolKind(
+  name: string,
+  definition?: CesiumToolDefinition
+): string {
+  if (definition?.kind?.trim()) {
+    return definition.kind.trim();
+  }
   switch (name) {
     case "read_file":
       return "read";
@@ -1131,7 +1137,17 @@ export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory)
   }
 }
 
-export function toolTitle(name: string, args: Record<string, unknown>): string {
+export function toolTitle(
+  name: string,
+  args: Record<string, unknown>,
+  definition?: CesiumToolDefinition
+): string {
+  if (typeof definition?.title === "function") {
+    return definition.title(args);
+  }
+  if (typeof definition?.title === "string" && definition.title.trim()) {
+    return definition.title.trim();
+  }
   switch (name) {
     case "read_file":
       return `Read ${asString(args.path) ?? "file"}`;

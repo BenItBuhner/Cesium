@@ -8,8 +8,10 @@ import {
 } from "./persistence.js";
 import type { AgentConfigOption, AgentPermissionCategory } from "./agents/types.js";
 import {
+  CESIUM_FEATURE_REGISTRY,
   defaultHarnessSettings,
   getCesiumFeatureCatalog,
+  loadCesiumHarnessPluginModulesFromEnv,
   mergeHarnessSettings,
   normalizeHarnessSettings,
   type CesiumHarnessSettings,
@@ -798,7 +800,10 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
   const compression = asRecord(record.compression);
   const orchestration = asRecord(record.orchestration);
   const toolPermissions = asRecord(record.toolPermissions);
-  const profiles = normalizeCesiumProfiles(record.profiles);
+  const profiles = normalizeCesiumProfiles(
+    record.profiles,
+    getCesiumFeatureCatalog().flatMap((plugin) => plugin.toolNames)
+  );
   return {
     schemaVersion: 1,
     updatedAt: asNumber(record.updatedAt) ?? defaults.updatedAt,
@@ -959,6 +964,10 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
 }
 
 export async function getCesiumAgentSettings(): Promise<CesiumAgentSettings> {
+  await loadCesiumHarnessPluginModulesFromEnv(
+    CESIUM_FEATURE_REGISTRY,
+    process.env.WORKSPACE_ROOT?.trim() || process.cwd()
+  );
   return normalizeSettings(await readJsonFile<unknown>(SETTINGS_FILE, null));
 }
 
@@ -1092,8 +1101,19 @@ export async function patchCesiumAgentSettings(input: {
     enabled?: Partial<Record<CesiumModeId, boolean>>;
   };
   harness?: {
-    features?: Record<string, { version?: number | string } | undefined> & {
-      subagents?: { version?: CesiumSubagentsVersion | number | string };
+    features?: Record<
+      string,
+      {
+        version?: number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      } | undefined
+    > & {
+      subagents?: {
+        version?: CesiumSubagentsVersion | number | string;
+        enabled?: boolean;
+        config?: Record<string, unknown>;
+      };
     };
     limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
   };
