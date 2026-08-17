@@ -89,17 +89,24 @@ jobs:
         working-directory: apps/mobile
         run: node scripts/run-xcodebuild.mjs --configuration Release
 
-      - name: Start Cesium backend (Bun) on the runner
+      - name: Start Cesium backend (Bun) and mock LLM provider on the runner
         id: backend
         continue-on-error: true
         run: |
           curl -fsSL https://bun.sh/install | bash
           export PATH="$HOME/.bun/bin:$PATH"
+          # Deterministic OpenAI-compatible provider so the agent chat pipeline
+          # can be asserted end-to-end without real credentials.
+          nohup node apps/mobile/scripts/mock-openai-provider.mjs > "$RUNNER_TEMP/mock-openai.log" 2>&1 &
           mkdir -p "$RUNNER_TEMP/cesium-data"
           (
             cd server
             OPENCURSOR_DATA_DIR="$RUNNER_TEMP/cesium-data" \
             WORKSPACE_ROOT="$GITHUB_WORKSPACE" \
+            CESIUM_BASE_URL="http://127.0.0.1:8123/v1" \
+            CESIUM_API_KEY="sk-mock-ci" \
+            CESIUM_DEFAULT_MODEL="kimi-k3" \
+            CESIUM_PROVIDER_ID="mock" \
             nohup bun src/runtime/bun-server.ts > "$RUNNER_TEMP/cesium-server.log" 2>&1 &
           )
           for _ in $(seq 1 30); do
@@ -168,6 +175,51 @@ jobs:
           xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_workbench.png
           echo "Cesium is alive on the simulator (pid $RELAUNCH_PID) after relaunch."
 
+          # --- Agent chat pipeline verification -----------------------------
+          # Drive a real agent run through the server API (the same
+          # create-and-prompt endpoint the composer uses) against the mock LLM
+          # provider, and hard-assert the streamed assistant reply. The app is
+          # foreground while the run streams, so the follow-up screenshot also
+          # shows the workbench receiving the run live over its WebSocket.
+          if curl -fsS http://127.0.0.1:9100/health > /dev/null 2>&1; then
+            WORKSPACE_ID=$(curl -fsS http://127.0.0.1:9100/api/workspaces | jq -r '.workspaces[0].id // empty')
+            if [ -z "$WORKSPACE_ID" ]; then
+              echo "No workspace was bootstrapped by the app; cannot run the chat check." >&2
+              exit 1
+            fi
+            echo "Prompting a mock/kimi-k3 agent run in workspace $WORKSPACE_ID"
+            CID=$(curl -fsS -X POST http://127.0.0.1:9100/api/agents/conversations/create-and-prompt \
+              -H "Content-Type: application/json" \
+              -H "x-opencursor-workspace-id: $WORKSPACE_ID" \
+              -d '{"conversation":{"backendId":"cesium-agent","modelId":"mock/kimi-k3","mode":"agent"},"text":"Reply with exactly the phrase \"Cesium iOS end-to-end PASS\" and nothing else."}' \
+              | jq -r '.snapshot.conversation.id')
+            echo "Conversation: $CID"
+            REPLY=""
+            for _ in $(seq 1 12); do
+              sleep 5
+              REPLY=$(curl -fsS "http://127.0.0.1:9100/api/agents/conversations/$CID" \
+                -H "x-opencursor-workspace-id: $WORKSPACE_ID" \
+                | jq -r '[.snapshot.events[] | select(.kind == "assistant_message_chunk") | (.text // .delta // "")] | join("")')
+              if [ -n "$REPLY" ]; then
+                break
+              fi
+            done
+            echo "Assistant reply: $REPLY"
+            if ! printf '%s' "$REPLY" | grep -q "Cesium iOS end-to-end PASS"; then
+              echo "Agent chat pipeline failed: expected passphrase not found in the reply." >&2
+              tail -n 40 "$RUNNER_TEMP/cesium-server.log" >&2 || true
+              tail -n 20 "$RUNNER_TEMP/mock-openai.log" >&2 || true
+              exit 1
+            fi
+            echo "Agent chat pipeline verified end-to-end (server -> mock provider -> streamed reply)."
+            # Give the workbench a moment to render the live-run updates it
+            # received over WS, then capture the UI state.
+            sleep 10
+            xcrun simctl io "$UDID" screenshot dist/mobile-ios/ios_simulator_chat.png
+          else
+            echo "Backend not healthy; skipping the agent chat verification." >&2
+          fi
+
           # App-side diagnostics for the artifact bundle: RN forwards workbench
           # console warnings (e.g. the WebView diagnostic bridge) into os_log.
           xcrun simctl spawn "$UDID" log show --last 4m \
@@ -182,6 +234,7 @@ jobs:
             "dist/mobile-ios/cesium-mobile-ios-${{ github.event.pull_request.number || 'manual' }}-simulator.zip"
           cp apps/mobile/ios/Podfile.lock dist/mobile-ios/Podfile.lock
           cp "$RUNNER_TEMP/cesium-server.log" dist/mobile-ios/cesium-server.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/mock-openai.log" dist/mobile-ios/mock-openai.log 2>/dev/null || true
 
       - name: Upload iOS artifacts
         uses: actions/upload-artifact@v4
@@ -200,14 +253,16 @@ jobs:
           message: |
             ## Cesium Mobile iOS build
 
-            The unsigned Release simulator app built successfully, and the simulator smoke test passed
-            (app installed, launched, and stayed alive; workbench screenshots captured against a live
-            Bun backend on the runner).
+            The unsigned Release simulator app built successfully, and the simulator smoke test passed:
+            the app installed, launched, and stayed alive against a live Bun backend on the runner, and
+            a full agent chat run (create-and-prompt -> cesium-agent -> mock OpenAI-compatible provider
+            -> streamed assistant reply) was verified end-to-end while the app was foreground.
 
             | Item | Artifact |
             | --- | --- |
             | Simulator app | `cesium-mobile-ios-${{ github.event.pull_request.number }}-simulator.zip` |
             | Workbench screenshot | `ios_simulator_workbench.png` |
+            | Live chat screenshot | `ios_simulator_chat.png` |
             | Pinned pods | `Podfile.lock` |
 
             Download them from the **cesium-mobile-ios** artifact on [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
