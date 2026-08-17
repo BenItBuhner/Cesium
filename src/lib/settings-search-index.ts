@@ -656,7 +656,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
     "actions",
     "actions-pill-work",
     "Background work",
-    "Live pill while agents, cloud tasks, or terminals are running.",
+    "Live pill while other chats, sub-agents, cloud tasks, or terminals are running.",
     ["subagent", "background", "running", "tasks"]
   ),
   section("actions", "presets", "Preset actions", "quick actions presets"),
