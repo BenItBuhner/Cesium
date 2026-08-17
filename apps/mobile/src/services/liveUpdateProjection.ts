@@ -19,10 +19,18 @@ export function toLiveUpdatePayload(
   const active = isMobileAgentRunActive(projection.status);
   const runKey = getLiveUpdateRunKey(projection);
   if (!active) {
+    // Terminal notifications state the outcome plainly. currentActivity is
+    // stale once the run ends (it can even be a raw tool-call payload like
+    // the last todo replace), so it never belongs in the final body; the
+    // one exception is the actual error text for failed runs.
+    const body =
+      projection.status === "failed" && projection.lastError
+        ? projection.lastError
+        : terminalLabel(projection.status);
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: projection.currentActivity || terminalLabel(projection.status),
+      body,
       shortText: getMobileNotificationChip(projection.status),
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,

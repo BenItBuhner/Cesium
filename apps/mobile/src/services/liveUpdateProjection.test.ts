@@ -124,7 +124,19 @@ test("terminal states stop requesting promotion", () => {
   assert.equal(payload.progressKind, "terminal");
   assert.equal(payload.progress, 100);
   assert.equal(payload.shortText, "DONE");
+  // Stale in-run activity text must not leak into the final notification.
+  assert.equal(payload.body, "Agent run completed");
   assert.equal(payload.promote, false);
   assert.equal(payload.ongoing, false);
   assert.equal(payload.cancellable, false);
+});
+
+test("failed runs surface the error text in the terminal body", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError: "Provider responded with 401",
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.equal(payload.body, "Provider responded with 401");
 });
