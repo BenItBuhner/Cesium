@@ -54,7 +54,7 @@ test("opencode server backend is registered in the harness menu", () => {
   const backends = listAgentBackends();
   const serverIndex = backends.findIndex((backend) => backend.id === "opencode-server");
   assert.ok(serverIndex >= 0);
-  assert.equal(AGENT_BACKENDS["opencode-server"].label, "OpenCode Server");
+  assert.equal(AGENT_BACKENDS["opencode-server"].label, "OpenCode");
   assert.equal(AGENT_BACKENDS["opencode-server"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["opencode-server"].capabilities.supportsPermissions, true);
 });

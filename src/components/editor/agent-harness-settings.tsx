@@ -89,8 +89,8 @@ export const HARNESS_ORDER: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
 export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
   "cursor-sdk": "Cursor SDK",
-  "opencode-server": "OpenCode Server",
-  "opencode-v2-beta": "OpenCode v2 Beta",
+  "opencode-server": "OpenCode",
+  "opencode-v2-beta": "OpenCode",
   "devin-acp": "Devin",
   "grok-build": "Grok Build",
   "codex-app-server": "Codex App Server",
@@ -105,9 +105,9 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "cursor-sdk":
     "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
   "opencode-server":
-    "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
+    "OpenCode native HTTP/SSE harness. Current uses OpenCode 1 (`opencode serve`); the v2 Beta dialect is packaged in the same option for durable logs, background subagents, PTY/shell, and forms until OpenCode 2.0 is standardized.",
   "opencode-v2-beta":
-    "Native OpenCode v2 beta API with typed tool events, durable reconnect recovery, background subagents, forms, and v2 permissions. Uses `opencode2` or `OPENCURSOR_OPENCODE_V2_SERVER_URL`.",
+    "Legacy alias for OpenCode. Existing v2 Beta chats migrate onto the OpenCode harness with generation set to v2 Beta.",
   "devin-acp":
     "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
   "grok-build":

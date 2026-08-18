@@ -42,6 +42,7 @@ import {
   detachOpenCodeGlobalSse,
   openCodeEventBelongsToRootSession,
 } from "./opencode-global-sse.js";
+import { ensureOpenCodeGenerationOption } from "./opencode-generation.js";
 import { createHarnessLogger, type HarnessLogger } from "./harness-diagnostics.js";
 import { materializeImageAttachments } from "./prompt-attachments.js";
 import {
@@ -262,9 +263,12 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.globalSseRegistrationId = callbacks.conversation.id;
     this.capabilities = backend.capabilities;
     this.configOptions = withConversationConfig(
-      callbacks.conversation.configOptions.length > 0
-        ? callbacks.conversation.configOptions
-        : configOptions,
+      ensureOpenCodeGenerationOption(
+        callbacks.conversation.configOptions.length > 0
+          ? callbacks.conversation.configOptions
+          : configOptions,
+        callbacks.conversation
+      ),
       callbacks.conversation
     );
     this.sessionId = providerSessionId ?? `opencode-server-pending-${callbacks.conversation.id}`;

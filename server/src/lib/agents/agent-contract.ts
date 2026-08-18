@@ -71,7 +71,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsLoadSession: true,
     supportsModeSelection: true,
     supportsModelSelection: true,
-    supportsSlashCommands: false,
+    supportsSlashCommands: true,
     supportsPermissions: true,
     supportsToolCalls: true,
     supportsStructuredPlans: false,
@@ -257,10 +257,12 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...toolEvents,
       "plan",
       "subagent",
+      "question",
       ...permissionEvents,
       "system",
     ],
-    notes: "Subagent events depend on global/child SSE routing.",
+    notes:
+      "Current dialect uses global/child SSE routing. The packaged v2 Beta dialect adds durable session logs, questions/forms, PTY/shell, and background subagents.",
   },
   "opencode-v2-beta": {
     expectedEventKinds: [

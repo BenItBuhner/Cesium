@@ -27,6 +27,10 @@ import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
 import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
 import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-config.js";
+import {
+  resolveOpenCodeGeneration,
+  withOpenCodeGenerationOption,
+} from "./opencode-generation.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
 import { LEGACY_MODE_CONFIG_ID } from "./config-option-parse.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
@@ -174,10 +178,10 @@ async function createOpenCodeCliConfigOptions(input?: {
   }
 
   if (options.length === 0) {
-    return [];
+    return withOpenCodeGenerationOption([], "current");
   }
 
-  return [
+  return withOpenCodeGenerationOption([
     {
       id: "mode",
       name: "Session Mode",
@@ -195,7 +199,7 @@ async function createOpenCodeCliConfigOptions(input?: {
       currentValue: options[0]?.value ?? "",
       options,
     },
-  ];
+  ], "current");
 }
 
 function collectOpenCodeServerModelOptions(payload: unknown): AgentConfigOption["options"] {
@@ -299,7 +303,7 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
       new Map(modelOptions.map((option) => [option.value, option])).values()
     );
     const agentOptions = collectOpenCodeServerAgentOptions(agents);
-    return [
+    return withOpenCodeGenerationOption([
       {
         id: "agent",
         name: "Agent",
@@ -317,7 +321,7 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
           : "No OpenCode server models were reported. Configure/authenticate OpenCode and refresh models.",
         options: uniqueModels,
       },
-    ];
+    ], "current");
   } catch {
     return createOpenCodeCliConfigOptions();
   }
@@ -1348,9 +1352,13 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
     case "opencode-server":
+    case "opencode-v2-beta": {
+      const generation = resolveOpenCodeGeneration({ backendId });
+      if (generation === "v2-beta") {
+        return createOpenCodeV2ConfigOptions();
+      }
       return createOpenCodeServerConfigOptions();
-    case "opencode-v2-beta":
-      return createOpenCodeV2ConfigOptions();
+    }
     case "devin-acp":
       return createDevinCliConfigOptions();
     case "grok-build":
@@ -1589,8 +1597,12 @@ function maybeInPlaceMigrate(
   if (backendId === "opencode-server" || backendId === "opencode-v2-beta") {
     const hasModel = cachedOptions.some((option) => option.id === "model");
     const hasAgent = cachedOptions.some((option) => option.id === "agent" || option.id === "mode");
-    if (!hasModel || !hasAgent) {
-      return { upgraded: cachedOptions, needsReseed: true };
+    const hasGeneration = cachedOptions.some((option) => option.id === "generation");
+    if (!hasModel || !hasAgent || !hasGeneration) {
+      return {
+        upgraded: withOpenCodeGenerationOption(cachedOptions),
+        needsReseed: !hasModel || !hasAgent,
+      };
     }
   }
 

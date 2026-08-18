@@ -30,11 +30,12 @@ import type {
   AgentRuntimeCallbacks,
 } from "../src/lib/agents/types.js";
 
-test("OpenCode v2 Beta is a separate registered harness", () => {
+test("OpenCode v2 Beta is packaged inside the OpenCode harness, not a second picker option", () => {
   const ids = listAgentBackends().map((backend) => backend.id);
   assert.ok(ids.includes("opencode-server"));
-  assert.ok(ids.includes("opencode-v2-beta"));
-  assert.equal(AGENT_BACKENDS["opencode-v2-beta"].label, "OpenCode v2 Beta");
+  assert.equal(ids.includes("opencode-v2-beta"), false);
+  assert.equal(AGENT_BACKENDS["opencode-server"].label, "OpenCode");
+  assert.equal(AGENT_BACKENDS["opencode-v2-beta"].label, "OpenCode");
   assert.equal(AGENT_BACKENDS["opencode-v2-beta"].capabilities.supportsPermissions, true);
   assert.equal(AGENT_BACKENDS["opencode-v2-beta"].capabilities.supportsTodos, false);
 });
@@ -67,12 +68,16 @@ test("OpenCode v2 catalogs expose primary agents and model variants", () => {
     currentAgent: "build",
     currentModel: "provider-a/model-a#high",
   });
-  assert.deepEqual(options[0]?.options.map((option) => option.value), ["build"]);
-  assert.deepEqual(options[1]?.options.map((option) => option.value), [
+  const agent = options.find((option) => option.id === "agent");
+  const model = options.find((option) => option.id === "model");
+  const generation = options.find((option) => option.id === "generation");
+  assert.equal(generation?.currentValue, "v2-beta");
+  assert.deepEqual(agent?.options.map((option) => option.value), ["build"]);
+  assert.deepEqual(model?.options.map((option) => option.value), [
     "provider-a/model-a",
     "provider-a/model-a#high",
   ]);
-  assert.equal(options[1]?.currentValue, "provider-a/model-a#high");
+  assert.equal(model?.currentValue, "provider-a/model-a#high");
   const partialRefresh = buildOpenCodeV2ConfigOptions({
     agents: [],
     models: [
@@ -86,10 +91,14 @@ test("OpenCode v2 catalogs expose primary agents and model variants", () => {
     ],
     previous: options,
   });
-  assert.deepEqual(partialRefresh[0]?.options.map((option) => option.value), ["build"]);
-  assert.deepEqual(partialRefresh[1]?.options.map((option) => option.value), [
-    "provider-b/model-b",
-  ]);
+  assert.deepEqual(
+    partialRefresh.find((option) => option.id === "agent")?.options.map((option) => option.value),
+    ["build"]
+  );
+  assert.deepEqual(
+    partialRefresh.find((option) => option.id === "model")?.options.map((option) => option.value),
+    ["provider-b/model-b"]
+  );
 });
 
 test("OpenCode v2 normalizes typed text, shell, subagent, and permission events", () => {
@@ -225,6 +234,34 @@ test("OpenCode v2 normalizes typed text, shell, subagent, and permission events"
   );
   assert.equal(openCodeV2PermissionReply("allow_always"), "always");
   assert.equal(openCodeV2PermissionReply("deny"), "reject");
+
+  const nextShell = normalizer.normalize({
+    ...common,
+    payload: {
+      type: "session.next.shell.started",
+      data: {
+        timestamp: Date.now(),
+        sessionID: "ses_root",
+        messageID: "msg_root",
+        callID: "call_next",
+        command: "ls",
+      },
+    },
+  });
+  assert.equal(nextShell[0]?.kind, "tool_call");
+  assert.equal("toolKind" in nextShell[0]! ? nextShell[0].toolKind : null, "terminal");
+
+  const pty = normalizer.normalize({
+    ...common,
+    payload: {
+      type: "pty.created",
+      data: {
+        info: { id: "pty_1", title: "dev server", command: "npm run dev", cwd: "/workspace" },
+      },
+    },
+  });
+  assert.equal(pty[0]?.kind, "tool_call");
+  assert.equal("title" in pty[0]! ? pty[0].title : null, "npm run dev");
 });
 
 test("OpenCode v2 recognizes native question and form requests", () => {
@@ -411,7 +448,8 @@ test("OpenCode v2 provider completes a native typed tool and text turn", async (
     }
     if (
       request.method === "GET" &&
-      url.pathname === "/api/experimental/session/ses_root/log"
+      (url.pathname === "/api/session/ses_root/log" ||
+        url.pathname === "/api/experimental/session/ses_root/log")
     ) {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(
