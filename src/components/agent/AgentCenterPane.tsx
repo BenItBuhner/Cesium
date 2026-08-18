@@ -50,6 +50,7 @@ import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
+import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -203,6 +204,8 @@ export function AgentCenterPane() {
   const rawThreadEvents = conversation
     ? (eventsByConversationId[conversation.id] ?? EMPTY_THREAD_EVENTS)
     : EMPTY_THREAD_EVENTS;
+  const threadEventKey =
+    conversation?.id ?? selectedConversationId ?? "__no-conversation__";
   const openedPlanFilesRef = useRef(new Set<string>());
   useEffect(() => {
     for (const event of rawThreadEvents) {
@@ -221,7 +224,16 @@ export function AgentCenterPane() {
       });
     }
   }, [openExplorerFile, rawThreadEvents]);
-  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
+  const threadEventState = useMemo(
+    () => ({ key: threadEventKey, value: rawThreadEvents }),
+    [rawThreadEvents, threadEventKey]
+  );
+  const deferredThreadEventState = useDeferredValue(threadEventState);
+  const deferredThreadEvents = selectKeyedDeferredValue(
+    threadEventKey,
+    rawThreadEvents,
+    deferredThreadEventState
+  );
   const contextUsageRefreshGeneration = useMemo(
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
