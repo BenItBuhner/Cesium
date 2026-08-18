@@ -6,6 +6,11 @@ export type LiveUpdatePayload = {
   workspaceId?: string | null;
   conversationId?: string | null;
   startedAt?: number | null;
+  /**
+   * Estimated completion timestamp, present only when the eta display
+   * preference allows it for this run kind. Informational: the native chip
+   * never renders a countdown; the estimate surfaces as body text.
+   */
   estimatedCompletionAt?: number | null;
   progressKind: "todo" | "goal" | "indeterminate" | "terminal";
   progressLabel?: string | null;
@@ -50,7 +55,8 @@ export const DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES: LiveUpdateAlertPreferences =
 };
 
 /**
- * Which runs may surface a time estimate (ETA countdown chip / "~Nm left"):
+ * Which runs may surface a time estimate (a "~Nm left" body hint — the
+ * status chip never counts down):
  * "goal"   — goal runs only. Goals are long-horizon, so an estimate carries
  *            real signal; todo plans are short and per-task complexity makes
  *            their extrapolated estimates useless noise. Todo runs show the

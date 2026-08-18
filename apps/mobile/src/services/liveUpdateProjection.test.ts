@@ -45,8 +45,9 @@ test("todo runs show progression without a time estimate by default", () => {
   assert.equal(payload.progressMax, 4);
   assert.equal(payload.progressLabel, "1/4");
   assert.equal(payload.shortText, "1/4");
-  // Todo estimates swing with per-task complexity; the countdown chip and
-  // the "~Nm left" suffix stay off unless the user opts in.
+  // Todo estimates swing with per-task complexity; the time-estimate body
+  // suffix stays off unless the user opts in, and the chip shows the
+  // fraction plus the elapsed count-up chronometer either way.
   assert.equal(payload.estimatedCompletionAt, null);
   assert.equal(payload.estimatedRemainingSeconds, null);
   assert.equal(payload.body, "Implement notifications");
@@ -81,6 +82,18 @@ test("etaMode 'off' strips the goal time estimate too", () => {
   assert.equal(payload.body, "Goal verification");
 });
 
+test("pending intervention outranks the todo fraction in the chip", () => {
+  const payload = toLiveUpdatePayload({
+    ...todoProjection,
+    status: "awaiting_permission",
+    pendingIntervention: "permission",
+  });
+
+  assert.equal(payload.progressKind, "todo");
+  assert.equal(payload.shortText, "INPUT");
+  assert.equal(payload.progressLabel, "1/4");
+});
+
 test("prioritizes Goal percentage over todo progress", () => {
   const payload = toLiveUpdatePayload({
     ...baseProjection,
@@ -108,6 +121,7 @@ test("prioritizes Goal percentage over todo progress", () => {
   assert.equal(payload.progress, 62);
   assert.equal(payload.progressMax, 100);
   assert.equal(payload.progressLabel, "62%");
+  assert.equal(payload.shortText, "62%");
   assert.equal(payload.body, "Goal verification · ~2m left");
 });
 
@@ -128,7 +142,19 @@ test("terminal states stop requesting promotion", () => {
   assert.equal(payload.progressKind, "terminal");
   assert.equal(payload.progress, 100);
   assert.equal(payload.shortText, "DONE");
+  // Stale in-run activity text must not leak into the final notification.
+  assert.equal(payload.body, "Agent run completed");
   assert.equal(payload.promote, false);
   assert.equal(payload.ongoing, false);
   assert.equal(payload.cancellable, false);
+});
+
+test("failed runs surface the error text in the terminal body", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError: "Provider responded with 401",
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.equal(payload.body, "Provider responded with 401");
 });

@@ -18,7 +18,8 @@ export type LiveUpdatePayloadOptions = {
    * Which progress kinds may carry a time estimate. Defaults to "goal":
    * goal runs are long enough for an ETA to mean something, while todo
    * estimates extrapolate wildly across tasks of uneven complexity — those
-   * runs show their todo progression instead.
+   * runs show their todo progression instead. The estimate surfaces as a
+   * "~Nm left" body hint only; the status chip never counts down.
    */
   etaMode?: LiveUpdateEtaMode;
 };
@@ -31,10 +32,18 @@ export function toLiveUpdatePayload(
   const active = isMobileAgentRunActive(projection.status);
   const runKey = getLiveUpdateRunKey(projection);
   if (!active) {
+    // Terminal notifications state the outcome plainly. currentActivity is
+    // stale once the run ends (it can even be a raw tool-call payload like
+    // the last todo replace), so it never belongs in the final body; the
+    // one exception is the actual error text for failed runs.
+    const body =
+      projection.status === "failed" && projection.lastError
+        ? projection.lastError
+        : terminalLabel(projection.status);
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: projection.currentActivity || terminalLabel(projection.status),
+      body,
       shortText: getMobileNotificationChip(projection.status),
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
@@ -51,9 +60,18 @@ export function toLiveUpdatePayload(
     };
   }
 
+  // Important run states (needs input / review) outrank routine progress
+  // text in the status chip so the user sees "INPUT" instead of "3/7" the
+  // moment an agent is waiting on them.
+  const statusChip =
+    projection.pendingIntervention == null
+      ? null
+      : getMobileNotificationChip(projection.status);
+
   const goal = projection.goalProgress;
   if (goal) {
     // Goals are long-running; their ETA carries signal (unless disabled).
+    // It is a soft "~Nm left" hint in the body text, never a countdown chip.
     const includeEta = etaMode !== "off";
     const remaining = includeEta
       ? formatRemainingTime(goal.estimatedRemainingMs)
@@ -65,7 +83,7 @@ export function toLiveUpdatePayload(
         goal.headline || projection.currentActivity || "Goal is running",
         remaining
       ),
-      shortText: `${goal.percent}%`,
+      shortText: statusChip ?? `${goal.percent}%`,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
@@ -91,8 +109,8 @@ export function toLiveUpdatePayload(
     const progressLabel = `${todo.completed}/${todo.total}`;
     // Todo estimates extrapolate across tasks of wildly uneven complexity —
     // by default the notification shows the todo progression, not an ETA.
-    // Without estimatedCompletionAt the native chip falls back to the
-    // "completed/total" text plus the elapsed count-up chronometer.
+    // The chip shows the completed/total fraction and the chronometer
+    // counts up; opting in to etaMode "always" adds a "~Nm left" body hint.
     const includeEta = etaMode === "always";
     const remaining = includeEta
       ? formatRemainingTime(todo.estimatedRemainingMs)
@@ -101,10 +119,11 @@ export function toLiveUpdatePayload(
       runKey,
       title: projection.title || "Cesium agent",
       body: withRemainingTime(
-        projection.currentActivity || `Task ${todo.currentIndex ?? todo.completed + 1}`,
+        projection.currentActivity ||
+          `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
         remaining
       ),
-      shortText: progressLabel,
+      shortText: statusChip ?? progressLabel,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
@@ -131,10 +150,7 @@ export function toLiveUpdatePayload(
     runKey,
     title: projection.title || "Cesium agent",
     body: projection.currentActivity || "Agent is working",
-    shortText:
-      projection.pendingIntervention == null
-        ? null
-        : getMobileNotificationChip(projection.status),
+    shortText: statusChip,
     workspaceId: projection.workspaceId,
     conversationId: projection.conversationId,
     startedAt: projection.startedAt,
