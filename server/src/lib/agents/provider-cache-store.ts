@@ -737,25 +737,22 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
       id: "sdk_sandbox",
       name: "Local Sandbox",
       category: "permission",
-      // "auto" defers to the Cursor SDK's own default (sandbox only when the
-      // user's ~/.cursor/sandbox.json requests it) and falls back to running
-      // unsandboxed when the environment cannot sandbox at all. Forcing
-      // "enabled" on hosts without sandbox support (containers, VMs without
-      // user namespaces, Windows) makes every run fail out of the box.
-      currentValue: "auto",
+      // Headless SDK runs have no interactive approval flow. Keep the sandbox
+      // explicitly disabled unless the user opts in; omitting sandboxOptions
+      // can inherit ~/.cursor/sandbox.json and silently block coding tools.
+      currentValue: "disabled",
       options: [
         {
-          value: "auto",
-          name: "Auto",
+          value: "disabled",
+          name: "Disabled",
           description:
-            "Use the Cursor SDK default; run unsandboxed when sandboxing is unsupported.",
+            "Recommended for headless SDK runs; avoids sandbox and auto-review blocks while keeping project hooks.",
         },
         {
           value: "enabled",
           name: "Enabled",
           description: "Require sandboxing; runs fail where it is unsupported.",
         },
-        { value: "disabled", name: "Disabled" },
       ],
     },
     {
@@ -1380,6 +1377,36 @@ function isStaleCursorSdkCache(configOptions: AgentConfigOption[]): boolean {
   );
 }
 
+export function migrateCursorSdkSandboxConfigOptions(
+  configOptions: AgentConfigOption[]
+): AgentConfigOption[] {
+  const definition = createCursorSdkFallbackConfigOptions().find(
+    (option) => option.id === "sdk_sandbox"
+  );
+  if (!definition) {
+    return configOptions;
+  }
+  const existingIndex = configOptions.findIndex(
+    (option) => option.id === "sdk_sandbox"
+  );
+  const existing = configOptions[existingIndex];
+  const migrated = {
+    ...definition,
+    // Preserve an explicit opt-in. The former "auto" default and every
+    // unknown/missing legacy value become the safe headless default.
+    currentValue: existing?.currentValue === "enabled" ? "enabled" : "disabled",
+  };
+  if (existing && JSON.stringify(existing) === JSON.stringify(migrated)) {
+    return configOptions;
+  }
+  if (existingIndex < 0) {
+    return [...configOptions, migrated];
+  }
+  return configOptions.map((option, index) =>
+    index === existingIndex ? migrated : option
+  );
+}
+
 export function isStaleCodexAppServerCache(configOptions: AgentConfigOption[]): boolean {
   const modelOption = configOptions.find((option) => option.id === "model");
   if (!modelOption || modelOption.options.length === 0) {
@@ -1552,8 +1579,12 @@ function maybeInPlaceMigrate(
   backendId: AgentBackendId,
   cachedOptions: AgentConfigOption[]
 ): { upgraded: AgentConfigOption[]; needsReseed: boolean } | null {
-  if (backendId === "cursor-sdk" && isStaleCursorSdkCache(cachedOptions)) {
-    return { upgraded: cachedOptions, needsReseed: true };
+  if (backendId === "cursor-sdk") {
+    const upgraded = migrateCursorSdkSandboxConfigOptions(cachedOptions);
+    const needsReseed = isStaleCursorSdkCache(upgraded);
+    if (upgraded !== cachedOptions || needsReseed) {
+      return { upgraded, needsReseed };
+    }
   }
 
   if (backendId === "pi-agent" && isPiAgentPlaceholderModelCatalog(cachedOptions)) {
