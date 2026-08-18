@@ -93,12 +93,18 @@ function optionName(options: AgentConfigOption[], id: string, value: string): st
   return option?.options.find((candidate) => candidate.value === value)?.name ?? value;
 }
 
-function modelBody(value: string): OpenCodeServerJson | undefined {
+export function modelBody(value: string): OpenCodeServerJson | undefined {
   if (!value || value === "auto" || value === "__default__") {
     return undefined;
   }
-  const [providerID, modelID] = value.includes("/") ? value.split("/", 2) : ["", value];
-  return providerID ? { providerID, modelID } : { modelID };
+  const [base, hashVariant] = value.split("#", 2);
+  const [providerID, modelID, legacyVariant] = base.includes("/")
+    ? base.split("/", 3)
+    : ["", base, ""];
+  const variant = hashVariant || legacyVariant;
+  return providerID
+    ? { providerID, modelID, ...(variant ? { variant } : {}) }
+    : { modelID, ...(variant ? { variant } : {}) };
 }
 
 function transcriptText(snapshot: AgentConversationSnapshot | null, excludeUserMessageId?: string): string {

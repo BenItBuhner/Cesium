@@ -121,3 +121,63 @@ test("Cursor SDK encoded model values decode into ModelSelection params", () => 
     ],
   });
 });
+
+test("Cursor SDK preserves independent parameter identities and effective defaults", () => {
+  const options = cursorSdkConfigOptionsFromModels([
+    {
+      id: "claude-fable-5",
+      displayName: "Claude Fable 5",
+      parameters: [
+        {
+          id: "context",
+          displayName: "Context",
+          values: [{ value: "300k" }, { value: "1m" }],
+        },
+        {
+          id: "reasoning_effort",
+          displayName: "Effort",
+          values: [{ value: "low" }, { value: "high" }],
+        },
+        {
+          id: "thinking",
+          displayName: "Reasoning",
+          values: [{ value: "false", displayName: "Off" }, { value: "true", displayName: "On" }],
+        },
+      ],
+      variants: [
+        {
+          displayName: "Low",
+          isDefault: true,
+          params: [
+            { id: "context", value: "300k" },
+            { id: "reasoning_effort", value: "low" },
+          ],
+        },
+        {
+          displayName: "High Thinking",
+          params: [
+            { id: "context", value: "1m" },
+            { id: "reasoning_effort", value: "high" },
+            { id: "thinking", value: "true" },
+          ],
+        },
+      ],
+    },
+  ]);
+  const rows = options.find((option) => option.id === "model")?.options;
+  assert.ok(rows);
+  assert.deepEqual(rows[0]?.modelParameters, [
+    { id: "context", name: "Context", value: "300k" },
+    { id: "reasoning_effort", name: "Effort", value: "low" },
+    { id: "thinking", name: "Reasoning", value: "false", valueName: "Off" },
+  ]);
+  assert.deepEqual(
+    rows[1]?.modelParameters?.map(({ id, value }) => ({ id, value })),
+    [
+      { id: "context", value: "1m" },
+      { id: "reasoning_effort", value: "high" },
+      { id: "thinking", value: "true" },
+    ]
+  );
+  assert.equal(rows.some((row) => row.modelParameters?.some((param) => param.id === "fast")), false);
+});

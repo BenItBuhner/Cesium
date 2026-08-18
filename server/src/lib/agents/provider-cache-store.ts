@@ -155,20 +155,41 @@ async function createOpenCodeCliConfigOptions(input?: {
       typeof record?.name === "string" && record.name.trim()
         ? `${formatProviderName(value)}/${record.name.trim()}`
         : value;
-    options.push({ value, name: baseName });
-
     const variants =
       record?.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
         ? Object.keys(record.variants as Record<string, unknown>)
         : [];
+    options.push({
+      value,
+      name: baseName,
+      modelGroupId: value,
+      modelGroupName: baseName,
+      ...(variants.length > 0
+        ? {
+            modelParameters: [
+              { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+            ],
+          }
+        : {}),
+    });
     for (const variant of variants) {
       const trimmedVariant = variant.trim();
       if (!trimmedVariant) {
         continue;
       }
       options.push({
-        value: `${value}/${trimmedVariant}`,
+        value: `${value}#${trimmedVariant}`,
         name: `${baseName} (${trimmedVariant})`,
+        modelGroupId: value,
+        modelGroupName: baseName,
+        modelParameters: [
+          {
+            id: "variant",
+            name: "Variant",
+            value: trimmedVariant,
+            valueName: titleCaseConfigValue(trimmedVariant),
+          },
+        ],
       });
     }
   }
@@ -249,7 +270,45 @@ function collectOpenCodeServerModelOptions(payload: unknown): AgentConfigOption[
       options.push({
         value: `${providerId}/${modelId}`,
         name: `${providerName}/${modelName}`,
+        modelGroupId: `${providerId}/${modelId}`,
+        modelGroupName: `${providerName}/${modelName}`,
+        ...(modelRecord.variants &&
+        typeof modelRecord.variants === "object" &&
+        !Array.isArray(modelRecord.variants) &&
+        Object.keys(modelRecord.variants as Record<string, unknown>).length > 0
+          ? {
+              modelParameters: [
+                { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+              ],
+            }
+          : {}),
       });
+      const variants =
+        modelRecord.variants &&
+        typeof modelRecord.variants === "object" &&
+        !Array.isArray(modelRecord.variants)
+          ? Object.keys(modelRecord.variants as Record<string, unknown>)
+          : [];
+      for (const variant of variants) {
+        const variantId = variant.trim();
+        if (!variantId) {
+          continue;
+        }
+        options.push({
+          value: `${providerId}/${modelId}#${variantId}`,
+          name: `${providerName}/${modelName} (${variantId})`,
+          modelGroupId: `${providerId}/${modelId}`,
+          modelGroupName: `${providerName}/${modelName}`,
+          modelParameters: [
+            {
+              id: "variant",
+              name: "Variant",
+              value: variantId,
+              valueName: titleCaseConfigValue(variantId),
+            },
+          ],
+        });
+      }
     }
   }
   return options;
@@ -586,7 +645,7 @@ function codexAppServerEffortValues(entry: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-function codexAppServerOptionsFromModels(
+export function codexAppServerOptionsFromModels(
   models: Array<Record<string, unknown>>
 ): AgentConfigOption[] {
   const modelOptions: AgentConfigOptionValue[] = models
@@ -856,7 +915,10 @@ function cursorSdkModelRows(model: {
         value: encodeCursorSdkModelValue(modelId, params),
         name,
         description: variant.description ?? model.description,
+        modelGroupId: modelId,
+        modelGroupName: model.displayName || modelId,
         metadata: cursorSdkModelMetadata(modelId, params, variant.isDefault),
+        modelParameters: cursorSdkEffectiveModelParameters(params, model.parameters ?? []),
       };
     });
   }
@@ -867,16 +929,23 @@ function cursorSdkModelRows(model: {
       value: encodeCursorSdkModelValue(modelId, params),
       name: formatCursorSdkVariantName(model.displayName || modelId, "", params),
       ...(model.description ? { description: model.description } : {}),
+      modelGroupId: modelId,
+      modelGroupName: model.displayName || modelId,
       metadata: cursorSdkModelMetadata(modelId, params, false),
+      modelParameters: cursorSdkEffectiveModelParameters(params, model.parameters ?? []),
     }));
   }
 
+  const defaultParameters = cursorSdkEffectiveModelParameters([], model.parameters ?? []);
   return [
     {
       value: modelId,
       name: model.displayName || modelId,
       ...(model.description ? { description: model.description } : {}),
+      modelGroupId: modelId,
+      modelGroupName: model.displayName || modelId,
       metadata: cursorSdkModelMetadata(modelId, [], false),
+      ...(defaultParameters.length > 0 ? { modelParameters: defaultParameters } : {}),
     },
     ...(model.aliases ?? [])
       .map((alias) => alias.trim())
@@ -885,10 +954,13 @@ function cursorSdkModelRows(model: {
         value: alias,
         name: `${model.displayName || modelId} (${alias})`,
         ...(model.description ? { description: model.description } : {}),
+        modelGroupId: alias,
+        modelGroupName: `${model.displayName || modelId} (${alias})`,
         metadata: {
           ...cursorSdkModelMetadata(modelId, [], false),
           cursorSdkAlias: alias,
         },
+        ...(defaultParameters.length > 0 ? { modelParameters: defaultParameters } : {}),
       })),
   ];
 }
@@ -898,6 +970,47 @@ function normalizeCursorSdkParams(params: CursorSdkModelParam[]): CursorSdkModel
     .map((param) => ({ id: param.id.trim(), value: param.value.trim() }))
     .filter((param) => param.id.length > 0 && param.value.length > 0)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function cursorSdkEffectiveModelParameters(
+  params: CursorSdkModelParam[],
+  definitions: Array<{
+    id: string;
+    displayName?: string;
+    values: Array<{ value: string; displayName?: string }>;
+  }>
+): NonNullable<AgentConfigOptionValue["modelParameters"]> {
+  const selected = new Map(params.map((param) => [param.id, param.value]));
+  const knownIds = new Set<string>();
+  const out: NonNullable<AgentConfigOptionValue["modelParameters"]> = [];
+
+  for (const definition of definitions) {
+    const id = definition.id.trim();
+    if (!id) {
+      continue;
+    }
+    knownIds.add(id);
+    const value = selected.get(id) ?? definition.values.find((candidate) => candidate.value.trim())?.value;
+    if (!value) {
+      continue;
+    }
+    const valueDefinition = definition.values.find((candidate) => candidate.value === value);
+    out.push({
+      id,
+      ...(definition.displayName?.trim() ? { name: definition.displayName.trim() } : {}),
+      value,
+      ...(valueDefinition?.displayName?.trim()
+        ? { valueName: valueDefinition.displayName.trim() }
+        : {}),
+    });
+  }
+
+  for (const param of params) {
+    if (!knownIds.has(param.id)) {
+      out.push({ id: param.id, value: param.value });
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function cursorSdkModelMetadata(
