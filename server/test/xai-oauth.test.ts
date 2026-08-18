@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   accessTokenIsExpiring,
+  clearXaiOAuthCredentials,
   credentialsFromTokenResponse,
   credentialsNeedRefresh,
+  persistXaiTokenResponse,
   pollXaiDeviceCodeToken,
   refreshXaiAccessToken,
   requestXaiDeviceCode,
@@ -179,4 +181,23 @@ test("resolveCesiumOAuthRequestAuth ignores unofficial leftover credentials", as
     modelId: "anthropic/claude-sonnet-4",
   });
   assert.equal(auth, null);
+});
+
+test("resolveCesiumOAuthRequestAuth returns SuperGrok bearer after persist", async () => {
+  await persistXaiTokenResponse({
+    access_token: "xai-access-test",
+    refresh_token: "xai-refresh-test",
+    expires_in: 3600,
+  });
+  try {
+    const auth = await resolveCesiumOAuthRequestAuth({
+      providerId: "xai",
+      modelId: "xai/grok-4.3",
+    });
+    assert.equal(auth?.providerId, "xai");
+    assert.equal(auth?.apiKey, "xai-access-test");
+    assert.equal(auth?.baseUrl, "https://api.x.ai/v1");
+  } finally {
+    await clearXaiOAuthCredentials();
+  }
 });
