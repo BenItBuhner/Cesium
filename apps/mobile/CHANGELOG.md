@@ -6,15 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-18
+
 ### Added
 
 - Native iOS app (React Native 0.86, `apps/mobile/ios`): the same shared shell (`src/App.tsx`) now runs on iOS. WKWebView loads the identical bundled workbench folder the APK ships (referenced straight from the Android assets copy, so both platforms stay pixel-identical per release), the bridge protocol is unchanged (it already listened on both `window` and `document`), and a new `CesiumIOSRuntime` native module supplies the bundled-workbench file URL, the `.app` read-access root, and safe-area insets. Android-only capabilities (Live Updates, predictive back, phone control, Wear companion, share intake) degrade gracefully through their existing platform guards. iOS defaults to `http://127.0.0.1:9100` (the simulator shares the host loopback; numeric on purpose, since `localhost` resolves to `::1` first on Apple platforms and hangs against IPv4-only servers); WebKit content-process termination gets the same retry surface as an Android renderer crash.
 - WebKit `file:` history guard: iOS WebKit throws a SecurityError when `history.pushState`/`replaceState` changes anything but query/fragment on `file:` pages (Chromium allows path changes, which Electron and the APK rely on). The renderer polyfills and the native documentStart bootstrap now retry such calls with the real bundle pathname plus the intended query + hash, so the workbench's Next-style router works identically on all shells.
 - Mobile iOS CI (`mobile-ios-ci.yml`): macOS runner builds the unsigned Release simulator app with CocoaPods + xcodebuild, boots an iPhone simulator, starts a real Bun backend plus a deterministic mock LLM provider on the runner, launches Cesium, asserts the process survives a warm relaunch, drives a standalone agent chat run end-to-end (streamed-reply assertion + live UI screenshot), and uploads the workbench screenshots plus the zipped `.app` as artifacts.
+- Agent rail Running section and opt-in Settled mode: actively working agents are elevated into their own cross-workspace Running bucket (below Needs attention), and Settled mode lets the rail collapse finished conversations.
+- Live notification display preferences and a combined multi-agent notification: per-run chips can merge, and the status chip shows todo fraction (`3/7`) or goal percent instead of a fake ETA countdown.
+- Settings nav drawer uses the same swipe/spring gestures as the agent shell rail.
+- Appearance toggle to hide tool-call icons in the transcript (off by default).
+
+### Changed
+
+- Fresh mobile sessions land on the new-chat page with the rail collapsed, instead of opening the full-viewport workspace drawer.
+- New-chat workspace/branch/import picker drops the docked-card chrome so those controls sit on the aurora backdrop.
+- Composer work pill no longer counts the conversation you are already looking at — only background chats, sub-agents, and cloud tasks.
+- Scoped agent rail hides the duplicate workspace title when only one group is visible; No workspace is restored in the new-chat dropdown and rail filter.
+- Chat streaming no longer re-projects every row on each flush (stable projection identity + memoized rows), which was janking phones and crashing the WebView on permission answers.
+- Bundled workbench picks up the post-0.6.0 shell: Running/Settled rail, no-workspace pickers, tool-call icon toggle, alpha scroll fades, conversation import on phones, Settings drawer gestures, and the live-notification chip rewrite.
 
 ### Fixed
 
 - Voice input no longer fails with "Could not start audio source" even when microphone permission is granted. Android WebView's `getUserMedia` audio capture requires the install-time `MODIFY_AUDIO_SETTINGS` permission in addition to `RECORD_AUDIO`; the manifest was missing it, and users cannot grant it from system settings. A regression test now pins both permissions in the manifest.
+- Live notification kill/restart flicker: bridge and native-socket projections no longer mint different `startedAt` keys for the same run, so the chip updates in place instead of cancelling and reposting.
+- Top safe-area padding no longer collapses under the status bar after app refocus, and landscape phones that cross the desktop-layout breakpoint keep their top chrome padded.
+- Backend connection survives app backgrounding instead of toasting "Reconnected" on every resume; the workbench stays mounted through transient auth/connection blips that previously looked like a random reload.
+- Android conversation import respects the bundled WebView origin (CORS) and uses a source-first phone/tablet dialog instead of a cramped two-column layout.
+- Android WebView overscroll stretch/glow is disabled on the root shell (inner scroll panes still overscroll).
+- Windowed-mode tab inset no longer indents the workspace dropdown or right-pane toggles.
+- Cursor SDK sandbox no longer fails fresh installs on hosts without kernel sandbox support (auto mode + unsandboxed fallback). Cesium's tool loop no longer dies at an artificial 80-iteration cap.
 
 ## [0.6.0] - 2026-08-17
 
