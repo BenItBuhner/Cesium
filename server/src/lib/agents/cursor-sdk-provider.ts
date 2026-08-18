@@ -165,13 +165,23 @@ function parseSettingSources(value: string): Array<"project" | "user" | "team" |
     .filter((part): part is "project" | "user" | "team" | "mdm" | "plugins" => allowed.has(part as never));
 }
 
-function modelSelectionFromConfig(
+export function cursorSdkModelSelectionFromConfig(
   conversation: AgentConversationRecord,
   configOptions: AgentConfigOption[]
 ): ModelSelection {
   const modelOption = findPrimaryModelConfigOption(configOptions);
+  const requestedValue =
+    conversation.config.modelId || modelOption?.currentValue || "composer-2.5";
+  const selectedValue =
+    !modelOption || modelOption.options.length === 0
+      ? requestedValue
+      : modelOption.options.some((option) => option.value === requestedValue)
+        ? requestedValue
+        : modelOption.options.some((option) => option.value === modelOption.currentValue)
+          ? modelOption.currentValue
+          : modelOption.options[0]!.value;
   const decoded = decodeCursorSdkModelValue(
-    conversation.config.modelId || modelOption?.currentValue || "composer-2.5"
+    selectedValue
   );
   return {
     id: decoded.id,
@@ -249,7 +259,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     const settingSources = parseSettingSources(
       optionValue(configOptions, "setting_sources", "project,user,plugins")
     );
-    const model = modelSelectionFromConfig(input.callbacks.conversation, configOptions);
+    const model = cursorSdkModelSelectionFromConfig(input.callbacks.conversation, configOptions);
     const modeOption = findPrimaryModeConfigOption(configOptions);
     const mode = modeOption?.currentValue ?? input.callbacks.conversation.config.mode;
     const pluginAttachments = await resolveAgentPluginAttachments({
@@ -453,7 +463,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       buildPromptWithSyntheticMode(mode, input.text),
       pluginAttachments
     );
-    const model = modelSelectionFromConfig(this.callbacks.conversation, this.configOptions);
+    const model = cursorSdkModelSelectionFromConfig(this.callbacks.conversation, this.configOptions);
     const mcpServers =
       Object.keys(pluginAttachments.sdkMcp.servers).length > 0
         ? pluginAttachments.sdkMcp.servers

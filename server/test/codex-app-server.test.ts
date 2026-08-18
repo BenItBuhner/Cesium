@@ -5,6 +5,7 @@ const [
   { AGENT_BACKENDS, listAgentBackends },
   { CodexAppServerTransport },
   { codexAppServerOptionsFromModels, isStaleCodexAppServerCache },
+  { resolveCodexModelEffort },
   {
     codexAppServerAssistantTextFromItem,
     canonicalizeCodexAppServerItem,
@@ -18,6 +19,7 @@ const [
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/codex-app-server-transport.js"),
   import("../src/lib/agents/provider-cache-store.js"),
+  import("../src/lib/agents/codex-app-server-provider.js"),
   import("../src/lib/agents/codex-app-server-normalize.js"),
 ]);
 
@@ -90,6 +92,9 @@ test("codex app server keeps effort capabilities scoped to each model", () => {
     options.find((option) => option.id === "model_reasoning_effort")?.options.map((option) => option.value),
     ["low", "high"]
   );
+  assert.equal(resolveCodexModelEffort(options, "gpt-5.6-soul", "high"), "high");
+  assert.equal(resolveCodexModelEffort(options, "gpt-5.6-soul", "xhigh"), "low");
+  assert.equal(resolveCodexModelEffort(options, "claude-fable-5", "high"), undefined);
 });
 
 test("codex app server normalizes assistant and reasoning deltas", () => {

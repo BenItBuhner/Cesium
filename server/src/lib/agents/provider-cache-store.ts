@@ -1151,7 +1151,27 @@ function expandCursorSdkParameterVariants(
       return [];
     }
   }
-  return rows.map((row) => normalizeCursorSdkParams(row));
+  return rows
+    .map((row) => normalizeCursorSdkParams(row))
+    .filter(isValidGeneratedCursorSdkParamCombination);
+}
+
+function isValidGeneratedCursorSdkParamCombination(params: CursorSdkModelParam[]): boolean {
+  const context = params.find((param) => /context|length|window|token/i.test(param.id));
+  const fast = params.find((param) => /speed|fast/i.test(param.id));
+  if (!context || !fast) {
+    return true;
+  }
+  const normalizedContext = context.value.trim().toLowerCase().replace(/[\s,_]/g, "");
+  const match = /^(\d+(?:\.\d+)?)([km]?)$/.exec(normalizedContext);
+  const tokens = match
+    ? Number.parseFloat(match[1]!) *
+      (match[2] === "m" ? 1_000_000 : match[2] === "k" ? 1_000 : 1)
+    : 0;
+  const fastEnabled = ["true", "fast", "enabled", "on"].includes(
+    fast.value.trim().toLowerCase()
+  );
+  return !(tokens >= 1_000_000 && fastEnabled);
 }
 
 const CURSOR_SDK_MODEL_LIST_TIMEOUT_MS = Number.parseInt(
