@@ -1,4 +1,5 @@
 import { AGENT_BACKENDS } from "./providers.js";
+import { withOpenCodeGenerationOption } from "./opencode-generation.js";
 import type { AgentBackendId, AgentConversationRecord } from "./types.js";
 
 const FALLBACK_BACKEND_ID: AgentBackendId = "cesium-agent";
@@ -8,6 +9,7 @@ const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "claude-adapter": "claude-code-sdk",
   "cursor-acp": "cursor-sdk",
   "opencode-acp": "opencode-server",
+  "opencode-v2-beta": "opencode-server",
   "codex-adapter": "codex-app-server",
   "gemini-acp": "google-antigravity-cli",
 };
@@ -37,25 +39,38 @@ export function normalizeConversationRecord(
   let baseRecord = record;
   if (legacyTarget) {
     const targetBackend = AGENT_BACKENDS[legacyTarget];
-    baseRecord = {
-      ...record,
-      capabilities: targetBackend.capabilities,
-      experimental: Boolean(targetBackend.experimental),
-      providerSessionId: null,
-      configOptions: [],
-      pendingPermission: null,
-      status:
-        record.status === "running" || record.status === "awaiting_permission"
-          ? "idle"
-          : record.status,
-      config: {
-        ...record.config,
-        backendId: legacyTarget,
-        mode: targetBackend.defaultMode,
-        modelId: targetBackend.defaultModelId,
-        modelName: targetBackend.defaultModelName,
-      },
-    };
+    if (backendKey === "opencode-v2-beta") {
+      baseRecord = {
+        ...record,
+        capabilities: targetBackend.capabilities,
+        experimental: Boolean(targetBackend.experimental),
+        configOptions: withOpenCodeGenerationOption(record.configOptions ?? [], "v2-beta"),
+        config: {
+          ...record.config,
+          backendId: legacyTarget,
+        },
+      };
+    } else {
+      baseRecord = {
+        ...record,
+        capabilities: targetBackend.capabilities,
+        experimental: Boolean(targetBackend.experimental),
+        providerSessionId: null,
+        configOptions: [],
+        pendingPermission: null,
+        status:
+          record.status === "running" || record.status === "awaiting_permission"
+            ? "idle"
+            : record.status,
+        config: {
+          ...record.config,
+          backendId: legacyTarget,
+          mode: targetBackend.defaultMode,
+          modelId: targetBackend.defaultModelId,
+          modelName: targetBackend.defaultModelName,
+        },
+      };
+    }
   }
 
   const rawBackendId = baseRecord.config.backendId;

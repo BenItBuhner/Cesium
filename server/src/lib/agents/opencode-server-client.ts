@@ -236,6 +236,65 @@ export class OpenCodeServerClient {
   listPermissions(): Promise<OpenCodeServerJson[]> {
     return this.request("/permission", undefined, { timeoutMs: 10_000 });
   }
+
+  listSessionStatus(): Promise<OpenCodeServerJson> {
+    return this.request("/session/status", undefined, { timeoutMs: 10_000 });
+  }
+
+  listChildren(id: string): Promise<OpenCodeServerJson[]> {
+    return this.request(`/session/${encodeURIComponent(id)}/children`);
+  }
+
+  listTodos(id: string): Promise<OpenCodeServerJson[]> {
+    return this.request(`/session/${encodeURIComponent(id)}/todo`);
+  }
+
+  listAgents(): Promise<OpenCodeServerJson[]> {
+    return this.request("/agent");
+  }
+
+  listCommands(): Promise<OpenCodeServerJson[]> {
+    return this.request("/command");
+  }
+
+  sendCommand(id: string, body: OpenCodeServerJson): Promise<OpenCodeServerJson> {
+    return this.request(`/session/${encodeURIComponent(id)}/command`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  sendShell(id: string, body: OpenCodeServerJson): Promise<OpenCodeServerJson> {
+    return this.request(`/session/${encodeURIComponent(id)}/shell`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  experimentalCapabilities(): Promise<{ backgroundSubagents?: boolean }> {
+    return this.request("/experimental/capabilities", undefined, { timeoutMs: 5_000 });
+  }
+
+  backgroundSession(id: string): Promise<boolean> {
+    return this.request(`/experimental/session/${encodeURIComponent(id)}/background`, {
+      method: "POST",
+    });
+  }
+
+  listPty(): Promise<OpenCodeServerJson[]> {
+    return this.request("/pty");
+  }
+
+  /**
+   * Newer OpenCode servers expose a request-id reply route in addition to the
+   * session-scoped `/session/:id/permissions/:permissionID` path.
+   */
+  answerPermissionByRequest(requestId: string, body: OpenCodeServerJson): Promise<boolean> {
+    return this.request(`/permission/${encodeURIComponent(requestId)}/reply`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 export function openCodeServerAuthFromEnv(): { username?: string; password?: string } {

@@ -558,14 +558,14 @@ async function runHarnessDropdownBenchmarks(page: Page): Promise<BrowserPerfSamp
     state: "visible",
     timeout: 5_000,
   });
-  await harnessMenu.getByRole("menuitem", { name: /OpenCode Server/i }).waitFor({
+  await harnessMenu.getByRole("menuitem", { name: /^OpenCode$/i }).waitFor({
     state: "visible",
     timeout: 5_000,
   });
   pushSample(samples, "chat.model_dropdown.harness_open_visible", harnessStartedAt);
 
   const selectStartedAt = performance.now();
-  const openCodeServer = harnessMenu.getByRole("menuitem", { name: /OpenCode Server/i }).first();
+  const openCodeServer = harnessMenu.getByRole("menuitem", { name: /^OpenCode$/i }).first();
   if (await openCodeServer.isEnabled().catch(() => false)) {
     await openCodeServer.click();
     await page.waitForTimeout(50);

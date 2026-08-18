@@ -67,6 +67,12 @@ import {
 import { ACTIVE_AGENT_BACKEND_IDS } from "../lib/active-agent-backends.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
 import { measureServerPerf } from "../lib/perf.js";
+import {
+  deleteVoiceSpeechSettings,
+  patchVoiceSpeechSettings,
+  type VoiceSpeechSettingsPatch,
+} from "../lib/voice-speech-settings.js";
+import { getVoiceSpeechSettingsPublic } from "../lib/voice-speech-resolve.js";
 
 export const settingsRoutes = new Hono();
 
@@ -312,6 +318,35 @@ settingsRoutes.delete("/api/settings/claude-code-sdk", async (c) => {
   await deleteClaudeCodeSdkSettings();
   const refresh = await forceRefreshAllBackendCaches(["claude-code-sdk"]);
   return c.json({ ok: true, settings: await getClaudeCodeSdkSettingsPublic(), refresh });
+});
+
+settingsRoutes.get("/api/settings/voice", async (c) => {
+  return c.json({ settings: await getVoiceSpeechSettingsPublic() });
+});
+
+settingsRoutes.put("/api/settings/voice", async (c) => {
+  const body = await c.req.json<VoiceSpeechSettingsPatch>().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return c.json({ error: "Expected voice settings payload." }, 400);
+  }
+  try {
+    await patchVoiceSpeechSettings({
+      ...(body.transcription ? { transcription: body.transcription } : {}),
+      ...(body.titleGeneration ? { titleGeneration: body.titleGeneration } : {}),
+      ...(body.tts ? { tts: body.tts } : {}),
+      ...(body.controller ? { controller: body.controller } : {}),
+    });
+    return c.json({ ok: true, settings: await getVoiceSpeechSettingsPublic() });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to save voice settings.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.delete("/api/settings/voice", async (c) => {
+  await deleteVoiceSpeechSettings();
+  return c.json({ ok: true, settings: await getVoiceSpeechSettingsPublic() });
 });
 
 settingsRoutes.get("/api/settings/pi-agent", async (c) => {

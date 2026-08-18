@@ -86,6 +86,7 @@ export async function connectOpenCodeV2(input: {
   if (externalUrl) {
     const client = new OpenCodeV2Client({
       baseUrl: externalUrl,
+      directory: input.workspaceRoot,
       ...openCodeV2AuthFromEnv(),
     });
     await waitForHealth(client);
@@ -151,7 +152,11 @@ export async function connectOpenCodeV2(input: {
   child.stdout?.on("data", reportLines);
   child.stderr?.on("data", reportLines);
 
-  const client = new OpenCodeV2Client({ baseUrl, password });
+  const client = new OpenCodeV2Client({
+    baseUrl,
+    password,
+    directory: input.workspaceRoot,
+  });
   const row: ManagedServerPoolRow = {
     client,
     child,

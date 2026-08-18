@@ -6,7 +6,6 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
-  "opencode-v2-beta",
   "devin-acp",
   "grok-build",
   "claude-code-sdk",
@@ -19,6 +18,7 @@ export const LEGACY_AGENT_BACKEND_IDS = [
   "cursor-acp",
   "claude-adapter",
   "opencode-acp",
+  "opencode-v2-beta",
   "codex-adapter",
   "gemini-acp",
 ] as const;

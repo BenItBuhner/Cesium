@@ -701,6 +701,7 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
     "cursor-acp": "cursor-sdk",
     "claude-adapter": "claude-code-sdk",
     "opencode-acp": "opencode-server",
+    "opencode-v2-beta": "opencode-server",
     "codex-adapter": "codex-app-server",
     "gemini-acp": "google-antigravity-cli",
   };

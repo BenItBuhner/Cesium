@@ -4,6 +4,8 @@ export type OpenCodeV2ClientOptions = {
   baseUrl: string;
   password?: string;
   timeoutMs?: number;
+  /** Workspace directory sent as `x-opencode-directory` on location-scoped routes. */
+  directory?: string;
 };
 
 export type OpenCodeV2ModelRef = {
@@ -102,11 +104,13 @@ export function parseOpenCodeV2ModelRef(value: string): OpenCodeV2ModelRef | und
 
 export class OpenCodeV2Client {
   readonly baseUrl: string;
+  readonly directory?: string;
   private readonly password?: string;
   private readonly timeoutMs?: number;
 
   constructor(options: OpenCodeV2ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
+    this.directory = options.directory?.trim() || undefined;
     this.password = options.password;
     this.timeoutMs = options.timeoutMs;
   }
@@ -120,6 +124,7 @@ export class OpenCodeV2Client {
             Authorization: `Basic ${Buffer.from(`opencode:${this.password}`).toString("base64")}`,
           }
         : {}),
+      ...(this.directory ? { "x-opencode-directory": this.directory } : {}),
       ...Object.fromEntries(new Headers(extra).entries()),
     };
   }
@@ -316,5 +321,54 @@ export class OpenCodeV2Client {
   async listModels(directory: string): Promise<OpenCodeV2Json[]> {
     const query = new URLSearchParams({ "location[directory]": directory });
     return dataArray(await this.request(`/api/model?${query.toString()}`));
+  }
+
+  async listPlugins(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(await this.request(`/api/plugin?${query.toString()}`));
+  }
+
+  async listCommands(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(await this.request(`/api/command?${query.toString()}`));
+  }
+
+  async listSkills(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(await this.request(`/api/skill?${query.toString()}`));
+  }
+
+  async listPty(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(await this.request(`/api/pty?${query.toString()}`));
+  }
+
+  async listShells(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(await this.request(`/api/shell?${query.toString()}`));
+  }
+
+  sendCommand(
+    id: string,
+    body: { command: string; arguments?: string; agent?: string; model?: OpenCodeV2ModelRef }
+  ): Promise<OpenCodeV2Json> {
+    return this.request(`/api/session/${encodeURIComponent(id)}/command`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  backgroundSession(id: string): Promise<null> {
+    return this.request(`/api/session/${encodeURIComponent(id)}/background`, {
+      method: "POST",
+    });
+  }
+
+  sessionLogPath(id: string, query: URLSearchParams): string[] {
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return [
+      `/api/session/${encodeURIComponent(id)}/log${suffix}`,
+      `/api/experimental/session/${encodeURIComponent(id)}/log${suffix}`,
+    ];
   }
 }

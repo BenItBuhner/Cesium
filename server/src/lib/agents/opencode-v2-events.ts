@@ -46,7 +46,11 @@ async function consumeSse(input: {
     signal: input.signal,
   });
   if (!response.ok || !response.body) {
-    throw new Error(`OpenCode v2 SSE ${input.path} failed with ${response.status}.`);
+    const error = new Error(`OpenCode v2 SSE ${input.path} failed with ${response.status}.`) as Error & {
+      status?: number;
+    };
+    error.status = response.status;
+    throw error;
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -121,6 +125,7 @@ export function startOpenCodeV2SessionLog(input: {
   const controller = new AbortController();
   let lastSeq: number | undefined;
   let initial = true;
+  let preferExperimentalLog = false;
   let readyResolve: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => {
     readyResolve = resolve;
@@ -133,37 +138,57 @@ export function startOpenCodeV2SessionLog(input: {
       if (lastSeq != null) {
         query.set("after", String(lastSeq));
       }
+      const paths = input.client.sessionLogPath(input.sessionId, query);
+      const orderedPaths = preferExperimentalLog ? [...paths].reverse() : paths;
       try {
-        await consumeSse({
-          client: input.client,
-          path: `/api/experimental/session/${encodeURIComponent(input.sessionId)}/log?${query.toString()}`,
-          signal: controller.signal,
-          onData: async (data) => {
-            if (!data || typeof data !== "object" || Array.isArray(data)) {
-              return;
+        let lastError: Error | null = null;
+        for (const [index, path] of orderedPaths.entries()) {
+          try {
+            await consumeSse({
+              client: input.client,
+              path,
+              signal: controller.signal,
+              onData: async (data) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) {
+                  return;
+                }
+                const event = data as OpenCodeV2Json;
+                if (event.type === "log.synced") {
+                  if (typeof event.seq === "number") {
+                    lastSeq = Math.max(lastSeq ?? -1, event.seq);
+                  }
+                  synced = true;
+                  initial = false;
+                  readyResolve();
+                  return;
+                }
+                const durable =
+                  event.durable && typeof event.durable === "object" && !Array.isArray(event.durable)
+                    ? (event.durable as OpenCodeV2Json)
+                    : undefined;
+                if (typeof durable?.seq === "number") {
+                  lastSeq = Math.max(lastSeq ?? -1, durable.seq);
+                }
+                if (synced) {
+                  await input.onEvent(event);
+                }
+              },
+            });
+            lastError = null;
+            break;
+          } catch (error) {
+            const status = (error as { status?: number }).status;
+            lastError = error instanceof Error ? error : new Error(String(error));
+            if (status === 404 && index < orderedPaths.length - 1) {
+              preferExperimentalLog = path.includes("/api/session/");
+              continue;
             }
-            const event = data as OpenCodeV2Json;
-            if (event.type === "log.synced") {
-              if (typeof event.seq === "number") {
-                lastSeq = Math.max(lastSeq ?? -1, event.seq);
-              }
-              synced = true;
-              initial = false;
-              readyResolve();
-              return;
-            }
-            const durable =
-              event.durable && typeof event.durable === "object" && !Array.isArray(event.durable)
-                ? (event.durable as OpenCodeV2Json)
-                : undefined;
-            if (typeof durable?.seq === "number") {
-              lastSeq = Math.max(lastSeq ?? -1, durable.seq);
-            }
-            if (synced) {
-              await input.onEvent(event);
-            }
-          },
-        });
+            throw lastError;
+          }
+        }
+        if (lastError) {
+          throw lastError;
+        }
         if (input.reconnectOnCleanClose === false) {
           return;
         }

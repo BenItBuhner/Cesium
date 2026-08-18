@@ -51,7 +51,7 @@ async function configuredTitleModelId(): Promise<string | null> {
 /**
  * Title generation via a Settings-selected Cesium catalog model. Supports the
  * same providers as chat turns, including OAuth subscription accounts
- * (ChatGPT/Codex, Claude Pro/Max, GitHub Copilot).
+ * (ChatGPT/Codex, SpaceXAI SuperGrok).
  */
 async function callCatalogTitleModel(modelId: string, userMessage: string): Promise<string> {
   const auth = await resolveCesiumAuth({ modelId });
@@ -150,8 +150,8 @@ async function callEnvTitleModel(userMessage: string): Promise<string> {
 
 /**
  * One title attempt. The Settings-selected catalog model wins when set; the
- * env-configured pipeline (OPENCURSOR_TITLE_MODEL) is the fallback so a broken
- * selection degrades instead of silencing titles entirely.
+ * Voice settings / env-configured pipeline (OPENCURSOR_TITLE_MODEL) is the
+ * fallback so a broken selection degrades instead of silencing titles entirely.
  */
 async function callTitleModel(userMessage: string): Promise<string> {
   const configuredModelId = await configuredTitleModelId();

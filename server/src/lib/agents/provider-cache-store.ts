@@ -27,6 +27,10 @@ import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
 import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
 import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-config.js";
+import {
+  resolveOpenCodeGeneration,
+  withOpenCodeGenerationOption,
+} from "./opencode-generation.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
 import { LEGACY_MODE_CONFIG_ID } from "./config-option-parse.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
@@ -155,29 +159,50 @@ async function createOpenCodeCliConfigOptions(input?: {
       typeof record?.name === "string" && record.name.trim()
         ? `${formatProviderName(value)}/${record.name.trim()}`
         : value;
-    options.push({ value, name: baseName });
-
     const variants =
       record?.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
         ? Object.keys(record.variants as Record<string, unknown>)
         : [];
+    options.push({
+      value,
+      name: baseName,
+      modelGroupId: value,
+      modelGroupName: baseName,
+      ...(variants.length > 0
+        ? {
+            modelParameters: [
+              { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+            ],
+          }
+        : {}),
+    });
     for (const variant of variants) {
       const trimmedVariant = variant.trim();
       if (!trimmedVariant) {
         continue;
       }
       options.push({
-        value: `${value}/${trimmedVariant}`,
+        value: `${value}#${trimmedVariant}`,
         name: `${baseName} (${trimmedVariant})`,
+        modelGroupId: value,
+        modelGroupName: baseName,
+        modelParameters: [
+          {
+            id: "variant",
+            name: "Variant",
+            value: trimmedVariant,
+            valueName: titleCaseConfigValue(trimmedVariant),
+          },
+        ],
       });
     }
   }
 
   if (options.length === 0) {
-    return [];
+    return withOpenCodeGenerationOption([], "current");
   }
 
-  return [
+  return withOpenCodeGenerationOption([
     {
       id: "mode",
       name: "Session Mode",
@@ -195,7 +220,7 @@ async function createOpenCodeCliConfigOptions(input?: {
       currentValue: options[0]?.value ?? "",
       options,
     },
-  ];
+  ], "current");
 }
 
 function collectOpenCodeServerModelOptions(payload: unknown): AgentConfigOption["options"] {
@@ -249,7 +274,45 @@ function collectOpenCodeServerModelOptions(payload: unknown): AgentConfigOption[
       options.push({
         value: `${providerId}/${modelId}`,
         name: `${providerName}/${modelName}`,
+        modelGroupId: `${providerId}/${modelId}`,
+        modelGroupName: `${providerName}/${modelName}`,
+        ...(modelRecord.variants &&
+        typeof modelRecord.variants === "object" &&
+        !Array.isArray(modelRecord.variants) &&
+        Object.keys(modelRecord.variants as Record<string, unknown>).length > 0
+          ? {
+              modelParameters: [
+                { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+              ],
+            }
+          : {}),
       });
+      const variants =
+        modelRecord.variants &&
+        typeof modelRecord.variants === "object" &&
+        !Array.isArray(modelRecord.variants)
+          ? Object.keys(modelRecord.variants as Record<string, unknown>)
+          : [];
+      for (const variant of variants) {
+        const variantId = variant.trim();
+        if (!variantId) {
+          continue;
+        }
+        options.push({
+          value: `${providerId}/${modelId}#${variantId}`,
+          name: `${providerName}/${modelName} (${variantId})`,
+          modelGroupId: `${providerId}/${modelId}`,
+          modelGroupName: `${providerName}/${modelName}`,
+          modelParameters: [
+            {
+              id: "variant",
+              name: "Variant",
+              value: variantId,
+              valueName: titleCaseConfigValue(variantId),
+            },
+          ],
+        });
+      }
     }
   }
   return options;
@@ -299,7 +362,7 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
       new Map(modelOptions.map((option) => [option.value, option])).values()
     );
     const agentOptions = collectOpenCodeServerAgentOptions(agents);
-    return [
+    return withOpenCodeGenerationOption([
       {
         id: "agent",
         name: "Agent",
@@ -317,7 +380,7 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
           : "No OpenCode server models were reported. Configure/authenticate OpenCode and refresh models.",
         options: uniqueModels,
       },
-    ];
+    ], "current");
   } catch {
     return createOpenCodeCliConfigOptions();
   }
@@ -586,7 +649,7 @@ function codexAppServerEffortValues(entry: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-function codexAppServerOptionsFromModels(
+export function codexAppServerOptionsFromModels(
   models: Array<Record<string, unknown>>
 ): AgentConfigOption[] {
   const modelOptions: AgentConfigOptionValue[] = models
@@ -853,7 +916,10 @@ function cursorSdkModelRows(model: {
         value: encodeCursorSdkModelValue(modelId, params),
         name,
         description: variant.description ?? model.description,
+        modelGroupId: modelId,
+        modelGroupName: model.displayName || modelId,
         metadata: cursorSdkModelMetadata(modelId, params, variant.isDefault),
+        modelParameters: cursorSdkEffectiveModelParameters(params, model.parameters ?? []),
       };
     });
   }
@@ -864,16 +930,23 @@ function cursorSdkModelRows(model: {
       value: encodeCursorSdkModelValue(modelId, params),
       name: formatCursorSdkVariantName(model.displayName || modelId, "", params),
       ...(model.description ? { description: model.description } : {}),
+      modelGroupId: modelId,
+      modelGroupName: model.displayName || modelId,
       metadata: cursorSdkModelMetadata(modelId, params, false),
+      modelParameters: cursorSdkEffectiveModelParameters(params, model.parameters ?? []),
     }));
   }
 
+  const defaultParameters = cursorSdkEffectiveModelParameters([], model.parameters ?? []);
   return [
     {
       value: modelId,
       name: model.displayName || modelId,
       ...(model.description ? { description: model.description } : {}),
+      modelGroupId: modelId,
+      modelGroupName: model.displayName || modelId,
       metadata: cursorSdkModelMetadata(modelId, [], false),
+      ...(defaultParameters.length > 0 ? { modelParameters: defaultParameters } : {}),
     },
     ...(model.aliases ?? [])
       .map((alias) => alias.trim())
@@ -882,10 +955,13 @@ function cursorSdkModelRows(model: {
         value: alias,
         name: `${model.displayName || modelId} (${alias})`,
         ...(model.description ? { description: model.description } : {}),
+        modelGroupId: alias,
+        modelGroupName: `${model.displayName || modelId} (${alias})`,
         metadata: {
           ...cursorSdkModelMetadata(modelId, [], false),
           cursorSdkAlias: alias,
         },
+        ...(defaultParameters.length > 0 ? { modelParameters: defaultParameters } : {}),
       })),
   ];
 }
@@ -895,6 +971,47 @@ function normalizeCursorSdkParams(params: CursorSdkModelParam[]): CursorSdkModel
     .map((param) => ({ id: param.id.trim(), value: param.value.trim() }))
     .filter((param) => param.id.length > 0 && param.value.length > 0)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function cursorSdkEffectiveModelParameters(
+  params: CursorSdkModelParam[],
+  definitions: Array<{
+    id: string;
+    displayName?: string;
+    values: Array<{ value: string; displayName?: string }>;
+  }>
+): NonNullable<AgentConfigOptionValue["modelParameters"]> {
+  const selected = new Map(params.map((param) => [param.id, param.value]));
+  const knownIds = new Set<string>();
+  const out: NonNullable<AgentConfigOptionValue["modelParameters"]> = [];
+
+  for (const definition of definitions) {
+    const id = definition.id.trim();
+    if (!id) {
+      continue;
+    }
+    knownIds.add(id);
+    const value = selected.get(id) ?? definition.values.find((candidate) => candidate.value.trim())?.value;
+    if (!value) {
+      continue;
+    }
+    const valueDefinition = definition.values.find((candidate) => candidate.value === value);
+    out.push({
+      id,
+      ...(definition.displayName?.trim() ? { name: definition.displayName.trim() } : {}),
+      value,
+      ...(valueDefinition?.displayName?.trim()
+        ? { valueName: valueDefinition.displayName.trim() }
+        : {}),
+    });
+  }
+
+  for (const param of params) {
+    if (!knownIds.has(param.id)) {
+      out.push({ id: param.id, value: param.value });
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function cursorSdkModelMetadata(
@@ -1035,7 +1152,27 @@ function expandCursorSdkParameterVariants(
       return [];
     }
   }
-  return rows.map((row) => normalizeCursorSdkParams(row));
+  return rows
+    .map((row) => normalizeCursorSdkParams(row))
+    .filter(isValidGeneratedCursorSdkParamCombination);
+}
+
+function isValidGeneratedCursorSdkParamCombination(params: CursorSdkModelParam[]): boolean {
+  const context = params.find((param) => /context|length|window|token/i.test(param.id));
+  const fast = params.find((param) => /speed|fast/i.test(param.id));
+  if (!context || !fast) {
+    return true;
+  }
+  const normalizedContext = context.value.trim().toLowerCase().replace(/[\s,_]/g, "");
+  const match = /^(\d+(?:\.\d+)?)([km]?)$/.exec(normalizedContext);
+  const tokens = match
+    ? Number.parseFloat(match[1]!) *
+      (match[2] === "m" ? 1_000_000 : match[2] === "k" ? 1_000 : 1)
+    : 0;
+  const fastEnabled = ["true", "fast", "enabled", "on"].includes(
+    fast.value.trim().toLowerCase()
+  );
+  return !(tokens >= 1_000_000 && fastEnabled);
 }
 
 const CURSOR_SDK_MODEL_LIST_TIMEOUT_MS = Number.parseInt(
@@ -1345,9 +1482,13 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
     case "opencode-server":
+    case "opencode-v2-beta": {
+      const generation = resolveOpenCodeGeneration({ backendId });
+      if (generation === "v2-beta") {
+        return createOpenCodeV2ConfigOptions();
+      }
       return createOpenCodeServerConfigOptions();
-    case "opencode-v2-beta":
-      return createOpenCodeV2ConfigOptions();
+    }
     case "devin-acp":
       return createDevinCliConfigOptions();
     case "grok-build":
@@ -1620,8 +1761,12 @@ function maybeInPlaceMigrate(
   if (backendId === "opencode-server" || backendId === "opencode-v2-beta") {
     const hasModel = cachedOptions.some((option) => option.id === "model");
     const hasAgent = cachedOptions.some((option) => option.id === "agent" || option.id === "mode");
-    if (!hasModel || !hasAgent) {
-      return { upgraded: cachedOptions, needsReseed: true };
+    const hasGeneration = cachedOptions.some((option) => option.id === "generation");
+    if (!hasModel || !hasAgent || !hasGeneration) {
+      return {
+        upgraded: withOpenCodeGenerationOption(cachedOptions),
+        needsReseed: !hasModel || !hasAgent,
+      };
     }
   }
 

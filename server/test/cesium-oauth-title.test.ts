@@ -87,9 +87,12 @@ test("public settings expose OAuth provider statuses for the settings UI", async
   const publicSettings = await getCesiumAgentSettingsPublic();
   assert.ok(Array.isArray(publicSettings.oauthProviders));
   const ids = publicSettings.oauthProviders.map((provider) => provider.id);
-  // Built-in Pi SDK OAuth providers are always listed (connected or not).
-  for (const expected of ["openai-codex", "anthropic", "github-copilot"]) {
+  // Official subscription logins only: ChatGPT/Codex and SpaceXAI SuperGrok.
+  for (const expected of ["openai-codex", "xai"]) {
     assert.ok(ids.includes(expected), `expected ${expected} in ${ids.join(", ")}`);
+  }
+  for (const blocked of ["anthropic", "github-copilot", "google-antigravity", "google-gemini-cli"]) {
+    assert.equal(ids.includes(blocked), false, `blocked ${blocked} leaked into ${ids.join(", ")}`);
   }
   for (const provider of publicSettings.oauthProviders) {
     assert.equal(typeof provider.name, "string");
