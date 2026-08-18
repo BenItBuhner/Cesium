@@ -62,7 +62,7 @@ test("does not infer Fast from a trailing true in legacy Cursor display names", 
   const group = buildBaseModelPickerGroups(models)[0]!;
   assert.deepEqual(
     group.parameters.map((parameter) => parameter.label),
-    ["Context", "Reasoning Effort", "Reasoning"]
+    ["Reasoning Effort", "Reasoning"]
   );
   assert.equal(group.parameters.some((parameter) => parameter.label === "Fast"), false);
 });
