@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Removed
+
+- The blocking "Check Cesium server" / "Sign in to Cesium" full-page gate is gone. The workbench now always mounts immediately on launch, even when the configured backend is unreachable or requires sign-in; connecting, switching, and signing in to servers (including the Termux on-device flow) live in-app under Settings -> Servers and the server picker. The gate's fix history kept missing the APK because the bundled workbench assets were last regenerated at #168 — this release rebuilds them from source with the gate removed.
+
 ## [0.7.0] - 2026-08-18
 
 ### Added
