@@ -2,11 +2,15 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Check, Folder, GitBranch, Layers, Plus } from "lucide-react";
+import { Check, Folder, GitBranch, Layers, MessageSquare, Plus } from "lucide-react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryContext";
 import type { WorkspaceRailAppearance } from "@/lib/global-settings";
 import { isStandaloneChatWorkspace } from "@/lib/types";
+import {
+  matchesNoWorkspacePickerQuery,
+  NO_WORKSPACE_PICKER_LABEL,
+} from "@/lib/multi-server-workspaces";
 import {
   getWorkspaceRailAppearance,
   WorkspaceFolderIcon,
@@ -48,7 +52,10 @@ export function WorkspacePickerMenu({
   selectedWorkspaceKey,
   allSelected = false,
   showAllWorkspacesOption = false,
+  showNoWorkspaceOption = true,
+  noWorkspaceSelected = false,
   onSelectAll,
+  onSelectNoWorkspace,
   onSelectWorkspace,
 }: {
   open: boolean;
@@ -61,7 +68,10 @@ export function WorkspacePickerMenu({
   selectedWorkspaceKey: string | null;
   allSelected?: boolean;
   showAllWorkspacesOption?: boolean;
+  showNoWorkspaceOption?: boolean;
+  noWorkspaceSelected?: boolean;
   onSelectAll?: () => void;
+  onSelectNoWorkspace?: () => void;
   onSelectWorkspace: (workspace: DirectoryWorkspaceRecord) => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -133,6 +143,9 @@ export function WorkspacePickerMenu({
     return ids.size > 1;
   }, [filtered]);
 
+  const showNoWorkspaceRow =
+    showNoWorkspaceOption && matchesNoWorkspacePickerQuery(query);
+
   if (!open) {
     return null;
   }
@@ -158,7 +171,7 @@ export function WorkspacePickerMenu({
         />
       </div>
       <VerticalFadedScroll
-        measureKey={`${query}\0${filtered.length}\0${showAllWorkspacesOption ? 1 : 0}`}
+        measureKey={`${query}\0${filtered.length}\0${showAllWorkspacesOption ? 1 : 0}\0${showNoWorkspaceRow ? 1 : 0}`}
         scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
       >
         {showAllWorkspacesOption ? (
@@ -175,46 +188,91 @@ export function WorkspacePickerMenu({
             {allSelected ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
           </button>
         ) : null}
-        {filtered.map((workspace) => {
-          const current = !allSelected && workspace.workspaceKey === selectedWorkspaceKey;
-          const isHome =
-            Boolean(homeWorkspaceId) &&
-            workspace.id === homeWorkspaceId &&
-            workspace.serverId === activeServerId;
-          const subtitle = [
-            workspace.repository?.currentBranch,
-            showDeviceLabel ? workspace.serverLabel : null,
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return (
+        {showNoWorkspaceRow ? (
+          <div
+            className={
+              showAllWorkspacesOption
+                ? "mt-[4px] border-t border-[var(--border-card)] pt-[4px]"
+                : undefined
+            }
+          >
             <button
-              key={workspace.workspaceKey}
               type="button"
+              data-perf="agent-workspace-picker-no-workspace"
               onClick={() => {
-                onSelectWorkspace(workspace);
+                onSelectNoWorkspace?.();
                 onClose();
               }}
               className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             >
-              <WorkspacePickerRowIcon
-                appearances={appearances}
-                workspaceKey={workspace.workspaceKey}
-                isHome={isHome}
-              />
+              <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
               <span className="min-w-0 flex-1 truncate">
-                <span className="block truncate text-[var(--text-primary)]">{workspace.name}</span>
-                {subtitle ? (
-                  <span className="mt-[1px] block truncate font-sans text-[10px] text-[var(--text-disabled)]">
-                    {subtitle}
-                  </span>
-                ) : null}
+                <span className="block truncate text-[var(--text-primary)]">
+                  {NO_WORKSPACE_PICKER_LABEL}
+                </span>
+                <span className="mt-[1px] block truncate font-sans text-[10px] text-[var(--text-disabled)]">
+                  One-off chat with a temporary folder
+                </span>
               </span>
-              {current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
+              {noWorkspaceSelected && !allSelected ? (
+                <Check className="size-[13px] shrink-0" strokeWidth={2} />
+              ) : null}
             </button>
-          );
-        })}
-        {filtered.length === 0 ? (
+          </div>
+        ) : null}
+        {filtered.length > 0 ? (
+          <div
+            className={
+              showAllWorkspacesOption || showNoWorkspaceRow
+                ? "mt-[4px] border-t border-[var(--border-card)] pt-[4px]"
+                : undefined
+            }
+          >
+            {filtered.map((workspace) => {
+              const current =
+                !allSelected &&
+                !noWorkspaceSelected &&
+                workspace.workspaceKey === selectedWorkspaceKey;
+              const isHome =
+                Boolean(homeWorkspaceId) &&
+                workspace.id === homeWorkspaceId &&
+                workspace.serverId === activeServerId;
+              const subtitle = [
+                workspace.repository?.currentBranch,
+                showDeviceLabel ? workspace.serverLabel : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <button
+                  key={workspace.workspaceKey}
+                  type="button"
+                  onClick={() => {
+                    onSelectWorkspace(workspace);
+                    onClose();
+                  }}
+                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                >
+                  <WorkspacePickerRowIcon
+                    appearances={appearances}
+                    workspaceKey={workspace.workspaceKey}
+                    isHome={isHome}
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="block truncate text-[var(--text-primary)]">{workspace.name}</span>
+                    {subtitle ? (
+                      <span className="mt-[1px] block truncate font-sans text-[10px] text-[var(--text-disabled)]">
+                        {subtitle}
+                      </span>
+                    ) : null}
+                  </span>
+                  {current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {filtered.length === 0 && !showNoWorkspaceRow ? (
           <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
             No workspaces found
           </div>

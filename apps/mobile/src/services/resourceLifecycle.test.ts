@@ -30,6 +30,26 @@ test("background coordinator only keeps the native agent socket in background", 
   assert.equal(statusRefreshes, 1);
 });
 
+test("agent status opens no socket without an active conversation", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  FakeAgentWebSocket.instances = [];
+  globalThis.WebSocket = FakeAgentWebSocket as unknown as typeof WebSocket;
+  try {
+    const service = new AgentStatusService({ onProjection() {} });
+    service.updateConfig({
+      serverBaseUrl: "http://localhost:9100",
+      workspaceId: "workspace",
+      conversationIds: [],
+    });
+    service.setConnectionEnabled(true);
+
+    assert.equal(FakeAgentWebSocket.instances.length, 0);
+    service.close();
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
 test("agent event merge appends monotonic batches and replaces duplicate sequences", () => {
   const first = event(1, "first");
   const second = event(2, "second");

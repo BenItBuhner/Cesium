@@ -135,7 +135,6 @@ function SettingsServerPicker({
               </div>
               <VerticalFadedScroll
                 measureKey={servers.length}
-                edgeColorVar="var(--bg-panel)"
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
                 {servers.map((server) => {

@@ -104,4 +104,68 @@ if (globalThis.crypto && !globalThis.crypto.randomUUID) {
     });
 }
 
+/**
+ * WebKit (the iOS WKWebView) throws a SecurityError when
+ * history.pushState/replaceState changes anything but query or fragment on a
+ * `file:` page; Chromium (Electron, Android WebView) allows same-origin path
+ * changes and the workbench's Next-style router relies on that. The bundled
+ * renderer is a single page that only ever reads `location.search` back, so
+ * on hosts that refuse a path change we retry with the real bundle pathname
+ * plus the intended query + hash, and as a last resort drop the URL sync
+ * entirely (it is cosmetic inside a WebView) instead of crashing the app.
+ * Chromium hosts never hit the fallback.
+ *
+ * Patched on both History.prototype and the window.history instance: some
+ * WebKit builds have been observed reaching the original implementation
+ * despite a prototype override.
+ */
+if (typeof window !== "undefined" && window.location.protocol === "file:") {
+  const patchHistoryMethod = (method: "pushState" | "replaceState") => {
+    const original = window.history[method].bind(window.history);
+    const patched = function patchedHistoryMethod(
+      state: unknown,
+      unused: string,
+      url?: string | URL | null
+    ) {
+      if (url == null) {
+        return original(state, unused, url as null | undefined);
+      }
+      try {
+        return original(state, unused, url);
+      } catch {
+        try {
+          const resolved = new URL(String(url), window.location.href);
+          return original(
+            state,
+            unused,
+            `${window.location.pathname}${resolved.search}${resolved.hash}`
+          );
+        } catch {
+          return undefined;
+        }
+      }
+    };
+    try {
+      Object.defineProperty(History.prototype, method, {
+        configurable: true,
+        writable: true,
+        value: patched,
+      });
+    } catch {
+      // Prototype not patchable on this engine; the instance patch below wins.
+    }
+    try {
+      Object.defineProperty(window.history, method, {
+        configurable: true,
+        writable: true,
+        value: patched,
+      });
+    } catch {
+      // Ignore; prototype patch already applied.
+    }
+  };
+  patchHistoryMethod("pushState");
+  patchHistoryMethod("replaceState");
+}
+
 export {};

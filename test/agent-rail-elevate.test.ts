@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { AgentConversationGroup, AgentRailConversationSummary } from "../src/lib/agent-types.ts";
 import {
+  clearSettledInGroups,
   collectAttentionConversations,
+  collectRunningConversations,
   conversationHasAttentionHome,
+  conversationHasRunningHome,
+  sinkSettledInGroups,
   stripAttentionFromPinned,
   stripElevatedFromGroups,
 } from "../src/lib/agent-rail-elevate.ts";
@@ -84,5 +88,96 @@ describe("agent rail elevate", () => {
       home[0]?.conversations.map((item) => item.id),
       ["idle"]
     );
+  });
+
+  test("running conversations get their own elevated home; attention wins", () => {
+    const running = conversation("run", "ws", { status: "running" });
+    const pausing = conversation("pause", "ws", { status: "pausing" });
+    const blockedRunner = conversation("blocked", "ws", {
+      status: "running",
+      hasPendingQuestion: true,
+    });
+    const idle = conversation("idle", "ws");
+    assert.equal(conversationHasRunningHome(running), true);
+    assert.equal(conversationHasRunningHome(pausing), true);
+    // Blocked on the user: homed in Needs attention, not Running.
+    assert.equal(conversationHasRunningHome(blockedRunner), false);
+    assert.equal(conversationHasAttentionHome(blockedRunner), true);
+    assert.equal(conversationHasRunningHome(idle), false);
+
+    const groups: AgentConversationGroup[] = [
+      { workspace: workspace("ws"), conversations: [running, pausing, blockedRunner, idle] },
+    ];
+    const collected = collectRunningConversations(groups, [], {});
+    assert.deepEqual(
+      collected.map((item) => item.id).sort(),
+      ["pause", "run"]
+    );
+    const elevatedIds = new Set([
+      ...collected.map((item) => item.id),
+      ...collectAttentionConversations(groups, [], {}).map((item) => item.id),
+    ]);
+    const home = stripElevatedFromGroups(groups, elevatedIds, new Set());
+    assert.deepEqual(
+      home[0]?.conversations.map((item) => item.id),
+      ["idle"]
+    );
+  });
+
+  test("settled runners are not promoted into the Running section", () => {
+    const settledRunner = conversation("sr", "ws", { status: "running", settledAt: 10 });
+    assert.equal(conversationHasRunningHome(settledRunner), false);
+    const groups: AgentConversationGroup[] = [
+      { workspace: workspace("ws"), conversations: [settledRunner] },
+    ];
+    assert.deepEqual(collectRunningConversations(groups, [], {}), []);
+  });
+
+  test("settled failures leave the attention inbox", () => {
+    const settledFailed = conversation("sf", "ws", { status: "failed", settledAt: 10 });
+    assert.equal(conversationHasAttentionHome(settledFailed), false);
+    // Blocked-on-user states still surface even when settled.
+    const settledBlocked = conversation("sb", "ws", {
+      hasPendingPermission: true,
+      settledAt: 10,
+    });
+    assert.equal(conversationHasAttentionHome(settledBlocked), true);
+  });
+
+  test("sinkSettledInGroups keeps relative order but sends settled rows to the bottom", () => {
+    const a = conversation("a", "ws", { updatedAt: 50, settledAt: 5 });
+    const b = conversation("b", "ws", { updatedAt: 40 });
+    const c = conversation("c", "ws", { updatedAt: 30, settledAt: 6 });
+    const d = conversation("d", "ws", { updatedAt: 20 });
+    const groups: AgentConversationGroup[] = [
+      { workspace: workspace("ws"), conversations: [a, b, c, d] },
+    ];
+    const sunk = sinkSettledInGroups(groups);
+    assert.deepEqual(
+      sunk[0]?.conversations.map((item) => item.id),
+      ["b", "d", "a", "c"]
+    );
+    // No settled rows: groups pass through untouched (same reference).
+    const untouched: AgentConversationGroup[] = [
+      { workspace: workspace("ws2"), conversations: [b, d] },
+    ];
+    assert.equal(sinkSettledInGroups(untouched)[0], untouched[0]);
+  });
+
+  test("clearSettledInGroups neutralizes settled flags when the mode is off", () => {
+    const settled = conversation("s", "ws", { settledAt: 10, status: "failed" });
+    const idle = conversation("i", "ws");
+    const groups: AgentConversationGroup[] = [
+      { workspace: workspace("ws"), conversations: [settled, idle] },
+    ];
+    const cleared = clearSettledInGroups(groups);
+    assert.equal(cleared[0]?.conversations[0]?.settledAt, null);
+    // With the flag stripped, the failure surfaces in Needs attention again.
+    assert.equal(conversationHasAttentionHome(cleared[0]!.conversations[0]!), true);
+    // Nothing settled: pass-through by reference.
+    const untouched: AgentConversationGroup[] = [
+      { workspace: workspace("ws2"), conversations: [idle] },
+    ];
+    assert.equal(clearSettledInGroups(untouched), untouched);
   });
 });

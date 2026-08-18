@@ -91,8 +91,9 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: [],
       showIcons: true,
+      settledMode: false,
       rowDetail: "balanced",
-      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+      sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],
       scope: { type: "all" },
     });
@@ -171,8 +172,9 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
+      settledMode: false,
       rowDetail: "balanced",
-      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+      sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],
       scope: { type: "all" },
     });
@@ -207,6 +209,7 @@ describe("global settings", () => {
     });
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "attention",
+      "running",
       "chats",
       "pinned",
       "workspaces",
@@ -231,6 +234,7 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "pinned",
       "attention",
+      "running",
       "chats",
       "workspaces",
     ]);
@@ -338,6 +342,21 @@ describe("global settings", () => {
       type: "workspace",
       workspaceKey: "local:ws-1",
     });
+  });
+
+  test("persists a no-workspace rail scope", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          scope: { type: "no-workspace" },
+        },
+      },
+    });
+    assert.deepEqual(settings.general.agentRail.scope, { type: "no-workspace" });
   });
 
   test("applies named rail view presets", () => {

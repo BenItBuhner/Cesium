@@ -270,10 +270,12 @@ async function collectWorkInsights(
   const active = conversations.filter(
     (record) => record.archivedAt == null && ACTIVE_CONVERSATION_STATUSES.has(record.status)
   );
+  const listed = active.slice(0, 8);
   insights.work.runningConversations = active.length;
-  insights.work.runningConversationTitles = active
-    .slice(0, 8)
-    .map((record) => record.title || "Untitled chat");
+  insights.work.runningConversationIds = listed.map((record) => record.id);
+  insights.work.runningConversationTitles = listed.map(
+    (record) => record.title || "Untitled chat"
+  );
   insights.work.aliveTerminals = listTerminalSessions().filter(
     (terminal) => terminal.workspaceId === workspace.id && terminal.alive
   ).length;

@@ -60,6 +60,10 @@ import {
 } from "@/lib/agent-rail-pins";
 import { resolveAgentRightPaneOpen } from "@/lib/agent-right-pane";
 import {
+  resolveLeftRailCollapsed,
+  shouldRestorePersistedLeftRailCollapsed,
+} from "@/lib/agent-left-rail";
+import {
   AGENT_CONVERSATION_DELETED_EVENT,
   AGENT_CONVERSATION_UPSERTED_EVENT,
   dispatchAgentConversationUpserted,
@@ -102,7 +106,10 @@ import {
   getRepositoryGroupingKey,
 } from "@/lib/multi-server-workspaces";
 import {
+  clearSettledInGroups,
   collectAttentionConversations,
+  collectRunningConversations,
+  sinkSettledInGroups,
   stripAttentionFromPinned,
   stripElevatedFromGroups,
 } from "@/lib/agent-rail-elevate";
@@ -145,6 +152,7 @@ function buildAgentRailCycleOrder(input: {
   groups: AgentConversationGroup[];
   pinnedRailConversations: AgentRailConversationSummary[];
   attentionRailConversations: AgentRailConversationSummary[];
+  runningRailConversations: AgentRailConversationSummary[];
   collapsedWorkspaceIds: Set<string>;
 }): AgentRailConversationSummary[] {
   const {
@@ -152,6 +160,7 @@ function buildAgentRailCycleOrder(input: {
     groups,
     pinnedRailConversations,
     attentionRailConversations,
+    runningRailConversations,
     collapsedWorkspaceIds,
   } = input;
   const visibleGroups = groups.filter(
@@ -160,6 +169,9 @@ function buildAgentRailCycleOrder(input: {
   const out: AgentRailConversationSummary[] = [];
   if (!collapsedWorkspaceIds.has("__agentAttention__")) {
     out.push(...attentionRailConversations);
+  }
+  if (!collapsedWorkspaceIds.has("__agentRunning__")) {
+    out.push(...runningRailConversations);
   }
   if (!collapsedWorkspaceIds.has(AGENT_RAIL_CYCLE_PINNED_SECTION_ID)) {
     out.push(...pinnedRailConversations);
@@ -255,8 +267,15 @@ type AgentShellStateContextValue = {
   applyOptimisticRailTitle: (conversationId: string, title: string) => void;
   archiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   unarchiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  /** Mark a conversation settled (sinks to the bottom until a new prompt unsettles it). */
+  settleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  unsettleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  /** Opt-in Settled mode; settle controls render only while enabled. */
+  settledModeEnabled: boolean;
   pinnedRailConversations: AgentRailConversationSummary[];
   attentionRailConversations: AgentRailConversationSummary[];
+  /** Actively working agents, elevated into their own cross-workspace section. */
+  runningRailConversations: AgentRailConversationSummary[];
   pinConversation: (conversationId: string) => void;
   unpinConversation: (conversationId: string) => void;
   railFilterToggles: AgentRailFilterToggleState;
@@ -576,7 +595,13 @@ export function AgentShellStateProvider({
   const [standaloneDraftActive, setStandaloneDraftActive] = useState(false);
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
-  const [sharedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState(false);
+  const [persistedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState<
+    boolean | null
+  >(null);
+  const sharedLeftRailCollapsed = resolveLeftRailCollapsed({
+    isMobile,
+    persistedLeftRailCollapsed,
+  });
   const [draftRightPaneOpenScope, setDraftRightPaneOpenScope] = useState<string | null>(null);
   const [sharedAgentShellDesktopLayout, setSharedAgentShellDesktopLayoutState] =
     useState<Record<string, number> | null>(null);
@@ -594,6 +619,7 @@ export function AgentShellStateProvider({
   const railRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const railFetchGenerationRef = useRef(0);
   const archiveMutationSequenceRef = useRef(new Map<string, number>());
+  const settleMutationSequenceRef = useRef(new Map<string, number>());
   serverStatusByIdRef.current = serverStatusById;
 
   useEffect(() => {
@@ -927,9 +953,19 @@ export function AgentShellStateProvider({
     void refreshConversationGroupsWithState();
   }, [activeServer.id, refreshConversationGroupsWithState]);
 
+  const settledModeEnabled = settings.general.agentRail.settledMode === true;
+
+  // Settled mode is opt-in: with the mode off, persisted settled flags are
+  // stripped up front so no downstream derivation (sinking, elevation,
+  // status kinds, row toggles) ever sees them.
+  const settledAwareGroups = useMemo(
+    () => (settledModeEnabled ? groups : clearSettledInGroups(groups)),
+    [groups, settledModeEnabled]
+  );
+
   const visibleMachineGroups = useMemo(
-    () => filterGroupsByMachine(groups, settings.general.agentRail.hiddenServerIds),
-    [groups, settings.general.agentRail.hiddenServerIds]
+    () => filterGroupsByMachine(settledAwareGroups, settings.general.agentRail.hiddenServerIds),
+    [settledAwareGroups, settings.general.agentRail.hiddenServerIds]
   );
 
   const scopedMachineGroups = useMemo(
@@ -1202,21 +1238,24 @@ export function AgentShellStateProvider({
 
   // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
   // after that — session layout changes when switching workspaces and must not clobber user prefs.
+  // Mobile ignores a stored "rail open" flag: the drawer covers the viewport, so a fresh
+  // session (sign-in, new server, new WebView) should land on the new-chat page.
   useLayoutEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
     const snapshot = readAgentShellSharedSnapshot();
-    if (!snapshot) {
-      return;
-    }
-    if (typeof snapshot.leftRailCollapsed === "boolean") {
-      setSharedLeftRailCollapsedState(snapshot.leftRailCollapsed);
-    }
-    if (snapshot.agentShellDesktopLayout != null) {
+    if (snapshot?.agentShellDesktopLayout != null) {
       setSharedAgentShellDesktopLayoutState(snapshot.agentShellDesktopLayout);
     }
-  }, []);
+    if (!shouldRestorePersistedLeftRailCollapsed(isMobile)) {
+      setSharedLeftRailCollapsedState(null);
+      return;
+    }
+    if (typeof snapshot?.leftRailCollapsed === "boolean") {
+      setSharedLeftRailCollapsedState(snapshot.leftRailCollapsed);
+    }
+  }, [isMobile]);
 
   useEffect(() => {
     if (!sessionReady || !activeWorkspaceId || typeof window === "undefined") {
@@ -1234,7 +1273,9 @@ export function AgentShellStateProvider({
     if (fallbackLayout == null) {
       return;
     }
-    setSharedLeftRailCollapsedState(nextLeftRailCollapsed);
+    if (shouldRestorePersistedLeftRailCollapsed(isMobile)) {
+      setSharedLeftRailCollapsedState(nextLeftRailCollapsed);
+    }
     setSharedAgentShellDesktopLayoutState(fallbackLayout);
     writeAgentShellSharedSnapshot({
       leftRailCollapsed: nextLeftRailCollapsed,
@@ -1242,6 +1283,7 @@ export function AgentShellStateProvider({
     });
   }, [
     activeWorkspaceId,
+    isMobile,
     sessionReady,
     workspaceSession.agentView.agentShellDesktopLayout,
     workspaceSession.agentView.leftRailCollapsed,
@@ -1709,10 +1751,15 @@ export function AgentShellStateProvider({
       },
     }));
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
+    if (isMobile) {
+      setLeftRailCollapsed(true);
+    }
   }, [
     activeWorkspaceId,
+    isMobile,
     replaceConversationIdInLocation,
     resetComposerDraft,
+    setLeftRailCollapsed,
     updateWorkspaceSession,
   ]);
 
@@ -1861,6 +1908,87 @@ export function AgentShellStateProvider({
     (conversation: AgentRailConversationSummary) =>
       setConversationArchived(conversation, false),
     [setConversationArchived]
+  );
+
+  const setConversationSettled = useCallback(
+    async (summary: AgentRailConversationSummary, settled: boolean) => {
+      const mutationKey =
+        summary.conversationKey ??
+        `${summary.serverId ?? activeServer.id}:${summary.workspaceId}:${summary.id}`;
+      const sequence = (settleMutationSequenceRef.current.get(mutationKey) ?? 0) + 1;
+      settleMutationSequenceRef.current.set(mutationKey, sequence);
+      railFetchGenerationRef.current += 1;
+      // Rank-neutral on purpose: settling must not bump the row's recency,
+      // it only re-partitions the row into/out of the settled tail.
+      setGroups((current) =>
+        patchAgentConversationSummaryInGroups(current, summary, {
+          settledAt: settled ? Date.now() : null,
+        })
+      );
+
+      const targetServer =
+        (summary.serverId
+          ? servers.find((server) => server.id === summary.serverId)
+          : activeServer) ?? activeServer;
+      try {
+        const { conversation } = await patchAgentConversationMetadata(
+          summary.id,
+          { settled },
+          {
+            server: {
+              serverId: targetServer.id,
+              baseUrl: targetServer.baseUrl,
+              workspaceId: summary.workspaceId,
+            },
+          }
+        );
+        if (settleMutationSequenceRef.current.get(mutationKey) === sequence) {
+          dispatchAgentConversationUpserted(conversation, targetServer.id);
+        }
+      } catch (error) {
+        if (settleMutationSequenceRef.current.get(mutationKey) === sequence) {
+          setGroups((current) =>
+            patchAgentConversationSummaryInGroups(current, summary, {
+              settledAt: summary.settledAt ?? null,
+            })
+          );
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "error",
+            title: settled ? "Settle Failed" : "Unsettle Failed",
+            message:
+              error instanceof Error
+                ? error.message
+                : `Could not ${settled ? "settle" : "unsettle"} the conversation.`,
+            autoDismissMs: 8_000,
+            compact: true,
+          });
+          await refreshConversationGroupsWithState();
+        }
+      } finally {
+        if (settleMutationSequenceRef.current.get(mutationKey) === sequence) {
+          settleMutationSequenceRef.current.delete(mutationKey);
+        }
+      }
+    },
+    [
+      activeServer,
+      pushNotification,
+      refreshConversationGroupsWithState,
+      servers,
+    ]
+  );
+
+  const settleConversation = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      setConversationSettled(conversation, true),
+    [setConversationSettled]
+  );
+
+  const unsettleConversation = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      setConversationSettled(conversation, false),
+    [setConversationSettled]
   );
 
   const pinConversation = useCallback(
@@ -2036,19 +2164,55 @@ export function AgentShellStateProvider({
     [attentionRailConversations]
   );
 
+  // Actively working agents get their own elevated home right below Needs
+  // attention: the user is most likely to come back to them next.
+  const runningRailConversations = useMemo(() => {
+    const hidden = new Set(settings.general.agentRail.hiddenSections ?? []);
+    if (settings.general.agentRail.groupBy === "priority" || hidden.has("running")) {
+      return [];
+    }
+    return collectRunningConversations(
+      filteredGroups,
+      pinnedRailConversationsUnstripped,
+      {
+        unreadCompletionByConversationId:
+          workspaceSession.chat.unreadChatCompletionByConversationId,
+        acknowledgedFailureByConversationId:
+          workspaceSession.chat.acknowledgedFailureByConversationId,
+      }
+    );
+  }, [
+    filteredGroups,
+    pinnedRailConversationsUnstripped,
+    settings.general.agentRail.groupBy,
+    settings.general.agentRail.hiddenSections,
+    workspaceSession.chat.acknowledgedFailureByConversationId,
+    workspaceSession.chat.unreadChatCompletionByConversationId,
+  ]);
+
+  const elevatedConversationIds = useMemo(() => {
+    const ids = new Set(attentionConversationIds);
+    for (const conversation of runningRailConversations) {
+      ids.add(conversation.id);
+    }
+    return ids;
+  }, [attentionConversationIds, runningRailConversations]);
+
   const pinnedRailConversations = useMemo(
-    () => stripAttentionFromPinned(pinnedRailConversationsUnstripped, attentionConversationIds),
-    [attentionConversationIds, pinnedRailConversationsUnstripped]
+    () => stripAttentionFromPinned(pinnedRailConversationsUnstripped, elevatedConversationIds),
+    [elevatedConversationIds, pinnedRailConversationsUnstripped]
   );
 
   const groupsForRail = useMemo(
     () =>
-      stripElevatedFromGroups(
-        filteredGroups,
-        attentionConversationIds,
-        pinnedConversationIdSet
+      sinkSettledInGroups(
+        stripElevatedFromGroups(
+          filteredGroups,
+          elevatedConversationIds,
+          pinnedConversationIdSet
+        )
       ),
-    [attentionConversationIds, filteredGroups, pinnedConversationIdSet]
+    [elevatedConversationIds, filteredGroups, pinnedConversationIdSet]
   );
 
   // Derived from the raw (pre-regrouping) groups so the attention section can
@@ -2244,6 +2408,7 @@ export function AgentShellStateProvider({
         groups: groupsForRail,
         pinnedRailConversations,
         attentionRailConversations,
+        runningRailConversations,
         collapsedWorkspaceIds: collapsed,
       });
       const currentId = isDraftConversationSelected ? null : selectedConversationId;
@@ -2260,6 +2425,7 @@ export function AgentShellStateProvider({
       openConversationSummary,
       pinnedRailConversations,
       attentionRailConversations,
+      runningRailConversations,
       selectedConversationId,
     ]
   );
@@ -2306,8 +2472,12 @@ export function AgentShellStateProvider({
       applyOptimisticRailTitle,
       archiveConversation,
       unarchiveConversation,
+      settleConversation,
+      unsettleConversation,
+      settledModeEnabled,
       pinnedRailConversations,
       attentionRailConversations,
+      runningRailConversations,
       pinConversation,
       unpinConversation,
       railFilterToggles,
@@ -2345,6 +2515,10 @@ export function AgentShellStateProvider({
       pinConversation,
       pinnedRailConversations,
       attentionRailConversations,
+      runningRailConversations,
+      settleConversation,
+      unsettleConversation,
+      settledModeEnabled,
       railFilterActive,
       railFilterToggles,
       railLoading,

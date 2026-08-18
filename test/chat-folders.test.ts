@@ -47,6 +47,55 @@ describe("chat folders", () => {
     );
   });
 
+  test("settled conversations sink below unsettled in every ordering mode", () => {
+    // Recency ordering: settled rows drop to the bottom, keeping relative order.
+    const byRecency = orderConversationsByIds(
+      [
+        { id: "a", title: "A", updatedAt: 40, settledAt: 5 },
+        { id: "b", title: "B", updatedAt: 30, settledAt: null },
+        { id: "c", title: "C", updatedAt: 20, settledAt: 6 },
+        { id: "d", title: "D", updatedAt: 10 },
+      ],
+      undefined
+    );
+    assert.deepEqual(
+      byRecency.map((item) => item.id),
+      ["b", "d", "a", "c"]
+    );
+    // Custom drag order: settled rows still sink, unsettled keep the drag order.
+    const custom = orderConversationsByIds(
+      [
+        { id: "a", title: "A", updatedAt: 1, settledAt: 5 },
+        { id: "b", title: "B", updatedAt: 2 },
+        { id: "c", title: "C", updatedAt: 3 },
+      ],
+      ["a", "c", "b"]
+    );
+    assert.deepEqual(
+      custom.map((item) => item.id),
+      ["c", "b", "a"]
+    );
+    // Folder lists sink settled rows too.
+    const { folderConversations } = partitionConversationsByFolders(
+      [
+        { id: "f-a", title: "FA", updatedAt: 3, settledAt: 9 },
+        { id: "f-b", title: "FB", updatedAt: 2 },
+      ],
+      [
+        folder({
+          id: "f1",
+          workspaceId: "ws",
+          conversationIds: ["f-a", "f-b"],
+        }),
+      ],
+      undefined
+    );
+    assert.deepEqual(
+      (folderConversations.get("f1") ?? []).map((item) => item.id),
+      ["f-b", "f-a"]
+    );
+  });
+
   test("partitions standalone chats across shared folder scope", () => {
     const folders = [
       folder({

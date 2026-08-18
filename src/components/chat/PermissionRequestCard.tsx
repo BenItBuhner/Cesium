@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import type { PermissionChoiceOption } from "@/lib/types";
 import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
@@ -25,7 +26,7 @@ function buttonClassForKind(kind: PermissionChoiceOption["kind"]): string {
   return kind === "allow_once" || kind === "allow_always" ? btnPrimary : btnSecondary;
 }
 
-export function PermissionRequestCard({
+export const PermissionRequestCard = memo(function PermissionRequestCard({
   title,
   detail,
   options,
@@ -33,6 +34,18 @@ export function PermissionRequestCard({
   selectedOptionId,
   onSelect,
 }: PermissionRequestCardProps) {
+  // Disable the buttons after the first tap: double-taps on a laggy device
+  // used to submit the same answer twice while the confirmation was in
+  // flight. Re-arm after a few seconds in case the submission failed and the
+  // card is still awaiting an answer.
+  const [submitted, setSubmitted] = useState(false);
+  useEffect(() => {
+    if (!submitted || resolved) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSubmitted(false), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [submitted, resolved]);
   const resolvedOutcomeText = (() => {
     if (!resolved) {
       return null;
@@ -63,7 +76,6 @@ export function PermissionRequestCard({
             <div className="mt-[6px]">
               <HorizontalFadedScroll
                 scrollClassName="hide-scrollbar-x overflow-x-auto py-[2px] font-mono text-[12px] leading-tight text-[var(--text-primary)] opacity-90 whitespace-pre"
-                edgeColorVar="var(--bg-card)"
                 measureKey={detail}
               >
                 {detail}
@@ -76,7 +88,11 @@ export function PermissionRequestCard({
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => onSelect?.(option.id)}
+                  disabled={submitted}
+                  onClick={() => {
+                    setSubmitted(true);
+                    onSelect?.(option.id);
+                  }}
                   className={buttonClassForKind(option.kind)}
                 >
                   {option.label}
@@ -94,4 +110,4 @@ export function PermissionRequestCard({
       </div>
     </div>
   );
-}
+});

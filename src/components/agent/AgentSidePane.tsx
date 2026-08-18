@@ -3,7 +3,6 @@
 import { PanelRightClose } from "lucide-react";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { useAgentShellState } from "./AgentShellStateContext";
-import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
 export function AgentSidePane() {
@@ -17,10 +16,7 @@ export function AgentSidePane() {
     setExpandedComposerDraft,
     sidePaneScopeId,
   } = useAgentShellState();
-  const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
-  const padTrailingForWindowChrome =
-    experimentalIpadWindowedTabInset && !isMobile;
   const electronTrailingChrome = isDesktopApp && !isMobile;
 
   return (
@@ -33,11 +29,7 @@ export function AgentSidePane() {
           data-electron-trailing-chrome={
             electronTrailingChrome ? "true" : undefined
           }
-          className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)] ${
-            padTrailingForWindowChrome
-              ? "right-[calc(var(--editor-window-chrome-tab-inset)+16px)]"
-              : "right-[16px]"
-          }`}
+          className="mobile-safe-top-offset absolute top-[11px] right-[16px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
           aria-label="Hide workbench pane"
           title="Hide workbench pane"
         >

@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 
 type VerticalFadedScrollProps = {
   children: ReactNode;
@@ -20,8 +21,6 @@ type VerticalFadedScrollProps = {
   scrollStyle?: CSSProperties;
   /** Optional external ref for the scrollport (keyboard nav scroll-into-view). */
   scrollRef?: RefObject<HTMLDivElement | null>;
-  /** CSS color for the fade, e.g. `var(--bg-panel)` (match the popover surface). */
-  edgeColorVar?: string;
   /** Bust fade layout when content changes (filter text, list length, etc.). */
   measureKey?: string | number | boolean | null;
 };
@@ -36,7 +35,6 @@ export function VerticalFadedScroll({
   scrollClassName,
   scrollStyle,
   scrollRef: externalScrollRef,
-  edgeColorVar = "var(--bg-panel)",
   measureKey,
 }: VerticalFadedScrollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -69,29 +67,12 @@ export function VerticalFadedScroll({
     return () => ro.disconnect();
   }, [updateFade]);
 
-  const gradTop = `linear-gradient(to bottom, ${edgeColorVar}, transparent)`;
-  const gradBottom = `linear-gradient(to top, ${edgeColorVar}, transparent)`;
-
   const wrapperClass = wrapperClassName
     ? `relative min-h-0 min-w-0 ${wrapperClassName}`
     : "relative min-h-0 min-w-0";
 
   return (
     <div className={wrapperClass}>
-      {fade.top ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
-          style={{ backgroundImage: gradTop }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.bottom ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
-          style={{ backgroundImage: gradBottom }}
-          aria-hidden
-        />
-      ) : null}
       <div
         ref={(node) => {
           scrollRef.current = node;
@@ -101,7 +82,7 @@ export function VerticalFadedScroll({
         }}
         onScroll={updateFade}
         className={scrollClassName}
-        style={scrollStyle}
+        style={{ ...scrollStyle, ...scrollEdgeMaskStyle(fade) }}
       >
         {children}
       </div>

@@ -885,7 +885,6 @@ function CustomProviderModal({
             {discovered.length > 0 ? (
               <VerticalFadedScroll
                 measureKey={discovered.length}
-                edgeColorVar="var(--bg-panel)"
                 scrollClassName="hide-scrollbar-y max-h-[200px] min-h-0 overflow-y-auto overscroll-contain rounded-[var(--radius-tab)] border border-[var(--border-card)]"
               >
                 <ul className="divide-y divide-[var(--border-subtle)]">

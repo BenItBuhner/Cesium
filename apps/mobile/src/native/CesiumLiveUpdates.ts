@@ -1,7 +1,9 @@
 import { NativeModules, Platform } from "react-native";
 import {
   DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES,
+  DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES,
   type LiveUpdateAlertPreferences,
+  type LiveUpdateDisplayPreferences,
   type LiveUpdatePayload,
   type LiveUpdateStatus,
 } from "../services/liveUpdateTypes";
@@ -17,6 +19,9 @@ type CesiumLiveUpdatesModule = {
   ): Promise<LiveUpdateStatus>;
   setAlertPreferences(
     preferences: LiveUpdateAlertPreferences
+  ): Promise<LiveUpdateStatus>;
+  setDisplayPreferences(
+    preferences: LiveUpdateDisplayPreferences
   ): Promise<LiveUpdateStatus>;
   /** Run keys persisted natively as ongoing (restorable) runs. */
   getActiveRunKeys(): Promise<string[]>;
@@ -83,6 +88,16 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
     }
     return nativeModule.setAlertPreferences(preferences);
   },
+  async setDisplayPreferences(preferences) {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return { ...fallbackStatus(), displayPreferences: preferences };
+    }
+    // Older native builds predate display customization; treat as best effort.
+    if (typeof nativeModule.setDisplayPreferences !== "function") {
+      return { ...fallbackStatus(), displayPreferences: preferences };
+    }
+    return nativeModule.setDisplayPreferences(preferences);
+  },
   async getActiveRunKeys() {
     if (Platform.OS !== "android" || !nativeModule) {
       return [];
@@ -126,5 +141,6 @@ function fallbackStatus(): LiveUpdateStatus {
     suppressedByDismissal: false,
     deliveryPreference: "live",
     alertPreferences: DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES,
+    displayPreferences: DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES,
   };
 }

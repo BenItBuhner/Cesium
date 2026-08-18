@@ -1198,6 +1198,31 @@ updateWorkspaceSession((current) => {
     [upsertConversation]
   );
 
+  /**
+   * Answering a permission used to refetch the FULL conversation snapshot
+   * inline, replacing the whole event array in one shot while tools were still
+   * streaming. On large transcripts (base64 image attachments, long tool
+   * output) that parse + merge + re-render spike is exactly when low-memory
+   * WebViews got killed. The `permission_resolved` event arrives over the
+   * WebSocket within milliseconds anyway, so only fall back to a snapshot sync
+   * when that confirmation does not show up in time.
+   */
+  const verifyPermissionResolutionSoon = useCallback(
+    (conversationId: string, requestId: string) => {
+      window.setTimeout(() => {
+        const events = eventsRef.current[conversationId] ?? [];
+        const resolved = events.some(
+          (event) =>
+            event.kind === "permission_resolved" && event.requestId === requestId
+        );
+        if (!resolved) {
+          void syncConversationSnapshot(conversationId).catch(() => undefined);
+        }
+      }, 2_500);
+    },
+    [syncConversationSnapshot]
+  );
+
   const answerPermissionForConversation = useCallback(
     async (conversationId: string, requestId: string, optionId: string) => {
       try {
@@ -1205,9 +1230,7 @@ updateWorkspaceSession((current) => {
           requestId,
           optionId,
         });
-        const result = await fetchAgentConversationSnapshot(conversationId);
-        mergeConversationSnapshot(result.snapshot);
-        dispatchAgentConversationUpserted(result.snapshot.conversation);
+        verifyPermissionResolutionSoon(conversationId, requestId);
         if (optionId === "allow_always" || optionId === "reject_always" || optionId === "acceptForSession") {
           void refreshSettings().catch(() => undefined);
         }
@@ -1215,7 +1238,7 @@ updateWorkspaceSession((current) => {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [mergeConversationSnapshot, refreshSettings, syncConversationSnapshot]
+    [refreshSettings, syncConversationSnapshot, verifyPermissionResolutionSoon]
   );
 
   const cancelPermissionForConversation = useCallback(
@@ -1225,14 +1248,12 @@ updateWorkspaceSession((current) => {
           requestId,
           cancelled: true,
         });
-        const result = await fetchAgentConversationSnapshot(conversationId);
-        mergeConversationSnapshot(result.snapshot);
-        dispatchAgentConversationUpserted(result.snapshot.conversation);
+        verifyPermissionResolutionSoon(conversationId, requestId);
       } catch {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [mergeConversationSnapshot, syncConversationSnapshot]
+    [syncConversationSnapshot, verifyPermissionResolutionSoon]
   );
 
   const answerQuestionForConversation = useCallback(
@@ -1389,6 +1410,8 @@ const executePrompt = useCallback(
           ? {
               ...currentConversation,
               status: "running",
+              // Sending a new message always unsettles the conversation.
+              settledAt: null,
               updatedAt: Math.max(currentConversation.updatedAt + 1, Date.now()),
             }
           : null;
@@ -2420,8 +2443,12 @@ loadOlderConversationHistory,
   );
 }
 
+export function useOptionalAgentConversations(): AgentConversationsContextValue | null {
+  return useContext(AgentConversationsContext);
+}
+
 export function useAgentConversations(): AgentConversationsContextValue {
-  const context = useContext(AgentConversationsContext);
+  const context = useOptionalAgentConversations();
   if (!context) {
     throw new Error(
       "useAgentConversations must be used within AgentConversationsProvider"

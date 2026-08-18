@@ -10,9 +10,13 @@ import { UserPreferencesProvider } from "@/components/preferences/UserPreference
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 
 function ThemedAuthBoundary({ children }: { children: ReactNode }) {
-  const { ready, enabled, authenticated, connectionError } = useAuth();
+  const { ready, enabled, authenticated, connectionError, hasServerStatus } = useAuth();
+  // Once the server has answered an auth-status request, a later transient
+  // connection error must not flip this flag: toggling it makes
+  // GlobalSettingsProvider drop to defaults and refetch, which visibly resets
+  // theme/settings state mid-session.
   const serverSettingsEnabled =
-    ready && !connectionError && (!enabled || authenticated);
+    ready && (hasServerStatus || !connectionError) && (!enabled || authenticated);
 
   return (
     <GlobalSettingsProvider serverSettingsEnabled={serverSettingsEnabled}>

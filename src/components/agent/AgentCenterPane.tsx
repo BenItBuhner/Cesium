@@ -8,7 +8,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
@@ -1212,6 +1211,17 @@ export function AgentCenterPane() {
         }
       : optimisticConversationView ??
         (showConversationTransitionState ? stableConversationView : null);
+  const visibleConversationId = visibleConversationView?.conversationId ?? null;
+  // Stable identity so memoized permission rows don't re-render every flush.
+  const handleResolvePermission = useCallback(
+    (requestId: string, optionId: string) => {
+      if (!visibleConversationId) {
+        return;
+      }
+      void answerPermissionForConversation(visibleConversationId, requestId, optionId);
+    },
+    [answerPermissionForConversation, visibleConversationId]
+  );
 
   // Run the split FLIP right after the optimistic view is in the DOM: the
   // user-message card and docked shell are translated from the captured
@@ -1286,7 +1296,6 @@ export function AgentCenterPane() {
             <MessageList
               key={visibleConversationView.conversationId}
               messages={visibleConversationView.messages}
-              surface="editor"
               contentClassName={AGENT_CENTER_CONTENT_CLASS}
               conversationId={visibleConversationView.conversationId}
               composerDraftId={composerDraftId}
@@ -1319,13 +1328,7 @@ export function AgentCenterPane() {
                       }
                 );
               }}
-              onResolvePermission={(requestId, optionId) => {
-                void answerPermissionForConversation(
-                  visibleConversationView.conversationId,
-                  requestId,
-                  optionId
-                );
-              }}
+              onResolvePermission={handleResolvePermission}
               onForkMessage={redoFlow.handleForkMessage}
               onRedoMessage={redoFlow.handleStartRedoMessage}
               renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
@@ -1339,13 +1342,6 @@ export function AgentCenterPane() {
 
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-            {visibleConversationView ? (
-              <div
-                aria-hidden
-                className="chat-bottom-fade"
-                style={{ "--chat-fade-surface": "var(--bg-main)" } as CSSProperties}
-              />
-            ) : null}
             <div className="pointer-events-auto chat-bottom-dock">
               <VoiceSessionDock wrapperClassName="pointer-events-none flex justify-center pb-[6px] pt-[8px] px-0 @min-[481px]:px-[10px]" />
               {dockedAsk && visibleConversationView ? (

@@ -32,10 +32,16 @@ export type AgentRailGroupByMode = "workspace" | "priority";
 /** Retired group-by modes; persisted values migrate to `workspace`. */
 const LEGACY_AGENT_RAIL_GROUP_BY = new Set(["repository", "server", "updated", "status"]);
 
-export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
+export type AgentRailSectionId =
+  | "attention"
+  | "running"
+  | "pinned"
+  | "chats"
+  | "workspaces";
 
 export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
   "attention",
+  "running",
   "pinned",
   "chats",
   "workspaces",
@@ -43,6 +49,7 @@ export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
 
 export type AgentRailScope =
   | { type: "all" }
+  | { type: "no-workspace" }
   | { type: "workspace"; workspaceKey: string };
 
 export const AGENT_RAIL_VIEW_PRESETS = ["default", "inbox", "compact"] as const;
@@ -172,6 +179,13 @@ export type AgentRailSettingsState = {
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /**
+   * Opt-in "Settled" mode. When enabled, rows grow a small settle toggle and
+   * settled conversations sink to the bottom until a new prompt unsettles
+   * them. When disabled, no settle controls render and any persisted settled
+   * flags are ignored.
+   */
+  settledMode: boolean;
   /** Per-row detail density: compact, auto (smart), or expanded. */
   rowDetail: AgentRailRowDetailMode;
   /**
@@ -311,8 +325,9 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
+        settledMode: false,
         rowDetail: "balanced",
-        sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+        sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
         hiddenSections: [],
         scope: { type: "all" },
       },
@@ -534,6 +549,7 @@ function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
   for (const value of raw) {
     if (
       value !== "attention" &&
+      value !== "running" &&
       value !== "pinned" &&
       value !== "chats" &&
       value !== "workspaces"
@@ -554,6 +570,9 @@ function normalizeAgentRailScope(raw: unknown): AgentRailScope {
     return { type: "all" };
   }
   const record = raw as { type?: unknown; workspaceKey?: unknown };
+  if (record.type === "no-workspace") {
+    return { type: "no-workspace" };
+  }
   if (
     record.type === "workspace" &&
     typeof record.workspaceKey === "string" &&
@@ -579,7 +598,7 @@ export function applyAgentRailViewPreset(
   current: AgentRailSettingsState
 ): AgentRailSettingsState {
   const homeSections = (current.hiddenSections ?? []).filter(
-    (id) => id !== "attention" && id !== "pinned"
+    (id) => id !== "attention" && id !== "running" && id !== "pinned"
   );
   switch (preset) {
     case "inbox":
@@ -639,6 +658,10 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!ordered.includes("attention")) {
     ordered.unshift("attention");
   }
+  // Same for the running section: default slot is right below Needs attention.
+  if (!ordered.includes("running")) {
+    ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
+  }
   const sectionOrder: AgentRailSectionId[] = [
     ...ordered,
     ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
@@ -655,6 +678,8 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    settledMode:
+      typeof record.settledMode === "boolean" ? record.settledMode : defaults.settledMode,
     rowDetail: isAgentRailRowDetailMode(record.rowDetail)
       ? record.rowDetail
       : // Pre-release name for the balanced mode; migrate quietly.
