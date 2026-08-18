@@ -30,11 +30,19 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
-import { isAutoModel, resolveModelBrandIcon } from "@/lib/model-brand-icons";
+import { resolveModelBrandIcon } from "@/lib/model-brand-icons";
 import { AgentBackendIcon } from "./AgentBackendIcon";
 import { ModelBrandIcon } from "./ModelBrandIcon";
 import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 import { measureDev, recordPerfSample } from "@/lib/dev-perf";
+import {
+  applySelectedToGroup as applyCapabilitySelection,
+  buildBaseModelPickerGroups as buildCapabilityGroups,
+  canSelectBooleanValue,
+  selectVariantForParameter,
+  type BaseModelPickerGroup as CapabilityBaseModelPickerGroup,
+  type ModelPickerGroup as CapabilityModelPickerGroup,
+} from "./model-picker-variants";
 
 /** Row height for @tanstack/react-virtual (py-[4px] + 13px text). */
 const MODEL_ROW_ESTIMATE_PX = 30;
@@ -61,261 +69,13 @@ function pickerOptionRowClass(active: boolean, keyboardHighlight: boolean): stri
   return `${base} hover:bg-[var(--accent-bg)]/60`;
 }
 
-type PickerVariantParams = {
-  context?: string;
-  reasoning?: string;
-  fast?: boolean;
-};
-
-type ModelPickerVariant = {
-  model: ModelInfo;
-  params: PickerVariantParams;
-  defaultish: boolean;
-};
-
-type ModelPickerGroup = {
-  key: string;
-  name: string;
-  provider: ModelInfo["provider"];
-  detail?: string;
-  variants: ModelPickerVariant[];
-  selectedVariant: ModelPickerVariant | null;
-  defaultVariant: ModelPickerVariant;
-  contextOptions: string[];
-  reasoningOptions: string[];
-  hasFastOption: boolean;
-};
-
-const REASONING_ORDER = ["none", "low", "medium", "high", "extra high", "max", "thinking"];
-
-function normalizeVariantToken(value: string): string {
-  return value.trim().toLowerCase().replace(/[-_]+/g, " ");
-}
-
-function formatContextLabel(value: string): string {
-  const trimmed = value.trim();
-  if (/^\d+\s*k$/i.test(trimmed)) {
-    return trimmed.replace(/\s+/g, "").toUpperCase();
-  }
-  if (/^\d+\s*m$/i.test(trimmed)) {
-    return trimmed.replace(/\s+/g, "").toUpperCase();
-  }
-  return trimmed;
-}
-
-function formatReasoningLabel(value: string): string {
-  const normalized = normalizeVariantToken(value);
-  if (!normalized || normalized === "default" || normalized === "auto") return "None";
-  if (normalized === "xhigh" || normalized === "extra high") return "Extra High";
-  return normalized
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function contextSortValue(value: string): number {
-  const normalized = value.trim().toLowerCase();
-  const match = /^(\d+(?:\.\d+)?)([km])$/.exec(normalized);
-  if (!match) return Number.MAX_SAFE_INTEGER;
-  const amount = Number.parseFloat(match[1]);
-  return amount * (match[2] === "m" ? 1000 : 1);
-}
-
-function sortReasoningValues(values: string[]): string[] {
-  return [...values].sort((a, b) => {
-    const ai = REASONING_ORDER.indexOf(normalizeVariantToken(a));
-    const bi = REASONING_ORDER.indexOf(normalizeVariantToken(b));
-    if (ai !== -1 || bi !== -1) {
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    }
-    return a.localeCompare(b);
-  });
-}
-
-function parseBracketParams(value: string): PickerVariantParams {
-  const out: PickerVariantParams = {};
-  const match = /^(.*)\[(.*)\]$/.exec(value.trim());
-  if (!match) return out;
-  for (const rawEntry of (match[2] ?? "").split(",")) {
-    const [rawKey, ...rawValueParts] = rawEntry.split("=");
-    const key = normalizeVariantToken(rawKey ?? "");
-    const rawValue = rawValueParts.join("=").trim();
-    const normalizedValue = normalizeVariantToken(rawValue);
-    if (!key || !rawValue) continue;
-    if (/context|length|window|token/.test(key)) {
-      out.context = formatContextLabel(rawValue);
-    } else if (/reason|effort|thinking/.test(key)) {
-      out.reasoning = formatReasoningLabel(rawValue);
-    } else if (/speed|fast/.test(key)) {
-      out.fast = normalizedValue === "fast" || normalizedValue === "true";
-    }
-  }
-  return out;
-}
-
-function consumeTrailingVariantToken(words: string[]): { key: keyof PickerVariantParams; value: string } | null {
-  const last = words.at(-1);
-  if (!last) return null;
-  const normalizedLast = normalizeVariantToken(last);
-  if (normalizedLast === "true") {
-    words.pop();
-    return { key: "fast", value: "true" };
-  }
-  if (normalizedLast === "false") {
-    words.pop();
-    if (normalizeVariantToken(words.at(-1) ?? "") === "fast") {
-      words.pop();
-    }
-    return { key: "fast", value: "false" };
-  }
-  if (normalizedLast === "fast") {
-    words.pop();
-    return { key: "fast", value: "true" };
-  }
-  if (/^\d+\s*[km]$/i.test(last)) {
-    words.pop();
-    return { key: "context", value: formatContextLabel(last) };
-  }
-  if (normalizedLast === "extra" && normalizeVariantToken(words.at(-2) ?? "") === "high") {
-    return null;
-  }
-  const prev = normalizeVariantToken(words.at(-2) ?? "");
-  if (prev === "extra" && normalizedLast === "high") {
-    words.pop();
-    words.pop();
-    return { key: "reasoning", value: "Extra High" };
-  }
-  if (["none", "low", "medium", "high", "xhigh", "max", "thinking"].includes(normalizedLast)) {
-    words.pop();
-    return { key: "reasoning", value: formatReasoningLabel(last) };
-  }
-  return null;
-}
-
-function parseNameVariant(modelName: string): { baseName: string; params: PickerVariantParams; defaultish: boolean } {
-  const params: PickerVariantParams = {};
-  const defaultish = /\bdefault\b/i.test(modelName);
-  const nameWithoutDefault = modelName.replace(/\s*\((?:default|current)\)\s*$/i, "").trim();
-  const paren = /^(.*)\(([^)]*)\)\s*$/.exec(nameWithoutDefault);
-  let baseName = (paren?.[1] ?? nameWithoutDefault).trim();
-  if (paren) {
-    for (const part of (paren[2] ?? "").split(",")) {
-      const token = part.trim();
-      const normalized = normalizeVariantToken(token);
-      if (!token || normalized === "none" || normalized === "default" || normalized === "auto") continue;
-      if (/^\d+\s*[km]$/i.test(token)) params.context = formatContextLabel(token);
-      else if (normalized === "fast") params.fast = true;
-      else if (["low", "medium", "high", "xhigh", "extra high", "max", "thinking"].includes(normalized)) {
-        params.reasoning = formatReasoningLabel(token);
-      }
-    }
-  }
-  const words = baseName.split(/\s+/).filter(Boolean);
-  for (;;) {
-    const consumed = consumeTrailingVariantToken(words);
-    if (!consumed) break;
-    if (consumed.key === "fast") params.fast = true;
-    if (consumed.key === "context") params.context = consumed.value;
-    if (consumed.key === "reasoning") params.reasoning = consumed.value;
-  }
-  baseName = words.join(" ").trim() || baseName;
-  return { baseName, params, defaultish };
-}
-
-function mergeParams(...parts: PickerVariantParams[]): PickerVariantParams {
-  return Object.assign({}, ...parts);
-}
-
-function modelGroupKey(model: ModelInfo, baseName: string): string {
-  return `${model.backendId ?? ""}:${model.provider}:${baseName.toLowerCase()}`;
-}
-
-function isSameModelChoice(a: ModelInfo, b: ModelInfo): boolean {
-  const av = a.modelValue ?? a.id;
-  const bv = b.modelValue ?? b.id;
-  if (av !== bv) return false;
-  const ac = a.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
-  const bc = b.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
-  return ac === bc;
-}
-
-type BaseModelPickerGroup = Omit<ModelPickerGroup, "selectedVariant">;
-
 type ModelPickerSearchEntry = {
-  group: BaseModelPickerGroup;
+  group: CapabilityBaseModelPickerGroup;
   /** Lowercased haystack built once when the catalog loads. */
   haystack: string;
 };
 
-function finalizeModelPickerGroup(
-  key: string,
-  group: {
-    name: string;
-    provider: ModelInfo["provider"];
-    detail?: string;
-    variants: ModelPickerVariant[];
-  }
-): BaseModelPickerGroup {
-  const defaultVariant =
-    group.variants.find((variant) => variant.defaultish) ?? group.variants[0];
-  const contextOptions = [
-    ...new Set(group.variants.map((variant) => variant.params.context).filter(Boolean) as string[]),
-  ].sort((a, b) => contextSortValue(a) - contextSortValue(b) || a.localeCompare(b));
-  const reasoningOptions = sortReasoningValues([
-    ...new Set(
-      group.variants.map((variant) => variant.params.reasoning ?? "None").filter(Boolean)
-    ),
-  ]);
-  const hasFast = group.variants.some((variant) => variant.params.fast === true);
-  const hasSlow = group.variants.some((variant) => variant.params.fast !== true);
-  return {
-    key,
-    name: group.name,
-    provider: group.provider,
-    detail: group.detail,
-    variants: group.variants,
-    defaultVariant,
-    contextOptions,
-    reasoningOptions: reasoningOptions.length > 1 ? reasoningOptions : [],
-    hasFastOption: hasFast && hasSlow,
-  };
-}
-
-/** Build grouped catalog once per models array — no selected-model dependency. */
-function buildBaseModelPickerGroups(models: ModelInfo[]): BaseModelPickerGroup[] {
-  return measureDev("chat.model_dropdown.build_base_groups", () => {
-    const byKey = new Map<
-      string,
-      { name: string; provider: ModelInfo["provider"]; detail?: string; variants: ModelPickerVariant[] }
-    >();
-    for (const model of models) {
-      const nameParsed = parseNameVariant(model.name);
-      const encodedParams = parseBracketParams(model.modelValue ?? model.id);
-      const params = mergeParams(nameParsed.params, encodedParams);
-      const baseName = isAutoModel(model) ? "Auto" : nameParsed.baseName;
-      const key = modelGroupKey(model, baseName);
-      const group = byKey.get(key) ?? {
-        name: baseName,
-        provider: model.provider,
-        detail: model.detail,
-        variants: [],
-      };
-      group.variants.push({
-        model,
-        params,
-        defaultish: nameParsed.defaultish || isAutoModel(model) || Object.keys(params).length === 0,
-      });
-      byKey.set(key, group);
-    }
-
-    return [...byKey.entries()]
-      .map(([key, group]) => finalizeModelPickerGroup(key, group))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  });
-}
-
-function buildModelPickerSearchIndex(groups: BaseModelPickerGroup[]): ModelPickerSearchEntry[] {
+function buildModelPickerSearchIndex(groups: CapabilityBaseModelPickerGroup[]): ModelPickerSearchEntry[] {
   return measureDev("chat.model_dropdown.build_search_index", () =>
     groups.map((group) => {
       const parts = [group.name, group.detail];
@@ -334,27 +94,16 @@ function buildModelPickerSearchIndex(groups: BaseModelPickerGroup[]): ModelPicke
   );
 }
 
-function applySelectedToGroup(
-  group: BaseModelPickerGroup,
-  selected: ModelInfo
-): ModelPickerGroup {
-  return {
-    ...group,
-    selectedVariant:
-      group.variants.find((variant) => isSameModelChoice(variant.model, selected)) ?? null,
-  };
-}
-
 function filterModelPickerGroups(
   searchIndex: ModelPickerSearchEntry[],
   query: string
-): BaseModelPickerGroup[] {
+): CapabilityBaseModelPickerGroup[] {
   const trimmed = query.trim();
   if (!trimmed) {
     return searchIndex.map((entry) => entry.group);
   }
   const q = trimmed.toLowerCase();
-  const out: BaseModelPickerGroup[] = [];
+  const out: CapabilityBaseModelPickerGroup[] = [];
   for (const entry of searchIndex) {
     if (entry.haystack.includes(q)) {
       out.push(entry.group);
@@ -363,54 +112,13 @@ function filterModelPickerGroups(
   return out;
 }
 
-function findVariantForParams(
-  group: ModelPickerGroup,
-  current: PickerVariantParams,
-  patch: PickerVariantParams
-): ModelPickerVariant {
-  const desired = { ...current, ...patch };
-  const fields: Array<keyof PickerVariantParams> = [];
-  if (group.contextOptions.length > 0) fields.push("context");
-  if (group.reasoningOptions.length > 0) fields.push("reasoning");
-  if (group.hasFastOption) fields.push("fast");
-
-  const exact = group.variants.find((variant) =>
-    fields.every((field) => {
-      const wanted = field === "reasoning" ? desired.reasoning ?? "None" : desired[field];
-      const got =
-        field === "reasoning"
-          ? variant.params.reasoning ?? "None"
-          : field === "fast"
-            ? variant.params.fast === true
-            : variant.params[field];
-      return got === wanted;
-    })
-  );
-  if (exact) return exact;
-
-  return [...group.variants].sort((a, b) => {
-    const score = (variant: ModelPickerVariant) =>
-      fields.reduce((sum, field) => {
-        const wanted = field === "reasoning" ? desired.reasoning ?? "None" : desired[field];
-        const got =
-          field === "reasoning"
-            ? variant.params.reasoning ?? "None"
-            : field === "fast"
-              ? variant.params.fast === true
-              : variant.params[field];
-        return sum + (got === wanted ? 1 : 0);
-      }, 0);
-    return score(b) - score(a);
-  })[0] ?? group.defaultVariant;
-}
-
 type ModelPickerRowProps = {
-  group: ModelPickerGroup;
+  group: CapabilityModelPickerGroup;
   index: number;
   highlightedIndex: number;
   onSelect: (model: ModelInfo) => void;
   onHighlight: (index: number) => void;
-  onEdit: (group: ModelPickerGroup, anchor: HTMLElement) => void;
+  onEdit: (group: CapabilityModelPickerGroup, anchor: HTMLElement) => void;
 };
 
 const ModelPickerRow = memo(function ModelPickerRow({
@@ -423,10 +131,7 @@ const ModelPickerRow = memo(function ModelPickerRow({
 }: ModelPickerRowProps) {
   const rowModel = group.selectedVariant?.model ?? group.defaultVariant.model;
   const active = group.selectedVariant != null;
-  const editable =
-    group.contextOptions.length > 0 ||
-    group.reasoningOptions.length > 0 ||
-    group.hasFastOption;
+  const editable = group.parameters.length > 0;
   const detail =
     group.detail ??
     group.selectedVariant?.model.detail ??
@@ -735,7 +440,10 @@ export function ModelDropdown({
   }, [deferredQuery]);
 
   /** Pre-index catalog when models change — not recomputed on each open/filter keystroke. */
-  const baseGroups = useMemo(() => buildBaseModelPickerGroups(models), [models]);
+  const baseGroups = useMemo(
+    () => measureDev("chat.model_dropdown.build_base_groups", () => buildCapabilityGroups(models)),
+    [models]
+  );
   const searchIndex = useMemo(() => buildModelPickerSearchIndex(baseGroups), [baseGroups]);
 
   const filteredBase = useMemo(
@@ -948,15 +656,11 @@ export function ModelDropdown({
         return null;
       }
       const base = searchIndex.find((entry) => entry.group.key === modelEditFlyout.groupKey)?.group;
-      return base ? applySelectedToGroup(base, model) : null;
+      return base ? applyCapabilitySelection(base, model) : null;
     },
     [model, modelEditFlyout?.groupKey, searchIndex]
   );
-  const activeEditGroupHasContext = (activeEditGroup?.contextOptions.length ?? 0) > 0;
-  const activeEditGroupHasReasoning = (activeEditGroup?.reasoningOptions.length ?? 0) > 0;
-  const activeEditGroupHasFast = activeEditGroup?.hasFastOption === true;
-
-  const openModelEditFlyout = useCallback((group: ModelPickerGroup, anchor: HTMLElement) => {
+  const openModelEditFlyout = useCallback((group: CapabilityModelPickerGroup, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
     const gap = 8;
     const panelWidth = 216;
@@ -972,14 +676,9 @@ export function ModelDropdown({
     });
   }, []);
 
-  const selectedParamsForGroup = activeEditGroup?.selectedVariant?.params ??
-    activeEditGroup?.defaultVariant.params ??
-    {};
-
   const selectVariantParam = useCallback(
-    (group: ModelPickerGroup, patch: PickerVariantParams) => {
-      const current = group.selectedVariant?.params ?? group.defaultVariant.params;
-      const next = findVariantForParams(group, current, patch);
+    (group: CapabilityModelPickerGroup, parameterId: string, value: string) => {
+      const next = selectVariantForParameter(group, parameterId, value);
       onModelChange?.(next.model);
     },
     [onModelChange]
@@ -1127,7 +826,7 @@ export function ModelDropdown({
                         if (!baseGroup) {
                           return null;
                         }
-                        const group = applySelectedToGroup(baseGroup, model);
+                        const group = applyCapabilitySelection(baseGroup, model);
                         return (
                           <div
                             key={group.key}
@@ -1152,7 +851,7 @@ export function ModelDropdown({
                     </div>
                   ) : (
                     filteredBase.map((baseGroup, index) => {
-                      const group = applySelectedToGroup(baseGroup, model);
+                      const group = applyCapabilitySelection(baseGroup, model);
                       return (
                         <ModelPickerRow
                           key={group.key}
@@ -1191,89 +890,87 @@ export function ModelDropdown({
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
-            {activeEditGroupHasContext ? (
-              <div
-                className={`px-[4px] ${
-                  activeEditGroupHasReasoning || activeEditGroupHasFast
-                    ? "border-b border-[var(--border-card)] pb-[6px]"
-                    : ""
-                }`}
-              >
-                <div className="px-[8px] pb-[3px] font-sans text-[11px] font-medium text-[var(--text-disabled)]">
-                  Context
-                </div>
-                {activeEditGroup.contextOptions.map((value) => {
-                  const selected = selectedParamsForGroup.context === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      className={pickerOptionRowClass(selected, false)}
-                      onClick={() => selectVariantParam(activeEditGroup, { context: value })}
-                    >
-                      <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-primary)]">
-                        {value}
-                      </span>
-                      {selected ? <Check className="size-[13px]" strokeWidth={2} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {activeEditGroupHasReasoning ? (
-              <div
-                className={`px-[4px] ${
-                  activeEditGroupHasContext ? "pt-[6px]" : ""
-                } ${activeEditGroupHasFast ? "border-b border-[var(--border-card)] pb-[6px]" : ""}`}
-              >
-                <div className="px-[8px] pb-[3px] font-sans text-[11px] font-medium text-[var(--text-disabled)]">
-                  Reasoning
-                </div>
-                {activeEditGroup.reasoningOptions.map((value) => {
-                  const selected = (selectedParamsForGroup.reasoning ?? "None") === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      className={pickerOptionRowClass(selected, false)}
-                      onClick={() => selectVariantParam(activeEditGroup, { reasoning: value })}
-                    >
-                      <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-primary)]">
-                        {value}
-                      </span>
-                      {selected ? <Check className="size-[13px]" strokeWidth={2} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {activeEditGroupHasFast ? (
-              <div className="px-[4px] pt-[6px]">
-                <div className="px-[8px] pb-[3px] font-sans text-[11px] font-medium text-[var(--text-disabled)]">
-                  Options
-                </div>
-                <div
-                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-left transition-colors hover:bg-[var(--accent-bg)]/60"
-                >
-                  <span
-                    id="model-picker-fast-label"
-                    className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-primary)]"
+            {activeEditGroup.parameters.map((parameter, index) => {
+              const current =
+                (activeEditGroup.selectedVariant ?? activeEditGroup.defaultVariant).parameters.get(
+                  parameter.id
+                )?.value;
+              const labelId = `model-picker-${parameter.id.replace(/[^a-z0-9_-]/gi, "-")}-label`;
+              const isLast = index === activeEditGroup.parameters.length - 1;
+              if (parameter.booleanValues) {
+                const checked = current === parameter.booleanValues.trueValue;
+                const targetValue = checked
+                  ? parameter.booleanValues.falseValue
+                  : parameter.booleanValues.trueValue;
+                const available = canSelectBooleanValue(
+                  activeEditGroup,
+                  parameter.id,
+                  targetValue
+                );
+                return (
+                  <div
+                    key={parameter.id}
+                    className={`px-[4px] ${index > 0 ? "pt-[6px]" : ""} ${
+                      isLast ? "" : "border-b border-[var(--border-card)] pb-[6px]"
+                    }`}
                   >
-                    Fast
-                  </span>
-                  <ToggleSwitch
-                    checked={selectedParamsForGroup.fast === true}
-                    onChange={(checked) =>
-                      selectVariantParam(activeEditGroup, { fast: checked })
-                    }
-                    size="sm"
-                    labelledBy="model-picker-fast-label"
-                  />
+                    <div className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-left transition-colors hover:bg-[var(--accent-bg)]/60">
+                      <span
+                        id={labelId}
+                        className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-primary)]"
+                      >
+                        {parameter.label}
+                      </span>
+                      <ToggleSwitch
+                        checked={checked}
+                        disabled={!available}
+                        onChange={(nextChecked) =>
+                          selectVariantParam(
+                            activeEditGroup,
+                            parameter.id,
+                            nextChecked
+                              ? parameter.booleanValues!.trueValue
+                              : parameter.booleanValues!.falseValue
+                          )
+                        }
+                        size="sm"
+                        labelledBy={labelId}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={parameter.id}
+                  className={`px-[4px] ${index > 0 ? "pt-[6px]" : ""} ${
+                    isLast ? "" : "border-b border-[var(--border-card)] pb-[6px]"
+                  }`}
+                >
+                  <div className="px-[8px] pb-[3px] font-sans text-[11px] font-medium text-[var(--text-disabled)]">
+                    {parameter.label}
+                  </div>
+                  {parameter.values.map((option) => {
+                    const selected = current === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={pickerOptionRowClass(selected, false)}
+                        onClick={() =>
+                          selectVariantParam(activeEditGroup, parameter.id, option.value)
+                        }
+                      >
+                        <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-primary)]">
+                          {option.label}
+                        </span>
+                        {selected ? <Check className="size-[13px]" strokeWidth={2} /> : null}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
-            ) : null}
+              );
+            })}
           </div>,
           document.body
         )}

@@ -5369,7 +5369,19 @@ export function buildConversationModelOptions(
           detail: `${backend?.label ?? conversation.config.backendId} · ${thoughtLevelOption.name}: ${thoughtLabel}`,
           provider,
           backendId: conversation.config.backendId,
+          variantGroupId: option.modelGroupId ?? option.value,
+          variantGroupName:
+            option.modelGroupName ?? formatModelVariantLabel(option.name, option.value),
           configSelections: [{ configId: thoughtLevelOption.id, value: thought.value }],
+          variantParameters: [
+            ...(option.modelParameters ?? []),
+            {
+              id: thoughtLevelOption.id,
+              name: thoughtLevelOption.name,
+              value: thought.value,
+              valueName: thought.name,
+            },
+          ],
           selected:
             option.value === effectiveSelectedId &&
             (!selectedThought || thought.value === selectedThought),
@@ -5390,6 +5402,9 @@ export function buildConversationModelOptions(
       detail: backend?.label ?? conversation.config.backendId,
       provider,
       backendId: conversation.config.backendId,
+      variantGroupId: option.modelGroupId,
+      variantGroupName: option.modelGroupName,
+      variantParameters: option.modelParameters,
       selected:
         option.value === effectiveSelectedId ||
         (!effectiveSelectedId &&
