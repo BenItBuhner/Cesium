@@ -114,4 +114,103 @@ describe("todo list stacking", () => {
     assert.equal(workedSessions.length, 1);
     assert.match(workedSessions[0]?.workedLabel ?? "", /updated todo list 2 times/i);
   });
+
+  test("todo tool calls group into the same dropdown as later commands and thoughts", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        ...base,
+        seq: 1,
+        eventId: "u1",
+        kind: "user_message",
+        messageId: "m-user",
+        content: "Inspect consumption patterns.",
+      },
+      {
+        ...base,
+        seq: 2,
+        eventId: "tc1",
+        kind: "tool_call",
+        toolCallId: "todo-1",
+        title: "Todo list",
+        toolKind: "todo",
+        status: "completed",
+      },
+      {
+        ...base,
+        seq: 3,
+        eventId: "p1",
+        kind: "plan",
+        planId: "plan-1",
+        entries: [{ id: "t1", content: "Inspect consumption", status: "in_progress" }],
+      },
+      {
+        ...base,
+        seq: 4,
+        eventId: "r1",
+        kind: "reasoning",
+        messageId: "a-1",
+        text: "Need the proxy status and recent logs.",
+      },
+      {
+        ...base,
+        seq: 5,
+        eventId: "term-1",
+        kind: "tool_call",
+        toolCallId: "term-1",
+        title: "Run curl localhost:9100",
+        toolKind: "terminal",
+        status: "completed",
+        raw: { id: "term-1", name: "terminal", arguments: { command: "curl localhost:9100" } },
+      },
+      {
+        ...base,
+        seq: 6,
+        eventId: "r2",
+        kind: "reasoning",
+        messageId: "a-1",
+        text: "Check the second listener next.",
+      },
+      {
+        ...base,
+        seq: 7,
+        eventId: "term-2",
+        kind: "tool_call",
+        toolCallId: "term-2",
+        title: "Run ss -lntp",
+        toolKind: "terminal",
+        status: "completed",
+        raw: { id: "term-2", name: "terminal", arguments: { command: "ss -lntp" } },
+      },
+      {
+        ...base,
+        seq: 8,
+        eventId: "idle",
+        kind: "status",
+        status: "idle",
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+    const workedSessions = messages.filter(
+      (message) => message.type === "worked-session" && !message.loading
+    );
+    assert.equal(
+      workedSessions.length,
+      1,
+      `expected one dropdown, got labels: ${workedSessions.map((w) => w.workedLabel).join(" | ")}`
+    );
+    assert.match(
+      workedSessions[0]?.workedLabel ?? "",
+      /updated todo list/i
+    );
+    assert.match(workedSessions[0]?.workedLabel ?? "", /ran 2 commands/i);
+    assert.match(workedSessions[0]?.workedLabel ?? "", /2 thoughts/i);
+    assert.equal(
+      messages.some((message) => message.type === "todo"),
+      true,
+      "checklist card should still render separately"
+    );
+  });
 });
