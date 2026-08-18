@@ -1927,8 +1927,8 @@ function CesiumAgentHarnessSettings() {
             <SettingsSubsectionHeading>Conversation titles</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Model used to auto-title new conversations. Pick any configured catalog model —
-              including OAuth-connected ones — or keep Automatic to use the server&apos;s
-              transcription/title environment pipeline.
+              including OAuth-connected ones — or keep Automatic to use Settings → Voice
+              (or the server&apos;s transcription/title environment pipeline).
             </p>
             <label className="mt-[10px] flex flex-col gap-[5px]">
               <SettingsFieldLabel>Title generation model</SettingsFieldLabel>

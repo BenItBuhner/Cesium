@@ -1215,6 +1215,37 @@ export class SettingsResource {
     }>("settings.cesiumAgent.models", "/api/settings/cesium-agent/models");
     return result.models;
   }
+
+  async voice<TSettings = unknown>(): Promise<TSettings> {
+    const result = await this.transport.request<{ settings: TSettings }>(
+      "settings.voice.get",
+      "/api/settings/voice"
+    );
+    return result.settings;
+  }
+
+  async updateVoice<TSettings = unknown>(
+    patch: Record<string, unknown>
+  ): Promise<TSettings> {
+    const result = await this.transport.request<{
+      ok: true;
+      settings: TSettings;
+    }>("settings.voice.update", "/api/settings/voice", {
+      method: "PUT",
+      json: patch,
+    });
+    return result.settings;
+  }
+
+  async deleteVoice<TSettings = unknown>(): Promise<TSettings> {
+    const result = await this.transport.request<{
+      ok: true;
+      settings: TSettings;
+    }>("settings.voice.remove", "/api/settings/voice", {
+      method: "DELETE",
+    });
+    return result.settings;
+  }
 }
 
 export class CloudAgentsResource {
