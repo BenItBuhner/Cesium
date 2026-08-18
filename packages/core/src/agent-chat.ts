@@ -1803,28 +1803,18 @@ function mergeWorkedSessionPair(
   };
 }
 
-function isTodoOnlyWorkedSession(message: ChatMessage | undefined): boolean {
-  if (message?.type !== "worked-session") {
-    return false;
-  }
-  const tools = (message.workedEntries ?? []).filter(
-    (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
-  );
-  if (tools.length === 0) {
-    return false;
-  }
-  return tools.every(
-    (tool) =>
-      tool.toolKind === "todo" ||
-      /todo/i.test(tool.title) ||
-      /updated todo list/i.test(tool.title)
+function isMergeableWorkedSession(message: ChatMessage | undefined): boolean {
+  return (
+    message?.type === "worked-session" &&
+    !message.loading &&
+    (message.workedEntries?.length ?? 0) > 0
   );
 }
 
 /**
  * Todo tool bursts often flush into separate worked-session rows around the shared
  * checklist card (and legacy per-item todo-update rows). Collapse those back into
- * one dropdown so consecutive todo writes do not look janky.
+ * one dropdown so todo writes group with the rest of the tool burst.
  */
 function mergeTodoWorkedSessionNoise(messages: ChatMessage[]): ChatMessage[] {
   const out = messages.filter((message) => message.type !== "todo-update");
@@ -1834,13 +1824,8 @@ function mergeTodoWorkedSessionNoise(messages: ChatMessage[]): ChatMessage[] {
     for (let i = 0; i + 1 < out.length; i += 1) {
       const a = out[i];
       const b = out[i + 1];
-      if (
-        a?.type === "worked-session" &&
-        b?.type === "worked-session" &&
-        isTodoOnlyWorkedSession(a) &&
-        isTodoOnlyWorkedSession(b)
-      ) {
-        out.splice(i, 2, mergeWorkedSessionPair(a, b));
+      if (isMergeableWorkedSession(a) && isMergeableWorkedSession(b)) {
+        out.splice(i, 2, mergeWorkedSessionPair(a!, b!));
         changed = true;
         break;
       }
@@ -1849,13 +1834,11 @@ function mergeTodoWorkedSessionNoise(messages: ChatMessage[]): ChatMessage[] {
       }
       const c = out[i + 2];
       if (
-        a?.type === "worked-session" &&
+        isMergeableWorkedSession(a) &&
         b?.type === "todo" &&
-        c?.type === "worked-session" &&
-        isTodoOnlyWorkedSession(a) &&
-        isTodoOnlyWorkedSession(c)
+        isMergeableWorkedSession(c)
       ) {
-        out.splice(i, 3, mergeWorkedSessionPair(a, c), b);
+        out.splice(i, 3, mergeWorkedSessionPair(a!, c!), b);
         changed = true;
         break;
       }
@@ -4988,7 +4971,9 @@ for (const turn of turns) {
     messages.push(...forkInTimeline, ...otherTimeline);
   }
 }
-  const dockedMessages = dockActiveTodoUnderLatestUser(messages);
+  const dockedMessages = mergeAdjacentWorkedSessions(
+    dockActiveTodoUnderLatestUser(messages)
+  );
   // Reuse identical message objects (and, when nothing changed, the whole
   // array) from the previous projection of this conversation so streaming
   // flushes don't invalidate memoized rows for unchanged messages.
