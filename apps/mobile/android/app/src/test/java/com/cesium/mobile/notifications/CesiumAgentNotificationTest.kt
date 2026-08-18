@@ -10,47 +10,39 @@ class CesiumChipPresentationTest {
   private val now = 1_000_000_000_000L
 
   @Test
-  fun farEtaCountdownOwnsTheChipAndSuppressesText() {
+  fun todoFractionAlwaysOwnsTheChip() {
+    // Regression: ETA countdowns used to hijack the chip and hide the
+    // fraction whenever the estimate was two-plus minutes out. Progress
+    // text now always wins; there is no countdown code path left.
     val chip = resolveChipPresentation(
       shortText = "3/7",
       startedAt = now - 60_000L,
-      estimatedCompletionAt = now + MIN_COUNTDOWN_MS,
-      ongoing = true,
-      now = now
+      ongoing = true
     )
-    assertEquals(now + MIN_COUNTDOWN_MS, chip.countdownTo)
-    assertNull(chip.countUpFrom)
-    assertNull(chip.shortCriticalText)
+    assertEquals(now - 60_000L, chip.countUpFrom)
+    assertEquals("3/7", chip.shortCriticalText)
   }
 
   @Test
-  fun nearEtaKeepsChipTextInsteadOfGoingBlank() {
-    // Regression: an ETA below the countdown floor used to suppress the
-    // short critical text too, leaving an icon-only status chip.
+  fun goalPercentKeepsChipText() {
     val chip = resolveChipPresentation(
       shortText = "82%",
       startedAt = now - 60_000L,
-      estimatedCompletionAt = now + 30_000L,
-      ongoing = true,
-      now = now
+      ongoing = true
     )
-    assertNull(chip.countdownTo)
     assertEquals(now - 60_000L, chip.countUpFrom)
     assertEquals("82%", chip.shortCriticalText)
   }
 
   @Test
-  fun ongoingRunWithoutEtaShowsElapsedTimeAndText() {
+  fun ongoingRunWithoutTextFallsBackToElapsedTimer() {
     val chip = resolveChipPresentation(
-      shortText = "2/5",
+      shortText = null,
       startedAt = now - 5_000L,
-      estimatedCompletionAt = 0L,
-      ongoing = true,
-      now = now
+      ongoing = true
     )
-    assertNull(chip.countdownTo)
     assertEquals(now - 5_000L, chip.countUpFrom)
-    assertEquals("2/5", chip.shortCriticalText)
+    assertNull(chip.shortCriticalText)
   }
 
   @Test
@@ -58,11 +50,8 @@ class CesiumChipPresentationTest {
     val chip = resolveChipPresentation(
       shortText = "Done",
       startedAt = now - 5_000L,
-      estimatedCompletionAt = 0L,
-      ongoing = false,
-      now = now
+      ongoing = false
     )
-    assertNull(chip.countdownTo)
     assertNull(chip.countUpFrom)
     assertEquals("Done", chip.shortCriticalText)
   }
@@ -72,9 +61,7 @@ class CesiumChipPresentationTest {
     val chip = resolveChipPresentation(
       shortText = "  ",
       startedAt = 0L,
-      estimatedCompletionAt = 0L,
-      ongoing = true,
-      now = now
+      ongoing = true
     )
     assertNull(chip.shortCriticalText)
   }

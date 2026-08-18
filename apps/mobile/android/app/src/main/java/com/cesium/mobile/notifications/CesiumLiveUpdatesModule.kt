@@ -529,17 +529,13 @@ private fun ReadableMap.toBundle(): Bundle {
   if (hasKey("startedAt") && !isNull("startedAt")) {
     bundle.putLong("startedAt", getDouble("startedAt").toLong())
   }
-  if (hasKey("estimatedCompletionAt") && !isNull("estimatedCompletionAt")) {
-    bundle.putLong("estimatedCompletionAt", getDouble("estimatedCompletionAt").toLong())
-  }
   listOf(
     "progress",
     "progressMax",
     "todoCompleted",
     "todoTotal",
     "todoCurrentIndex",
-    "goalProgressPercent",
-    "estimatedRemainingSeconds"
+    "goalProgressPercent"
   ).forEach { key ->
     if (hasKey(key) && !isNull(key)) {
       bundle.putInt(key, getDouble(key).toInt())

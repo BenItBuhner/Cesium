@@ -30,15 +30,14 @@ object CesiumLiveUpdateStateStore {
     "progressLabel",
     "intervention"
   )
-  private val longKeys = listOf("startedAt", "estimatedCompletionAt")
+  private val longKeys = listOf("startedAt")
   private val intKeys = listOf(
     "progress",
     "progressMax",
     "todoCompleted",
     "todoTotal",
     "todoCurrentIndex",
-    "goalProgressPercent",
-    "estimatedRemainingSeconds"
+    "goalProgressPercent"
   )
   private val booleanKeys = listOf(
     "indeterminate",
