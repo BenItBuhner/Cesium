@@ -84,6 +84,14 @@ interface MessageListProps {
   renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
   editingUserMessageId?: string | null;
   bottomDockVisible?: boolean;
+  /**
+   * Measured height of the floating bottom dock (composer + docked cards).
+   * When provided (> 0), the scrollport's bottom padding tracks it exactly so
+   * every message can scroll clear of the dock, without the fixed padding's
+   * failure modes: content stuck unreachable behind a tall dock, or fake
+   * scroll range (and bottom-pin lock) when the dock is short.
+   */
+  bottomDockHeightPx?: number;
   contentClassName?: string;
   conversationId?: string;
   conversationBusy?: boolean;
@@ -105,6 +113,7 @@ export function MessageList({
   renderUserMessageEditor,
   editingUserMessageId,
   bottomDockVisible = true,
+  bottomDockHeightPx = 0,
   contentClassName,
   conversationId,
   conversationBusy = false,
@@ -532,7 +541,36 @@ export function MessageList({
       ? `pt-[10px] ${contentClassName}`
       : "pt-[10px]";
 
-  const fadeMeasureKey = `${messages.length}:${bottomDockVisible ? 1 : 0}:${loadingOlderHistory ? 1 : 0}`;
+  /**
+   * Bottom clearance for the floating dock. With a live dock measurement the
+   * padding is exactly dock height + a small gap: pinning to the bottom rests
+   * the newest content just above the composer, all content stays reachable
+   * however tall the docked cards stack, and short conversations gain no
+   * fake scroll range (which used to shift the view up and then fight the
+   * user with bottom re-pins). Falls back to the legacy fixed clamp while the
+   * dock has not been measured.
+   */
+  const scrollBottomPad = bottomDockVisible
+    ? bottomDockHeightPx > 0
+      ? `${Math.round(bottomDockHeightPx) + 24}px`
+      : "clamp(160px,24vh,240px)"
+    : "14px";
+
+  // Padding changes move the scrollport's max scroll; keep the bottom pin
+  // (or the prepend snapshot) coherent in the same frame.
+  useLayoutEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root) {
+      return;
+    }
+    if (stickToBottomRef.current) {
+      pinToBottom(root);
+    } else {
+      scrollSnapshotRef.current = { sh: root.scrollHeight, st: root.scrollTop };
+    }
+  }, [scrollBottomPad, pinToBottom]);
+
+  const fadeMeasureKey = `${messages.length}:${bottomDockVisible ? 1 : 0}:${loadingOlderHistory ? 1 : 0}:${scrollBottomPad}`;
   const { fade, onScroll: updateScrollFade } = useComposerEditorScrollFade(
     scrollRootRef,
     fadeMeasureKey
@@ -563,10 +601,8 @@ export function MessageList({
       <div
         ref={scrollRootRef}
         data-chat-scroll-root
-        className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain [overflow-anchor:none] ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
-          bottomDockVisible ? "pb-[clamp(160px,24vh,240px)]" : "pb-[14px]"
-        }`}
-        style={scrollMaskStyle}
+        className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain [overflow-anchor:none] ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y`}
+        style={{ ...scrollMaskStyle, paddingBottom: scrollBottomPad }}
         onScroll={(event) => {
           const root = event.currentTarget;
           updateScrollFade();
