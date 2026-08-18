@@ -77,6 +77,12 @@ test("OpenCode v2 catalogs expose primary agents and model variants", () => {
     "provider-a/model-a",
     "provider-a/model-a#high",
   ]);
+  assert.deepEqual(model?.options[0]?.modelParameters, [
+    { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+  ]);
+  assert.deepEqual(model?.options[1]?.modelParameters, [
+    { id: "variant", name: "Variant", value: "high", valueName: "high" },
+  ]);
   assert.equal(model?.currentValue, "provider-a/model-a#high");
   const partialRefresh = buildOpenCodeV2ConfigOptions({
     agents: [],

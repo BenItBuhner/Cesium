@@ -6,7 +6,9 @@ import {
   getPiAgentSettingsResponse,
   piAgentOAuthSuccessHtml,
   providerLabelForId,
+  startPiAgentOAuth,
 } from "../src/lib/pi-agent-oauth.js";
+import { SUBSCRIPTION_OAUTH_PROVIDER_IDS } from "../src/lib/subscription-oauth.js";
 
 test("buildPiAgentOAuthCallbackUrl uses settings callback path", () => {
   const url = buildPiAgentOAuthCallbackUrl("https://app.example.com/");
@@ -14,19 +16,14 @@ test("buildPiAgentOAuthCallbackUrl uses settings callback path", () => {
 });
 
 test("piAgentOAuthSuccessHtml posts message to opener", () => {
-  const html = piAgentOAuthSuccessHtml("Anthropic");
+  const html = piAgentOAuthSuccessHtml("ChatGPT");
   assert.match(html, /opencursor-pi-agent-oauth/);
-  assert.match(html, /Anthropic/);
+  assert.match(html, /ChatGPT/);
 });
 
-test("minimum Pi Agent provider ids include required OAuth providers", () => {
-  for (const providerId of [
-    "openai-codex",
-    "anthropic",
-    "github-copilot",
-    "google-antigravity",
-    "google-gemini-cli",
-  ]) {
+test("minimum Pi Agent provider ids are official subscription logins only", () => {
+  assert.deepEqual([...PI_AGENT_MINIMUM_PROVIDER_IDS], [...SUBSCRIPTION_OAUTH_PROVIDER_IDS]);
+  for (const providerId of ["openai-codex", "xai"]) {
     assert.ok(
       PI_AGENT_MINIMUM_PROVIDER_IDS.includes(
         providerId as (typeof PI_AGENT_MINIMUM_PROVIDER_IDS)[number]
@@ -34,14 +31,23 @@ test("minimum Pi Agent provider ids include required OAuth providers", () => {
       `missing provider ${providerId}`
     );
   }
+  for (const blocked of ["anthropic", "github-copilot", "google-antigravity", "google-gemini-cli"]) {
+    assert.equal(
+      PI_AGENT_MINIMUM_PROVIDER_IDS.includes(
+        blocked as (typeof PI_AGENT_MINIMUM_PROVIDER_IDS)[number]
+      ),
+      false,
+      `blocked provider ${blocked} must not be offered`
+    );
+  }
 });
 
 test("providerLabelForId returns friendly labels", () => {
-  assert.equal(providerLabelForId("anthropic"), "Anthropic (Claude Pro/Max)");
-  assert.equal(providerLabelForId("google-gemini-cli"), "Google Gemini CLI");
+  assert.equal(providerLabelForId("openai-codex"), "ChatGPT (Codex subscription)");
+  assert.equal(providerLabelForId("xai"), "SpaceXAI SuperGrok");
 });
 
-test("getPiAgentSettingsResponse lists minimum providers with oauth flags", async () => {
+test("getPiAgentSettingsResponse lists official OAuth and hides unofficial Connect", async () => {
   const payload = await getPiAgentSettingsResponse();
   assert.ok(Array.isArray(payload.providers));
   assert.ok(payload.settings);
@@ -53,11 +59,34 @@ test("getPiAgentSettingsResponse lists minimum providers with oauth flags", asyn
   for (const providerId of PI_AGENT_MINIMUM_PROVIDER_IDS) {
     const provider = payload.providers.find((entry) => entry.id === providerId);
     assert.ok(provider, `expected provider entry for ${providerId}`);
-    assert.equal(typeof provider.oauthSupported, "boolean");
+    assert.equal(provider.oauthSupported, true);
     assert.equal(typeof provider.modelCount, "number");
   }
+  const openai = payload.providers.find((entry) => entry.id === "openai-codex");
+  assert.equal(openai?.oauthSupported, true);
+  const xai = payload.providers.find((entry) => entry.id === "xai");
+  assert.equal(xai?.oauthSupported, true);
   const anthropic = payload.providers.find((entry) => entry.id === "anthropic");
-  assert.equal(anthropic?.oauthSupported, true);
+  if (anthropic) {
+    assert.equal(anthropic.oauthSupported, false);
+  }
   const googleAntigravity = payload.providers.find((entry) => entry.id === "google-antigravity");
-  assert.equal(googleAntigravity?.oauthSupported, false);
+  if (googleAntigravity) {
+    assert.equal(googleAntigravity.oauthSupported, false);
+  }
+});
+
+test("startPiAgentOAuth rejects unofficial subscription providers", async () => {
+  await assert.rejects(
+    () => startPiAgentOAuth({ providerId: "anthropic", publicOrigin: "https://app.example.com" }),
+    /Unsupported subscription OAuth provider/
+  );
+  await assert.rejects(
+    () =>
+      startPiAgentOAuth({
+        providerId: "google-gemini-cli",
+        publicOrigin: "https://app.example.com",
+      }),
+    /Unsupported subscription OAuth provider/
+  );
 });

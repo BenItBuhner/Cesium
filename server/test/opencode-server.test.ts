@@ -10,7 +10,7 @@ const [
     openCodeServerLegacyPermissionResponse,
     openCodeServerPermissionResponse,
   },
-  { openCodeServerPartTextDelta },
+  { modelBody, openCodeServerPartTextDelta },
   { extractOpenCodeEventSessionId, openCodeEventBelongsToRootSession, translateOpenCodeGlobalPayload },
   { OpenCodeServerClient },
 ] = await Promise.all([
@@ -41,6 +41,19 @@ test("opencode server client scopes instance routes to the workspace directory",
   // Global routes are instance-independent and must stay unscoped.
   assert.equal(client.url("/global/health"), "http://127.0.0.1:9333/global/health");
   assert.equal(client.url("/global/event"), "http://127.0.0.1:9333/global/event");
+});
+
+test("opencode server preserves model variants in prompt selections", () => {
+  assert.deepEqual(modelBody("anthropic/claude-fable-5#high"), {
+    providerID: "anthropic",
+    modelID: "claude-fable-5",
+    variant: "high",
+  });
+  assert.deepEqual(modelBody("anthropic/claude-fable-5/max"), {
+    providerID: "anthropic",
+    modelID: "claude-fable-5",
+    variant: "max",
+  });
 });
 
 test("opencode server client leaves routes unscoped without a directory", () => {

@@ -4,7 +4,8 @@ import { test } from "node:test";
 const [
   { AGENT_BACKENDS, listAgentBackends },
   { CodexAppServerTransport },
-  { isStaleCodexAppServerCache },
+  { codexAppServerOptionsFromModels, isStaleCodexAppServerCache },
+  { resolveCodexModelEffort },
   {
     codexAppServerAssistantTextFromItem,
     canonicalizeCodexAppServerItem,
@@ -18,6 +19,7 @@ const [
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/codex-app-server-transport.js"),
   import("../src/lib/agents/provider-cache-store.js"),
+  import("../src/lib/agents/codex-app-server-provider.js"),
   import("../src/lib/agents/codex-app-server-normalize.js"),
 ]);
 
@@ -65,6 +67,34 @@ test("codex app server treats old gpt-5.1-only catalogs as stale", () => {
     ]),
     false
   );
+});
+
+test("codex app server keeps effort capabilities scoped to each model", () => {
+  const options = codexAppServerOptionsFromModels([
+    {
+      id: "gpt-5.6-soul",
+      displayName: "GPT-5.6 Soul",
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low" },
+        { reasoningEffort: "high" },
+      ],
+    },
+    {
+      id: "claude-fable-5",
+      displayName: "Claude Fable 5",
+      supportedReasoningEfforts: [],
+    },
+  ]);
+  const models = options.find((option) => option.id === "model")?.options;
+  assert.deepEqual(models?.[0]?.metadata?.reasoningLevels, ["low", "high"]);
+  assert.equal(models?.[1]?.metadata?.reasoningLevels, undefined);
+  assert.deepEqual(
+    options.find((option) => option.id === "model_reasoning_effort")?.options.map((option) => option.value),
+    ["low", "high"]
+  );
+  assert.equal(resolveCodexModelEffort(options, "gpt-5.6-soul", "high"), "high");
+  assert.equal(resolveCodexModelEffort(options, "gpt-5.6-soul", "xhigh"), "low");
+  assert.equal(resolveCodexModelEffort(options, "claude-fable-5", "high"), undefined);
 });
 
 test("codex app server normalizes assistant and reasoning deltas", () => {

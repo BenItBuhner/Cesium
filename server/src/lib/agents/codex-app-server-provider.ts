@@ -76,6 +76,22 @@ function optionHasValue(option: AgentConfigOption | undefined, value: string | u
   return Boolean(value && option?.options.some((candidate) => candidate.value === value));
 }
 
+export function resolveCodexModelEffort(
+  options: AgentConfigOption[],
+  model: string | undefined,
+  requestedEffort: string | undefined
+): string | undefined {
+  const modelOption = options.find((option) => option.id === "model");
+  const modelValue = modelOption?.options.find((option) => option.value === model);
+  const supported = modelValue?.metadata?.reasoningLevels;
+  if (!Array.isArray(supported) || supported.length === 0) {
+    return undefined;
+  }
+  return requestedEffort && supported.includes(requestedEffort)
+    ? requestedEffort
+    : supported[0];
+}
+
 function hydrateConfigOptions(
   backendOptions: AgentConfigOption[],
   conversation: AgentRuntimeCallbacks["conversation"]
@@ -233,9 +249,10 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     this.assistantTextByItemId.clear();
     this.lastCodexEventError = null;
     const model = this.callbacks.conversation.config.modelId || currentValueFor(this.configOptions, "model");
-    const effort =
+    const requestedEffort =
       currentValueFor(this.configOptions, "model_reasoning_effort") ||
       currentValueFor(this.configOptions, "effort");
+    const effort = resolveCodexModelEffort(this.configOptions, model, requestedEffort);
     const permission = currentValueFor(this.configOptions, "permission") || "workspace-write";
     const mode = currentValueFor(this.configOptions, "mode") || this.callbacks.conversation.config.mode || "agent";
     const imageAttachments = await materializeImageAttachments(

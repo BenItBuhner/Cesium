@@ -24,6 +24,7 @@ import {
 } from "./settings-ui";
 import { HARNESS_LABELS, HARNESS_ORDER } from "./agent-harness-settings";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { openExternalUrl } from "@/lib/mobile-bridge";
 import {
   createCloudAgentTask,
   deleteCloudAgentConnection,
@@ -461,9 +462,11 @@ export function CloudAgentsSettingsPanel() {
             onStartOAuth={() =>
               runAction(async () => {
                 const result = await startCloudAgentOAuth(provider.id);
-                window.open(result.authUrl, "_blank", "noopener,noreferrer,width=560,height=760");
+                openExternalUrl(result.authUrl, {
+                  features: "noopener,noreferrer,width=560,height=760",
+                });
                 setMessage(
-                  `Complete the ${provider.label} authorization in the popup, then return here.`
+                  `Complete the ${provider.label} authorization in your browser, then return here.`
                 );
               })
             }

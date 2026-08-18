@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- OAuth / Sign In / Authenticate redirects no longer die inside the Android (and iOS) WebView. `window.open` and foreign http(s) navigations now leave the bundled workbench and open in the system browser instead of being swallowed by `setSupportMultipleWindows={false}` or unloading the `file://` page.
+
 ## [0.7.0] - 2026-08-18
 
 ### Added

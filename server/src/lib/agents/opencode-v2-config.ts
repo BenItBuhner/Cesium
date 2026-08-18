@@ -31,18 +31,45 @@ export function buildOpenCodeV2ConfigOptions(input: {
     const id = asString(model.id) ?? asString(model.modelID);
     if (!providerId || !id || model.enabled === false) return [];
     const name = asString(model.name) ?? id;
-    const base = { value: `${providerId}/${id}`, name: `${providerId}/${name}` };
-    const variants = Array.isArray(model.variants)
-      ? model.variants.flatMap((variant) => {
+    const reportedVariants = Array.isArray(model.variants) ? model.variants : [];
+    const base = {
+      value: `${providerId}/${id}`,
+      name: `${providerId}/${name}`,
+      modelGroupId: `${providerId}/${id}`,
+      modelGroupName: `${providerId}/${name}`,
+      ...(reportedVariants.length > 0
+        ? {
+            modelParameters: [
+              { id: "variant", name: "Variant", value: "default", valueName: "Default" },
+            ],
+          }
+        : {}),
+    };
+    const variants = reportedVariants
+      .flatMap((variant) => {
           const variantId =
             variant && typeof variant === "object" && !Array.isArray(variant)
               ? asString((variant as OpenCodeV2Json).id)
               : undefined;
           return variantId
-            ? [{ value: `${providerId}/${id}#${variantId}`, name: `${providerId}/${name} (${variantId})` }]
+            ? [
+                {
+                  value: `${providerId}/${id}#${variantId}`,
+                  name: `${providerId}/${name} (${variantId})`,
+                  modelGroupId: `${providerId}/${id}`,
+                  modelGroupName: `${providerId}/${name}`,
+                  modelParameters: [
+                    {
+                      id: "variant",
+                      name: "Variant",
+                      value: variantId,
+                      valueName: variantId,
+                    },
+                  ],
+                },
+              ]
             : [];
-        })
-      : [];
+        });
     return [base, ...variants];
   });
   const previousAgent = input.previous?.find((option) => option.id === "agent" || option.id === "mode");

@@ -71,6 +71,22 @@ describe("settings search index", () => {
     assert.ok(autoDispatch.some((hit) => hit.rowId === "cloud-agents-auto-dispatch"));
   });
 
+  test("indexes Voice settings for transcription and TTS", () => {
+    const index = buildSettingsSearchIndex({});
+    const nav = searchSettingsIndex(index, "voice");
+    assert.ok(nav.some((hit) => hit.kind === "nav" && hit.navId === "voice"));
+
+    const transcription = searchSettingsIndex(index, "transcription model");
+    assert.ok(
+      transcription.some(
+        (hit) => hit.navId === "voice" && hit.rowId === "transcription-model"
+      )
+    );
+
+    const whisper = searchSettingsIndex(index, "whisper");
+    assert.ok(whisper.some((hit) => hit.navId === "voice"));
+  });
+
   test("indexes VS Code extension settings", () => {
     const index = buildSettingsSearchIndex({});
     const navHits = searchSettingsIndex(index, "extensions");
@@ -104,6 +120,14 @@ describe("settings search index", () => {
         (hit) => hit.kind === "shortcut" && hit.id === "shortcut::chat.action.newChat"
       )
     );
+  });
+
+  test("indexes official Cesium subscription OAuth accounts", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "supergrok");
+    assert.ok(hits.some((hit) => hit.rowId === "cesium-oauth-accounts"));
+    const chatgpt = searchSettingsIndex(index, "chatgpt codex");
+    assert.ok(chatgpt.some((hit) => hit.rowId === "cesium-oauth-accounts"));
   });
 
   test("can omit iPad beta rows for desktop shells", () => {

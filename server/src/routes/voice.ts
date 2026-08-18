@@ -110,7 +110,7 @@ voiceRoutes.post("/api/voice/controller", async (c) => {
     return c.json(
       {
         error:
-          "Voice controller is not configured. Set CESIUM_BASE_URL/OPENAI_BASE_URL, an API key, and optionally OPENCURSOR_VOICE_MODEL.",
+          "Voice controller is not configured. Open Settings → Voice to set a base URL, API key, and model, or set OPENCURSOR_VOICE_* / CESIUM_* environment variables.",
       },
       503
     );

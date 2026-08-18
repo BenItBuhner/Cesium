@@ -4,7 +4,7 @@ import { Check, Copy, ExternalLink, Smartphone } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { getStoredSessionToken } from "@/lib/auth-client";
-import { postMobileBridgeMessage } from "@/lib/mobile-bridge";
+import { openExternalUrl, postMobileBridgeMessage } from "@/lib/mobile-bridge";
 
 const TERMUX_SERVER_URL = "http://127.0.0.1:9100";
 const TERMUX_FDROID_URL = "https://f-droid.org/packages/com.termux/";
@@ -61,13 +61,7 @@ export function TermuxServerSetup({ compact = false }: { compact?: boolean }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
 
   const openFDroid = useCallback(() => {
-    const posted = postMobileBridgeMessage({
-      type: "openExternalUrl",
-      url: TERMUX_FDROID_URL,
-    });
-    if (!posted) {
-      window.open(TERMUX_FDROID_URL, "_blank", "noopener");
-    }
+    openExternalUrl(TERMUX_FDROID_URL, { features: "noopener" });
   }, []);
 
   const copyCommand = useCallback(async () => {
