@@ -1209,6 +1209,11 @@ export function AgentCenterPane() {
     !!conversation &&
     hasConversationHistoryLoaded &&
     (!optimisticTurn || scrollMessages.length > 0);
+  const stableSelectedConversationView =
+    selectedConversationId &&
+    stableConversationView?.conversationId === selectedConversationId
+      ? stableConversationView
+      : null;
   const visibleConversationView =
     realConversationViewReady && selectedConversationId && conversation
       ? {
@@ -1222,7 +1227,7 @@ export function AgentCenterPane() {
           initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
         }
       : optimisticConversationView ??
-        (showConversationTransitionState ? stableConversationView : null);
+        (showConversationTransitionState ? stableSelectedConversationView : null);
   const visibleConversationId = visibleConversationView?.conversationId ?? null;
   // Stable identity so memoized permission rows don't re-render every flush.
   const handleResolvePermission = useCallback(
