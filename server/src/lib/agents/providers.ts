@@ -34,6 +34,10 @@ import {
   resolveHarnessRuntimeSpec,
   type HarnessCliId,
 } from "./harness-runtime.js";
+import {
+  openCodeHarnessAvailable,
+  openCodeHarnessCommandPreview,
+} from "./opencode-generation.js";
 
 /**
  * Maps CLI-backed agent backends onto the harness runtime descriptor that
@@ -111,43 +115,17 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultModelId: "composer-2.5",
         defaultModelName: "Composer 2.5",
       });
-    case "opencode-server": {
-      const externalUrl = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim();
-      const runtime = resolveHarnessRuntimeSpec("opencode");
-      return createBackendInfo({
-        id: "opencode-server",
-        label: "OpenCode Server",
-        description:
-          "OpenCode native HTTP/SSE server API with root and child-session event routing.",
-        experimental: true,
-        commandPreview: externalUrl
-          ? `OpenCode server at ${externalUrl}`
-          : runtime
-            ? `${runtime.commandPreview} serve`
-            : "OpenCode server not configured",
-        available: Boolean(externalUrl) || runtime !== null,
-        capabilities: AGENT_CAPABILITIES["opencode-server"],
-        defaultMode: "build",
-        defaultModelId: "auto",
-        defaultModelName: "Auto",
-      });
-    }
+    case "opencode-server":
     case "opencode-v2-beta": {
-      const externalUrl = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim();
-      const detection = detectHarnessCli("opencode-v2");
       return createBackendInfo({
-        id: "opencode-v2-beta",
-        label: "OpenCode v2 Beta",
+        id,
+        label: "OpenCode",
         description:
-          "Native OpenCode v2 API with durable event recovery, typed tool events, background subagents, forms, and v2 permissions.",
+          "OpenCode native HTTP/SSE harness. Current talks to OpenCode 1; v2 Beta is packaged in the same option for durable logs, background subagents, PTY/shell, forms, and v2 permissions until OpenCode 2.0 is standardized.",
         experimental: true,
-        commandPreview: externalUrl
-          ? `OpenCode v2 server at ${externalUrl}`
-          : detection
-            ? `${detection.executablePath} serve --stdio`
-            : "OpenCode v2 Beta server not configured",
-        available: Boolean(externalUrl) || detection !== null,
-        capabilities: AGENT_CAPABILITIES["opencode-v2-beta"],
+        commandPreview: openCodeHarnessCommandPreview(),
+        available: openCodeHarnessAvailable(),
+        capabilities: AGENT_CAPABILITIES[id],
         defaultMode: "build",
         defaultModelId: "auto",
         defaultModelName: "Auto",
@@ -276,11 +254,14 @@ const AGENT_BACKEND_MENU_ORDER: readonly AgentBackendId[] = ACTIVE_AGENT_BACKEND
  * reload required. Spreads, `Object.entries`, and `in` checks all behave like
  * a plain record.
  */
+const HIDDEN_AGENT_BACKEND_IDS = ["opencode-v2-beta"] as const satisfies readonly AgentBackendId[];
+
 export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = (() => {
   const registry = {} as Record<AgentBackendId, AgentBackendInfo>;
-  for (const id of AGENT_BACKEND_MENU_ORDER) {
+  const hidden = new Set<string>(HIDDEN_AGENT_BACKEND_IDS);
+  for (const id of [...AGENT_BACKEND_MENU_ORDER, ...HIDDEN_AGENT_BACKEND_IDS]) {
     Object.defineProperty(registry, id, {
-      enumerable: true,
+      enumerable: !hidden.has(id),
       get: () => computeBackendInfo(id),
     });
   }
@@ -418,31 +399,14 @@ export async function createAgentProvider(
     });
   }
 
-  if (backendId === "opencode-server") {
-    if (
-      !process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim() &&
-      !detectHarnessCli("opencode")
-    ) {
+  if (backendId === "opencode-server" || backendId === "opencode-v2-beta") {
+    if (!openCodeHarnessAvailable()) {
       throw new Error(`${backend.label} is not installed or configured.`);
     }
-    const { createOpenCodeServerProvider } = await import("./opencode-server-provider.js");
-    return createOpenCodeServerProvider({
-      backend,
-      configOptions: await readAgentBackendConfigCache(backendId),
-    });
-  }
-
-  if (backendId === "opencode-v2-beta") {
-    if (
-      !process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim() &&
-      !detectHarnessCli("opencode-v2")
-    ) {
-      throw new Error(`${backend.label} is not installed or configured.`);
-    }
-    const { createOpenCodeV2Provider } = await import("./opencode-v2-provider.js");
-    return createOpenCodeV2Provider({
-      backend,
-      configOptions: await readAgentBackendConfigCache(backendId),
+    const { createOpenCodeProvider } = await import("./opencode-provider.js");
+    return createOpenCodeProvider({
+      backend: AGENT_BACKENDS["opencode-server"],
+      configOptions: await readAgentBackendConfigCache("opencode-server"),
     });
   }
 

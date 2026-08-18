@@ -356,17 +356,27 @@ export class OpenCodeV2EventNormalizer {
       });
     }
 
-    if (type === "session.shell.started" || type === "session.shell.ended") {
+    if (
+      type === "session.shell.started" ||
+      type === "session.shell.ended" ||
+      type === "session.next.shell.started" ||
+      type === "session.next.shell.ended"
+    ) {
       const shell = asRecord(data.shell);
-      const shellId = asString(shell?.id);
+      const shellId =
+        asString(shell?.id) ?? asString(data.callID) ?? asString(data.id);
       if (!sessionId || !shellId) return [];
-      const ended = type.endsWith(".ended");
+      const ended = type.endsWith(".ended") || type.endsWith(".exited");
       const output = asRecord(data.output);
-      const detail = ended ? asString(output?.output) : asString(shell?.command);
+      const detail = ended
+        ? asString(data.output) ?? asString(output?.output)
+        : asString(data.command) ?? asString(shell?.command);
       const status: AgentToolCallStatus = ended
         ? shell?.status === "exited" && (shell.exit == null || shell.exit === 0)
           ? "completed"
-          : "failed"
+          : asString(data.output) != null
+            ? "completed"
+            : "failed"
         : "in_progress";
       return [
         {
@@ -374,11 +384,40 @@ export class OpenCodeV2EventNormalizer {
           conversationId: input.conversationId,
           kind: ended ? "tool_call_update" : "tool_call",
           toolCallId: `opencode-v2-shell:${sessionId}:${shellId}`,
-          title: asString(shell?.command) ?? "shell",
+          title: asString(data.command) ?? asString(shell?.command) ?? "shell",
           toolKind: "terminal",
           status,
           detail,
           ...(isChild ? { openCodeSubagentSessionId: input.childSessionId } : {}),
+          raw: input.payload,
+        },
+      ];
+    }
+
+    if (
+      type === "pty.created" ||
+      type === "pty.updated" ||
+      type === "pty.exited" ||
+      type === "pty.deleted" ||
+      type === "shell.created" ||
+      type === "shell.exited" ||
+      type === "shell.deleted"
+    ) {
+      const info = asRecord(data.info) ?? data;
+      const ptyId = asString(info.id) ?? asString(data.id);
+      if (!ptyId) return [];
+      const ended = type.endsWith(".exited") || type.endsWith(".deleted");
+      const command = asString(info.command) ?? asString(info.title) ?? type.split(".")[0] ?? "pty";
+      return [
+        {
+          eventId: randomUUID(),
+          conversationId: input.conversationId,
+          kind: type.endsWith(".created") ? "tool_call" : "tool_call_update",
+          toolCallId: `opencode-v2-${type.startsWith("pty.") ? "pty" : "shell"}:${ptyId}`,
+          title: command,
+          toolKind: "terminal",
+          status: ended ? "completed" : "in_progress",
+          detail: asString(info.cwd) ?? asString(info.message) ?? command,
           raw: input.payload,
         },
       ];

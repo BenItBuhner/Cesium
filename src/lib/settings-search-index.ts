@@ -449,10 +449,10 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
   row(
     "agents",
-    "opencode-v2-beta",
-    "OpenCode v2 Beta",
-    "Native OpenCode v2 harness with durable events, typed tools, and background subagents.",
-    ["opencode2", "terminal", "subagent", "permission", "form"]
+    "opencode-server",
+    "OpenCode",
+    "OpenCode harness with Current (v1) and packaged v2 Beta dialects: durable events, typed tools, background subagents, PTY, and forms.",
+    ["opencode", "opencode2", "terminal", "subagent", "permission", "form", "pty"]
   ),
 
   // —— Cloud Agents ——

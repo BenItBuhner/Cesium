@@ -1,6 +1,10 @@
 import { asString } from "./json-coerce.js";
 import type { OpenCodeV2Json } from "./opencode-v2-client.js";
 import type { AgentConfigOption } from "./types.js";
+import {
+  type OpenCodeGeneration,
+  withOpenCodeGenerationOption,
+} from "./opencode-generation.js";
 
 export function buildOpenCodeV2ConfigOptions(input: {
   agents: OpenCodeV2Json[];
@@ -8,6 +12,7 @@ export function buildOpenCodeV2ConfigOptions(input: {
   currentAgent?: string;
   currentModel?: string;
   previous?: AgentConfigOption[];
+  generation?: OpenCodeGeneration;
 }): AgentConfigOption[] {
   const reportedAgents = input.agents.flatMap((agent) => {
     const id = asString(agent.id);
@@ -73,7 +78,7 @@ export function buildOpenCodeV2ConfigOptions(input: {
   const models = reportedModels.length > 0 ? reportedModels : previousModel?.options ?? [];
   const requestedAgent = input.currentAgent ?? previousAgent?.currentValue;
   const requestedModel = input.currentModel ?? previousModel?.currentValue;
-  return [
+  return withOpenCodeGenerationOption([
     {
       id: "agent",
       name: "Agent",
@@ -99,5 +104,5 @@ export function buildOpenCodeV2ConfigOptions(input: {
           : "No OpenCode v2 models were reported. Configure provider credentials in OpenCode.",
       options: models,
     },
-  ];
+  ], input.generation ?? "v2-beta");
 }

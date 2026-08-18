@@ -19,9 +19,8 @@ export function getAgentLabel(agentId: string): string {
     case "opencode-acp":
       return "OpenCode";
     case "opencode-server":
-      return "OpenCode Server";
     case "opencode-v2-beta":
-      return "OpenCode v2 Beta";
+      return "OpenCode";
     case "gemini-acp":
       return "Gemini (retired)";
     case "devin-acp":
@@ -51,7 +50,6 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "cesium-agent":
     case "cursor-sdk":
     case "opencode-server":
-    case "opencode-v2-beta":
     case "devin-acp":
     case "grok-build":
     case "codex-app-server":
@@ -62,6 +60,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "cursor-acp":
       return "cursor-sdk";
     case "opencode-acp":
+    case "opencode-v2-beta":
       return "opencode-server";
     case "codex-adapter":
       return "codex-app-server";
