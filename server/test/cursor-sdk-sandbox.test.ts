@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AgentOptions, SDKAgent } from "@cursor/sdk";
 import {
   buildCursorSdkLocalOptions,
   cursorSdkSandboxOptions,
@@ -14,7 +15,19 @@ import {
   cursorSdkConfigOptionsFromModels,
   migrateCursorSdkSandboxConfigOptions,
 } from "../src/lib/agents/provider-cache-store.js";
-import type { AgentConfigOption } from "../src/lib/agents/types.js";
+import {
+  createCursorSdkProvider,
+  type CursorSdkProviderDependencies,
+} from "../src/lib/agents/cursor-sdk-provider.js";
+import { AGENT_CAPABILITIES } from "../src/lib/agents/agent-contract.js";
+import type {
+  AgentBackendInfo,
+  AgentConfigOption,
+  AgentConversationRecord,
+  AgentRuntimeCallbacks,
+  AgentStoredEvent,
+} from "../src/lib/agents/types.js";
+import type { AgentPluginAttachmentSnapshot } from "../src/lib/plugins/attachments.js";
 
 const SDK_SANDBOX_UNSUPPORTED_MESSAGE =
   "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. " +
@@ -178,4 +191,151 @@ test("cursorSdkRunFailureDetail preserves structured terminal errors", () => {
     cursorSdkRunFailureDetail({ id: "run-6", status: "finished" }),
     null
   );
+});
+
+test("live sandbox and setting-source changes rebind the local SDK agent", async () => {
+  const createdOptions: AgentOptions[] = [];
+  const resumedOptions: Array<Partial<AgentOptions> | undefined> = [];
+  const disposedHandles: string[] = [];
+  let resumeCount = 0;
+
+  const fakeAgent = (agentId: string, handleName: string): SDKAgent =>
+    ({
+      agentId,
+      async [Symbol.asyncDispose]() {
+        disposedHandles.push(handleName);
+      },
+    }) as unknown as SDKAgent;
+
+  const dependencies: CursorSdkProviderDependencies = {
+    agent: {
+      async create(options) {
+        createdOptions.push(options);
+        return fakeAgent("agent-cursor-sdk-test", "created");
+      },
+      async resume(agentId, options) {
+        resumedOptions.push(options);
+        resumeCount += 1;
+        return fakeAgent(agentId, `resumed-${resumeCount}`);
+      },
+    },
+    async getApiKey() {
+      return "test-key";
+    },
+    async resolvePluginAttachments(input) {
+      return {
+        ...input,
+        plugins: [],
+        skillsList: "",
+        promptSection: "",
+        mcpSummaries: [],
+        mcpServers: [],
+        sdkMcp: { servers: {}, skipped: [] },
+        warnings: [],
+        toolDisplays: [],
+      } satisfies AgentPluginAttachmentSnapshot;
+    },
+  };
+
+  const configOptions = cursorSdkConfigOptionsFromModels([]);
+  const backend: AgentBackendInfo = {
+    id: "cursor-sdk",
+    label: "Cursor SDK",
+    description: "test",
+    available: true,
+    defaultMode: "agent",
+    defaultModelId: "composer-2.5",
+    defaultModelName: "Composer 2.5",
+    capabilities: AGENT_CAPABILITIES["cursor-sdk"],
+  };
+  let conversation: AgentConversationRecord = {
+    schemaVersion: 1,
+    id: "conversation-cursor-sdk-test",
+    workspaceId: "workspace-cursor-sdk-test",
+    title: "Cursor SDK lifecycle test",
+    createdAt: 1,
+    updatedAt: 1,
+    lastEventSeq: 0,
+    status: "idle",
+    config: {
+      backendId: "cursor-sdk",
+      mode: "agent",
+      modelId: "composer-2.5",
+      modelName: "Composer 2.5",
+    },
+    providerSessionId: null,
+    configOptions,
+    capabilities: AGENT_CAPABILITIES["cursor-sdk"],
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+  };
+  const callbacks: AgentRuntimeCallbacks = {
+    workspace: {
+      id: conversation.workspaceId,
+      root: "C:\\Users\\dev\\source\\repo",
+      name: "Windows workspace",
+      createdAt: 1,
+      updatedAt: 1,
+      lastOpenedAt: 1,
+    },
+    conversation,
+    async appendEvents(events) {
+      return events.map(
+        (event, index) =>
+          ({
+            ...event,
+            seq: index + 1,
+            createdAt: event.createdAt ?? 1,
+          }) as AgentStoredEvent
+      );
+    },
+    async readSnapshot() {
+      return null;
+    },
+    async updateConversation(patch) {
+      conversation =
+        typeof patch === "function"
+          ? patch(conversation)
+          : { ...conversation, ...patch };
+      return conversation;
+    },
+  };
+
+  const provider = createCursorSdkProvider({
+    backend,
+    configOptions,
+    dependencies,
+  });
+  const handle = await provider.startSession(callbacks);
+
+  assert.equal(createdOptions.length, 1);
+  assert.equal(createdOptions[0]?.local?.cwd, callbacks.workspace.root);
+  assert.deepEqual(createdOptions[0]?.local?.sandboxOptions, {
+    enabled: false,
+  });
+  assert.equal(createdOptions[0]?.local?.autoReview, false);
+
+  await handle.setConfigOption("sdk_sandbox", "enabled");
+  assert.equal(resumedOptions.length, 1);
+  assert.deepEqual(resumedOptions[0]?.local?.sandboxOptions, {
+    enabled: true,
+  });
+  assert.deepEqual(disposedHandles, ["created"]);
+
+  await handle.setConfigOption("setting_sources", "all");
+  assert.equal(resumedOptions.length, 2);
+  assert.deepEqual(resumedOptions[1]?.local?.settingSources, ["all"]);
+  assert.deepEqual(disposedHandles, ["created", "resumed-1"]);
+
+  await handle.dispose();
+  assert.deepEqual(disposedHandles, [
+    "created",
+    "resumed-1",
+    "resumed-2",
+  ]);
 });

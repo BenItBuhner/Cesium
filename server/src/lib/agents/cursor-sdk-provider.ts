@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   Agent,
   CursorAgentError,
+  type AgentOptions,
   type ModelSelection,
   type Run,
   type SDKAgent,
@@ -54,6 +55,7 @@ import type { SdkMcpServerConfig } from "./mcp-export-adapter.js";
 import {
   appendAgentPluginPrompt,
   resolveAgentPluginAttachments,
+  type AgentPluginAttachmentSnapshot,
 } from "../plugins/attachments.js";
 import {
   providerPlanEvents,
@@ -64,7 +66,25 @@ type CursorSdkHandleInput = {
   backend: AgentBackendInfo;
   callbacks: AgentRuntimeCallbacks;
   configOptions: AgentConfigOption[];
+  dependencies: CursorSdkProviderDependencies;
   loadAgentId?: string | null;
+};
+
+type CursorSdkAgentApi = {
+  create(options: AgentOptions): Promise<SDKAgent>;
+  resume(agentId: string, options?: Partial<AgentOptions>): Promise<SDKAgent>;
+};
+
+export type CursorSdkProviderDependencies = {
+  agent: CursorSdkAgentApi;
+  getApiKey: typeof getCursorSdkApiKey;
+  resolvePluginAttachments: typeof resolveAgentPluginAttachments;
+};
+
+const defaultCursorSdkProviderDependencies: CursorSdkProviderDependencies = {
+  agent: Agent,
+  getApiKey: getCursorSdkApiKey,
+  resolvePluginAttachments: resolveAgentPluginAttachments,
 };
 
 type PendingCursorRequest = {
@@ -189,6 +209,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
 
   private activeRun: Run | null = null;
   private disposed = false;
+  private localRuntimeOptionsDirty = false;
   private pendingRequest: PendingCursorRequest | null = null;
   private handledCreatePlanCallIds = new Set<string>();
   private pendingQuestions = new Map<
@@ -201,69 +222,83 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     private readonly callbacks: AgentRuntimeCallbacks,
     private readonly backend: AgentBackendInfo,
     configOptions: AgentConfigOption[],
-    private readonly mcpServers: Record<string, SdkMcpServerConfig>
+    private readonly mcpServers: Record<string, SdkMcpServerConfig>,
+    private readonly resumeWithConfig: (
+      agentId: string,
+      configOptions: AgentConfigOption[]
+    ) => Promise<SDKAgent>,
+    private readonly resolvePluginAttachments: (
+      input: Parameters<typeof resolveAgentPluginAttachments>[0]
+    ) => Promise<AgentPluginAttachmentSnapshot>
   ) {
     this.sessionId = agent.agentId;
     this.configOptions = configOptions;
   }
 
   static async create(input: CursorSdkHandleInput): Promise<CursorSdkSessionHandle> {
-    const apiKey = await getCursorSdkApiKey();
+    const apiKey = await input.dependencies.getApiKey();
     if (!apiKey) {
       throw new Error("Cursor SDK API key is not configured. Add it in Settings -> Agents.");
     }
 
     const configOptions = withCurrentConfig(input.configOptions, input.callbacks.conversation);
-    const sandboxMode = resolveCursorSdkSandboxMode(configOptions);
-    const settingSources = parseSettingSources(
-      optionValue(configOptions, "setting_sources", "project,user,plugins")
-    );
-    const model = modelSelectionFromConfig(input.callbacks.conversation, configOptions);
-    const modeOption = findPrimaryModeConfigOption(configOptions);
-    const mode = modeOption?.currentValue ?? input.callbacks.conversation.config.mode;
-    const pluginAttachments = await resolveAgentPluginAttachments({
+    const pluginAttachments = await input.dependencies.resolvePluginAttachments({
       workspaceId: input.callbacks.workspace.id,
       workspaceRoot: input.callbacks.workspace.root,
       backendId: "cursor-sdk",
     });
     const mcpExport = pluginAttachments.sdkMcp;
     const mcpServers = Object.keys(mcpExport.servers).length > 0 ? mcpExport.servers : undefined;
-    const buildLocalOptions = () =>
-      buildCursorSdkLocalOptions({
-        cwd: input.callbacks.workspace.root,
-        settingSources,
-        sandboxMode,
-      });
-    const createOptions = withCursorSdkMode(
-      {
-        apiKey,
-        model,
-        name: input.callbacks.conversation.title,
-        ...(mcpServers ? { mcpServers } : {}),
-        local: buildLocalOptions(),
-      },
-      mode
-    );
-    const buildResumeOptions = () =>
-      withCursorSdkMode(
+    const buildAgentOptions = (
+      currentConfigOptions: AgentConfigOption[],
+      includeName: boolean
+    ): AgentOptions => {
+      const sandboxMode = resolveCursorSdkSandboxMode(currentConfigOptions);
+      const settingSources = parseSettingSources(
+        optionValue(currentConfigOptions, "setting_sources", "project,user,plugins")
+      );
+      const model = modelSelectionFromConfig(
+        input.callbacks.conversation,
+        currentConfigOptions
+      );
+      const modeOption = findPrimaryModeConfigOption(currentConfigOptions);
+      const mode =
+        modeOption?.currentValue ?? input.callbacks.conversation.config.mode;
+      return withCursorSdkMode(
         {
           apiKey,
           model,
+          ...(includeName ? { name: input.callbacks.conversation.title } : {}),
           ...(mcpServers ? { mcpServers } : {}),
-          local: buildLocalOptions(),
+          local: buildCursorSdkLocalOptions({
+            cwd: input.callbacks.workspace.root,
+            settingSources,
+            sandboxMode,
+          }),
         },
         mode
       );
+    };
+    const createOptions = buildAgentOptions(configOptions, true);
     const agent = input.loadAgentId
-      ? await Agent.resume(input.loadAgentId, buildResumeOptions())
-      : await Agent.create(createOptions);
+      ? await input.dependencies.agent.resume(
+          input.loadAgentId,
+          buildAgentOptions(configOptions, false)
+        )
+      : await input.dependencies.agent.create(createOptions);
 
     const handle = new CursorSdkSessionHandle(
       agent,
       input.callbacks,
       input.backend,
       configOptions,
-      mcpServers ?? {}
+      mcpServers ?? {},
+      (agentId, currentConfigOptions) =>
+        input.dependencies.agent.resume(
+          agentId,
+          buildAgentOptions(currentConfigOptions, false)
+        ),
+      input.dependencies.resolvePluginAttachments
     );
     if (mcpExport.skipped.length > 0) {
       await input.callbacks.appendEvents([
@@ -364,6 +399,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       throw new Error("Cursor SDK session has been disposed.");
     }
     try {
+      await this.rebindLocalRuntimeIfIdle();
       await this.runPrompt(input);
     } catch (error) {
       await this.reportPromptFailure(error);
@@ -379,7 +415,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     const assistantMessageId = `cursor-sdk-assistant-${randomUUID()}`;
     const modeOption = findPrimaryModeConfigOption(this.configOptions);
     const mode = modeOption?.currentValue ?? this.callbacks.conversation.config.mode;
-    const pluginAttachments = await resolveAgentPluginAttachments({
+    const pluginAttachments = await this.resolvePluginAttachments({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,
       backendId: "cursor-sdk",
@@ -706,9 +742,41 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
   }
 
   async setConfigOption(configId: string, value: string): Promise<void> {
-    this.configOptions = this.configOptions.map((option) =>
-      option.id === configId ? { ...option, currentValue: value } : option
+    const nextOptions = this.configOptions.map((option) =>
+      option.id === configId && option.currentValue !== value
+        ? { ...option, currentValue: value }
+        : option
     );
+    if (nextOptions.every((option, index) => option === this.configOptions[index])) {
+      return;
+    }
+    this.configOptions = nextOptions;
+    if (configId === "sdk_sandbox" || configId === "setting_sources") {
+      this.localRuntimeOptionsDirty = true;
+      await this.rebindLocalRuntimeIfIdle();
+    }
+  }
+
+  private async rebindLocalRuntimeIfIdle(): Promise<void> {
+    if (
+      !this.localRuntimeOptionsDirty ||
+      this.activeRun ||
+      this.disposed
+    ) {
+      return;
+    }
+    const previous = this.agent;
+    const replacement = await this.resumeWithConfig(
+      previous.agentId,
+      this.configOptions
+    );
+    if (this.disposed) {
+      await replacement[Symbol.asyncDispose]().catch(() => undefined);
+      return;
+    }
+    this.agent = replacement;
+    this.localRuntimeOptionsDirty = false;
+    await previous[Symbol.asyncDispose]().catch(() => undefined);
   }
 
   async answerPermission(input: {
@@ -817,7 +885,12 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
 export function createCursorSdkProvider(input: {
   backend: AgentBackendInfo;
   configOptions: AgentConfigOption[];
+  dependencies?: Partial<CursorSdkProviderDependencies>;
 }): AgentProvider {
+  const dependencies: CursorSdkProviderDependencies = {
+    ...defaultCursorSdkProviderDependencies,
+    ...input.dependencies,
+  };
   return {
     backend: input.backend,
     startSession(callbacks) {
@@ -825,6 +898,7 @@ export function createCursorSdkProvider(input: {
         backend: input.backend,
         callbacks,
         configOptions: input.configOptions,
+        dependencies,
       });
     },
     loadSession(callbacks, providerSessionId) {
@@ -832,6 +906,7 @@ export function createCursorSdkProvider(input: {
         backend: input.backend,
         callbacks,
         configOptions: input.configOptions,
+        dependencies,
         loadAgentId: providerSessionId,
       });
     },
