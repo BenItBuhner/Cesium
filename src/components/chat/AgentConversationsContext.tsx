@@ -484,6 +484,24 @@ export function mergeAgentConversationEventMap(
   return next;
 }
 
+export function mergeAgentConversationSnapshotHeadEvents(
+  existing: AgentStoredEvent[],
+  incoming: AgentStoredEvent[],
+  window: Pick<AgentConversationEventWindow, "oldestSeq" | "newestSeq">
+): AgentStoredEvent[] {
+  const kept = existing.filter((event) => event.seq < window.oldestSeq);
+  const bySeq = new Map<number, AgentStoredEvent>();
+  for (const event of kept) {
+    bySeq.set(event.seq, event);
+  }
+  for (const event of incoming) {
+    bySeq.set(event.seq, event);
+  }
+  return compactConversationEvents(
+    dedupeAgentStoredEvents([...bySeq.values()].sort((a, b) => a.seq - b.seq))
+  );
+}
+
 export function AgentConversationsProvider({
   children,
 }: {
@@ -710,18 +728,14 @@ export function AgentConversationsProvider({
         const head = snapshot;
         setEventsByConversationId((current) => {
           const existing = current[incoming.id] ?? [];
-          const kept = existing.filter((e) => e.seq < head.window.oldestSeq);
-          const bySeq = new Map<number, AgentStoredEvent>();
-          for (const e of kept) {
-            bySeq.set(e.seq, e);
-          }
-          for (const e of head.events) {
-            bySeq.set(e.seq, e);
-          }
-          const mergedEvents = dedupeAgentStoredEvents(
-            [...bySeq.values()].sort((a, b) => a.seq - b.seq)
-          );
-          return { ...current, [incoming.id]: compactConversationEvents(mergedEvents) };
+          return {
+            ...current,
+            [incoming.id]: mergeAgentConversationSnapshotHeadEvents(
+              existing,
+              head.events,
+              head.window
+            ),
+          };
         });
         setHistoryMetaById((c) => ({
           ...c,
