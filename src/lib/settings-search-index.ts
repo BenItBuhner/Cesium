@@ -377,6 +377,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cesium-mcp-call", "MCP call", "Cesium tool permissions"),
   row("agents", "cesium-switch-mode", "Switch mode", "Cesium tool permissions"),
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
+  row(
+    "agents",
+    "cesium-oauth-accounts",
+    "OAuth accounts",
+    "ChatGPT Codex and SpaceXAI SuperGrok subscription sign-in.",
+    ["oauth", "chatgpt", "codex", "xai", "grok", "spacexai", "supergrok"]
+  ),
   row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
   row(

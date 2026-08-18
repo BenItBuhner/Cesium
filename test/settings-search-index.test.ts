@@ -106,6 +106,14 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes official Cesium subscription OAuth accounts", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "supergrok");
+    assert.ok(hits.some((hit) => hit.rowId === "cesium-oauth-accounts"));
+    const chatgpt = searchSettingsIndex(index, "chatgpt codex");
+    assert.ok(chatgpt.some((hit) => hit.rowId === "cesium-oauth-accounts"));
+  });
+
   test("can omit iPad beta rows for desktop shells", () => {
     const index = buildSettingsSearchIndex({}, { includeIpadBeta: false });
     assert.equal(

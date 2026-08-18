@@ -11,14 +11,22 @@ import {
   type PiAgentHomeInfo,
   type PiAgentSettingsPublic,
 } from "./pi-agent-settings.js";
+import {
+  isBlockedSubscriptionOAuthProviderId,
+  isSubscriptionOAuthProviderId,
+  SUBSCRIPTION_OAUTH_LABELS,
+  SUBSCRIPTION_OAUTH_PROVIDER_IDS,
+} from "./subscription-oauth.js";
+import {
+  clearXaiOAuthCredentials,
+  hasXaiOAuthCredentials,
+  persistXaiTokenResponse,
+  pollXaiDeviceCodeToken,
+  requestXaiDeviceCode,
+  XAI_OAUTH_PROVIDER_ID,
+} from "./xai-oauth.js";
 
-export const PI_AGENT_MINIMUM_PROVIDER_IDS = [
-  "openai-codex",
-  "anthropic",
-  "github-copilot",
-  "google-antigravity",
-  "google-gemini-cli",
-] as const;
+export const PI_AGENT_MINIMUM_PROVIDER_IDS = SUBSCRIPTION_OAUTH_PROVIDER_IDS;
 
 export type PiAgentMinimumProviderId = (typeof PI_AGENT_MINIMUM_PROVIDER_IDS)[number];
 
@@ -67,11 +75,7 @@ const OAUTH_START_TIMEOUT_MS = 30_000;
 const AUTH_LOCK_STALE_MS = 5 * 60 * 1000;
 
 const PROVIDER_LABELS: Record<string, string> = {
-  "openai-codex": "ChatGPT Plus/Pro (Codex)",
-  anthropic: "Anthropic (Claude Pro/Max)",
-  "github-copilot": "GitHub Copilot",
-  "google-antigravity": "Google Antigravity",
-  "google-gemini-cli": "Google Gemini CLI",
+  ...SUBSCRIPTION_OAUTH_LABELS,
 };
 
 function normalizeProviderId(providerId: string): string {
@@ -79,8 +83,23 @@ function normalizeProviderId(providerId: string): string {
 }
 
 function assertSupportedProviderId(providerId: string): void {
-  if (!PI_AGENT_MINIMUM_PROVIDER_IDS.includes(providerId as PiAgentMinimumProviderId)) {
-    throw new Error(`Unsupported Pi Agent provider: ${providerId}`);
+  if (!isSubscriptionOAuthProviderId(providerId)) {
+    throw new Error(
+      `Unsupported subscription OAuth provider: ${providerId}. Only ChatGPT/Codex and SpaceXAI SuperGrok are offered.`
+    );
+  }
+}
+
+async function revokeBlockedSubscriptionOAuth(
+  authStorage: Awaited<ReturnType<typeof createPiAuthStorage>>
+): Promise<void> {
+  for (const providerId of authStorage.list()) {
+    if (
+      isBlockedSubscriptionOAuthProviderId(providerId) &&
+      authStorage.get(providerId)?.type === "oauth"
+    ) {
+      authStorage.logout(providerId);
+    }
   }
 }
 
@@ -175,11 +194,13 @@ function resolveProviderAuthMethod(
 
 export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsResponse> {
   await ensureAuthStorageUnlocked();
-  const [settings, authStorage, home] = await Promise.all([
+  const [settings, authStorage, home, xaiConnected] = await Promise.all([
     getPiAgentSettingsPublic(),
     createPiAuthStorage(),
     describePiAgentHome(),
+    hasXaiOAuthCredentials(),
   ]);
+  await revokeBlockedSubscriptionOAuth(authStorage);
   await applyPiRuntimeApiKeys(authStorage);
 
   const { ModelRegistry } = await import("@earendil-works/pi-coding-agent");
@@ -187,7 +208,10 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
   modelRegistry.refresh();
 
   const oauthById = new Map(
-    authStorage.getOAuthProviders().map((provider) => [provider.id, provider])
+    authStorage
+      .getOAuthProviders()
+      .filter((provider) => isSubscriptionOAuthProviderId(provider.id))
+      .map((provider) => [provider.id, provider])
   );
   const allModels = modelRegistry.getAll();
   const availableModels = modelRegistry.getAvailable();
@@ -195,7 +219,6 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
   const providerIds = [
     ...new Set([
       ...PI_AGENT_MINIMUM_PROVIDER_IDS,
-      ...oauthById.keys(),
       ...allModels.map((model) => model.provider),
     ]),
   ].sort();
@@ -204,6 +227,7 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
     const oauthProvider = oauthById.get(id);
     const auth = resolveProviderAuthMethod(authStorage, id, settings);
     const modelCount = allModels.filter((model) => model.provider === id).length;
+    const xaiOauth = id === XAI_OAUTH_PROVIDER_ID && xaiConnected;
     return {
       id,
       name:
@@ -211,18 +235,85 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
         modelRegistry.getProviderDisplayName(id) ??
         PROVIDER_LABELS[id] ??
         id,
-      oauthSupported: oauthById.has(id),
-      usesCallbackServer: oauthProvider?.usesCallbackServer,
-      authMethod: auth.authMethod,
-      configured: auth.configured,
-      authLabel: auth.authLabel,
+      oauthSupported: isSubscriptionOAuthProviderId(id),
+      usesCallbackServer: oauthProvider?.usesCallbackServer === true,
+      authMethod: xaiOauth ? "oauth" : auth.authMethod,
+      configured: xaiOauth || auth.configured,
+      authLabel: xaiOauth ? "OAuth" : auth.authLabel,
       modelCount,
       modelsAvailable: availableModels.some((model) => model.provider === id),
-      apiKeyLastFour: auth.apiKeyLastFour,
+      apiKeyLastFour: xaiOauth ? undefined : auth.apiKeyLastFour,
     };
   });
 
   return { settings, providers, home };
+}
+
+async function persistXaiCredentialToAuthStorage(
+  authStorage: Awaited<ReturnType<typeof createPiAuthStorage>>,
+  access: string,
+  refresh: string,
+  expires: number
+): Promise<void> {
+  authStorage.set(XAI_OAUTH_PROVIDER_ID, {
+    type: "oauth",
+    access,
+    refresh,
+    expires,
+  });
+  authStorage.setRuntimeApiKey(XAI_OAUTH_PROVIDER_ID, access);
+}
+
+async function startXaiSubscriptionOAuth(
+  authStorage: Awaited<ReturnType<typeof createPiAuthStorage>>
+): Promise<PiAgentOAuthStartResponse> {
+  const providerId = XAI_OAUTH_PROVIDER_ID;
+  cancelPending(providerId);
+
+  const device = await requestXaiDeviceCode();
+  const verificationUri = device.verification_uri_complete ?? device.verification_uri;
+
+  let rejectLogin: ((error: Error) => void) | undefined;
+  const loginPromise = new Promise<void>((resolve, reject) => {
+    rejectLogin = reject;
+    void pollXaiDeviceCodeToken(device)
+      .then(async (tokens) => {
+        const stored = await persistXaiTokenResponse(tokens);
+        await persistXaiCredentialToAuthStorage(
+          authStorage,
+          stored.access,
+          stored.refresh,
+          stored.expires
+        );
+        resolve();
+      })
+      .catch((error) => {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        reject(normalized);
+      });
+  })
+    .then(() => {
+      pendingByProvider.delete(providerId);
+    })
+    .catch((error) => {
+      pendingByProvider.delete(providerId);
+      throw error;
+    });
+
+  pendingByProvider.set(providerId, {
+    providerId,
+    createdAt: Date.now(),
+    rejectManual: (error) => rejectLogin?.(error),
+    loginPromise,
+  });
+
+  void loginPromise.catch(() => undefined);
+  return {
+    providerId,
+    userCode: device.user_code,
+    verificationUri,
+    instructions: `Open ${device.verification_uri} and enter code ${device.user_code}`,
+  };
 }
 
 export async function startPiAgentOAuth(input: {
@@ -235,7 +326,12 @@ export async function startPiAgentOAuth(input: {
 
   await ensureAuthStorageUnlocked();
   const authStorage = await createPiAuthStorage();
+  await revokeBlockedSubscriptionOAuth(authStorage);
   await applyPiRuntimeApiKeys(authStorage);
+
+  if (providerId === XAI_OAUTH_PROVIDER_ID) {
+    return startXaiSubscriptionOAuth(authStorage);
+  }
 
   const oauthProvider = authStorage
     .getOAuthProviders()
@@ -365,6 +461,9 @@ export async function disconnectPiAgentOAuth(providerIdInput: string): Promise<P
   const authStorage = await createPiAuthStorage();
   authStorage.logout(providerId);
   authStorage.removeRuntimeApiKey(providerId);
+  if (providerId === XAI_OAUTH_PROVIDER_ID) {
+    await clearXaiOAuthCredentials();
+  }
 
   const settings = await getPiAgentSettings();
   const storedKey = settings.providerKeys.find((key) => key.providerId === providerId);

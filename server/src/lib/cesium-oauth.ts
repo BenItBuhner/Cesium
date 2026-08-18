@@ -1,15 +1,18 @@
 /**
  * OAuth subscription accounts for the first-party Cesium harness.
  *
- * Reuses the shared Pi SDK auth storage (auth.json) so a single OAuth login
- * (ChatGPT/Codex, Anthropic Claude Pro/Max, GitHub Copilot, Google providers
- * registered by Pi extensions) serves both the Pi harness and the Cesium
- * harness. Tokens are auto-refreshed with file locking by the SDK.
+ * Only vendors that officially allow third-party harnesses to use a paid
+ * subscription are offered: ChatGPT/Codex and SpaceXAI SuperGrok. Unofficial
+ * Claude Pro/Max, Copilot editor, and Google CLI logins are stripped and never
+ * used for inference.
+ *
+ * OpenAI tokens live in the shared Pi auth.json. SpaceXAI tokens live in
+ * profile/xai-oauth.json and are mirrored into auth.json as a runtime key so
+ * the Pi harness can use the same SuperGrok login.
  *
  * The bridge exposes three capabilities:
  *   1. Provider status list for Settings → Agents → Cesium Agent.
- *   2. Catalog entries so OAuth-only providers (openai-codex, github-copilot,
- *      Google CLIs) surface their models in the Cesium model picker.
+ *   2. Catalog entries so the ChatGPT/Codex OAuth account surfaces its models.
  *   3. Request auth resolution (refreshed access token + provider headers +
  *      base URL) consumed by resolveCesiumAuth when no API key exists.
  */
@@ -22,6 +25,20 @@ import {
   startPiAgentOAuth,
   type PiAgentOAuthStartResponse,
 } from "./pi-agent-oauth.js";
+import {
+  isBlockedSubscriptionOAuthProviderId,
+  isSubscriptionOAuthProviderId,
+  SUBSCRIPTION_OAUTH_DESCRIPTIONS,
+  SUBSCRIPTION_OAUTH_LABELS,
+  SUBSCRIPTION_OAUTH_PROVIDER_IDS,
+} from "./subscription-oauth.js";
+import {
+  clearXaiOAuthCredentials,
+  getValidXaiAccessToken,
+  hasXaiOAuthCredentials,
+  XAI_OAUTH_BASE_URL,
+  XAI_OAUTH_PROVIDER_ID,
+} from "./xai-oauth.js";
 import type { CesiumModelCatalogEntry, CesiumProviderKind } from "./cesium-agent-settings.js";
 
 export type CesiumOAuthProviderStatus = {
@@ -35,7 +52,7 @@ export type CesiumOAuthProviderStatus = {
 };
 
 export type CesiumOAuthRequestAuth = {
-  /** OAuth provider id, e.g. "openai-codex" | "anthropic" | "github-copilot". */
+  /** OAuth provider id, e.g. "openai-codex" | "xai". */
   providerId: string;
   /** Refreshed access token (or exchanged Copilot bearer). */
   apiKey: string;
@@ -45,38 +62,21 @@ export type CesiumOAuthRequestAuth = {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  "openai-codex": "ChatGPT (Codex subscription)",
-  anthropic: "Anthropic (Claude Pro/Max)",
-  "github-copilot": "GitHub Copilot",
-  "google-antigravity": "Google Antigravity",
-  "google-gemini-cli": "Google Gemini CLI",
+  ...SUBSCRIPTION_OAUTH_LABELS,
 };
 
 const PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  "openai-codex":
-    "Sign in with your ChatGPT Plus/Pro account to run Codex models over the ChatGPT backend.",
-  anthropic:
-    "Sign in with a Claude Pro/Max subscription. Applies to anthropic/* models when no API key is saved.",
-  "github-copilot":
-    "Device-code sign-in with GitHub. Copilot serves OpenAI, Anthropic, and Google models.",
-  "google-antigravity": "Google OAuth via the Pi Antigravity provider package.",
-  "google-gemini-cli": "Google OAuth via the Pi Gemini CLI provider package.",
+  ...SUBSCRIPTION_OAUTH_DESCRIPTIONS,
 };
 
-/** Curated ordering; unknown OAuth providers registered by extensions sort after. */
-const PROVIDER_ORDER = [
-  "openai-codex",
-  "anthropic",
-  "github-copilot",
-  "google-antigravity",
-  "google-gemini-cli",
-];
+/** Official subscription logins only. Unknown Pi extensions are not listed. */
+const PROVIDER_ORDER = [...SUBSCRIPTION_OAUTH_PROVIDER_IDS];
 
 /**
- * Anthropic OAuth reuses the models.dev `anthropic/*` catalog entries, so it
- * contributes no additional catalog rows of its own.
+ * SuperGrok reuses models.dev `xai/*` catalog rows. Codex is OAuth-only and
+ * still contributes its own catalog entries.
  */
-const CATALOG_EXCLUDED_PROVIDERS = new Set(["anthropic"]);
+const CATALOG_EXCLUDED_PROVIDERS = new Set([XAI_OAUTH_PROVIDER_ID]);
 
 type PiModel = {
   id: string;
@@ -109,11 +109,6 @@ export function invalidateCesiumOAuthCache(): void {
 
 export function cesiumOAuthProviderLabel(providerId: string): string {
   return PROVIDER_LABELS[providerId] ?? providerId;
-}
-
-function providerSortKey(id: string): number {
-  const index = PROVIDER_ORDER.indexOf(id);
-  return index === -1 ? PROVIDER_ORDER.length : index;
 }
 
 function mapPiApiToCesiumKind(api: string): CesiumProviderKind | null {
@@ -170,21 +165,33 @@ async function createModelRegistry(
 
 async function buildSnapshot(): Promise<OAuthSnapshot> {
   const authStorage = await createPiAuthStorage();
+  for (const providerId of authStorage.list()) {
+    if (
+      isBlockedSubscriptionOAuthProviderId(providerId) &&
+      authStorage.get(providerId)?.type === "oauth"
+    ) {
+      authStorage.logout(providerId);
+    }
+  }
   const registry = await createModelRegistry(authStorage);
-  const oauthProviders = authStorage.getOAuthProviders();
+  const oauthProviders = authStorage
+    .getOAuthProviders()
+    .filter((provider) => isSubscriptionOAuthProviderId(provider.id));
   const allModels = registry.getAll() as unknown as PiModel[];
+  const xaiConnected = await hasXaiOAuthCredentials();
 
   const connectedIds: string[] = [];
   const statuses: CesiumOAuthProviderStatus[] = [];
   const catalogEntries: CesiumModelCatalogEntry[] = [];
 
-  const providerIds = [
-    ...new Set([...PROVIDER_ORDER, ...oauthProviders.map((provider) => provider.id)]),
-  ].sort((a, b) => providerSortKey(a) - providerSortKey(b) || a.localeCompare(b));
+  const providerIds = [...PROVIDER_ORDER];
 
   for (const providerId of providerIds) {
     const oauthProvider = oauthProviders.find((provider) => provider.id === providerId);
-    const connected = authStorage.get(providerId)?.type === "oauth";
+    const connected =
+      providerId === XAI_OAUTH_PROVIDER_ID
+        ? xaiConnected
+        : authStorage.get(providerId)?.type === "oauth";
     const providerModels = allModels.filter((model) => model.provider === providerId);
     if (connected) {
       connectedIds.push(providerId);
@@ -193,7 +200,7 @@ async function buildSnapshot(): Promise<OAuthSnapshot> {
       id: providerId,
       name: oauthProvider?.name ?? cesiumOAuthProviderLabel(providerId),
       connected,
-      oauthSupported: oauthProvider != null,
+      oauthSupported: true,
       usesCallbackServer: oauthProvider?.usesCallbackServer,
       modelCount: providerModels.length,
       description: PROVIDER_DESCRIPTIONS[providerId],
@@ -251,7 +258,7 @@ export async function getCesiumOAuthConnectedProviderIds(): Promise<string[]> {
   }
 }
 
-/** Catalog rows for connected OAuth-only providers (Codex, Copilot, Google CLIs). */
+/** Catalog rows for connected OAuth-only providers (ChatGPT/Codex). */
 export async function getCesiumOAuthCatalogEntries(): Promise<CesiumModelCatalogEntry[]> {
   try {
     return (await getSnapshot()).catalogEntries;
@@ -265,17 +272,30 @@ export async function startCesiumOAuth(input: {
   providerId: string;
   publicOrigin: string;
 }): Promise<PiAgentOAuthStartResponse> {
+  const providerId = input.providerId.trim().toLowerCase();
+  if (!isSubscriptionOAuthProviderId(providerId)) {
+    throw new Error(
+      `Unsupported subscription OAuth provider: ${providerId}. Only ChatGPT/Codex and SpaceXAI SuperGrok are offered.`
+    );
+  }
   invalidateCesiumOAuthCache();
-  return startPiAgentOAuth(input);
+  return startPiAgentOAuth({ ...input, providerId });
 }
 
 /** Remove the OAuth credential only; stored API keys are left untouched. */
 export async function disconnectCesiumOAuth(providerId: string): Promise<void> {
   const normalized = providerId.trim().toLowerCase();
+  if (!isSubscriptionOAuthProviderId(normalized)) {
+    throw new Error(`Unsupported subscription OAuth provider: ${normalized}.`);
+  }
   const authStorage = await createPiAuthStorage();
   const credential = authStorage.get(normalized);
   if (credential?.type === "oauth") {
     authStorage.logout(normalized);
+  }
+  authStorage.removeRuntimeApiKey(normalized);
+  if (normalized === XAI_OAUTH_PROVIDER_ID) {
+    await clearXaiOAuthCredentials();
   }
   invalidateCesiumOAuthCache();
 }
@@ -291,6 +311,20 @@ export async function resolveCesiumOAuthRequestAuth(input: {
   modelId?: string;
 }): Promise<CesiumOAuthRequestAuth | null> {
   const providerId = input.providerId.trim().toLowerCase();
+  if (!isSubscriptionOAuthProviderId(providerId)) {
+    return null;
+  }
+  if (providerId === XAI_OAUTH_PROVIDER_ID) {
+    const apiKey = await getValidXaiAccessToken();
+    if (!apiKey) {
+      return null;
+    }
+    return {
+      providerId,
+      apiKey,
+      baseUrl: XAI_OAUTH_BASE_URL,
+    };
+  }
   const authStorage = await createPiAuthStorage();
   if (authStorage.get(providerId)?.type !== "oauth") {
     return null;
