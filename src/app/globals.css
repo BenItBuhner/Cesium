@@ -164,12 +164,26 @@
   scrollbar-color: var(--border-card) transparent;
 }
 
+/*
+ * The workbench is an app shell: the root document never scrolls (body is
+ * overflow hidden below) and real scrolling lives in inner panes that already
+ * declare overscroll-contain. Without this, mobile browsers and WebViews still
+ * play the root overscroll effect — Android 12+ rubber-band stretch, the older
+ * glow, and pull-to-refresh — on fling gestures over non-scrollable chrome
+ * such as the new-chat screen. Applies to the root scroller only; inner
+ * scrollable content is unaffected.
+ */
+html {
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--bg-main);
   color: var(--text-primary);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: var(--font-size-body);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* Monospace: Geist Mono (next/font) — same stack as Tailwind `font-mono` */
