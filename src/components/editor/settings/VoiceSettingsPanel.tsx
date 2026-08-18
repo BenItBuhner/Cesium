@@ -209,6 +209,11 @@ export function VoiceSettingsPanel() {
         Configure speech-to-text, spoken replies, and the ambient voice controller from the
         app. Environment variables still work as a fallback when a field is left empty.
       </p>
+      {message ? (
+        <div className="mb-[16px]">
+          <SettingsCallout tone="info">{message}</SettingsCallout>
+        </div>
+      ) : null}
 
       <SettingsSection title="Speech to text">
         <div className="px-[16px] py-[12px] border-b border-[var(--border-subtle)]">
@@ -540,9 +545,6 @@ export function VoiceSettingsPanel() {
               Remove stored voice settings
             </button>
           </div>
-          {message ? (
-            <SettingsCallout tone="info">{message}</SettingsCallout>
-          ) : null}
         </div>
       </SettingsSection>
     </>
