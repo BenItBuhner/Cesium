@@ -1,11 +1,38 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, resolveRepoRootFromProcessCwd } from "./persistence.js";
+import {
+  getStoredVoiceSpeechSettingsSync,
+  resolvePreferredField,
+  type VoiceSpeechResolvedField,
+} from "./voice-speech-settings.js";
 
 export type TranscriptionFilePayload = {
   baseUrl: string;
   apiKey: string;
   model: string;
+};
+
+export type TranscriptionResolved = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  language: string;
+  prompt: string;
+};
+
+export type TranscriptionResolvedFields = {
+  baseUrl: VoiceSpeechResolvedField;
+  apiKey: VoiceSpeechResolvedField;
+  model: VoiceSpeechResolvedField;
+  language: VoiceSpeechResolvedField;
+  prompt: VoiceSpeechResolvedField;
+};
+
+export type TitleGenerationResolvedFields = {
+  baseUrl: VoiceSpeechResolvedField;
+  apiKey: VoiceSpeechResolvedField;
+  titleModel: VoiceSpeechResolvedField;
 };
 
 let mergedDefaultsCache: TranscriptionFilePayload | null | undefined;
@@ -88,24 +115,58 @@ function loadTranscriptionDefaultsPayload(): TranscriptionFilePayload | null {
   return null;
 }
 
-export function transcriptionProcessEnv(
+export function resetTranscriptionEnvCacheForTests(): void {
+  mergedDefaultsCache = undefined;
+}
+
+function useStoredSettings(env: NodeJS.ProcessEnv): boolean {
+  return env === process.env;
+}
+
+export function resolveTranscriptionFields(
   env: NodeJS.ProcessEnv = process.env
-): { baseUrl: string; apiKey: string; model: string } {
-  const fromEnv = {
-    baseUrl: (env.OPENCURSOR_TRANSCRIPTION_BASE_URL ?? env.OPENAI_BASE_URL ?? "").trim(),
-    apiKey: (
-      env.OPENCURSOR_TRANSCRIPTION_API_KEY ??
-      env.OPENAI_API_KEY ??
-      env.GROQ_API_KEY ??
-      ""
-    ).trim(),
-    model: (env.OPENCURSOR_TRANSCRIPTION_MODEL ?? "").trim(),
-  };
+): TranscriptionResolvedFields {
+  const stored = useStoredSettings(env)
+    ? getStoredVoiceSpeechSettingsSync()?.transcription
+    : undefined;
   const fromFile = loadTranscriptionDefaultsPayload();
   return {
-    baseUrl: fromEnv.baseUrl || fromFile?.baseUrl || "",
-    apiKey: fromEnv.apiKey || fromFile?.apiKey || "",
-    model: fromEnv.model || fromFile?.model || "",
+    baseUrl: resolvePreferredField(
+      stored?.baseUrl,
+      env.OPENCURSOR_TRANSCRIPTION_BASE_URL ?? env.OPENAI_BASE_URL,
+      fromFile?.baseUrl
+    ),
+    apiKey: resolvePreferredField(
+      stored?.apiKey,
+      env.OPENCURSOR_TRANSCRIPTION_API_KEY ?? env.OPENAI_API_KEY ?? env.GROQ_API_KEY,
+      fromFile?.apiKey
+    ),
+    model: resolvePreferredField(
+      stored?.model,
+      env.OPENCURSOR_TRANSCRIPTION_MODEL,
+      fromFile?.model
+    ),
+    language: resolvePreferredField(
+      stored?.language,
+      env.OPENCURSOR_TRANSCRIPTION_LANGUAGE
+    ),
+    prompt: resolvePreferredField(
+      stored?.prompt,
+      env.OPENCURSOR_TRANSCRIPTION_PROMPT
+    ),
+  };
+}
+
+export function transcriptionProcessEnv(
+  env: NodeJS.ProcessEnv = process.env
+): TranscriptionResolved {
+  const fields = resolveTranscriptionFields(env);
+  return {
+    baseUrl: fields.baseUrl.value ?? "",
+    apiKey: fields.apiKey.value ?? "",
+    model: fields.model.value ?? "",
+    language: fields.language.value ?? "",
+    prompt: fields.prompt.value ?? "",
   };
 }
 
@@ -114,10 +175,31 @@ export function isTranscriptionConfigured(env?: NodeJS.ProcessEnv): boolean {
   return Boolean(baseUrl && apiKey && model);
 }
 
+export function resolveTitleGenerationFields(
+  env: NodeJS.ProcessEnv = process.env
+): TitleGenerationResolvedFields {
+  const transcription = resolveTranscriptionFields(env);
+  const stored = useStoredSettings(env)
+    ? getStoredVoiceSpeechSettingsSync()?.titleGeneration
+    : undefined;
+  const envTitle = env.OPENCURSOR_TITLE_MODEL?.trim();
+  const titleModel = resolvePreferredField(stored?.model, envTitle);
+  return {
+    baseUrl: transcription.baseUrl,
+    apiKey: transcription.apiKey,
+    titleModel: titleModel.value
+      ? titleModel
+      : { value: "openai/gpt-oss-20b", source: "default" },
+  };
+}
+
 export function titleGenerationProcessEnv(
   env: NodeJS.ProcessEnv = process.env
 ): { baseUrl: string; apiKey: string; titleModel: string } {
-  const { baseUrl, apiKey } = transcriptionProcessEnv(env);
-  const titleModel = (env.OPENCURSOR_TITLE_MODEL ?? "openai/gpt-oss-20b").trim();
-  return { baseUrl, apiKey, titleModel };
+  const fields = resolveTitleGenerationFields(env);
+  return {
+    baseUrl: fields.baseUrl.value ?? "",
+    apiKey: fields.apiKey.value ?? "",
+    titleModel: fields.titleModel.value ?? "openai/gpt-oss-20b",
+  };
 }

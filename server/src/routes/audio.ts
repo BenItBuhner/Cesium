@@ -50,23 +50,24 @@ audioRoutes.post("/api/audio/transcriptions", async (c) => {
     return c.json({ error: "Expected audio file upload." }, 400);
   }
 
-  const { baseUrl, apiKey, model } = transcriptionProcessEnv();
+  const { baseUrl, apiKey, model, language: configuredLanguage, prompt: configuredPrompt } =
+    transcriptionProcessEnv();
 
   if (!baseUrl || !apiKey || !model) {
     return c.json(
       {
         error:
-          "Speech transcription is not configured. Set OPENCURSOR_TRANSCRIPTION_BASE_URL, OPENCURSOR_TRANSCRIPTION_API_KEY, and OPENCURSOR_TRANSCRIPTION_MODEL (or use OPENCURSOR_TRANSCRIPTION_CONFIG_JSON / OPENCURSOR_TRANSCRIPTION_CONFIG_FILE / server/transcription-provider.json).",
+          "Speech transcription is not configured. Open Settings → Voice to set a base URL, API key, and model, or set OPENCURSOR_TRANSCRIPTION_* environment variables.",
       },
       503
     );
   }
 
   const language =
-    (typeof body.language === "string" ? body.language : process.env.OPENCURSOR_TRANSCRIPTION_LANGUAGE)?.trim() ||
+    (typeof body.language === "string" ? body.language : configuredLanguage)?.trim() ||
     undefined;
   const prompt =
-    (typeof body.prompt === "string" ? body.prompt : process.env.OPENCURSOR_TRANSCRIPTION_PROMPT)?.trim() ||
+    (typeof body.prompt === "string" ? body.prompt : configuredPrompt)?.trim() ||
     undefined;
 
   const upstream = new URL(

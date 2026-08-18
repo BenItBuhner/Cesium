@@ -2042,6 +2042,97 @@ export async function deleteClaudeCodeSdkSettings(): Promise<{
   );
 }
 
+export type VoiceSpeechFieldSource = "stored" | "env" | "file" | "default" | null;
+
+export type VoiceSpeechCredentialPayload = {
+  configured: boolean;
+  source: VoiceSpeechFieldSource;
+  baseUrl?: string;
+  model?: string;
+  apiKeyLastFour?: string;
+  baseUrlSource?: VoiceSpeechFieldSource;
+  modelSource?: VoiceSpeechFieldSource;
+  apiKeySource?: VoiceSpeechFieldSource;
+};
+
+export type VoiceSpeechSettingsPayload = {
+  transcription: VoiceSpeechCredentialPayload & {
+    language?: string;
+    prompt?: string;
+    languageSource?: VoiceSpeechFieldSource;
+    promptSource?: VoiceSpeechFieldSource;
+  };
+  titleGeneration: {
+    model: string;
+    modelSource: VoiceSpeechFieldSource;
+  };
+  tts: {
+    engine?: string;
+    engineSource?: VoiceSpeechFieldSource;
+    openaiCompat: VoiceSpeechCredentialPayload & {
+      voice?: string;
+      voiceSource?: VoiceSpeechFieldSource;
+    };
+  };
+  controller: VoiceSpeechCredentialPayload;
+};
+
+export type VoiceSpeechSettingsPatch = {
+  transcription?: {
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    model?: string | null;
+    language?: string | null;
+    prompt?: string | null;
+  };
+  titleGeneration?: {
+    model?: string | null;
+  };
+  tts?: {
+    engine?: string | null;
+    openaiCompat?: {
+      baseUrl?: string | null;
+      apiKey?: string | null;
+      model?: string | null;
+      voice?: string | null;
+    } | null;
+  };
+  controller?: {
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    model?: string | null;
+  };
+};
+
+export async function fetchVoiceSpeechSettings(): Promise<{
+  settings: VoiceSpeechSettingsPayload;
+}> {
+  return request<{ settings: VoiceSpeechSettingsPayload }>("/api/settings/voice", {
+    method: "GET",
+  });
+}
+
+export async function saveVoiceSpeechSettings(
+  input: VoiceSpeechSettingsPatch
+): Promise<{
+  ok: true;
+  settings: VoiceSpeechSettingsPayload;
+}> {
+  return request<{ ok: true; settings: VoiceSpeechSettingsPayload }>("/api/settings/voice", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteVoiceSpeechSettings(): Promise<{
+  ok: true;
+  settings: VoiceSpeechSettingsPayload;
+}> {
+  return request<{ ok: true; settings: VoiceSpeechSettingsPayload }>("/api/settings/voice", {
+    method: "DELETE",
+  });
+}
+
 export type PiAgentProviderAuthMethod = "oauth" | "api_key" | "env" | null;
 
 export type PiAgentProviderStatus = {

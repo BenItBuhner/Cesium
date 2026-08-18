@@ -20,6 +20,7 @@ import { ExportImportSettingsPanel } from "./ExportImportSettingsPanel";
 import { StorageSettingsPanel } from "./StorageSettingsPanel";
 import { UpdatesSettingsPanel } from "./UpdatesSettingsPanel";
 import { UsageSettingsPanel } from "./UsageSettingsPanel";
+import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
 
@@ -28,6 +29,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
   actions: ActionsSettingsPanel,
   appearance: AppearanceSettingsPanel,
+  voice: VoiceSettingsPanel,
   agents: AgentsHarnessSettingsPanel,
   cloudAgents: CloudAgentsSettingsPanel,
   models: ModelsSettingsPanel,

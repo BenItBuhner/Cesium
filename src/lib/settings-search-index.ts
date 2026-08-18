@@ -34,6 +34,7 @@ export type SettingsSearchEntry = {
 const NAV_LABELS: Record<string, string> = {
   account: "Account",
   general: "General",
+  voice: "Voice",
   actions: "Actions",
   appearance: "Appearance",
   keyboardShortcuts: "Keyboard shortcuts",
@@ -238,6 +239,66 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Voice orb",
     "Show the floating ambient voice orb. Hiding it also turns the voice plane off.",
     ["voice", "orb", "ambient", "microphone", "assistant", "overlay", "bubble"]
+  ),
+  row(
+    "general",
+    "voice-settings-link",
+    "Speech, titles, and spoken replies",
+    "Open Voice settings for transcription, title fallback, TTS, and the voice controller.",
+    ["transcription", "speech", "stt", "tts", "whisper"]
+  ),
+
+  section("voice", "stt", "Speech to text", "transcription whisper stt microphone"),
+  row(
+    "voice",
+    "transcription-model",
+    "Transcription model",
+    "OpenAI-compatible speech-to-text model, base URL, and API key.",
+    ["whisper", "groq", "stt", "voice-to-text", "dictation", "OPENCURSOR_TRANSCRIPTION_MODEL"]
+  ),
+  row(
+    "voice",
+    "transcription-language",
+    "Transcription language",
+    "Optional language hint sent to the speech-to-text provider.",
+    ["locale", "language", "OPENCURSOR_TRANSCRIPTION_LANGUAGE"]
+  ),
+  row(
+    "voice",
+    "title-model",
+    "Title generation model",
+    "Fallback model used to auto-title new conversations.",
+    ["title", "OPENCURSOR_TITLE_MODEL", "conversation name"]
+  ),
+  section("voice", "tts", "Text to speech", "spoken replies synthesis"),
+  row(
+    "voice",
+    "tts-engine",
+    "Preferred TTS engine",
+    "Pin Piper, Kokoro, a remote OpenAI-compatible host, or another available engine.",
+    ["piper", "kokoro", "espeak", "openai", "OPENCURSOR_VOICE_TTS_ENGINE"]
+  ),
+  row(
+    "voice",
+    "tts-remote",
+    "Remote TTS host",
+    "OpenAI-compatible /audio/speech base URL, API key, model, and voice.",
+    ["tts-1", "alloy", "OPENCURSOR_VOICE_TTS_BASE_URL"]
+  ),
+  section("voice", "controller", "Voice controller", "ambient orb"),
+  row(
+    "voice",
+    "voice-controller",
+    "Voice controller model",
+    "Fast model the ambient voice orb uses to answer or hand off to an agent.",
+    ["orb", "OPENCURSOR_VOICE_MODEL", "controller"]
+  ),
+  row(
+    "voice",
+    "show-voice-orb",
+    "Voice orb",
+    "Show the floating ambient voice orb. Hiding it also turns the voice plane off.",
+    ["voice", "orb", "ambient", "microphone"]
   ),
 
   // —— Appearance ——

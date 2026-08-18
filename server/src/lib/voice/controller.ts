@@ -205,7 +205,7 @@ export async function runVoiceController(
   const { baseUrl, apiKey, model } = voiceControllerEnv();
   if (!baseUrl || !apiKey || !model) {
     throw new Error(
-      "Voice controller is not configured. Set CESIUM_BASE_URL/OPENAI_BASE_URL, an API key, and optionally OPENCURSOR_VOICE_MODEL."
+      "Voice controller is not configured. Open Settings → Voice to set a base URL, API key, and model, or set OPENCURSOR_VOICE_* / CESIUM_* environment variables."
     );
   }
   const utterance = request.utterance.trim().slice(0, MAX_UTTERANCE_CHARS);
