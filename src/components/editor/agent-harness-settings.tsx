@@ -1436,20 +1436,36 @@ function CesiumAgentHarnessSettings() {
           openExternalUrl(result.verificationUri, {
             features: "noopener,noreferrer,width=520,height=720",
           });
-          setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
+          setMessage(
+            result.instructions ??
+              `Enter code ${result.userCode} at ${result.verificationUri}`
+          );
         } else {
-          setMessage("OAuth flow started. Refreshing status…");
+          setMessage("OAuth flow started. Waiting for sign-in…");
         }
-        window.setTimeout(() => {
-          void refresh().then(() => notifyAgentBackendsChanged());
-        }, 4000);
+        const deadline = Date.now() + 3 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          const next = await fetchCesiumAgentSettings();
+          setSettings(next.settings);
+          const connected = next.settings.oauthProviders.find((entry) => entry.id === provider.id)
+            ?.connected;
+          if (connected) {
+            setMessage(`${provider.name} connected.`);
+            notifyAgentBackendsChanged();
+            return;
+          }
+        }
+        setMessage(
+          `Still waiting for ${provider.name}. Finish sign-in in the browser, then refresh this page.`
+        );
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Failed to start OAuth sign-in.");
       } finally {
         setOauthBusyId(null);
       }
     },
-    [refresh]
+    []
   );
 
   const disconnectOAuthAccount = useCallback(
@@ -1826,9 +1842,9 @@ function CesiumAgentHarnessSettings() {
         <HarnessDetailBlock>
           <SettingsSubsectionHeading>OAuth accounts</SettingsSubsectionHeading>
           <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-            Subscription sign-ins (ChatGPT/Codex, Claude Pro/Max, GitHub Copilot, Google) shared
-            with the Pi harness. Connected providers add their models to the Cesium picker and are
-            used automatically when no API key is saved.
+            Official subscription sign-ins only: ChatGPT/Codex and SpaceXAI SuperGrok. These
+            vendors publish third-party harness login. Connected accounts add their models to the
+            Cesium picker and are used automatically when no API key is saved.
           </p>
           <ul className="mt-[10px] divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
             {settings.oauthProviders.map((provider) => {
@@ -2757,12 +2773,26 @@ function PiAgentHarnessSettings() {
           openExternalUrl(result.verificationUri, {
             features: "noopener,noreferrer,width=520,height=720",
           });
-          setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
-          window.setTimeout(() => {
-            void refresh()
-              .then(() => refreshModels())
-              .then(() => notifyAgentBackendsChanged());
-          }, 4000);
+          setMessage(
+            result.instructions ??
+              `Enter code ${result.userCode} at ${result.verificationUri}`
+          );
+          const deadline = Date.now() + 3 * 60 * 1000;
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            const next = await fetchPiAgentSettings();
+            setPayload(next);
+            const connected = next.providers.find((entry) => entry.id === provider.id)?.configured;
+            if (connected) {
+              setMessage(`${provider.name} connected.`);
+              await refreshModels();
+              notifyAgentBackendsChanged();
+              return;
+            }
+          }
+          setMessage(
+            `Still waiting for ${provider.name}. Finish sign-in in the browser, then refresh this page.`
+          );
           return;
         }
         setMessage("OAuth flow started. Refreshing provider status…");
@@ -2885,10 +2915,11 @@ function PiAgentHarnessSettings() {
             : "Loading…"}
         </p>
         <p className="leading-relaxed">
-          Connect OAuth or paste API keys. Credentials write into the active agent home{" "}
+          Connect an official subscription (ChatGPT/Codex or SpaceXAI SuperGrok) or paste API keys.
+          Credentials write into the active agent home{" "}
           <span className="font-mono text-[11px] text-[var(--text-primary)]">auth.json</span>
           {agentHome === "native" ? " (shared with the Pi CLI)" : ""}. Cesium-stored keys also apply
-          as runtime overlays.
+          as runtime overlays. Unofficial Claude / Copilot / Google CLI logins are not offered.
         </p>
         <ul className="divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
           {providers.map((provider) => {

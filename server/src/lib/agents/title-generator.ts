@@ -51,7 +51,7 @@ async function configuredTitleModelId(): Promise<string | null> {
 /**
  * Title generation via a Settings-selected Cesium catalog model. Supports the
  * same providers as chat turns, including OAuth subscription accounts
- * (ChatGPT/Codex, Claude Pro/Max, GitHub Copilot).
+ * (ChatGPT/Codex, SpaceXAI SuperGrok).
  */
 async function callCatalogTitleModel(modelId: string, userMessage: string): Promise<string> {
   const auth = await resolveCesiumAuth({ modelId });
