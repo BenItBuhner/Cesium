@@ -2,6 +2,23 @@ export const STREAM_EVENT_BATCH_WINDOW_MS = 50;
 
 export type EventBatchMap<T> = Map<string, T[]>;
 
+export type KeyedDeferredValue<T> = {
+  key: string;
+  value: T;
+};
+
+/**
+ * A deferred stream value may lag within its current key, but must never leak
+ * across keys when the user switches conversations.
+ */
+export function selectKeyedDeferredValue<T>(
+  activeKey: string,
+  currentValue: T,
+  deferred: KeyedDeferredValue<T>
+): T {
+  return deferred.key === activeKey ? deferred.value : currentValue;
+}
+
 type ScheduleHandle = ReturnType<typeof globalThis.setTimeout>;
 
 export type KeyedEventBatcherOptions<T> = {
