@@ -14,6 +14,7 @@ import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { openExternalUrl } from "@/lib/mobile-bridge";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { AgentsSettingsState, RememberedAgentPermissionRule } from "@/lib/global-settings";
@@ -1424,17 +1425,17 @@ function CesiumAgentHarnessSettings() {
       try {
         const result = await startCesiumOAuth(provider.id);
         if (result.authUrl) {
-          window.open(result.authUrl, "_blank", "noopener,noreferrer,width=520,height=720");
+          openExternalUrl(result.authUrl, {
+            features: "noopener,noreferrer,width=520,height=720",
+          });
           setMessage(
             result.instructions ??
               `Complete sign-in for ${provider.name} in your browser, then return here.`
           );
         } else if (result.verificationUri && result.userCode) {
-          window.open(
-            result.verificationUri,
-            "_blank",
-            "noopener,noreferrer,width=520,height=720"
-          );
+          openExternalUrl(result.verificationUri, {
+            features: "noopener,noreferrer,width=520,height=720",
+          });
           setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
         } else {
           setMessage("OAuth flow started. Refreshing status…");
@@ -2738,7 +2739,9 @@ function PiAgentHarnessSettings() {
       try {
         const result = await startPiAgentOAuth(provider.id);
         if (result.authUrl) {
-          window.open(result.authUrl, "_blank", "noopener,noreferrer,width=520,height=720");
+          openExternalUrl(result.authUrl, {
+            features: "noopener,noreferrer,width=520,height=720",
+          });
           setMessage(
             result.instructions ??
               `Complete sign-in for ${provider.name} in your browser, then return here.`
@@ -2751,7 +2754,9 @@ function PiAgentHarnessSettings() {
           return;
         }
         if (result.verificationUri && result.userCode) {
-          window.open(result.verificationUri, "_blank", "noopener,noreferrer,width=520,height=720");
+          openExternalUrl(result.verificationUri, {
+            features: "noopener,noreferrer,width=520,height=720",
+          });
           setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
           window.setTimeout(() => {
             void refresh()
@@ -3018,11 +3023,9 @@ function GrokBuildHarnessSettings() {
       if (result.login.status === "failed") {
         setMessage(result.login.error ?? "Grok login failed to start.");
       } else if (result.login.verificationUrl) {
-        window.open(
-          result.login.verificationUrl,
-          "_blank",
-          "noopener,noreferrer,width=520,height=720"
-        );
+        openExternalUrl(result.login.verificationUrl, {
+          features: "noopener,noreferrer,width=520,height=720",
+        });
       }
       notifyAgentBackendsChanged();
     } catch (error) {
