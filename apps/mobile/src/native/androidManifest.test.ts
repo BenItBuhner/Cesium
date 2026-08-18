@@ -20,6 +20,18 @@ function declaredPermissions(): string[] {
 // grant the user sees, and MODIFY_AUDIO_SETTINGS is an install-time permission
 // Chromium requires to open the audio source. Dropping either regresses voice
 // input to "Could not start audio source" with no user-visible remedy.
+test("manifest declares VIEW queries for http and https so OAuth can leave the app", () => {
+  const xml = readFileSync(manifestPath, "utf8");
+  assert.match(
+    xml,
+    /android.intent.action.VIEW[\s\S]*android.intent.category.BROWSABLE[\s\S]*android:scheme="https"/
+  );
+  assert.match(
+    xml,
+    /android.intent.action.VIEW[\s\S]*android.intent.category.BROWSABLE[\s\S]*android:scheme="http"/
+  );
+});
+
 test("manifest declares the WebView microphone capture prerequisites", () => {
   const permissions = declaredPermissions();
   assert.ok(

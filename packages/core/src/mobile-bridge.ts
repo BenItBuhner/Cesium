@@ -420,6 +420,73 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       reportError((event.reason && event.reason.message) || event.reason);
     });
   }
+  // OAuth / Sign In / Authenticate use window.open(https://…). Android
+  // WebView with setSupportMultipleWindows=false swallows that; a same-
+  // document navigation would unload the file:// workbench. Route foreign
+  // http(s) URLs to the native shell (openExternalUrl → system browser).
+  if (!window.__CESIUM_MOBILE_EXTERNAL_NAV__) {
+    window.__CESIUM_MOBILE_EXTERNAL_NAV__ = true;
+    const postExternalUrl = (url) => {
+      try {
+        if (!url || (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0)) return false;
+        if (!window.ReactNativeWebView || !window.ReactNativeWebView.postMessage) return false;
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: "openExternalUrl", url: String(url) }));
+        return true;
+      } catch (error) {
+        return false;
+      }
+    };
+    const isForeignHttpUrl = (url) => {
+      try {
+        const resolved = new URL(String(url), window.location.href);
+        if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+        if (window.location.protocol === "file:" || window.location.protocol === "about:") {
+          return resolved.href;
+        }
+        if (resolved.origin !== window.location.origin) return resolved.href;
+        return null;
+      } catch (error) {
+        return null;
+      }
+    };
+    const originalOpen = window.open.bind(window);
+    const patchedOpen = (url, target, features) => {
+      const foreign = url != null && String(url) !== "" && String(url) !== "about:blank"
+        ? isForeignHttpUrl(url)
+        : null;
+      if (foreign && postExternalUrl(foreign)) {
+        return {
+          closed: false,
+          close() { this.closed = true; },
+          focus() {},
+          blur() {},
+          opener: null,
+          location: { href: foreign },
+        };
+      }
+      return originalOpen(url, target, features);
+    };
+    try {
+      Object.defineProperty(window, "open", {
+        configurable: true,
+        writable: true,
+        value: patchedOpen,
+      });
+    } catch (defineError) {
+      try { window.open = patchedOpen; } catch (assignError) {}
+    }
+    document.addEventListener("click", (event) => {
+      const target = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+      if (!target) return;
+      const rawHref = target.getAttribute("href") || "";
+      if (!rawHref || rawHref.charAt(0) === "#") return;
+      const foreign = isForeignHttpUrl(target.href || rawHref);
+      if (!foreign) return;
+      event.preventDefault();
+      if (typeof event.stopPropagation === "function") event.stopPropagation();
+      postExternalUrl(foreign);
+    }, true);
+  }
   true;
 })();`;
 }
