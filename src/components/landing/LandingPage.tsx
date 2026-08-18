@@ -17,7 +17,7 @@ import {
   Tablet,
   TerminalSquare,
 } from "lucide-react";
-import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
+import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
 
 /* ------------------------------------------------------------------------ */
 /* Shared bits                                                              */
@@ -302,12 +302,11 @@ export function LandingPage() {
             >
               Get started
             </Link>
-            <Link
-              href={WORKSPACE_ROUTE}
+            <WorkbenchLink
               className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
             >
               Launch workbench
-            </Link>
+            </WorkbenchLink>
           </nav>
         </div>
       </header>
@@ -335,13 +334,12 @@ export function LandingPage() {
                 terminals — from anywhere.
               </p>
               <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
-                <Link
-                  href={WORKSPACE_ROUTE}
+                <WorkbenchLink
                   className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
                 >
                   Launch the workbench
                   <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-                </Link>
+                </WorkbenchLink>
                 <Link
                   href="/docs"
                   className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
@@ -552,13 +550,12 @@ export function LandingPage() {
           wired.
         </p>
         <div className="mt-[28px] flex flex-wrap items-center justify-center gap-[12px]">
-          <Link
-            href={WORKSPACE_ROUTE}
+          <WorkbenchLink
             className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
           >
             Open the workbench
             <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-          </Link>
+          </WorkbenchLink>
         </div>
       </section>
 
@@ -573,9 +570,9 @@ export function LandingPage() {
             <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
               Docs
             </Link>
-            <Link href={WORKSPACE_ROUTE} className="transition-colors hover:text-[var(--text-primary)]">
+            <WorkbenchLink className="transition-colors hover:text-[var(--text-primary)]">
               Workbench
-            </Link>
+            </WorkbenchLink>
             <span className="font-mono">AGPL-3.0</span>
           </div>
         </div>
