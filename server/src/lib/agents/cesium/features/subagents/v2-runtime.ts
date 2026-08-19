@@ -4,7 +4,11 @@ import type { CesiumProviderKind } from "../../../../cesium-agent-settings.js";
 import { resolveCesiumAuth } from "../../../../cesium-agent-settings.js";
 import { CESIUM_SYSTEM_PROMPT } from "../../cesium-prompt.js";
 import {
+  createSubagentProgressBroadcaster,
+  latestSubagentTranscriptActivity,
+  pushRunningSubagentToolRow,
   runSubagentToolLoop,
+  settleSubagentToolRow,
   subagentToolsetGuidance,
   type CesiumSubagentToolset,
 } from "../../subagent-toolset.js";
@@ -604,6 +608,13 @@ export class SubagentsV2Runtime {
     }
 
     let cardStatus: "completed" | "failed" | "running" | null = null;
+    // Live progress: re-emit the running card while the child works so open
+    // transcript views update in real time instead of freezing on "Working".
+    let turnFinished = false;
+    const progress = createSubagentProgressBroadcaster({
+      emit: () =>
+        turnFinished ? Promise.resolve() : this.emitSubagentCard(agent, "running"),
+    });
     try {
       if (agent.abortController.signal.aborted || this.options.isCancelled?.()) {
         agent.status = { kind: "interrupted" };
@@ -647,19 +658,26 @@ export class SubagentsV2Runtime {
         toolset,
         isAborted: () =>
           agent.abortController.signal.aborted || this.options.isCancelled?.() === true,
-        onToolCall: async (event) => {
-          agent.transcript.push({
-            seq: agent.transcript.length + 1,
-            eventId: randomUUID(),
+        onToolCallStart: (event) => {
+          pushRunningSubagentToolRow({
+            transcript: agent.transcript,
             conversationId: this.options.conversationId,
-            createdAt: Date.now(),
-            kind: "tool_call",
             toolCallId: event.toolCallId,
-            title: `${event.name}`,
-            toolKind: "mcp",
-            status: event.ok ? "completed" : "failed",
-            detail: event.result.slice(0, 600),
+            name: event.name,
+            arguments: event.arguments,
           });
+          progress.notify();
+        },
+        onToolCall: (event) => {
+          settleSubagentToolRow({
+            transcript: agent.transcript,
+            conversationId: this.options.conversationId,
+            toolCallId: event.toolCallId,
+            name: event.name,
+            result: event.result,
+            ok: event.ok,
+          });
+          progress.notify();
         },
       });
       if (agent.abortController.signal.aborted) {
@@ -701,6 +719,10 @@ export class SubagentsV2Runtime {
       }
       cardStatus = "failed";
     } finally {
+      // Stop live progress before the terminal card so a stale running card
+      // can never land after (and re-open) the settled state.
+      turnFinished = true;
+      progress.stop();
       // Always wake wait_agent even if card persistence fails.
       agent.unreadCount += 1;
       this.notifyMailbox([agent.path]);
@@ -719,7 +741,11 @@ export class SubagentsV2Runtime {
         ? agent.status.summary ?? ""
         : agent.status.kind === "errored"
           ? agent.status.error
-          : agent.lastTaskMessage ?? "";
+          : status === "running"
+            ? latestSubagentTranscriptActivity(agent.transcript) ??
+              agent.lastTaskMessage ??
+              ""
+            : agent.lastTaskMessage ?? "";
     try {
       await this.options.appendEvents([
         {
@@ -729,7 +755,9 @@ export class SubagentsV2Runtime {
           subagentId: agent.path,
           title: agent.title,
           status,
-          transcript: agent.transcript,
+          // Copy: the live transcript keeps growing after this emission and the
+          // storage layer may serialize the payload asynchronously.
+          transcript: [...agent.transcript],
           recentActivity: recent.slice(0, 240),
           raw: {
             version: 2,

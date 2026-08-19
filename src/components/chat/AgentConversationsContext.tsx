@@ -648,10 +648,18 @@ export function AgentConversationsProvider({
       if (tab.conversationId) {
         ids.add(tab.conversationId);
       }
+      // Subagent transcript tabs replay their parent conversation's events;
+      // keep that parent subscribed even when no chat pane has it open.
+      if (tab.transcriptLiveConversationId) {
+        ids.add(tab.transcriptLiveConversationId);
+      }
     }
     for (const tab of scopedEditorSession.rightTabs) {
       if (tab.conversationId) {
         ids.add(tab.conversationId);
+      }
+      if (tab.transcriptLiveConversationId) {
+        ids.add(tab.transcriptLiveConversationId);
       }
     }
     // IDE chat tabs (session.chat.tabs) are separate from editor tabs; include them
@@ -684,12 +692,18 @@ export function AgentConversationsProvider({
     if (leftActive?.conversationId) {
       ids.add(leftActive.conversationId);
     }
+    if (leftActive?.transcriptLiveConversationId) {
+      ids.add(leftActive.transcriptLiveConversationId);
+    }
 
     const rightActive = scopedEditorSession.rightTabs.find(
       (tab) => tab.id === scopedEditorSession.rightActiveId
     );
     if (rightActive?.conversationId) {
       ids.add(rightActive.conversationId);
+    }
+    if (rightActive?.transcriptLiveConversationId) {
+      ids.add(rightActive.transcriptLiveConversationId);
     }
 
     return [...ids];

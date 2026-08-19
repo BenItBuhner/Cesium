@@ -517,6 +517,9 @@ export function MessageList({
           title,
           messages: transcript,
           sessionId: sessionId ?? inferTranscriptSessionId(transcript),
+          // Parent conversation id wires the editor tab into the live event
+          // stream; without it the tab freezes on an open-time snapshot.
+          conversationId,
         })
       }
       workspaceRoot={workspaceInfo?.root ?? null}
