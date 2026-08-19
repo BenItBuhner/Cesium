@@ -1597,6 +1597,67 @@ export class AgentRuntimeManager {
   }
 
   /**
+   * Interrupt the current turn (if any) and start this queued item immediately.
+   * Remaining queued prompts stay in order and drain after the new turn.
+   */
+  async sendQueuedPromptNow(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    itemId: string
+  ): Promise<AgentConversationSnapshotHead> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record) {
+        throw new Error(`Unknown conversation: ${conversationId}`);
+      }
+      const queued = record.queuedPrompts ?? [];
+      const item = queued.find((queuedItem) => queuedItem.id === itemId);
+      if (!item) {
+        throw new Error(`Unknown queued prompt: ${itemId}`);
+      }
+      const remaining = queued.filter((queuedItem) => queuedItem.id !== itemId);
+
+      if (isConversationTurnInProgress(record.status)) {
+        const runtime = await this.resolveActiveRuntime(workspace, conversationId);
+        if (runtime) {
+          await runtime.handle.cancel();
+          await this.disposeRuntime(conversationId);
+          this.skipRecoverySeedOnce.add(conversationId);
+        }
+        await updateConversationRecord(workspace.id, conversationId, (current) => ({
+          ...current,
+          status: "idle",
+          providerSessionId: null,
+          pendingPermission: null,
+          pendingQuestion: null,
+          queuedPrompts: remaining,
+        }));
+      } else {
+        await updateConversationRecord(workspace.id, conversationId, (current) => ({
+          ...current,
+          queuedPrompts: remaining,
+        }));
+      }
+
+      return this.promptConversationLocked(
+        workspace,
+        conversationId,
+        item.text,
+        item.attachments,
+        {
+          ...(item.clientEventId ? { clientEventId: item.clientEventId } : {}),
+          ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+          ...(item.clientTimezone ? { clientTimezone: item.clientTimezone } : {}),
+          ...(item.delivery ? { delivery: item.delivery } : {}),
+          ...(item.configOverride ? { configOverride: item.configOverride } : {}),
+          ...(item.planHandoff ? { planHandoff: item.planHandoff } : {}),
+          ...(item.hidden ? { hidden: true } : {}),
+        }
+      );
+    });
+  }
+
+  /**
    * Pops the next server-side queued prompt and starts it. Caller must only
    * invoke when the conversation is idle; errors re-insert the item at the front.
    */
@@ -1604,37 +1665,45 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string
   ): Promise<void> {
-    const record = await readConversationRecord(workspace.id, conversationId);
-    if (!record || record.status !== "idle" || !record.queuedPrompts.length) {
-      return;
-    }
-    const [head, ...rest] = record.queuedPrompts;
-    await updateConversationRecord(workspace.id, conversationId, (current) => ({
-      ...current,
-      queuedPrompts: rest,
-    }));
-
-    const reinsertHead = async (): Promise<void> => {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record || record.status !== "idle" || !record.queuedPrompts.length) {
+        return;
+      }
+      const [head, ...rest] = record.queuedPrompts;
       await updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
-        queuedPrompts: [head, ...(current.queuedPrompts ?? [])],
+        queuedPrompts: rest,
       }));
-    };
 
-    try {
-      await this.promptConversation(workspace, conversationId, head.text, head.attachments, {
-        ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
-        ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
-        ...(head.clientTimezone ? { clientTimezone: head.clientTimezone } : {}),
-        ...(head.delivery ? { delivery: head.delivery } : {}),
-        ...(head.configOverride ? { configOverride: head.configOverride } : {}),
-        ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
-        ...(head.hidden ? { hidden: true } : {}),
-      });
-    } catch (error) {
-      console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
-      await reinsertHead();
-    }
+      const reinsertHead = async (): Promise<void> => {
+        await updateConversationRecord(workspace.id, conversationId, (current) => ({
+          ...current,
+          queuedPrompts: [head, ...(current.queuedPrompts ?? [])],
+        }));
+      };
+
+      try {
+        await this.promptConversationLocked(
+          workspace,
+          conversationId,
+          head.text,
+          head.attachments,
+          {
+            ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
+            ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+            ...(head.clientTimezone ? { clientTimezone: head.clientTimezone } : {}),
+            ...(head.delivery ? { delivery: head.delivery } : {}),
+            ...(head.configOverride ? { configOverride: head.configOverride } : {}),
+            ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
+            ...(head.hidden ? { hidden: true } : {}),
+          }
+        );
+      } catch (error) {
+        console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
+        await reinsertHead();
+      }
+    });
   }
 
   private async resolveActiveRuntime(

@@ -192,6 +192,7 @@ export {
   screenshotBrowserControlTab,
   searchExtensionMarketplace,
   searchFiles,
+  sendAgentConversationQueueItem,
   sendBrowserControlInput,
   sendBrowserDebugInput,
   setActiveWorkspaceId,

@@ -1359,6 +1359,16 @@ export async function deleteAgentConversationQueueItem(
   );
 }
 
+export async function sendAgentConversationQueueItem(
+  conversationId: string,
+  itemId: string
+): Promise<AgentConversationSnapshotResponse> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(itemId)}/send`,
+    { method: "POST", body: JSON.stringify({}) }
+  );
+}
+
 export async function cancelAgentConversation(
   conversationId: string
 ): Promise<{ conversation: AgentConversationRecord }> {

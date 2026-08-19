@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, CornerUpLeft, Pencil, Settings2, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronDown, Pencil, Settings2, Trash2 } from "lucide-react";
 import type { AgentConversationConfig } from "@/lib/agent-types";
 import type { QueuedChatPrompt, QueuedPromptConfigOverride } from "@/lib/types";
 import {
@@ -13,7 +13,7 @@ import { dockedComposerCardMx } from "./docked-card";
 type ComposerQueueDockProps = {
   items: QueuedChatPrompt[];
   onDelete: (item: QueuedChatPrompt) => void;
-  onUnqueue: (item: QueuedChatPrompt) => void;
+  onSendNow: (item: QueuedChatPrompt) => void;
   onEdit?: (item: QueuedChatPrompt) => void;
   conversationConfig?: AgentConversationConfig;
   backendLabels?: Record<string, string>;
@@ -29,7 +29,7 @@ function oneLinePreview(text: string): string {
 export function ComposerQueueDock({
   items,
   onDelete,
-  onUnqueue,
+  onSendNow,
   onEdit,
   conversationConfig,
   backendLabels,
@@ -115,11 +115,12 @@ export function ComposerQueueDock({
                   )}
                   <button
                     type="button"
-                    onClick={() => onUnqueue(item)}
+                    onClick={() => onSendNow(item)}
                     className="flex items-center gap-[4px] rounded-[6px] px-[8px] py-[4px] font-sans text-[10.5px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
-                    title="Unqueue"
+                    title="Send now"
+                    aria-label="Send queued message now"
                   >
-                    <CornerUpLeft className="size-[12px]" strokeWidth={2} />
+                    <ArrowUp className="size-[12px]" strokeWidth={2.25} />
                   </button>
                   <button
                     type="button"

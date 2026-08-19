@@ -132,6 +132,7 @@ export function AgentCenterPane() {
     getConversationLoadStatus,
     createAndPromptConversation,
     promptConversation,
+    sendQueuedPromptNow,
     cancelConversation,
     pauseConversation,
     resumeConversation,
@@ -751,37 +752,14 @@ export function AgentCenterPane() {
     [selectedConversationId, syncConversationSnapshot, upsertConversation]
   );
 
-  const unqueuePromptToComposer = useCallback(
+  const sendQueuedPrompt = useCallback(
     (item: QueuedChatPrompt) => {
       if (!selectedConversationId) {
         return;
       }
-      void (async () => {
-        try {
-          const { conversation: nextConversation } = await deleteAgentConversationQueueItem(
-            selectedConversationId,
-            item.id
-          );
-          upsertConversation(nextConversation);
-        } catch {
-          void syncConversationSnapshot(selectedConversationId).catch(() => undefined);
-          return;
-        }
-        upsertComposerDraft(composerDraftId, {
-          title: composerDraftTitle,
-          content: item.text,
-          attachments: item.attachments,
-        });
-      })();
+      void sendQueuedPromptNow(selectedConversationId, item.id);
     },
-    [
-      composerDraftId,
-      composerDraftTitle,
-      selectedConversationId,
-      syncConversationSnapshot,
-      upsertComposerDraft,
-      upsertConversation,
-    ]
+    [selectedConversationId, sendQueuedPromptNow]
   );
 
   const editQueuedPrompt = useCallback(
@@ -1447,7 +1425,7 @@ export function AgentCenterPane() {
                     <ComposerQueueDock
                       items={queuedPrompts}
                       onDelete={removeQueuedPrompt}
-                      onUnqueue={unqueuePromptToComposer}
+                      onSendNow={sendQueuedPrompt}
                       onEdit={editQueuedPrompt}
                       conversationConfig={conversation?.config}
                       backendLabels={backendLabels}
