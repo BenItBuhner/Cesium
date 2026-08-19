@@ -1,13 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const IS_MAC = process.platform === "darwin";
+
 function injectDesktopChrome() {
-  if (document.getElementById("cesium-electron-window-controls")) return;
+  if (document.getElementById("cesium-electron-chrome-style")) return;
 
   document.documentElement.dataset.cesiumDesktop = "true";
+  document.documentElement.dataset.cesiumDesktopPlatform = process.platform;
 
-  const style = document.createElement("style");
-  style.id = "cesium-electron-chrome-style";
-  style.textContent = `
+  const baseStyle = document.createElement("style");
+  baseStyle.id = "cesium-electron-chrome-style";
+  baseStyle.textContent = `
     html[data-cesium-desktop="true"] [data-electron-drag-host] {
       -webkit-app-region: drag;
       cursor: default;
@@ -32,7 +35,17 @@ function injectDesktopChrome() {
     html[data-cesium-desktop="true"] [data-electron-no-drag] {
       -webkit-app-region: no-drag;
     }
+  `;
+  document.head.appendChild(baseStyle);
 
+  // macOS uses the native traffic lights (hidden-inset title bar); the web
+  // layer applies its own leading inset. The injected top-right controls and
+  // their layout offsets are Windows/Linux frameless chrome only.
+  if (IS_MAC) return;
+
+  const style = document.createElement("style");
+  style.id = "cesium-electron-window-controls-style";
+  style.textContent = `
     html[data-cesium-desktop="true"] #cesium-electron-window-controls {
       -webkit-app-region: no-drag;
       position: fixed;

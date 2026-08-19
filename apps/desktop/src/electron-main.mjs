@@ -621,6 +621,17 @@ function installRendererHealthRecovery(win) {
 }
 
 function createRendererBrowserWindow(options = {}) {
+  // macOS keeps the native traffic lights (close/minimize/zoom) overlaying
+  // the renderer via a hidden-inset title bar; the web layer pads its
+  // top-left chrome to clear them. Windows/Linux stay fully frameless with
+  // the preload-injected window controls on the top-right.
+  const platformChrome =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : { frame: false };
   return new BrowserWindow({
     title: options.title ?? "Cesium",
     icon: APP_ICON_PATH,
@@ -629,7 +640,7 @@ function createRendererBrowserWindow(options = {}) {
     height: options.height ?? 960,
     minWidth: options.minWidth ?? 980,
     minHeight: options.minHeight ?? 640,
-    frame: false,
+    ...platformChrome,
     autoHideMenuBar: true,
     backgroundColor: "#191919",
     webPreferences: {

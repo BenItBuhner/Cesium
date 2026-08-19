@@ -100,6 +100,31 @@ jobs:
           tail -30 demo-app.log
           echo "Captured $(ls demo-frames | wc -l) demo frames"
 
+      - name: Install from the DMG and capture the full screen (traffic lights)
+        run: |
+          mkdir -p screenshots
+          csrutil status || true
+          # Suppress the macOS 15 legacy screen-capture re-approval alert so
+          # it does not photobomb the captures (documented managed key; best
+          # effort on an unmanaged runner).
+          sudo defaults write /Library/Preferences/com.apple.applicationaccess forceBypassScreenCaptureAlert -bool true || true
+          DMG=$(ls apps/desktop/out/*.dmg | head -1)
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/CesiumDesktop
+          sudo cp -R "/Volumes/CesiumDesktop/Cesium Desktop.app" /Applications/
+          hdiutil detach /Volumes/CesiumDesktop
+          xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app" || true
+          open -a "/Applications/Cesium Desktop.app"
+          sleep 45
+          screencapture -x screenshots/macos_fullscreen_installed_boot.png || true
+          sleep 15
+          screencapture -x screenshots/macos_fullscreen_installed_workbench.png || true
+          sleep 10
+          screencapture -x screenshots/macos_fullscreen_installed_settled.png || true
+          APP_PID=$(pgrep -x "Cesium Desktop" | head -1)
+          if [ -n "$APP_PID" ]; then kill "$APP_PID" || true; fi
+          sleep 3
+          ls -la screenshots
+
       - name: Upload macOS demo frames
         if: always()
         uses: actions/upload-artifact@v4

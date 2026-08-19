@@ -22,6 +22,22 @@ function isCesiumDesktopRenderer(): boolean {
 }
 
 /**
+ * True inside the Electron shell on macOS, where the window uses
+ * `titleBarStyle: "hiddenInset"` and the native traffic lights overlay the
+ * top-left of the renderer — the same geometry the iPadOS windowed-mode
+ * leading inset was built for.
+ */
+export function isMacElectronRenderer(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const bridge = (
+    window as Window & { cesiumDesktop?: { isElectron?: boolean; platform?: string } }
+  ).cesiumDesktop;
+  return Boolean(bridge?.isElectron) && bridge?.platform === "darwin";
+}
+
+/**
  * The VS Code extension Beta is desktop-first, but can be force-enabled for
  * web renderers via `NEXT_PUBLIC_VSCODE_EXTENSIONS_WEB=1` (build-time) or by
  * setting `localStorage["cesium.vscodeExtensionsWeb"] = "1"` (runtime).
@@ -66,9 +82,13 @@ export function resolveEffectiveUserPreferences(
     experimentalIpadCustomButtons: flags.ipadExperimentalUi
       ? preferences.experimentalIpadCustomButtons
       : false,
-    experimentalIpadWindowedTabInset: flags.ipadExperimentalUi
-      ? preferences.experimentalIpadWindowedTabInset
-      : false,
+    // macOS Electron always needs the leading window-chrome inset: the
+    // native traffic lights overlay the top-left of the frameless content.
+    experimentalIpadWindowedTabInset: isMacElectronRenderer()
+      ? true
+      : flags.ipadExperimentalUi
+        ? preferences.experimentalIpadWindowedTabInset
+        : false,
     experimentalIpadResumeCache: flags.ipadResumeCache
       ? preferences.experimentalIpadResumeCache
       : false,
