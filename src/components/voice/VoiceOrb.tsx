@@ -114,7 +114,16 @@ export function VoiceOrb() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     let raf = 0;
+    // 30fps cap: the orb is tiny and heavily smoothed, so display-rate
+    // painting (60-120fps) just burns GPU while voice UI is mounted.
+    const frameIntervalMs = 1000 / 30;
+    let last = 0;
     const render = (time: number) => {
+      raf = requestAnimationFrame(render);
+      if (time - last < frameIntervalMs) {
+        return;
+      }
+      last = time;
       const levels = getOrbLevels();
       const currentActivity = activityRef.current;
       const level =
@@ -129,7 +138,6 @@ export function VoiceOrb() {
         level,
         timeMs: time,
       });
-      raf = requestAnimationFrame(render);
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);

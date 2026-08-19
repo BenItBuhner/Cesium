@@ -20,6 +20,16 @@ const FRAME_INTERVAL_MS = 1000 / 30;
  * GPU/CPU tax by a third on the hardware that feels it most.
  */
 const LOW_POWER_FRAME_INTERVAL_MS = 1000 / 20;
+/**
+ * Calm moods (idle / paused) drift slowly under a heavy blur — half the frame
+ * rate is visually indistinguishable there and halves the standing GPU
+ * composite cost of the full-window layer, which is most of what this
+ * component costs when the app is just sitting open.
+ */
+const CALM_FRAME_INTERVAL_MS = 1000 / 15;
+const LOW_POWER_CALM_FRAME_INTERVAL_MS = 1000 / 10;
+/** Window visible but not focused (another window on top / beside it). */
+const UNFOCUSED_FRAME_INTERVAL_MS = 1000 / 8;
 
 let lowPowerDisplayCache: boolean | null = null;
 function isLowPowerDisplay(): boolean {
@@ -129,6 +139,8 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bufferRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<AuroraRenderer | null>(null);
+  const moodRef = useRef<AuroraMood>(mood);
+  moodRef.current = mood;
 
   const colors = useMemo(() => resolveAuroraColors(aurora), [aurora]);
   const colorsKey = colors.join(",");
@@ -250,21 +262,35 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     return () => observer.disconnect();
   }, [enabled, paintFrame]);
 
-  // Animation loop: rAF capped to ~30fps, parked while the tab is hidden.
+  // Animation loop: rAF capped to ~30fps, parked while the tab is hidden or
+  // the canvas is scrolled/covered offscreen, slowed while the window is
+  // unfocused or the scene is calm (idle/paused).
   useEffect(() => {
     if (!enabled || reducedMotion) {
       return;
     }
     let raf = 0;
     let last = performance.now();
-    const frameIntervalMs = isLowPowerDisplay()
-      ? LOW_POWER_FRAME_INTERVAL_MS
-      : FRAME_INTERVAL_MS;
+    let offscreen = false;
+    let windowBlurred =
+      typeof document !== "undefined" && !document.hasFocus();
+    const lowPower = isLowPowerDisplay();
+
+    const frameIntervalMs = (): number => {
+      if (windowBlurred) {
+        return UNFOCUSED_FRAME_INTERVAL_MS;
+      }
+      const calm = moodRef.current === "idle" || moodRef.current === "paused";
+      if (calm) {
+        return lowPower ? LOW_POWER_CALM_FRAME_INTERVAL_MS : CALM_FRAME_INTERVAL_MS;
+      }
+      return lowPower ? LOW_POWER_FRAME_INTERVAL_MS : FRAME_INTERVAL_MS;
+    };
 
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
       const dt = now - last;
-      if (dt < frameIntervalMs) {
+      if (dt < frameIntervalMs()) {
         return;
       }
       last = now;
@@ -273,24 +299,56 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
 
     const start = () => {
       cancelAnimationFrame(raf);
+      if (document.hidden || offscreen) {
+        return;
+      }
       last = performance.now();
       raf = requestAnimationFrame(tick);
     };
+    const stop = () => cancelAnimationFrame(raf);
     const onVisibility = () => {
       if (document.hidden) {
-        cancelAnimationFrame(raf);
+        stop();
       } else {
         start();
       }
     };
+    const onBlur = () => {
+      windowBlurred = true;
+    };
+    const onFocus = () => {
+      windowBlurred = false;
+    };
+
+    const canvas = canvasRef.current;
+    const observer =
+      canvas && typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver((entries) => {
+            const entry = entries[entries.length - 1];
+            offscreen = entry ? !entry.isIntersecting : false;
+            if (offscreen) {
+              stop();
+            } else {
+              start();
+            }
+          })
+        : null;
+    if (canvas && observer) {
+      observer.observe(canvas);
+    }
 
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     if (!document.hidden) {
       start();
     }
     return () => {
+      observer?.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
-      cancelAnimationFrame(raf);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      stop();
     };
   }, [enabled, reducedMotion, paintFrame]);
 

@@ -38,7 +38,16 @@ export function VoiceSessionOrb({
     if (!ctx) return;
 
     let frame = 0;
+    // 30fps cap: painting at display rate doubles-to-quadruples the GPU cost
+    // of an orb whose motion is already heavily smoothed.
+    const frameIntervalMs = 1000 / 30;
+    let last = 0;
     const render = (timeMs: number) => {
+      frame = requestAnimationFrame(render);
+      if (timeMs - last < frameIntervalMs) {
+        return;
+      }
+      last = timeMs;
       const levels = getOrbLevels();
       const target =
         statusRef.current === "speaking" ? levels.tts : levels.mic;
@@ -53,7 +62,6 @@ export function VoiceSessionOrb({
         level: smoothedLevelRef.current,
         timeMs,
       });
-      frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frame);
