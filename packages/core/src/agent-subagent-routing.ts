@@ -800,6 +800,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
 > = {
   "cesium-agent": isStrictAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
+  "cursor-acp": isCursorAcpSubagentTaskToolEvent,
   "opencode-server": isStrictAcpSubagentTaskToolEvent,
   "opencode-v2-beta": isStrictAcpSubagentTaskToolEvent,
   "devin-acp": isStrictAcpSubagentTaskToolEvent,

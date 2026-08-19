@@ -898,7 +898,6 @@ export function mergeWorkspaceSessionFromImport(
   const importedChatBackendRaw = r.chat?.backendId;
   const legacyChatBackendRemap: Record<string, AgentBackendId> = {
     "claude-adapter": "claude-code-sdk",
-    "cursor-acp": "cursor-sdk",
     "opencode-acp": "opencode-server",
     "opencode-v2-beta": "opencode-server",
     "codex-adapter": "codex-app-server",

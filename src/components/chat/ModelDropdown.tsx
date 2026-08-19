@@ -28,6 +28,8 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
+import { composerVisibleBackends, isHarnessEnabled } from "@cesium/core";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import { resolveModelBrandIcon } from "@/lib/model-brand-icons";
@@ -259,6 +261,7 @@ export function ModelDropdown({
 }: ModelDropdownProps) {
   const { openSettingsView } = useShellView();
   const { updateWorkspaceSession } = useWorkspace();
+  const { settings } = useGlobalSettings();
   /**
    * Touch taps synthesize mouseenter/mouseleave bursts; hover-open + click
    * -toggle on the same target makes the harness flyout open and instantly
@@ -342,8 +345,18 @@ export function ModelDropdown({
     }
   }, []);
 
+  const visibleBackends = useMemo(
+    () =>
+      composerVisibleBackends(backends ?? [], backendId).filter(
+        (backend) =>
+          backend.id === backendId ||
+          isHarnessEnabled(settings.agents.enabledHarnesses, backend.id)
+      ),
+    [backendId, backends, settings.agents.enabledHarnesses]
+  );
+
   const showHarnessFlyoutUi = Boolean(
-    backends && backends.length > 1 && onBackendChange
+    visibleBackends.length > 0 && onBackendChange
   );
 
   const openBackendSettings = useCallback(
@@ -353,6 +366,7 @@ export function ModelDropdown({
         settingsView: {
           ...current.settingsView,
           activeNav: settingsNavForBackend(),
+          agentsHarnessId: null,
         },
       }));
       openSettingsView();
@@ -1006,7 +1020,7 @@ export function ModelDropdown({
                 style={scrollEdgeMaskStyle(harnessListFade)}
                 onScroll={updateHarnessListFade}
               >
-              {(backends ?? []).map((backend) => {
+              {visibleBackends.map((backend) => {
                 const harnessActive = backend.id === backendId;
                 const available = backend.available !== false;
                 return (
@@ -1071,6 +1085,16 @@ export function ModelDropdown({
                 );
               })}
               </div>
+            </div>
+            <div className="border-t border-[var(--border-card)] px-[4px] pt-[4px]">
+              <button
+                type="button"
+                className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[5px] text-left font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                onClick={() => openBackendSettings()}
+              >
+                <Settings className="size-[12px] shrink-0" strokeWidth={1.7} />
+                Manage harnesses
+              </button>
             </div>
           </div>,
           document.body

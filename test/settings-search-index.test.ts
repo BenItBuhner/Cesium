@@ -122,6 +122,14 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes Cursor ACP and harness enable toggles", () => {
+    const index = buildSettingsSearchIndex({});
+    const acp = searchSettingsIndex(index, "cursor acp oauth");
+    assert.ok(acp.some((hit) => hit.rowId === "cursor-acp" || hit.id === "harness::cursor-acp"));
+    const toggles = searchSettingsIndex(index, "enabled harnesses");
+    assert.ok(toggles.some((hit) => hit.rowId === "enabled-harnesses"));
+  });
+
   test("indexes official Cesium subscription OAuth accounts", () => {
     const index = buildSettingsSearchIndex({});
     const hits = searchSettingsIndex(index, "supergrok");

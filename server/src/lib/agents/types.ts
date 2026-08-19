@@ -11,6 +11,7 @@ export type AgentConversationMode =
 export type AgentBackendId =
   | "cesium-agent"
   | "cursor-sdk"
+  | "cursor-acp"
   | "opencode-server"
   | "opencode-v2-beta"
   | "devin-acp"
@@ -157,6 +158,11 @@ export type AgentBackendInfo = {
   commandPreview?: string;
   experimental?: boolean;
   available: boolean;
+  /**
+   * Whether Settings → Agents currently exposes this harness in the composer
+   * picker. Disabled harnesses stay usable for existing chats.
+   */
+  enabled?: boolean;
   defaultMode: AgentConversationMode;
   defaultModelId: string;
   defaultModelName: string;

@@ -2757,7 +2757,7 @@ export function ChatComposer({
  if (configLocked) {
  return false;
  }
- const cyclable = backends.filter((b) => b.available);
+ const cyclable = backends.filter((b) => b.available && b.enabled !== false);
  if (cyclable.length < 2) {
  return false;
  }

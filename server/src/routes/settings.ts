@@ -59,12 +59,22 @@ import {
   startGrokBuildDeviceLogin,
 } from "../lib/grok-build-login.js";
 import {
+  cancelHarnessCliLogin,
+  isHarnessCliAuthBackendId,
+  refreshHarnessCliAuthState,
+  startHarnessCliLogin,
+  startHarnessCliLogout,
+} from "../lib/harness-cli-auth.js";
+import {
   bumpRevision,
   formatEtag,
   getRevision,
   parseRevisionHeader,
 } from "../storage/revisions.js";
-import { ACTIVE_AGENT_BACKEND_IDS } from "../lib/active-agent-backends.js";
+import {
+  ACTIVE_AGENT_BACKEND_IDS,
+  isActiveAgentBackendId,
+} from "../lib/active-agent-backends.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
 import { measureServerPerf } from "../lib/perf.js";
 import {
@@ -189,7 +199,7 @@ settingsRoutes.post("/api/settings/remembered-permissions/clear", async (c) => {
     typeof body.backendId === "string" && body.backendId.trim()
       ? body.backendId.trim()
       : undefined;
-  if (backendId && !ACTIVE_AGENT_BACKEND_IDS.includes(backendId as AgentBackendId)) {
+  if (backendId && !isActiveAgentBackendId(backendId)) {
     return c.json({ error: `Unknown backendId: ${backendId}` }, 400);
   }
   const rememberedPermissions = await clearRememberedAgentPermissionRules(
@@ -641,6 +651,38 @@ settingsRoutes.post("/api/settings/grok-build/login/cancel", async (c) => {
     installed: isGrokCliInstalled(),
     login: cancelGrokBuildDeviceLogin(),
   });
+});
+
+settingsRoutes.get("/api/settings/harness-auth/:backendId", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await refreshHarnessCliAuthState(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/login", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await startHarnessCliLogin(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/logout", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await startHarnessCliLogout(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/cancel", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(cancelHarnessCliLogin(backendId));
 });
 
 settingsRoutes.get("/api/settings/cesium-agent/models", async (c) => {

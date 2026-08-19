@@ -1,5 +1,11 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { type CliRuntimeSpec } from "./cli-adapter.js";
-import { ACTIVE_AGENT_BACKEND_IDS } from "../active-agent-backends.js";
+import {
+  ACTIVE_AGENT_BACKEND_IDS,
+  isHarnessEnabled,
+} from "../active-agent-backends.js";
+import { getGlobalSettings } from "../global-settings-store.js";
 import { AGENT_CAPABILITIES } from "./agent-contract.js";
 import { getCursorSdkCredentialStatus } from "../cursor-sdk-credentials.js";
 import { getCesiumCredentialStatus } from "../cesium-agent-settings.js";
@@ -29,7 +35,9 @@ import {
 } from "../claude-code-sdk-credentials.js";
 import { AcpSessionHandle } from "./acp/acp-session.js";
 import {
+  buildCliInvocation,
   detectHarnessCli,
+  harnessDefaultArgs,
   probeHarnessCliVersion,
   resolveHarnessRuntimeSpec,
   type HarnessCliId,
@@ -51,7 +59,56 @@ const BACKEND_HARNESS_CLI: Partial<Record<AgentBackendId, HarnessCliId>> = {
   "codex-app-server": "codex",
   "google-antigravity-cli": "google-antigravity",
   "claude-code-sdk": "claude",
+  "cursor-acp": "cursor",
 };
+
+function parseCursorAgentExtraArgs(): string[] {
+  const rawJson = process.env.OPENCURSOR_CURSOR_AGENT_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+  const permissionMode = process.env.OPENCURSOR_CURSOR_PERMISSION_MODE?.trim();
+  if (permissionMode) {
+    return ["--permission-mode", permissionMode];
+  }
+  return [];
+}
+
+function resolveCursorAcpRuntime(): CliRuntimeSpec | null {
+  const detection = detectHarnessCli("cursor");
+  if (!detection) {
+    if (process.platform === "win32") {
+      const localAppData = process.env.LOCALAPPDATA?.trim();
+      const cursorAgentScript = localAppData
+        ? path.join(localAppData, "cursor-agent", "agent.ps1")
+        : null;
+      if (cursorAgentScript && existsSync(cursorAgentScript)) {
+        return buildCliInvocation(
+          cursorAgentScript,
+          [...parseCursorAgentExtraArgs(), ...harnessDefaultArgs("cursor")],
+          {
+            CURSOR_INVOKED_AS: process.env.CURSOR_INVOKED_AS || "agent.cmd",
+          }
+        );
+      }
+    }
+    return null;
+  }
+  return buildCliInvocation(
+    detection.executablePath,
+    [...parseCursorAgentExtraArgs(), ...harnessDefaultArgs("cursor")],
+    {
+      CURSOR_INVOKED_AS: process.env.CURSOR_INVOKED_AS || "agent.cmd",
+    }
+  );
+}
 
 function createBackendInfo(input: {
   id: AgentBackendId;
@@ -115,6 +172,22 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultModelId: "composer-2.5",
         defaultModelName: "Composer 2.5",
       });
+    case "cursor-acp": {
+      const runtime = resolveCursorAcpRuntime();
+      return createBackendInfo({
+        id: "cursor-acp",
+        label: "Cursor ACP",
+        description:
+          "Cursor Agent CLI over ACP (`agent acp`). Supports CLI OAuth (`agent login`) that the TypeScript SDK does not expose.",
+        experimental: true,
+        commandPreview: runtime?.commandPreview ?? "Cursor Agent CLI not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["cursor-acp"],
+        defaultMode: "agent",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    }
     case "opencode-server":
     case "opencode-v2-beta": {
       return createBackendInfo({
@@ -293,7 +366,8 @@ async function describeBackendRuntime(
 }
 
 export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
-  const [cursorSdkStatus, cesiumStatus, piAgentStatus, piAgentAuthStatus] = await Promise.all([
+  const [cursorSdkStatus, cesiumStatus, piAgentStatus, piAgentAuthStatus, globalSettings] =
+    await Promise.all([
     getCursorSdkCredentialStatus().catch(() => ({
       configured: false,
       source: null,
@@ -304,7 +378,9 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
     })),
     hasPiAgentStoredAuthConfig().catch(() => false),
     describePiAgentAuthStatus().catch(() => "API key not configured"),
+    getGlobalSettings().catch(() => null),
   ]);
+  const enabledHarnesses = globalSettings?.agents.enabledHarnesses;
   return Promise.all(
     AGENT_BACKEND_MENU_ORDER.map(async (id) => {
       const backend = computeBackendInfo(id);
@@ -314,6 +390,7 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
       ]);
       return {
         ...backend,
+        enabled: isHarnessEnabled(enabledHarnesses, backend.id),
         available:
           backend.id === "cesium-agent"
             ? cesiumStatus.configured
@@ -333,6 +410,8 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             ? "Cesium Agent requires at least one OpenAI, Anthropic, Google, or custom provider API key. Open Settings -> Agents to configure it."
             : backend.id === "cursor-sdk" && !cursorSdkStatus.configured
             ? "Cursor SDK requires a Cursor API key. Open Settings -> Agents to configure it."
+            : backend.id === "cursor-acp" && !backend.available
+            ? "Cursor ACP requires the Cursor Agent CLI (`agent`) on the server host. Install it or set OPENCURSOR_CURSOR_CLI_BIN, then sign in with `agent login`."
             : backend.id === "pi-agent" && !piAgentStatus
             ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
             : backend.description,
@@ -388,6 +467,20 @@ export async function createAgentProvider(
     return createCursorSdkProvider({
       backend,
       configOptions: await readAgentBackendConfigCache(backendId),
+    });
+  }
+
+  if (backendId === "cursor-acp") {
+    const runtime = resolveCursorAcpRuntime();
+    if (!runtime) {
+      throw new Error(
+        `${backend.label} requires the Cursor Agent CLI. Install it or set OPENCURSOR_CURSOR_CLI_BIN / OPENCURSOR_CURSOR_ACP_BIN.`
+      );
+    }
+    return createAcpProvider({
+      backend,
+      runtime,
+      seedConfigOptions: await readAgentBackendConfigCache(backendId),
     });
   }
 

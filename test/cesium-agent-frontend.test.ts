@@ -16,6 +16,7 @@ describe("Cesium Agent frontend integration", () => {
     assert.deepEqual(HARNESS_ORDER, [
       "cesium-agent",
       "cursor-sdk",
+      "cursor-acp",
       "codex-app-server",
       "opencode-server",
       "devin-acp",

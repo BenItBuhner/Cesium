@@ -53,6 +53,20 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
+  "cursor-acp": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: true,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: true,
+    supportsTodos: true,
+    supportsSessionResume: true,
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+  },
   "opencode-server": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -249,6 +263,19 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       "system",
     ],
     notes: "Question and plan approval support must be verified against the installed SDK.",
+  },
+  "cursor-acp": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "plan",
+      "plan_file",
+      "question",
+      ...permissionEvents,
+      "system",
+    ],
+    notes: "Cursor Agent CLI over ACP (`agent acp`). OAuth/login works via the CLI; the TypeScript SDK does not expose that flow.",
   },
   "opencode-server": {
     expectedEventKinds: [
