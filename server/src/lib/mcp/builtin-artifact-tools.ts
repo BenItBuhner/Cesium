@@ -198,7 +198,7 @@ async function openArtifactTab(input: {
     workspaceId: input.workspaceId,
     url: artifactAbsoluteUrl(input.summary.serverPath),
     title: input.summary.title,
-    group: input.group === "left" ? "left" : "right",
+    group: input.group === "right" ? "right" : "left",
     engine: "proxy",
   });
 }
@@ -320,7 +320,7 @@ export async function callBuiltInArtifactTool(input: {
     const tab = await openArtifactTab({
       workspaceId: input.workspaceId,
       summary,
-      group: args.group === "left" ? "left" : "right",
+      group: args.group === "right" ? "right" : "left",
     });
     return json({
       ok: true,

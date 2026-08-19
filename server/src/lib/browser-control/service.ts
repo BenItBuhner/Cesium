@@ -236,7 +236,7 @@ export async function openBrowserControlTab(input: {
   const tab: BrowserControlTab = {
     tabId: `browser:${randomUUID()}`,
     workspaceId: input.workspaceId,
-    group: input.group ?? "right",
+    group: input.group ?? "left",
     title: input.title?.trim() || titleFromUrl(input.url),
     targetUrl: input.url,
     currentUrl: input.url,

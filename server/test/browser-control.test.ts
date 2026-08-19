@@ -14,6 +14,7 @@ import {
   closeBrowserControlTab,
   completeBrowserControlCommand,
   listBrowserControlTabs,
+  openBrowserControlTab,
   readBrowserControlCommands,
   resetBrowserControlForTests,
 } from "../src/lib/browser-control/service.js";
@@ -23,6 +24,16 @@ test("browser-control capabilities are explicit per engine", () => {
   assert.equal(browserControlCapabilitiesForEngine("proxy").jsEvaluate, false);
   assert.equal(browserControlCapabilitiesForEngine("server-chromium").screenshot, true);
   assert.equal(browserControlCapabilitiesForEngine("server-chromium").viewportEmulation, true);
+});
+
+test("browser-control tabs open in the primary group unless a split is requested", async () => {
+  resetBrowserControlForTests();
+  const tab = await openBrowserControlTab({
+    workspaceId: "ws-default-group",
+    url: "https://example.com",
+    engine: "proxy",
+  });
+  assert.equal(tab.group, "left");
 });
 
 test("browser-control viewport presets and custom values normalize safely", () => {
@@ -101,6 +112,7 @@ test("built-in browser MCP supports visible editor tabs when requested", async (
   const tab = listBrowserControlTabs(workspaceId)[0];
   assert.ok(tab);
   assert.equal(tab.engine, "electron-native");
+  assert.equal(tab.group, "left");
   assert.equal(tab.debugSessionId, null);
 
   await callBuiltInBrowserTool({
