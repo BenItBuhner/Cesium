@@ -10,6 +10,10 @@ import {
   isCompressingContextStatusDetail,
   isTakingLongerStatusDetail,
 } from "./agent-completion-error";
+import {
+  parseLooseJsonObjectCached,
+  tryParseLeadingJsonArrayCached,
+} from "./loose-json";
 import { resolveModelDisplayName } from "./model-display-name";
 
 /** Agent is actively working or waiting on user mid-turn (not paused). */
@@ -2105,22 +2109,7 @@ function mergeDuplicateSubagentMessages(messages: ChatMessage[]): ChatMessage[] 
   return output;
 }
 
-function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
+const parseLooseJsonObject = parseLooseJsonObjectCached;
 
 /** OpenCode / plan-mode models often stream the same checklist as JSON that duplicates structured `plan` events. */
 export function isAgentTodoJsonArrayPayload(value: unknown): boolean {
@@ -2142,17 +2131,7 @@ export function isAgentTodoJsonArrayPayload(value: unknown): boolean {
   });
 }
 
-function tryParseLeadingJsonArray(text: string): unknown | undefined {
-  const t = text.trim();
-  if (!t.startsWith("[")) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(t) as unknown;
-  } catch {
-    return undefined;
-  }
-}
+const tryParseLeadingJsonArray = tryParseLeadingJsonArrayCached;
 
 export function isAgentTodoJsonDetailString(text: string): boolean {
   const parsed = tryParseLeadingJsonArray(text);
