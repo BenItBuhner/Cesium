@@ -61,20 +61,20 @@ jobs:
         run: |
           mkdir -p screenshots
           APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
-          "$APP_BIN" > app.log 2>&1 &
+          # OPENCURSOR_DESKTOP_CAPTURE_PATH makes the app capture its own
+          # window contents (permission-free, unlike TCC-gated screencapture).
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/macos_app_window.png" \
+            "$APP_BIN" > app.log 2>&1 &
           APP_PID=$!
           echo "Launched Cesium Desktop with PID $APP_PID"
           sleep 20
           screencapture -x screenshots/macos_app_boot.png || true
           sleep 25
           screencapture -x screenshots/macos_app_workbench.png || true
-          # Bring the app frontmost in case another window stole focus.
-          osascript -e 'tell application "System Events" to set frontmost of (first process whose name is "Cesium Desktop") to true' || true
-          sleep 5
-          screencapture -x screenshots/macos_app_front.png || true
           kill "$APP_PID" || true
           sleep 3
           tail -50 app.log
+          ls -la screenshots
 
       - name: Upload macOS app artifacts
         if: always()

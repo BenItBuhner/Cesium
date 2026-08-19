@@ -6,6 +6,7 @@ import { startCesiumBackend } from "./main.mjs";
 import { resolvePackagedDesktopDataDir } from "./desktop-data-dir.mjs";
 import {
   applyPlatformApplicationMenu,
+  argvContainsIntakePayload,
   destroyDesktopNativeIntegrations,
   handleStartupArgv,
   installDesktopNativeIntegrations,
@@ -837,6 +838,35 @@ async function createMainWindow(options = {}) {
   if (options.closeAfterLoad) {
     mainWindow.close();
   }
+  installWindowCaptureForCi(mainWindow);
+}
+
+/**
+ * CI evidence hook: when OPENCURSOR_DESKTOP_CAPTURE_PATH is set, capture the
+ * main window's rendered contents (TCC/permission-free, unlike macOS
+ * `screencapture`) shortly after load and again after the workbench settles.
+ */
+function installWindowCaptureForCi(win) {
+  const capturePath = process.env.OPENCURSOR_DESKTOP_CAPTURE_PATH;
+  if (!capturePath || !win || win.isDestroyed()) {
+    return;
+  }
+  const capture = async (suffix) => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+    try {
+      const image = await win.webContents.capturePage();
+      const target = capturePath.replace(/\.png$/i, "") + suffix + ".png";
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(target, image.toPNG());
+      console.log("[cesium-desktop] captured window to", target);
+    } catch (error) {
+      console.warn("[cesium-desktop] window capture failed", error);
+    }
+  };
+  setTimeout(() => void capture("_early"), 8_000);
+  setTimeout(() => void capture(""), 30_000);
 }
 
 function installDesktopLifecycleHandlers() {
@@ -862,8 +892,17 @@ function installDesktopLifecycleHandlers() {
 
 const gotLock = app.isPackaged ? app.requestSingleInstanceLock() : true;
 console.log("[cesium-desktop] single instance lock", gotLock);
-if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
-  console.error("[cesium-desktop] another desktop instance already has the lock");
+// Launches that only carry a payload (Open With file, cesium:// deep link)
+// hand it to the lock holder via the second-instance event and exit —
+// booting a second full app for them would duplicate backends and windows.
+const deferToLockHolder =
+  !gotLock &&
+  (process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1" ||
+    argvContainsIntakePayload(process.argv, process.cwd()));
+if (deferToLockHolder) {
+  console.log(
+    "[cesium-desktop] another instance holds the lock; forwarding launch arguments and exiting"
+  );
   app.quit();
 } else {
   if (!gotLock) {

@@ -7,6 +7,7 @@ import {
   Notification,
   Tray,
 } from "electron";
+import { statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 
@@ -417,6 +418,44 @@ async function existingFilePath(arg, workingDirectory) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Synchronous argv scan used before startup: does this launch carry a deep
+ * link or an openable file? When another instance already holds the
+ * single-instance lock, such launches hand their payload to the lock holder
+ * (via Electron's second-instance event) and must quit instead of booting a
+ * second full app.
+ */
+export function argvContainsIntakePayload(argv, workingDirectory) {
+  const args = Array.isArray(argv) ? argv.slice(1) : [];
+  for (const arg of args) {
+    if (looksLikeDeepLink(arg)) {
+      return true;
+    }
+    if (typeof arg !== "string" || arg.length === 0 || arg.startsWith("-")) {
+      continue;
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) {
+      continue;
+    }
+    const candidate = isAbsolute(arg)
+      ? arg
+      : workingDirectory
+        ? resolve(workingDirectory, arg)
+        : null;
+    if (!candidate) {
+      continue;
+    }
+    try {
+      if (statSync(candidate).isFile()) {
+        return true;
+      }
+    } catch {
+      /* not a file */
+    }
+  }
+  return false;
 }
 
 /**
