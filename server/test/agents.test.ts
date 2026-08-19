@@ -778,32 +778,31 @@ test("sendQueuedPromptNow interrupts the current turn and starts that item", asy
   assert.equal(firstQueued?.text, "queued first");
   assert.equal(forceQueued?.text, "queued force send");
 
-  const snapshot = await testRuntimeManager.sendQueuedPromptNow(
+  const sent = await testRuntimeManager.sendQueuedPromptNow(
     workspace,
     conversation.id,
     forceQueued.id
   );
 
-  assert.ok(
-    snapshot.events.some(
-      (event) => event.kind === "status" && event.status === "cancelled"
-    ),
-    "expected the interrupted turn to emit a cancelled status"
-  );
-  assert.ok(
-    snapshot.events.some(
-      (event) => event.kind === "user_message" && event.content === "queued force send"
-    ),
-    "expected the force-sent queued prompt to start immediately"
-  );
   assert.equal(
-    snapshot.conversation.queuedPrompts.length,
+    sent.conversation.queuedPrompts.length,
     1,
     "remaining queued prompts should stay queued"
   );
-  assert.equal(snapshot.conversation.queuedPrompts[0]?.id, firstQueued.id);
-  assert.equal(snapshot.conversation.queuedPrompts[0]?.text, "queued first");
-  assert.equal(snapshot.conversation.pendingPermission, null);
+  assert.equal(sent.conversation.queuedPrompts[0]?.id, firstQueued.id);
+  assert.equal(sent.conversation.queuedPrompts[0]?.text, "queued first");
+  assert.equal(sent.conversation.pendingPermission, null);
+
+  const snapshot = await waitFor(
+    "cancelled status and force-sent user message",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.events.some((event) => event.kind === "status" && event.status === "cancelled") &&
+      value.events.some(
+        (event) => event.kind === "user_message" && event.content === "queued force send"
+      )
+  );
+  assert.ok(snapshot, "expected a snapshot after force-send");
 
   const completed = await waitFor(
     "force-sent prompt to finish",
