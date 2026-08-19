@@ -2,7 +2,22 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("cesiumDesktop", {
   isElectron: true,
+  platform: process.platform,
   getBackendInfo: () => ipcRenderer.invoke("cesium:get-backend-info"),
+  notifications: {
+    isSupported: () => ipcRenderer.invoke("cesium:notifications-supported"),
+    notify: (payload) => ipcRenderer.invoke("cesium:notify", payload),
+    syncAgentRuns: (input) => ipcRenderer.invoke("cesium:sync-agent-runs", input),
+  },
+  nativeEvents: {
+    ready: () => ipcRenderer.invoke("cesium:intake-ready"),
+    onEvent: (listener) => {
+      if (typeof listener !== "function") return () => undefined;
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("cesium:native-event", wrapped);
+      return () => ipcRenderer.removeListener("cesium:native-event", wrapped);
+    },
+  },
   openExternal: (url) => ipcRenderer.invoke("cesium:open-external", url),
   openDocsWindow: () => ipcRenderer.invoke("cesium:open-docs-window"),
   setTaskbarGoalProgress: (input) =>

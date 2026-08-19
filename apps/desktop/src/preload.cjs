@@ -1,13 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const IS_MAC = process.platform === "darwin";
+
 function injectDesktopChrome() {
-  if (document.getElementById("cesium-electron-window-controls")) return;
+  if (document.getElementById("cesium-electron-chrome-style")) return;
 
   document.documentElement.dataset.cesiumDesktop = "true";
+  document.documentElement.dataset.cesiumDesktopPlatform = process.platform;
 
-  const style = document.createElement("style");
-  style.id = "cesium-electron-chrome-style";
-  style.textContent = `
+  const baseStyle = document.createElement("style");
+  baseStyle.id = "cesium-electron-chrome-style";
+  baseStyle.textContent = `
     html[data-cesium-desktop="true"] [data-electron-drag-host] {
       -webkit-app-region: drag;
       cursor: default;
@@ -32,7 +35,30 @@ function injectDesktopChrome() {
     html[data-cesium-desktop="true"] [data-electron-no-drag] {
       -webkit-app-region: no-drag;
     }
+  `;
+  document.head.appendChild(baseStyle);
 
+  // macOS uses the native traffic lights (hidden-inset title bar); the web
+  // layer applies its own leading inset. The injected top-right controls and
+  // their layout offsets are Windows/Linux frameless chrome only.
+  if (IS_MAC) {
+    const macStyle = document.createElement("style");
+    macStyle.id = "cesium-electron-mac-chrome-style";
+    // The default 72px inset (sized for iPadOS window controls) leaves only
+    // ~8px between the green traffic light and the first rail icon; widen it
+    // so the lights read as their own group.
+    macStyle.textContent = `
+      html[data-cesium-desktop-platform="darwin"] {
+        --editor-window-chrome-tab-inset: 92px;
+      }
+    `;
+    document.head.appendChild(macStyle);
+    return;
+  }
+
+  const style = document.createElement("style");
+  style.id = "cesium-electron-window-controls-style";
+  style.textContent = `
     html[data-cesium-desktop="true"] #cesium-electron-window-controls {
       -webkit-app-region: no-drag;
       position: fixed;
@@ -176,7 +202,22 @@ scheduleDesktopChromeInjection();
 
 contextBridge.exposeInMainWorld("cesiumDesktop", {
   isElectron: true,
+  platform: process.platform,
   getBackendInfo: () => ipcRenderer.invoke("cesium:get-backend-info"),
+  notifications: {
+    isSupported: () => ipcRenderer.invoke("cesium:notifications-supported"),
+    notify: (payload) => ipcRenderer.invoke("cesium:notify", payload),
+    syncAgentRuns: (input) => ipcRenderer.invoke("cesium:sync-agent-runs", input),
+  },
+  nativeEvents: {
+    ready: () => ipcRenderer.invoke("cesium:intake-ready"),
+    onEvent: (listener) => {
+      if (typeof listener !== "function") return () => undefined;
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("cesium:native-event", wrapped);
+      return () => ipcRenderer.removeListener("cesium:native-event", wrapped);
+    },
+  },
   openExternal: (url) => ipcRenderer.invoke("cesium:open-external", url),
   openDocsWindow: () => ipcRenderer.invoke("cesium:open-docs-window"),
   setTaskbarGoalProgress: (input) =>

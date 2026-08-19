@@ -323,8 +323,13 @@ clearPendingConfigForConversation,
 } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  // iPad-only trailing margin: the Electron shell has no top-right window
+  // controls needing clearance on macOS (native traffic lights sit top-left),
+  // and Windows/Linux clearance comes from the preload chrome CSS instead.
   const padTabsForWindowChrome =
-    experimentalIpadWindowedTabInset && chatTrailingWindowControlsVisible;
+    experimentalIpadWindowedTabInset &&
+    chatTrailingWindowControlsVisible &&
+    !isDesktopApp;
   const electronChatTrailingChrome =
     isDesktopApp && chatTrailingWindowControlsVisible;
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);

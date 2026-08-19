@@ -5,9 +5,25 @@ const { spawnSync } = require("node:child_process");
 const repoRoot = path.resolve(__dirname, "..");
 const serverPackagePath = path.join(repoRoot, "server", "package.json");
 const stagingRoot = path.join(repoRoot, "apps", "desktop", ".server-runtime");
-const localWorkspacePackages = {
-  "@cesium/core": path.join(repoRoot, "packages", "core"),
-};
+
+/**
+ * Workspace packages the server depends on via `file:` links. These must be
+ * staged into the packaged runtime by hand: npm cannot install them from a
+ * registry, and the packaged app cannot rely on the repo checkout's
+ * node_modules being an ancestor of the install location (that accident made
+ * missing packages invisible when testing builds from inside the repo).
+ * The recursive `cesium` root link is excluded on purpose.
+ */
+function resolveLocalWorkspacePackages(serverPackage) {
+  const packages = {};
+  for (const [name, version] of Object.entries(serverPackage.dependencies ?? {})) {
+    if (name === "cesium" || typeof version !== "string" || !version.startsWith("file:")) {
+      continue;
+    }
+    packages[name] = path.resolve(path.join(repoRoot, "server"), version.slice("file:".length));
+  }
+  return packages;
+}
 
 async function copyLocalWorkspacePackage(packageName, sourceRoot) {
   const packageJsonPath = path.join(sourceRoot, "package.json");
@@ -40,11 +56,27 @@ async function copyLocalWorkspacePackage(packageName, sourceRoot) {
 
 async function main() {
   const serverPackage = JSON.parse(await fs.readFile(serverPackagePath, "utf8"));
+  const localWorkspacePackages = resolveLocalWorkspacePackages(serverPackage);
   const dependencies = Object.fromEntries(
     Object.entries(serverPackage.dependencies ?? {}).filter(
       ([, version]) => typeof version === "string" && !version.startsWith("file:")
     )
   );
+
+  // Local workspace packages may have external runtime deps of their own
+  // (e.g. @cesium/contracts -> zod). Install them explicitly instead of
+  // hoping some transitive dependency happens to provide them.
+  for (const sourceRoot of Object.values(localWorkspacePackages)) {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(sourceRoot, "package.json"), "utf8")
+    );
+    for (const [name, version] of Object.entries(packageJson.dependencies ?? {})) {
+      if (name.startsWith("@cesium/") || typeof version !== "string" || version.startsWith("file:")) {
+        continue;
+      }
+      dependencies[name] ??= version;
+    }
+  }
 
   await fs.rm(stagingRoot, { recursive: true, force: true });
   await fs.mkdir(stagingRoot, { recursive: true });
@@ -77,7 +109,15 @@ async function main() {
     }
   }
 
-  await fs.copyFile(process.execPath, path.join(stagingRoot, "node.exe"));
+  // Windows keeps the historic `node.exe` name; POSIX (macOS/Linux) stages a
+  // plain executable `node`. `electron-builder.config.cjs` picks the matching
+  // resource per platform.
+  const nodeBinName = process.platform === "win32" ? "node.exe" : "node";
+  const stagedNode = path.join(stagingRoot, nodeBinName);
+  await fs.copyFile(process.execPath, stagedNode);
+  if (process.platform !== "win32") {
+    await fs.chmod(stagedNode, 0o755);
+  }
   console.log("Bundled Node.js runtime for desktop backend startup.");
 }
 

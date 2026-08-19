@@ -28,6 +28,7 @@ import {
   isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@/lib/mobile-agent-projection";
+import { publishAgentProjectionFeed } from "@/lib/agent-projection-feed";
 import { toWatchAgentProjection, toWatchSyncEnvelope } from "@/lib/watch-agent-contract";
 
 // Cheap pre-filter before deriving a full projection per conversation.
@@ -202,6 +203,12 @@ export function MobileBridgeSync() {
       }
     };
   }, [conversationsById, conversationEventsStore]);
+
+  // Mirror the projection set to non-RN shells (Electron desktop) without
+  // re-deriving it there. No-op consumers simply never subscribe.
+  useEffect(() => {
+    publishAgentProjectionFeed({ projections: activeProjections, bootstrapped });
+  }, [activeProjections, bootstrapped]);
 
   const activeConversationIds = useMemo(
     () =>

@@ -745,6 +745,51 @@ const MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
 ];
 
+/** Rows rendered only inside the Electron desktop shell (DesktopNativeSettings). */
+const DESKTOP_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  section(
+    "general",
+    "desktop-notifications-tray",
+    "Desktop notifications & tray",
+    "electron native notifications tray dock"
+  ),
+  row(
+    "general",
+    "desktop-notification-test",
+    "System notifications",
+    "Send a test native notification and learn how agent runs surface in the tray menu and dock/taskbar badge.",
+    ["notification", "test", "tray", "dock", "badge", "native", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-completion-alerts",
+    "Agent finished notifications",
+    "Choose whether agents that finish, fail, or are cancelled post a native notification: always, only while Cesium is in the background, or never.",
+    ["completion", "finished", "done", "alert", "notification", "background", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-intervention-alerts",
+    "Needs-input alerts",
+    "Choose when an agent asking a question or requesting permission posts a native notification: always, only in the background, or silent.",
+    ["permission", "question", "input", "alert", "notification", "silent", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-eta-mode",
+    "Time estimates",
+    "Show a time-remaining hint in tray entries for goal runs, all runs, or never.",
+    ["eta", "time", "estimate", "remaining", "tray", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-multi-agent-style",
+    "Multiple agents",
+    "Keep a tray entry per running agent or fold concurrent agents into one combined entry.",
+    ["multiple", "agents", "combined", "separate", "tray", "desktop"]
+  ),
+];
+
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Actions ——
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
@@ -886,14 +931,20 @@ function buildModelSearchEntries(
 
 export function buildSettingsSearchIndex(
   modelsByBackend: Record<string, ModelToggleState[]>,
-  options?: { includeIpadBeta?: boolean; includeMobileNative?: boolean }
+  options?: {
+    includeIpadBeta?: boolean;
+    includeMobileNative?: boolean;
+    includeDesktopNative?: boolean;
+  }
 ): SettingsSearchEntry[] {
   const includeIpadBeta = options?.includeIpadBeta !== false;
   const includeMobileNative = options?.includeMobileNative === true;
+  const includeDesktopNative = options?.includeDesktopNative === true;
   return [
     ...STATIC_SETTINGS_SEARCH_ENTRIES,
     ...(includeIpadBeta ? IPAD_BETA_SETTINGS_SEARCH_ENTRIES : []),
     ...(includeMobileNative ? MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
+    ...(includeDesktopNative ? DESKTOP_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
     ...STATIC_SETTINGS_SEARCH_ENTRIES_TAIL,
     ...SHORTCUT_SEARCH_ENTRIES,
     ...buildModelSearchEntries(modelsByBackend),
