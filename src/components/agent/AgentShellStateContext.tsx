@@ -58,7 +58,10 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
-import { resolveAgentRightPaneOpen } from "@/lib/agent-right-pane";
+import {
+  resolveAgentRightPaneOpen,
+  shouldRestorePersistedRightPaneOpen,
+} from "@/lib/agent-right-pane";
 import {
   resolveLeftRailCollapsed,
   shouldRestorePersistedLeftRailCollapsed,
@@ -608,6 +611,7 @@ export function AgentShellStateProvider({
   const previousEditorTabCountRef = useRef(0);
   const editorTabCountHydratedRef = useRef(false);
   const editorTabScopeRef = useRef<string | null>(null);
+  const rightPaneScopeRef = useRef<string | null>(null);
   const sharedLeftRailCollapsedRef = useRef(sharedLeftRailCollapsed);
   const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
   const railInitialLoadCompletedRef = useRef(false);
@@ -1562,6 +1566,18 @@ export function AgentShellStateProvider({
   const toggleRightPaneOpen = useCallback(() => {
     setRightPaneOpen(!rightPaneOpen);
   }, [rightPaneOpen, setRightPaneOpen]);
+
+  useLayoutEffect(() => {
+    if (shouldRestorePersistedRightPaneOpen()) {
+      return;
+    }
+    const scopeKey = `${activeWorkspaceId ?? "workspace"}:${sidePaneScopeId}`;
+    if (rightPaneScopeRef.current === scopeKey) {
+      return;
+    }
+    rightPaneScopeRef.current = scopeKey;
+    setRightPaneOpen(false);
+  }, [activeWorkspaceId, setRightPaneOpen, sidePaneScopeId]);
 
   const updateSidePaneEditorSession = useCallback(
     (updater: (current: EditorSessionState) => EditorSessionState) => {

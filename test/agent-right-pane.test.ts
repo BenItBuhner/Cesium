@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveAgentRightPaneOpen } from "../src/lib/agent-right-pane";
+import {
+  resolveAgentRightPaneOpen,
+  shouldRestorePersistedRightPaneOpen,
+} from "../src/lib/agent-right-pane";
 
 test("draft selection stays collapsed until explicitly opened", () => {
   assert.equal(
@@ -19,6 +22,10 @@ test("draft selection stays collapsed until explicitly opened", () => {
     }),
     true
   );
+});
+
+test("conversation switches do not restore a previously open workbench pane", () => {
+  assert.equal(shouldRestorePersistedRightPaneOpen(), false);
 });
 
 test("conversation selection follows its persisted pane state", () => {
