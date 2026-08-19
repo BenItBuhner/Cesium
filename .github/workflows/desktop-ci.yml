@@ -130,7 +130,10 @@ jobs:
 
       - name: Package the Linux app (AppImage + deb, x64)
         # xvfb wraps the whole step because the desktop `check` script runs
-        # `electron --version`, which needs an X display on Linux.
+        # `electron --version`, which needs an X display on Linux; the SUID
+        # chrome-sandbox is not setuid-root on runners, so disable it.
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
         run: xvfb-run --auto-servernum npm --prefix apps/desktop run package:linux
 
       - name: List packaged output
