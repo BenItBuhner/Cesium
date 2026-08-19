@@ -32,14 +32,24 @@ import {
   rowButtonClass,
 } from "./settings-ui";
 
+function protocolLabel(status: McpServerPublic["connectionStatus"]): string | null {
+  if (!status?.protocol?.selected || !status.protocol.selectedVersion) {
+    return null;
+  }
+  return status.protocol.selected === "stateless"
+    ? `stateless ${status.protocol.selectedVersion}`
+    : `session ${status.protocol.selectedVersion}`;
+}
+
 function statusLabel(server: McpServerPublic): string {
   const status = server.connectionStatus;
   if (!status) return "Unknown";
   if (status.needsAuth) return "Needs authentication";
+  const protocol = protocolLabel(status);
   if (status.connected) {
-    return status.toolCount != null
-      ? `Connected · ${status.toolCount} tools`
-      : "Connected";
+    const tools =
+      status.toolCount != null ? `${status.toolCount} tools` : "Connected";
+    return protocol ? `Connected · ${tools} · ${protocol}` : `Connected · ${tools}`;
   }
   if (status.error) return status.error;
   return "Disconnected";
