@@ -25,6 +25,10 @@ import {
   type QuickOpenScopeId,
   type QuickSwitcherScopeId,
 } from "./quick-open-scopes";
+import {
+  normalizeComposerStatusBarVisibility,
+  type ComposerStatusBarVisibility,
+} from "./composer-status-bar";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 export type AgentRailGroupByMode = "workspace" | "priority";
@@ -170,6 +174,12 @@ export type GeneralSettingsState = {
   agentRail: AgentRailSettingsState;
   /** Order + visibility of the widgets on the new-chat landing. */
   newChatWidgets: NewChatWidgetsState;
+  /**
+   * Defaults for the repo / branch / goal / context row beneath the composer.
+   * Omitted on legacy profiles so their workspace's last-used value migrates
+   * naturally until the user changes a toggle or saves an explicit default.
+   */
+  composerStatusBarVisibility?: ComposerStatusBarVisibility;
 };
 
 export type AgentRailSettingsState = {
@@ -837,6 +847,13 @@ export function normalizeLoadedGlobalSettings(
       newChatWidgets: normalizeNewChatWidgetsState(
         (r.general as Record<string, unknown> | undefined)?.newChatWidgets
       ),
+      composerStatusBarVisibility:
+        (r.general as Record<string, unknown> | undefined)
+          ?.composerStatusBarVisibility === undefined
+          ? undefined
+          : normalizeComposerStatusBarVisibility(
+              (r.general as Record<string, unknown>).composerStatusBarVisibility
+            ),
     },
     agents: {
       ...base.agents,

@@ -201,6 +201,40 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Add, edit, or remove the actions shown on the new chat landing.",
     ["new chat", "landing", "actions"]
   ),
+  section(
+    "general",
+    "composer-status-bar",
+    "Composer status bar",
+    "footer repo branch goal context defaults"
+  ),
+  row(
+    "general",
+    "composer-status-repo",
+    "Repository",
+    "Show the workspace or repository name beneath the composer in new chats.",
+    ["status bar", "footer", "repo", "workspace", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-branch",
+    "Git branch",
+    "Show the current Git branch beneath the composer in new chats.",
+    ["status bar", "footer", "branch", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-goal",
+    "Goal progress",
+    "Show tracked goal progress and runtime beneath the composer in new chats.",
+    ["status bar", "footer", "goal", "runtime", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-context",
+    "Context usage",
+    "Show the model context usage indicator beneath the composer in new chats.",
+    ["status bar", "footer", "context", "tokens", "default"]
+  ),
   section("general", "quick-open", "Quick Open & switcher", "palette search"),
   row(
     "general",
