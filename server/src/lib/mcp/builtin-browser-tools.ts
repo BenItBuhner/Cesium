@@ -546,7 +546,7 @@ async function callBuiltInBrowserToolText(input: {
         workspaceId: input.workspaceId,
         url,
         title: asString(args.title),
-        group: args.group === "left" ? "left" : "right",
+        group: args.group === "right" ? "right" : "left",
         engine:
           args.engine === "server-chromium"
             ? "server-chromium"

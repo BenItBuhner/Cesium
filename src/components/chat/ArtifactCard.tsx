@@ -114,7 +114,7 @@ export function ArtifactCard({ artifactId }: { artifactId: string }) {
 
   const openInEditor = useCallback(() => {
     if (!viewUrl) return;
-    openBrowserUrl({ url: viewUrl, title: meta?.title ?? "Artifact", group: "right" });
+    openBrowserUrl({ url: viewUrl, title: meta?.title ?? "Artifact" });
   }, [meta?.title, openBrowserUrl, viewUrl]);
 
   const openInWindow = useCallback(() => {

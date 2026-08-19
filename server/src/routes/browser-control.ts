@@ -27,7 +27,7 @@ import type {
 export const browserControlRoutes = new Hono();
 
 function asGroup(value: unknown): BrowserControlGroup {
-  return value === "left" ? "left" : "right";
+  return value === "right" ? "right" : "left";
 }
 
 browserControlRoutes.get("/api/browser-control/tabs", async (c) => {
