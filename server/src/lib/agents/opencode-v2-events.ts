@@ -139,7 +139,9 @@ export function startOpenCodeV2SessionLog(input: {
         query.set("after", String(lastSeq));
       }
       const paths = input.client.sessionLogPath(input.sessionId, query);
-      const orderedPaths = preferExperimentalLog ? [...paths].reverse() : paths;
+      // Annotated to break a circular inference chain through
+      // `preferExperimentalLog` (assigned from `path` inside the loop below).
+      const orderedPaths: string[] = preferExperimentalLog ? [...paths].reverse() : paths;
       try {
         let lastError: Error | null = null;
         for (const [index, path] of orderedPaths.entries()) {

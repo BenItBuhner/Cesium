@@ -189,7 +189,7 @@ settingsRoutes.post("/api/settings/remembered-permissions/clear", async (c) => {
     typeof body.backendId === "string" && body.backendId.trim()
       ? body.backendId.trim()
       : undefined;
-  if (backendId && !ACTIVE_AGENT_BACKEND_IDS.includes(backendId as AgentBackendId)) {
+  if (backendId && !(ACTIVE_AGENT_BACKEND_IDS as readonly string[]).includes(backendId)) {
     return c.json({ error: `Unknown backendId: ${backendId}` }, 400);
   }
   const rememberedPermissions = await clearRememberedAgentPermissionRules(
