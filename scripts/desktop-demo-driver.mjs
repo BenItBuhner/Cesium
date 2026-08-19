@@ -19,6 +19,17 @@ const port = process.env.CESIUM_DEMO_CDP_PORT || "9222";
 const shareCmd = process.env.CESIUM_DEMO_SHARE_CMD || "";
 const deeplinkCmd = process.env.CESIUM_DEMO_DEEPLINK_CMD || "";
 
+// Hard watchdog: a dead CDP socket or a stuck OS dialog must fail the demo,
+// never hang the CI job until its own timeout.
+const WATCHDOG_MS = 8 * 60_000;
+const watchdog = setTimeout(() => {
+  console.error("[desktop-demo] FAILED: watchdog expired after 8 minutes");
+  process.exit(1);
+}, WATCHDOG_MS);
+// unref'd: never keeps a finished demo alive, still fires while the CDP
+// socket (or anything else) keeps the process running.
+watchdog.unref?.();
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function log(message) {
@@ -75,7 +86,21 @@ async function connect(page) {
 function send(method, params = {}) {
   const id = ++nextId;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (pending.delete(id)) {
+        reject(new Error(`CDP ${method} timed out after 30s`));
+      }
+    }, 30_000);
+    pending.set(id, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
     ws.send(JSON.stringify({ id, method, params }));
   });
 }
