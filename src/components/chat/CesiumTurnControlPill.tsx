@@ -4,6 +4,7 @@ import { ArrowUp, LoaderCircle, Pause, Play, Square } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactElement,
@@ -14,7 +15,10 @@ import {
   isAgentCesiumPauseDraining,
   isAgentConversationPaused,
 } from "@/lib/agent-chat";
-import { CESIUM_TURN_PILL_TRANSITION_MS } from "@/components/chat/cesium-turn-control-motion";
+import {
+  CESIUM_TURN_PILL_TRANSITION_MS,
+  prefersCesiumTurnPillReducedMotion,
+} from "@/components/chat/cesium-turn-control-motion";
 
 type CesiumTurnControlPillProps = {
   expanded: boolean;
@@ -74,12 +78,16 @@ export function CesiumTurnControlPill({
   const [resumePending, setResumePending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
   const inFlightRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const lastWidthRef = useRef<number | null>(null);
 
   const draining = conversationStatus ? isAgentCesiumPauseDraining(conversationStatus) : false;
   const paused = conversationStatus ? isAgentConversationPaused(conversationStatus) : false;
   const showPauseLoader = draining || pausePending;
-  const showSendIcon = !expanded && !sendDisabled;
-  const turnControlsLive = expanded && interactive;
+  /** Collapse immediately on Stop so we don't sit expanded until cancel lands. */
+  const visuallyExpanded = expanded && !stopPending;
+  const showSendIcon = !visuallyExpanded && !sendDisabled && !stopPending;
+  const turnControlsLive = visuallyExpanded && interactive;
 
   useEffect(() => {
     if (!draining) {
@@ -89,6 +97,44 @@ export function CesiumTurnControlPill({
       setResumePending(false);
     }
   }, [draining, paused]);
+
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) {
+      return;
+    }
+    const sendSize =
+      Number.parseFloat(
+        getComputedStyle(el).getPropertyValue("--d2-composer-send-size")
+      ) || 24;
+    const to = visuallyExpanded ? sendSize * 2 : sendSize;
+    const from = lastWidthRef.current ?? sendSize;
+    el.style.minWidth = "0px";
+    el.style.width = `${to}px`;
+    if (prefersCesiumTurnPillReducedMotion() || Math.abs(from - to) < 0.5) {
+      lastWidthRef.current = to;
+      return;
+    }
+    const animation = el.animate(
+      [{ width: `${from}px` }, { width: `${to}px` }],
+      {
+        duration: CESIUM_TURN_PILL_TRANSITION_MS,
+        easing: "cubic-bezier(0.24, 0.9, 0.3, 1)",
+      }
+    );
+    void animation.finished.then(
+      () => {
+        lastWidthRef.current = to;
+      },
+      () => {
+        /* cancelled — cleanup records the in-flight width */
+      }
+    );
+    return () => {
+      lastWidthRef.current = el.getBoundingClientRect().width;
+      animation.cancel();
+    };
+  }, [visuallyExpanded]);
 
   const runGuarded = useCallback(
     async (action: "pause" | "resume" | "stop", fn?: () => Promise<void> | void) => {
@@ -131,15 +177,15 @@ export function CesiumTurnControlPill({
 
   return (
     <div
-      className={`flex h-[var(--d2-composer-send-size)] shrink-0 items-center gap-0 overflow-hidden rounded-full transition-[width,opacity] ease-out motion-reduce:transition-none ${toneClass} ${
-        expanded
+      ref={rootRef}
+      className={`flex h-[var(--d2-composer-send-size)] min-w-0 shrink-0 items-center gap-0 overflow-hidden rounded-full ${toneClass} ${
+        visuallyExpanded
           ? "w-[calc(var(--d2-composer-send-size)*2)]"
           : "w-[var(--d2-composer-send-size)]"
       }`}
-      style={{ transitionDuration: `${CESIUM_TURN_PILL_TRANSITION_MS}ms` }}
       aria-label="Cesium agent controls"
       data-cesium-turn-pill=""
-      data-expanded={expanded ? "true" : "false"}
+      data-expanded={visuallyExpanded ? "true" : "false"}
     >
       <button
         type="button"
@@ -167,20 +213,20 @@ export function CesiumTurnControlPill({
         <IconLayer visible={showSendIcon}>
           <ArrowUp className="size-[14px] text-[var(--bg-main)]" strokeWidth={2.5} />
         </IconLayer>
-        <IconLayer visible={!showSendIcon && showPauseLoader}>
+        <IconLayer visible={!showSendIcon && (showPauseLoader || stopPending)}>
           <LoaderCircle
             className="size-[10px] shrink-0 animate-spin text-[var(--bg-main)]"
             strokeWidth={2.5}
           />
         </IconLayer>
-        <IconLayer visible={!showSendIcon && !showPauseLoader && paused}>
+        <IconLayer visible={!showSendIcon && !showPauseLoader && !stopPending && paused}>
           <Play
             className="size-[10px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
           />
         </IconLayer>
-        <IconLayer visible={!showSendIcon && !showPauseLoader && !paused}>
+        <IconLayer visible={!showSendIcon && !showPauseLoader && !stopPending && !paused}>
           <Pause
             className="size-[10px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
@@ -197,10 +243,10 @@ export function CesiumTurnControlPill({
           void runGuarded("stop", onStop);
         }}
         disabled={!turnControlsLive || stopPending}
-        tabIndex={expanded ? 0 : -1}
+        tabIndex={visuallyExpanded ? 0 : -1}
         className={`${SQUARE_BUTTON_CLASS} disabled:opacity-100`}
-        style={iconLayerStyle(expanded)}
-        aria-hidden={!expanded}
+        style={iconLayerStyle(visuallyExpanded)}
+        aria-hidden={!visuallyExpanded}
         aria-label="Stop Cesium agent"
         title="Stop Cesium agent"
       >
