@@ -82,11 +82,10 @@ export async function syncWorkspaceAntigravityMcpConfig(input: {
   written: boolean;
 }> {
   const enabled = await listEnabledMcpServers(input.workspaceId);
-  const pluginServers = enabled.filter((server) => Boolean(server.pluginId));
   const exported = await exportEnabledMcpServersForSdk({
     workspaceId: input.workspaceId,
     workspaceRoot: input.workspaceRoot,
-    configs: pluginServers,
+    configs: enabled,
   });
 
   const configFile = mcpConfigPath(input.workspaceRoot);

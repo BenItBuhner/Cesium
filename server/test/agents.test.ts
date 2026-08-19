@@ -744,6 +744,95 @@ test("prompt after cancellation starts a fresh runtime turn", async () => {
   assert.equal(completed.conversation.pendingPermission, null);
 });
 
+test("sendQueuedPromptNow interrupts the current turn and starts that item", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "permission then send now"
+  );
+
+  await waitFor(
+    "permission before force-send",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => value.conversation.pendingPermission !== null
+  );
+
+  await testRuntimeManager.promptConversation(workspace, conversation.id, "queued first");
+  await testRuntimeManager.promptConversation(workspace, conversation.id, "queued force send");
+
+  const queued = await waitFor(
+    "two follow-ups queued",
+    () => readConversationRecord(workspace.id, conversation.id),
+    (record) => (record?.queuedPrompts.length ?? 0) === 2
+  );
+  const firstQueued = queued.queuedPrompts[0];
+  const forceQueued = queued.queuedPrompts[1];
+  assert.equal(firstQueued?.text, "queued first");
+  assert.equal(forceQueued?.text, "queued force send");
+
+  const sent = await testRuntimeManager.sendQueuedPromptNow(
+    workspace,
+    conversation.id,
+    forceQueued.id
+  );
+
+  assert.equal(
+    sent.conversation.queuedPrompts.length,
+    1,
+    "remaining queued prompts should stay queued"
+  );
+  assert.equal(sent.conversation.queuedPrompts[0]?.id, firstQueued.id);
+  assert.equal(sent.conversation.queuedPrompts[0]?.text, "queued first");
+  assert.equal(sent.conversation.pendingPermission, null);
+
+  const snapshot = await waitFor(
+    "cancelled status and force-sent user message",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.events.some((event) => event.kind === "status" && event.status === "cancelled") &&
+      value.events.some(
+        (event) => event.kind === "user_message" && event.content === "queued force send"
+      )
+  );
+  assert.ok(snapshot, "expected a snapshot after force-send");
+
+  const completed = await waitFor(
+    "force-sent prompt to finish",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.text.includes("Handling: queued force send")
+      )
+  );
+  assert.equal(completed.conversation.queuedPrompts[0]?.text, "queued first");
+});
+
+test("sendQueuedPromptNow rejects an unknown queue item", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await assert.rejects(
+    () => testRuntimeManager.sendQueuedPromptNow(workspace, conversation.id, "missing-item"),
+    /Unknown queued prompt/
+  );
+});
+
 test("multiple conversations keep isolated event streams", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const first = await testRuntimeManager.createConversation(workspace, {

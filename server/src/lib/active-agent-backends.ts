@@ -4,6 +4,7 @@ import type { AgentBackendId } from "./agents/types.js";
 export const ACTIVE_AGENT_BACKEND_IDS = [
   "cesium-agent",
   "cursor-sdk",
+  "cursor-acp",
   "codex-app-server",
   "opencode-server",
   "devin-acp",
@@ -15,7 +16,6 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
 
 /** Retired ACP/adapter harness ids kept only for migration of stored settings. */
 export const LEGACY_AGENT_BACKEND_IDS = [
-  "cursor-acp",
   "claude-adapter",
   "opencode-acp",
   "opencode-v2-beta",
@@ -47,4 +47,39 @@ export function pruneModelToggleByBackend<T extends { backendId?: string }>(
     }
   }
   return pruned;
+}
+
+/** Missing keys default to enabled so existing installs keep every harness. */
+export function isHarnessEnabled(
+  enabledHarnesses: Partial<Record<string, boolean>> | undefined,
+  backendId: string
+): boolean {
+  if (!enabledHarnesses || !(backendId in enabledHarnesses)) {
+    return true;
+  }
+  return enabledHarnesses[backendId] !== false;
+}
+
+export function normalizeEnabledHarnesses(raw: unknown): Partial<Record<string, boolean>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Partial<Record<string, boolean>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    if (!id || typeof value !== "boolean") {
+      continue;
+    }
+    out[id] = value;
+  }
+  return out;
+}
+
+export function composerVisibleBackends<T extends { id: string; enabled?: boolean }>(
+  backends: T[],
+  currentBackendId?: string | null
+): T[] {
+  return backends.filter(
+    (backend) => backend.enabled !== false || backend.id === currentBackendId
+  );
 }

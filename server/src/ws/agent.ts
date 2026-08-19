@@ -25,7 +25,22 @@ type AgentSocketState = {
   subscribeChain: Promise<void>;
 };
 
-const agentWebSocketServer = new WebSocketServer({ noServer: true });
+// Node/desktop fallback path (Bun.serve configures its own compression).
+// Agent frames are repetitive JSON that deflates 5-10x; the threshold keeps
+// tiny control frames uncompressed and no-context-takeover keeps per-socket
+// memory flat with thousands of connected clients.
+const agentWebSocketServer = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate:
+    process.env.NODE_WS_PERMESSAGE_DEFLATE === "0"
+      ? false
+      : {
+          threshold: 1_024,
+          serverNoContextTakeover: true,
+          clientNoContextTakeover: true,
+          zlibDeflateOptions: { level: 3 },
+        },
+});
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
 const MAX_EVENT_BATCH_EVENTS = 100;
 const MAX_SOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -60,17 +75,23 @@ function pushLiveAgentEventForBatch(
       if (!clients) {
         return;
       }
-      for (const client of clients) {
-        if (!client.subscribedConversationIds.has(conversationId)) {
-          continue;
-        }
-        for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
-          send(client.socket, {
+      const serializedChunks: string[] = [];
+      for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
+        serializedChunks.push(
+          JSON.stringify({
             type: "event_batch",
             workspaceId,
             conversationId,
             events: batch.slice(i, i + MAX_EVENT_BATCH_EVENTS),
-          });
+          } satisfies AgentSocketServerMessage)
+        );
+      }
+      for (const client of clients) {
+        if (!client.subscribedConversationIds.has(conversationId)) {
+          continue;
+        }
+        for (const chunk of serializedChunks) {
+          sendSerialized(client.socket, chunk, { droppable: true });
         }
       }
     });
@@ -91,13 +112,18 @@ function pushConversationUpsertForBatch(
   setTimeout(() => {
     const batch = conversationUpsertPending.get(workspaceId);
     conversationUpsertPending.delete(workspaceId);
-    const clients = workspaceClients.get(workspaceId);
-    if (!batch || !clients) {
+    if (!batch || workspaceClients.size === 0) {
       return;
     }
-    for (const client of clients) {
-      for (const queued of batch.values()) {
-        send(client.socket, queued);
+    const serialized = [...batch.values()].map((queued) => JSON.stringify(queued));
+    // Record pushes go to EVERY client, not just the conversation's own
+    // workspace: the conversation rail is cross-workspace, and pushing spares
+    // it from polling full conversation lists to keep other workspaces live.
+    for (const clients of workspaceClients.values()) {
+      for (const client of clients) {
+        for (const frame of serialized) {
+          sendSerialized(client.socket, frame, { droppable: true });
+        }
       }
     }
   }, 100);
@@ -113,6 +139,27 @@ function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
     }
   }
   socket.send(JSON.stringify(message));
+}
+
+/**
+ * Broadcast path: the frame is serialized ONCE and the same string goes to
+ * every client. With N clients and hundreds of running agents, per-client
+ * JSON.stringify of identical frames was pure CPU burn on the event loop.
+ * Droppable frames (stream batches, coalesced record pushes) are skipped for
+ * backpressured sockets; the client heals via its subscribe cursor.
+ */
+function sendSerialized(
+  socket: RuntimeSocket,
+  serialized: string,
+  options: { droppable: boolean }
+): void {
+  if (!socket.isOpen) {
+    return;
+  }
+  if (options.droppable && (socket.bufferedAmount ?? 0) > MAX_SOCKET_BUFFERED_BYTES) {
+    return;
+  }
+  socket.send(serialized);
 }
 
 function addClient(state: AgentSocketState): void {
@@ -154,12 +201,14 @@ subscribeAgentStoreEvents((event) => {
     //                                the conversation rail / sidebar can
     //                                refresh without the old `visibilitychange`
     //                                refetch dance.
+    let serializedConversation: string | null = null;
     for (const client of clients) {
       if (client.subscribedConversationIds.has(event.conversation.id)) {
-        send(client.socket, {
+        serializedConversation ??= JSON.stringify({
           type: "conversation",
           conversation: event.conversation,
-        });
+        } satisfies AgentSocketServerMessage);
+        sendSerialized(client.socket, serializedConversation, { droppable: false });
       }
     }
     pushConversationUpsertForBatch(event.conversation.workspaceId, {
@@ -178,19 +227,20 @@ subscribeAgentStoreEvents((event) => {
     if (pendingUpserts?.size === 0) {
       conversationUpsertPending.delete(event.workspaceId);
     }
-    const clients = workspaceClients.get(event.workspaceId);
-    if (!clients) {
-      return;
-    }
-    for (const client of clients) {
-      // Drop it from the in-memory subscription set eagerly; the client will
-      // receive its own notice to purge local state.
-      client.subscribedConversationIds.delete(event.conversationId);
-      send(client.socket, {
-        type: "conversation_deleted",
-        conversationId: event.conversationId,
-        workspaceId: event.workspaceId,
-      });
+    // Deletions broadcast to every client (rare, tiny frames) so the
+    // cross-workspace rail drops the row without waiting for a backstop poll.
+    const serialized = JSON.stringify({
+      type: "conversation_deleted",
+      conversationId: event.conversationId,
+      workspaceId: event.workspaceId,
+    } satisfies AgentSocketServerMessage);
+    for (const clients of workspaceClients.values()) {
+      for (const client of clients) {
+        // Drop it from the in-memory subscription set eagerly; the client will
+        // receive its own notice to purge local state.
+        client.subscribedConversationIds.delete(event.conversationId);
+        sendSerialized(client.socket, serialized, { droppable: false });
+      }
     }
   }
 });
@@ -295,6 +345,59 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
       }
       if (message.type === "ping") {
         send(ws, { type: "pong" });
+        return;
+      }
+      if (message.type === "request_events_since") {
+        const conversationId =
+          typeof message.conversationId === "string" ? message.conversationId.trim() : "";
+        const sinceSeq =
+          typeof message.sinceSeq === "number" && Number.isFinite(message.sinceSeq)
+            ? Math.max(0, Math.floor(message.sinceSeq))
+            : -1;
+        if (!conversationId || sinceSeq < 0) {
+          send(ws, {
+            type: "error",
+            message: "request_events_since requires conversationId and sinceSeq.",
+          });
+          return;
+        }
+        if (!state.subscribedConversationIds.has(conversationId)) {
+          send(ws, {
+            type: "error",
+            message: "Subscribe to the conversation before requesting a delta.",
+          });
+          return;
+        }
+        void (async () => {
+          try {
+            const replay = await readConversationEventsSince(
+              state.workspaceId,
+              conversationId,
+              sinceSeq
+            );
+            // Recovery deltas are never dropped for backpressure — the client
+            // asked precisely because earlier droppable frames were lost.
+            for (let i = 0; i < replay.length; i += MAX_EVENT_BATCH_EVENTS) {
+              send(ws, {
+                type: "event_batch",
+                workspaceId: state.workspaceId,
+                conversationId,
+                events: replay.slice(i, i + MAX_EVENT_BATCH_EVENTS),
+              });
+            }
+          } catch (error) {
+            console.error("[ws/agent] request_events_since failed:", error);
+            send(ws, {
+              type: "error",
+              message:
+                error instanceof Error
+                  ? `Delta fetch failed: ${error.message}`
+                  : "Delta fetch failed.",
+              conversationId,
+              op: "request_events_since",
+            });
+          }
+        })();
         return;
       }
       if (message.type === "request_history") {

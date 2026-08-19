@@ -45,19 +45,14 @@ import {
   type CloudAgentTaskStatus,
 } from "../lib/cloud-agents/types.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
+import { resolveOAuthPublicOrigin } from "../lib/oauth/public-origin.js";
 
 export const cloudAgentRoutes = new Hono();
 
 function publicOriginFromRequest(c: {
   req: { url: string; header: (name: string) => string | undefined };
 }): string {
-  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-  const forwardedHost = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-  const url = new URL(c.req.url);
-  return `${url.protocol}//${url.host}`;
+  return resolveOAuthPublicOrigin(c.req);
 }
 
 function isExecutionMode(value: unknown): value is CloudAgentExecutionMode {
@@ -184,18 +179,18 @@ cloudAgentRoutes.get("/api/cloud-agents/connections/:providerId/oauth/start", as
 /** Exempted from auth middleware: browser redirect target from the provider. */
 cloudAgentRoutes.get("/api/cloud-agents/oauth/callback", async (c) => {
   const error = c.req.query("error")?.trim();
+  const state = c.req.query("state")?.trim();
   if (error) {
-    return c.html(cloudAgentOAuthFailureHtml(error), 400);
+    return c.html(cloudAgentOAuthFailureHtml(error, state), 400);
   }
   const code = c.req.query("code")?.trim();
-  const state = c.req.query("state")?.trim();
   if (!code || !state) {
-    return c.html(cloudAgentOAuthFailureHtml("Missing authorization code or state."), 400);
+    return c.html(cloudAgentOAuthFailureHtml("Missing authorization code or state.", state), 400);
   }
   try {
     const result = await completeCloudAgentOAuthCallback({ code, state });
     return c.html(
-      cloudAgentOAuthSuccessHtml(CLOUD_AGENT_PROVIDER_LABELS[result.providerId])
+      cloudAgentOAuthSuccessHtml(CLOUD_AGENT_PROVIDER_LABELS[result.providerId], result.sessionId)
     );
   } catch (callbackError) {
     const message =

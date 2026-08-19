@@ -13,6 +13,8 @@ import { createDefaultGlobalSettings } from "../src/lib/global-settings.ts";
 import {
   createInitialEditorState,
   editorPanelReducer,
+  resolveBrowserEditorGroup,
+  resolveEditorSplitOrientation,
 } from "../src/components/editor/editor-panel-state.ts";
 
 describe("browser engine capabilities", () => {
@@ -32,6 +34,47 @@ describe("new browser beta flag", () => {
 });
 
 describe("browser tab engine metadata", () => {
+  test("defaults to the primary group without opening a split", () => {
+    assert.equal(resolveBrowserEditorGroup(undefined), "left");
+    assert.equal(resolveBrowserEditorGroup("left"), "left");
+    assert.equal(resolveBrowserEditorGroup("right"), "right");
+
+    let state = createInitialEditorState([]);
+    state = editorPanelReducer(state, {
+      type: "OPEN_BROWSER_TAB",
+      url: "https://example.com",
+    });
+    assert.equal(state.split, false);
+    assert.equal(state.leftTabs.length, 1);
+    assert.equal(state.rightTabs.length, 0);
+  });
+
+  test("still splits when a browser is explicitly opened on the right", () => {
+    let state = createInitialEditorState([]);
+    state = editorPanelReducer(state, {
+      type: "OPEN_BROWSER_TAB",
+      url: "https://example.com",
+      group: "right",
+    });
+    assert.equal(state.split, true);
+    assert.equal(state.rightTabs.length, 1);
+  });
+
+  test("mobile stacked splits ignore a persisted side-by-side orientation", () => {
+    assert.equal(
+      resolveEditorSplitOrientation({ isMobile: true, persisted: "horizontal" }),
+      "vertical"
+    );
+    assert.equal(
+      resolveEditorSplitOrientation({ isMobile: false, persisted: "horizontal" }),
+      "horizontal"
+    );
+    assert.equal(
+      resolveEditorSplitOrientation({ isMobile: false, persisted: "vertical" }),
+      "vertical"
+    );
+  });
+
   test("opens with proxy fallback and can promote to native/remote engines", () => {
     let state = createInitialEditorState([]);
     state = editorPanelReducer(state, {

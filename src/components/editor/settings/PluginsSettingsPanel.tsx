@@ -4,15 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Database, Search } from "lucide-react";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
+  addPluginRegistrySource,
   createCustomAgentPlugin,
   discoverAgentPlugins,
   fetchAgentPluginHarnessCapabilities,
   fetchAgentPlugins,
+  fetchMcpServers,
+  fetchPluginRegistrySources,
   installAgentPlugin,
+  pollOAuthSession,
+  removePluginRegistrySource,
   setAgentPluginEnabled,
   setAgentPluginHarnessOverride,
+  startMcpOAuth,
+  upsertMcpServer,
   verifyAgentPlugins,
 } from "@/lib/server-api";
+import { openExternalUrl } from "@/lib/mobile-bridge";
 import type {
   AgentPluginDefinition,
   AgentPluginDiscoveryResult,
@@ -105,12 +113,20 @@ function InstalledPluginBlock({
   workspaceId,
   pendingAction,
   onRunAction,
+  onConnect,
+  connectSecret,
+  onConnectSecretChange,
+  onSaveSecret,
 }: {
   plugin: AgentPluginPublic;
   capabilityById: Map<AgentBackendId, AgentPluginHarnessCapability>;
   workspaceId: string | null;
   pendingAction: string | null;
   onRunAction: (actionId: string, action: () => Promise<AgentPluginPublic[]>) => Promise<void>;
+  onConnect?: (plugin: AgentPluginPublic) => Promise<void>;
+  connectSecret?: string;
+  onConnectSecretChange?: (value: string) => void;
+  onSaveSecret?: (plugin: AgentPluginPublic, value: string) => Promise<void>;
 }) {
   const installed = Boolean(plugin.install);
   const enabled = plugin.enabled;
@@ -155,16 +171,35 @@ function InstalledPluginBlock({
             </SettingsCallout>
           ) : null}
         </div>
+        <div className="flex flex-col items-end gap-[6px]">
+        {installed && plugin.needsAuth && onConnect ? (
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={pendingAction !== null}
+            onClick={() => void onConnect(plugin)}
+          >
+            Connect
+          </button>
+        ) : null}
         <button
           type="button"
           className={rowButtonClass}
           disabled={pendingAction !== null || !workspaceId}
           onClick={() =>
-            void onRunAction(plugin.definition.pluginId, () =>
-              installed
-                ? setAgentPluginEnabled(workspaceId!, plugin.definition.pluginId, !enabled)
-                : installAgentPlugin(workspaceId!, plugin.definition.pluginId)
-            )
+            void onRunAction(plugin.definition.pluginId, async () => {
+              if (installed) {
+                return setAgentPluginEnabled(workspaceId!, plugin.definition.pluginId, !enabled);
+              }
+              const next = await installAgentPlugin(workspaceId!, plugin.definition.pluginId);
+              const installedPlugin = next.find(
+                (entry) => entry.definition.pluginId === plugin.definition.pluginId
+              );
+              if (installedPlugin && onConnect) {
+                await onConnect(installedPlugin);
+              }
+              return next;
+            })
           }
         >
           {pendingAction === plugin.definition.pluginId
@@ -175,7 +210,27 @@ function InstalledPluginBlock({
                 : "Enable"
               : "Install"}
         </button>
+        </div>
       </div>
+      {installed && plugin.needsAuth && onSaveSecret ? (
+        <div className="mt-[10px] flex gap-[8px]">
+          <input
+            className={`${shortcutInputClass} min-w-0 flex-1`}
+            type="password"
+            placeholder="API key or header value"
+            value={connectSecret ?? ""}
+            onChange={(event) => onConnectSecretChange?.(event.target.value)}
+          />
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={!connectSecret?.trim() || pendingAction !== null}
+            onClick={() => void onSaveSecret(plugin, connectSecret ?? "")}
+          >
+            Save key
+          </button>
+        </div>
+      ) : null}
       {installed ? (
         <div className="mt-[12px] grid gap-[6px] sm:grid-cols-2">
           {HARNESS_ORDER.map((backendId) => {
@@ -298,6 +353,19 @@ export function PluginsSettingsPanel() {
   const [customName, setCustomName] = useState("");
   const [customSkill, setCustomSkill] = useState("");
   const [customMcpUrl, setCustomMcpUrl] = useState("");
+  const [registrySources, setRegistrySources] = useState<
+    Array<{
+      id: string;
+      kind: "official-mcp" | "url" | "github" | "file";
+      enabled: boolean;
+      label: string;
+      url?: string;
+      repo?: string;
+      path?: string;
+    }>
+  >([]);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [connectSecret, setConnectSecret] = useState<Record<string, string>>({});
 
   const workspaceId = workspaceInfo?.id ?? null;
 
@@ -335,10 +403,18 @@ export function PluginsSettingsPanel() {
     }
   }, [workspaceId]);
 
-  const refreshDiscovery = useCallback(async (query = discoveryQuery) => {
+  const refreshDiscovery = useCallback(async (query = discoveryQuery, offset = 0) => {
     setDiscovering(true);
     try {
-      setDiscovery(await discoverAgentPlugins(query));
+      const next = await discoverAgentPlugins(query, { limit: 50, offset });
+      setDiscovery((current) =>
+        offset > 0 && current
+          ? {
+              ...next,
+              plugins: [...current.plugins, ...next.plugins],
+            }
+          : next
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to discover plugins.");
     } finally {
@@ -346,9 +422,40 @@ export function PluginsSettingsPanel() {
     }
   }, [discoveryQuery]);
 
+  const refreshSources = useCallback(async () => {
+    try {
+      setRegistrySources(await fetchPluginRegistrySources());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load marketplace sources.");
+    }
+  }, []);
+
+  const connectPluginServers = useCallback(
+    async (plugin: AgentPluginPublic) => {
+      if (!workspaceId) return;
+      const servers = await fetchMcpServers(workspaceId);
+      const managed = servers.filter((server) =>
+        plugin.managedMcpServerIds.includes(server.id)
+      );
+      for (const server of managed) {
+        if (server.auth.kind === "oauth") {
+          const { authorizationUrl, sessionId } = await startMcpOAuth(workspaceId, server.id);
+          openExternalUrl(authorizationUrl, {
+            features: "noopener,noreferrer,width=520,height=720",
+          });
+          if (sessionId) {
+            await pollOAuthSession(sessionId);
+          }
+        }
+      }
+    },
+    [workspaceId]
+  );
+
   useEffect(() => {
     void refreshPlugins();
-  }, [refreshPlugins]);
+    void refreshSources();
+  }, [refreshPlugins, refreshSources]);
 
   useEffect(() => {
     let cancelled = false;
@@ -525,17 +632,103 @@ export function PluginsSettingsPanel() {
             workspaceId={workspaceId}
             pendingAction={pendingAction}
             onRunAction={runPluginAction}
+            onConnect={connectPluginServers}
+            connectSecret={connectSecret[plugin.definition.pluginId] ?? ""}
+            onConnectSecretChange={(value) =>
+              setConnectSecret((current) => ({
+                ...current,
+                [plugin.definition.pluginId]: value,
+              }))
+            }
+            onSaveSecret={async (target, value) => {
+              if (!workspaceId) return;
+              await runPluginAction(`secret:${target.definition.pluginId}`, async () => {
+                const servers = await fetchMcpServers(workspaceId);
+                for (const server of servers.filter((entry) =>
+                  target.managedMcpServerIds.includes(entry.id)
+                )) {
+                  const secretValues =
+                    server.auth.kind === "bearer"
+                      ? { bearer: value }
+                      : server.auth.kind === "headers"
+                        ? {
+                            [`header:${server.auth.headers[0]?.name ?? "Authorization"}`]: value,
+                          }
+                        : { bearer: value };
+                  await upsertMcpServer(workspaceId, {
+                    server: { ...server, label: server.label },
+                    secretValues,
+                  });
+                }
+                return fetchAgentPlugins(workspaceId);
+              });
+            }}
           />
         ))}
+      </SettingsSection>
+
+      <SettingsSection title="Sources">
+        <SettingsBlock className="space-y-[10px]">
+          <p className="font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
+            Marketplace sources include the official MCP registry plus any URL or GitHub registry
+            you add. Env vars still work; these settings persist in the Cesium profile.
+          </p>
+          <div className="flex flex-wrap gap-[6px] font-sans text-[10px] text-[var(--text-secondary)]">
+            {registrySources.map((source) => (
+              <span
+                key={source.id}
+                className="flex items-center gap-[6px] rounded-full border border-[var(--border-subtle)] px-[7px] py-[2px]"
+              >
+                {source.label}
+                {source.kind !== "official-mcp" ? (
+                  <button
+                    type="button"
+                    className="text-[var(--text-secondary)]"
+                    onClick={() =>
+                      void removePluginRegistrySource(source.id).then(setRegistrySources)
+                    }
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-[8px]">
+            <input
+              className={`${shortcutInputClass} min-w-0 flex-1`}
+              placeholder="https://example.com/plugins/registry.json or owner/repo"
+              value={sourceUrl}
+              onChange={(event) => setSourceUrl(event.target.value)}
+            />
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={!sourceUrl.trim()}
+              onClick={() => {
+                const value = sourceUrl.trim();
+                const isGithub = /^[\w.-]+\/[\w.-]+$/.test(value);
+                void addPluginRegistrySource({
+                  kind: isGithub ? "github" : "url",
+                  label: isGithub ? `GitHub (${value})` : "Remote registry",
+                  ...(isGithub ? { repo: value } : { url: value }),
+                }).then((next) => {
+                  setRegistrySources(next);
+                  setSourceUrl("");
+                  void refreshDiscovery(discoveryQuery);
+                });
+              }}
+            >
+              Add source
+            </button>
+          </div>
+        </SettingsBlock>
       </SettingsSection>
 
       <SettingsSection title="Discover">
         <SettingsBlock className="space-y-[10px]">
           <p className="font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
-            Browse the local catalog and optional remote/GitHub registries. Set{" "}
-            <span className="font-mono text-[11px]">OPENCURSOR_PLUGIN_REGISTRY_URL</span> or{" "}
-            <span className="font-mono text-[11px]">OPENCURSOR_PLUGIN_GITHUB_REPO</span> to pull
-            additional plugins.
+            Search the built-in Cesium catalog, official MCP registry, and any sources you added.
           </p>
           <div className="flex items-center gap-[8px]">
             <div className="relative min-w-0 flex-1">
@@ -578,7 +771,7 @@ export function PluginsSettingsPanel() {
             </div>
           ) : null}
         </SettingsBlock>
-        {uninstalledDiscoveryEntries.slice(0, 12).map((entry) => (
+        {uninstalledDiscoveryEntries.map((entry) => (
           <SettingsBlock
             key={`${entry.source}:${entry.definition.pluginId}`}
             className="flex items-start justify-between gap-[12px] py-[10px]"
@@ -620,6 +813,19 @@ export function PluginsSettingsPanel() {
             <p className="font-sans text-[12px] text-[var(--text-secondary)]">
               No additional plugins to install for this search.
             </p>
+          </SettingsBlock>
+        ) : null}
+        {discovery &&
+        (discovery.total ?? discovery.plugins.length) > discovery.plugins.length ? (
+          <SettingsBlock>
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={discovering}
+              onClick={() => void refreshDiscovery(discoveryQuery, discovery.plugins.length)}
+            >
+              Load more
+            </button>
           </SettingsBlock>
         ) : null}
       </SettingsSection>

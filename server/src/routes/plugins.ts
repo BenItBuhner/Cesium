@@ -3,6 +3,13 @@ import type { AgentBackendId } from "../lib/agents/types.js";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { discoverAgentPlugins } from "../lib/plugins/discovery.js";
 import {
+  addPluginRegistrySource,
+  listPluginRegistrySources,
+  removePluginRegistrySource,
+  savePluginRegistrySources,
+  type PluginRegistrySource,
+} from "../lib/plugins/sources.js";
+import {
   ALL_PLUGIN_HARNESS_IDS,
   HARNESS_PLUGIN_CAPABILITIES,
 } from "../lib/plugins/harness-support.js";
@@ -20,7 +27,48 @@ export const pluginRoutes = new Hono();
 
 pluginRoutes.get("/api/plugins/discover", async (c) => {
   const query = c.req.query("q") ?? c.req.query("query") ?? "";
-  return c.json(await discoverAgentPlugins({ query }));
+  const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+  const offset = Number.parseInt(c.req.query("offset") ?? "", 10);
+  return c.json(
+    await discoverAgentPlugins({
+      query,
+      ...(Number.isFinite(limit) ? { limit } : {}),
+      ...(Number.isFinite(offset) ? { offset } : {}),
+    })
+  );
+});
+
+pluginRoutes.get("/api/plugins/sources", async (c) => {
+  return c.json({ sources: await listPluginRegistrySources() });
+});
+
+pluginRoutes.put("/api/plugins/sources", async (c) => {
+  const body = await c.req.json<{ sources?: PluginRegistrySource[] }>();
+  if (!Array.isArray(body.sources)) {
+    return c.json({ error: "Expected sources array." }, 400);
+  }
+  return c.json({ sources: await savePluginRegistrySources(body.sources) });
+});
+
+pluginRoutes.post("/api/plugins/sources", async (c) => {
+  const body = await c.req.json<Partial<PluginRegistrySource>>();
+  if (!body.kind || !body.label?.trim()) {
+    return c.json({ error: "Expected kind and label." }, 400);
+  }
+  return c.json({
+    sources: await addPluginRegistrySource({
+      kind: body.kind,
+      label: body.label,
+      enabled: body.enabled !== false,
+      url: body.url,
+      repo: body.repo,
+      path: body.path,
+    }),
+  });
+});
+
+pluginRoutes.delete("/api/plugins/sources/:sourceId", async (c) => {
+  return c.json({ sources: await removePluginRegistrySource(c.req.param("sourceId")) });
 });
 
 pluginRoutes.get("/api/plugins/harness-capabilities", async (c) => {

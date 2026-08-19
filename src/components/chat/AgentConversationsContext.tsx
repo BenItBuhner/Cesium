@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
@@ -53,19 +54,27 @@ import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyEditorSession,
   getAgentSidePaneSessionScopeId,
+  type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import { resolveEffectiveConfig } from "@/lib/queued-prompt-utils";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { normalizeEditorPanelState } from "@/components/editor/editor-panel-state";
 import { JsonWebSocket } from "@/lib/ws-client";
+import {
+  ConversationEventsStore,
+  EMPTY_CONVERSATION_EVENTS,
+} from "@/lib/conversation-events-store";
+import { recentMainThreadCongestionMs } from "@/lib/main-thread-congestion";
 import { devPerfEnabled, recordPerfSample } from "@/lib/dev-perf";
 import {
   KeyedEventBatcher,
+  STREAM_EVENT_BATCH_WINDOW_MS,
   type EventBatchMap,
 } from "@/lib/stream-event-batcher";
 import {
   dispatchAgentConversationDeleted,
   dispatchAgentConversationUpserted,
+  dispatchAgentConversationsUpsertedBatch,
 } from "@/lib/agent-conversation-events";
 import { AGENT_BACKENDS_CHANGED_EVENT } from "@/lib/agent-backend-events";
 import {
@@ -85,8 +94,13 @@ import {
   promptAgentConversation,
   resumeAgentConversation,
   retryAgentConversation,
+  sendAgentConversationQueueItem,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
+import {
+  endQueuedPromptFlush,
+  tryBeginQueuedPromptFlush,
+} from "@/lib/queued-prompt-flush-guard";
 
 function toConversationMap(
   conversations: AgentConversationRecord[]
@@ -122,9 +136,44 @@ function pickAvailableBackend(
 ): AgentBackendInfo | null {
   return (
     backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
+    backends.find((backend) => backend.available && backend.enabled !== false) ??
     backends.find((backend) => backend.available) ??
     backends[0] ??
     null
+  );
+}
+
+/**
+ * Structural equality for record meta fields (pending permission/question,
+ * queued prompts). Reference and empty checks short-circuit the overwhelmingly
+ * common cases (null / empty) so record-batch merges stay cheap with
+ * thousands of running conversations; only genuinely differing values pay for
+ * a stringify compare.
+ */
+function conversationMetaFieldEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  const aEmpty = a == null || (Array.isArray(a) && a.length === 0);
+  const bEmpty = b == null || (Array.isArray(b) && b.length === 0);
+  if (aEmpty || bEmpty) {
+    return aEmpty === bEmpty;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function conversationMetaChanged(
+  existing: AgentConversationRecord,
+  incoming: AgentConversationRecord
+): boolean {
+  return (
+    existing.status !== incoming.status ||
+    existing.title !== incoming.title ||
+    existing.lastError !== incoming.lastError ||
+    existing.archivedAt !== incoming.archivedAt ||
+    !conversationMetaFieldEqual(existing.pendingPermission, incoming.pendingPermission) ||
+    !conversationMetaFieldEqual(existing.pendingQuestion, incoming.pendingQuestion) ||
+    !conversationMetaFieldEqual(existing.queuedPrompts ?? [], incoming.queuedPrompts ?? [])
   );
 }
 
@@ -146,18 +195,7 @@ function mergeConversationByRecency(
     if (incomingWithQueue.lastEventSeq > existing.lastEventSeq) {
       return { ...incomingWithQueue, updatedAt: existing.updatedAt };
     }
-    const metaChanged =
-      existing.status !== incomingWithQueue.status ||
-      JSON.stringify(existing.pendingPermission) !==
-        JSON.stringify(incomingWithQueue.pendingPermission) ||
-      JSON.stringify(existing.pendingQuestion) !==
-        JSON.stringify(incomingWithQueue.pendingQuestion) ||
-      existing.title !== incomingWithQueue.title ||
-      existing.lastError !== incomingWithQueue.lastError ||
-      existing.archivedAt !== incomingWithQueue.archivedAt ||
-      JSON.stringify(existing.queuedPrompts ?? []) !==
-        JSON.stringify(incomingWithQueue.queuedPrompts ?? []);
-    if (metaChanged) {
+    if (conversationMetaChanged(existing, incomingWithQueue)) {
       return {
         ...existing,
         ...incomingWithQueue,
@@ -166,17 +204,7 @@ function mergeConversationByRecency(
     }
     return existing;
   }
-  const metaChanged =
-    existing.status !== incomingWithQueue.status ||
-    JSON.stringify(existing.pendingPermission) !==
-      JSON.stringify(incomingWithQueue.pendingPermission) ||
-    JSON.stringify(existing.pendingQuestion) !==
-      JSON.stringify(incomingWithQueue.pendingQuestion) ||
-    existing.title !== incomingWithQueue.title ||
-    existing.lastError !== incomingWithQueue.lastError ||
-    existing.archivedAt !== incomingWithQueue.archivedAt ||
-    JSON.stringify(existing.queuedPrompts ?? []) !==
-      JSON.stringify(incomingWithQueue.queuedPrompts ?? []);
+  const metaChanged = conversationMetaChanged(existing, incomingWithQueue);
   if (metaChanged || incomingWithQueue.lastEventSeq !== existing.lastEventSeq) {
     const lastError = incomingWithQueue.lastError ?? existing.lastError;
     const status =
@@ -194,6 +222,53 @@ function mergeConversationByRecency(
     };
   }
   return existing;
+}
+
+/**
+ * Folds one upserted conversation into the workspace session (unread map,
+ * acknowledged-failure map, chat tab titles). Returns the same session object
+ * when nothing changed so batched folds stay cheap.
+ */
+function foldWorkspaceSessionAfterConversationUpsert(
+  current: WorkspaceSessionState,
+  prev: AgentConversationRecord | undefined,
+  merged: AgentConversationRecord
+): WorkspaceSessionState {
+  const unreadMap = nextUnreadCompletionMap(current, prev, merged);
+  const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
+  const nextTabs = current.chat.tabs.map((tab) =>
+    tab.id === merged.id
+      ? {
+          ...tab,
+          title:
+            merged.lastEventSeq > 0 && tab.isDraft
+              ? merged.title
+              : tab.isDraft
+                ? tab.title
+                : merged.title,
+          isDraft: merged.lastEventSeq > 0 ? undefined : tab.isDraft,
+        }
+      : tab
+  );
+  const tabUnchanged = nextTabs.every(
+    (tab, index) =>
+      tab.id === current.chat.tabs[index]?.id &&
+      tab.title === current.chat.tabs[index]?.title &&
+      Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
+      Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
+  );
+  if (unreadMap === null && ackMap === null && tabUnchanged) {
+    return current;
+  }
+  return {
+    ...current,
+    chat: {
+      ...current.chat,
+      ...(unreadMap === null ? {} : { unreadChatCompletionByConversationId: unreadMap }),
+      ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
+      ...(!tabUnchanged ? { tabs: nextTabs } : {}),
+    },
+  };
 }
 
 function conversationNeedsRuntimeHydration(
@@ -253,7 +328,15 @@ type AgentConversationsContextValue = {
   backends: AgentBackendInfo[];
   conversationsById: Record<string, AgentConversationRecord>;
   conversations: AgentConversationRecord[];
-  eventsByConversationId: Record<string, AgentStoredEvent[]>;
+  /**
+   * Per-conversation event logs live outside React state so a streaming flush
+   * only re-renders subscribers of that conversation. Subscribe with
+   * `useConversationEvents(conversationId)`; for non-reactive reads use
+   * `getConversationEvents`.
+   */
+  conversationEventsStore: ConversationEventsStore;
+  /** Non-reactive read of a conversation's current event log. */
+  getConversationEvents: (conversationId: string) => AgentStoredEvent[];
   bootstrapped: boolean;
   getConversationLoadStatus: (conversationId: string) => ConversationLoadStatus;
   createConversation: (
@@ -312,6 +395,7 @@ type AgentConversationsContextValue = {
     delivery?: "normal" | "steer",
     planHandoff?: PlanBuildHandoff
   ) => Promise<boolean>;
+  sendQueuedPromptNow: (conversationId: string, itemId: string) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   pauseConversation: (conversationId: string) => Promise<void>;
@@ -346,6 +430,35 @@ const AgentConversationsContext =
   createContext<AgentConversationsContextValue | null>(null);
 
 const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
+/**
+ * Pushed `conversation_upserted` records coalesce for this long client-side.
+ * Status changes for the ACTIVE conversation still land instantly through the
+ * event stream (`status` events); this only paces rail/tab metadata churn.
+ */
+const CONVERSATION_UPSERT_COALESCE_MS = 250;
+/** Stream commit window while the tab is hidden — nobody sees the frames. */
+const HIDDEN_STREAM_BATCH_WINDOW_MS = 1_000;
+/** At most one gap-recovery delta request per conversation per window. */
+const EVENT_DELTA_REQUEST_COOLDOWN_MS = 2_000;
+/** Grace before treating record.lastEventSeq > local tail as lost frames. */
+const EVENT_CONSISTENCY_GRACE_MS = 2_000;
+/**
+ * Very long transcripts make each commit expensive (full projection +
+ * reconciliation downstream), so the batch window stretches with the largest
+ * pending log to bound the projection work per second.
+ */
+function resolveStreamBatchWindowMs(largestPendingLogLength: number): number {
+  if (typeof document !== "undefined" && document.hidden) {
+    return HIDDEN_STREAM_BATCH_WINDOW_MS;
+  }
+  if (largestPendingLogLength >= 3_000) {
+    return 250;
+  }
+  if (largestPendingLogLength >= 1_200) {
+    return 150;
+  }
+  return STREAM_EVENT_BATCH_WINDOW_MS;
+}
 const BATCHABLE_STREAM_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
   "assistant_message_chunk",
   "reasoning",
@@ -367,6 +480,8 @@ type StreamRenderPerfControl = {
   flush: () => void;
   reset: () => void;
   snapshot: () => StreamRenderPerfSnapshot;
+  /** Diagnostics: committed tail seq of a conversation's local event log. */
+  tailSeq: (conversationId: string) => number;
 };
 
 declare global {
@@ -436,6 +551,48 @@ export function mergeAgentConversationEventBatch(
 ): AgentStoredEvent[] {
   if (incoming.length === 0) {
     return existing;
+  }
+  // Fast path — pure tail append (the overwhelmingly common streaming case):
+  // every incoming seq is strictly beyond the existing tail and strictly
+  // increasing. Skipping the two full-log Set rebuilds turns the per-flush
+  // merge from O(existing + incoming) into O(incoming), which is what keeps
+  // thousands of long conversations streaming concurrently cheap.
+  const tailSeq = existing.at(-1)?.seq ?? Number.NEGATIVE_INFINITY;
+  let pureAppend = existing.length > 0;
+  let previousSeq = tailSeq;
+  for (let i = 0; pureAppend && i < incoming.length; i += 1) {
+    const seq = incoming[i]!.seq;
+    if (!(seq > previousSeq) || seq <= 0) {
+      pureAppend = false;
+      break;
+    }
+    previousSeq = seq;
+  }
+  if (pureAppend) {
+    // Optimistic local events (client-guessed seq, shared eventId with the
+    // real event the server later assigns) always live near the tail; a
+    // duplicate eventId there must take the slow path's full dedupe.
+    const tailIds = new Set<string>();
+    for (let i = Math.max(0, existing.length - 8); i < existing.length; i += 1) {
+      tailIds.add(existing[i]!.eventId);
+    }
+    const tailDuplicate = incoming.some((event) => tailIds.has(event.eventId));
+    if (!tailDuplicate) {
+      let next = existing;
+      for (const event of incoming) {
+        if (isIncomingEventDroppedByAcpToolStrip(next, event)) {
+          continue;
+        }
+        if (next === existing) {
+          next = [...existing];
+        }
+        next.push(event);
+      }
+      if (next === existing) {
+        return existing;
+      }
+      return compactConversationEvents(compactAdjacentAgentMessageChunks(next));
+    }
   }
   const seenSeq = new Set(existing.map((event) => event.seq));
   const seenEventIds = new Set(existing.map((event) => event.eventId));
@@ -527,9 +684,15 @@ export function AgentConversationsProvider({
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
   >({});
-  const [eventsByConversationId, setEventsByConversationId] = useState<
-    Record<string, AgentStoredEvent[]>
-  >({});
+  const [eventsStore] = useState(() => new ConversationEventsStore());
+  // Load-status readiness depends on whether a conversation's log has been
+  // loaded at all; that key-set changes rarely (snapshot arrival, deletion,
+  // workspace switch), unlike the logs themselves which change every flush.
+  const eventsKeysVersion = useSyncExternalStore(
+    useCallback((onChange) => eventsStore.subscribeKeys(onChange), [eventsStore]),
+    () => eventsStore.getKeysVersion(),
+    () => 0
+  );
   const [bootstrapped, setBootstrapped] = useState(false);
   const [conversationLoadStatusById, setConversationLoadStatusById] = useState<
     Record<string, ConversationLoadStatus>
@@ -549,7 +712,6 @@ export function AgentConversationsProvider({
   const scheduleConversationCatchUpRef = useRef<(conversationId: string) => void>(() => {});
   const openConversationsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatDraftRef = useRef(workspaceSession.chat);
-  const eventsRef = useRef(eventsByConversationId);
   const loadedSnapshotConversationIdsRef = useRef(new Set<string>());
   const backgroundSnapshotCooldownUntilRef = useRef<Record<string, number>>({});
   const openConversationIdsRef = useRef<string[]>([]);
@@ -582,16 +744,53 @@ export function AgentConversationsProvider({
       new KeyedEventBatcher<AgentStoredEvent>({
         enabled: globalSettings.general.batchStreamEvents,
         onFlush: (batches) => commitEventBatchesRef.current(batches),
+        // Slow or artificially throttled devices can't hold the frame budget
+        // at the default commit cadence — instead of dropping frames, commits
+        // get rarer: the window stretches with main-thread congestion and
+        // relaxes as it drains.
+        resolveWindowMs: (pendingKeys) => {
+          let largest = 0;
+          for (const key of pendingKeys) {
+            const length = eventsStore.get(key).length;
+            if (length > largest) {
+              largest = length;
+            }
+          }
+          const base = resolveStreamBatchWindowMs(largest);
+          const congestion = recentMainThreadCongestionMs();
+          if (congestion <= 60) {
+            return base;
+          }
+          return Math.min(
+            1_200,
+            Math.round(base * Math.min(6, 1 + congestion / 200))
+          );
+        },
+        // Tool completions force an immediate commit for visible feedback;
+        // with the tab hidden there is nothing to see, so let them coalesce.
+        // Under main-thread congestion they coalesce too — an immediate
+        // commit would only widen the frame gap it is trying to explain.
+        allowImmediateFlush: () =>
+          (typeof document === "undefined" || !document.hidden) &&
+          recentMainThreadCongestionMs() <= 250,
       })
   );
+
+  // Returning to a hidden tab commits whatever accumulated at the slow hidden
+  // cadence right away, so the transcript is current the moment it is seen.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        eventRenderBatcher.flush();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [eventRenderBatcher]);
 
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
   }, [workspaceSession.chat]);
-
-  useEffect(() => {
-    eventsRef.current = eventsByConversationId;
-  }, [eventsByConversationId]);
 
   useEffect(() => {
     historyMetaRef.current = historyMetaById;
@@ -745,38 +944,36 @@ export function AgentConversationsProvider({
         typeof snapshot.window.oldestSeq === "number";
       if (isHead) {
         const head = snapshot;
-        setEventsByConversationId((current) => {
-          const existing = current[incoming.id] ?? [];
-          return {
-            ...current,
-            [incoming.id]: mergeAgentConversationSnapshotHeadEvents(
-              existing,
-              head.events,
-              head.window
-            ),
-          };
-        });
+        eventsStore.update(incoming.id, (existing) =>
+          mergeAgentConversationSnapshotHeadEvents(existing, head.events, head.window)
+        );
         setHistoryMetaById((c) => ({
           ...c,
           [incoming.id]: { hasOlder: head.window.hasOlder },
         }));
       } else {
         const full = snapshot as AgentConversationSnapshot;
-        setEventsByConversationId((current) => {
-          const existing = dedupeAgentStoredEvents(current[full.conversation.id] ?? []);
+        eventsStore.update(full.conversation.id, (current) => {
+          const existing = dedupeAgentStoredEvents(current);
           const existingSeq = existing.at(-1)?.seq ?? 0;
           const incomingDeduped = dedupeAgentStoredEvents(full.events);
           const incomingSeq = incomingDeduped.at(-1)?.seq ?? 0;
-          return {
-            ...current,
-            [full.conversation.id]:
-              compactConversationEvents(incomingSeq >= existingSeq ? incomingDeduped : existing),
-          };
+          return compactConversationEvents(
+            incomingSeq >= existingSeq ? incomingDeduped : existing
+          );
         });
         setHistoryMetaById((c) => ({
           ...c,
           [incoming.id]: { hasOlder: false },
         }));
+      }
+      // Snapshots reset the gap-detection baseline to the merged tail.
+      {
+        const ledger = lastSeenSeqByConversationRef.current;
+        const tailSeq = getConversationLatestSeq(eventsStore.get(incoming.id));
+        if (tailSeq > (ledger.get(incoming.id) ?? 0)) {
+          ledger.set(incoming.id, tailSeq);
+        }
       }
 
 updateWorkspaceSession((current) => {
@@ -825,7 +1022,7 @@ updateWorkspaceSession((current) => {
       dispatchAgentConversationUpserted(merged);
       loadedSnapshotConversationIdsRef.current.add(incoming.id);
     },
-    [updateWorkspaceSession]
+    [eventsStore, updateWorkspaceSession]
   );
 
   const primeConversationSnapshotIfEmpty = useCallback(
@@ -842,7 +1039,7 @@ updateWorkspaceSession((current) => {
       if ((backgroundSnapshotCooldownUntilRef.current[conversationId] ?? 0) > Date.now()) {
         return;
       }
-      if (eventsRef.current[conversationId] !== undefined) {
+      if (eventsStore.has(conversationId)) {
         loadedSnapshotConversationIdsRef.current.add(conversationId);
         return;
       }
@@ -866,7 +1063,7 @@ updateWorkspaceSession((current) => {
         snapshotPrimeInFlightRef.current.delete(conversationId);
       }
     },
-    [mergeConversationSnapshot]
+    [eventsStore, mergeConversationSnapshot]
   );
 
   const prependHistoryPage = useCallback(
@@ -877,8 +1074,7 @@ updateWorkspaceSession((current) => {
     ) => {
       loadingOlderRef.current[conversationId] = false;
       setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
+      eventsStore.update(conversationId, (existing) => {
         const bySeq = new Map<number, AgentStoredEvent>();
         for (const e of existing) {
           bySeq.set(e.seq, e);
@@ -889,7 +1085,7 @@ updateWorkspaceSession((current) => {
         const merged = dedupeAgentStoredEvents(
           [...bySeq.values()].sort((a, b) => a.seq - b.seq)
         );
-        return { ...current, [conversationId]: compactConversationEvents(merged) };
+        return compactConversationEvents(merged);
       });
       setHistoryMetaById((c) => ({
         ...c,
@@ -898,7 +1094,7 @@ updateWorkspaceSession((current) => {
       historyOlderPagesFetchedRef.current[conversationId] =
         (historyOlderPagesFetchedRef.current[conversationId] ?? 0) + 1;
     },
-    []
+    [eventsStore]
   );
 
   const loadOlderConversationHistory = useCallback((conversationId: string) => {
@@ -913,7 +1109,7 @@ updateWorkspaceSession((current) => {
     if (loadingOlderRef.current[conversationId]) {
       return;
     }
-    const events = eventsRef.current[conversationId] ?? [];
+    const events = eventsStore.get(conversationId);
     const oldest = events[0]?.seq;
     if (!oldest) {
       return;
@@ -935,7 +1131,7 @@ updateWorkspaceSession((current) => {
         setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
       }
     }, 18_000);
-  }, []);
+  }, [eventsStore]);
 
   const getConversationHistoryCursor = useCallback(
     (conversationId: string): ConversationHistoryCursor => ({
@@ -1012,22 +1208,98 @@ updateWorkspaceSession((current) => {
         });
       }
 
-      setEventsByConversationId((current) =>
-        mergeAgentConversationEventMap(current, batches)
-      );
+      for (const [conversationId, incoming] of batches) {
+        eventsStore.update(conversationId, (existing) =>
+          mergeAgentConversationEventBatch(existing, incoming)
+        );
+      }
     },
-    []
+    [eventsStore]
   );
 
   useEffect(() => {
     commitEventBatchesRef.current = commitConversationEventBatches;
   }, [commitConversationEventBatches]);
 
+  /**
+   * Highest event seq seen per conversation (including events still pending
+   * in the render batcher). Live stream frames are droppable under socket
+   * backpressure by design; this is the ledger that lets the client notice a
+   * hole and request a delta instead of silently rendering a stale transcript.
+   */
+  const lastSeenSeqByConversationRef = useRef(new Map<string, number>());
+  const deltaRequestCooldownUntilRef = useRef(new Map<string, number>());
+  const consistencyCheckTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const requestEventsDelta = useCallback((conversationId: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      return;
+    }
+    const now = Date.now();
+    const cooldownUntil = deltaRequestCooldownUntilRef.current.get(conversationId) ?? 0;
+    if (cooldownUntil > now) {
+      return;
+    }
+    deltaRequestCooldownUntilRef.current.set(
+      conversationId,
+      now + EVENT_DELTA_REQUEST_COOLDOWN_MS
+    );
+    socket.send({
+      type: "request_events_since",
+      conversationId,
+      sinceSeq: lastSeenSeqByConversationRef.current.get(conversationId) ?? 0,
+    });
+  }, []);
+
+  /**
+   * A pushed record whose `lastEventSeq` runs ahead of the local log means
+   * frames were lost (or never subscribed-through). Give in-flight batches a
+   * grace period, then heal with a delta if the hole is still there.
+   */
+  const scheduleEventConsistencyCheck = useCallback(
+    (conversationId: string) => {
+      if (consistencyCheckTimersRef.current.has(conversationId)) {
+        return;
+      }
+      const timer = setTimeout(() => {
+        consistencyCheckTimersRef.current.delete(conversationId);
+        const record = conversationsByIdRef.current[conversationId];
+        if (!record) {
+          return;
+        }
+        const lastSeen = lastSeenSeqByConversationRef.current.get(conversationId) ?? 0;
+        if (record.lastEventSeq > lastSeen && lastSeen > 0) {
+          requestEventsDelta(conversationId);
+        }
+      }, EVENT_CONSISTENCY_GRACE_MS);
+      consistencyCheckTimersRef.current.set(conversationId, timer);
+    },
+    [requestEventsDelta]
+  );
+
   const ingestConversationEvents = useCallback(
     (conversationId: string, incoming: AgentStoredEvent[]) => {
       if (incoming.length === 0) {
         return;
       }
+      const ledger = lastSeenSeqByConversationRef.current;
+      const lastSeen = ledger.get(conversationId) ?? 0;
+      let minIncoming = Number.POSITIVE_INFINITY;
+      let maxIncoming = lastSeen;
+      for (const event of incoming) {
+        if (event.seq < minIncoming) {
+          minIncoming = event.seq;
+        }
+        if (event.seq > maxIncoming) {
+          maxIncoming = event.seq;
+        }
+      }
+      if (lastSeen > 0 && minIncoming > lastSeen + 1) {
+        // Sequence hole: frames between lastSeen and this batch were dropped.
+        requestEventsDelta(conversationId);
+      }
+      ledger.set(conversationId, maxIncoming);
       streamRenderPerfRef.current.receivedEvents += incoming.length;
       eventRenderBatcher.enqueue(
         conversationId,
@@ -1035,7 +1307,7 @@ updateWorkspaceSession((current) => {
         shouldFlushAgentEventRenderBatch(incoming)
       );
     },
-    [eventRenderBatcher]
+    [eventRenderBatcher, requestEventsDelta]
   );
 
   useEffect(() => {
@@ -1079,6 +1351,8 @@ updateWorkspaceSession((current) => {
         ...streamRenderPerfRef.current,
         pendingEvents: eventRenderBatcher.pendingEventCount(),
       }),
+      tailSeq: (conversationId) =>
+        getConversationLatestSeq(eventsStore.get(conversationId)),
     };
     window.__opencursorStreamRenderPerf = control;
     return () => {
@@ -1086,7 +1360,7 @@ updateWorkspaceSession((current) => {
         delete window.__opencursorStreamRenderPerf;
       }
     };
-  }, [eventRenderBatcher]);
+  }, [eventRenderBatcher, eventsStore]);
 
   useEffect(
     () => () => {
@@ -1097,48 +1371,139 @@ updateWorkspaceSession((current) => {
 
   const upsertConversation = useCallback(
     (conversation: AgentConversationRecord) => {
-      const prev = conversationsByIdRef.current[conversation.id];
-      const merged = mergeConversationByRecency(prev, conversation);
-      setConversationsById((current) => ({
-        ...current,
-        [conversation.id]: merged,
-      }));
-      updateWorkspaceSession((current) => {
-        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
-        const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
-      const nextTabs = current.chat.tabs.map((tab) =>
-        tab.id === conversation.id
-          ? {
-              ...tab,
-              title: conversation.lastEventSeq > 0 && tab.isDraft ? conversation.title : tab.isDraft ? tab.title : conversation.title,
-              isDraft: conversation.lastEventSeq > 0 ? undefined : tab.isDraft,
-            }
-          : tab
-      );
-      const tabUnchanged = nextTabs.every(
-        (tab, index) =>
-          tab.id === current.chat.tabs[index]?.id &&
-          tab.title === current.chat.tabs[index]?.title &&
-          Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
-          Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
-      );
-      if (unreadMap === null && ackMap === null && tabUnchanged) {
-        return current;
-      }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            ...(unreadMap === null
-              ? {}
-              : { unreadChatCompletionByConversationId: unreadMap }),
-            ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
-            ...(!tabUnchanged ? { tabs: nextTabs } : {}),
-          },
-        };
-      });
+      applyConversationRecordBatchRef.current([conversation], { dispatch: false });
     },
-    [updateWorkspaceSession]
+    []
+  );
+
+  /**
+   * Applies a window's worth of pushed conversation records in ONE
+   * conversations-map update, ONE workspace-session fold, and ONE batched
+   * window event. The server broadcasts a record update for every running
+   * agent's event append; applying them one-by-one meant hundreds of full
+   * context re-renders per second once many agents ran in parallel.
+   */
+  const applyConversationRecordBatch = useCallback(
+    (
+      records: AgentConversationRecord[],
+      options: { dispatch: boolean }
+    ) => {
+      if (records.length === 0) {
+        return;
+      }
+      const prevById = conversationsByIdRef.current;
+      const applied = records.map((record) => {
+        const prev = prevById[record.id];
+        return { prev, merged: mergeConversationByRecency(prev, record) };
+      });
+      setConversationsById((current) => {
+        let next = current;
+        for (const record of records) {
+          const merged = mergeConversationByRecency(current[record.id], record);
+          if (merged === current[record.id]) {
+            continue;
+          }
+          if (next === current) {
+            next = { ...current };
+          }
+          next[record.id] = merged;
+        }
+        return next;
+      });
+      updateWorkspaceSession((current) => {
+        let session = current;
+        for (const { prev, merged } of applied) {
+          session = foldWorkspaceSessionAfterConversationUpsert(session, prev, merged);
+        }
+        return session;
+      });
+      // Record pushes double as a consistency signal: for subscribed
+      // conversations, a lastEventSeq ahead of the local log means live
+      // frames were dropped — heal with a delta after a short grace.
+      const openIds = new Set(openConversationIdsRef.current);
+      for (const { merged } of applied) {
+        if (!openIds.has(merged.id)) {
+          continue;
+        }
+        const lastSeen = lastSeenSeqByConversationRef.current.get(merged.id) ?? 0;
+        if (lastSeen > 0 && merged.lastEventSeq > lastSeen) {
+          scheduleEventConsistencyCheck(merged.id);
+        }
+      }
+      if (options.dispatch) {
+        dispatchAgentConversationsUpsertedBatch(applied.map((entry) => entry.merged));
+      }
+    },
+    [scheduleEventConsistencyCheck, updateWorkspaceSession]
+  );
+  const applyConversationRecordBatchRef = useRef(applyConversationRecordBatch);
+  useEffect(() => {
+    applyConversationRecordBatchRef.current = applyConversationRecordBatch;
+  }, [applyConversationRecordBatch]);
+
+  /** Pushed record updates coalesce for this long before one batched apply. */
+  const pendingSocketUpsertsRef = useRef(new Map<string, AgentConversationRecord>());
+  /**
+   * Records pushed for OTHER workspaces: never merged into the (workspace-
+   * scoped) conversations map, only dispatched so the cross-workspace rail
+   * stays live without polling.
+   */
+  const pendingForeignUpsertsRef = useRef(new Map<string, AgentConversationRecord>());
+  const socketUpsertFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSocketUpsertFlushAtRef = useRef(0);
+
+  const flushPendingSocketUpserts = useCallback(() => {
+    if (socketUpsertFlushTimerRef.current != null) {
+      clearTimeout(socketUpsertFlushTimerRef.current);
+      socketUpsertFlushTimerRef.current = null;
+    }
+    const pendingLocal = pendingSocketUpsertsRef.current;
+    const pendingForeign = pendingForeignUpsertsRef.current;
+    if (pendingLocal.size === 0 && pendingForeign.size === 0) {
+      return;
+    }
+    const localRecords = [...pendingLocal.values()];
+    const foreignRecords = [...pendingForeign.values()];
+    pendingLocal.clear();
+    pendingForeign.clear();
+    lastSocketUpsertFlushAtRef.current = Date.now();
+    if (localRecords.length > 0) {
+      applyConversationRecordBatchRef.current(localRecords, { dispatch: true });
+    }
+    if (foreignRecords.length > 0) {
+      dispatchAgentConversationsUpsertedBatch(foreignRecords);
+    }
+  }, []);
+
+  const scheduleSocketUpsertFlush = useCallback(() => {
+    if (socketUpsertFlushTimerRef.current != null) {
+      return;
+    }
+    // Leading edge: after a quiet period the first record applies almost
+    // immediately (snappy single-agent UX); under sustained load flushes
+    // settle to one per window.
+    const elapsed = Date.now() - lastSocketUpsertFlushAtRef.current;
+    const delay = Math.max(0, CONVERSATION_UPSERT_COALESCE_MS - elapsed);
+    socketUpsertFlushTimerRef.current = setTimeout(() => {
+      socketUpsertFlushTimerRef.current = null;
+      flushPendingSocketUpserts();
+    }, delay);
+  }, [flushPendingSocketUpserts]);
+
+  const queueSocketConversationUpsert = useCallback(
+    (record: AgentConversationRecord) => {
+      pendingSocketUpsertsRef.current.set(record.id, record);
+      scheduleSocketUpsertFlush();
+    },
+    [scheduleSocketUpsertFlush]
+  );
+
+  const queueForeignConversationUpsert = useCallback(
+    (record: AgentConversationRecord) => {
+      pendingForeignUpsertsRef.current.set(record.id, record);
+      scheduleSocketUpsertFlush();
+    },
+    [scheduleSocketUpsertFlush]
   );
 
   const syncSnapshotPromisesRef = useRef(
@@ -1162,7 +1527,9 @@ updateWorkspaceSession((current) => {
           mergeConversationSnapshot(result.snapshot);
         } catch (error) {
           const conv = conversationsByIdRef.current[conversationId];
-          const ev = eventsRef.current[conversationId];
+          const ev = eventsStore.has(conversationId)
+            ? eventsStore.get(conversationId)
+            : null;
           const usable =
             Boolean(conv) &&
             (conv!.lastEventSeq === 0 || (ev != null && ev.length > 0));
@@ -1184,7 +1551,7 @@ updateWorkspaceSession((current) => {
         syncSnapshotPromisesRef.current.delete(conversationId);
       }
     },
-    [mergeConversationSnapshot]
+    [eventsStore, mergeConversationSnapshot]
   );
 
   const scheduleConversationCatchUp = useCallback(
@@ -1243,7 +1610,7 @@ updateWorkspaceSession((current) => {
   const verifyPermissionResolutionSoon = useCallback(
     (conversationId: string, requestId: string) => {
       window.setTimeout(() => {
-        const events = eventsRef.current[conversationId] ?? [];
+        const events = eventsStore.get(conversationId);
         const resolved = events.some(
           (event) =>
             event.kind === "permission_resolved" && event.requestId === requestId
@@ -1253,7 +1620,7 @@ updateWorkspaceSession((current) => {
         }
       }, 2_500);
     },
-    [syncConversationSnapshot]
+    [eventsStore, syncConversationSnapshot]
   );
 
   const answerPermissionForConversation = useCallback(
@@ -1448,30 +1815,26 @@ const executePrompt = useCallback(
               updatedAt: Math.max(currentConversation.updatedAt + 1, Date.now()),
             }
           : null;
-        setEventsByConversationId((current) => {
-          const existing = current[conversationId] ?? [];
+        eventsStore.update(conversationId, (existing) => {
           if (existing.some((event) => event.eventId === clientEventId)) {
-            return current;
+            return existing;
           }
-          return {
-            ...current,
-            [conversationId]: [
-              ...existing,
-              {
-                seq: getConversationLatestSeq(existing) + 1,
-                eventId: clientEventId,
-                conversationId,
-                createdAt,
-                kind: "user_message",
-                messageId: clientMessageId,
-                content: text,
+          return [
+            ...existing,
+            {
+              seq: getConversationLatestSeq(existing) + 1,
+              eventId: clientEventId,
+              conversationId,
+              createdAt,
+              kind: "user_message",
+              messageId: clientMessageId,
+              content: text,
               displayContent: planHandoff
                 ? `Build: ${planHandoff.planTitle ?? planHandoff.planPath}`
                 : undefined,
-                attachments,
-              },
-            ],
-          };
+              attachments,
+            },
+          ];
         });
         setConversationsById((current) => {
           if (!optimisticConversation || !current[conversationId]) {
@@ -1517,13 +1880,9 @@ const executePrompt = useCallback(
         return true;
       } catch (error) {
         if (canOptimisticallyAppend) {
-          setEventsByConversationId((current) => {
-            const existing = current[conversationId] ?? [];
-            return {
-              ...current,
-              [conversationId]: existing.filter((event) => event.eventId !== clientEventId),
-            };
-          });
+          eventsStore.update(conversationId, (existing) =>
+            existing.filter((event) => event.eventId !== clientEventId)
+          );
           if (currentConversation) {
             setConversationsById((current) => ({
               ...current,
@@ -1533,30 +1892,23 @@ const executePrompt = useCallback(
         }
         const message =
           error instanceof Error ? error.message : "Failed to start the agent turn.";
-        setEventsByConversationId((current) => {
-          const existing = current[conversationId] ?? [];
-          const nextSeq = getConversationLatestSeq(existing) + 1;
-          return {
-            ...current,
-            [conversationId]: [
-              ...existing,
-              {
-                seq: nextSeq,
-                eventId:
-                  globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
-                conversationId,
-                createdAt: Date.now(),
-                kind: "system",
-                level: "error",
-                text: message,
-              },
-            ],
-          };
-        });
+        eventsStore.update(conversationId, (existing) => [
+          ...existing,
+          {
+            seq: getConversationLatestSeq(existing) + 1,
+            eventId:
+              globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
+            conversationId,
+            createdAt: Date.now(),
+            kind: "system",
+            level: "error",
+            text: message,
+          },
+        ]);
         return false;
       }
     },
-    [markWorkspaceActivity, mergeConversationSnapshot]
+    [eventsStore, markWorkspaceActivity, mergeConversationSnapshot]
   );
 
   const clearEditingQueuedPromptForConversation = useCallback(
@@ -1603,6 +1955,55 @@ const executePrompt = useCallback(
       return ok;
     },
     [clearEditingQueuedPromptForConversation, executePrompt]
+  );
+
+  const sendQueuedPromptNow = useCallback(
+    async (conversationId: string, itemId: string) => {
+      if (!tryBeginQueuedPromptFlush(conversationId)) {
+        return false;
+      }
+      const startedAt = performance.now();
+      flushAgentSubscriptionRef.current([conversationId]);
+      try {
+        const snapshot = await sendAgentConversationQueueItem(conversationId, itemId);
+        recordPerfSample("conversation.queue_send.ack", startedAt, {
+          conversationId,
+        });
+        mergeConversationSnapshot(snapshot.snapshot);
+        dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
+        flushAgentSubscriptionRef.current([conversationId]);
+        scheduleConversationCatchUpRef.current(conversationId);
+        void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
+        clearEditingQueuedPromptForConversation(conversationId);
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to send the queued message.";
+        eventsStore.update(conversationId, (existing) => [
+          ...existing,
+          {
+            seq: getConversationLatestSeq(existing) + 1,
+            eventId:
+              globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
+            conversationId,
+            createdAt: Date.now(),
+            kind: "system",
+            level: "error",
+            text: message,
+          },
+        ]);
+        return false;
+      } finally {
+        endQueuedPromptFlush(conversationId);
+      }
+    },
+    [
+      clearEditingQueuedPromptForConversation,
+      markWorkspaceActivity,
+      mergeConversationSnapshot,
+    ]
   );
 
   const retryConversation = useCallback(
@@ -1780,7 +2181,7 @@ const conversation = conversationsById[conversationId] ?? null;
 if (!conversation) {
 return null;
 }
-const busy = isAgentComposerBusy(conversation, eventsByConversationId[conversationId]);
+const busy = isAgentComposerBusy(conversation, eventsStore.get(conversationId));
 const pending = pendingConfigByConversationId[conversationId];
 const effectiveConfig = busy && pending
 ? resolveEffectiveConfig(conversation.config, pending)
@@ -1820,7 +2221,7 @@ sessionConfigOptions: listSupplementaryAgentConfigOptions(conversation),
 busy,
 };
 },
-[backends, conversationsById, eventsByConversationId, globalSettings.models.byBackend, pendingConfigByConversationId]
+[backends, conversationsById, eventsStore, globalSettings.models.byBackend, pendingConfigByConversationId]
   );
 
   const getConversationLoadStatus = useCallback(
@@ -1836,12 +2237,13 @@ busy,
       if (conv.lastEventSeq === 0) {
         return "ready";
       }
-      if (Object.hasOwn(eventsByConversationId, conversationId)) {
+      if (eventsStore.has(conversationId)) {
         return "ready";
       }
       return "loading";
     },
-    [conversationLoadStatusById, conversationsById, eventsByConversationId]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- eventsKeysVersion re-derives readiness when a log is first loaded or dropped.
+    [conversationLoadStatusById, conversationsById, eventsStore, eventsKeysVersion]
   );
 
   const flushAgentSubscription = useCallback((extraConversationIds: string[] = []) => {
@@ -1866,7 +2268,7 @@ busy,
     const sinceByConversationId = Object.fromEntries(
       conversationIds.map((conversationId) => [
         conversationId,
-        getConversationLatestSeq(eventsRef.current[conversationId] ?? []),
+        getConversationLatestSeq(eventsStore.get(conversationId)),
       ])
     );
     socket.send({
@@ -1874,7 +2276,7 @@ busy,
       conversationIds,
       sinceByConversationId,
     });
-  }, []);
+  }, [eventsStore]);
 
   useEffect(() => {
     flushAgentSubscriptionRef.current = flushAgentSubscription;
@@ -1937,7 +2339,8 @@ busy,
       }
       setBackends([]);
       setConversationsById({});
-      setEventsByConversationId({});
+      eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setConversationLoadStatusById({});
@@ -1967,7 +2370,8 @@ busy,
     let cancelled = false;
     setBootstrapped(false);
     setConversationsById({});
-    setEventsByConversationId({});
+    eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
     loadedSnapshotConversationIdsRef.current.clear();
     backgroundSnapshotCooldownUntilRef.current = {};
     setHistoryMetaById({});
@@ -1986,7 +2390,8 @@ busy,
       setBackends(result.backends);
 
       setConversationsById(toConversationMap(nextConversations));
-      setEventsByConversationId({});
+      eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setHistoryMetaById({});
@@ -2127,7 +2532,7 @@ busy,
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, eventRenderBatcher, updateWorkspaceSession]);
+  }, [activeWorkspaceId, eventRenderBatcher, eventsStore, updateWorkspaceSession]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !bootstrapped) {
@@ -2139,10 +2544,9 @@ busy,
     openConversationsSyncTimerRef.current = window.setTimeout(() => {
       openConversationsSyncTimerRef.current = null;
       for (const conversationId of openConversationIds) {
-        const events = eventsRef.current[conversationId];
         if (
           loadedSnapshotConversationIdsRef.current.has(conversationId) ||
-          (conversationsById[conversationId] && events !== undefined)
+          (conversationsById[conversationId] && eventsStore.has(conversationId))
         ) {
           continue;
         }
@@ -2164,6 +2568,7 @@ busy,
     activeWorkspaceId,
     bootstrapped,
     conversationsById,
+    eventsStore,
     openConversationIds,
     syncConversationSnapshot,
   ]);
@@ -2255,20 +2660,35 @@ busy,
       const expectWs = activeWorkspaceIdRef.current;
       const scoped = agentSocketMessageWorkspaceScope(message);
       if (scoped != null && scoped !== expectWs) {
+        // Cross-workspace record pushes keep the rail live without polling;
+        // everything else stays scoped to the active workspace.
+        if (message.type === "conversation_upserted") {
+          queueForeignConversationUpsert(message.conversation);
+        } else if (message.type === "conversation_deleted") {
+          pendingForeignUpsertsRef.current.delete(message.conversationId);
+          dispatchAgentConversationDeleted({
+            conversationId: message.conversationId,
+            workspaceId: message.workspaceId,
+          });
+        }
         return;
       }
       switch (message.type) {
         case "conversation":
-          upsertConversation(message.conversation);
-          dispatchAgentConversationUpserted(message.conversation);
-          return;
         case "conversation_upserted":
-          upsertConversation(message.conversation);
-          dispatchAgentConversationUpserted(message.conversation);
+          queueSocketConversationUpsert(message.conversation);
           return;
         case "conversation_deleted": {
           const deletedId = message.conversationId;
           eventRenderBatcher.discard(deletedId);
+          pendingSocketUpsertsRef.current.delete(deletedId);
+          lastSeenSeqByConversationRef.current.delete(deletedId);
+          deltaRequestCooldownUntilRef.current.delete(deletedId);
+          const consistencyTimer = consistencyCheckTimersRef.current.get(deletedId);
+          if (consistencyTimer != null) {
+            clearTimeout(consistencyTimer);
+            consistencyCheckTimersRef.current.delete(deletedId);
+          }
           setConversationsById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2277,14 +2697,7 @@ busy,
             delete next[deletedId];
             return next;
           });
-          setEventsByConversationId((current) => {
-            if (!current[deletedId]) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[deletedId];
-            return next;
-          });
+          eventsStore.delete(deletedId);
           setHistoryMetaById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2371,18 +2784,31 @@ busy,
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
+      if (socketUpsertFlushTimerRef.current != null) {
+        clearTimeout(socketUpsertFlushTimerRef.current);
+        socketUpsertFlushTimerRef.current = null;
+      }
+      pendingSocketUpsertsRef.current.clear();
+      pendingForeignUpsertsRef.current.clear();
+      for (const timer of consistencyCheckTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      consistencyCheckTimersRef.current.clear();
+      deltaRequestCooldownUntilRef.current.clear();
     };
   }, [
     activeWorkspaceId,
     agentSocketServerKey,
     bootstrapped,
     eventRenderBatcher,
+    eventsStore,
     flushAgentSubscription,
     ingestConversationEvents,
     mergeConversationSnapshot,
     prependHistoryPage,
+    queueForeignConversationUpsert,
+    queueSocketConversationUpsert,
     updateWorkspaceSession,
-    upsertConversation,
   ]);
 
   useEffect(() => {
@@ -2403,7 +2829,9 @@ busy,
       backends,
       conversationsById,
       conversations,
-      eventsByConversationId,
+      conversationEventsStore: eventsStore,
+      getConversationEvents: (conversationId: string) =>
+        eventsStore.get(conversationId),
       bootstrapped,
       getConversationLoadStatus,
       createConversation,
@@ -2419,6 +2847,7 @@ busy,
       setConversationBackend,
       setConversationConfigOption,
       promptConversation,
+      sendQueuedPromptNow,
       retryConversation,
       cancelConversation,
       pauseConversation,
@@ -2447,13 +2876,14 @@ createAndPromptConversation,
 createAndPromptStandaloneConversation,
 conversations,
 conversationsById,
-eventsByConversationId,
+eventsStore,
 forkConversation,
 getConversationLoadStatus,
 getConversationComposerState,
 mergeConversationSnapshot,
 pendingConfigByConversationId,
 promptConversation,
+sendQueuedPromptNow,
 pauseConversation,
 resumeConversation,
 retryConversation,
@@ -2492,4 +2922,30 @@ export function useAgentConversations(): AgentConversationsContextValue {
     );
   }
   return context;
+}
+
+/**
+ * Subscribe to a single conversation's event log. Re-renders only when THAT
+ * conversation's events change; streams from other agents leave the component
+ * untouched. Pass a falsy id (or render outside the provider) to opt out —
+ * both return a stable empty array.
+ */
+export function useConversationEvents(
+  conversationId: string | null | undefined
+): AgentStoredEvent[] {
+  const store = useOptionalAgentConversations()?.conversationEventsStore ?? null;
+  return useSyncExternalStore(
+    useCallback(
+      (onChange) =>
+        store && conversationId
+          ? store.subscribe(conversationId, onChange)
+          : () => {},
+      [store, conversationId]
+    ),
+    () =>
+      store && conversationId
+        ? store.get(conversationId)
+        : EMPTY_CONVERSATION_EVENTS,
+    () => EMPTY_CONVERSATION_EVENTS
+  );
 }

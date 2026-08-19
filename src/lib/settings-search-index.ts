@@ -201,6 +201,40 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Add, edit, or remove the actions shown on the new chat landing.",
     ["new chat", "landing", "actions"]
   ),
+  section(
+    "general",
+    "composer-status-bar",
+    "Composer status bar",
+    "footer repo branch goal context defaults"
+  ),
+  row(
+    "general",
+    "composer-status-repo",
+    "Repository",
+    "Show the workspace or repository name beneath the composer in new chats.",
+    ["status bar", "footer", "repo", "workspace", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-branch",
+    "Git branch",
+    "Show the current Git branch beneath the composer in new chats.",
+    ["status bar", "footer", "branch", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-goal",
+    "Goal progress",
+    "Show tracked goal progress and runtime beneath the composer in new chats.",
+    ["status bar", "footer", "goal", "runtime", "default"]
+  ),
+  row(
+    "general",
+    "composer-status-context",
+    "Context usage",
+    "Show the model context usage indicator beneath the composer in new chats.",
+    ["status bar", "footer", "context", "tokens", "default"]
+  ),
   section("general", "quick-open", "Quick Open & switcher", "palette search"),
   row(
     "general",
@@ -449,6 +483,20 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
   row(
     "agents",
+    "cursor-acp",
+    "Cursor ACP",
+    "Cursor Agent CLI over ACP with host OAuth (`agent login`).",
+    ["cursor", "acp", "oauth", "agent login"]
+  ),
+  row(
+    "agents",
+    "enabled-harnesses",
+    "Enabled harnesses",
+    "Turn agent harnesses on or off in the model picker.",
+    ["toggle", "enable", "disable", "backend"]
+  ),
+  row(
+    "agents",
     "opencode-server",
     "OpenCode",
     "OpenCode harness with Current (v1) and packaged v2 Beta dialects: durable events, typed tools, background subagents, PTY, and forms.",
@@ -549,7 +597,8 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Plugins ——
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
-  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7"),
+  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7 official mcp"),
+  section("plugins", "sources", "Sources", "official mcp registry github url marketplace source"),
   section("plugins", "verify", "Verify harness sync", "plugin harness mcp skills verify"),
   section("plugins", "custom", "Custom Plugin", "custom mcp skill plugin"),
   row(

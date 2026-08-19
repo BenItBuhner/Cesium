@@ -77,6 +77,8 @@ import {
   TAB_GROUP_COLOR_PRESET_IDS,
   editorPanelReducer,
   normalizeEditorPanelState,
+  resolveBrowserEditorGroup,
+  resolveEditorSplitOrientation,
   resolveTabGroupColorHex,
   type EditorPanelAction,
   type EditorGroup,
@@ -380,6 +382,11 @@ export function EditorPanel({
     persistedSession,
     createEditorStateFromSession
   );
+  const splitOrientation = resolveEditorSplitOrientation({
+    isMobile,
+    persisted: state.splitOrientation,
+  });
+  const allowHorizontalSplit = !isMobile;
   const [pendingTabGroupRename, setPendingTabGroupRename] = useState<{
     pane: EditorGroup;
     groupId: string;
@@ -573,7 +580,7 @@ export function EditorPanel({
       try {
         const result = await openBrowserControlTab({
           url,
-          group: options?.group ?? "right",
+          group: resolveBrowserEditorGroup(options?.group),
           active: options?.activate ?? true,
           engine: options?.engine ?? "proxy",
           title: options?.title,
@@ -889,7 +896,7 @@ export function EditorPanel({
     };
     const onBrowserUrl = (payload: OpenBrowserUrlPayload) => {
       void openBrowserTab(payload.url, {
-        group: payload.group ?? "right",
+        group: resolveBrowserEditorGroup(payload.group),
         title: payload.title,
       });
     };
@@ -958,24 +965,27 @@ export function EditorPanel({
     }
     handledDiskChangeAtRef.current = lastFileChange.at;
 
-    const matchingTab = [
-      ...stateRef.current.leftTabs,
-      ...stateRef.current.rightTabs,
-    ].find((tab) => tab.filePath === lastFileChange.path);
-    if (!matchingTab) return;
+    // Change notices arrive coalesced (one notice per window, many paths);
+    // refresh every open tab whose file changed.
+    const openTabs = [...stateRef.current.leftTabs, ...stateRef.current.rightTabs];
+    const changedPaths = lastFileChange.paths ?? [lastFileChange.path];
+    for (const changedPath of changedPaths) {
+      const matchingTab = openTabs.find((tab) => tab.filePath === changedPath);
+      if (!matchingTab) continue;
 
-    if (matchingTab.dirty) {
-      dispatch({ type: "FILE_CHANGED_ON_DISK", path: lastFileChange.path });
-      return;
+      if (matchingTab.dirty) {
+        dispatch({ type: "FILE_CHANGED_ON_DISK", path: changedPath });
+        continue;
+      }
+
+      void readFile(changedPath)
+        .then((result) => {
+          dispatch(fileContentLoadAction(matchingTab.id, result));
+        })
+        .catch(() => {
+          // Keep the stale buffer visible if a background refresh fails.
+        });
     }
-
-    void readFile(lastFileChange.path)
-      .then((result) => {
-        dispatch(fileContentLoadAction(matchingTab.id, result));
-      })
-      .catch(() => {
-        // Keep the stale buffer visible if a background refresh fails.
-      });
   }, [lastFileChange]);
 
   useEffect(() => {
@@ -1374,9 +1384,13 @@ export function EditorPanel({
       orientation: EditorSplitOrientation,
       focus: EditorGroup = stateRef.current.focusedGroup
     ) => {
-      dispatch({ type: "ENABLE_SPLIT", orientation, focus });
+      dispatch({
+        type: "ENABLE_SPLIT",
+        orientation: isMobile ? "vertical" : orientation,
+        focus,
+      });
     },
-    []
+    [isMobile]
   );
 
   const joinEditorGroups = useCallback(() => {
@@ -1386,10 +1400,14 @@ export function EditorPanel({
   const moveTabToNewSplit = useCallback(
     (tabId: string, from: EditorGroup, orientation: EditorSplitOrientation) => {
       const targetGroup: EditorGroup = from === "left" ? "right" : "left";
-      dispatch({ type: "ENABLE_SPLIT", orientation, focus: targetGroup });
+      dispatch({
+        type: "ENABLE_SPLIT",
+        orientation: isMobile ? "vertical" : orientation,
+        focus: targetGroup,
+      });
       dispatch({ type: "MOVE_TAB", tabId, from, to: targetGroup });
     },
-    []
+    [isMobile]
   );
 
   const copyToClipboard = useCallback(
@@ -1540,14 +1558,14 @@ export function EditorPanel({
               type: "item",
               id: "split-right",
               label: "Use Side-by-side Layout",
-              disabled: snapshot.splitOrientation === "horizontal",
+              disabled: !allowHorizontalSplit || splitOrientation === "horizontal",
               onSelect: () => setSplitMode("horizontal", group),
             },
             {
               type: "item",
               id: "split-down",
               label: "Use Stacked Layout",
-              disabled: snapshot.splitOrientation === "vertical",
+              disabled: splitOrientation === "vertical",
               onSelect: () => setSplitMode("vertical", group),
             },
           ]
@@ -1556,6 +1574,7 @@ export function EditorPanel({
               type: "item",
               id: "split-right",
               label: "Split Editor Right",
+              disabled: !allowHorizontalSplit,
               onSelect: () => setSplitMode("horizontal", group),
             },
             {
@@ -1585,11 +1604,13 @@ export function EditorPanel({
       ]);
     },
     [
+      allowHorizontalSplit,
       joinEditorGroups,
       openAt,
       requestCloseAllInGroup,
       requestCloseOthersInGroup,
       setSplitMode,
+      splitOrientation,
     ]
   );
 
@@ -1762,14 +1783,14 @@ export function EditorPanel({
             type: "item",
             id: "split-right",
             label: "Use Side-by-side Layout",
-            disabled: snapshot.splitOrientation === "horizontal",
+            disabled: !allowHorizontalSplit || splitOrientation === "horizontal",
             onSelect: () => setSplitMode("horizontal", otherGroup),
           },
           {
             type: "item",
             id: "split-down",
             label: "Use Stacked Layout",
-            disabled: snapshot.splitOrientation === "vertical",
+            disabled: splitOrientation === "vertical",
             onSelect: () => setSplitMode("vertical", otherGroup),
           },
           {
@@ -1785,6 +1806,7 @@ export function EditorPanel({
             type: "item",
             id: "move-split-right",
             label: "Move to New Right Group",
+            disabled: !allowHorizontalSplit,
             onSelect: () => moveTabToNewSplit(tabId, group, "horizontal"),
           },
           {
@@ -1874,6 +1896,7 @@ export function EditorPanel({
     [
       activeWindowId,
       activeWorkspaceId,
+      allowHorizontalSplit,
       copyToClipboard,
       dispatch,
       findTab,
@@ -1886,6 +1909,7 @@ export function EditorPanel({
       requestCloseTab,
       saveTab,
       setSplitMode,
+      splitOrientation,
       workspaceWindows,
       workspaceInfo?.root,
     ]
@@ -2150,7 +2174,7 @@ export function EditorPanel({
     }
   ) {
     const paneCloseSlotGroup: EditorGroup =
-      !state.split || state.splitOrientation === "vertical" ? "left" : "right";
+      !state.split || splitOrientation === "vertical" ? "left" : "right";
     const padStripLeadingForWindowChrome =
       experimentalIpadWindowedTabInset &&
       !isMobile &&
@@ -2173,7 +2197,8 @@ export function EditorPanel({
           tabGroups={group === "left" ? state.leftTabGroups : state.rightTabGroups}
           activeTabId={options.activeTabId}
           splitActive={state.split}
-          splitOrientation={state.splitOrientation}
+          splitOrientation={splitOrientation}
+          allowHorizontalSplit={allowHorizontalSplit}
           showSplitToolbar={options.showSplitToolbar}
           padStripLeadingForWindowChrome={padStripLeadingForWindowChrome}
           onSelectTab={(id) => selectTab(group, id)}
@@ -2309,9 +2334,9 @@ export function EditorPanel({
   return (
     <div className="aurora-editor-surface flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
       <Group
-        orientation={state.splitOrientation}
+        orientation={splitOrientation}
         id="editor-split-group"
-        key={state.splitOrientation}
+        key={splitOrientation}
         className="min-h-0 min-w-0 flex-1"
         defaultLayout={splitLayout}
         onLayoutChanged={(layout) => {
@@ -2320,7 +2345,7 @@ export function EditorPanel({
       >
         <Panel
           id={EDITOR_SPLIT_PANEL_IDS.left}
-          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
+          minSize={splitOrientation === "horizontal" ? "18%" : "15%"}
           className="min-h-0 min-w-0"
           style={{ overflow: "hidden" }}
         >
@@ -2332,10 +2357,10 @@ export function EditorPanel({
             emptyMessage: "No file selected — open a tab above or move one here.",
           })}
         </Panel>
-        <EditorSplitResizeHandle orientation={state.splitOrientation} />
+        <EditorSplitResizeHandle orientation={splitOrientation} />
         <Panel
           id={EDITOR_SPLIT_PANEL_IDS.right}
-          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
+          minSize={splitOrientation === "horizontal" ? "18%" : "15%"}
           className="min-h-0 min-w-0"
           style={{ overflow: "hidden" }}
         >

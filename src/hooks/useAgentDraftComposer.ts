@@ -11,7 +11,7 @@
  * code path instead of forking submit logic.
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import {
   AGENT_STANDALONE_COMPOSER_DRAFT_ID,
   agentWorkspaceComposerDraftId,
@@ -120,13 +120,23 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         : [workspaceSession.chat.model],
     [draftBackend, workspaceSession.chat.model]
   );
+  // Depend on the narrow chat fields the resolution actually reads — the
+  // whole `chat` object is replaced by unrelated session folds (unread maps,
+  // tab titles) several times per second under load, and each spurious
+  // recompute used to re-derive the full model catalog.
+  const chatRef = useRef(workspaceSession.chat);
+  chatRef.current = workspaceSession.chat;
+  const chatModel = workspaceSession.chat.model;
+  const chatBackendId = workspaceSession.chat.backendId;
+  const chatLastModelByBackend = workspaceSession.chat.lastModelByBackend;
   const draftModel = useMemo(() => {
-    if (!draftBackend) return workspaceSession.chat.model;
+    if (!draftBackend) return chatModel;
     return (
-      resolveLastUsedDraftModel(workspaceSession.chat, draftBackend, draftModels) ??
+      resolveLastUsedDraftModel(chatRef.current, draftBackend, draftModels) ??
       resolveDraftModelForBackend(draftBackend)
     );
-  }, [draftBackend, draftModels, workspaceSession.chat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveLastUsedDraftModel reads only model/backendId/lastModelByBackend from chat.
+  }, [draftBackend, draftModels, chatModel, chatBackendId, chatLastModelByBackend]);
   const draftModeOptions = useMemo(
     () =>
       draftBackend

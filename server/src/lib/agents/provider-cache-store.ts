@@ -1481,6 +1481,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createCesiumAgentConfigOptions();
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
+    case "cursor-acp":
+      return [];
     case "opencode-server":
     case "opencode-v2-beta": {
       const generation = resolveOpenCodeGeneration({ backendId });

@@ -21,6 +21,8 @@ import type {
   AgentPluginToolDisplay,
 } from "./types.js";
 import { syncWorkspaceAntigravityMcpConfig } from "./workspace-mcp-sync.js";
+import { syncWorkspaceOpenCodeMcpConfig } from "./workspace-opencode-mcp-sync.js";
+import { syncWorkspacePiMcpConfig } from "./workspace-pi-mcp-sync.js";
 
 export type ResolvedAgentPlugin = {
   definition: AgentPluginDefinition;
@@ -168,10 +170,53 @@ export async function resolveAgentPluginAttachments(input: {
       });
     }
   }
+  if (input.backendId === "opencode-server" || input.backendId === "opencode-v2-beta") {
+    try {
+      await syncWorkspaceOpenCodeMcpConfig({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+      });
+    } catch (error) {
+      warnings.push({
+        pluginId: "workspace-mcp-sync",
+        pluginName: "OpenCode MCP sync",
+        backendId: input.backendId,
+        reason:
+          error instanceof Error
+            ? `Failed to sync opencode.json: ${error.message}`
+            : "Failed to sync opencode.json.",
+      });
+    }
+  }
+  if (input.backendId === "pi-agent") {
+    try {
+      await syncWorkspacePiMcpConfig({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+      });
+    } catch (error) {
+      warnings.push({
+        pluginId: "workspace-mcp-sync",
+        pluginName: "Pi MCP export",
+        backendId: input.backendId,
+        reason:
+          error instanceof Error
+            ? `Failed to write Pi MCP export: ${error.message}`
+            : "Failed to write Pi MCP export.",
+      });
+    }
+  }
 
-  const mcpServers = plugins.flatMap((plugin) =>
-    supportsNativeMcp(plugin.definition, input.backendId) ? plugin.mcpServers : []
+  const disabledPluginIds = new Set(
+    installs
+      .filter((install) => !harnessEnabled(install, input.backendId))
+      .map((install) => install.pluginId)
   );
+  const mcpServers = getHarnessPluginCapability(input.backendId).nativeMcp
+    ? enabledMcpServers.filter(
+        (server) => !server.pluginId || !disabledPluginIds.has(server.pluginId)
+      )
+    : [];
   const skillsList = renderPluginSkills(plugins, input.backendId);
   const sdkMcp = await exportEnabledMcpServersForSdk({
     workspaceId: input.workspaceId,

@@ -291,6 +291,26 @@ export default function App() {
   }, [sendToWeb]);
 
   useEffect(() => {
+    const handleOAuthUrl = (url: string | null) => {
+      if (!url || !url.startsWith("cesium://oauth/")) return;
+      try {
+        const parsed = new URL(url);
+        sendToWeb({
+          type: "oauthCompleted",
+          sessionId: parsed.searchParams.get("session") ?? undefined,
+          ok: parsed.searchParams.get("ok") !== "0",
+          kind: parsed.searchParams.get("kind") ?? undefined,
+        });
+      } catch {
+        sendToWeb({ type: "oauthCompleted", ok: true });
+      }
+    };
+    const subscription = Linking.addEventListener("url", (event) => handleOAuthUrl(event.url));
+    void Linking.getInitialURL().then(handleOAuthUrl);
+    return () => subscription.remove();
+  }, [sendToWeb]);
+
+  useEffect(() => {
     serverUrlRef.current = serverUrl;
   }, [serverUrl]);
 

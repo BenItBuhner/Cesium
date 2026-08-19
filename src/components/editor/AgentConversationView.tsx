@@ -36,7 +36,10 @@ import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refres
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { isOrchestrationModeLocked } from "@/lib/chat-modes";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
@@ -84,8 +87,6 @@ interface AgentConversationViewProps {
 }
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
-const EMPTY_THREAD_EVENTS: never[] = [];
-
 export function AgentConversationView({
   conversationId,
   expandedComposerDraftId: expandedComposerDraftIdOverride,
@@ -106,13 +107,13 @@ export function AgentConversationView({
     backends,
 conversations,
 conversationsById,
-eventsByConversationId,
 bootstrapped,
 getConversationLoadStatus,
 answerPermissionForConversation,
 answerQuestionForConversation,
 getConversationComposerState,
 promptConversation,
+sendQueuedPromptNow,
 mergeConversationSnapshot,
 refreshConversations,
 cancelConversation,
@@ -146,15 +147,7 @@ loadOlderConversationHistory,
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
-  const rawThreadEvents = eventsByConversationId[conversationId] ?? EMPTY_THREAD_EVENTS;
-  const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawThreadEvents),
-    [rawThreadEvents]
-  );
-  const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
-    [conversation?.status, rawThreadEvents]
-  );
+  const rawThreadEvents = useConversationEvents(conversationId);
   // Defer the events together with the conversation id they belong to so a
   // conversation switch can never project the previous conversation's stale
   // events under the new id (deferred values lag by design on slow devices).
@@ -168,9 +161,22 @@ loadOlderConversationHistory,
     rawThreadEvents,
     deferredThreadEventState
   );
+  // Every full-log derivation keys off the DEFERRED events: the synchronous
+  // render triggered by each stream flush then does O(1) work, and the O(n)
+  // scans run in the interruptible deferred lane alongside the projection.
+  // On throttled/low-end devices this is the difference between dropped
+  // frames per flush and a flat frame rate.
+  const contextUsageRefreshGeneration = useMemo(
+    () => computeContextUsageRefreshGeneration(deferredThreadEvents),
+    [deferredThreadEvents]
+  );
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+    [conversation?.status, deferredThreadEvents]
+  );
   const composerUserMessageHistory = useMemo(
-    () => extractComposerUserMessageHistory(rawThreadEvents),
-    [rawThreadEvents]
+    () => extractComposerUserMessageHistory(deferredThreadEvents),
+    [deferredThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
@@ -183,10 +189,10 @@ loadOlderConversationHistory,
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawThreadEvents,
+        events: deferredThreadEvents,
         conversation,
       }),
-    [conversation, rawThreadEvents]
+    [conversation, deferredThreadEvents]
   );
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
@@ -205,7 +211,7 @@ loadOlderConversationHistory,
     workspaceSession.chat.dismissedCompletionErrorKeyByConversationId?.[conversationId];
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation,
-    events: rawThreadEvents,
+    events: deferredThreadEvents,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -383,34 +389,11 @@ loadOlderConversationHistory,
     },
     [conversationId, syncConversationSnapshot, upsertConversation]
   );
-  const unqueuePromptToComposer = useCallback(
+  const sendQueuedPrompt = useCallback(
     (item: QueuedChatPrompt) => {
-      void (async () => {
-        try {
-          const { conversation: nextConv } = await deleteAgentConversationQueueItem(
-            conversationId,
-            item.id
-          );
-          upsertConversation(nextConv);
-        } catch {
-          void syncConversationSnapshot(conversationId).catch(() => undefined);
-          return;
-        }
-        upsertComposerDraft(composerDraftId, {
-          title: composerDraftTitle,
-          content: item.text,
-          attachments: item.attachments,
-        });
-      })();
+      void sendQueuedPromptNow(conversationId, item.id);
     },
-    [
-      composerDraftId,
-      composerDraftTitle,
-      conversationId,
-      syncConversationSnapshot,
-      upsertComposerDraft,
-      upsertConversation,
-    ]
+    [conversationId, sendQueuedPromptNow]
   );
 
   const editQueuedPrompt = useCallback(
@@ -726,7 +709,7 @@ const showRecentChatsSection =
                   <ComposerQueueDock
                     items={queuedPrompts}
                     onDelete={removeQueuedPrompt}
-                    onUnqueue={unqueuePromptToComposer}
+                    onSendNow={sendQueuedPrompt}
                     onEdit={editQueuedPrompt}
                     conversationConfig={conversation?.config}
                     backendLabels={backendLabels}
@@ -763,7 +746,7 @@ const showRecentChatsSection =
             composerDraftId={composerDraftId}
             conversationBusy={
               conversation
-                ? isAgentComposerBusy(conversation, eventsByConversationId[conversationId]) ||
+                ? isAgentComposerBusy(conversation, deferredThreadEvents) ||
                   conversation.status === "awaiting_permission"
                 : false
             }
@@ -871,7 +854,7 @@ const showRecentChatsSection =
                       <ComposerQueueDock
                         items={queuedPrompts}
                         onDelete={removeQueuedPrompt}
-                        onUnqueue={unqueuePromptToComposer}
+                        onSendNow={sendQueuedPrompt}
                         onEdit={editQueuedPrompt}
                         conversationConfig={conversation?.config}
                         backendLabels={backendLabels}

@@ -51,6 +51,8 @@ interface EditorTabsProps {
   activeTabId: string | null;
   splitActive: boolean;
   splitOrientation: EditorSplitOrientation;
+  /** When false (mobile), stacked splits are the only layout. */
+  allowHorizontalSplit?: boolean;
   /** Left row only: split / join + overflow. Right row when split: overflow only. */
   showSplitToolbar: boolean;
   /** When true, add leading padding on the tab strip (iPadOS window controls). */
@@ -116,6 +118,7 @@ export function EditorTabs({
   activeTabId,
   splitActive,
   splitOrientation,
+  allowHorizontalSplit = true,
   showSplitToolbar,
   padStripLeadingForWindowChrome = false,
   onSelectTab,
@@ -581,7 +584,13 @@ export function EditorTabs({
         {showSplitToolbar && (
           <button
             type="button"
-            onClick={splitActive ? onJoinGroups : onSplitRight}
+            onClick={
+              splitActive
+                ? onJoinGroups
+                : allowHorizontalSplit
+                  ? onSplitRight
+                  : onSplitDown
+            }
             className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             aria-label={splitActive ? "Join editor groups" : "Split editor to the right"}
             aria-pressed={splitActive}
@@ -681,11 +690,13 @@ export function EditorTabs({
                 <button
                   type="button"
                   role="menuitem"
-                  disabled={splitOrientation === "horizontal"}
+                  disabled={!allowHorizontalSplit || splitOrientation === "horizontal"}
                   onClick={() => {
-                    if (splitOrientation !== "horizontal") {
-                      onSplitRight();
+                    if (!allowHorizontalSplit || splitOrientation === "horizontal") {
+                      closeMenu();
+                      return;
                     }
+                    onSplitRight();
                     closeMenu();
                   }}
                   className={popoverMenuIconItemClass}
@@ -722,7 +733,12 @@ export function EditorTabs({
                 <button
                   type="button"
                   role="menuitem"
+                  disabled={!allowHorizontalSplit}
                   onClick={() => {
+                    if (!allowHorizontalSplit) {
+                      closeMenu();
+                      return;
+                    }
                     onSplitRight();
                     closeMenu();
                   }}

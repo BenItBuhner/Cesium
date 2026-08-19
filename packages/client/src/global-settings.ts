@@ -1,4 +1,4 @@
-import { pruneModelToggleByBackend } from "@cesium/core";
+import { normalizeEnabledHarnesses, pruneModelToggleByBackend } from "@cesium/core";
 import { normalizeAgentConversationMruByServer } from "./agent-conversation-mru";
 import {
   createDefaultAuroraSettings,
@@ -25,6 +25,10 @@ import {
   type QuickOpenScopeId,
   type QuickSwitcherScopeId,
 } from "./quick-open-scopes";
+import {
+  normalizeComposerStatusBarVisibility,
+  type ComposerStatusBarVisibility,
+} from "./composer-status-bar";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 export type AgentRailGroupByMode = "workspace" | "priority";
@@ -170,6 +174,12 @@ export type GeneralSettingsState = {
   agentRail: AgentRailSettingsState;
   /** Order + visibility of the widgets on the new-chat landing. */
   newChatWidgets: NewChatWidgetsState;
+  /**
+   * Defaults for the repo / branch / goal / context row beneath the composer.
+   * Omitted on legacy profiles so their workspace's last-used value migrates
+   * naturally until the user changes a toggle or saves an explicit default.
+   */
+  composerStatusBarVisibility?: ComposerStatusBarVisibility;
 };
 
 export type AgentRailSettingsState = {
@@ -234,6 +244,11 @@ export type AgentsSettingsState = {
    */
   autoAcceptAllAgentPermissions: boolean;
   rememberedPermissions: RememberedAgentPermissionRule[];
+  /**
+   * Per-harness visibility in the composer picker. Missing keys default to on.
+   * Existing chats on a turned-off harness still run.
+   */
+  enabledHarnesses: Partial<Record<string, boolean>>;
 };
 
 export type RememberedAgentPermissionRule = {
@@ -359,6 +374,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       branchPrefix: "cursor/",
       autoAcceptAllAgentPermissions: false,
       rememberedPermissions: [],
+      enabledHarnesses: {},
     },
     models: {
       byBackend: {},
@@ -698,7 +714,6 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
   }
   const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
     cesium: "cesium-agent",
-    "cursor-acp": "cursor-sdk",
     "claude-adapter": "claude-code-sdk",
     "opencode-acp": "opencode-server",
     "opencode-v2-beta": "opencode-server",
@@ -837,6 +852,13 @@ export function normalizeLoadedGlobalSettings(
       newChatWidgets: normalizeNewChatWidgetsState(
         (r.general as Record<string, unknown> | undefined)?.newChatWidgets
       ),
+      composerStatusBarVisibility:
+        (r.general as Record<string, unknown> | undefined)
+          ?.composerStatusBarVisibility === undefined
+          ? undefined
+          : normalizeComposerStatusBarVisibility(
+              (r.general as Record<string, unknown>).composerStatusBarVisibility
+            ),
     },
     agents: {
       ...base.agents,
@@ -850,6 +872,7 @@ export function normalizeLoadedGlobalSettings(
       rememberedPermissions: normalizeRememberedPermissions(
         r.agents?.rememberedPermissions
       ),
+      enabledHarnesses: normalizeEnabledHarnesses(r.agents?.enabledHarnesses),
     },
     models: {
       byBackend:

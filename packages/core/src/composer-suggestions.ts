@@ -188,7 +188,9 @@ export function getSlashMenuSections(input: {
     sections.push({
       id: "harnesses",
       label: "Harnesses",
-      items: backends.map((entry) => ({
+      items: backends
+        .filter((entry) => entry.enabled !== false)
+        .map((entry) => ({
         id: `backend:${entry.id}`,
         label: entry.experimental ? `${entry.label} (experimental)` : entry.label,
         searchText: `${entry.label} ${entry.id} harness backend`,

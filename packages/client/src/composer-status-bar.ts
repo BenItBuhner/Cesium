@@ -47,19 +47,23 @@ export type ComposerStatusBarScopeState = {
 };
 
 /**
- * Per-conversation state wins; otherwise the last-used default; otherwise the
- * built-in defaults. New conversations therefore inherit whatever the user
- * configured most recently, and keep their own state once toggled.
+ * Per-conversation state wins; otherwise an explicit global new-chat default,
+ * then the legacy workspace default, then the built-in defaults. New
+ * conversations therefore inherit whatever the user configured most recently,
+ * and keep their own state once toggled.
  */
 export function resolveComposerStatusBarVisibilityForConversation(
   scope: ComposerStatusBarScopeState,
-  conversationId: string | null | undefined
+  conversationId: string | null | undefined,
+  newConversationDefault?: ComposerStatusBarVisibility
 ): ComposerStatusBarVisibility {
   const byConversation = scope.composerStatusBarVisibilityByConversationId;
   if (conversationId && byConversation && byConversation[conversationId]) {
     return normalizeComposerStatusBarVisibility(byConversation[conversationId]);
   }
-  return normalizeComposerStatusBarVisibility(scope.composerStatusBarVisibility);
+  return normalizeComposerStatusBarVisibility(
+    newConversationDefault ?? scope.composerStatusBarVisibility
+  );
 }
 
 function pruneStatusBarPerConversationMap(
@@ -84,7 +88,11 @@ function pruneStatusBarPerConversationMap(
  */
 export function pinComposerStatusBarVisibilityForConversation<
   T extends ComposerStatusBarScopeState,
->(scope: T, conversationId: string | null | undefined): T {
+>(
+  scope: T,
+  conversationId: string | null | undefined,
+  newConversationDefault?: ComposerStatusBarVisibility
+): T {
   if (!conversationId) {
     return scope;
   }
@@ -96,8 +104,10 @@ export function pinComposerStatusBarVisibilityForConversation<
     ...scope,
     composerStatusBarVisibilityByConversationId: pruneStatusBarPerConversationMap({
       ...byConversation,
-      [conversationId]: normalizeComposerStatusBarVisibility(
-        scope.composerStatusBarVisibility
+      [conversationId]: resolveComposerStatusBarVisibilityForConversation(
+        scope,
+        undefined,
+        newConversationDefault
       ),
     }),
   };

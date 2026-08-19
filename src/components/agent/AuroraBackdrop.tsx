@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useAuroraScene } from "@/components/agent/AuroraSceneContext";
+import { recentMainThreadCongestionMs } from "@/lib/main-thread-congestion";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 import { resolveAuroraColors, type AuroraSettingsState } from "@/lib/global-settings";
 import {
@@ -20,6 +21,35 @@ const FRAME_INTERVAL_MS = 1000 / 30;
  * GPU/CPU tax by a third on the hardware that feels it most.
  */
 const LOW_POWER_FRAME_INTERVAL_MS = 1000 / 20;
+/**
+ * Calm moods (idle / paused) drift slowly under a heavy blur — half the frame
+ * rate is visually indistinguishable there and halves the standing GPU
+ * composite cost of the full-window layer, which is most of what this
+ * component costs when the app is just sitting open.
+ */
+const CALM_FRAME_INTERVAL_MS = 1000 / 15;
+const LOW_POWER_CALM_FRAME_INTERVAL_MS = 1000 / 10;
+/** Window visible but not focused (another window on top / beside it). */
+const UNFOCUSED_FRAME_INTERVAL_MS = 1000 / 8;
+/**
+ * Every aurora frame damages the whole window, so composite cost scales with
+ * DISPLAY pixels (device pixels, not CSS pixels) even though the canvas
+ * paints at a tiny internal resolution. Above QHD the drift drops to 20fps
+ * and above 4K to 12fps — imperceptible under the heavy blur, but it keeps
+ * the standing GPU cost flat instead of quadrupling at 4K and 16x-ing at 8K.
+ */
+const QHD_DEVICE_PIXELS = 2_560 * 1_440;
+const UHD_4K_DEVICE_PIXELS = 3_840 * 2_160;
+const LARGE_DISPLAY_FRAME_INTERVAL_MS = 1000 / 20;
+const HUGE_DISPLAY_FRAME_INTERVAL_MS = 1000 / 12;
+
+function displayDevicePixels(): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  return window.innerWidth * dpr * (window.innerHeight * dpr);
+}
 
 let lowPowerDisplayCache: boolean | null = null;
 function isLowPowerDisplay(): boolean {
@@ -35,6 +65,51 @@ function isLowPowerDisplay(): boolean {
   }
   return lowPowerDisplayCache;
 }
+
+/**
+ * GPU-less compositing (SwiftShader / llvmpipe / headless fallbacks) pays for
+ * every full-window damage in CPU; the aurora's whole-window canvas is the
+ * dominant standing cost there (~38% of a core at 4K/15fps measured under
+ * SwiftShader). Such machines get survival frame rates — the drift stays
+ * alive, the tax collapses.
+ */
+let softwareRendererCache: boolean | null = null;
+function isSoftwareRenderer(): boolean {
+  if (softwareRendererCache !== null) {
+    return softwareRendererCache;
+  }
+  let result = false;
+  try {
+    const probe = document.createElement("canvas");
+    const gl =
+      probe.getContext("webgl") ??
+      (probe.getContext("experimental-webgl") as WebGLRenderingContext | null);
+    if (!gl) {
+      result = true;
+    } else {
+      const info = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = info
+        ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) ?? "")
+        : "";
+      result = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(renderer);
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    }
+  } catch {
+    result = false;
+  }
+  softwareRendererCache = result;
+  return result;
+}
+
+const SOFTWARE_GL_FRAME_INTERVAL_MS = 1000 / 12;
+const SOFTWARE_GL_CALM_FRAME_INTERVAL_MS = 1000 / 8;
+/**
+ * Ambient effects yield first when the main thread is drowning (slow device,
+ * DevTools CPU throttling, heavy agent load): moderate congestion halves the
+ * drift to 6fps, severe congestion parks it at 3fps until the backlog drains.
+ */
+const CONGESTED_FRAME_INTERVAL_MS = 1000 / 6;
+const SEVERELY_CONGESTED_FRAME_INTERVAL_MS = 1000 / 3;
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
 const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
@@ -129,6 +204,8 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bufferRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<AuroraRenderer | null>(null);
+  const moodRef = useRef<AuroraMood>(mood);
+  moodRef.current = mood;
 
   const colors = useMemo(() => resolveAuroraColors(aurora), [aurora]);
   const colorsKey = colors.join(",");
@@ -250,21 +327,65 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     return () => observer.disconnect();
   }, [enabled, paintFrame]);
 
-  // Animation loop: rAF capped to ~30fps, parked while the tab is hidden.
+  // Animation loop: rAF capped to ~30fps, parked while the tab is hidden or
+  // the canvas is scrolled/covered offscreen, slowed while the window is
+  // unfocused or the scene is calm (idle/paused).
   useEffect(() => {
     if (!enabled || reducedMotion) {
       return;
     }
     let raf = 0;
     let last = performance.now();
-    const frameIntervalMs = isLowPowerDisplay()
-      ? LOW_POWER_FRAME_INTERVAL_MS
-      : FRAME_INTERVAL_MS;
+    let offscreen = false;
+    let windowBlurred =
+      typeof document !== "undefined" && !document.hasFocus();
+    const lowPower = isLowPowerDisplay();
+
+    const softwareGl = isSoftwareRenderer();
+    const frameIntervalMs = (): number => {
+      const congestion = recentMainThreadCongestionMs();
+      if (congestion > 1_000) {
+        return SEVERELY_CONGESTED_FRAME_INTERVAL_MS;
+      }
+      if (windowBlurred) {
+        return UNFOCUSED_FRAME_INTERVAL_MS;
+      }
+      if (congestion > 300) {
+        return CONGESTED_FRAME_INTERVAL_MS;
+      }
+      // Completed conversations sit open indefinitely; after the brief bloom
+      // transition the scene is ambient drift, same as idle.
+      const calm =
+        moodRef.current === "idle" ||
+        moodRef.current === "paused" ||
+        moodRef.current === "completed";
+      let baseInterval = calm
+        ? lowPower
+          ? LOW_POWER_CALM_FRAME_INTERVAL_MS
+          : CALM_FRAME_INTERVAL_MS
+        : lowPower
+          ? LOW_POWER_FRAME_INTERVAL_MS
+          : FRAME_INTERVAL_MS;
+      if (softwareGl) {
+        baseInterval = Math.max(
+          baseInterval,
+          calm ? SOFTWARE_GL_CALM_FRAME_INTERVAL_MS : SOFTWARE_GL_FRAME_INTERVAL_MS
+        );
+      }
+      const pixels = displayDevicePixels();
+      if (pixels >= UHD_4K_DEVICE_PIXELS) {
+        return Math.max(baseInterval, HUGE_DISPLAY_FRAME_INTERVAL_MS);
+      }
+      if (pixels >= QHD_DEVICE_PIXELS) {
+        return Math.max(baseInterval, LARGE_DISPLAY_FRAME_INTERVAL_MS);
+      }
+      return baseInterval;
+    };
 
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
       const dt = now - last;
-      if (dt < frameIntervalMs) {
+      if (dt < frameIntervalMs()) {
         return;
       }
       last = now;
@@ -273,24 +394,56 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
 
     const start = () => {
       cancelAnimationFrame(raf);
+      if (document.hidden || offscreen) {
+        return;
+      }
       last = performance.now();
       raf = requestAnimationFrame(tick);
     };
+    const stop = () => cancelAnimationFrame(raf);
     const onVisibility = () => {
       if (document.hidden) {
-        cancelAnimationFrame(raf);
+        stop();
       } else {
         start();
       }
     };
+    const onBlur = () => {
+      windowBlurred = true;
+    };
+    const onFocus = () => {
+      windowBlurred = false;
+    };
+
+    const canvas = canvasRef.current;
+    const observer =
+      canvas && typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver((entries) => {
+            const entry = entries[entries.length - 1];
+            offscreen = entry ? !entry.isIntersecting : false;
+            if (offscreen) {
+              stop();
+            } else {
+              start();
+            }
+          })
+        : null;
+    if (canvas && observer) {
+      observer.observe(canvas);
+    }
 
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     if (!document.hidden) {
       start();
     }
     return () => {
+      observer?.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
-      cancelAnimationFrame(raf);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      stop();
     };
   }, [enabled, reducedMotion, paintFrame]);
 

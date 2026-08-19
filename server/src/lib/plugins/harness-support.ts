@@ -26,6 +26,13 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     attachment: "sdk-mcp",
     notes: "Cursor SDK receives native mcpServers plus plugin skill prompt blocks.",
   },
+  "cursor-acp": {
+    backendId: "cursor-acp",
+    nativeMcp: true,
+    promptSkills: true,
+    attachment: "acp-mcp",
+    notes: "Cursor ACP sessions receive MCP servers through the ACP mcpServers array.",
+  },
   "claude-code-sdk": {
     backendId: "claude-code-sdk",
     nativeMcp: true,
@@ -64,19 +71,19 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
   },
   "opencode-server": {
     backendId: "opencode-server",
-    nativeMcp: false,
+    nativeMcp: true,
     promptSkills: true,
-    attachment: "prompt-only",
+    attachment: "workspace-mcp-config",
     notes:
-      "OpenCode Current and v2 Beta both discover MCP from OpenCode's own configuration. Cesium-managed plugin MCP is prompt-only — tools will not run natively across this harness.",
+      "Cesium syncs enabled MCP servers into workspace opencode.json. OpenCode reads that file natively.",
   },
   "opencode-v2-beta": {
     backendId: "opencode-v2-beta",
-    nativeMcp: false,
+    nativeMcp: true,
     promptSkills: true,
-    attachment: "prompt-only",
+    attachment: "workspace-mcp-config",
     notes:
-      "Legacy OpenCode v2 Beta id. Chats migrate onto the OpenCode harness; MCP remains prompt-only.",
+      "Legacy OpenCode v2 Beta id. Chats migrate onto the OpenCode harness; MCP syncs via opencode.json.",
   },
   "pi-agent": {
     backendId: "pi-agent",
@@ -84,7 +91,7 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     promptSkills: true,
     attachment: "prompt-only",
     notes:
-      "Pi loads its own packages/extensions/skills from the configured agent home (~/.pi/agent by default). Cesium-managed plugin MCP is prompt-only — use Pi packages or CLI tools for native Pi capabilities.",
+      "Cesium writes a managed MCP export to .pi/cesium-mcp.json and ~/.pi/agent/cesium-mcp.json. Pi still does not consume that file natively, so plugin MCP remains prompt-only unless you install a Pi package that reads it.",
   },
 };
 

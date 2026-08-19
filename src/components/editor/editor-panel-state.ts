@@ -66,6 +66,26 @@ function nextDefaultTabGroupTitle(
 
 export type EditorGroup = "left" | "right";
 
+/** Browsers open in the primary (full) group unless the caller asks for a split. */
+export const DEFAULT_BROWSER_EDITOR_GROUP: EditorGroup = "left";
+
+export function resolveBrowserEditorGroup(
+  group?: EditorGroup | null
+): EditorGroup {
+  return group === "right" ? "right" : DEFAULT_BROWSER_EDITOR_GROUP;
+}
+
+/** Narrow viewports cannot usefully host two editor columns side by side. */
+export function resolveEditorSplitOrientation({
+  isMobile,
+  persisted,
+}: {
+  isMobile: boolean;
+  persisted: EditorSplitOrientation;
+}): EditorSplitOrientation {
+  return isMobile ? "vertical" : persisted;
+}
+
 export interface EditorPanelState {
   split: boolean;
   splitOrientation: EditorSplitOrientation;
