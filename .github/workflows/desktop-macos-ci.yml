@@ -40,6 +40,9 @@ jobs:
           # never let it into staged/packaged output.
           rm -f server/node_modules/cesium
 
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
       - name: Package the macOS app (dmg + zip, arm64)
         run: npm --prefix apps/desktop run package:mac
 
