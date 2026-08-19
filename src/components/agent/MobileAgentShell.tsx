@@ -18,8 +18,10 @@
  *
  * Gesture rules (deliberately conservative so content interactions never
  * fight the shell):
- * - Right pane open: no swipe gestures at all — it hosts web pages, files and
- *   terminals the user is actively touching.
+ * - Right pane open with tabs: no swipe gestures — it hosts web pages, files
+ *   and terminals the user is actively touching.
+ * - Right pane open with zero tabs: swipe right closes it, same physics as
+ *   the other overlays.
  * - Left rail open: swipe left anywhere closes it.
  * - Main chat with nothing open: swipe right opens the rail; swipe left opens
  *   the workbench pane (when a real conversation is selected).
@@ -47,11 +49,17 @@ import {
   FLICK_VELOCITY_THRESHOLD,
   SCROLL_CLAIM_PX,
   gestureBlockedByTarget,
+  isRightPaneSwipeAction,
+  resolveAgentShellSwipeAction,
   useLegacyOverflowClipGuard,
+  type AgentShellSwipeAction,
   type DrawerSide,
 } from "@/components/mobile/drawer-motion";
 
-type SwipeAction = "open-left" | "close-left" | "open-right";
+type SwipeAction = AgentShellSwipeAction;
+
+/** Gaussian smear applied to the chat while the workbench pane covers it. */
+const RIGHT_PANE_BACKDROP_BLUR_PX = 18;
 
 type ActiveGesture = {
   touchId: number;
@@ -72,6 +80,7 @@ export function MobileAgentShell({
   setRailOpen,
   setRightOpen,
   rightGestureEnabled,
+  rightCloseGestureEnabled,
   railWidth,
   rightPaneWidthCss,
   rail,
@@ -84,6 +93,8 @@ export function MobileAgentShell({
   setRightOpen: (open: boolean) => void;
   /** Swipe-to-open for the right pane (disabled on the new-chat landing). */
   rightGestureEnabled: boolean;
+  /** Swipe-right-to-close the right pane when it has zero tabs/files open. */
+  rightCloseGestureEnabled: boolean;
   railWidth: number;
   rightPaneWidthCss: string;
   rail: ReactNode;
@@ -91,6 +102,7 @@ export function MobileAgentShell({
   children: ReactNode;
 }) {
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const sceneRef = useRef<HTMLDivElement | null>(null);
   const leftDrawerRef = useRef<HTMLDivElement | null>(null);
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const rightPaneRef = useRef<HTMLDivElement | null>(null);
@@ -107,11 +119,21 @@ export function MobileAgentShell({
   rightOpenRef.current = rightOpen;
   const rightGestureEnabledRef = useRef(rightGestureEnabled);
   rightGestureEnabledRef.current = rightGestureEnabled;
+  const rightCloseGestureEnabledRef = useRef(rightCloseGestureEnabled);
+  rightCloseGestureEnabledRef.current = rightCloseGestureEnabled;
 
   const applyLeftFrame = useCallback((progress: number) => {
     const drawer = leftDrawerRef.current;
     if (drawer) {
-      drawer.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
+      // Drop the resting transform so backdrop-filter can sample the chat
+      // instead of the drawer's own empty compositor layer.
+      if (progress >= 0.999) {
+        drawer.style.transform = "none";
+        drawer.style.willChange = "auto";
+      } else {
+        drawer.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
+        drawer.style.willChange = "transform";
+      }
     }
     const scrim = scrimRef.current;
     if (scrim) {
@@ -123,9 +145,27 @@ export function MobileAgentShell({
   const applyRightFrame = useCallback((progress: number) => {
     const pane = rightPaneRef.current;
     if (pane) {
-      pane.style.transform = `translate3d(${(1 - progress) * 100}%, 0, 0)`;
+      if (progress >= 0.999) {
+        pane.style.transform = "none";
+        pane.style.willChange = "auto";
+      } else {
+        pane.style.transform = `translate3d(${(1 - progress) * 100}%, 0, 0)`;
+        pane.style.willChange = "transform";
+      }
       pane.style.visibility = progress <= 0.001 ? "hidden" : "visible";
       pane.style.pointerEvents = progress >= 0.999 ? "auto" : "none";
+    }
+    // Backdrop-filter on a transformed overlay is unreliable (WebKit +
+    // overflow-clip ancestors + compositor promotion). Blurring the chat
+    // itself is what actually frosts the pixels the pane covers.
+    const scene = sceneRef.current;
+    if (scene) {
+      if (progress <= 0.001) {
+        scene.style.filter = "none";
+      } else {
+        const blurPx = (progress * RIGHT_PANE_BACKDROP_BLUR_PX).toFixed(1);
+        scene.style.filter = `blur(${blurPx}px)`;
+      }
     }
   }, []);
 
@@ -259,22 +299,14 @@ export function MobileAgentShell({
       return null;
     };
 
-    const resolveAction = (direction: DrawerSide): SwipeAction | null => {
-      const leftProgress = leftMotionRef.current?.progress ?? 0;
-      const rightProgress = rightMotionRef.current?.progress ?? 0;
-      if (rightProgress > 0.01) {
-        // The workbench pane owns the screen: swipes must keep interacting
-        // with its content (web pages, files), never close it.
-        return null;
-      }
-      if (leftProgress > 0.01) {
-        return direction === "left" ? "close-left" : null;
-      }
-      if (direction === "right") {
-        return "open-left";
-      }
-      return rightGestureEnabledRef.current ? "open-right" : null;
-    };
+    const resolveAction = (direction: DrawerSide): SwipeAction | null =>
+      resolveAgentShellSwipeAction({
+        direction,
+        leftProgress: leftMotionRef.current?.progress ?? 0,
+        rightProgress: rightMotionRef.current?.progress ?? 0,
+        rightOpenGestureEnabled: rightGestureEnabledRef.current,
+        rightCloseGestureEnabled: rightCloseGestureEnabledRef.current,
+      });
 
     const onTouchMove = (event: TouchEvent) => {
       const gesture = gestureRef.current;
@@ -309,8 +341,9 @@ export function MobileAgentShell({
           gesture.rejected = true;
           return;
         }
-        const motion =
-          action === "open-right" ? rightMotionRef.current : leftMotionRef.current;
+        const motion = isRightPaneSwipeAction(action)
+          ? rightMotionRef.current
+          : leftMotionRef.current;
         if (!motion) {
           gesture.rejected = true;
           return;
@@ -323,8 +356,9 @@ export function MobileAgentShell({
           // The drawer must exist before the first drag frame lands on it.
           flushSync(() => setLeftMounted(true));
         }
-        const drawerEl =
-          action === "open-right" ? rightPaneRef.current : leftDrawerRef.current;
+        const drawerEl = isRightPaneSwipeAction(action)
+          ? rightPaneRef.current
+          : leftDrawerRef.current;
         if (!drawerEl) {
           motion.cancel();
           gesture.rejected = true;
@@ -341,12 +375,13 @@ export function MobileAgentShell({
       }
       event.preventDefault();
 
-      const motion =
-        gesture.action === "open-right" ? rightMotionRef.current : leftMotionRef.current;
+      const motion = isRightPaneSwipeAction(gesture.action)
+        ? rightMotionRef.current
+        : leftMotionRef.current;
       if (!motion) {
         return;
       }
-      const sign = gesture.action === "open-right" ? -1 : 1;
+      const sign = isRightPaneSwipeAction(gesture.action) ? -1 : 1;
       const progress = gesture.baseProgress + (sign * dx) / gesture.drawerWidth;
       motion.dragTo(progress, 0);
     };
@@ -355,7 +390,7 @@ export function MobileAgentShell({
       if (!gesture.engaged || !gesture.action) {
         return;
       }
-      const isRight = gesture.action === "open-right";
+      const isRight = isRightPaneSwipeAction(gesture.action);
       const motion = isRight ? rightMotionRef.current : leftMotionRef.current;
       if (!motion) {
         return;
@@ -438,7 +473,15 @@ export function MobileAgentShell({
     // would otherwise create horizontal scrollable overflow that focus/scroll
     // heuristics can drag the whole shell sideways into.
     <div ref={shellRef} className="absolute inset-0 overflow-clip">
-      {children}
+      <div
+        ref={sceneRef}
+        className="absolute inset-0"
+        style={{
+          filter: rightOpen ? `blur(${RIGHT_PANE_BACKDROP_BLUR_PX}px)` : "none",
+        }}
+      >
+        {children}
+      </div>
 
       {leftMounted ? (
         <>
@@ -454,8 +497,8 @@ export function MobileAgentShell({
             className="mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
             style={{
               width: `${railWidth}px`,
-              transform: "translate3d(-100%, 0, 0)",
-              willChange: "transform",
+              transform: railOpen ? "none" : "translate3d(-100%, 0, 0)",
+              willChange: railOpen ? "auto" : "transform",
             }}
           >
             {rail}
@@ -466,17 +509,17 @@ export function MobileAgentShell({
       <div
         ref={rightPaneRef}
         data-mobile-drawer="right"
-        className="mobile-right-drawer-surface absolute inset-y-0 right-0 z-40 overflow-hidden border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
+        className="mobile-right-drawer-surface absolute inset-y-0 right-0 z-40 border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
         style={{
           width: rightPaneWidthCss,
-          transform: rightOpen ? "translate3d(0, 0, 0)" : "translate3d(100%, 0, 0)",
+          transform: rightOpen ? "none" : "translate3d(100%, 0, 0)",
           visibility: rightOpen ? "visible" : "hidden",
           pointerEvents: rightOpen ? "auto" : "none",
-          willChange: "transform",
+          willChange: rightOpen ? "auto" : "transform",
         }}
         aria-hidden={!rightOpen}
       >
-        {rightPane}
+        <div className="h-full overflow-hidden">{rightPane}</div>
       </div>
     </div>
   );

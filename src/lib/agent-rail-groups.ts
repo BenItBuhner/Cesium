@@ -2,7 +2,7 @@ import type {
   AgentConversationGroup,
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
-import type { AgentRailGroupByMode } from "@/lib/global-settings";
+import type { AgentRailGroupByMode, AgentRailScope } from "@/lib/global-settings";
 import {
   AGENT_RAIL_PRIORITY_BUCKETS,
   AGENT_RAIL_PRIORITY_BUCKET_LABELS,
@@ -244,7 +244,21 @@ export function shouldShowAgentRailWorkspaceGroupHeaders(input: {
   return Boolean(input.standaloneSectionVisible && input.workspaceGroupCount >= 1);
 }
 
-/** Hide the standalone "Chat" title when the picker is already scoped to it. */
-export function shouldShowAgentRailStandaloneSectionHeader(scopedToStandalone: boolean): boolean {
-  return !scopedToStandalone;
+/**
+ * Hide the standalone "Chat" title when the picker already names that scope —
+ * a selected standalone workspace, or the explicit "No workspace" option.
+ */
+export function shouldShowAgentRailStandaloneSectionHeader(input: {
+  scopeType?: AgentRailScope["type"] | null;
+  standaloneSectionVisible?: boolean;
+  workspaceGroupCount?: number;
+}): boolean {
+  if (input.scopeType === "no-workspace") {
+    return false;
+  }
+  const scopedToStandaloneWorkspace =
+    input.scopeType === "workspace" &&
+    Boolean(input.standaloneSectionVisible) &&
+    (input.workspaceGroupCount ?? 0) === 0;
+  return !scopedToStandaloneWorkspace;
 }

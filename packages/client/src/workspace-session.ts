@@ -326,6 +326,12 @@ export type ChatSessionState = {
   model: ModelInfo;
   backendId: AgentBackendId;
   /**
+   * Per-backend "last used" model memory. New-chat drafts inherit the model
+   * the user last picked for that backend instead of snapping back to the
+   * backend's hardcoded default when switching harnesses or starting fresh.
+   */
+  lastModelByBackend?: Record<string, ModelInfo>;
+  /**
    * Cesium capability profile for new-chat drafts ("code", "work", or a custom
    * profile id). Persisted conversations bind their profile via config options.
    */

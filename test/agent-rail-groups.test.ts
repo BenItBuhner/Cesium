@@ -372,7 +372,54 @@ describe("agent rail workspace group headers", () => {
   });
 
   test("hides the standalone Chat title when that workspace is scoped", () => {
-    assert.equal(shouldShowAgentRailStandaloneSectionHeader(true), false);
-    assert.equal(shouldShowAgentRailStandaloneSectionHeader(false), true);
+    assert.equal(
+      shouldShowAgentRailStandaloneSectionHeader({
+        scopeType: "workspace",
+        standaloneSectionVisible: true,
+        workspaceGroupCount: 0,
+      }),
+      false
+    );
+  });
+
+  test("hides the standalone Chat title when No workspace is scoped", () => {
+    assert.equal(
+      shouldShowAgentRailStandaloneSectionHeader({
+        scopeType: "no-workspace",
+        standaloneSectionVisible: true,
+        workspaceGroupCount: 0,
+      }),
+      false
+    );
+  });
+
+  test("keeps the standalone Chat title when all workspaces are shown", () => {
+    assert.equal(
+      shouldShowAgentRailStandaloneSectionHeader({
+        scopeType: "all",
+        standaloneSectionVisible: true,
+        workspaceGroupCount: 1,
+      }),
+      true
+    );
+    assert.equal(
+      shouldShowAgentRailStandaloneSectionHeader({
+        scopeType: "all",
+        standaloneSectionVisible: true,
+        workspaceGroupCount: 0,
+      }),
+      true
+    );
+  });
+
+  test("keeps the standalone Chat title when a regular workspace is scoped", () => {
+    assert.equal(
+      shouldShowAgentRailStandaloneSectionHeader({
+        scopeType: "workspace",
+        standaloneSectionVisible: false,
+        workspaceGroupCount: 1,
+      }),
+      true
+    );
   });
 });

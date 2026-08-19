@@ -79,7 +79,10 @@ function AgentLayoutShell() {
     setAgentShellDesktopLayout,
     setRightPaneOpen,
     toggleRightPaneOpen,
+    sidePaneEditorSession,
   } = useAgentShellState();
+  const rightEditorTabCount =
+    sidePaneEditorSession.leftTabs.length + sidePaneEditorSession.rightTabs.length;
   const isDesktopApp = useIsCesiumDesktopApp();
 
   // Android back gestures for the mobile rail drawer and right pane are
@@ -337,6 +340,7 @@ function AgentLayoutShell() {
                 setRailOpen={(open) => setLeftRailCollapsed(!open)}
                 setRightOpen={setRightPaneOpen}
                 rightGestureEnabled={!isDraftConversationSelected}
+                rightCloseGestureEnabled={rightEditorTabCount === 0}
                 railWidth={AGENT_LEFT_RAIL_EXPANDED_WIDTH}
                 rightPaneWidthCss={`min(100vw, ${AGENT_RIGHT_PANE_WIDTH}px)`}
                 rail={<AgentWorkspaceRail />}

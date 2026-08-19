@@ -587,13 +587,14 @@ html.dark .landing-shot-dark {
 /*
  * Touch devices (phones, tablets, Android WebView): backdrop-filter re-blurs
  * the pixels underneath on EVERY frame the content behind changes — i.e. on
- * every scroll frame under the composer dock and continuously during drawer
- * drags. On mobile GPUs (and worse, software-composited WebViews) that alone
- * can halve frame rate. Swap the frosted glass for near-opaque fills; the
- * visual difference on a small screen is negligible, the performance
- * difference is not. Selector list mirrors the blur rules above (including
- * the `.dark`-scoped aurora variants) so these later declarations win at
- * equal-or-greater specificity.
+ * every scroll frame under the composer dock. On mobile GPUs (and worse,
+ * software-composited WebViews) that alone can halve frame rate. Swap the
+ * frosted glass on those small, always-on chrome pieces for near-opaque
+ * fills. The mobile drawers are excluded on purpose: they are the layered
+ * overlay the user stares at, and a near-opaque fill made the chat behind
+ * the workbench pane read as sharp undimmed text. Drawer frost is applied
+ * once at rest (transform is dropped when fully open) so it is not paying
+ * the per-scroll-frame cost this rule is meant to avoid.
  */
 @media (pointer: coarse) {
   .chat-composer-surface,
@@ -604,13 +605,6 @@ html.dark .landing-shot-dark {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: color-mix(in srgb, var(--agent-card-bg) 96%, transparent);
-  }
-
-  .mobile-left-drawer-surface,
-  .mobile-right-drawer-surface {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    background: color-mix(in srgb, var(--bg-panel) 97%, transparent);
   }
 }
 
