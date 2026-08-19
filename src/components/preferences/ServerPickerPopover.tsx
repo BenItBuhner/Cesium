@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleUserRound, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { Check, CircleUserRound, Cloud, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -25,6 +25,7 @@ import {
   serverHealthIndicator,
 } from "@/lib/server-health-display";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
+import type { CloudExecutionDevice } from "@/lib/cloud-execution-devices";
 
 export type ServerPickerPopoverProps = {
   open: boolean;
@@ -40,6 +41,15 @@ export type ServerPickerPopoverProps = {
   placement?: "above" | "below";
   /** Device surface adds connect / rename / remove / advanced settings. */
   variant?: "switch" | "device";
+  /**
+   * Cloud pseudo-devices from cloud-capable backends (e.g. Cursor Cloud).
+   * Rendered as a dedicated section; selecting one does not change the
+   * active server — new chats execute on the vendor's cloud instead.
+   */
+  cloudDevices?: CloudExecutionDevice[];
+  /** Active cloud pseudo-device id; overrides server selection highlighting. */
+  selectedCloudDeviceId?: string | null;
+  onSelectCloudDevice?: (cloudDeviceId: string) => void;
 };
 
 export function ServerPickerPopover({
@@ -54,6 +64,9 @@ export function ServerPickerPopover({
   onSelect,
   placement = "below",
   variant = "switch",
+  cloudDevices = [],
+  selectedCloudDeviceId = null,
+  onSelectCloudDevice,
 }: ServerPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0, width: 280 });
@@ -156,11 +169,11 @@ export function ServerPickerPopover({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <VerticalFadedScroll
-        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}`}
+        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${cloudDevices.length}\0${selectedCloudDeviceId ?? ""}`}
         scrollClassName="hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
       >
         {servers.map((server, index) => {
-          const selected = server.id === selectedServerId;
+          const selected = server.id === selectedServerId && !selectedCloudDeviceId;
           const health = serverStatusById[server.id]?.health ?? "unknown";
           const appearance = getServerRailAppearance(serverRailAppearances, server.id, index);
           const displayLabel = getServerDisplayLabel(server, appearance);
@@ -277,6 +290,49 @@ export function ServerPickerPopover({
             </div>
           );
         })}
+        {cloudDevices.length > 0 && onSelectCloudDevice ? (
+          <div className="mt-[4px] border-t border-[var(--border-card)] pt-[4px]">
+            <div className="px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+              Cloud
+            </div>
+            {cloudDevices.map((device) => {
+              const selected = device.id === selectedCloudDeviceId;
+              return (
+                <button
+                  key={device.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  onClick={() => {
+                    onSelectCloudDevice(device.id);
+                    onClose();
+                  }}
+                  className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[8px] text-left hover:bg-[var(--accent-bg)] sm:py-[7px]"
+                >
+                  <Cloud
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
+                      {device.label}
+                    </span>
+                    <span className="mt-[2px] block truncate font-sans text-[10.5px] text-[var(--text-secondary)]">
+                      {device.description}
+                    </span>
+                  </span>
+                  {selected ? (
+                    <Check
+                      className="size-[13px] shrink-0 text-[var(--text-primary)]"
+                      strokeWidth={2}
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </VerticalFadedScroll>
       {variant === "device" ? (
         <div className="border-t border-[var(--border-card)] p-[4px]">
