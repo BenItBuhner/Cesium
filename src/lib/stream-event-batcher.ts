@@ -7,6 +7,18 @@ type ScheduleHandle = ReturnType<typeof globalThis.setTimeout>;
 export type KeyedEventBatcherOptions<T> = {
   enabled: boolean;
   windowMs?: number;
+  /**
+   * Overrides `windowMs` each time a flush is scheduled, given the keys with
+   * pending events. Lets callers stretch the window when the tab is hidden or
+   * when a huge transcript makes each downstream commit expensive.
+   */
+  resolveWindowMs?: (pendingKeys: string[]) => number;
+  /**
+   * Gates `flushNow` enqueues (tool completions etc.). Returning false
+   * coalesces them like ordinary stream chunks — e.g. while the tab is
+   * hidden, where an immediate commit buys nothing.
+   */
+  allowImmediateFlush?: () => boolean;
   onFlush: (batches: EventBatchMap<T>) => void;
   schedule?: (callback: () => void, delayMs: number) => ScheduleHandle;
   cancel?: (handle: ScheduleHandle) => void;
@@ -20,6 +32,8 @@ export type KeyedEventBatcherOptions<T> = {
 export class KeyedEventBatcher<T> {
   private enabled: boolean;
   private readonly windowMs: number;
+  private readonly resolveWindowMs?: (pendingKeys: string[]) => number;
+  private readonly allowImmediateFlush?: () => boolean;
   private readonly onFlush: (batches: EventBatchMap<T>) => void;
   private readonly schedule: (callback: () => void, delayMs: number) => ScheduleHandle;
   private readonly cancel: (handle: ScheduleHandle) => void;
@@ -29,6 +43,8 @@ export class KeyedEventBatcher<T> {
   constructor(options: KeyedEventBatcherOptions<T>) {
     this.enabled = options.enabled;
     this.windowMs = options.windowMs ?? STREAM_EVENT_BATCH_WINDOW_MS;
+    this.resolveWindowMs = options.resolveWindowMs;
+    this.allowImmediateFlush = options.allowImmediateFlush;
     this.onFlush = options.onFlush;
     this.schedule =
       options.schedule ??
@@ -68,15 +84,17 @@ export class KeyedEventBatcher<T> {
       this.pending.set(key, [...events]);
     }
 
-    if (flushNow) {
+    if (flushNow && (this.allowImmediateFlush?.() ?? true)) {
       this.flush();
       return;
     }
     if (this.timer == null) {
+      const windowMs =
+        this.resolveWindowMs?.([...this.pending.keys()]) ?? this.windowMs;
       this.timer = this.schedule(() => {
         this.timer = null;
         this.flushPending();
-      }, this.windowMs);
+      }, windowMs);
     }
   }
 

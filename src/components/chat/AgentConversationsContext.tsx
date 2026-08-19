@@ -67,6 +67,7 @@ import {
 import { devPerfEnabled, recordPerfSample } from "@/lib/dev-perf";
 import {
   KeyedEventBatcher,
+  STREAM_EVENT_BATCH_WINDOW_MS,
   type EventBatchMap,
 } from "@/lib/stream-event-batcher";
 import {
@@ -414,6 +415,25 @@ const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
  * event stream (`status` events); this only paces rail/tab metadata churn.
  */
 const CONVERSATION_UPSERT_COALESCE_MS = 250;
+/** Stream commit window while the tab is hidden — nobody sees the frames. */
+const HIDDEN_STREAM_BATCH_WINDOW_MS = 1_000;
+/**
+ * Very long transcripts make each commit expensive (full projection +
+ * reconciliation downstream), so the batch window stretches with the largest
+ * pending log to bound the projection work per second.
+ */
+function resolveStreamBatchWindowMs(largestPendingLogLength: number): number {
+  if (typeof document !== "undefined" && document.hidden) {
+    return HIDDEN_STREAM_BATCH_WINDOW_MS;
+  }
+  if (largestPendingLogLength >= 3_000) {
+    return 250;
+  }
+  if (largestPendingLogLength >= 1_200) {
+    return 150;
+  }
+  return STREAM_EVENT_BATCH_WINDOW_MS;
+}
 const BATCHABLE_STREAM_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
   "assistant_message_chunk",
   "reasoning",
@@ -632,8 +652,34 @@ export function AgentConversationsProvider({
       new KeyedEventBatcher<AgentStoredEvent>({
         enabled: globalSettings.general.batchStreamEvents,
         onFlush: (batches) => commitEventBatchesRef.current(batches),
+        resolveWindowMs: (pendingKeys) => {
+          let largest = 0;
+          for (const key of pendingKeys) {
+            const length = eventsStore.get(key).length;
+            if (length > largest) {
+              largest = length;
+            }
+          }
+          return resolveStreamBatchWindowMs(largest);
+        },
+        // Tool completions force an immediate commit for visible feedback;
+        // with the tab hidden there is nothing to see, so let them coalesce.
+        allowImmediateFlush: () =>
+          typeof document === "undefined" || !document.hidden,
       })
   );
+
+  // Returning to a hidden tab commits whatever accumulated at the slow hidden
+  // cadence right away, so the transcript is current the moment it is seen.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        eventRenderBatcher.flush();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [eventRenderBatcher]);
 
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
