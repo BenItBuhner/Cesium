@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Cesium Desktop",
   "author": "Cesium",
+  "homepage": "https://github.com/BenItBuhner/Cesium",
   "private": true,
   "type": "module",
   "main": "./src/electron-main.mjs",
@@ -15,7 +16,8 @@
     "package": "npm run build && npm run prepare:package && node ../../node_modules/electron-builder/cli.js --dir --config electron-builder.config.cjs && node ../../scripts/edit-desktop-exe-metadata.cjs",
     "install:unpacked": "npm run package && node ../../scripts/install-desktop-unpacked.cjs",
     "package:win": "npm run build && npm run prepare:package && node ../../node_modules/electron-builder/cli.js --win --publish never --config electron-builder.config.cjs",
-    "package:mac": "npm run build && npm run prepare:package && node ../../node_modules/electron-builder/cli.js --mac --publish never --config electron-builder.config.cjs"
+    "package:mac": "npm run build && npm run prepare:package && node ../../node_modules/electron-builder/cli.js --mac --publish never --config electron-builder.config.cjs",
+    "package:linux": "npm run build && npm run prepare:package && node ../../node_modules/electron-builder/cli.js --linux --publish never --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@cesium/core": "file:../../packages/core",

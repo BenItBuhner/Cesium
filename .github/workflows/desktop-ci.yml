@@ -1,0 +1,189 @@
+name: desktop-ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "cursor/**"
+    paths:
+      - "apps/desktop/**"
+      - "apps/desktop-renderer/**"
+      - "packages/**"
+      - "server/src/**"
+      - "server/package.json"
+      - "scripts/prepare-desktop-*.mjs"
+      - "scripts/prepare-desktop-*.cjs"
+      - "scripts/assert-desktop-package-safe.cjs"
+      - ".github/workflows/desktop-ci.yml"
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-macos:
+    name: Package, smoke-test, and screenshot the macOS app
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          # The server's file:.. dependency symlinks back to the repo root;
+          # never let it into staged/packaged output.
+          rm -f server/node_modules/cesium
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Package the macOS app (dmg + zip, arm64)
+        run: npm --prefix apps/desktop run package:mac
+
+      - name: List packaged output
+        run: |
+          ls -la apps/desktop/out
+          ls -la "apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/Resources" | head -30
+
+      - name: Smoke-test the packaged app (embedded backend + window load)
+        run: |
+          APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
+          "$APP_BIN" --smoke 2>&1 | tee smoke.log
+          grep -q "Cesium packaged smoke passed" smoke.log
+
+      - name: Launch the packaged app and capture screenshots
+        run: |
+          mkdir -p screenshots
+          APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
+          # OPENCURSOR_DESKTOP_CAPTURE_PATH makes the app capture its own
+          # window contents (permission-free, unlike TCC-gated screencapture).
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/macos_app_window.png" \
+            "$APP_BIN" > app.log 2>&1 &
+          APP_PID=$!
+          echo "Launched Cesium Desktop with PID $APP_PID"
+          sleep 20
+          screencapture -x screenshots/macos_app_boot.png || true
+          sleep 25
+          screencapture -x screenshots/macos_app_workbench.png || true
+          kill "$APP_PID" || true
+          sleep 3
+          tail -50 app.log
+          ls -la screenshots
+
+      - name: Upload macOS app artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-macos
+          if-no-files-found: warn
+          path: |
+            apps/desktop/out/*.dmg
+            apps/desktop/out/*.zip
+
+      - name: Upload macOS smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-macos-evidence
+          if-no-files-found: warn
+          path: |
+            screenshots/
+            smoke.log
+            app.log
+
+  package-linux:
+    name: Package, smoke-test, and screenshot the Linux app
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install system dependencies (xvfb for headless window smoke)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          rm -f server/node_modules/cesium
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Package the Linux app (AppImage + deb, x64)
+        run: npm --prefix apps/desktop run package:linux
+
+      - name: List packaged output
+        run: |
+          ls -la apps/desktop/out
+          ls -la apps/desktop/out/linux-unpacked | head -20
+
+      - name: Verify desktop-file integration (cesium:// scheme + mime types)
+        run: |
+          # Extract the .desktop entry from the AppImage without FUSE.
+          APPIMAGE=$(ls apps/desktop/out/*.AppImage | head -1)
+          chmod +x "$APPIMAGE"
+          "$APPIMAGE" --appimage-extract "*.desktop" > /dev/null
+          cat squashfs-root/*.desktop
+          grep -q "x-scheme-handler/cesium" squashfs-root/*.desktop
+          grep -q "text/markdown" squashfs-root/*.desktop
+
+      - name: Smoke-test the AppImage under Xvfb (embedded backend + window load)
+        run: |
+          # Extract and run OUTSIDE the repo checkout: from inside it, Node's
+          # upward module resolution can accidentally satisfy missing packaged
+          # dependencies from the workspace node_modules and mask real bugs.
+          APPIMAGE=$(ls apps/desktop/out/*.AppImage | head -1)
+          SMOKE_DIR="$RUNNER_TEMP/cesium-appimage-smoke"
+          mkdir -p "$SMOKE_DIR"
+          (cd "$SMOKE_DIR" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract > /dev/null)
+          (cd "$SMOKE_DIR" && APPDIR="$SMOKE_DIR/squashfs-root" \
+            xvfb-run --auto-servernum ./squashfs-root/AppRun --no-sandbox --smoke 2>&1 | tee "$GITHUB_WORKSPACE/smoke.log")
+          grep -q "Cesium packaged smoke passed" smoke.log
+
+      - name: Launch the packaged app under Xvfb and capture its window
+        run: |
+          mkdir -p screenshots
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/linux_app_window.png" \
+            xvfb-run --auto-servernum apps/desktop/out/linux-unpacked/cesium-desktop \
+            --no-sandbox > app.log 2>&1 &
+          RUNNER_PID=$!
+          echo "Launched Cesium Desktop under Xvfb with PID $RUNNER_PID"
+          sleep 45
+          kill "$RUNNER_PID" || true
+          sleep 3
+          tail -50 app.log
+          ls -la screenshots
+
+      - name: Upload Linux app artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-linux
+          if-no-files-found: warn
+          path: |
+            apps/desktop/out/*.AppImage
+            apps/desktop/out/*.deb
+
+      - name: Upload Linux smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-linux-evidence
+          if-no-files-found: warn
+          path: |
+            screenshots/
+            smoke.log
+            app.log

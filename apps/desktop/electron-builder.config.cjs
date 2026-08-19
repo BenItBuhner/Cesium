@@ -67,6 +67,36 @@ module.exports = {
     uninstallDisplayName: "Cesium",
     license: "build/terms.txt",
   },
+  linux: {
+    executableName: "cesium-desktop",
+    artifactName: "cesium-desktop-${version}-${arch}.${ext}",
+    target: [
+      { target: "AppImage", arch: ["x64"] },
+      { target: "deb", arch: ["x64"] },
+    ],
+    icon: "build/icon.png",
+    category: "Development",
+    maintainer: "Cesium <cesium@localhost>",
+    synopsis: "Cesium Desktop AI workbench",
+    // "Open with Cesium" targets for the share-intake path (the cesium://
+    // scheme handler is added automatically from `protocols`).
+    mimeTypes: [
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "application/json",
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+    ],
+    desktop: {
+      entry: {
+        StartupWMClass: "Cesium Desktop",
+      },
+    },
+  },
   mac: {
     target: [
       { target: "dmg", arch: ["arm64"] },
