@@ -54,6 +54,7 @@ import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyEditorSession,
   getAgentSidePaneSessionScopeId,
+  type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import { resolveEffectiveConfig } from "@/lib/queued-prompt-utils";
 import { useShellView } from "@/components/layout/ShellViewContext";
@@ -71,6 +72,7 @@ import {
 import {
   dispatchAgentConversationDeleted,
   dispatchAgentConversationUpserted,
+  dispatchAgentConversationsUpsertedBatch,
 } from "@/lib/agent-conversation-events";
 import { AGENT_BACKENDS_CHANGED_EVENT } from "@/lib/agent-backend-events";
 import {
@@ -199,6 +201,53 @@ function mergeConversationByRecency(
     };
   }
   return existing;
+}
+
+/**
+ * Folds one upserted conversation into the workspace session (unread map,
+ * acknowledged-failure map, chat tab titles). Returns the same session object
+ * when nothing changed so batched folds stay cheap.
+ */
+function foldWorkspaceSessionAfterConversationUpsert(
+  current: WorkspaceSessionState,
+  prev: AgentConversationRecord | undefined,
+  merged: AgentConversationRecord
+): WorkspaceSessionState {
+  const unreadMap = nextUnreadCompletionMap(current, prev, merged);
+  const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
+  const nextTabs = current.chat.tabs.map((tab) =>
+    tab.id === merged.id
+      ? {
+          ...tab,
+          title:
+            merged.lastEventSeq > 0 && tab.isDraft
+              ? merged.title
+              : tab.isDraft
+                ? tab.title
+                : merged.title,
+          isDraft: merged.lastEventSeq > 0 ? undefined : tab.isDraft,
+        }
+      : tab
+  );
+  const tabUnchanged = nextTabs.every(
+    (tab, index) =>
+      tab.id === current.chat.tabs[index]?.id &&
+      tab.title === current.chat.tabs[index]?.title &&
+      Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
+      Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
+  );
+  if (unreadMap === null && ackMap === null && tabUnchanged) {
+    return current;
+  }
+  return {
+    ...current,
+    chat: {
+      ...current.chat,
+      ...(unreadMap === null ? {} : { unreadChatCompletionByConversationId: unreadMap }),
+      ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
+      ...(!tabUnchanged ? { tabs: nextTabs } : {}),
+    },
+  };
 }
 
 function conversationNeedsRuntimeHydration(
@@ -359,6 +408,12 @@ const AgentConversationsContext =
   createContext<AgentConversationsContextValue | null>(null);
 
 const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
+/**
+ * Pushed `conversation_upserted` records coalesce for this long client-side.
+ * Status changes for the ACTIVE conversation still land instantly through the
+ * event stream (`status` events); this only paces rail/tab metadata churn.
+ */
+const CONVERSATION_UPSERT_COALESCE_MS = 250;
 const BATCHABLE_STREAM_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
   "assistant_message_chunk",
   "reasoning",
@@ -1076,48 +1131,100 @@ updateWorkspaceSession((current) => {
 
   const upsertConversation = useCallback(
     (conversation: AgentConversationRecord) => {
-      const prev = conversationsByIdRef.current[conversation.id];
-      const merged = mergeConversationByRecency(prev, conversation);
-      setConversationsById((current) => ({
-        ...current,
-        [conversation.id]: merged,
-      }));
-      updateWorkspaceSession((current) => {
-        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
-        const ackMap = nextAcknowledgedFailureMap(current, prev, merged);
-      const nextTabs = current.chat.tabs.map((tab) =>
-        tab.id === conversation.id
-          ? {
-              ...tab,
-              title: conversation.lastEventSeq > 0 && tab.isDraft ? conversation.title : tab.isDraft ? tab.title : conversation.title,
-              isDraft: conversation.lastEventSeq > 0 ? undefined : tab.isDraft,
-            }
-          : tab
-      );
-      const tabUnchanged = nextTabs.every(
-        (tab, index) =>
-          tab.id === current.chat.tabs[index]?.id &&
-          tab.title === current.chat.tabs[index]?.title &&
-          Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active) &&
-          Boolean(tab.isDraft) === Boolean(current.chat.tabs[index]?.isDraft)
-      );
-      if (unreadMap === null && ackMap === null && tabUnchanged) {
-        return current;
+      applyConversationRecordBatchRef.current([conversation], { dispatch: false });
+    },
+    []
+  );
+
+  /**
+   * Applies a window's worth of pushed conversation records in ONE
+   * conversations-map update, ONE workspace-session fold, and ONE batched
+   * window event. The server broadcasts a record update for every running
+   * agent's event append; applying them one-by-one meant hundreds of full
+   * context re-renders per second once many agents ran in parallel.
+   */
+  const applyConversationRecordBatch = useCallback(
+    (
+      records: AgentConversationRecord[],
+      options: { dispatch: boolean }
+    ) => {
+      if (records.length === 0) {
+        return;
       }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            ...(unreadMap === null
-              ? {}
-              : { unreadChatCompletionByConversationId: unreadMap }),
-            ...(ackMap === null ? {} : { acknowledgedFailureByConversationId: ackMap }),
-            ...(!tabUnchanged ? { tabs: nextTabs } : {}),
-          },
-        };
+      const prevById = conversationsByIdRef.current;
+      const applied = records.map((record) => {
+        const prev = prevById[record.id];
+        return { prev, merged: mergeConversationByRecency(prev, record) };
       });
+      setConversationsById((current) => {
+        let next = current;
+        for (const record of records) {
+          const merged = mergeConversationByRecency(current[record.id], record);
+          if (merged === current[record.id]) {
+            continue;
+          }
+          if (next === current) {
+            next = { ...current };
+          }
+          next[record.id] = merged;
+        }
+        return next;
+      });
+      updateWorkspaceSession((current) => {
+        let session = current;
+        for (const { prev, merged } of applied) {
+          session = foldWorkspaceSessionAfterConversationUpsert(session, prev, merged);
+        }
+        return session;
+      });
+      if (options.dispatch) {
+        dispatchAgentConversationsUpsertedBatch(applied.map((entry) => entry.merged));
+      }
     },
     [updateWorkspaceSession]
+  );
+  const applyConversationRecordBatchRef = useRef(applyConversationRecordBatch);
+  useEffect(() => {
+    applyConversationRecordBatchRef.current = applyConversationRecordBatch;
+  }, [applyConversationRecordBatch]);
+
+  /** Pushed record updates coalesce for this long before one batched apply. */
+  const pendingSocketUpsertsRef = useRef(new Map<string, AgentConversationRecord>());
+  const socketUpsertFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSocketUpsertFlushAtRef = useRef(0);
+
+  const flushPendingSocketUpserts = useCallback(() => {
+    if (socketUpsertFlushTimerRef.current != null) {
+      clearTimeout(socketUpsertFlushTimerRef.current);
+      socketUpsertFlushTimerRef.current = null;
+    }
+    const pending = pendingSocketUpsertsRef.current;
+    if (pending.size === 0) {
+      return;
+    }
+    const records = [...pending.values()];
+    pending.clear();
+    lastSocketUpsertFlushAtRef.current = Date.now();
+    applyConversationRecordBatchRef.current(records, { dispatch: true });
+  }, []);
+
+  const queueSocketConversationUpsert = useCallback(
+    (record: AgentConversationRecord) => {
+      pendingSocketUpsertsRef.current.set(record.id, record);
+      if (socketUpsertFlushTimerRef.current != null) {
+        return;
+      }
+      // Leading edge: after a quiet period the first record applies almost
+      // immediately (snappy single-agent UX); under sustained load flushes
+      // settle to one per window.
+      const elapsed = Date.now() - lastSocketUpsertFlushAtRef.current;
+      const delay = Math.max(0, CONVERSATION_UPSERT_COALESCE_MS - elapsed);
+      socketUpsertFlushTimerRef.current = setTimeout(() => {
+        socketUpsertFlushTimerRef.current = null;
+        flushPendingSocketUpserts();
+      }, delay);
+    },
+    [flushPendingSocketUpserts]
   );
 
   const syncSnapshotPromisesRef = useRef(
@@ -2222,16 +2329,13 @@ busy,
       }
       switch (message.type) {
         case "conversation":
-          upsertConversation(message.conversation);
-          dispatchAgentConversationUpserted(message.conversation);
-          return;
         case "conversation_upserted":
-          upsertConversation(message.conversation);
-          dispatchAgentConversationUpserted(message.conversation);
+          queueSocketConversationUpsert(message.conversation);
           return;
         case "conversation_deleted": {
           const deletedId = message.conversationId;
           eventRenderBatcher.discard(deletedId);
+          pendingSocketUpsertsRef.current.delete(deletedId);
           setConversationsById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2327,6 +2431,11 @@ busy,
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
+      if (socketUpsertFlushTimerRef.current != null) {
+        clearTimeout(socketUpsertFlushTimerRef.current);
+        socketUpsertFlushTimerRef.current = null;
+      }
+      pendingSocketUpsertsRef.current.clear();
     };
   }, [
     activeWorkspaceId,
@@ -2338,8 +2447,8 @@ busy,
     ingestConversationEvents,
     mergeConversationSnapshot,
     prependHistoryPage,
+    queueSocketConversationUpsert,
     updateWorkspaceSession,
-    upsertConversation,
   ]);
 
   useEffect(() => {

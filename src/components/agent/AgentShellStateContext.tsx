@@ -65,10 +65,10 @@ import {
 } from "@/lib/agent-left-rail";
 import {
   AGENT_CONVERSATION_DELETED_EVENT,
-  AGENT_CONVERSATION_UPSERTED_EVENT,
+  AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT,
   dispatchAgentConversationUpserted,
   type AgentConversationDeletedDetail,
-  type AgentConversationUpsertedDetail,
+  type AgentConversationsUpsertedBatchDetail,
 } from "@/lib/agent-conversation-events";
 import {
   patchAgentConversationGroups,
@@ -898,16 +898,26 @@ export function AgentShellStateProvider({
   }, [refreshConversationGroupsWithState]);
 
   useEffect(() => {
-    const onUpsert = (ev: Event) => {
-      const detail = (ev as CustomEvent<AgentConversationUpsertedDetail>).detail;
-      if (!detail?.id || !detail.workspaceId) {
+    const onUpsertBatch = (ev: Event) => {
+      const detail = (ev as CustomEvent<AgentConversationsUpsertedBatchDetail>).detail;
+      const records = (detail?.conversations ?? []).filter(
+        (record) => record?.id && record.workspaceId
+      );
+      if (records.length === 0) {
         return;
       }
       if (railInitialLoadCompletedRef.current) {
         railFetchGenerationRef.current += 1;
       }
+      // One state update per batch: with hundreds of concurrently running
+      // agents this is the difference between 1 rail render per window and 1
+      // per agent per window.
       setGroups((prev) =>
-        patchAgentConversationGroups(prev, detail, detail.serverId ?? activeServer.id)
+        records.reduce(
+          (acc, record) =>
+            patchAgentConversationGroups(acc, record, record.serverId ?? activeServer.id),
+          prev
+        )
       );
     };
     const onDeleted = (ev: Event) => {
@@ -927,10 +937,10 @@ export function AgentShellStateProvider({
         )
       );
     };
-    window.addEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
+    window.addEventListener(AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT, onUpsertBatch);
     window.addEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
     return () => {
-      window.removeEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
+      window.removeEventListener(AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT, onUpsertBatch);
       window.removeEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
     };
   }, [activeServer.id]);
