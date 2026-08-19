@@ -129,7 +129,9 @@ jobs:
         run: npm run build:packages
 
       - name: Package the Linux app (AppImage + deb, x64)
-        run: npm --prefix apps/desktop run package:linux
+        # xvfb wraps the whole step because the desktop `check` script runs
+        # `electron --version`, which needs an X display on Linux.
+        run: xvfb-run --auto-servernum npm --prefix apps/desktop run package:linux
 
       - name: List packaged output
         run: |
