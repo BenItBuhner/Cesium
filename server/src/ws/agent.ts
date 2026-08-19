@@ -97,14 +97,18 @@ function pushConversationUpsertForBatch(
   setTimeout(() => {
     const batch = conversationUpsertPending.get(workspaceId);
     conversationUpsertPending.delete(workspaceId);
-    const clients = workspaceClients.get(workspaceId);
-    if (!batch || !clients) {
+    if (!batch || workspaceClients.size === 0) {
       return;
     }
     const serialized = [...batch.values()].map((queued) => JSON.stringify(queued));
-    for (const client of clients) {
-      for (const frame of serialized) {
-        sendSerialized(client.socket, frame, { droppable: true });
+    // Record pushes go to EVERY client, not just the conversation's own
+    // workspace: the conversation rail is cross-workspace, and pushing spares
+    // it from polling full conversation lists to keep other workspaces live.
+    for (const clients of workspaceClients.values()) {
+      for (const client of clients) {
+        for (const frame of serialized) {
+          sendSerialized(client.socket, frame, { droppable: true });
+        }
       }
     }
   }, 100);
@@ -208,19 +212,20 @@ subscribeAgentStoreEvents((event) => {
     if (pendingUpserts?.size === 0) {
       conversationUpsertPending.delete(event.workspaceId);
     }
-    const clients = workspaceClients.get(event.workspaceId);
-    if (!clients) {
-      return;
-    }
-    for (const client of clients) {
-      // Drop it from the in-memory subscription set eagerly; the client will
-      // receive its own notice to purge local state.
-      client.subscribedConversationIds.delete(event.conversationId);
-      send(client.socket, {
-        type: "conversation_deleted",
-        conversationId: event.conversationId,
-        workspaceId: event.workspaceId,
-      });
+    // Deletions broadcast to every client (rare, tiny frames) so the
+    // cross-workspace rail drops the row without waiting for a backstop poll.
+    const serialized = JSON.stringify({
+      type: "conversation_deleted",
+      conversationId: event.conversationId,
+      workspaceId: event.workspaceId,
+    } satisfies AgentSocketServerMessage);
+    for (const clients of workspaceClients.values()) {
+      for (const client of clients) {
+        // Drop it from the in-memory subscription set eagerly; the client will
+        // receive its own notice to purge local state.
+        client.subscribedConversationIds.delete(event.conversationId);
+        sendSerialized(client.socket, serialized, { droppable: false });
+      }
     }
   }
 });

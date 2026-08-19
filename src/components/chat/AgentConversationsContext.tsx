@@ -1190,6 +1190,12 @@ updateWorkspaceSession((current) => {
 
   /** Pushed record updates coalesce for this long before one batched apply. */
   const pendingSocketUpsertsRef = useRef(new Map<string, AgentConversationRecord>());
+  /**
+   * Records pushed for OTHER workspaces: never merged into the (workspace-
+   * scoped) conversations map, only dispatched so the cross-workspace rail
+   * stays live without polling.
+   */
+  const pendingForeignUpsertsRef = useRef(new Map<string, AgentConversationRecord>());
   const socketUpsertFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSocketUpsertFlushAtRef = useRef(0);
 
@@ -1198,33 +1204,53 @@ updateWorkspaceSession((current) => {
       clearTimeout(socketUpsertFlushTimerRef.current);
       socketUpsertFlushTimerRef.current = null;
     }
-    const pending = pendingSocketUpsertsRef.current;
-    if (pending.size === 0) {
+    const pendingLocal = pendingSocketUpsertsRef.current;
+    const pendingForeign = pendingForeignUpsertsRef.current;
+    if (pendingLocal.size === 0 && pendingForeign.size === 0) {
       return;
     }
-    const records = [...pending.values()];
-    pending.clear();
+    const localRecords = [...pendingLocal.values()];
+    const foreignRecords = [...pendingForeign.values()];
+    pendingLocal.clear();
+    pendingForeign.clear();
     lastSocketUpsertFlushAtRef.current = Date.now();
-    applyConversationRecordBatchRef.current(records, { dispatch: true });
+    if (localRecords.length > 0) {
+      applyConversationRecordBatchRef.current(localRecords, { dispatch: true });
+    }
+    if (foreignRecords.length > 0) {
+      dispatchAgentConversationsUpsertedBatch(foreignRecords);
+    }
   }, []);
+
+  const scheduleSocketUpsertFlush = useCallback(() => {
+    if (socketUpsertFlushTimerRef.current != null) {
+      return;
+    }
+    // Leading edge: after a quiet period the first record applies almost
+    // immediately (snappy single-agent UX); under sustained load flushes
+    // settle to one per window.
+    const elapsed = Date.now() - lastSocketUpsertFlushAtRef.current;
+    const delay = Math.max(0, CONVERSATION_UPSERT_COALESCE_MS - elapsed);
+    socketUpsertFlushTimerRef.current = setTimeout(() => {
+      socketUpsertFlushTimerRef.current = null;
+      flushPendingSocketUpserts();
+    }, delay);
+  }, [flushPendingSocketUpserts]);
 
   const queueSocketConversationUpsert = useCallback(
     (record: AgentConversationRecord) => {
       pendingSocketUpsertsRef.current.set(record.id, record);
-      if (socketUpsertFlushTimerRef.current != null) {
-        return;
-      }
-      // Leading edge: after a quiet period the first record applies almost
-      // immediately (snappy single-agent UX); under sustained load flushes
-      // settle to one per window.
-      const elapsed = Date.now() - lastSocketUpsertFlushAtRef.current;
-      const delay = Math.max(0, CONVERSATION_UPSERT_COALESCE_MS - elapsed);
-      socketUpsertFlushTimerRef.current = setTimeout(() => {
-        socketUpsertFlushTimerRef.current = null;
-        flushPendingSocketUpserts();
-      }, delay);
+      scheduleSocketUpsertFlush();
     },
-    [flushPendingSocketUpserts]
+    [scheduleSocketUpsertFlush]
+  );
+
+  const queueForeignConversationUpsert = useCallback(
+    (record: AgentConversationRecord) => {
+      pendingForeignUpsertsRef.current.set(record.id, record);
+      scheduleSocketUpsertFlush();
+    },
+    [scheduleSocketUpsertFlush]
   );
 
   const syncSnapshotPromisesRef = useRef(
@@ -2325,6 +2351,17 @@ busy,
       const expectWs = activeWorkspaceIdRef.current;
       const scoped = agentSocketMessageWorkspaceScope(message);
       if (scoped != null && scoped !== expectWs) {
+        // Cross-workspace record pushes keep the rail live without polling;
+        // everything else stays scoped to the active workspace.
+        if (message.type === "conversation_upserted") {
+          queueForeignConversationUpsert(message.conversation);
+        } else if (message.type === "conversation_deleted") {
+          pendingForeignUpsertsRef.current.delete(message.conversationId);
+          dispatchAgentConversationDeleted({
+            conversationId: message.conversationId,
+            workspaceId: message.workspaceId,
+          });
+        }
         return;
       }
       switch (message.type) {
@@ -2436,6 +2473,7 @@ busy,
         socketUpsertFlushTimerRef.current = null;
       }
       pendingSocketUpsertsRef.current.clear();
+      pendingForeignUpsertsRef.current.clear();
     };
   }, [
     activeWorkspaceId,
@@ -2447,6 +2485,7 @@ busy,
     ingestConversationEvents,
     mergeConversationSnapshot,
     prependHistoryPage,
+    queueForeignConversationUpsert,
     queueSocketConversationUpsert,
     updateWorkspaceSession,
   ]);

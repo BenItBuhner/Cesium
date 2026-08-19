@@ -1339,11 +1339,18 @@ workspaceSession.chat.model,
     if (!activeWorkspaceId) {
       return;
     }
+    // Push keeps the list live while visible; refetch on return only after a
+    // real absence so rapid window switching does not spray list fetches.
+    let hiddenAt: number | null = null;
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") {
+        hiddenAt = Date.now();
         return;
       }
-      void refreshConversations().catch(() => undefined);
+      if (hiddenAt != null && Date.now() - hiddenAt >= 15_000) {
+        void refreshConversations().catch(() => undefined);
+      }
+      hiddenAt = null;
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);

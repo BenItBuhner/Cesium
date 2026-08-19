@@ -100,6 +100,15 @@ import {
   resolveRailFetchServers,
   runRailFetchWithTimeout,
 } from "@/lib/rail-fetch";
+
+/**
+ * Push (WebSocket `conversation_upserted`) keeps the rail live; HTTP refetch
+ * is only a consistency backstop. It used to run every 20s AND on every
+ * focus/visibility flip, which multiplied by servers is serious network
+ * churn for data that almost never differs from the pushed state.
+ */
+const RAIL_PERIODIC_REFRESH_MS = 120_000;
+const RAIL_FOCUS_REFRESH_MIN_GAP_MS = 30_000;
 import {
   filterGroupsByMachine,
   filterGroupsByWorkspaceScope,
@@ -821,6 +830,7 @@ export function AgentShellStateProvider({
     };
   }, [connectionsReady, refreshConversationGroups]);
 
+  const lastRailRefreshAtRef = useRef(0);
   const refreshConversationGroupsWithState = useCallback(async () => {
     if (railRefreshInFlightRef.current) {
       return railRefreshInFlightRef.current;
@@ -834,6 +844,7 @@ export function AgentShellStateProvider({
     railRefreshInFlightRef.current = refreshPromise;
     try {
       await refreshPromise;
+      lastRailRefreshAtRef.current = Date.now();
     } catch {
       // A failed background refresh must not blank out an already-loaded
       // rail; stale conversations beat an error screen, and the periodic
@@ -846,6 +857,22 @@ export function AgentShellStateProvider({
       setRailRefreshing(false);
     }
   }, [refreshConversationGroups]);
+
+  /**
+   * Focus/visibility/online handlers used to refetch unconditionally, so
+   * window-switching sprayed full cross-workspace list fetches. Live updates
+   * arrive over the agent WebSocket; an HTTP refetch is only a staleness
+   * backstop and can skip when one ran recently.
+   */
+  const refreshConversationGroupsIfStale = useCallback(
+    (staleAfterMs: number) => {
+      if (Date.now() - lastRailRefreshAtRef.current < staleAfterMs) {
+        return;
+      }
+      void refreshConversationGroupsWithState();
+    },
+    [refreshConversationGroupsWithState]
+  );
 
   const applyOptimisticRailTitle = useCallback(
     (conversationId: string, title: string) => {
@@ -863,15 +890,16 @@ export function AgentShellStateProvider({
       typeof navigator !== "undefined" && navigator.onLine === false;
     const handleFocus = () => {
       if (document.visibilityState === "hidden" || browserIsOffline()) return;
-      void refreshConversationGroupsWithState();
+      refreshConversationGroupsIfStale(RAIL_FOCUS_REFRESH_MIN_GAP_MS);
     };
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && !browserIsOffline()) {
-        void refreshConversationGroupsWithState();
+        refreshConversationGroupsIfStale(RAIL_FOCUS_REFRESH_MIN_GAP_MS);
       }
     };
     const handleOnline = () => {
       if (document.visibilityState === "hidden") return;
+      // Coming back online is a real gap in push coverage — always refetch.
       void refreshConversationGroupsWithState();
     };
     window.addEventListener("focus", handleFocus);
@@ -882,7 +910,7 @@ export function AgentShellStateProvider({
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("online", handleOnline);
     };
-  }, [refreshConversationGroupsWithState]);
+  }, [refreshConversationGroupsIfStale, refreshConversationGroupsWithState]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -892,10 +920,10 @@ export function AgentShellStateProvider({
       ) {
         return;
       }
-      void refreshConversationGroupsWithState();
-    }, 20_000);
+      refreshConversationGroupsIfStale(RAIL_PERIODIC_REFRESH_MS - 5_000);
+    }, RAIL_PERIODIC_REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [refreshConversationGroupsWithState]);
+  }, [refreshConversationGroupsIfStale]);
 
   useEffect(() => {
     const onUpsertBatch = (ev: Event) => {
