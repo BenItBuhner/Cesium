@@ -109,10 +109,16 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install system dependencies (xvfb for headless window smoke)
+      - name: Ensure xvfb is available (preinstalled on GitHub Ubuntu images)
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q xvfb
+          # apt-get update can hang for many minutes on busy runners waiting
+          # for image maintenance locks; only fall back to apt when the
+          # preinstalled xvfb-run is somehow missing.
+          if ! command -v xvfb-run > /dev/null; then
+            sudo timeout 300 apt-get update -q
+            sudo timeout 300 apt-get install -y -q xvfb
+          fi
+          xvfb-run --help > /dev/null && echo "xvfb-run OK"
 
       - name: Install workspace dependencies
         run: |
