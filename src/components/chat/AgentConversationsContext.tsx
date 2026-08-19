@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
@@ -58,6 +59,10 @@ import { resolveEffectiveConfig } from "@/lib/queued-prompt-utils";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { normalizeEditorPanelState } from "@/components/editor/editor-panel-state";
 import { JsonWebSocket } from "@/lib/ws-client";
+import {
+  ConversationEventsStore,
+  EMPTY_CONVERSATION_EVENTS,
+} from "@/lib/conversation-events-store";
 import { devPerfEnabled, recordPerfSample } from "@/lib/dev-perf";
 import {
   KeyedEventBatcher,
@@ -253,7 +258,15 @@ type AgentConversationsContextValue = {
   backends: AgentBackendInfo[];
   conversationsById: Record<string, AgentConversationRecord>;
   conversations: AgentConversationRecord[];
-  eventsByConversationId: Record<string, AgentStoredEvent[]>;
+  /**
+   * Per-conversation event logs live outside React state so a streaming flush
+   * only re-renders subscribers of that conversation. Subscribe with
+   * `useConversationEvents(conversationId)`; for non-reactive reads use
+   * `getConversationEvents`.
+   */
+  conversationEventsStore: ConversationEventsStore;
+  /** Non-reactive read of a conversation's current event log. */
+  getConversationEvents: (conversationId: string) => AgentStoredEvent[];
   bootstrapped: boolean;
   getConversationLoadStatus: (conversationId: string) => ConversationLoadStatus;
   createConversation: (
@@ -504,9 +517,15 @@ export function AgentConversationsProvider({
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
   >({});
-  const [eventsByConversationId, setEventsByConversationId] = useState<
-    Record<string, AgentStoredEvent[]>
-  >({});
+  const [eventsStore] = useState(() => new ConversationEventsStore());
+  // Load-status readiness depends on whether a conversation's log has been
+  // loaded at all; that key-set changes rarely (snapshot arrival, deletion,
+  // workspace switch), unlike the logs themselves which change every flush.
+  const eventsKeysVersion = useSyncExternalStore(
+    useCallback((onChange) => eventsStore.subscribeKeys(onChange), [eventsStore]),
+    () => eventsStore.getKeysVersion(),
+    () => 0
+  );
   const [bootstrapped, setBootstrapped] = useState(false);
   const [conversationLoadStatusById, setConversationLoadStatusById] = useState<
     Record<string, ConversationLoadStatus>
@@ -526,7 +545,6 @@ export function AgentConversationsProvider({
   const scheduleConversationCatchUpRef = useRef<(conversationId: string) => void>(() => {});
   const openConversationsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatDraftRef = useRef(workspaceSession.chat);
-  const eventsRef = useRef(eventsByConversationId);
   const loadedSnapshotConversationIdsRef = useRef(new Set<string>());
   const backgroundSnapshotCooldownUntilRef = useRef<Record<string, number>>({});
   const openConversationIdsRef = useRef<string[]>([]);
@@ -565,10 +583,6 @@ export function AgentConversationsProvider({
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
   }, [workspaceSession.chat]);
-
-  useEffect(() => {
-    eventsRef.current = eventsByConversationId;
-  }, [eventsByConversationId]);
 
   useEffect(() => {
     historyMetaRef.current = historyMetaById;
@@ -708,8 +722,7 @@ export function AgentConversationsProvider({
         typeof snapshot.window.oldestSeq === "number";
       if (isHead) {
         const head = snapshot;
-        setEventsByConversationId((current) => {
-          const existing = current[incoming.id] ?? [];
+        eventsStore.update(incoming.id, (existing) => {
           const kept = existing.filter((e) => e.seq < head.window.oldestSeq);
           const bySeq = new Map<number, AgentStoredEvent>();
           for (const e of kept) {
@@ -721,7 +734,7 @@ export function AgentConversationsProvider({
           const mergedEvents = dedupeAgentStoredEvents(
             [...bySeq.values()].sort((a, b) => a.seq - b.seq)
           );
-          return { ...current, [incoming.id]: compactConversationEvents(mergedEvents) };
+          return compactConversationEvents(mergedEvents);
         });
         setHistoryMetaById((c) => ({
           ...c,
@@ -729,16 +742,14 @@ export function AgentConversationsProvider({
         }));
       } else {
         const full = snapshot as AgentConversationSnapshot;
-        setEventsByConversationId((current) => {
-          const existing = dedupeAgentStoredEvents(current[full.conversation.id] ?? []);
+        eventsStore.update(full.conversation.id, (current) => {
+          const existing = dedupeAgentStoredEvents(current);
           const existingSeq = existing.at(-1)?.seq ?? 0;
           const incomingDeduped = dedupeAgentStoredEvents(full.events);
           const incomingSeq = incomingDeduped.at(-1)?.seq ?? 0;
-          return {
-            ...current,
-            [full.conversation.id]:
-              compactConversationEvents(incomingSeq >= existingSeq ? incomingDeduped : existing),
-          };
+          return compactConversationEvents(
+            incomingSeq >= existingSeq ? incomingDeduped : existing
+          );
         });
         setHistoryMetaById((c) => ({
           ...c,
@@ -792,7 +803,7 @@ updateWorkspaceSession((current) => {
       dispatchAgentConversationUpserted(merged);
       loadedSnapshotConversationIdsRef.current.add(incoming.id);
     },
-    [updateWorkspaceSession]
+    [eventsStore, updateWorkspaceSession]
   );
 
   const primeConversationSnapshotIfEmpty = useCallback(
@@ -809,7 +820,7 @@ updateWorkspaceSession((current) => {
       if ((backgroundSnapshotCooldownUntilRef.current[conversationId] ?? 0) > Date.now()) {
         return;
       }
-      if (eventsRef.current[conversationId] !== undefined) {
+      if (eventsStore.has(conversationId)) {
         loadedSnapshotConversationIdsRef.current.add(conversationId);
         return;
       }
@@ -833,7 +844,7 @@ updateWorkspaceSession((current) => {
         snapshotPrimeInFlightRef.current.delete(conversationId);
       }
     },
-    [mergeConversationSnapshot]
+    [eventsStore, mergeConversationSnapshot]
   );
 
   const prependHistoryPage = useCallback(
@@ -844,8 +855,7 @@ updateWorkspaceSession((current) => {
     ) => {
       loadingOlderRef.current[conversationId] = false;
       setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
+      eventsStore.update(conversationId, (existing) => {
         const bySeq = new Map<number, AgentStoredEvent>();
         for (const e of existing) {
           bySeq.set(e.seq, e);
@@ -856,7 +866,7 @@ updateWorkspaceSession((current) => {
         const merged = dedupeAgentStoredEvents(
           [...bySeq.values()].sort((a, b) => a.seq - b.seq)
         );
-        return { ...current, [conversationId]: compactConversationEvents(merged) };
+        return compactConversationEvents(merged);
       });
       setHistoryMetaById((c) => ({
         ...c,
@@ -865,7 +875,7 @@ updateWorkspaceSession((current) => {
       historyOlderPagesFetchedRef.current[conversationId] =
         (historyOlderPagesFetchedRef.current[conversationId] ?? 0) + 1;
     },
-    []
+    [eventsStore]
   );
 
   const loadOlderConversationHistory = useCallback((conversationId: string) => {
@@ -880,7 +890,7 @@ updateWorkspaceSession((current) => {
     if (loadingOlderRef.current[conversationId]) {
       return;
     }
-    const events = eventsRef.current[conversationId] ?? [];
+    const events = eventsStore.get(conversationId);
     const oldest = events[0]?.seq;
     if (!oldest) {
       return;
@@ -902,7 +912,7 @@ updateWorkspaceSession((current) => {
         setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
       }
     }, 18_000);
-  }, []);
+  }, [eventsStore]);
 
   const getConversationHistoryCursor = useCallback(
     (conversationId: string): ConversationHistoryCursor => ({
@@ -979,11 +989,13 @@ updateWorkspaceSession((current) => {
         });
       }
 
-      setEventsByConversationId((current) =>
-        mergeAgentConversationEventMap(current, batches)
-      );
+      for (const [conversationId, incoming] of batches) {
+        eventsStore.update(conversationId, (existing) =>
+          mergeAgentConversationEventBatch(existing, incoming)
+        );
+      }
     },
-    []
+    [eventsStore]
   );
 
   useEffect(() => {
@@ -1129,7 +1141,9 @@ updateWorkspaceSession((current) => {
           mergeConversationSnapshot(result.snapshot);
         } catch (error) {
           const conv = conversationsByIdRef.current[conversationId];
-          const ev = eventsRef.current[conversationId];
+          const ev = eventsStore.has(conversationId)
+            ? eventsStore.get(conversationId)
+            : null;
           const usable =
             Boolean(conv) &&
             (conv!.lastEventSeq === 0 || (ev != null && ev.length > 0));
@@ -1151,7 +1165,7 @@ updateWorkspaceSession((current) => {
         syncSnapshotPromisesRef.current.delete(conversationId);
       }
     },
-    [mergeConversationSnapshot]
+    [eventsStore, mergeConversationSnapshot]
   );
 
   const scheduleConversationCatchUp = useCallback(
@@ -1210,7 +1224,7 @@ updateWorkspaceSession((current) => {
   const verifyPermissionResolutionSoon = useCallback(
     (conversationId: string, requestId: string) => {
       window.setTimeout(() => {
-        const events = eventsRef.current[conversationId] ?? [];
+        const events = eventsStore.get(conversationId);
         const resolved = events.some(
           (event) =>
             event.kind === "permission_resolved" && event.requestId === requestId
@@ -1220,7 +1234,7 @@ updateWorkspaceSession((current) => {
         }
       }, 2_500);
     },
-    [syncConversationSnapshot]
+    [eventsStore, syncConversationSnapshot]
   );
 
   const answerPermissionForConversation = useCallback(
@@ -1415,30 +1429,26 @@ const executePrompt = useCallback(
               updatedAt: Math.max(currentConversation.updatedAt + 1, Date.now()),
             }
           : null;
-        setEventsByConversationId((current) => {
-          const existing = current[conversationId] ?? [];
+        eventsStore.update(conversationId, (existing) => {
           if (existing.some((event) => event.eventId === clientEventId)) {
-            return current;
+            return existing;
           }
-          return {
-            ...current,
-            [conversationId]: [
-              ...existing,
-              {
-                seq: getConversationLatestSeq(existing) + 1,
-                eventId: clientEventId,
-                conversationId,
-                createdAt,
-                kind: "user_message",
-                messageId: clientMessageId,
-                content: text,
+          return [
+            ...existing,
+            {
+              seq: getConversationLatestSeq(existing) + 1,
+              eventId: clientEventId,
+              conversationId,
+              createdAt,
+              kind: "user_message",
+              messageId: clientMessageId,
+              content: text,
               displayContent: planHandoff
                 ? `Build: ${planHandoff.planTitle ?? planHandoff.planPath}`
                 : undefined,
-                attachments,
-              },
-            ],
-          };
+              attachments,
+            },
+          ];
         });
         setConversationsById((current) => {
           if (!optimisticConversation || !current[conversationId]) {
@@ -1480,13 +1490,9 @@ const executePrompt = useCallback(
         return true;
       } catch (error) {
         if (canOptimisticallyAppend) {
-          setEventsByConversationId((current) => {
-            const existing = current[conversationId] ?? [];
-            return {
-              ...current,
-              [conversationId]: existing.filter((event) => event.eventId !== clientEventId),
-            };
-          });
+          eventsStore.update(conversationId, (existing) =>
+            existing.filter((event) => event.eventId !== clientEventId)
+          );
           if (currentConversation) {
             setConversationsById((current) => ({
               ...current,
@@ -1496,30 +1502,23 @@ const executePrompt = useCallback(
         }
         const message =
           error instanceof Error ? error.message : "Failed to start the agent turn.";
-        setEventsByConversationId((current) => {
-          const existing = current[conversationId] ?? [];
-          const nextSeq = getConversationLatestSeq(existing) + 1;
-          return {
-            ...current,
-            [conversationId]: [
-              ...existing,
-              {
-                seq: nextSeq,
-                eventId:
-                  globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
-                conversationId,
-                createdAt: Date.now(),
-                kind: "system",
-                level: "error",
-                text: message,
-              },
-            ],
-          };
-        });
+        eventsStore.update(conversationId, (existing) => [
+          ...existing,
+          {
+            seq: getConversationLatestSeq(existing) + 1,
+            eventId:
+              globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
+            conversationId,
+            createdAt: Date.now(),
+            kind: "system",
+            level: "error",
+            text: message,
+          },
+        ]);
         return false;
       }
     },
-    [markWorkspaceActivity, mergeConversationSnapshot]
+    [eventsStore, markWorkspaceActivity, mergeConversationSnapshot]
   );
 
   const clearEditingQueuedPromptForConversation = useCallback(
@@ -1743,7 +1742,7 @@ const conversation = conversationsById[conversationId] ?? null;
 if (!conversation) {
 return null;
 }
-const busy = isAgentComposerBusy(conversation, eventsByConversationId[conversationId]);
+const busy = isAgentComposerBusy(conversation, eventsStore.get(conversationId));
 const pending = pendingConfigByConversationId[conversationId];
 const effectiveConfig = busy && pending
 ? resolveEffectiveConfig(conversation.config, pending)
@@ -1783,7 +1782,7 @@ sessionConfigOptions: listSupplementaryAgentConfigOptions(conversation),
 busy,
 };
 },
-[backends, conversationsById, eventsByConversationId, globalSettings.models.byBackend, pendingConfigByConversationId]
+[backends, conversationsById, eventsStore, globalSettings.models.byBackend, pendingConfigByConversationId]
   );
 
   const getConversationLoadStatus = useCallback(
@@ -1799,12 +1798,13 @@ busy,
       if (conv.lastEventSeq === 0) {
         return "ready";
       }
-      if (Object.hasOwn(eventsByConversationId, conversationId)) {
+      if (eventsStore.has(conversationId)) {
         return "ready";
       }
       return "loading";
     },
-    [conversationLoadStatusById, conversationsById, eventsByConversationId]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- eventsKeysVersion re-derives readiness when a log is first loaded or dropped.
+    [conversationLoadStatusById, conversationsById, eventsStore, eventsKeysVersion]
   );
 
   const flushAgentSubscription = useCallback((extraConversationIds: string[] = []) => {
@@ -1829,7 +1829,7 @@ busy,
     const sinceByConversationId = Object.fromEntries(
       conversationIds.map((conversationId) => [
         conversationId,
-        getConversationLatestSeq(eventsRef.current[conversationId] ?? []),
+        getConversationLatestSeq(eventsStore.get(conversationId)),
       ])
     );
     socket.send({
@@ -1837,7 +1837,7 @@ busy,
       conversationIds,
       sinceByConversationId,
     });
-  }, []);
+  }, [eventsStore]);
 
   useEffect(() => {
     flushAgentSubscriptionRef.current = flushAgentSubscription;
@@ -1900,7 +1900,7 @@ busy,
       }
       setBackends([]);
       setConversationsById({});
-      setEventsByConversationId({});
+      eventsStore.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setConversationLoadStatusById({});
@@ -1930,7 +1930,7 @@ busy,
     let cancelled = false;
     setBootstrapped(false);
     setConversationsById({});
-    setEventsByConversationId({});
+    eventsStore.clear();
     loadedSnapshotConversationIdsRef.current.clear();
     backgroundSnapshotCooldownUntilRef.current = {};
     setHistoryMetaById({});
@@ -1949,7 +1949,7 @@ busy,
       setBackends(result.backends);
 
       setConversationsById(toConversationMap(nextConversations));
-      setEventsByConversationId({});
+      eventsStore.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setHistoryMetaById({});
@@ -2090,7 +2090,7 @@ busy,
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, eventRenderBatcher, updateWorkspaceSession]);
+  }, [activeWorkspaceId, eventRenderBatcher, eventsStore, updateWorkspaceSession]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !bootstrapped) {
@@ -2102,10 +2102,9 @@ busy,
     openConversationsSyncTimerRef.current = window.setTimeout(() => {
       openConversationsSyncTimerRef.current = null;
       for (const conversationId of openConversationIds) {
-        const events = eventsRef.current[conversationId];
         if (
           loadedSnapshotConversationIdsRef.current.has(conversationId) ||
-          (conversationsById[conversationId] && events !== undefined)
+          (conversationsById[conversationId] && eventsStore.has(conversationId))
         ) {
           continue;
         }
@@ -2127,6 +2126,7 @@ busy,
     activeWorkspaceId,
     bootstrapped,
     conversationsById,
+    eventsStore,
     openConversationIds,
     syncConversationSnapshot,
   ]);
@@ -2240,14 +2240,7 @@ busy,
             delete next[deletedId];
             return next;
           });
-          setEventsByConversationId((current) => {
-            if (!current[deletedId]) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[deletedId];
-            return next;
-          });
+          eventsStore.delete(deletedId);
           setHistoryMetaById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2340,6 +2333,7 @@ busy,
     agentSocketServerKey,
     bootstrapped,
     eventRenderBatcher,
+    eventsStore,
     flushAgentSubscription,
     ingestConversationEvents,
     mergeConversationSnapshot,
@@ -2366,7 +2360,9 @@ busy,
       backends,
       conversationsById,
       conversations,
-      eventsByConversationId,
+      conversationEventsStore: eventsStore,
+      getConversationEvents: (conversationId: string) =>
+        eventsStore.get(conversationId),
       bootstrapped,
       getConversationLoadStatus,
       createConversation,
@@ -2410,7 +2406,7 @@ createAndPromptConversation,
 createAndPromptStandaloneConversation,
 conversations,
 conversationsById,
-eventsByConversationId,
+eventsStore,
 forkConversation,
 getConversationLoadStatus,
 getConversationComposerState,
@@ -2455,4 +2451,30 @@ export function useAgentConversations(): AgentConversationsContextValue {
     );
   }
   return context;
+}
+
+/**
+ * Subscribe to a single conversation's event log. Re-renders only when THAT
+ * conversation's events change; streams from other agents leave the component
+ * untouched. Pass a falsy id (or render outside the provider) to opt out —
+ * both return a stable empty array.
+ */
+export function useConversationEvents(
+  conversationId: string | null | undefined
+): AgentStoredEvent[] {
+  const store = useOptionalAgentConversations()?.conversationEventsStore ?? null;
+  return useSyncExternalStore(
+    useCallback(
+      (onChange) =>
+        store && conversationId
+          ? store.subscribe(conversationId, onChange)
+          : () => {},
+      [store, conversationId]
+    ),
+    () =>
+      store && conversationId
+        ? store.get(conversationId)
+        : EMPTY_CONVERSATION_EVENTS,
+    () => EMPTY_CONVERSATION_EVENTS
+  );
 }

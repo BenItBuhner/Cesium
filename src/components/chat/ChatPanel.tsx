@@ -68,7 +68,10 @@ import type {
   QueuedChatPrompt,
 } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
@@ -263,8 +266,6 @@ function isPersistedConversationTabId(tabId: string): boolean {
 }
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
-const EMPTY_THREAD_EVENTS: never[] = [];
-
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
   const { chatTrailingWindowControlsVisible } = useWorkbench();
@@ -294,7 +295,7 @@ const {
 backends,
 conversationsById,
 conversations,
-eventsByConversationId,
+getConversationEvents,
 bootstrapped,
 mergeConversationSnapshot,
 refreshConversations,
@@ -693,6 +694,7 @@ workspaceSession.chat.mode,
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
+  const rawPanelThreadEvents = useConversationEvents(activeTabId);
   const panelHistoryCursor = useMemo(() => {
     if (!activeTabId || activeTabId === "__empty__") {
       return { hasOlder: false, loadingOlder: false };
@@ -749,7 +751,7 @@ workspaceSession.chat.mode,
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation: activeConversation,
-    events: activeTabId ? eventsByConversationId[activeTabId] : undefined,
+    events: activeTabId ? rawPanelThreadEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -857,9 +859,6 @@ workspaceSession.chat.mode,
       resolveDraftModelForBackend(draftBackend)
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
-  const rawPanelThreadEvents = activeTabId
-    ? (eventsByConversationId[activeTabId] ?? EMPTY_THREAD_EVENTS)
-    : EMPTY_THREAD_EVENTS;
   const contextUsageRefreshGeneration = useMemo(
     () => computeContextUsageRefreshGeneration(rawPanelThreadEvents),
     [rawPanelThreadEvents]
@@ -881,7 +880,7 @@ workspaceSession.chat.mode,
 const resolveComposerStateForDraft = useCallback(
 (draftId: string) => {
 const conversation = conversationsById[draftId] ?? null;
-const draftEvents = eventsByConversationId[draftId];
+const draftEvents = getConversationEvents(draftId);
 const busy = conversation ? isAgentComposerBusy(conversation, draftEvents) : false;
 const pendingConfig = pendingConfigByConversationId[draftId];
 const pendingBackendId = pendingConfig?.backendId;
@@ -961,7 +960,7 @@ busy,
 backends,
 conversationsById,
 draftBackend,
-eventsByConversationId,
+getConversationEvents,
 modelVisibility,
 pendingConfigByConversationId,
 workspaceSession.chat.backendId,
@@ -2384,6 +2383,7 @@ const cancelPromptForDraft = useCallback(
     [conversationsById, resumeConversationFromHook, syncConversationSnapshot]
   );
 
+  const expandedComposerEvents = useConversationEvents(expandedComposerDraftId);
   const expandedComposerState = useMemo(() => {
     if (!expandedComposerDraftId) {
       return null;
@@ -2424,12 +2424,12 @@ const cancelPromptForDraft = useCallback(
       onResume: () => resumePromptForDraft(expandedComposerDraftId),
       conversationStatus: state.conversation?.status,
       goalProgress: latestGoalProgressStatus(
-        eventsByConversationId[expandedComposerDraftId] ?? [],
+        expandedComposerEvents,
         state.conversation?.status
       ),
       conversationId: state.conversation?.id ?? expandedComposerDraftId,
       contextUsageRefreshGeneration: computeContextUsageRefreshGeneration(
-        eventsByConversationId[expandedComposerDraftId] ?? []
+        expandedComposerEvents
       ),
       busy: state.busy,
       configLocked: false,
@@ -2453,7 +2453,7 @@ const cancelPromptForDraft = useCallback(
     resumePromptForDraft,
     composerDrafts,
     composerUserMessageHistory,
-    eventsByConversationId,
+    expandedComposerEvents,
     expandedComposerDraftId,
     handleRequestHandoff,
     loadOlderConversationHistory,
@@ -2700,10 +2700,7 @@ const cancelPromptForDraft = useCallback(
           composerDraftId={composerDraftId}
           conversationBusy={
             activeConversation
-              ? isAgentComposerBusy(
-                  activeConversation,
-                  activeTabId ? eventsByConversationId[activeTabId] : undefined
-                ) ||
+              ? isAgentComposerBusy(activeConversation, rawPanelThreadEvents) ||
                 activeConversation.status === "awaiting_permission"
               : false
           }

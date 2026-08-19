@@ -22,7 +22,10 @@ import {
 } from "@/components/chat/PlanBuildControls";
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import {
   agentWorkspaceComposerDraftId,
   useOpenInEditor,
@@ -123,7 +126,6 @@ export function AgentCenterPane() {
   const {
     backends,
     conversationsById,
-    eventsByConversationId,
     getConversationComposerState,
     getConversationLoadStatus,
     createAndPromptConversation,
@@ -165,6 +167,7 @@ export function AgentCenterPane() {
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
     : null;
+  const selectedConversationEvents = useConversationEvents(selectedConversationId);
   const activeBackend = useMemo(
     () => backends.find((backend) => backend.id === conversation?.config.backendId) ?? null,
     [backends, conversation?.config.backendId]
@@ -174,7 +177,7 @@ export function AgentCenterPane() {
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation,
-    events: selectedConversationId ? eventsByConversationId[selectedConversationId] : undefined,
+    events: selectedConversationId ? selectedConversationEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -201,7 +204,7 @@ export function AgentCenterPane() {
     : "idle";
 
   const rawThreadEvents = conversation
-    ? (eventsByConversationId[conversation.id] ?? EMPTY_THREAD_EVENTS)
+    ? selectedConversationEvents
     : EMPTY_THREAD_EVENTS;
   const openedPlanFilesRef = useRef(new Set<string>());
   useEffect(() => {
@@ -330,7 +333,7 @@ export function AgentCenterPane() {
       conversationId: selectedConversationId,
       messages: scrollMessages,
       conversationBusy:
-        isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+        isAgentComposerBusy(conversation, selectedConversationEvents) ||
         conversation.status === "awaiting_permission",
       hasOlderHistory: historyCursor.hasOlder,
       loadingOlderHistory: historyCursor.loadingOlder,
@@ -347,6 +350,7 @@ export function AgentCenterPane() {
     conversationSelectionPending,
     isDraftConversationSelected,
     scrollMessages,
+    selectedConversationEvents,
     selectedConversationId,
     setStableConversationView,
     workspaceSession.chat.scrollTopByTabId,
@@ -1203,7 +1207,7 @@ export function AgentCenterPane() {
           conversationId: selectedConversationId,
           messages: scrollMessages,
           conversationBusy:
-            isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+            isAgentComposerBusy(conversation, selectedConversationEvents) ||
             conversation.status === "awaiting_permission",
           hasOlderHistory: historyCursor.hasOlder,
           loadingOlderHistory: historyCursor.loadingOlder,

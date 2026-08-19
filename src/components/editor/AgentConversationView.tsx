@@ -28,7 +28,10 @@ import { isAgentComposerBusy } from "@/lib/agent-completion-error";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { isOrchestrationModeLocked } from "@/lib/chat-modes";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
@@ -76,8 +79,6 @@ interface AgentConversationViewProps {
 }
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
-const EMPTY_THREAD_EVENTS: never[] = [];
-
 export function AgentConversationView({
   conversationId,
   expandedComposerDraftId: expandedComposerDraftIdOverride,
@@ -98,7 +99,6 @@ export function AgentConversationView({
     backends,
 conversations,
 conversationsById,
-eventsByConversationId,
 bootstrapped,
 getConversationLoadStatus,
 answerPermissionForConversation,
@@ -138,7 +138,7 @@ loadOlderConversationHistory,
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
-  const rawThreadEvents = eventsByConversationId[conversationId] ?? EMPTY_THREAD_EVENTS;
+  const rawThreadEvents = useConversationEvents(conversationId);
   const contextUsageRefreshGeneration = useMemo(
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
@@ -725,7 +725,7 @@ const showRecentChatsSection =
             composerDraftId={composerDraftId}
             conversationBusy={
               conversation
-                ? isAgentComposerBusy(conversation, eventsByConversationId[conversationId]) ||
+                ? isAgentComposerBusy(conversation, rawThreadEvents) ||
                   conversation.status === "awaiting_permission"
                 : false
             }
