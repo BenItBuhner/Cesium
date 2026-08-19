@@ -325,6 +325,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "cesium-agent":
       return "auto";
     case "cursor-sdk":
+    case "cursor-acp":
       return "cursor";
     case "opencode-server":
     case "opencode-v2-beta":

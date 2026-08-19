@@ -129,6 +129,25 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.groupBy, "workspace");
   });
 
+  test("normalizes harness enable toggles and defaults missing keys to on", () => {
+    const base = createDefaultGlobalSettings();
+    assert.deepEqual(base.agents.enabledHarnesses, {});
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      agents: {
+        ...base.agents,
+        enabledHarnesses: {
+          "cursor-sdk": false,
+          "not-a-boolean": "nope",
+          "": false,
+        } as never,
+      },
+    });
+    assert.equal(settings.agents.enabledHarnesses["cursor-sdk"], false);
+    assert.equal(settings.agents.enabledHarnesses["cursor-acp"], undefined);
+    assert.equal("not-a-boolean" in settings.agents.enabledHarnesses, false);
+  });
+
   test("drops retired harness ids from model toggle settings", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
@@ -144,7 +163,7 @@ describe("global settings", () => {
       },
     });
     assert.equal(settings.models.byBackend["cursor-sdk"]?.length, 1);
-    assert.equal(settings.models.byBackend["cursor-acp"], undefined);
+    assert.equal(settings.models.byBackend["cursor-acp"]?.length, 1);
     assert.equal(settings.models.byBackend["codex-adapter"], undefined);
     assert.equal(settings.models.byBackend["opencode-acp"], undefined);
     assert.equal(settings.models.byBackend["gemini-acp"], undefined);

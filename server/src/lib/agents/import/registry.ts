@@ -25,7 +25,9 @@ const IMPORT_SOURCES: HarnessImportSource[] = [
 export const UNSUPPORTED_IMPORT_BACKENDS: Partial<Record<AgentBackendId, string>> = {
   "cesium-agent": "Cesium Agent conversations are native to Cesium — nothing to import.",
   "cursor-sdk":
-    "Cursor agent chats are synced to the Cursor account service; the CLI keeps no stable on-disk session store to import from.",
+    "Cursor agent chats are synced to the Cursor account service; the TypeScript SDK keeps no stable on-disk session store to import from.",
+  "cursor-acp":
+    "Cursor Agent ACP chats are synced to the Cursor account service; the CLI keeps no stable on-disk session store to import from.",
   "devin-acp":
     "Devin sessions live in Cognition's cloud behind your Devin account — there is no local CLI session storage to import.",
   "grok-build":
@@ -53,6 +55,7 @@ export const IMPORTABLE_BACKEND_IDS: AgentBackendId[] = [
   "google-antigravity-cli",
   "pi-agent",
   "cursor-sdk",
+  "cursor-acp",
   "devin-acp",
   "grok-build",
 ];

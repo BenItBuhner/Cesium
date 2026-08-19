@@ -1,4 +1,4 @@
-import { pruneModelToggleByBackend } from "@cesium/core";
+import { normalizeEnabledHarnesses, pruneModelToggleByBackend } from "@cesium/core";
 import { normalizeAgentConversationMruByServer } from "./agent-conversation-mru";
 import {
   createDefaultAuroraSettings,
@@ -234,6 +234,11 @@ export type AgentsSettingsState = {
    */
   autoAcceptAllAgentPermissions: boolean;
   rememberedPermissions: RememberedAgentPermissionRule[];
+  /**
+   * Per-harness visibility in the composer picker. Missing keys default to on.
+   * Existing chats on a turned-off harness still run.
+   */
+  enabledHarnesses: Partial<Record<string, boolean>>;
 };
 
 export type RememberedAgentPermissionRule = {
@@ -359,6 +364,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       branchPrefix: "cursor/",
       autoAcceptAllAgentPermissions: false,
       rememberedPermissions: [],
+      enabledHarnesses: {},
     },
     models: {
       byBackend: {},
@@ -698,7 +704,6 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
   }
   const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
     cesium: "cesium-agent",
-    "cursor-acp": "cursor-sdk",
     "claude-adapter": "claude-code-sdk",
     "opencode-acp": "opencode-server",
     "opencode-v2-beta": "opencode-server",
@@ -850,6 +855,7 @@ export function normalizeLoadedGlobalSettings(
       rememberedPermissions: normalizeRememberedPermissions(
         r.agents?.rememberedPermissions
       ),
+      enabledHarnesses: normalizeEnabledHarnesses(r.agents?.enabledHarnesses),
     },
     models: {
       byBackend:
