@@ -1981,26 +1981,19 @@ const executePrompt = useCallback(
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to send the queued message.";
-        setEventsByConversationId((current) => {
-          const existing = current[conversationId] ?? [];
-          const nextSeq = getConversationLatestSeq(existing) + 1;
-          return {
-            ...current,
-            [conversationId]: [
-              ...existing,
-              {
-                seq: nextSeq,
-                eventId:
-                  globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
-                conversationId,
-                createdAt: Date.now(),
-                kind: "system",
-                level: "error",
-                text: message,
-              },
-            ],
-          };
-        });
+        eventsStore.update(conversationId, (existing) => [
+          ...existing,
+          {
+            seq: getConversationLatestSeq(existing) + 1,
+            eventId:
+              globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
+            conversationId,
+            createdAt: Date.now(),
+            kind: "system",
+            level: "error",
+            text: message,
+          },
+        ]);
         return false;
       } finally {
         endQueuedPromptFlush(conversationId);
