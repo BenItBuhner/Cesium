@@ -85,6 +85,24 @@ test("custom agent plugins contribute skills without MCP", async () => {
   assert.equal(attachments.mcpServers.length, 0);
 });
 
+test("first-party catalog stays aligned with MCP presets", async () => {
+  const { listBuiltInAgentPlugins } = await import("../src/lib/plugins/catalog.js");
+  const { MCP_PRESETS } = await import("../src/lib/mcp/presets.js");
+
+  const plugins = listBuiltInAgentPlugins();
+  const pluginIds = new Set(plugins.map((plugin) => plugin.pluginId));
+  const presetIds = MCP_PRESETS.map((preset) => preset.presetId);
+
+  assert.ok(pluginIds.has("exa"));
+  assert.ok(pluginIds.has("stripe"));
+  assert.equal(plugins.length, presetIds.length);
+  for (const presetId of presetIds) {
+    assert.ok(pluginIds.has(presetId), `missing plugin for preset ${presetId}`);
+    const plugin = plugins.find((entry) => entry.pluginId === presetId);
+    assert.equal(plugin?.mcp[0]?.presetId, presetId);
+  }
+});
+
 test("plugin discovery includes local Context7 and harness verify identifies all backends", async () => {
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-plugin-verify-"));
   const workspaceId = "workspace-plugin-verify";

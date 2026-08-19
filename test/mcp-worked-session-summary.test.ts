@@ -22,6 +22,8 @@ describe("MCP server display names", () => {
   test("formatMcpServerDisplayName uses preset labels", () => {
     assert.equal(formatMcpServerDisplayName("context7"), "Context7");
     assert.equal(formatMcpServerDisplayName("plugin-linear"), "Linear");
+    assert.equal(formatMcpServerDisplayName("stripe"), "Stripe");
+    assert.equal(formatMcpServerDisplayName("huggingface"), "Hugging Face");
     assert.equal(formatMcpServerDisplayName("my_custom_server"), "My Custom Server");
   });
 

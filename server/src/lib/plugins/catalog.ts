@@ -1,7 +1,7 @@
 import type { AgentPluginDefinition } from "./types.js";
 import { standardHarnessSupport } from "./harness-support.js";
 
-export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
+const CORE_BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
   {
     schemaVersion: 1,
     pluginId: "context7",
@@ -194,6 +194,132 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     ],
     harnesses: standardHarnessSupport(),
   },
+];
+
+type FirstPartyRemotePlugin = {
+  pluginId: string;
+  displayName: string;
+  description: string;
+  iconUrl: string;
+  publisher: string;
+  skillTitle: string;
+  skillBody: string;
+  triggerHints: string[];
+};
+
+const FIRST_PARTY_REMOTE_SPECS: FirstPartyRemotePlugin[] = [
+  {
+    pluginId: "stripe",
+    displayName: "Stripe",
+    description: "Inspect payments, customers, and Stripe documentation.",
+    iconUrl: "https://stripe.com/favicon.ico",
+    publisher: "Stripe",
+    skillTitle: "Stripe Billing",
+    skillBody:
+      "Use Stripe tools when the user asks about charges, customers, invoices, or Stripe API behavior.",
+    triggerHints: ["Stripe", "payment", "invoice"],
+  },
+  {
+    pluginId: "atlassian",
+    displayName: "Atlassian",
+    description: "Jira issues, Confluence pages, and Bitbucket from Atlassian Cloud.",
+    iconUrl: "https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png",
+    publisher: "Atlassian",
+    skillTitle: "Atlassian Workflow",
+    skillBody:
+      "When the user references a Jira issue or Confluence page, fetch it before planning or editing.",
+    triggerHints: ["Jira", "Confluence", "Atlassian"],
+  },
+  {
+    pluginId: "huggingface",
+    displayName: "Hugging Face",
+    description: "Search models, datasets, and Spaces on the Hugging Face Hub.",
+    iconUrl: "https://huggingface.co/favicon.ico",
+    publisher: "Hugging Face",
+    skillTitle: "Hugging Face Hub",
+    skillBody:
+      "Use Hugging Face tools when the user asks about models, datasets, inference, or Spaces.",
+    triggerHints: ["Hugging Face", "model hub", "dataset"],
+  },
+  {
+    pluginId: "neon",
+    displayName: "Neon",
+    description: "Manage Neon serverless Postgres projects and run SQL.",
+    iconUrl: "https://neon.tech/favicon.ico",
+    publisher: "Neon",
+    skillTitle: "Neon Postgres",
+    skillBody: "Use Neon tools for branches, SQL, and project status instead of guessing schema.",
+    triggerHints: ["Neon", "Postgres", "database"],
+  },
+  {
+    pluginId: "cloudflare",
+    displayName: "Cloudflare",
+    description: "Operate Cloudflare accounts, Workers, DNS, and related APIs.",
+    iconUrl: "https://www.cloudflare.com/favicon.ico",
+    publisher: "Cloudflare",
+    skillTitle: "Cloudflare Ops",
+    skillBody:
+      "Use Cloudflare tools for Workers, DNS, KV, R2, and account diagnostics the user names.",
+    triggerHints: ["Cloudflare", "Workers", "DNS"],
+  },
+  {
+    pluginId: "vercel",
+    displayName: "Vercel",
+    description: "Inspect Vercel projects, deployments, and runtime logs.",
+    iconUrl: "https://vercel.com/favicon.ico",
+    publisher: "Vercel",
+    skillTitle: "Vercel Deployments",
+    skillBody: "Use Vercel tools when the user asks about a deployment, preview URL, or build log.",
+    triggerHints: ["Vercel", "deployment", "preview"],
+  },
+  {
+    pluginId: "supabase",
+    displayName: "Supabase",
+    description: "Query Supabase projects, tables, and auth configuration.",
+    iconUrl: "https://supabase.com/favicon.ico",
+    publisher: "Supabase",
+    skillTitle: "Supabase Data",
+    skillBody: "Use Supabase tools for schema, rows, and project settings instead of inventing SQL.",
+    triggerHints: ["Supabase", "Postgres", "RLS"],
+  },
+  {
+    pluginId: "hubspot",
+    displayName: "HubSpot",
+    description: "Read and update HubSpot CRM contacts, deals, and companies.",
+    iconUrl: "https://www.hubspot.com/favicon.ico",
+    publisher: "HubSpot",
+    skillTitle: "HubSpot CRM",
+    skillBody: "Use HubSpot tools when the user mentions contacts, deals, or CRM records.",
+    triggerHints: ["HubSpot", "CRM", "deal"],
+  },
+];
+
+const FIRST_PARTY_REMOTE_PLUGINS: AgentPluginDefinition[] = FIRST_PARTY_REMOTE_SPECS.map(
+  (spec) => ({
+    schemaVersion: 1,
+    pluginId: spec.pluginId,
+    displayName: spec.displayName,
+    description: spec.description,
+    iconUrl: spec.iconUrl,
+    builtIn: true,
+    marketplace: { id: spec.pluginId, publisher: spec.publisher },
+    mcp: [{ id: spec.pluginId, presetId: spec.pluginId }],
+    skills: [
+      {
+        id: `${spec.pluginId}-workflow`,
+        title: spec.skillTitle,
+        description: spec.description,
+        triggerHints: spec.triggerHints,
+        body: spec.skillBody,
+      },
+    ],
+    harnesses: standardHarnessSupport(),
+  })
+);
+
+export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
+  ...CORE_BUILT_IN_AGENT_PLUGINS,
+  ...FIRST_PARTY_REMOTE_PLUGINS,
 ];
 
 export function listBuiltInAgentPlugins(): AgentPluginDefinition[] {

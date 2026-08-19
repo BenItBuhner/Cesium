@@ -165,6 +165,102 @@ export const MCP_PRESETS: McpPresetDefinition[] = [
       summary: "Sentry issues and traces",
     },
   },
+  {
+    presetId: "stripe",
+    label: "Stripe",
+    description: "Payments, customers, and Stripe docs (OAuth or restricted API key).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.stripe.com" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Stripe payments and billing",
+    },
+  },
+  {
+    presetId: "atlassian",
+    label: "Atlassian",
+    description: "Jira, Confluence, and Bitbucket via the Atlassian Rovo MCP server.",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.atlassian.com/v1/mcp" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Jira and Confluence",
+    },
+  },
+  {
+    presetId: "huggingface",
+    label: "Hugging Face",
+    description: "Models, datasets, and Spaces on Hugging Face.",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://huggingface.co/mcp" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Hugging Face Hub",
+    },
+  },
+  {
+    presetId: "neon",
+    label: "Neon",
+    description: "Serverless Postgres projects and SQL (OAuth).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.neon.tech/mcp" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Neon Postgres",
+    },
+  },
+  {
+    presetId: "cloudflare",
+    label: "Cloudflare",
+    description: "Cloudflare API and account operations (OAuth).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.cloudflare.com/mcp" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Cloudflare account and APIs",
+    },
+  },
+  {
+    presetId: "vercel",
+    label: "Vercel",
+    description: "Projects, deployments, and logs (OAuth).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.vercel.com" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Vercel deployments",
+    },
+  },
+  {
+    presetId: "supabase",
+    label: "Supabase",
+    description: "Projects, database, and auth (OAuth).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.supabase.com/mcp" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "Supabase projects",
+    },
+  },
+  {
+    presetId: "hubspot",
+    label: "HubSpot",
+    description: "CRM records and marketing context (OAuth).",
+    onboarding: { kind: "oauth-dcr" },
+    config: {
+      transport: "streamable-http",
+      remote: { url: "https://mcp.hubspot.com" },
+      auth: { kind: "oauth", scopes: [] },
+      summary: "HubSpot CRM",
+    },
+  },
 ];
 
 export function getMcpPreset(presetId: string): McpPresetDefinition | null {

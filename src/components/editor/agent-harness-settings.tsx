@@ -14,6 +14,7 @@ import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { formatMcpServerDisplayName } from "@/lib/mcp-server-display";
 import { openExternalUrl } from "@/lib/mobile-bridge";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { AgentBackendId } from "@/lib/agent-types";
@@ -34,6 +35,7 @@ import {
   fetchCesiumModelCatalog,
   fetchCursorSdkCredentialStatus,
   fetchGrokBuildLogin,
+  fetchMcpServers,
   fetchPiAgentSettings,
   pollOAuthSession,
   patchCesiumAgentSettings,
@@ -996,6 +998,36 @@ function newCustomProfileId(): string {
   return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+type ProfileMcpOption = {
+  id: string;
+  label: string;
+};
+
+function mcpAllowlistLabel(serverId: string, options: ProfileMcpOption[]): string {
+  return (
+    options.find((option) => option.id === serverId)?.label ??
+    formatMcpServerDisplayName(serverId)
+  );
+}
+
+function mcpOptionsFromServers(servers: Array<{ id: string; label: string; displayName?: string; pluginId?: string }>): ProfileMcpOption[] {
+  const seen = new Set<string>();
+  const options: ProfileMcpOption[] = [];
+  for (const server of servers) {
+    const id = server.id.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    options.push({
+      id,
+      label:
+        server.displayName?.trim() ||
+        server.label.trim() ||
+        formatMcpServerDisplayName(server.pluginId || id),
+    });
+  }
+  return options;
+}
+
 type ProfileEditorModalProps = {
   open: boolean;
   onClose: () => void;
@@ -1004,6 +1036,7 @@ type ProfileEditorModalProps = {
   toolGroups: CesiumProfileToolGroupPayload[];
   lockedTools: string[];
   existingProfiles: CesiumAgentProfilePayload[];
+  mcpOptions: ProfileMcpOption[];
   onSave: (profile: CesiumAgentProfilePayload) => Promise<void>;
 };
 
@@ -1014,6 +1047,7 @@ function ProfileEditorModal({
   toolGroups,
   lockedTools,
   existingProfiles,
+  mcpOptions,
   onSave,
 }: ProfileEditorModalProps) {
   const [name, setName] = useState("");
@@ -1023,7 +1057,7 @@ function ProfileEditorModal({
   const [allTools, setAllTools] = useState(true);
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [allMcpServers, setAllMcpServers] = useState(true);
-  const [mcpServersText, setMcpServersText] = useState("");
+  const [selectedMcpServers, setSelectedMcpServers] = useState<Set<string>>(new Set());
   const [permissionOverrides, setPermissionOverrides] = useState<
     CesiumAgentProfilePayload["permissionOverrides"]
   >({});
@@ -1043,7 +1077,7 @@ function ProfileEditorModal({
     setSelectedTools(new Set(allowed === "all" ? lockedTools : [...allowed, ...lockedTools]));
     const mcpServers = draft?.tools.mcpServers ?? "all";
     setAllMcpServers(mcpServers === "all");
-    setMcpServersText(mcpServers === "all" ? "" : mcpServers.join(", "));
+    setSelectedMcpServers(new Set(mcpServers === "all" ? [] : mcpServers));
     setPermissionOverrides(draft?.permissionOverrides ?? {});
     setMessage(null);
   }, [open, draft, lockedTools]);
@@ -1085,12 +1119,7 @@ function ProfileEditorModal({
       },
       tools: {
         allowed: allTools ? "all" : [...new Set([...selectedTools, ...lockedTools])],
-        mcpServers: allMcpServers
-          ? "all"
-          : mcpServersText
-              .split(",")
-              .map((entry) => entry.trim().toLowerCase())
-              .filter(Boolean),
+        mcpServers: allMcpServers ? "all" : [...selectedMcpServers],
       },
       permissionOverrides,
     };
@@ -1258,8 +1287,7 @@ function ProfileEditorModal({
               <div>
                 <SettingsFieldLabel>MCP servers</SettingsFieldLabel>
                 <p className="mt-[2px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                  Restrict call_mcp_tool to specific server ids (comma-separated, e.g.
-                  browser, artifacts, phone).
+                  Restrict call_mcp_tool to installed plugins and built-in MCP servers.
                 </p>
               </div>
               <label className="flex shrink-0 items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
@@ -1273,13 +1301,51 @@ function ProfileEditorModal({
               </label>
             </div>
             {!allMcpServers ? (
-              <HardwareAwareTextInput
-                value={mcpServersText}
-                onChange={setMcpServersText}
-                placeholder="browser, artifacts, phone"
-                className={monoInputClass}
-                ariaLabel="Allowed MCP server ids"
-              />
+              <div className="flex flex-col gap-[4px] rounded-[var(--radius-tab)] border border-[var(--border-card)] p-[10px]">
+                {(() => {
+                  const listed = new Set(mcpOptions.map((option) => option.id));
+                  const extras = [...selectedMcpServers]
+                    .filter((id) => !listed.has(id))
+                    .map((id) => ({ id, label: formatMcpServerDisplayName(id) }));
+                  const rows = [...mcpOptions, ...extras];
+                  if (rows.length === 0) {
+                    return (
+                      <p className="font-sans text-[12px] text-[var(--text-secondary)]">
+                        No MCP servers in this workspace yet. Install a plugin or add a custom
+                        server first.
+                      </p>
+                    );
+                  }
+                  return rows.map((option) => {
+                    const checked = selectedMcpServers.has(option.id);
+                    return (
+                      <label
+                        key={option.id}
+                        className="flex items-center gap-[7px] font-sans text-[12px] text-[var(--text-secondary)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedMcpServers((current) => {
+                              const next = new Set(current);
+                              if (next.has(option.id)) {
+                                next.delete(option.id);
+                              } else {
+                                next.add(option.id);
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="min-w-0 truncate text-[var(--text-primary)]">
+                          {option.label}
+                        </span>
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
             ) : null}
             <div>
               <SettingsFieldLabel>Permission overrides</SettingsFieldLabel>
@@ -1340,7 +1406,9 @@ function ProfileEditorModal({
 }
 
 function CesiumAgentHarnessSettings() {
+  const { activeWorkspaceId } = useWorkspace();
   const [settings, setSettings] = useState<CesiumAgentSettingsPayload | null>(null);
+  const [mcpOptions, setMcpOptions] = useState<ProfileMcpOption[]>([]);
   const [catalog, setCatalog] = useState<CesiumModelCatalogEntry[]>([]);
   const [providerOptionId, setProviderOptionId] = useState("openai");
   const [label, setLabel] = useState("");
@@ -1405,6 +1473,16 @@ function CesiumAgentHarnessSettings() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setMcpOptions([]);
+      return;
+    }
+    void fetchMcpServers(activeWorkspaceId)
+      .then((servers) => setMcpOptions(mcpOptionsFromServers(servers)))
+      .catch(() => setMcpOptions([]));
+  }, [activeWorkspaceId, profileModal.open]);
 
   useEffect(() => {
     // The Cesium OAuth flow reuses the Pi callback page, which posts this
@@ -2099,7 +2177,11 @@ function CesiumAgentHarnessSettings() {
                 const mcpSummary =
                   profile.tools.mcpServers === "all"
                     ? "all MCP servers"
-                    : `MCP: ${profile.tools.mcpServers.join(", ") || "none"}`;
+                    : `MCP: ${
+                        profile.tools.mcpServers
+                          .map((id) => mcpAllowlistLabel(id, mcpOptions))
+                          .join(", ") || "none"
+                      }`;
                 return (
                   <div
                     key={profile.id}
@@ -2693,6 +2775,7 @@ function CesiumAgentHarnessSettings() {
         toolGroups={settings?.profileToolGroups ?? []}
         lockedTools={settings?.profileLockedTools ?? []}
         existingProfiles={settings?.profileCatalog ?? []}
+        mcpOptions={mcpOptions}
         onSave={saveProfile}
       />
     </>
