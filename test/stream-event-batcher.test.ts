@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { AgentStoredEvent } from "../src/lib/agent-types.ts";
 import {
   KeyedEventBatcher,
+  selectKeyedDeferredValue,
   STREAM_EVENT_BATCH_WINDOW_MS,
   type EventBatchMap,
 } from "../src/lib/stream-event-batcher.ts";
@@ -121,6 +122,23 @@ test("disabled batching preserves immediate per-event updates", () => {
   assert.equal(flushed.length, 2);
   assert.deepEqual([...flushed[0]!.entries()], [["foreground", [1]]]);
   assert.deepEqual([...flushed[1]!.entries()], [["background", [2]]]);
+});
+
+test("deferred stream values never leak across conversation keys", () => {
+  const current = ["new conversation"];
+  const staleDeferred = {
+    key: "old-conversation",
+    value: ["old conversation"],
+  };
+
+  assert.equal(
+    selectKeyedDeferredValue("new-conversation", current, staleDeferred),
+    current
+  );
+  assert.equal(
+    selectKeyedDeferredValue("old-conversation", current, staleDeferred),
+    staleDeferred.value
+  );
 });
 
 test("disabling batching flushes queued events before switching modes", () => {

@@ -230,6 +230,8 @@ async function main(): Promise<void> {
           cwd: args.cwd,
           settingSources: ["project", "user", "plugins"],
           sandboxOptions: { enabled: false },
+          autoReview: false,
+          enableAgentRetries: true,
         },
       },
       args.mode

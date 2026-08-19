@@ -46,11 +46,28 @@ export type AgentConfigOptionCategory =
   | "permission"
   | "other";
 
+export type AgentModelParameterValue = {
+  /** Provider-defined parameter id; never inferred from the display name. */
+  id: string;
+  name?: string;
+  value: string;
+  valueName?: string;
+};
+
 export type AgentConfigOptionValue = {
   value: string;
   name: string;
   description?: string;
   metadata?: Record<string, string | string[]>;
+  /** Stable identity/display name shared by parameter variants of one model. */
+  modelGroupId?: string;
+  modelGroupName?: string;
+  /**
+   * Effective model parameter values for this exact catalog row. Keeping
+   * these structured prevents distinct controls (for example effort and
+   * thinking) from being collapsed by display-name parsing.
+   */
+  modelParameters?: AgentModelParameterValue[];
 };
 
 export type AgentConfigOption = {

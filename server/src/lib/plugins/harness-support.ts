@@ -68,7 +68,7 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     promptSkills: true,
     attachment: "prompt-only",
     notes:
-      "OpenCode does not currently accept Cesium-managed native MCP attachment. Plugin skills and MCP guidance are injected into the prompt only — tools will not run natively across this harness.",
+      "OpenCode Current and v2 Beta both discover MCP from OpenCode's own configuration. Cesium-managed plugin MCP is prompt-only — tools will not run natively across this harness.",
   },
   "opencode-v2-beta": {
     backendId: "opencode-v2-beta",
@@ -76,7 +76,7 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     promptSkills: true,
     attachment: "prompt-only",
     notes:
-      "OpenCode v2 Beta discovers MCP from its own configuration; Cesium-managed plugin MCP is not attached to the native v2 session yet. Prompt skills and MCP guidance are still injected.",
+      "Legacy OpenCode v2 Beta id. Chats migrate onto the OpenCode harness; MCP remains prompt-only.",
   },
   "pi-agent": {
     backendId: "pi-agent",

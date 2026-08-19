@@ -5,6 +5,7 @@ import {
   AGENT_STORED_EVENT_KINDS as CORE_AGENT_STORED_EVENT_KINDS,
 } from "../../packages/core/src/protocol.ts";
 import {
+  AGENT_CAPABILITIES,
   AGENT_CAPABILITY_KEYS,
   AGENT_STORED_EVENT_KINDS,
   BACKEND_HARNESS_EXPECTATIONS,
@@ -18,9 +19,12 @@ test("core protocol constants stay aligned with server harness contract", () => 
 });
 
 test("every registered backend has harness expectations", () => {
-  const registered = Object.keys(AGENT_BACKENDS).sort();
+  const registered = Object.keys(AGENT_CAPABILITIES).sort();
   const expected = Object.keys(BACKEND_HARNESS_EXPECTATIONS).sort();
   assert.deepEqual(expected, registered);
+  for (const id of registered) {
+    assert.ok(id in AGENT_BACKENDS, id);
+  }
 });
 
 test("backend capabilities are complete and matched by expectation matrix", () => {

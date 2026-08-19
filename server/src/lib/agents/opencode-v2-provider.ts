@@ -42,6 +42,7 @@ import {
   type OpenCodeV2QuestionRequest,
 } from "./opencode-v2-normalize.js";
 import { harnessLog } from "./harness-diagnostics.js";
+import { ensureOpenCodeGenerationOption } from "./opencode-generation.js";
 import {
   buildRememberedPermissionToolKey,
   persistRememberedPermissionChoice,
@@ -343,9 +344,12 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   ) {
     this.capabilities = backend.capabilities;
     this.configOptions = withConversationConfig(
-      callbacks.conversation.configOptions.length > 0
-        ? callbacks.conversation.configOptions
-        : configOptions,
+      ensureOpenCodeGenerationOption(
+        callbacks.conversation.configOptions.length > 0
+          ? callbacks.conversation.configOptions
+          : configOptions,
+        callbacks.conversation
+      ),
       callbacks.conversation
     );
     this.sessionId = providerSessionId ?? `opencode-v2-pending-${callbacks.conversation.id}`;
@@ -466,10 +470,10 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     const pluginAttachments = await resolveAgentPluginAttachments({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,
-      backendId: "opencode-v2-beta",
+      backendId: this.backend.id,
     });
     const text = appendAgentPluginPrompt(recovery?.userText ?? input.text, pluginAttachments);
-    const images = await materializeImageAttachments(input.attachments, "opencode-v2-beta");
+    const images = await materializeImageAttachments(input.attachments, this.backend.id);
     const active = createActivePrompt(`opencode-v2-${input.userMessageId}`);
     this.activePrompt = active;
     await this.callbacks.updateConversation((current) => ({
@@ -778,7 +782,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
         optionValue(this.configOptions, "model", this.callbacks.conversation.config.modelId),
       previous: this.configOptions,
     });
-    await writeAgentBackendConfigCache("opencode-v2-beta", this.configOptions).catch(
+    await writeAgentBackendConfigCache(this.backend.id, this.configOptions).catch(
       () => undefined
     );
   }

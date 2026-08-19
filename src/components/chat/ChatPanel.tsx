@@ -98,6 +98,7 @@ import {
   FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
+import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import {
   getGlobalPinnedAgentConversationIdsSnapshot,
   migrateGlobalPinnedAgentConversationIdsIfNeeded,
@@ -864,7 +865,16 @@ workspaceSession.chat.mode,
     () => computeContextUsageRefreshGeneration(rawPanelThreadEvents),
     [rawPanelThreadEvents]
   );
-  const deferredPanelThreadEvents = useDeferredValue(rawPanelThreadEvents);
+  const panelThreadEventState = useMemo(
+    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
+    [activeTabId, rawPanelThreadEvents]
+  );
+  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
+  const deferredPanelThreadEvents = selectKeyedDeferredValue(
+    activeTabId,
+    rawPanelThreadEvents,
+    deferredPanelThreadEventState
+  );
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(rawPanelThreadEvents),
     [rawPanelThreadEvents]

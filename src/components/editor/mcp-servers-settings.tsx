@@ -11,6 +11,7 @@ import type {
   McpServerPublic,
   McpTransportKind,
 } from "@/lib/mcp-types";
+import { openExternalUrl } from "@/lib/mobile-bridge";
 import {
   deleteMcpServer,
   fetchMcpPresets,
@@ -214,7 +215,9 @@ export function McpServersSettingsPanel() {
     setBusyId(serverId);
     try {
       const { authorizationUrl } = await startMcpOAuth(activeWorkspaceId, serverId);
-      window.open(authorizationUrl, "_blank", "noopener,noreferrer,width=520,height=720");
+      openExternalUrl(authorizationUrl, {
+        features: "noopener,noreferrer,width=520,height=720",
+      });
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : String(authError));
     } finally {

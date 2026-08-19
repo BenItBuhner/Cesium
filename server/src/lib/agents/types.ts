@@ -71,6 +71,14 @@ export type AgentConfigOptionValue = {
   name: string;
   description?: string;
   metadata?: Record<string, string | string[]>;
+  modelGroupId?: string;
+  modelGroupName?: string;
+  modelParameters?: Array<{
+    id: string;
+    name?: string;
+    value: string;
+    valueName?: string;
+  }>;
 };
 
 export type AgentConfigOption = {

@@ -27,7 +27,9 @@ import {
   buildMobileBootstrapScript,
   encodeMobileBridgeMessage,
   MOBILE_BRIDGE_PROTOCOL_VERSION,
+  mobileExternalHttpUrl,
   parseMobileBridgeMessage,
+  shouldOpenMobileNavigationExternally,
   type MobileAgentProjection,
   type MobileNativeToWebMessage,
   type MobileNativeStatus,
@@ -562,10 +564,8 @@ export default function App() {
       }
       if (message.type === "openExternalUrl") {
         // Open outside the WebView so the workbench (a file:// bundle) is not
-        // navigated away, e.g. the F-Droid page for the Termux server setup.
-        if (/^https?:\/\//i.test(message.url)) {
-          void Linking.openURL(message.url).catch(() => undefined);
-        }
+        // navigated away — OAuth / Sign In / Authenticate, F-Droid, docs, etc.
+        openSystemBrowser(message.url);
         return;
       }
       if (message.type === "serverConfigured") {
@@ -620,6 +620,29 @@ export default function App() {
     [syncBackIntercept]
   );
 
+  const handleShouldStartLoad = useCallback(
+    (request: { url: string; isTopFrame?: boolean }) => {
+      if (
+        shouldOpenMobileNavigationExternally(request.url, {
+          documentUrl: webUrl,
+          isTopFrame: request.isTopFrame,
+        })
+      ) {
+        openSystemBrowser(request.url);
+        return false;
+      }
+      return true;
+    },
+    [webUrl]
+  );
+
+  const handleOpenWindow = useCallback(
+    (event: { nativeEvent: { targetUrl: string } }) => {
+      openSystemBrowser(event.nativeEvent.targetUrl, webUrl);
+    },
+    [webUrl]
+  );
+
   return (
     <View style={styles.root} testID="cesium-mobile-root">
       <StatusBar
@@ -648,6 +671,8 @@ export default function App() {
           }}
           onMessage={handleMessage}
           onNavigationStateChange={handleNavigation}
+          onShouldStartLoadWithRequest={handleShouldStartLoad}
+          onOpenWindow={handleOpenWindow}
           onError={(event: {
             nativeEvent: { description: string; code?: number; url?: string };
           }) => {
@@ -706,6 +731,10 @@ export default function App() {
           javaScriptEnabled
           domStorageEnabled
           sharedCookiesEnabled
+          // Keep false so Chromium does not spawn a hidden child WebView for
+          // window.open. The bootstrap patches window.open / _blank clicks,
+          // and onShouldStartLoadWithRequest / onOpenWindow send foreign
+          // http(s) URLs to the system browser instead.
           setSupportMultipleWindows={false}
           mediaPlaybackRequiresUserAction={false}
           style={styles.webview}
@@ -732,6 +761,14 @@ export default function App() {
       ) : null}
     </View>
   );
+}
+
+function openSystemBrowser(url: string, documentUrl?: string) {
+  const href = mobileExternalHttpUrl(url, documentUrl);
+  if (!href) {
+    return;
+  }
+  void Linking.openURL(href).catch(() => undefined);
 }
 
 function toMobileLifecycleState(state: AppStateStatus) {

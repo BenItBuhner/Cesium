@@ -217,6 +217,12 @@ export function GeneralSettingsPanel() {
               size="md"
             />
           }
+        />
+        <SettingsLinkRow
+          searchId="voice-settings-link"
+          title="Speech, titles, and spoken replies"
+          description="Choose the transcription model, title fallback, TTS engine, and voice controller without editing environment variables."
+          onClick={() => openNav("voice")}
           border={false}
         />
       </SettingsSection>

@@ -4,10 +4,11 @@ import type { AgentBackendId, AgentStoredEvent } from "../src/lib/agent-types";
 import { hasAgentBackendIconAsset } from "../src/lib/agent-backend-icons";
 import { SUBAGENT_TOOL_CALL_CLASSIFIERS } from "../src/lib/agent-subagent-routing";
 
-test("both opencode harnesses use the opencode icon and subagent classifier", () => {
-  for (const id of ["opencode-server", "opencode-v2-beta"] satisfies AgentBackendId[]) {
-    assert.equal(hasAgentBackendIconAsset(id), true);
-    assert.equal(typeof SUBAGENT_TOOL_CALL_CLASSIFIERS[id], "function");
+test("the OpenCode harness uses the opencode icon and classifies task/subagent tools", () => {
+  const id = "opencode-server" satisfies AgentBackendId;
+  assert.equal(hasAgentBackendIconAsset(id), true);
+  assert.equal(typeof SUBAGENT_TOOL_CALL_CLASSIFIERS[id], "function");
+  for (const tool of ["task", "subagent"] as const) {
     assert.equal(
       SUBAGENT_TOOL_CALL_CLASSIFIERS[id]({
         kind: "tool_call",
@@ -16,7 +17,7 @@ test("both opencode harnesses use the opencode icon and subagent classifier", ()
         toolKind: "task",
         status: "in_progress",
         raw: {
-          tool: id === "opencode-v2-beta" ? "subagent" : "task",
+          tool,
           rawInput: {
             description: "Inspect files",
             prompt: "go",
@@ -99,7 +100,7 @@ test("OpenCode v2 child tools render inside a subagent transcript", async () => 
         raw: {},
       },
     ] as AgentStoredEvent[],
-    { backendId: "opencode-v2-beta", workspaceRoot: "/workspace" }
+    { backendId: "opencode-server", workspaceRoot: "/workspace" }
   );
   assert.equal(messages.filter((message) => message.type === "worked-session").length, 0);
   assert.equal(messages.filter((message) => message.type === "subagent").length, 1);

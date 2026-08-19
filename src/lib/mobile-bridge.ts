@@ -19,6 +19,11 @@ import {
 } from "@cesium/core";
 
 export {
+  isMobileExternalHttpUrl,
+  mobileExternalHttpUrl,
+  shouldOpenMobileNavigationExternally,
+} from "@cesium/core";
+export {
   MOBILE_BRIDGE_MESSAGE_EVENT,
   MOBILE_BRIDGE_PROTOCOL_VERSION,
   MOBILE_IDLE_CLASS,
@@ -54,6 +59,29 @@ export function postMobileBridgeMessage(message: MobileWebToNativeMessage): bool
     return false;
   }
   bridge.postMessage(encodeMobileBridgeMessage(message));
+  return true;
+}
+
+/**
+ * Open an http(s) URL outside the workbench. On the Android / iOS WebView
+ * host this asks the native shell to hand the URL to the system browser
+ * (`Linking.openURL`) so OAuth and other redirects do not unload the
+ * bundled `file://` page. Desktop / regular browsers keep `window.open`.
+ */
+export function openExternalUrl(
+  url: string,
+  options?: { target?: string; features?: string }
+): boolean {
+  if (!url) {
+    return false;
+  }
+  if (postMobileBridgeMessage({ type: "openExternalUrl", url })) {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  window.open(url, options?.target ?? "_blank", options?.features ?? "noopener,noreferrer");
   return true;
 }
 
@@ -125,6 +153,7 @@ declare global {
     __CESIUM_MOBILE_NATIVE_READY__?: string;
     __CESIUM_MOBILE_SERVER__?: MobileServerConfig;
     __CESIUM_MOBILE_BRIDGE_LISTENERS__?: boolean;
+    __CESIUM_MOBILE_EXTERNAL_NAV__?: boolean;
     cesiumMobile?: {
       isReactNative?: boolean;
       protocolVersion?: number;
