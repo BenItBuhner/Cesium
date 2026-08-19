@@ -41,7 +41,20 @@ function injectDesktopChrome() {
   // macOS uses the native traffic lights (hidden-inset title bar); the web
   // layer applies its own leading inset. The injected top-right controls and
   // their layout offsets are Windows/Linux frameless chrome only.
-  if (IS_MAC) return;
+  if (IS_MAC) {
+    const macStyle = document.createElement("style");
+    macStyle.id = "cesium-electron-mac-chrome-style";
+    // The default 72px inset (sized for iPadOS window controls) leaves only
+    // ~8px between the green traffic light and the first rail icon; widen it
+    // so the lights read as their own group.
+    macStyle.textContent = `
+      html[data-cesium-desktop-platform="darwin"] {
+        --editor-window-chrome-tab-inset: 92px;
+      }
+    `;
+    document.head.appendChild(macStyle);
+    return;
+  }
 
   const style = document.createElement("style");
   style.id = "cesium-electron-window-controls-style";

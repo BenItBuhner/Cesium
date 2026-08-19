@@ -58,20 +58,19 @@ jobs:
           "$APP_BIN" --smoke 2>&1 | tee smoke.log
           grep -q "Cesium packaged smoke passed" smoke.log
 
-      - name: Launch the packaged app and capture screenshots
+      - name: Launch the packaged app and capture its window
+        # Window self-captures only — no `screencapture` here. The first
+        # screencapture of the job triggers macOS 15's capture-approval
+        # alert, which then lingers on screen; the full-screen install step
+        # below must own the job's first (clean) screencapture.
         run: |
           mkdir -p screenshots
           APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
-          # OPENCURSOR_DESKTOP_CAPTURE_PATH makes the app capture its own
-          # window contents (permission-free, unlike TCC-gated screencapture).
           OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/macos_app_window.png" \
             "$APP_BIN" > app.log 2>&1 &
           APP_PID=$!
           echo "Launched Cesium Desktop with PID $APP_PID"
-          sleep 20
-          screencapture -x screenshots/macos_app_boot.png || true
-          sleep 25
-          screencapture -x screenshots/macos_app_workbench.png || true
+          sleep 45
           kill "$APP_PID" || true
           sleep 3
           tail -50 app.log
@@ -114,12 +113,14 @@ jobs:
           hdiutil detach /Volumes/CesiumDesktop
           xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app" || true
           open -a "/Applications/Cesium Desktop.app"
-          sleep 45
-          screencapture -x screenshots/macos_fullscreen_installed_boot.png || true
-          sleep 15
+          # Let the workbench settle fully so the job's FIRST screencapture
+          # (guaranteed alert-free) is the settled money shot.
+          sleep 60
           screencapture -x screenshots/macos_fullscreen_installed_workbench.png || true
           sleep 10
-          screencapture -x screenshots/macos_fullscreen_installed_settled.png || true
+          screencapture -x screenshots/macos_fullscreen_installed_extra1.png || true
+          sleep 10
+          screencapture -x screenshots/macos_fullscreen_installed_extra2.png || true
           APP_PID=$(pgrep -x "Cesium Desktop" | head -1)
           if [ -n "$APP_PID" ]; then kill "$APP_PID" || true; fi
           sleep 3
