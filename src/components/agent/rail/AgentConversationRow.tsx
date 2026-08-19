@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useEffect,
   useRef,
   type KeyboardEvent,
@@ -21,11 +22,11 @@ import {
 } from "lucide-react";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
-  formatAgentRailRelativeTime,
   getAgentRailStatusInfo,
   type AgentRailRowDetailMode,
   type AgentRailStatusInfo,
 } from "@/lib/agent-rail-status";
+import { useAgentRailRelativeTime } from "@/hooks/useAgentRailRelativeTime";
 import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
 import { integrationIconLabel } from "@/lib/integration-icons";
 
@@ -141,13 +142,12 @@ function ConversationStatusGlyph({
   }
 }
 
-export function AgentConversationRow({
+export const AgentConversationRow = memo(function AgentConversationRow({
   conversation,
   detail = "balanced",
   detailContext,
   editValue,
   editing = false,
-  now,
   onBeginRename,
   onCancelRename,
   onCommitRename,
@@ -176,8 +176,6 @@ export function AgentConversationRow({
   detailContext?: string;
   editValue?: string;
   editing?: boolean;
-  /** Reference timestamp for relative times on detail lines. */
-  now?: number;
   onBeginRename?: () => void;
   onCancelRename?: () => void;
   onCommitRename?: () => void;
@@ -222,8 +220,7 @@ export function AgentConversationRow({
     acknowledgedFailure,
   });
 
-  const relativeTime =
-    now != null ? formatAgentRailRelativeTime(conversation.updatedAt, now) : null;
+  const relativeTime = useAgentRailRelativeTime(conversation.updatedAt);
   const effectiveDetail: AgentRailRowDetailMode =
     bulkSelectMode || editing ? "compact" : detail;
   let detailText: string | null = null;
@@ -371,8 +368,12 @@ export function AgentConversationRow({
     : conversation.title;
 
   return (
+    // `content-visibility: auto` lets the browser skip layout/paint for rows
+    // scrolled out of view — the rail has no virtualization, so with very
+    // large conversation sets this is what keeps scrolling and re-renders
+    // cheap. The intrinsic-size hint keeps the scrollbar stable.
     <div
-      className="group flex w-full min-w-0 items-center gap-[4px]"
+      className="group flex w-full min-w-0 items-center gap-[4px] [content-visibility:auto] [contain-intrinsic-size:auto_30px]"
       draggable={Boolean(onDragStart) && !bulkSelectMode}
       onDragStart={
         onDragStart ? (event) => onDragStart(event, conversation) : undefined
@@ -489,4 +490,4 @@ export function AgentConversationRow({
       ) : null}
     </div>
   );
-}
+});

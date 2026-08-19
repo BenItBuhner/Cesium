@@ -2665,6 +2665,81 @@ export async function cancelGrokBuildLogin(): Promise<GrokBuildLoginResponse> {
   });
 }
 
+export type HarnessCliAuthBackendId =
+  | "cursor-acp"
+  | "grok-build"
+  | "opencode-server"
+  | "devin-acp"
+  | "codex-app-server"
+  | "claude-code-sdk"
+  | "google-antigravity-cli";
+
+export type HarnessCliAuthState = {
+  backendId: HarnessCliAuthBackendId;
+  installed: boolean;
+  signedIn: boolean | null;
+  accountLabel?: string;
+  status: "idle" | "pending" | "awaiting-confirmation" | "success" | "failed";
+  verificationUrl?: string;
+  userCode?: string;
+  outputTail?: string;
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  loginCommand: string;
+  logoutCommand: string;
+};
+
+export function isHarnessCliAuthBackendId(
+  backendId: string
+): backendId is HarnessCliAuthBackendId {
+  return (
+    backendId === "cursor-acp" ||
+    backendId === "grok-build" ||
+    backendId === "opencode-server" ||
+    backendId === "devin-acp" ||
+    backendId === "codex-app-server" ||
+    backendId === "claude-code-sdk" ||
+    backendId === "google-antigravity-cli"
+  );
+}
+
+export async function fetchHarnessCliAuth(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}`,
+    { method: "GET" }
+  );
+}
+
+export async function startHarnessCliAuthLogin(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/login`,
+    { method: "POST" }
+  );
+}
+
+export async function startHarnessCliAuthLogout(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/logout`,
+    { method: "POST" }
+  );
+}
+
+export async function cancelHarnessCliAuthLogin(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/cancel`,
+    { method: "POST" }
+  );
+}
+
 export async function fetchTree(depth?: number): Promise<{
   root: string;
   tree: FileNode;

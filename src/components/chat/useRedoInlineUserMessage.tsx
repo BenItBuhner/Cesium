@@ -69,6 +69,7 @@ function pickAvailableBackend(
 ): AgentBackendInfo | null {
   return (
     backendsList.find((backend) => backend.id === preferredBackendId && backend.available) ??
+    backendsList.find((backend) => backend.available && backend.enabled !== false) ??
     backendsList.find((backend) => backend.available) ??
     backendsList[0] ??
     null

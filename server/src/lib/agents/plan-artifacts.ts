@@ -14,6 +14,7 @@ import {
 const BACKEND_PLAN_SEGMENTS: Record<AgentBackendId, string> = {
   "cesium-agent": "cesium",
   "cursor-sdk": "cursor-sdk",
+  "cursor-acp": "cursor-acp",
   "opencode-server": "opencode",
   "opencode-v2-beta": "opencode-v2",
   "devin-acp": "devin",

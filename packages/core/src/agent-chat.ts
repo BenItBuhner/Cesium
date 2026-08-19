@@ -10,6 +10,10 @@ import {
   isCompressingContextStatusDetail,
   isTakingLongerStatusDetail,
 } from "./agent-completion-error";
+import {
+  parseLooseJsonObjectCached,
+  tryParseLeadingJsonArrayCached,
+} from "./loose-json";
 import { resolveModelDisplayName } from "./model-display-name";
 
 /** Agent is actively working or waiting on user mid-turn (not paused). */
@@ -325,6 +329,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "cesium-agent":
       return "auto";
     case "cursor-sdk":
+    case "cursor-acp":
       return "cursor";
     case "opencode-server":
     case "opencode-v2-beta":
@@ -2106,22 +2111,7 @@ function mergeDuplicateSubagentMessages(messages: ChatMessage[]): ChatMessage[] 
   return output;
 }
 
-function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
+const parseLooseJsonObject = parseLooseJsonObjectCached;
 
 /** OpenCode / plan-mode models often stream the same checklist as JSON that duplicates structured `plan` events. */
 export function isAgentTodoJsonArrayPayload(value: unknown): boolean {
@@ -2143,17 +2133,7 @@ export function isAgentTodoJsonArrayPayload(value: unknown): boolean {
   });
 }
 
-function tryParseLeadingJsonArray(text: string): unknown | undefined {
-  const t = text.trim();
-  if (!t.startsWith("[")) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(t) as unknown;
-  } catch {
-    return undefined;
-  }
-}
+const tryParseLeadingJsonArray = tryParseLeadingJsonArrayCached;
 
 export function isAgentTodoJsonDetailString(text: string): boolean {
   const parsed = tryParseLeadingJsonArray(text);
@@ -3992,7 +3972,9 @@ export function stripSpuriousAcpToolCallReplays(
     }
     out.push(e);
   }
-  return out;
+  // Nothing stripped (the per-flush common case): keep the input identity so
+  // callers avoid a fresh full-log array allocation every streaming commit.
+  return out.length === events.length ? events : out;
 }
 
 /**
@@ -4214,9 +4196,9 @@ export function projectAgentEventsToChatMessages(
     return cached;
   }
   const workspaceRoot = options?.workspaceRoot;
-  const ordered = stripSpuriousAcpToolCallReplays(
-    dedupeAgentStoredEvents([...events].sort((a, b) => a.seq - b.seq))
-  );
+  // dedupeAgentStoredEvents sorts internally (and fast-paths already-ordered
+  // logs, the per-flush common case) — no need to copy + pre-sort here.
+  const ordered = stripSpuriousAcpToolCallReplays(dedupeAgentStoredEvents(events));
   const hiddenHandoffTranscriptMessageIds = new Set<string>();
   for (let index = 0; index < ordered.length - 1; index += 1) {
     const current = ordered[index];
@@ -5069,6 +5051,20 @@ export function dedupeAgentStoredEvents(
   if (events.length <= 1) {
     return events;
   }
+  // Fast path: the hot callers (projection per streaming flush, snapshot
+  // merges) almost always pass already-ordered logs where seqs strictly
+  // increase. Strict monotonicity (> 0) implies unique seqs, and the merge
+  // layer/store guarantee eventId uniqueness across distinct seqs — return
+  // the input untouched instead of two sorts and three array allocations.
+  let strictlyIncreasing = events[0]!.seq > 0;
+  for (let i = 1; strictlyIncreasing && i < events.length; i += 1) {
+    if (events[i]!.seq <= events[i - 1]!.seq) {
+      strictlyIncreasing = false;
+    }
+  }
+  if (strictlyIncreasing) {
+    return events;
+  }
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const bySeq = new Map<number, AgentStoredEvent>();
   const unsequenced: AgentStoredEvent[] = [];
@@ -5226,7 +5222,30 @@ function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | 
   return null;
 }
 
+/**
+ * Pure (name, modelId) -> label; memoized because catalog-wide formatting
+ * reruns per composer-state derivation. Sized to hold a full provider catalog
+ * incl. thought-level variants — an undersized cache thrashes (clears mid-
+ * pass) and is worse than none.
+ */
+const modelVariantLabelCache = new Map<string, string>();
+const MAX_MODEL_VARIANT_LABEL_CACHE = 32_768;
+
 function formatModelVariantLabel(name: string, modelId: string): string {
+  const cacheKey = `${name}\u0000${modelId}`;
+  const cached = modelVariantLabelCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = formatModelVariantLabelUncached(name, modelId);
+  if (modelVariantLabelCache.size >= MAX_MODEL_VARIANT_LABEL_CACHE) {
+    modelVariantLabelCache.clear();
+  }
+  modelVariantLabelCache.set(cacheKey, result);
+  return result;
+}
+
+function formatModelVariantLabelUncached(name: string, modelId: string): string {
   const trimmedName = cleanModelVariantBaseName(
     resolveModelDisplayName(name.trim() || modelId.trim() || "Model", modelId.trim() || name.trim())
   );
@@ -5428,23 +5447,70 @@ export function buildConversationModelOptions(
   );
 }
 
+/**
+ * Draft helpers are pure functions of the backend object (and visibility map),
+ * but callers derive them inside render-path memos whose dependencies churn
+ * under load (session folds, record pushes). Formatting a large model catalog
+ * per call was a top CPU hot spot with many concurrent agents, so results are
+ * memoized on the input object identities; WeakMaps release entries when the
+ * backend catalog refreshes.
+ */
+type DraftModelOptionsCacheEntry = {
+  withoutVisibility?: ModelInfo[];
+  byVisibility: WeakMap<object, ModelInfo[]>;
+};
+const draftModelOptionsCache = new WeakMap<AgentBackendInfo, DraftModelOptionsCacheEntry>();
+const draftModelCache = new WeakMap<AgentBackendInfo, ModelInfo>();
+const draftModeOptionsCache = new WeakMap<AgentBackendInfo, AgentModeOption[]>();
+
 export function buildDraftModelOptionsForBackend(
   backend: AgentBackendInfo,
   modelVisibility?: Record<string, Array<{ id: string; name: string; on: boolean }>>
 ): ModelInfo[] {
-  return buildConversationModelOptions(createBackendDraftConversation(backend), [backend], modelVisibility);
+  let entry = draftModelOptionsCache.get(backend);
+  if (!entry) {
+    entry = { byVisibility: new WeakMap() };
+    draftModelOptionsCache.set(backend, entry);
+  }
+  if (!modelVisibility) {
+    entry.withoutVisibility ??= buildConversationModelOptions(
+      createBackendDraftConversation(backend),
+      [backend]
+    );
+    return entry.withoutVisibility;
+  }
+  let cached = entry.byVisibility.get(modelVisibility);
+  if (!cached) {
+    cached = buildConversationModelOptions(
+      createBackendDraftConversation(backend),
+      [backend],
+      modelVisibility
+    );
+    entry.byVisibility.set(modelVisibility, cached);
+  }
+  return cached;
 }
 
 export function resolveDraftModelForBackend(
   backend: AgentBackendInfo
 ): ModelInfo {
-  return resolveConversationModel(createBackendDraftConversation(backend), [backend]);
+  let cached = draftModelCache.get(backend);
+  if (!cached) {
+    cached = resolveConversationModel(createBackendDraftConversation(backend), [backend]);
+    draftModelCache.set(backend, cached);
+  }
+  return cached;
 }
 
 export function buildDraftModeOptionsForBackend(
   backend: AgentBackendInfo
 ): AgentModeOption[] {
-  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
+  let cached = draftModeOptionsCache.get(backend);
+  if (!cached) {
+    cached = buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
+    draftModeOptionsCache.set(backend, cached);
+  }
+  return cached;
 }
 
 export function resolveConversationModel(

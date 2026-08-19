@@ -6,6 +6,7 @@ import type { AgentBackendId } from "../lib/agents/types.js";
 const ALL_BACKEND_IDS: AgentBackendId[] = [
   "cesium-agent",
   "cursor-sdk",
+  "cursor-acp",
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",

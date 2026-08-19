@@ -7,7 +7,6 @@ const FALLBACK_BACKEND_ID: AgentBackendId = "cesium-agent";
 /** Stored rows may still reference harness backends removed from `AgentBackendId`. */
 const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "claude-adapter": "claude-code-sdk",
-  "cursor-acp": "cursor-sdk",
   "opencode-acp": "opencode-server",
   "opencode-v2-beta": "opencode-server",
   "codex-adapter": "codex-app-server",

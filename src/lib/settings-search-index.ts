@@ -483,6 +483,20 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
   row(
     "agents",
+    "cursor-acp",
+    "Cursor ACP",
+    "Cursor Agent CLI over ACP with host OAuth (`agent login`).",
+    ["cursor", "acp", "oauth", "agent login"]
+  ),
+  row(
+    "agents",
+    "enabled-harnesses",
+    "Enabled harnesses",
+    "Turn agent harnesses on or off in the model picker.",
+    ["toggle", "enable", "disable", "backend"]
+  ),
+  row(
+    "agents",
     "opencode-server",
     "OpenCode",
     "OpenCode harness with Current (v1) and packaged v2 Beta dialects: durable events, typed tools, background subagents, PTY, and forms.",

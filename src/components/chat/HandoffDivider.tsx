@@ -13,7 +13,7 @@ export function getAgentLabel(agentId: string): string {
     case "cesium-agent":
       return "Cesium Agent";
     case "cursor-acp":
-      return "Cursor";
+      return "Cursor ACP";
     case "cursor-sdk":
       return "Cursor SDK";
     case "opencode-acp":
@@ -49,6 +49,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
   switch (raw) {
     case "cesium-agent":
     case "cursor-sdk":
+    case "cursor-acp":
     case "opencode-server":
     case "devin-acp":
     case "grok-build":
@@ -57,8 +58,6 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "pi-agent":
     case "google-antigravity-cli":
       return raw;
-    case "cursor-acp":
-      return "cursor-sdk";
     case "opencode-acp":
     case "opencode-v2-beta":
       return "opencode-server";

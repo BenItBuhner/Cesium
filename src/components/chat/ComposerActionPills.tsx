@@ -50,7 +50,7 @@ import {
 } from "@/lib/composer-pills";
 import type { AgentConversationStatus } from "@/lib/agent-types";
 import { isAgentCesiumTurnActive } from "@/lib/agent-chat";
-import { useOptionalAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useConversationEvents } from "@/components/chat/AgentConversationsContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceInsights, requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
 import { runQuickAction, useQuickActionsConfig } from "@/lib/quick-actions";
@@ -306,8 +306,7 @@ export function ComposerActionPills({
   const { activeWorkspaceId, workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { effectiveActions, loaded } = useQuickActionsConfig();
   const runCommandRunner = useIDECommandRunner();
-  const agentConversations = useOptionalAgentConversations();
-  const eventsByConversationId = agentConversations?.eventsByConversationId;
+  const conversationEvents = useConversationEvents(conversationId);
 
   const conversationRunning =
     conversationStatus != null && isAgentCesiumTurnActive(conversationStatus);
@@ -324,10 +323,8 @@ export function ComposerActionPills({
 
   const liveSubagents = useMemo(
     () =>
-      conversationId
-        ? listRunningSubagentWorkItems(eventsByConversationId?.[conversationId])
-        : [],
-    [conversationId, eventsByConversationId]
+      conversationId ? listRunningSubagentWorkItems(conversationEvents) : [],
+    [conversationId, conversationEvents]
   );
 
   const builtin = deriveComposerBuiltinPills(visibility, insights, {

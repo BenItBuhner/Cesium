@@ -26,6 +26,13 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     attachment: "sdk-mcp",
     notes: "Cursor SDK receives native mcpServers plus plugin skill prompt blocks.",
   },
+  "cursor-acp": {
+    backendId: "cursor-acp",
+    nativeMcp: true,
+    promptSkills: true,
+    attachment: "acp-mcp",
+    notes: "Cursor ACP sessions receive MCP servers through the ACP mcpServers array.",
+  },
   "claude-code-sdk": {
     backendId: "claude-code-sdk",
     nativeMcp: true,

@@ -526,12 +526,6 @@ export function AgentWorkspaceRail() {
       null
     );
   }, [agentRailSettings.scope, directoryWorkspaces]);
-  // Reference clock for relative times on row detail lines ("5m ago").
-  const [railNow, setRailNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setRailNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
   const isConversationUnread = useCallback(
     (conversation: AgentRailConversationSummary) =>
       Boolean(unreadCompletionByConversationId?.[conversation.id]),
@@ -2460,7 +2454,6 @@ export function AgentWorkspaceRail() {
                 conversation={conversation}
                 detail={railRowDetail === "compact" ? "compact" : "expanded"}
                 detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
-                now={railNow}
                 unreadCompletion={isConversationUnread(conversation)}
                 acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                 showMachineBadge={showMachine}
@@ -2519,7 +2512,6 @@ export function AgentWorkspaceRail() {
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
-    railNow,
     railRowDetail,
     railWorkspaceNameById,
     renameState,
@@ -2582,7 +2574,6 @@ export function AgentWorkspaceRail() {
                 conversation={conversation}
                 detail={railRowDetail === "compact" ? "compact" : "expanded"}
                 detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
-                now={railNow}
                 unreadCompletion={isConversationUnread(conversation)}
                 acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                 showMachineBadge={showMachine}
@@ -2640,7 +2631,6 @@ export function AgentWorkspaceRail() {
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
-    railNow,
     railRowDetail,
     railWorkspaceNameById,
     renameState,
@@ -2693,7 +2683,6 @@ export function AgentWorkspaceRail() {
                   key={conversation.conversationKey ?? conversation.id}
                   conversation={conversation}
                   detail={railRowDetail}
-                  now={railNow}
                   unreadCompletion={isConversationUnread(conversation)}
                   acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                   rowIndex={index}
@@ -2751,7 +2740,6 @@ export function AgentWorkspaceRail() {
     isConversationChatSelected,
     isConversationUnread,
     pinnedRailConversations,
-    railNow,
     railRowDetail,
     renameState?.conversationId,
     renameState?.draft,
@@ -2788,7 +2776,6 @@ export function AgentWorkspaceRail() {
           key={conversation.conversationKey ?? conversation.id}
           conversation={conversation}
           detail={railRowDetail}
-          now={railNow}
           unreadCompletion={isConversationUnread(conversation)}
           acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
           rowIndex={index}
@@ -3069,7 +3056,6 @@ export function AgentWorkspaceRail() {
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
-    railNow,
     railRowDetail,
     renameState?.conversationId,
     renameState?.draft,
@@ -3358,7 +3344,6 @@ export function AgentWorkspaceRail() {
                                         key={conversation.conversationKey ?? conversation.id}
                                         conversation={conversation}
                                         detail={railRowDetail}
-                                        now={railNow}
                                         unreadCompletion={isConversationUnread(conversation)}
                                         acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                                         showMachineBadge={showConversationMachine}
@@ -3442,7 +3427,6 @@ export function AgentWorkspaceRail() {
                               key={conversation.conversationKey ?? conversation.id}
                               conversation={conversation}
                               detail={railRowDetail}
-                              now={railNow}
                               unreadCompletion={isConversationUnread(conversation)}
                               acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
                               showMachineBadge={showConversationMachine}

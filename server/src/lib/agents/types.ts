@@ -11,6 +11,7 @@ export type AgentConversationMode =
 export type AgentBackendId =
   | "cesium-agent"
   | "cursor-sdk"
+  | "cursor-acp"
   | "opencode-server"
   | "opencode-v2-beta"
   | "devin-acp"
@@ -157,6 +158,11 @@ export type AgentBackendInfo = {
   commandPreview?: string;
   experimental?: boolean;
   available: boolean;
+  /**
+   * Whether Settings → Agents currently exposes this harness in the composer
+   * picker. Disabled harnesses stay usable for existing chats.
+   */
+  enabled?: boolean;
   defaultMode: AgentConversationMode;
   defaultModelId: string;
   defaultModelName: string;
@@ -738,6 +744,16 @@ export type AgentSocketClientMessage =
       limitTurns?: number;
       limitEvents?: number;
     }
+  | {
+      /**
+       * Gap recovery: replay events after `sinceSeq` for a subscribed
+       * conversation. Stream frames are droppable under backpressure by
+       * design; this is the heal path when the client detects a hole.
+       */
+      type: "request_events_since";
+      conversationId: string;
+      sinceSeq: number;
+    }
   | { type: "ping" };
 
 export type AgentSocketServerMessage =
@@ -784,7 +800,7 @@ export type AgentSocketServerMessage =
       message: string;
       /** Set for targeted failures (e.g. history) so the client can clear a single load gate. */
       conversationId?: string;
-      op?: "request_history";
+      op?: "request_history" | "request_events_since";
     };
 
 export function createUnavailableCapabilities(): AgentProviderCapabilities {
