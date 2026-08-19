@@ -3953,7 +3953,9 @@ export function stripSpuriousAcpToolCallReplays(
     }
     out.push(e);
   }
-  return out;
+  // Nothing stripped (the per-flush common case): keep the input identity so
+  // callers avoid a fresh full-log array allocation every streaming commit.
+  return out.length === events.length ? events : out;
 }
 
 /**
@@ -4165,9 +4167,9 @@ export function projectAgentEventsToChatMessages(
     return cached;
   }
   const workspaceRoot = options?.workspaceRoot;
-  const ordered = stripSpuriousAcpToolCallReplays(
-    dedupeAgentStoredEvents([...events].sort((a, b) => a.seq - b.seq))
-  );
+  // dedupeAgentStoredEvents sorts internally (and fast-paths already-ordered
+  // logs, the per-flush common case) — no need to copy + pre-sort here.
+  const ordered = stripSpuriousAcpToolCallReplays(dedupeAgentStoredEvents(events));
   const hiddenHandoffTranscriptMessageIds = new Set<string>();
   for (let index = 0; index < ordered.length - 1; index += 1) {
     const current = ordered[index];
@@ -5018,6 +5020,20 @@ export function dedupeAgentStoredEvents(
   events: AgentStoredEvent[]
 ): AgentStoredEvent[] {
   if (events.length <= 1) {
+    return events;
+  }
+  // Fast path: the hot callers (projection per streaming flush, snapshot
+  // merges) almost always pass already-ordered logs where seqs strictly
+  // increase. Strict monotonicity (> 0) implies unique seqs, and the merge
+  // layer/store guarantee eventId uniqueness across distinct seqs — return
+  // the input untouched instead of two sorts and three array allocations.
+  let strictlyIncreasing = events[0]!.seq > 0;
+  for (let i = 1; strictlyIncreasing && i < events.length; i += 1) {
+    if (events[i]!.seq <= events[i - 1]!.seq) {
+      strictlyIncreasing = false;
+    }
+  }
+  if (strictlyIncreasing) {
     return events;
   }
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
