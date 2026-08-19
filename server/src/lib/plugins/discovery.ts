@@ -5,11 +5,15 @@ import { listBuiltInAgentPlugins } from "./catalog.js";
 import { standardHarnessSupport } from "./harness-support.js";
 import type { AgentPluginDefinition } from "./types.js";
 
+import { fetchOfficialMcpRegistryPlugins } from "./official-registry.js";
+import { listPluginRegistrySources } from "./sources.js";
+
 export type AgentPluginRegistrySource =
   | "builtin"
   | "local"
   | "remote"
-  | "github";
+  | "github"
+  | "official-mcp";
 
 export type AgentPluginDiscoveryEntry = {
   definition: AgentPluginDefinition;
@@ -36,6 +40,9 @@ export type AgentPluginDiscoveryResult = {
     error?: string;
   }>;
   plugins: AgentPluginDiscoveryEntry[];
+  total?: number;
+  offset?: number;
+  limit?: number;
 };
 
 const LOCAL_REGISTRY_PATH = path.join(
@@ -108,9 +115,10 @@ function githubRawRegistryUrl(repo: string, registryPath = "plugins/registry.jso
     );
   }
   const branch = process.env.OPENCURSOR_PLUGIN_GITHUB_BRANCH?.trim() || "main";
-  const filePath = (
-    process.env.OPENCURSOR_PLUGIN_GITHUB_PATH?.trim() || registryPath
-  ).replace(/^\/+/, "");
+  const filePath = (registryPath || process.env.OPENCURSOR_PLUGIN_GITHUB_PATH?.trim() || "plugins/registry.json").replace(
+    /^\/+/,
+    ""
+  );
   return `https://raw.githubusercontent.com/${owner}/${name}/${branch}/${filePath}`;
 }
 
@@ -145,91 +153,83 @@ async function loadOptionalSources(): Promise<{
     });
   }
 
-  const registryFile = process.env.OPENCURSOR_PLUGIN_REGISTRY_FILE?.trim();
-  if (registryFile) {
+  const configured = await listPluginRegistrySources();
+  for (const source of configured.filter((entry) => entry.enabled)) {
     try {
-      const file = await readRegistryFile(path.resolve(registryFile));
-      const plugins = file.plugins.map(normalizeDefinition);
-      sources.push({
-        id: "local",
-        label: `File registry (${path.basename(registryFile)})`,
-        url: registryFile,
-        pluginCount: plugins.length,
-      });
-      for (const definition of plugins) {
-        entries.push({
-          definition,
-          source: "local",
-          sourceLabel: path.basename(registryFile),
+      if (source.kind === "official-mcp") {
+        const plugins = (await fetchOfficialMcpRegistryPlugins({ url: source.url })).map(
+          normalizeDefinition
+        );
+        sources.push({
+          id: "official-mcp",
+          label: source.label,
+          url: source.url,
+          pluginCount: plugins.length,
         });
+        for (const definition of plugins) {
+          entries.push({
+            definition,
+            source: "official-mcp",
+            sourceLabel: source.label,
+          });
+        }
+        continue;
       }
-    } catch (error) {
-      sources.push({
-        id: "local",
-        label: `File registry (${path.basename(registryFile)})`,
-        url: registryFile,
-        pluginCount: 0,
-        error: error instanceof Error ? error.message : "Failed to load file registry.",
-      });
-    }
-  }
-
-  const remoteUrl = process.env.OPENCURSOR_PLUGIN_REGISTRY_URL?.trim();
-  if (remoteUrl) {
-    try {
-      const remote = await fetchRemoteRegistry(remoteUrl);
-      const plugins = remote.plugins.map(normalizeDefinition);
-      sources.push({
-        id: "remote",
-        label: "Remote registry",
-        url: remoteUrl,
-        pluginCount: plugins.length,
-      });
-      for (const definition of plugins) {
-        entries.push({
-          definition,
-          source: "remote",
-          sourceLabel: "Remote registry",
+      if (source.kind === "file" && source.path) {
+        const file = await readRegistryFile(path.resolve(source.path));
+        const plugins = file.plugins.map(normalizeDefinition);
+        sources.push({
+          id: "local",
+          label: source.label,
+          url: source.path,
+          pluginCount: plugins.length,
         });
+        for (const definition of plugins) {
+          entries.push({
+            definition,
+            source: "local",
+            sourceLabel: source.label,
+          });
+        }
+        continue;
       }
-    } catch (error) {
-      sources.push({
-        id: "remote",
-        label: "Remote registry",
-        url: remoteUrl,
-        pluginCount: 0,
-        error: error instanceof Error ? error.message : "Failed to load remote registry.",
-      });
-    }
-  }
-
-  const githubRepo = process.env.OPENCURSOR_PLUGIN_GITHUB_REPO?.trim();
-  if (githubRepo) {
-    let url = "";
-    try {
-      url = githubRawRegistryUrl(githubRepo);
+      const url =
+        source.kind === "github" && source.repo
+          ? githubRawRegistryUrl(source.repo, source.path)
+          : source.url;
+      if (!url) {
+        throw new Error("Registry source is missing a URL.");
+      }
       const remote = await fetchRemoteRegistry(url);
       const plugins = remote.plugins.map(normalizeDefinition);
+      const id = source.kind === "github" ? "github" : "remote";
       sources.push({
-        id: "github",
-        label: `GitHub (${githubRepo})`,
+        id,
+        label: source.label,
         url,
         pluginCount: plugins.length,
       });
       for (const definition of plugins) {
         entries.push({
           definition,
-          source: "github",
-          sourceLabel: `GitHub/${githubRepo}`,
+          source: id,
+          sourceLabel: source.label,
         });
       }
     } catch (error) {
       sources.push({
-        id: "github",
-        label: `GitHub (${githubRepo})`,
-        url: url || undefined,
+        id:
+          source.kind === "official-mcp"
+            ? "official-mcp"
+            : source.kind === "github"
+              ? "github"
+              : source.kind === "file"
+                ? "local"
+                : "remote",
+        label: source.label,
+        url: source.url ?? source.path,
         pluginCount: 0,
-        error: error instanceof Error ? error.message : "Failed to load GitHub registry.",
+        error: error instanceof Error ? error.message : "Failed to load registry.",
       });
     }
   }
@@ -239,6 +239,8 @@ async function loadOptionalSources(): Promise<{
 
 export async function discoverAgentPlugins(input?: {
   query?: string;
+  limit?: number;
+  offset?: number;
 }): Promise<AgentPluginDiscoveryResult> {
   const query = input?.query?.trim() ?? "";
   const builtin = listBuiltInAgentPlugins().map((definition) => ({
@@ -253,15 +255,19 @@ export async function discoverAgentPlugins(input?: {
   for (const entry of [...builtin, ...optional.entries]) {
     if (!matchesQuery(entry.definition, query)) continue;
     const existing = byId.get(entry.definition.pluginId);
-    // Prefer built-in definitions when ids collide; otherwise keep first remote hit.
-    if (!existing || (existing.source !== "builtin" && entry.source === "builtin")) {
+    const existingRank = existing?.source === "builtin" ? 2 : existing?.source === "official-mcp" ? 0 : 1;
+    const nextRank = entry.source === "builtin" ? 2 : entry.source === "official-mcp" ? 0 : 1;
+    if (!existing || nextRank > existingRank) {
       byId.set(entry.definition.pluginId, entry);
     }
   }
 
-  const plugins = [...byId.values()].sort((a, b) =>
+  const allPlugins = [...byId.values()].sort((a, b) =>
     a.definition.displayName.localeCompare(b.definition.displayName)
   );
+  const offset = Math.max(0, input?.offset ?? 0);
+  const limit = Math.max(1, Math.min(input?.limit ?? 50, 200));
+  const plugins = allPlugins.slice(offset, offset + limit);
 
   return {
     query,
@@ -274,6 +280,9 @@ export async function discoverAgentPlugins(input?: {
       ...optional.sources,
     ],
     plugins,
+    total: allPlugins.length,
+    offset,
+    limit,
   };
 }
 

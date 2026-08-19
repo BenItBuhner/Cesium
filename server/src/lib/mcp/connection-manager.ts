@@ -1,6 +1,7 @@
 import type { McpServerConfig } from "@cesium/core/mcp";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { connectMcpClient, type McpClientSession } from "./client-factory.js";
+import { protocolStatusPayload } from "./protocol.js";
 import {
   getMcpServer,
   isBuiltInArtifactsMcpEnabled,
@@ -96,10 +97,10 @@ async function connectOne(input: {
       MCP_CONNECT_TIMEOUT_MS,
       () => session.client.listTools()
     );
-    const tools = listed.tools ?? [];
+    const tools = (listed.tools ?? []) as Tool[];
     let instructions: string | undefined;
     try {
-      const init = await session.client.getInstructions();
+      const init = await session.client.getInstructions?.();
       instructions = typeof init === "string" ? init : undefined;
     } catch {
       instructions = undefined;
@@ -109,6 +110,7 @@ async function connectOne(input: {
       connected: true,
       lastCheckedAt: Date.now(),
       toolCount: tools.length,
+      protocol: protocolStatusPayload(session.protocol),
     };
     setMcpConnectionStatus(input.workspaceId, input.config.id, status);
     return { tools, instructions, status };

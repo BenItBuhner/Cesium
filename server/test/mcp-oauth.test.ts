@@ -11,7 +11,8 @@ test("buildMcpOAuthCallbackUrl uses global callback path", () => {
 });
 
 test("oauthSuccessHtml posts message to opener", () => {
-  const html = oauthSuccessHtml("Context7");
+  const html = oauthSuccessHtml("Context7", "session-1");
   assert.match(html, /opencursor-mcp-oauth/);
   assert.match(html, /Context7/);
+  assert.match(html, /cesium:\/\/oauth\/done/);
 });

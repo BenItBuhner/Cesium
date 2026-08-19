@@ -51,12 +51,26 @@ export type McpServerPublic = Omit<
   removable?: boolean;
 };
 
+export type McpProtocolEra = "stateless" | "session";
+
+export type McpProtocolProbeStatus = {
+  ok: boolean;
+  version?: string;
+  error?: string;
+};
+
 export type McpConnectionStatus = {
   connected: boolean;
   lastCheckedAt: number;
   toolCount?: number;
   error?: string;
   needsAuth?: boolean;
+  protocol?: {
+    selected?: McpProtocolEra;
+    selectedVersion?: string;
+    stateless?: McpProtocolProbeStatus;
+    session?: McpProtocolProbeStatus;
+  };
 };
 
 export type McpOAuthPending = {

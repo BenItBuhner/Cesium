@@ -597,7 +597,8 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Plugins ——
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
-  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7"),
+  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7 official mcp"),
+  section("plugins", "sources", "Sources", "official mcp registry github url marketplace source"),
   section("plugins", "verify", "Verify harness sync", "plugin harness mcp skills verify"),
   section("plugins", "custom", "Custom Plugin", "custom mcp skill plugin"),
   row(

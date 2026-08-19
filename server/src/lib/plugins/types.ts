@@ -70,6 +70,7 @@ export type AgentPluginPublic = {
   install: AgentPluginInstallRecord | null;
   enabled: boolean;
   managedMcpServerIds: string[];
+  needsAuth: boolean;
 };
 
 export type AgentPluginAttachmentWarning = {
@@ -101,20 +102,23 @@ export type AgentPluginHarnessCapabilityPublic = {
 
 export type AgentPluginDiscoveryEntryPublic = {
   definition: AgentPluginDefinition;
-  source: "builtin" | "local" | "remote" | "github";
+    source: "builtin" | "local" | "remote" | "github" | "official-mcp";
   sourceLabel: string;
 };
 
 export type AgentPluginDiscoveryResultPublic = {
   query: string;
   sources: Array<{
-    id: "builtin" | "local" | "remote" | "github";
+    id: "builtin" | "local" | "remote" | "github" | "official-mcp";
     label: string;
     url?: string;
     pluginCount: number;
     error?: string;
   }>;
   plugins: AgentPluginDiscoveryEntryPublic[];
+  total?: number;
+  offset?: number;
+  limit?: number;
 };
 
 export type AgentPluginHarnessVerificationPublic = {

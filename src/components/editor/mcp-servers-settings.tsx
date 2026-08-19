@@ -18,6 +18,8 @@ import {
   fetchMcpServers,
   refreshMcpServerMirror,
   setBuiltInMcpServerEnabled,
+  pollOAuthSession,
+  probeMcpRemoteAuth,
   startMcpOAuth,
   testMcpServerConnection,
   upsertMcpServer,
@@ -30,14 +32,24 @@ import {
   rowButtonClass,
 } from "./settings-ui";
 
+function protocolLabel(status: McpServerPublic["connectionStatus"]): string | null {
+  if (!status?.protocol?.selected || !status.protocol.selectedVersion) {
+    return null;
+  }
+  return status.protocol.selected === "stateless"
+    ? `stateless ${status.protocol.selectedVersion}`
+    : `session ${status.protocol.selectedVersion}`;
+}
+
 function statusLabel(server: McpServerPublic): string {
   const status = server.connectionStatus;
   if (!status) return "Unknown";
   if (status.needsAuth) return "Needs authentication";
+  const protocol = protocolLabel(status);
   if (status.connected) {
-    return status.toolCount != null
-      ? `Connected · ${status.toolCount} tools`
-      : "Connected";
+    const tools =
+      status.toolCount != null ? `${status.toolCount} tools` : "Connected";
+    return protocol ? `Connected · ${tools} · ${protocol}` : `Connected · ${tools}`;
   }
   if (status.error) return status.error;
   return "Disconnected";
@@ -58,6 +70,11 @@ export function McpServersSettingsPanel() {
   const [customUrl, setCustomUrl] = useState("");
   const [customAuth, setCustomAuth] = useState<McpAuthConfig["kind"]>("none");
   const [customBearer, setCustomBearer] = useState("");
+  const [customHeaderName, setCustomHeaderName] = useState("Authorization");
+  const [customHeaderValue, setCustomHeaderValue] = useState("");
+  const [headerDrafts, setHeaderDrafts] = useState<Record<string, { name: string; value: string }>>(
+    {}
+  );
 
   const reload = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -169,9 +186,15 @@ export function McpServersSettingsPanel() {
       const auth: McpAuthConfig =
         customAuth === "bearer"
           ? { kind: "bearer", secretId: "bearer" }
-          : customAuth === "oauth"
-            ? { kind: "oauth" }
-            : { kind: "none" };
+          : customAuth === "headers"
+            ? {
+                kind: "headers",
+                headers: [{ name: customHeaderName.trim() || "Authorization", secretId: "header" }],
+              }
+            : customAuth === "oauth"
+              ? { kind: "oauth" }
+              : { kind: "none" };
+      const headerKey = `header:${customHeaderName.trim() || "Authorization"}`;
       await upsertMcpServer(activeWorkspaceId, {
         server: {
           label: customLabel.trim(),
@@ -195,13 +218,16 @@ export function McpServersSettingsPanel() {
         secretValues:
           customAuth === "bearer" && customBearer.trim()
             ? { bearer: customBearer.trim() }
-            : undefined,
+            : customAuth === "headers" && customHeaderValue.trim()
+              ? { [headerKey]: customHeaderValue.trim() }
+              : undefined,
       });
       setShowCustomForm(false);
       setCustomLabel("");
       setCustomUrl("");
       setCustomArgs("");
       setCustomBearer("");
+      setCustomHeaderValue("");
       await reload();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
@@ -214,12 +240,59 @@ export function McpServersSettingsPanel() {
     if (!activeWorkspaceId) return;
     setBusyId(serverId);
     try {
-      const { authorizationUrl } = await startMcpOAuth(activeWorkspaceId, serverId);
+      const { authorizationUrl, sessionId } = await startMcpOAuth(activeWorkspaceId, serverId);
       openExternalUrl(authorizationUrl, {
         features: "noopener,noreferrer,width=520,height=720",
       });
+      if (sessionId) {
+        const session = await pollOAuthSession(sessionId);
+        if (session.status === "failed") {
+          throw new Error(session.error || "OAuth failed.");
+        }
+        await reload();
+      }
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : String(authError));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveServerSecrets = async (
+    serverId: string,
+    secretValues: Record<string, string>,
+    serverPatch?: Partial<McpServerPublic> & { label: string }
+  ) => {
+    if (!activeWorkspaceId) return;
+    setBusyId(serverId);
+    try {
+      const existing = servers.find((server) => server.id === serverId);
+      await upsertMcpServer(activeWorkspaceId, {
+        server: {
+          ...(existing ?? { label: serverId, transport: "streamable-http", auth: { kind: "none" } }),
+          label: serverPatch?.label ?? existing?.label ?? serverId,
+          ...serverPatch,
+        },
+        secretValues,
+      });
+      await reload();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const detectCustomAuth = async () => {
+    if (!customUrl.trim()) return;
+    setBusyId("__probe__");
+    try {
+      const probe = await probeMcpRemoteAuth(customUrl.trim());
+      if (probe.kind === "oauth") {
+        setCustomAuth("oauth");
+      }
+    } catch (probeError) {
+      setError(probeError instanceof Error ? probeError.message : String(probeError));
     } finally {
       setBusyId(null);
     }
@@ -349,9 +422,41 @@ export function McpServersSettingsPanel() {
               >
                 <option value="none">None</option>
                 <option value="bearer">Bearer token</option>
-                <option value="oauth">OAuth (configure client id after save)</option>
+                <option value="headers">Custom header</option>
+                <option value="oauth">OAuth (auto-register when supported)</option>
               </select>
             </label>
+            {customTransport !== "stdio" ? (
+              <button
+                type="button"
+                className={rowButtonClass}
+                disabled={!customUrl.trim() || busyId === "__probe__"}
+                onClick={() => void detectCustomAuth()}
+              >
+                Detect auth from URL
+              </button>
+            ) : null}
+            {customAuth === "headers" ? (
+              <>
+                <label className="block font-sans text-[12px] text-[var(--text-secondary)]">
+                  Header name
+                  <input
+                    className="mt-[4px] w-full rounded-[6px] border border-[var(--border-subtle)] bg-transparent px-[8px] py-[6px] font-sans text-[13px]"
+                    value={customHeaderName}
+                    onChange={(event) => setCustomHeaderName(event.target.value)}
+                  />
+                </label>
+                <label className="block font-sans text-[12px] text-[var(--text-secondary)]">
+                  Header value
+                  <input
+                    type="password"
+                    className="mt-[4px] w-full rounded-[6px] border border-[var(--border-subtle)] bg-transparent px-[8px] py-[6px] font-sans text-[13px]"
+                    value={customHeaderValue}
+                    onChange={(event) => setCustomHeaderValue(event.target.value)}
+                  />
+                </label>
+              </>
+            ) : null}
             {customAuth === "bearer" ? (
               <label className="block font-sans text-[12px] text-[var(--text-secondary)]">
                 Bearer token
@@ -390,8 +495,8 @@ export function McpServersSettingsPanel() {
           </p>
         ) : (
           servers.map((server) => (
+            <div key={server.id}>
             <SettingsRow
-              key={server.id}
               title={server.label}
               description={`${server.builtIn ? "Built-in" : server.transport} · ${statusLabel(server)} · mcp-servers/${server.id}/`}
               trailing={
@@ -413,7 +518,28 @@ export function McpServersSettingsPanel() {
                       disabled={busyId === server.id}
                       onClick={() => void authenticate(server.id)}
                     >
-                      Sign in
+                      Connect
+                    </button>
+                  ) : null}
+                  {server.auth.kind === "headers" || server.auth.kind === "bearer" ? (
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      disabled={busyId === server.id}
+                      onClick={() =>
+                        setHeaderDrafts((current) => ({
+                          ...current,
+                          [server.id]: current[server.id] ?? {
+                            name:
+                              server.auth.kind === "headers"
+                                ? server.auth.headers[0]?.name ?? "Authorization"
+                                : "Authorization",
+                            value: "",
+                          },
+                        }))
+                      }
+                    >
+                      Set secret
                     </button>
                   ) : null}
                   <button
@@ -445,6 +571,55 @@ export function McpServersSettingsPanel() {
                 </div>
               }
             />
+            {headerDrafts[server.id] ? (
+              <SettingsBlock className="space-y-[8px]">
+                <input
+                  className="w-full rounded-[6px] border border-[var(--border-subtle)] bg-transparent px-[8px] py-[6px] font-sans text-[13px]"
+                  value={headerDrafts[server.id].name}
+                  onChange={(event) =>
+                    setHeaderDrafts((current) => ({
+                      ...current,
+                      [server.id]: { ...current[server.id], name: event.target.value },
+                    }))
+                  }
+                  placeholder="Header name"
+                />
+                <input
+                  type="password"
+                  className="w-full rounded-[6px] border border-[var(--border-subtle)] bg-transparent px-[8px] py-[6px] font-sans text-[13px]"
+                  value={headerDrafts[server.id].value}
+                  onChange={(event) =>
+                    setHeaderDrafts((current) => ({
+                      ...current,
+                      [server.id]: { ...current[server.id], value: event.target.value },
+                    }))
+                  }
+                  placeholder="Secret value"
+                />
+                <button
+                  type="button"
+                  className={rowButtonClass}
+                  disabled={!headerDrafts[server.id].value.trim() || busyId === server.id}
+                  onClick={() => {
+                    const draft = headerDrafts[server.id];
+                    const secretValues =
+                      server.auth.kind === "bearer"
+                        ? { bearer: draft.value }
+                        : { [`header:${draft.name || "Authorization"}`]: draft.value };
+                    void saveServerSecrets(server.id, secretValues).then(() =>
+                      setHeaderDrafts((current) => {
+                        const next = { ...current };
+                        delete next[server.id];
+                        return next;
+                      })
+                    );
+                  }}
+                >
+                  Save secret
+                </button>
+              </SettingsBlock>
+            ) : null}
+            </div>
           ))
         )}
       </SettingsSection>

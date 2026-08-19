@@ -11,6 +11,11 @@ import {
   type PiAgentHomeInfo,
   type PiAgentSettingsPublic,
 } from "./pi-agent-settings.js";
+import { oauthCompletionHtml } from "./oauth/callback-html.js";
+import {
+  createOAuthCoordinatorSession,
+  updateOAuthCoordinatorSession,
+} from "./oauth/sessions.js";
 import {
   isBlockedSubscriptionOAuthProviderId,
   isSubscriptionOAuthProviderId,
@@ -59,6 +64,7 @@ export type PiAgentOAuthStartResponse = {
   verificationUri?: string;
   instructions?: string;
   callbackUrl?: string;
+  sessionId?: string;
 };
 
 type PiOAuthPending = {
@@ -308,11 +314,25 @@ async function startXaiSubscriptionOAuth(
   });
 
   void loginPromise.catch(() => undefined);
+  const session = await createOAuthCoordinatorSession({
+    kind: "pi-agent",
+    label: PROVIDER_LABELS[providerId] ?? providerId,
+    payload: { providerId, flow: "device-code" },
+  });
+  void loginPromise
+    .then(() => updateOAuthCoordinatorSession(session.id, { status: "complete" }))
+    .catch((error) =>
+      updateOAuthCoordinatorSession(session.id, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
   return {
     providerId,
     userCode: device.user_code,
     verificationUri,
     instructions: `Open ${device.verification_uri} and enter code ${device.user_code}`,
+    sessionId: session.id,
   };
 }
 
@@ -408,8 +428,21 @@ export async function startPiAgentOAuth(input: {
 
   try {
     const initial = await initialPromise;
+    const session = await createOAuthCoordinatorSession({
+      kind: "pi-agent",
+      label: PROVIDER_LABELS[providerId] ?? providerId,
+      payload: { providerId, flow: initial.authUrl ? "redirect" : "device-code" },
+    });
+    void loginPromise
+      .then(() => updateOAuthCoordinatorSession(session.id, { status: "complete" }))
+      .catch((error) =>
+        updateOAuthCoordinatorSession(session.id, {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     void loginPromise.catch(() => undefined);
-    return initial;
+    return { ...initial, sessionId: session.id };
   } catch (error) {
     cancelPending(providerId);
     throw error;
@@ -490,12 +523,28 @@ export async function waitForPiAgentOAuthCompletion(
   return result;
 }
 
-export function piAgentOAuthSuccessHtml(providerLabel: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pi Agent connected</title></head><body style="font-family:system-ui;padding:2rem;"><h1>Connected</h1><p>${providerLabel} is authenticated. You can close this window and return to OpenCursor.</p><script>if(window.opener){window.opener.postMessage({type:"opencursor-pi-agent-oauth",ok:true}, "*");}</script></body></html>`;
+export function piAgentOAuthSuccessHtml(providerLabel: string, sessionId?: string): string {
+  return oauthCompletionHtml({
+    title: "Pi Agent connected",
+    heading: "Connected",
+    message: `${providerLabel} is authenticated.`,
+    postMessageType: "opencursor-pi-agent-oauth",
+    sessionId,
+    kind: "pi-agent",
+    ok: true,
+  });
 }
 
-export function piAgentOAuthFailureHtml(message: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pi Agent OAuth failed</title></head><body style="font-family:system-ui;padding:2rem;"><h1>Authentication failed</h1><p>${message}</p></body></html>`;
+export function piAgentOAuthFailureHtml(message: string, sessionId?: string): string {
+  return oauthCompletionHtml({
+    title: "Pi Agent OAuth failed",
+    heading: "Authentication failed",
+    message,
+    postMessageType: "opencursor-pi-agent-oauth",
+    sessionId,
+    kind: "pi-agent",
+    ok: false,
+  });
 }
 
 export function providerLabelForId(providerId: string): string {

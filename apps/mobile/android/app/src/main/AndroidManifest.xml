@@ -56,6 +56,12 @@
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="cesium" android:host="mobile" />
       </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="cesium" android:host="oauth" />
+      </intent-filter>
       <!-- System share sheet: text, links, and any file(s) can be shared into a chat. -->
       <intent-filter>
         <action android:name="android.intent.action.SEND" />
