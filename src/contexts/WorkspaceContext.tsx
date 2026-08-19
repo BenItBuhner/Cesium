@@ -99,8 +99,20 @@ type WorkspaceSessionBackup = {
 };
 
 type FileChangeNotice = {
+  /** Most recent changed path in the coalesce window. */
   path: string;
+  /** Every path that changed in the window (deduped, oldest first). */
+  paths: string[];
   at: number;
+};
+
+/** One state pass per window instead of one per touched file. */
+const FS_EVENT_COALESCE_MS = 150;
+
+type PendingFsEvent = {
+  type: "change" | "add" | "addDir" | "unlink" | "unlinkDir";
+  path: string;
+  isDir: boolean;
 };
 
 type WorkspaceContextValue = {
@@ -491,6 +503,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [lastFileChange, setLastFileChange] = useState<FileChangeNotice | null>(null);
   const [fsResyncToken, setFsResyncToken] = useState(0);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
+  const pendingFsEventsRef = useRef<PendingFsEvent[]>([]);
+  const fsFlushTimerRef = useRef<number | null>(null);
 
   const workspaceSessionRef = useRef(workspaceSession);
   const lastSeenSeqRef = useRef(0);
@@ -639,6 +653,52 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [getSessionScopeId, sessionReady, windowId, workspaceInfo, writeIpadResumeSnapshot]
   );
 
+  const flushPendingFsEvents = useCallback(() => {
+    if (fsFlushTimerRef.current != null) {
+      window.clearTimeout(fsFlushTimerRef.current);
+      fsFlushTimerRef.current = null;
+    }
+    const pending = pendingFsEventsRef.current;
+    if (pending.length === 0) {
+      return;
+    }
+    pendingFsEventsRef.current = [];
+    const structural = pending.filter((entry) => entry.type !== "change");
+    if (structural.length > 0) {
+      setFileTree((currentTree) => {
+        if (!currentTree) return currentTree;
+        let tree = currentTree;
+        for (const op of structural) {
+          tree =
+            op.type === "add" || op.type === "addDir"
+              ? addNodeToTree(tree, op.path, createNodeFromEvent(op.path, op.isDir))
+              : removeNodeFromTree(tree, op.path);
+        }
+        return tree;
+      });
+    }
+    const changedPaths: string[] = [];
+    const seenPaths = new Set<string>();
+    for (const entry of pending) {
+      if (entry.type !== "change" || seenPaths.has(entry.path)) {
+        continue;
+      }
+      seenPaths.add(entry.path);
+      changedPaths.push(entry.path);
+    }
+    if (changedPaths.length > 0) {
+      setLastFileChange({
+        path: changedPaths[changedPaths.length - 1]!,
+        paths: changedPaths,
+        at: Date.now(),
+      });
+    }
+  }, []);
+  const flushPendingFsEventsRef = useRef(flushPendingFsEvents);
+  useEffect(() => {
+    flushPendingFsEventsRef.current = flushPendingFsEvents;
+  }, [flushPendingFsEvents]);
+
   const refreshTree = useCallback(async () => {
     if (!activeWorkspaceId) {
       return;
@@ -762,6 +822,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setLoading(!isRepeatWorkspaceTransition);
       if (!isRepeatWorkspaceTransition) {
         setSessionReady(false);
+      }
+      pendingFsEventsRef.current = [];
+      if (fsFlushTimerRef.current != null) {
+        window.clearTimeout(fsFlushTimerRef.current);
+        fsFlushTimerRef.current = null;
       }
       setLastFileChange(null);
       setFileTree(null);
@@ -1620,28 +1685,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         lastSeenSeqRef.current = event.seq;
 
-        if (event.type === "change") {
-          setLastFileChange({ path: event.path, at: Date.now() });
-          return;
-        }
-
-        if (event.type === "add" || event.type === "addDir") {
-          setFileTree((currentTree) => {
-            if (!currentTree) return currentTree;
-            return addNodeToTree(
-              currentTree,
-              event.path,
-              createNodeFromEvent(event.path, event.isDir)
-            );
+        // FS events arrive one WS frame per touched path. Agent runs (builds,
+        // installs, parallel edits) produce hundreds per second, and each
+        // used to commit its own state update — re-rendering every
+        // useWorkspace() consumer per file. Coalesce a window's worth into
+        // ONE change notice and ONE tree pass.
+        if (
+          event.type === "change" ||
+          event.type === "add" ||
+          event.type === "addDir" ||
+          event.type === "unlink" ||
+          event.type === "unlinkDir"
+        ) {
+          pendingFsEventsRef.current.push({
+            type: event.type,
+            path: event.path,
+            isDir: "isDir" in event ? Boolean(event.isDir) : false,
           });
-          return;
-        }
-
-        if (event.type === "unlink" || event.type === "unlinkDir") {
-          setFileTree((currentTree) => {
-            if (!currentTree) return currentTree;
-            return removeNodeFromTree(currentTree, event.path);
-          });
+          if (fsFlushTimerRef.current == null) {
+            fsFlushTimerRef.current = window.setTimeout(() => {
+              fsFlushTimerRef.current = null;
+              flushPendingFsEventsRef.current();
+            }, FS_EVENT_COALESCE_MS);
+          }
         }
       }),
       socket.onClose(() => {
@@ -1722,6 +1788,11 @@ let lastHeartbeatRunAt = Date.now();
       clearPendingStartupDisconnect();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       socket.disconnect();
+      if (fsFlushTimerRef.current != null) {
+        window.clearTimeout(fsFlushTimerRef.current);
+        fsFlushTimerRef.current = null;
+      }
+      pendingFsEventsRef.current = [];
     };
   }, [activeWorkspaceId]);
 

@@ -958,24 +958,27 @@ export function EditorPanel({
     }
     handledDiskChangeAtRef.current = lastFileChange.at;
 
-    const matchingTab = [
-      ...stateRef.current.leftTabs,
-      ...stateRef.current.rightTabs,
-    ].find((tab) => tab.filePath === lastFileChange.path);
-    if (!matchingTab) return;
+    // Change notices arrive coalesced (one notice per window, many paths);
+    // refresh every open tab whose file changed.
+    const openTabs = [...stateRef.current.leftTabs, ...stateRef.current.rightTabs];
+    const changedPaths = lastFileChange.paths ?? [lastFileChange.path];
+    for (const changedPath of changedPaths) {
+      const matchingTab = openTabs.find((tab) => tab.filePath === changedPath);
+      if (!matchingTab) continue;
 
-    if (matchingTab.dirty) {
-      dispatch({ type: "FILE_CHANGED_ON_DISK", path: lastFileChange.path });
-      return;
+      if (matchingTab.dirty) {
+        dispatch({ type: "FILE_CHANGED_ON_DISK", path: changedPath });
+        continue;
+      }
+
+      void readFile(changedPath)
+        .then((result) => {
+          dispatch(fileContentLoadAction(matchingTab.id, result));
+        })
+        .catch(() => {
+          // Keep the stale buffer visible if a background refresh fails.
+        });
     }
-
-    void readFile(lastFileChange.path)
-      .then((result) => {
-        dispatch(fileContentLoadAction(matchingTab.id, result));
-      })
-      .catch(() => {
-        // Keep the stale buffer visible if a background refresh fails.
-      });
   }, [lastFileChange]);
 
   useEffect(() => {

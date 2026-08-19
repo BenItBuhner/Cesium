@@ -5177,7 +5177,30 @@ function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | 
   return null;
 }
 
+/**
+ * Pure (name, modelId) -> label; memoized because catalog-wide formatting
+ * reruns per composer-state derivation. Sized to hold a full provider catalog
+ * incl. thought-level variants — an undersized cache thrashes (clears mid-
+ * pass) and is worse than none.
+ */
+const modelVariantLabelCache = new Map<string, string>();
+const MAX_MODEL_VARIANT_LABEL_CACHE = 32_768;
+
 function formatModelVariantLabel(name: string, modelId: string): string {
+  const cacheKey = `${name}\u0000${modelId}`;
+  const cached = modelVariantLabelCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = formatModelVariantLabelUncached(name, modelId);
+  if (modelVariantLabelCache.size >= MAX_MODEL_VARIANT_LABEL_CACHE) {
+    modelVariantLabelCache.clear();
+  }
+  modelVariantLabelCache.set(cacheKey, result);
+  return result;
+}
+
+function formatModelVariantLabelUncached(name: string, modelId: string): string {
   const trimmedName = cleanModelVariantBaseName(
     resolveModelDisplayName(name.trim() || modelId.trim() || "Model", modelId.trim() || name.trim())
   );
@@ -5379,23 +5402,70 @@ export function buildConversationModelOptions(
   );
 }
 
+/**
+ * Draft helpers are pure functions of the backend object (and visibility map),
+ * but callers derive them inside render-path memos whose dependencies churn
+ * under load (session folds, record pushes). Formatting a large model catalog
+ * per call was a top CPU hot spot with many concurrent agents, so results are
+ * memoized on the input object identities; WeakMaps release entries when the
+ * backend catalog refreshes.
+ */
+type DraftModelOptionsCacheEntry = {
+  withoutVisibility?: ModelInfo[];
+  byVisibility: WeakMap<object, ModelInfo[]>;
+};
+const draftModelOptionsCache = new WeakMap<AgentBackendInfo, DraftModelOptionsCacheEntry>();
+const draftModelCache = new WeakMap<AgentBackendInfo, ModelInfo>();
+const draftModeOptionsCache = new WeakMap<AgentBackendInfo, AgentModeOption[]>();
+
 export function buildDraftModelOptionsForBackend(
   backend: AgentBackendInfo,
   modelVisibility?: Record<string, Array<{ id: string; name: string; on: boolean }>>
 ): ModelInfo[] {
-  return buildConversationModelOptions(createBackendDraftConversation(backend), [backend], modelVisibility);
+  let entry = draftModelOptionsCache.get(backend);
+  if (!entry) {
+    entry = { byVisibility: new WeakMap() };
+    draftModelOptionsCache.set(backend, entry);
+  }
+  if (!modelVisibility) {
+    entry.withoutVisibility ??= buildConversationModelOptions(
+      createBackendDraftConversation(backend),
+      [backend]
+    );
+    return entry.withoutVisibility;
+  }
+  let cached = entry.byVisibility.get(modelVisibility);
+  if (!cached) {
+    cached = buildConversationModelOptions(
+      createBackendDraftConversation(backend),
+      [backend],
+      modelVisibility
+    );
+    entry.byVisibility.set(modelVisibility, cached);
+  }
+  return cached;
 }
 
 export function resolveDraftModelForBackend(
   backend: AgentBackendInfo
 ): ModelInfo {
-  return resolveConversationModel(createBackendDraftConversation(backend), [backend]);
+  let cached = draftModelCache.get(backend);
+  if (!cached) {
+    cached = resolveConversationModel(createBackendDraftConversation(backend), [backend]);
+    draftModelCache.set(backend, cached);
+  }
+  return cached;
 }
 
 export function buildDraftModeOptionsForBackend(
   backend: AgentBackendInfo
 ): AgentModeOption[] {
-  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
+  let cached = draftModeOptionsCache.get(backend);
+  if (!cached) {
+    cached = buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
+    draftModeOptionsCache.set(backend, cached);
+  }
+  return cached;
 }
 
 export function resolveConversationModel(

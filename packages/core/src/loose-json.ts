@@ -15,8 +15,12 @@ const MISS = Symbol("loose-json-miss");
 
 const objectCache = new Map<string, Record<string, unknown> | typeof MISS>();
 const arrayCache = new Map<string, unknown[] | typeof MISS>();
-/** Bounded: on overflow the cache resets (simpler than LRU, same effect here). */
-const MAX_CACHE_ENTRIES = 8_192;
+/**
+ * Bounded: on overflow the cache resets (simpler than LRU, same effect here).
+ * Sized above the client event cap (6k/conversation) times a few payload
+ * fields so a full-transcript projection never clears the cache mid-pass.
+ */
+const MAX_CACHE_ENTRIES = 32_768;
 
 function remember<V>(cache: Map<string, V | typeof MISS>, key: string, value: V | typeof MISS): void {
   if (cache.size >= MAX_CACHE_ENTRIES) {
