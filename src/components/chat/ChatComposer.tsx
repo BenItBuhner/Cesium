@@ -162,6 +162,7 @@ import {
 } from "@/lib/composer-status-bar";
 import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
+import { useCesiumTurnPillMotion } from "@/components/chat/cesium-turn-control-motion";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   getServerBaseUrl,
@@ -3510,29 +3511,41 @@ const handleNativeComposerKeyDown = useCallback(
   );
   const composerTrimmedLength = value.trim().length;
   const canSubmit = composerTrimmedLength > 0 || attachedImages.length > 0;
-  const isCesiumAgent = backendId === "cesium-agent";
   const cesiumPausing =
     conversationStatus != null && isAgentCesiumPauseDraining(conversationStatus);
   const cesiumPaused = conversationStatus === "paused";
+  const cesiumTurnActive = Boolean(
+    conversationStatus && isAgentCesiumTurnActive(conversationStatus)
+  );
   const showCesiumTurnPill =
-    isCesiumAgent &&
+    isCesiumBackend &&
     Boolean(onCancel) &&
-    Boolean(conversationStatus && isAgentCesiumTurnActive(conversationStatus)) &&
+    cesiumTurnActive &&
     ((busy && !canSubmit) || cesiumPaused || cesiumPausing);
-  const cesiumTurnPill = showCesiumTurnPill ? (
+  const cesiumWantMounted =
+    isCesiumBackend && (showCesiumTurnPill || (canSubmit && cesiumTurnActive));
+  const { mounted: cesiumTurnPillMounted, expanded: cesiumTurnPillExpanded } =
+    useCesiumTurnPillMotion(cesiumWantMounted, showCesiumTurnPill);
+  const cesiumTurnPill = cesiumTurnPillMounted ? (
     <CesiumTurnControlPill
+      expanded={cesiumTurnPillExpanded}
       conversationStatus={conversationStatus}
       toneClass={sendButtonBgClass[getModeTone(mode)]}
       onPause={onPause}
       onResume={onResume}
       onStop={onCancel}
+      onSend={() => void submitComposer()}
+      sendDisabled={!canSubmit}
+      sendLabel={busy ? "Send or queue message" : "Send"}
+      interactive={showCesiumTurnPill}
     />
   ) : null;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
   const primaryControlIsStop = Boolean(
-    busy && onCancel && !canSubmit && !showCesiumTurnPill
+    busy && onCancel && !canSubmit && !cesiumTurnPillMounted
   );
-  const primaryControlIsVoice = !primaryControlIsStop && !showCesiumTurnPill && !canSubmit;
+  const primaryControlIsVoice =
+    !primaryControlIsStop && !cesiumTurnPillMounted && !canSubmit;
 
   /**
    * Flips when the contenteditable wraps beyond one visual line. The hook
