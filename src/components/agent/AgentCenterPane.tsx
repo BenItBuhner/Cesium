@@ -22,7 +22,10 @@ import {
 } from "@/components/chat/PlanBuildControls";
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import {
   agentWorkspaceComposerDraftId,
   useOpenInEditor,
@@ -128,7 +131,6 @@ export function AgentCenterPane() {
   const {
     backends,
     conversationsById,
-    eventsByConversationId,
     getConversationComposerState,
     getConversationLoadStatus,
     createAndPromptConversation,
@@ -171,6 +173,7 @@ export function AgentCenterPane() {
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
     : null;
+  const selectedConversationEvents = useConversationEvents(selectedConversationId);
   const activeBackend = useMemo(
     () => backends.find((backend) => backend.id === conversation?.config.backendId) ?? null,
     [backends, conversation?.config.backendId]
@@ -180,7 +183,7 @@ export function AgentCenterPane() {
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation,
-    events: selectedConversationId ? eventsByConversationId[selectedConversationId] : undefined,
+    events: selectedConversationId ? selectedConversationEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -207,13 +210,23 @@ export function AgentCenterPane() {
     : "idle";
 
   const rawThreadEvents = conversation
-    ? (eventsByConversationId[conversation.id] ?? EMPTY_THREAD_EVENTS)
+    ? selectedConversationEvents
     : EMPTY_THREAD_EVENTS;
   const threadEventKey =
     conversation?.id ?? selectedConversationId ?? "__no-conversation__";
   const openedPlanFilesRef = useRef(new Set<string>());
+  const threadEventState = useMemo(
+    () => ({ key: threadEventKey, value: rawThreadEvents }),
+    [rawThreadEvents, threadEventKey]
+  );
+  const deferredThreadEventState = useDeferredValue(threadEventState);
+  const deferredThreadEvents = selectKeyedDeferredValue(
+    threadEventKey,
+    rawThreadEvents,
+    deferredThreadEventState
+  );
   useEffect(() => {
-    for (const event of rawThreadEvents) {
+    for (const event of deferredThreadEvents) {
       if (event.kind !== "plan_file" || openedPlanFilesRef.current.has(event.eventId)) {
         continue;
       }
@@ -228,24 +241,16 @@ export function AgentCenterPane() {
         planFile: true,
       });
     }
-  }, [openExplorerFile, rawThreadEvents]);
-  const threadEventState = useMemo(
-    () => ({ key: threadEventKey, value: rawThreadEvents }),
-    [rawThreadEvents, threadEventKey]
-  );
-  const deferredThreadEventState = useDeferredValue(threadEventState);
-  const deferredThreadEvents = selectKeyedDeferredValue(
-    threadEventKey,
-    rawThreadEvents,
-    deferredThreadEventState
-  );
+  }, [openExplorerFile, deferredThreadEvents]);
+  // Full-log derivations key off the DEFERRED events so each stream flush's
+  // synchronous render stays O(1) (critical on throttled devices).
   const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawThreadEvents),
-    [rawThreadEvents]
+    () => computeContextUsageRefreshGeneration(deferredThreadEvents),
+    [deferredThreadEvents]
   );
   const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
-    [conversation?.status, rawThreadEvents]
+    () => latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+    [conversation?.status, deferredThreadEvents]
   );
 
   const threadMessages = useMemo(
@@ -261,14 +266,14 @@ export function AgentCenterPane() {
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawThreadEvents,
+        events: deferredThreadEvents,
         conversation,
       }),
-    [conversation, rawThreadEvents]
+    [conversation, deferredThreadEvents]
   );
   const latestPlanFile = useMemo(() => {
-    for (let index = rawThreadEvents.length - 1; index >= 0; index -= 1) {
-      const event = rawThreadEvents[index];
+    for (let index = deferredThreadEvents.length - 1; index >= 0; index -= 1) {
+      const event = deferredThreadEvents[index];
       if (event?.kind === "plan_file") {
         const normalizedPath = event.path.replace(/\\/g, "/");
         return {
@@ -280,11 +285,11 @@ export function AgentCenterPane() {
       }
     }
     return null;
-  }, [rawThreadEvents]);
+  }, [deferredThreadEvents]);
   const dismissedPlanEventByConversationId =
     workspaceSession.chat.dismissedPlanEventByConversationId ?? {};
   const planSuperseded =
-    latestPlanFile && rawThreadEvents.some((event) => {
+    latestPlanFile && deferredThreadEvents.some((event) => {
       if (event.seq <= latestPlanFile.seq) return false;
       return event.kind === "user_message" || event.kind === "assistant_message_end";
     });
@@ -347,7 +352,7 @@ export function AgentCenterPane() {
       conversationId: selectedConversationId,
       messages: scrollMessages,
       conversationBusy:
-        isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+        isAgentComposerBusy(conversation, selectedConversationEvents) ||
         conversation.status === "awaiting_permission",
       hasOlderHistory: historyCursor.hasOlder,
       loadingOlderHistory: historyCursor.loadingOlder,
@@ -364,6 +369,7 @@ export function AgentCenterPane() {
     conversationSelectionPending,
     isDraftConversationSelected,
     scrollMessages,
+    selectedConversationEvents,
     selectedConversationId,
     setStableConversationView,
     workspaceSession.chat.scrollTopByTabId,
@@ -1216,7 +1222,7 @@ export function AgentCenterPane() {
           conversationId: selectedConversationId,
           messages: scrollMessages,
           conversationBusy:
-            isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+            isAgentComposerBusy(conversation, selectedConversationEvents) ||
             conversation.status === "awaiting_permission",
           hasOlderHistory: historyCursor.hasOlder,
           loadingOlderHistory: historyCursor.loadingOlder,

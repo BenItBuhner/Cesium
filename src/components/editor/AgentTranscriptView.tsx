@@ -5,7 +5,10 @@ import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS } from "./agent-chat-layout";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import {
   extractLiveSubagentTranscriptFromMessages,
   projectAgentEventsToChatMessages,
@@ -25,13 +28,12 @@ export function AgentTranscriptView({
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const { workspaceInfo } = useWorkspace();
   const {
-    eventsByConversationId,
     conversationsById,
     answerPermissionForConversation,
   } = useAgentConversations();
 
   const conversation = liveConversationId ? conversationsById[liveConversationId] : undefined;
-  const events = liveConversationId ? eventsByConversationId[liveConversationId] ?? [] : [];
+  const events = useConversationEvents(liveConversationId);
   const deferredEvents = useDeferredValue(events);
   const backendId = conversation?.config.backendId;
   const workspaceRoot = workspaceInfo?.root ?? null;

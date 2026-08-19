@@ -68,7 +68,10 @@ import type {
   QueuedChatPrompt,
 } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
@@ -265,8 +268,6 @@ function isPersistedConversationTabId(tabId: string): boolean {
 }
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
-const EMPTY_THREAD_EVENTS: never[] = [];
-
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
   const { chatTrailingWindowControlsVisible } = useWorkbench();
@@ -296,7 +297,7 @@ const {
 backends,
 conversationsById,
 conversations,
-eventsByConversationId,
+getConversationEvents,
 bootstrapped,
 mergeConversationSnapshot,
 refreshConversations,
@@ -696,6 +697,17 @@ workspaceSession.chat.mode,
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
+  const rawPanelThreadEvents = useConversationEvents(activeTabId);
+  const panelThreadEventState = useMemo(
+    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
+    [activeTabId, rawPanelThreadEvents]
+  );
+  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
+  const deferredPanelThreadEvents = selectKeyedDeferredValue(
+    activeTabId,
+    rawPanelThreadEvents,
+    deferredPanelThreadEventState
+  );
   const panelHistoryCursor = useMemo(() => {
     if (!activeTabId || activeTabId === "__empty__") {
       return { hasOlder: false, loadingOlder: false };
@@ -752,7 +764,7 @@ workspaceSession.chat.mode,
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation: activeConversation,
-    events: activeTabId ? eventsByConversationId[activeTabId] : undefined,
+    events: activeTabId ? deferredPanelThreadEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -860,26 +872,16 @@ workspaceSession.chat.mode,
       resolveDraftModelForBackend(draftBackend)
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
-  const rawPanelThreadEvents = activeTabId
-    ? (eventsByConversationId[activeTabId] ?? EMPTY_THREAD_EVENTS)
-    : EMPTY_THREAD_EVENTS;
+  // Full-log derivations key off the DEFERRED events so each stream flush's
+  // synchronous render stays O(1); the O(n) scans run in the interruptible
+  // deferred lane alongside the projection (critical on throttled devices).
   const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
-  );
-  const panelThreadEventState = useMemo(
-    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
-    [activeTabId, rawPanelThreadEvents]
-  );
-  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
-  const deferredPanelThreadEvents = selectKeyedDeferredValue(
-    activeTabId,
-    rawPanelThreadEvents,
-    deferredPanelThreadEventState
+    () => computeContextUsageRefreshGeneration(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const composerUserMessageHistory = useMemo(
-    () => extractComposerUserMessageHistory(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
+    () => extractComposerUserMessageHistory(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
@@ -893,7 +895,7 @@ workspaceSession.chat.mode,
 const resolveComposerStateForDraft = useCallback(
 (draftId: string) => {
 const conversation = conversationsById[draftId] ?? null;
-const draftEvents = eventsByConversationId[draftId];
+const draftEvents = getConversationEvents(draftId);
 const busy = conversation ? isAgentComposerBusy(conversation, draftEvents) : false;
 const pendingConfig = pendingConfigByConversationId[draftId];
 const pendingBackendId = pendingConfig?.backendId;
@@ -973,7 +975,7 @@ busy,
 backends,
 conversationsById,
 draftBackend,
-eventsByConversationId,
+getConversationEvents,
 modelVisibility,
 pendingConfigByConversationId,
 workspaceSession.chat.backendId,
@@ -1019,14 +1021,14 @@ workspaceSession.chat.model,
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawPanelThreadEvents,
+        events: deferredPanelThreadEvents,
         conversation: activeConversation,
       }),
-    [activeConversation, rawPanelThreadEvents]
+    [activeConversation, deferredPanelThreadEvents]
   );
   const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawPanelThreadEvents, activeConversation?.status),
-    [activeConversation?.status, rawPanelThreadEvents]
+    () => latestGoalProgressStatus(deferredPanelThreadEvents, activeConversation?.status),
+    [activeConversation?.status, deferredPanelThreadEvents]
   );
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
@@ -1333,11 +1335,18 @@ workspaceSession.chat.model,
     if (!activeWorkspaceId) {
       return;
     }
+    // Push keeps the list live while visible; refetch on return only after a
+    // real absence so rapid window switching does not spray list fetches.
+    let hiddenAt: number | null = null;
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") {
+        hiddenAt = Date.now();
         return;
       }
-      void refreshConversations().catch(() => undefined);
+      if (hiddenAt != null && Date.now() - hiddenAt >= 15_000) {
+        void refreshConversations().catch(() => undefined);
+      }
+      hiddenAt = null;
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -2377,6 +2386,7 @@ const cancelPromptForDraft = useCallback(
     [conversationsById, resumeConversationFromHook, syncConversationSnapshot]
   );
 
+  const expandedComposerEvents = useConversationEvents(expandedComposerDraftId);
   const expandedComposerState = useMemo(() => {
     if (!expandedComposerDraftId) {
       return null;
@@ -2417,12 +2427,12 @@ const cancelPromptForDraft = useCallback(
       onResume: () => resumePromptForDraft(expandedComposerDraftId),
       conversationStatus: state.conversation?.status,
       goalProgress: latestGoalProgressStatus(
-        eventsByConversationId[expandedComposerDraftId] ?? [],
+        expandedComposerEvents,
         state.conversation?.status
       ),
       conversationId: state.conversation?.id ?? expandedComposerDraftId,
       contextUsageRefreshGeneration: computeContextUsageRefreshGeneration(
-        eventsByConversationId[expandedComposerDraftId] ?? []
+        expandedComposerEvents
       ),
       busy: state.busy,
       configLocked: false,
@@ -2446,7 +2456,7 @@ const cancelPromptForDraft = useCallback(
     resumePromptForDraft,
     composerDrafts,
     composerUserMessageHistory,
-    eventsByConversationId,
+    expandedComposerEvents,
     expandedComposerDraftId,
     handleRequestHandoff,
     loadOlderConversationHistory,
@@ -2693,10 +2703,7 @@ const cancelPromptForDraft = useCallback(
           composerDraftId={composerDraftId}
           conversationBusy={
             activeConversation
-              ? isAgentComposerBusy(
-                  activeConversation,
-                  activeTabId ? eventsByConversationId[activeTabId] : undefined
-                ) ||
+              ? isAgentComposerBusy(activeConversation, deferredPanelThreadEvents) ||
                 activeConversation.status === "awaiting_permission"
               : false
           }

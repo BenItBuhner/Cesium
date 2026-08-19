@@ -57,6 +57,8 @@ type BunServeOptions = {
     sendPings?: boolean;
     /** Seconds without inbound frames (messages or pongs) before the socket is reaped. */
     idleTimeout?: number;
+    /** Negotiate permessage-deflate; agent event JSON compresses 5-10x. */
+    perMessageDeflate?: boolean;
     open(ws: BunServerWebSocket): void;
     message(ws: BunServerWebSocket, message: string | Buffer): void;
     close(ws: BunServerWebSocket): void;
@@ -205,6 +207,10 @@ export function startBunServer(): void {
       sendPings: true,
       idleTimeout:
         Number.parseInt(process.env.BUN_WS_IDLE_TIMEOUT_SECONDS ?? "", 10) || 240,
+      // Stream frames are repetitive JSON that deflates 5-10x — a large win
+      // for remote/mobile clients (radio time, data) at a small CPU cost.
+      // Opt out with BUN_WS_PERMESSAGE_DEFLATE=0 for pure-localhost setups.
+      perMessageDeflate: process.env.BUN_WS_PERMESSAGE_DEFLATE !== "0",
       open(ws) {
         attachSocket(ws);
       },

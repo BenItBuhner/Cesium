@@ -395,10 +395,23 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       return;
     }
     void refreshRendezvousEndpoints();
+    // Hidden tabs skip the periodic probe; a refresh runs on return instead.
     const interval = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       void refreshRendezvousEndpoints();
     }, 10_000);
-    return () => window.clearInterval(interval);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshRendezvousEndpoints();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [ready, refreshRendezvousEndpoints]);
 
   const refreshServerHealth = useCallback(async () => {
@@ -439,10 +452,24 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       return;
     }
     void refreshServerHealth().catch(() => undefined);
+    // Hidden tabs skip health probes (N servers × 30s adds up); a probe runs
+    // immediately on return so statuses never look stale to the user.
     const interval = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       void refreshServerHealth().catch(() => undefined);
     }, 30_000);
-    return () => window.clearInterval(interval);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshServerHealth().catch(() => undefined);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [ready, refreshServerHealth]);
 
   const setActiveServer = useCallback((serverId: string) => {

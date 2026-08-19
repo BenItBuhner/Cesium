@@ -27,7 +27,10 @@ import {
   type ReactNode,
 } from "react";
 import { transcribeAudio, synthesizeVoiceSpeech } from "@/lib/server-api";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import {
   BACK_INTENT_PRIORITY,
@@ -124,7 +127,6 @@ declare global {
 export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const {
     promptConversation,
-    eventsByConversationId,
     conversationsById,
     syncConversationSnapshot,
   } = useAgentConversations();
@@ -541,9 +543,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [expand, minimize, start, stop]);
 
   // ---- Speak-on-reply: watch the bound conversation's events -------------
-  const boundEvents = conversationId
-    ? eventsByConversationId[conversationId]
-    : undefined;
+  const boundEvents = useConversationEvents(conversationId);
   useEffect(() => {
     if (!conversationId || !boundEvents || boundEvents.length === 0) return;
     if (viewRef.current === "closed") return;
@@ -577,7 +577,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [boundEvents, conversationId, getPlayer, pushTranscript, trackProcessedReply]);
 
   // ---- Reply reconciliation: close the event-delivery hole ---------------
-  // `eventsByConversationId` is fed by socket event batches and by catch-up
+  // The conversation event log is fed by socket event batches and by catch-up
   // snapshot polls that stop 5s after submit. Both can fail silently — a dead
   // socket even freezes the conversation's client-side status at "running",
   // so nothing push-based can be trusted. Poll the snapshot directly (deduped
