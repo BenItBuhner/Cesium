@@ -137,8 +137,6 @@ export type SubagentToolLoopResult = {
   toolCallCount: number;
 };
 
-const SUBAGENT_MAX_TOOL_ITERATIONS = 40;
-
 /** Default minimum spacing between live subagent progress cards on the parent event stream. */
 export const SUBAGENT_PROGRESS_MIN_INTERVAL_MS = 900;
 
@@ -308,8 +306,9 @@ export function latestSubagentTranscriptActivity(
 
 /**
  * Minimal assistant/tool round-trip loop for subagent turns. Mirrors the main
- * Cesium turn loop shape (assistant tool_calls followed by tool results) but
- * with the subagent toolset and bounded iterations.
+ * Cesium turn loop: assistant tool_calls followed by tool results, with no
+ * iteration cap. The loop ends when the model returns a final answer, the
+ * child has no toolset, or the run is aborted.
  */
 export async function runSubagentToolLoop(input: {
   adapter: {
@@ -322,7 +321,6 @@ export async function runSubagentToolLoop(input: {
   };
   messages: CesiumHistoryMessage[];
   toolset?: CesiumSubagentToolset | null;
-  maxIterations?: number;
   isAborted?: () => boolean;
   /** Fires before a tool executes so live progress can show in-flight work, not just results. */
   onToolCallStart?: (event: SubagentToolLoopToolStartEvent) => void | Promise<void>;
@@ -333,13 +331,12 @@ export async function runSubagentToolLoop(input: {
   const toolset = input.toolset ?? null;
   const tools = toolset?.tools ?? [];
   const adapterImpl = input.runAdapterImpl ?? runAdapter;
-  const maxIterations = Math.max(1, input.maxIterations ?? SUBAGENT_MAX_TOOL_ITERATIONS);
   const messages: CesiumHistoryMessage[] = [...input.messages];
   let usedToolResultChars = 0;
   let toolCallCount = 0;
   let lastResult: CesiumAdapterResult | null = null;
 
-  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+  for (let iteration = 0; ; iteration += 1) {
     if (input.isAborted?.()) {
       return { text: lastResult?.text ?? "", toolCallCount };
     }
@@ -414,10 +411,4 @@ export async function runSubagentToolLoop(input: {
       });
     }
   }
-  return {
-    text:
-      lastResult?.text?.trim() ||
-      `Subagent stopped after ${maxIterations} tool iterations without a final answer.`,
-    toolCallCount,
-  };
 }

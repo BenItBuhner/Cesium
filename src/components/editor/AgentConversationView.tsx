@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
@@ -28,6 +35,7 @@ import { isAgentComposerBusy } from "@/lib/agent-completion-error";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
+import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { isOrchestrationModeLocked } from "@/lib/chat-modes";
@@ -147,7 +155,19 @@ loadOlderConversationHistory,
     () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
     [conversation?.status, rawThreadEvents]
   );
-  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
+  // Defer the events together with the conversation id they belong to so a
+  // conversation switch can never project the previous conversation's stale
+  // events under the new id (deferred values lag by design on slow devices).
+  const threadEventState = useMemo(
+    () => ({ key: conversationId, value: rawThreadEvents }),
+    [conversationId, rawThreadEvents]
+  );
+  const deferredThreadEventState = useDeferredValue(threadEventState);
+  const deferredThreadEvents = selectKeyedDeferredValue(
+    conversationId,
+    rawThreadEvents,
+    deferredThreadEventState
+  );
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(rawThreadEvents),
     [rawThreadEvents]
@@ -222,6 +242,24 @@ loadOlderConversationHistory,
       workspaceSession.chat.scrollTopByTabId,
     ]
   );
+
+  // Live height of the floating composer dock, mirrored into the message
+  // list's bottom padding (see MessageList.bottomDockHeightPx).
+  const [bottomDockEl, setBottomDockEl] = useState<HTMLDivElement | null>(null);
+  const [bottomDockHeightPx, setBottomDockHeightPx] = useState(0);
+  useLayoutEffect(() => {
+    if (!bottomDockEl) {
+      return;
+    }
+    const measure = () => {
+      const next = Math.round(bottomDockEl.getBoundingClientRect().height);
+      setBottomDockHeightPx((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bottomDockEl);
+    return () => observer.disconnect();
+  }, [bottomDockEl]);
 
   const getRedoComposerSeed = useCallback(() => {
     const state = getConversationComposerState(conversationId);
@@ -794,10 +832,11 @@ const showRecentChatsSection =
             renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
             editingUserMessageId={redoFlow.editingUserMessageId}
             bottomDockVisible={!composerHiddenForExpanded}
+            bottomDockHeightPx={bottomDockHeightPx}
           />
           {!composerHiddenForExpanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-              <div className="pointer-events-auto chat-bottom-dock">
+              <div ref={setBottomDockEl} className="pointer-events-auto chat-bottom-dock">
                 {recentChatsSection ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     {recentChatsSection}

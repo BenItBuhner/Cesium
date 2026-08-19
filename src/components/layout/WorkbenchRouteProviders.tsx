@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AuthGate } from "@/components/auth/AuthGate";
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
@@ -21,9 +20,7 @@ function ThemedAuthBoundary({ children }: { children: ReactNode }) {
   return (
     <GlobalSettingsProvider serverSettingsEnabled={serverSettingsEnabled}>
       <ThemeProvider>
-        <AuthGate>
-          <UserPreferencesProvider>{children}</UserPreferencesProvider>
-        </AuthGate>
+        <UserPreferencesProvider>{children}</UserPreferencesProvider>
       </ThemeProvider>
     </GlobalSettingsProvider>
   );

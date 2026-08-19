@@ -25,7 +25,12 @@ type SplitSource = {
 
 let pendingSource: SplitSource | null = null;
 
-const SOURCE_TTL_MS = 800;
+// Generous TTL: the optimistic first-turn render can take well over a second
+// on slow devices (Android WebView under TCG, busy main thread). The old
+// 800ms budget silently skipped the split FLIP there, snapping the composer
+// into place with no animation. The capture is consumed by the very next
+// optimistic commit, so a longer window cannot leak into unrelated renders.
+const SOURCE_TTL_MS = 3000;
 const SPLIT_EASING = "cubic-bezier(0.24, 0.9, 0.3, 1)";
 const SPLIT_DURATION_MS = 360;
 

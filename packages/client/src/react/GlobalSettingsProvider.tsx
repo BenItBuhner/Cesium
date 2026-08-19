@@ -194,7 +194,8 @@ export function GlobalSettingsProvider({
         skipNextSaveRef.current = true;
         setSettings(normalizeLoadedGlobalSettings(result.settings));
       } catch {
-        // Logged-out, offline, or stale-auth startup should keep defaults and let AuthGate own the UI.
+        // Logged-out, offline, or stale-auth startup keeps defaults; the
+        // workbench stays mounted and in-app surfaces own connect/sign-in UX.
       } finally {
         if (mounted) {
           setReady(true);

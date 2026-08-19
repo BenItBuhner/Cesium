@@ -189,8 +189,14 @@ test("subagent tool loop rejects tools outside the toolset", async () => {
   assert.deepEqual(rejected, ["switch_mode"]);
 });
 
-test("subagent tool loop stops at max iterations", async () => {
-  const toolset = browserBackedToolset("ws-max");
+test("subagent tool loop has no iteration cap", async () => {
+  const formerCap = 40;
+  const toolRounds = formerCap + 1;
+  const toolset = createSubagentToolset({
+    definitions: [{ name: "wait", description: "", parameters: { type: "object", properties: {} } }],
+    execute: async () => "ok",
+  });
+  let call = 0;
   const result = await runSubagentToolLoop({
     adapter: {
       apiKind: "openai-chat-completions",
@@ -198,14 +204,20 @@ test("subagent tool loop stops at max iterations", async () => {
       providerId: "openai",
       modelId: "openai/test-model",
     },
-    messages: [{ role: "user", content: "loop forever" }],
+    messages: [{ role: "user", content: "keep going" }],
     toolset,
-    maxIterations: 2,
-    runAdapterImpl: async (): Promise<CesiumAdapterResult> => ({
-      text: "",
-      toolRequests: [{ id: `tool-${Math.random()}`, name: "browser_tabs", arguments: { action: "list" } }],
-    }),
+    runAdapterImpl: async (): Promise<CesiumAdapterResult> => {
+      call += 1;
+      if (call <= toolRounds) {
+        return {
+          text: "",
+          toolRequests: [{ id: `tool-${call}`, name: "wait", arguments: {} }],
+        };
+      }
+      return { text: "Finished after many tool rounds.", toolRequests: [] };
+    },
   });
-  assert.match(result.text, /stopped after 2 tool iterations/);
-  assert.equal(result.toolCallCount, 2);
+  assert.equal(result.text, "Finished after many tool rounds.");
+  assert.equal(result.toolCallCount, toolRounds);
+  assert.equal(call, toolRounds + 1);
 });

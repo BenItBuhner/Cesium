@@ -484,6 +484,29 @@ export function mergeAgentConversationEventMap(
   return next;
 }
 
+export function mergeAgentConversationSnapshotHeadEvents(
+  existing: AgentStoredEvent[],
+  incoming: AgentStoredEvent[],
+  window: Pick<AgentConversationEventWindow, "oldestSeq" | "newestSeq">
+): AgentStoredEvent[] {
+  // A prompt ACK can carry an older head than events already delivered over
+  // the socket. Treat only the advertised window as authoritative: retain
+  // loaded history before it and live events that raced ahead of it.
+  const kept = existing.filter(
+    (event) => event.seq < window.oldestSeq || event.seq > window.newestSeq
+  );
+  const bySeq = new Map<number, AgentStoredEvent>();
+  for (const event of kept) {
+    bySeq.set(event.seq, event);
+  }
+  for (const event of incoming) {
+    bySeq.set(event.seq, event);
+  }
+  return compactConversationEvents(
+    dedupeAgentStoredEvents([...bySeq.values()].sort((a, b) => a.seq - b.seq))
+  );
+}
+
 export function AgentConversationsProvider({
   children,
 }: {
@@ -724,18 +747,14 @@ export function AgentConversationsProvider({
         const head = snapshot;
         setEventsByConversationId((current) => {
           const existing = current[incoming.id] ?? [];
-          const kept = existing.filter((e) => e.seq < head.window.oldestSeq);
-          const bySeq = new Map<number, AgentStoredEvent>();
-          for (const e of kept) {
-            bySeq.set(e.seq, e);
-          }
-          for (const e of head.events) {
-            bySeq.set(e.seq, e);
-          }
-          const mergedEvents = dedupeAgentStoredEvents(
-            [...bySeq.values()].sort((a, b) => a.seq - b.seq)
-          );
-          return { ...current, [incoming.id]: compactConversationEvents(mergedEvents) };
+          return {
+            ...current,
+            [incoming.id]: mergeAgentConversationSnapshotHeadEvents(
+              existing,
+              head.events,
+              head.window
+            ),
+          };
         });
         setHistoryMetaById((c) => ({
           ...c,
@@ -1473,6 +1492,10 @@ const executePrompt = useCallback(
           conversationId,
         });
       }
+      // A just-created conversation may not be present in React's committed
+      // tab state yet. Subscribe by explicit id before starting the turn so a
+      // fast provider cannot finish entirely inside that render gap.
+      flushAgentSubscriptionRef.current([conversationId]);
       try {
         const snapshot = await promptAgentConversation(
           conversationId,
@@ -1486,7 +1509,7 @@ const executePrompt = useCallback(
         });
         mergeConversationSnapshot(snapshot.snapshot);
         dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
-        flushAgentSubscriptionRef.current();
+        flushAgentSubscriptionRef.current([conversationId]);
         scheduleConversationCatchUpRef.current(conversationId);
         void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
           () => undefined
@@ -1631,7 +1654,7 @@ const executePrompt = useCallback(
         });
         mergeConversationSnapshot(result.snapshot);
         dispatchAgentConversationUpserted(result.snapshot.conversation);
-        flushAgentSubscriptionRef.current();
+        flushAgentSubscriptionRef.current([result.snapshot.conversation.id]);
         scheduleConversationCatchUpRef.current(result.snapshot.conversation.id);
         recordPerfSample("conversation.create_and_prompt.ack", startedAt, {
           conversationId: result.snapshot.conversation.id,
