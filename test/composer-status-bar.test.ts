@@ -192,6 +192,36 @@ describe("per-conversation composer status bar visibility", () => {
     assert.deepEqual(pinned.composerStatusBarVisibility, scope.composerStatusBarVisibility);
   });
 
+  test("an explicit new-chat default wins over stale workspace state when pinning", () => {
+    const staleWorkspaceState = {
+      composerStatusBarVisibility: {
+        repo: true,
+        branch: true,
+        goal: true,
+        context: true,
+      },
+      composerStatusBarVisibilityByConversationId: {},
+    };
+    assert.deepEqual(
+      resolveComposerStatusBarVisibilityForConversation(
+        staleWorkspaceState,
+        null,
+        hidden
+      ),
+      hidden
+    );
+
+    const pinned = pinComposerStatusBarVisibilityForConversation(
+      staleWorkspaceState,
+      "conv-new",
+      hidden
+    );
+    assert.deepEqual(
+      pinned.composerStatusBarVisibilityByConversationId?.["conv-new"],
+      hidden
+    );
+  });
+
   test("pinning is a no-op for pinned conversations and missing ids", () => {
     const scope = {
       composerStatusBarVisibility: {

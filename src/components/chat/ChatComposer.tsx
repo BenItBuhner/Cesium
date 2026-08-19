@@ -3408,7 +3408,8 @@ const handleNativeComposerKeyDown = useCallback(
     showStatusBar && variant !== "expanded" && layout !== "empty-top";
   const composerStatusBarVisibility = resolveComposerStatusBarVisibilityForConversation(
     workspaceSession.chat,
-    conversationId
+    conversationId,
+    settings.general.composerStatusBarVisibility
   );
   const statusBarHasVisibleItems =
     statusBarMounted &&

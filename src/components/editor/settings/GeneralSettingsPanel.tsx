@@ -18,6 +18,10 @@ import {
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
+  normalizeComposerStatusBarVisibility,
+  type ComposerStatusBarVisibility,
+} from "@/lib/composer-status-bar";
+import {
   QUICK_OPEN_SCOPE_IDS,
   QUICK_OPEN_SCOPE_LABELS,
   QUICK_SWITCHER_SCOPE_IDS,
@@ -29,8 +33,12 @@ import { MobileNativeSettings } from "./MobileNativeSettings";
 
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
-  const { updateWorkspaceSession } = useWorkspace();
+  const { updateWorkspaceSession, workspaceSession } = useWorkspace();
   const general = settings.general;
+  const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
+    general.composerStatusBarVisibility ??
+      workspaceSession.chat.composerStatusBarVisibility
+  );
   const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
   const moveNewChatWidget = useNewChatWidgetMove();
 
@@ -52,6 +60,18 @@ export function GeneralSettingsPanel() {
         activeNav,
       },
     }));
+  };
+
+  const patchComposerStatusBarDefault = (
+    key: keyof ComposerStatusBarVisibility,
+    value: boolean
+  ) => {
+    patchGeneral({
+      composerStatusBarVisibility: {
+        ...composerStatusBarDefault,
+        [key]: value,
+      },
+    });
   };
 
   return (
@@ -123,6 +143,57 @@ export function GeneralSettingsPanel() {
           title="Configure quick actions"
           description="Add, edit, or remove the actions shown on the new chat landing."
           onClick={() => openNav("actions")}
+          border={false}
+        />
+      </SettingsSection>
+      <SettingsSection title="Composer status bar">
+        <SettingsRow
+          searchId="composer-status-repo"
+          title="Repository"
+          description="Show the workspace or repository name beneath the composer in new chats."
+          trailing={
+            <ToggleSwitch
+              checked={composerStatusBarDefault.repo}
+              onChange={(value) => patchComposerStatusBarDefault("repo", value)}
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="composer-status-branch"
+          title="Git branch"
+          description="Show the current Git branch beneath the composer in new chats."
+          trailing={
+            <ToggleSwitch
+              checked={composerStatusBarDefault.branch}
+              onChange={(value) => patchComposerStatusBarDefault("branch", value)}
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="composer-status-goal"
+          title="Goal progress"
+          description="Show tracked goal progress and runtime beneath the composer in new chats."
+          trailing={
+            <ToggleSwitch
+              checked={composerStatusBarDefault.goal}
+              onChange={(value) => patchComposerStatusBarDefault("goal", value)}
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="composer-status-context"
+          title="Context usage"
+          description="Show the model context usage indicator beneath the composer in new chats."
+          trailing={
+            <ToggleSwitch
+              checked={composerStatusBarDefault.context}
+              onChange={(value) => patchComposerStatusBarDefault("context", value)}
+              size="md"
+            />
+          }
           border={false}
         />
       </SettingsSection>

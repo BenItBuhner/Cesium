@@ -61,6 +61,32 @@ describe("global settings", () => {
     assert.equal(settings.general.showVoiceOrb, true);
   });
 
+  test("leaves composer status defaults unset for legacy workspace migration", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.equal(settings.general.composerStatusBarVisibility, undefined);
+  });
+
+  test("normalizes explicit composer status defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        composerStatusBarVisibility: {
+          repo: false,
+          branch: false,
+          context: false,
+        },
+      },
+    });
+    assert.deepEqual(settings.general.composerStatusBarVisibility, {
+      repo: false,
+      branch: false,
+      goal: true,
+      context: false,
+    });
+  });
+
   test("defaults workspace rail appearances to empty map", () => {
     const settings = createDefaultGlobalSettings();
     assert.deepEqual(settings.general.workspaceRailAppearances, {});

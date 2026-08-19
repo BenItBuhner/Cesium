@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "reac
 import { Flame, GitBranch } from "lucide-react";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   pinComposerStatusBarVisibilityForConversation,
@@ -130,10 +131,14 @@ export function ComposerStatusBar({
     workspaces,
     activeWorkspaceId,
   } = useWorkspace();
+  const { settings, updateSettings } = useGlobalSettings();
   const bridgeRef = useEditorBridgeRef();
   const agentShell = useAgentShellStateMaybe();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [goalSummaryOpen, setGoalSummaryOpen] = useState(false);
+  const newConversationDefault =
+    settings.general.composerStatusBarVisibility ??
+    workspaceSession.chat.composerStatusBarVisibility;
 
   const openPullRequestView = useCallback(() => {
     bridgeRef.current?.openPullRequestTab();
@@ -142,7 +147,8 @@ export function ComposerStatusBar({
 
   const visibility = resolveComposerStatusBarVisibilityForConversation(
     workspaceSession.chat,
-    conversationId
+    conversationId,
+    newConversationDefault
   );
 
   // Snapshot the last-used default as this conversation's own state the first
@@ -159,11 +165,18 @@ export function ComposerStatusBar({
     updateWorkspaceSession((current) => {
       const nextChat = pinComposerStatusBarVisibilityForConversation(
         current.chat,
-        conversationId
+        conversationId,
+        newConversationDefault
       );
       return nextChat === current.chat ? current : { ...current, chat: nextChat };
     });
-  }, [conversationId, sessionReady, updateWorkspaceSession, visibilityByConversationId]);
+  }, [
+    conversationId,
+    newConversationDefault,
+    sessionReady,
+    updateWorkspaceSession,
+    visibilityByConversationId,
+  ]);
 
   const workspaceName =
     workspaceInfo?.name ??
@@ -180,8 +193,15 @@ export function ComposerStatusBar({
         ...current,
         chat: withComposerStatusBarVisibility(current.chat, conversationId, next),
       }));
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          composerStatusBarVisibility: next,
+        },
+      }));
     },
-    [conversationId, updateWorkspaceSession]
+    [conversationId, updateSettings, updateWorkspaceSession]
   );
 
   const handleContextMenu = useCallback(
