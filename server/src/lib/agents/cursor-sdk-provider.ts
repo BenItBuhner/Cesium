@@ -17,6 +17,10 @@ import {
   resolveCursorSdkSandboxMode,
 } from "./cursor-sdk-local-options.js";
 import {
+  buildCursorSdkCloudOptions,
+  isCloudExecutionTarget,
+} from "./cursor-sdk-cloud-options.js";
+import {
   cursorSdkRunFailureDetail,
   isCursorSdkSandboxRunFailure,
   isCursorSdkSandboxUnsupportedError,
@@ -79,12 +83,14 @@ export type CursorSdkProviderDependencies = {
   agent: CursorSdkAgentApi;
   getApiKey: typeof getCursorSdkApiKey;
   resolvePluginAttachments: typeof resolveAgentPluginAttachments;
+  buildCloudOptions: typeof buildCursorSdkCloudOptions;
 };
 
 const defaultCursorSdkProviderDependencies: CursorSdkProviderDependencies = {
   agent: Agent,
   getApiKey: getCursorSdkApiKey,
   resolvePluginAttachments: resolveAgentPluginAttachments,
+  buildCloudOptions: buildCursorSdkCloudOptions,
 };
 
 type PendingCursorRequest = {
@@ -239,7 +245,9 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     ) => Promise<SDKAgent>,
     private readonly resolvePluginAttachments: (
       input: Parameters<typeof resolveAgentPluginAttachments>[0]
-    ) => Promise<AgentPluginAttachmentSnapshot>
+    ) => Promise<AgentPluginAttachmentSnapshot>,
+    /** True when the agent executes on Cursor Cloud instead of this device. */
+    private readonly cloudExecution: boolean
   ) {
     this.sessionId = agent.agentId;
     this.configOptions = configOptions;
@@ -252,13 +260,26 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     }
 
     const configOptions = withCurrentConfig(input.configOptions, input.callbacks.conversation);
+    const cloudExecution = isCloudExecutionTarget(
+      input.callbacks.conversation.config.executionTarget
+    );
     const pluginAttachments = await input.dependencies.resolvePluginAttachments({
       workspaceId: input.callbacks.workspace.id,
       workspaceRoot: input.callbacks.workspace.root,
       backendId: "cursor-sdk",
     });
     const mcpExport = pluginAttachments.sdkMcp;
-    const mcpServers = Object.keys(mcpExport.servers).length > 0 ? mcpExport.servers : undefined;
+    const configuredMcpServerCount = Object.keys(mcpExport.servers).length;
+    // Local MCP servers (stdio processes, loopback URLs) cannot run on the
+    // cloud VM, so cloud agents never receive them.
+    const mcpServers =
+      !cloudExecution && configuredMcpServerCount > 0 ? mcpExport.servers : undefined;
+    const cloudOptions = cloudExecution
+      ? await input.dependencies.buildCloudOptions({
+          workspaceRoot: input.callbacks.workspace.root,
+          conversationId: input.callbacks.conversation.id,
+        })
+      : null;
     const buildAgentOptions = (
       currentConfigOptions: AgentConfigOption[],
       includeName: boolean
@@ -280,11 +301,15 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
           model,
           ...(includeName ? { name: input.callbacks.conversation.title } : {}),
           ...(mcpServers ? { mcpServers } : {}),
-          local: buildCursorSdkLocalOptions({
-            cwd: input.callbacks.workspace.root,
-            settingSources,
-            sandboxMode,
-          }),
+          ...(cloudOptions
+            ? { cloud: cloudOptions }
+            : {
+                local: buildCursorSdkLocalOptions({
+                  cwd: input.callbacks.workspace.root,
+                  settingSources,
+                  sandboxMode,
+                }),
+              }),
         },
         mode
       );
@@ -308,9 +333,21 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
           agentId,
           buildAgentOptions(currentConfigOptions, false)
         ),
-      input.dependencies.resolvePluginAttachments
+      input.dependencies.resolvePluginAttachments,
+      cloudExecution
     );
-    if (mcpExport.skipped.length > 0) {
+    if (cloudExecution && configuredMcpServerCount > 0 && !input.loadAgentId) {
+      await input.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: input.callbacks.conversation.id,
+          kind: "system",
+          level: "info",
+          text: `This conversation runs on Cursor Cloud; ${configuredMcpServerCount} locally configured MCP server(s) are not forwarded to the cloud agent.`,
+        },
+      ]);
+    }
+    if (mcpExport.skipped.length > 0 && !cloudExecution) {
       await input.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -435,8 +472,9 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       pluginAttachments
     );
     const model = cursorSdkModelSelectionFromConfig(this.callbacks.conversation, this.configOptions);
-    const mcpServers =
-      Object.keys(pluginAttachments.sdkMcp.servers).length > 0
+    const mcpServers = this.cloudExecution
+      ? {}
+      : Object.keys(pluginAttachments.sdkMcp.servers).length > 0
         ? pluginAttachments.sdkMcp.servers
         : this.mcpServers;
     const sendOptions = withCursorSdkMode(
@@ -642,6 +680,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
       let failureDetail = cursorSdkRunFailureDetail(result);
       if (
         failureDetail &&
+        !this.cloudExecution &&
         resolveCursorSdkSandboxMode(this.configOptions) === "enabled" &&
         isCursorSdkSandboxRunFailure(result)
       ) {
@@ -703,6 +742,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
         ? `Cursor SDK agent error: ${message}`
         : message;
     if (
+      !this.cloudExecution &&
       resolveCursorSdkSandboxMode(this.configOptions) === "enabled" &&
       isCursorSdkSandboxUnsupportedError(error)
     ) {
@@ -762,6 +802,11 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
     }
     this.configOptions = nextOptions;
     if (configId === "sdk_sandbox" || configId === "setting_sources") {
+      // Sandbox and setting-source options only affect the local runtime;
+      // cloud agents run on Cursor's VM and never rebind for them.
+      if (this.cloudExecution) {
+        return;
+      }
       this.localRuntimeOptionsDirty = true;
       await this.rebindLocalRuntimeIfIdle();
     }
@@ -769,6 +814,7 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
 
   private async rebindLocalRuntimeIfIdle(): Promise<void> {
     if (
+      this.cloudExecution ||
       !this.localRuntimeOptionsDirty ||
       this.activeRun ||
       this.disposed

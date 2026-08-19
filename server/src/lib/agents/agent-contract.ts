@@ -16,6 +16,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsPromptImages",
   "supportsInlineReasoning",
   "supportsCompletionRetry",
+  "supportsCloudExecution",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 /**
@@ -38,6 +39,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: true,
+    supportsCloudExecution: false,
   },
   "cursor-sdk": {
     supportsLoadSession: true,
@@ -52,6 +54,9 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    // The @cursor/sdk Agent API runs the same conversation contract on
+    // Cursor-hosted cloud VMs (`Agent.create({ cloud })`).
+    supportsCloudExecution: true,
   },
   "opencode-server": {
     supportsLoadSession: true,
@@ -66,6 +71,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "opencode-v2-beta": {
     supportsLoadSession: true,
@@ -80,6 +86,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "devin-acp": {
     supportsLoadSession: true,
@@ -94,6 +101,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "grok-build": {
     supportsLoadSession: true,
@@ -108,6 +116,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "codex-app-server": {
     supportsLoadSession: true,
@@ -122,6 +131,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "claude-code-sdk": {
     supportsLoadSession: true,
@@ -136,6 +146,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: false,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "pi-agent": {
     supportsLoadSession: true,
@@ -150,6 +161,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "google-antigravity-cli": {
     supportsLoadSession: true,
@@ -164,6 +176,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: false,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
 };
 

@@ -28,6 +28,7 @@ export type {
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentConversationStatus,
+  AgentExecutionTarget,
   AgentPendingPermission,
   AgentPendingQuestion,
   AgentPermissionOption,
