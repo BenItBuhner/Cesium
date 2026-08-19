@@ -753,13 +753,11 @@ export function AgentWorkspaceRail() {
     workspaceGroupCount: visibleGroups.length,
     standaloneSectionVisible: showStandaloneHomeGroup,
   });
-  const showStandaloneSectionHeader = shouldShowAgentRailStandaloneSectionHeader(
-    Boolean(
-      agentRailSettings.scope?.type === "workspace" &&
-        showStandaloneHomeGroup &&
-        visibleGroups.length === 0
-    )
-  );
+  const showStandaloneSectionHeader = shouldShowAgentRailStandaloneSectionHeader({
+    scopeType: agentRailSettings.scope?.type,
+    standaloneSectionVisible: showStandaloneHomeGroup,
+    workspaceGroupCount: visibleGroups.length,
+  });
 
   const standaloneWorkspaceIds = useMemo(() => {
     const ids = new Set<string>();
