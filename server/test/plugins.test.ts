@@ -105,14 +105,12 @@ test("plugin discovery includes local Context7 and harness verify identifies all
   assert.equal(report.harnesses.length, Object.keys(HARNESS_PLUGIN_CAPABILITIES).length);
   assert.ok(report.summary.identifyingPlugins.includes("cesium-agent"));
   assert.ok(report.summary.identifyingPlugins.includes("cursor-sdk"));
-  assert.ok(report.summary.promptOnlyMcp.includes("opencode-server"));
+  assert.ok(!report.summary.promptOnlyMcp.includes("opencode-server"));
   assert.ok(report.summary.promptOnlyMcp.includes("pi-agent"));
 
   const openCode = report.harnesses.find((entry) => entry.backendId === "opencode-server");
   assert.ok(openCode);
-  assert.equal(openCode.nativeMcp, false);
-  assert.ok(openCode.warnings.length > 0);
-  assert.match(openCode.warnings[0]?.reason ?? "", /will not work|prompt/i);
+  assert.equal(openCode.nativeMcp, true);
 
   const antigravity = report.harnesses.find(
     (entry) => entry.backendId === "google-antigravity-cli"
@@ -124,6 +122,12 @@ test("plugin discovery includes local Context7 and harness verify identifies all
     await fs.readFile(path.join(workspaceRoot, ".agents", "mcp_config.json"), "utf8")
   ) as { mcpServers: Record<string, { serverUrl?: string }> };
   assert.equal(mcpConfig.mcpServers.context7?.serverUrl, "https://mcp.context7.com/mcp");
+
+  const openCodeConfig = JSON.parse(
+    await fs.readFile(path.join(workspaceRoot, "opencode.json"), "utf8")
+  ) as { mcp?: Record<string, { type?: string; url?: string }> };
+  assert.equal(openCodeConfig.mcp?.context7?.type, "remote");
+  assert.equal(openCodeConfig.mcp?.context7?.url, "https://mcp.context7.com/mcp");
 
   await fs.rm(workspaceRoot, { recursive: true, force: true });
   await fs.rm(process.env.OPENCURSOR_DATA_DIR!, { recursive: true, force: true });

@@ -134,6 +134,66 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     ],
     harnesses: standardHarnessSupport(),
   },
+  {
+    schemaVersion: 1,
+    pluginId: "exa",
+    displayName: "Exa",
+    description: "Search the web and research sources with Exa.",
+    iconUrl: "https://exa.ai/favicon.ico",
+    builtIn: true,
+    marketplace: { id: "exa", publisher: "Exa" },
+    mcp: [{ id: "exa", presetId: "exa" }],
+    skills: [
+      {
+        id: "exa-research",
+        title: "Exa Research",
+        description: "Use Exa for current web research and source discovery.",
+        triggerHints: ["search the web", "research", "find sources"],
+        body: "Use Exa when the user needs current web results, citations, or research beyond local workspace context.",
+      },
+    ],
+    harnesses: standardHarnessSupport(),
+  },
+  {
+    schemaVersion: 1,
+    pluginId: "github",
+    displayName: "GitHub",
+    description: "Read and update GitHub repositories, issues, and pull requests.",
+    iconUrl: "https://github.githubassets.com/favicons/favicon.svg",
+    builtIn: true,
+    marketplace: { id: "github", publisher: "GitHub" },
+    mcp: [{ id: "github", presetId: "github" }],
+    skills: [
+      {
+        id: "github-workflow",
+        title: "GitHub Workflow",
+        description: "Use GitHub context for issues, PRs, and repository work.",
+        triggerHints: ["GitHub issue", "pull request", "repo"],
+        body: "When the user references a GitHub issue or pull request, fetch it before planning or editing.",
+      },
+    ],
+    harnesses: standardHarnessSupport(),
+  },
+  {
+    schemaVersion: 1,
+    pluginId: "sentry",
+    displayName: "Sentry",
+    description: "Inspect Sentry issues, traces, and production error context.",
+    iconUrl: "https://sentry.io/favicon.ico",
+    builtIn: true,
+    marketplace: { id: "sentry", publisher: "Sentry" },
+    mcp: [{ id: "sentry", presetId: "sentry" }],
+    skills: [
+      {
+        id: "sentry-debug",
+        title: "Sentry Debugging",
+        description: "Pull Sentry issue and trace context when debugging production errors.",
+        triggerHints: ["Sentry", "production error", "stack trace"],
+        body: "Use Sentry tools when the user mentions a Sentry issue, event, or production exception.",
+      },
+    ],
+    harnesses: standardHarnessSupport(),
+  },
 ];
 
 export function listBuiltInAgentPlugins(): AgentPluginDefinition[] {

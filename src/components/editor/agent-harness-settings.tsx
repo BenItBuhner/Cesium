@@ -35,6 +35,7 @@ import {
   fetchCursorSdkCredentialStatus,
   fetchGrokBuildLogin,
   fetchPiAgentSettings,
+  pollOAuthSession,
   patchCesiumAgentSettings,
   refreshCesiumModelCatalog,
   saveClaudeCodeSdkSettings,
@@ -1424,6 +1425,14 @@ function CesiumAgentHarnessSettings() {
       setMessage(null);
       try {
         const result = await startCesiumOAuth(provider.id);
+        if (result.sessionId) {
+          void pollOAuthSession(result.sessionId).then((session) => {
+            if (session.status === "complete") {
+              void refresh().then(() => notifyAgentBackendsChanged());
+              setMessage(`${provider.name} connected.`);
+            }
+          });
+        }
         if (result.authUrl) {
           openExternalUrl(result.authUrl, {
             features: "noopener,noreferrer,width=520,height=720",

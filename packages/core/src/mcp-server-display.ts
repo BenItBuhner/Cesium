@@ -8,6 +8,9 @@ const KNOWN_MCP_PRESET_LABELS: Record<string, string> = {
   figma: "Figma",
   slack: "Slack",
   todoist: "Todoist",
+  exa: "Exa",
+  github: "GitHub",
+  sentry: "Sentry",
 };
 
 const MCP_SERVER_ID_KEYS = [

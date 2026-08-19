@@ -37,6 +37,7 @@ import {
   saveCloudAgentConnectionToken,
   saveCloudAgentOAuthApp,
   saveCloudAgentWebhookSecret,
+  pollOAuthSession,
   startCloudAgentOAuth,
 } from "@/lib/server-api";
 import type {
@@ -468,6 +469,14 @@ export function CloudAgentsSettingsPanel() {
                 setMessage(
                   `Complete the ${provider.label} authorization in your browser, then return here.`
                 );
+                if (result.sessionId) {
+                  const session = await pollOAuthSession(result.sessionId);
+                  if (session.status === "complete") {
+                    const next = await fetchCloudAgentSettings();
+                    setSettings(next.settings);
+                    setMessage(`${provider.label} connected.`);
+                  }
+                }
               })
             }
             onDisconnect={() =>
