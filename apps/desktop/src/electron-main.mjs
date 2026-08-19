@@ -845,28 +845,61 @@ async function createMainWindow(options = {}) {
  * CI evidence hook: when OPENCURSOR_DESKTOP_CAPTURE_PATH is set, capture the
  * main window's rendered contents (TCC/permission-free, unlike macOS
  * `screencapture`) shortly after load and again after the workbench settles.
+ *
+ * With OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS also set, keep capturing
+ * numbered frames at that interval (capped) — a scripted demo can then be
+ * assembled into a video offline.
  */
 function installWindowCaptureForCi(win) {
   const capturePath = process.env.OPENCURSOR_DESKTOP_CAPTURE_PATH;
   if (!capturePath || !win || win.isDestroyed()) {
     return;
   }
-  const capture = async (suffix) => {
+  const base = capturePath.replace(/\.png$/i, "");
+  const capture = async (target) => {
     if (win.isDestroyed() || win.webContents.isDestroyed()) {
-      return;
+      return false;
     }
     try {
       const image = await win.webContents.capturePage();
-      const target = capturePath.replace(/\.png$/i, "") + suffix + ".png";
       const { writeFile } = await import("node:fs/promises");
       await writeFile(target, image.toPNG());
-      console.log("[cesium-desktop] captured window to", target);
+      return true;
     } catch (error) {
       console.warn("[cesium-desktop] window capture failed", error);
+      return false;
     }
   };
-  setTimeout(() => void capture("_early"), 8_000);
-  setTimeout(() => void capture(""), 30_000);
+
+  const intervalMs = Number(process.env.OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS);
+  if (Number.isFinite(intervalMs) && intervalMs >= 100) {
+    const MAX_FRAMES = 600;
+    let frame = 0;
+    const timer = setInterval(() => {
+      if (frame >= MAX_FRAMES || win.isDestroyed()) {
+        clearInterval(timer);
+        return;
+      }
+      frame += 1;
+      void capture(`${base}_${String(frame).padStart(4, "0")}.png`);
+    }, intervalMs);
+    win.on("closed", () => clearInterval(timer));
+    console.log(
+      `[cesium-desktop] capturing window frames every ${intervalMs}ms to ${base}_NNNN.png`
+    );
+    return;
+  }
+
+  setTimeout(() => {
+    void capture(`${base}_early.png`).then((ok) => {
+      if (ok) console.log("[cesium-desktop] captured window to", `${base}_early.png`);
+    });
+  }, 8_000);
+  setTimeout(() => {
+    void capture(`${base}.png`).then((ok) => {
+      if (ok) console.log("[cesium-desktop] captured window to", `${base}.png`);
+    });
+  }, 30_000);
 }
 
 function installDesktopLifecycleHandlers() {

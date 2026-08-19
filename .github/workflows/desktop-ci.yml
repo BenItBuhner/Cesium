@@ -76,6 +76,39 @@ jobs:
           tail -50 app.log
           ls -la screenshots
 
+      - name: Record scripted macOS demo (CDP-driven, window frame capture)
+        run: |
+          mkdir -p demo-frames
+          APP="$PWD/apps/desktop/out/mac-arm64/Cesium Desktop.app"
+          APP_BIN="$APP/Contents/MacOS/Cesium Desktop"
+          printf '# macOS Demo\n\nShared into Cesium via the macOS Open With path.\n' > "$RUNNER_TEMP/cesium_demo_share.md"
+          # Register the bundle with LaunchServices so `open -a` and the
+          # cesium:// scheme resolve to this build.
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/demo-frames/frame.png" \
+          OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS=600 \
+            "$APP_BIN" --remote-debugging-port=9222 > demo-app.log 2>&1 &
+          APP_PID=$!
+          echo "Launched Cesium Desktop for demo with PID $APP_PID"
+          CESIUM_DEMO_SHARE_CMD="open -a \"$APP\" \"$RUNNER_TEMP/cesium_demo_share.md\"" \
+          CESIUM_DEMO_DEEPLINK_CMD="open 'cesium://share?text=Hello%20from%20a%20cesium%20deep%20link%20on%20macOS'" \
+            node scripts/desktop-demo-driver.mjs
+          sleep 3
+          kill "$APP_PID" || true
+          sleep 2
+          tail -30 demo-app.log
+          echo "Captured $(ls demo-frames | wc -l) demo frames"
+
+      - name: Upload macOS demo frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-macos-demo-frames
+          if-no-files-found: warn
+          path: |
+            demo-frames/
+            demo-app.log
+
       - name: Upload macOS app artifacts
         if: always()
         uses: actions/upload-artifact@v4
