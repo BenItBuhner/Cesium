@@ -60,17 +60,23 @@ function pushLiveAgentEventForBatch(
       if (!clients) {
         return;
       }
-      for (const client of clients) {
-        if (!client.subscribedConversationIds.has(conversationId)) {
-          continue;
-        }
-        for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
-          send(client.socket, {
+      const serializedChunks: string[] = [];
+      for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
+        serializedChunks.push(
+          JSON.stringify({
             type: "event_batch",
             workspaceId,
             conversationId,
             events: batch.slice(i, i + MAX_EVENT_BATCH_EVENTS),
-          });
+          } satisfies AgentSocketServerMessage)
+        );
+      }
+      for (const client of clients) {
+        if (!client.subscribedConversationIds.has(conversationId)) {
+          continue;
+        }
+        for (const chunk of serializedChunks) {
+          sendSerialized(client.socket, chunk, { droppable: true });
         }
       }
     });
@@ -95,9 +101,10 @@ function pushConversationUpsertForBatch(
     if (!batch || !clients) {
       return;
     }
+    const serialized = [...batch.values()].map((queued) => JSON.stringify(queued));
     for (const client of clients) {
-      for (const queued of batch.values()) {
-        send(client.socket, queued);
+      for (const frame of serialized) {
+        sendSerialized(client.socket, frame, { droppable: true });
       }
     }
   }, 100);
@@ -113,6 +120,27 @@ function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
     }
   }
   socket.send(JSON.stringify(message));
+}
+
+/**
+ * Broadcast path: the frame is serialized ONCE and the same string goes to
+ * every client. With N clients and hundreds of running agents, per-client
+ * JSON.stringify of identical frames was pure CPU burn on the event loop.
+ * Droppable frames (stream batches, coalesced record pushes) are skipped for
+ * backpressured sockets; the client heals via its subscribe cursor.
+ */
+function sendSerialized(
+  socket: RuntimeSocket,
+  serialized: string,
+  options: { droppable: boolean }
+): void {
+  if (!socket.isOpen) {
+    return;
+  }
+  if (options.droppable && (socket.bufferedAmount ?? 0) > MAX_SOCKET_BUFFERED_BYTES) {
+    return;
+  }
+  socket.send(serialized);
 }
 
 function addClient(state: AgentSocketState): void {
@@ -154,12 +182,14 @@ subscribeAgentStoreEvents((event) => {
     //                                the conversation rail / sidebar can
     //                                refresh without the old `visibilitychange`
     //                                refetch dance.
+    let serializedConversation: string | null = null;
     for (const client of clients) {
       if (client.subscribedConversationIds.has(event.conversation.id)) {
-        send(client.socket, {
+        serializedConversation ??= JSON.stringify({
           type: "conversation",
           conversation: event.conversation,
-        });
+        } satisfies AgentSocketServerMessage);
+        sendSerialized(client.socket, serializedConversation, { droppable: false });
       }
     }
     pushConversationUpsertForBatch(event.conversation.workspaceId, {
