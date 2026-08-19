@@ -10,12 +10,14 @@ export function ToggleSwitch({
   size = "sm",
   variant = "blue",
   labelledBy,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   size?: "sm" | "md";
   variant?: "blue" | "green";
   labelledBy?: string;
+  disabled?: boolean;
 }) {
   const sm = { h: 18, w: 32, knob: 14, offX: 2, onX: 16 };
   const md = { h: 22, w: 40, knob: 16, offX: 2, onX: 22 };
@@ -27,8 +29,9 @@ export function ToggleSwitch({
       role="switch"
       aria-checked={checked}
       aria-labelledby={labelledBy}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors"
+      className="relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       style={{
         height: d.h,
         width: d.w,

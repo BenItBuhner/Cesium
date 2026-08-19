@@ -671,6 +671,15 @@ export interface ModelInfo {
   detail?: string;
   backendId?: string;
   configSelections?: Array<{ configId: string; value: string }>;
+  variantGroupId?: string;
+  variantGroupName?: string;
+  /** Effective provider-reported parameters for this exact model variant. */
+  variantParameters?: Array<{
+    id: string;
+    name?: string;
+    value: string;
+    valueName?: string;
+  }>;
   provider:
     | "openai"
     | "anthropic"

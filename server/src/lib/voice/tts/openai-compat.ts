@@ -1,4 +1,5 @@
 import { readWavInfo } from "../wav.js";
+import { resolveOpenAiTtsConfig } from "./settings-resolve.js";
 import {
   clampSpeed,
   type VoiceTtsEngine,
@@ -9,34 +10,14 @@ import {
 
 /**
  * Any OpenAI-compatible `/audio/speech` host (OpenAI itself, LocalAI, a
- * self-hosted Kokoro/Piper server, etc.). Deliberately opt-in via
- * `OPENCURSOR_VOICE_TTS_BASE_URL`: chat/transcription base URLs are NOT
+ * self-hosted Kokoro/Piper server, etc.). Opt-in via Settings → Voice or
+ * `OPENCURSOR_VOICE_TTS_BASE_URL`. Chat/transcription base URLs are NOT
  * reused because most proxies (including the techlit one) do not route
  * speech synthesis.
  */
 
-type OpenAiTtsConfig = {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  voice: string;
-};
-
-function resolveConfig(): OpenAiTtsConfig | null {
-  const baseUrl = process.env.OPENCURSOR_VOICE_TTS_BASE_URL?.trim();
-  if (!baseUrl) return null;
-  const apiKey = (
-    process.env.OPENCURSOR_VOICE_TTS_API_KEY ??
-    process.env.OPENAI_API_KEY ??
-    ""
-  ).trim();
-  if (!apiKey) return null;
-  return {
-    baseUrl: baseUrl.replace(/\/+$/, ""),
-    apiKey,
-    model: process.env.OPENCURSOR_VOICE_TTS_MODEL?.trim() || "tts-1",
-    voice: process.env.OPENCURSOR_VOICE_TTS_VOICE?.trim() || "alloy",
-  };
+function resolveConfig() {
+  return resolveOpenAiTtsConfig();
 }
 
 export const openAiCompatEngine: VoiceTtsEngine = {
@@ -51,7 +32,7 @@ export const openAiCompatEngine: VoiceTtsEngine = {
       : {
           available: false,
           ready: false,
-          detail: "set OPENCURSOR_VOICE_TTS_BASE_URL (+ API key) to enable",
+          detail: "set a remote TTS base URL in Settings → Voice (or OPENCURSOR_VOICE_TTS_BASE_URL)",
         };
   },
 

@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import {
   buildMobileBootstrapScript,
   encodeMobileBridgeMessage,
+  openExternalUrl,
   parseMobileBridgeMessage,
 } from "../src/lib/mobile-bridge.ts";
 import { createLaunchUrlConfig } from "../apps/mobile/src/services/launchConfig.ts";
@@ -146,6 +147,8 @@ describe("mobile bridge", () => {
     assert.doesNotMatch(script, /syncLegacyThemeTokens/);
     assert.doesNotMatch(script, /Array\.prototype\.at/);
     assert.doesNotMatch(script, /structuredClone/);
+    assert.match(script, /__CESIUM_MOBILE_EXTERNAL_NAV__/);
+    assert.match(script, /openExternalUrl/);
   });
 
   test("bootstrap script does not invent a minimum safe area", () => {
@@ -206,5 +209,29 @@ describe("mobile bridge", () => {
 
     assert.equal(config.serverUrl, "http://localhost:9100");
     assert.equal(config.runtime?.defaultWorkspaceRoot, "/files/projects/default");
+  });
+
+  test("openExternalUrl posts to the native bridge instead of window.open", () => {
+    const posted: unknown[] = [];
+    const g = globalThis as typeof globalThis & { window?: unknown };
+    const previous = g.window;
+    g.window = {
+      ReactNativeWebView: {
+        postMessage(message: string) {
+          posted.push(JSON.parse(message));
+        },
+      },
+      open() {
+        assert.fail("window.open must not run when the native bridge is present");
+      },
+    };
+    try {
+      assert.equal(openExternalUrl("https://auth.openai.com/oauth/authorize"), true);
+      assert.deepEqual(posted, [
+        { type: "openExternalUrl", url: "https://auth.openai.com/oauth/authorize" },
+      ]);
+    } finally {
+      g.window = previous;
+    }
   });
 });

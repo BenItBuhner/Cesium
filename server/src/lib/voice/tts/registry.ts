@@ -3,6 +3,7 @@ import { espeakEngine } from "./espeak.js";
 import { kokoroEngine } from "./kokoro.js";
 import { openAiCompatEngine } from "./openai-compat.js";
 import { piperEngine } from "./piper.js";
+import { resolveTtsEnginePreference } from "./settings-resolve.js";
 import type {
   VoiceTtsEngine,
   VoiceTtsEngineStatus,
@@ -15,8 +16,8 @@ import type {
  * Piper (fast local neural) -> Kokoro (local neural, first-use model load)
  * -> Cartesia -> OpenAI-compatible -> espeak-ng (always-works fallback).
  *
- * `OPENCURSOR_VOICE_TTS_ENGINE` pins an engine id; `OPENCURSOR_VOICE_TTS_DISABLE`
- * is a comma list of engine ids to skip.
+ * Settings → Voice (or `OPENCURSOR_VOICE_TTS_ENGINE`) pins an engine id;
+ * `OPENCURSOR_VOICE_TTS_DISABLE` is a comma list of engine ids to skip.
  */
 
 const ENGINES: VoiceTtsEngine[] = [
@@ -90,7 +91,7 @@ export async function resolveTtsEngine(
   const disabled = disabledEngineIds();
   const pinnedId =
     preferredId?.trim().toLowerCase() ||
-    process.env.OPENCURSOR_VOICE_TTS_ENGINE?.trim().toLowerCase() ||
+    resolveTtsEnginePreference().value?.trim().toLowerCase() ||
     null;
   if (pinnedId) {
     const pinned = ENGINES.find((engine) => engine.id === pinnedId);

@@ -10,7 +10,7 @@ const [
     openCodeServerLegacyPermissionResponse,
     openCodeServerPermissionResponse,
   },
-  { openCodeServerPartTextDelta },
+  { modelBody, openCodeServerPartTextDelta },
   { extractOpenCodeEventSessionId, openCodeEventBelongsToRootSession, translateOpenCodeGlobalPayload },
   { OpenCodeServerClient },
 ] = await Promise.all([
@@ -43,6 +43,19 @@ test("opencode server client scopes instance routes to the workspace directory",
   assert.equal(client.url("/global/event"), "http://127.0.0.1:9333/global/event");
 });
 
+test("opencode server preserves model variants in prompt selections", () => {
+  assert.deepEqual(modelBody("anthropic/claude-fable-5#high"), {
+    providerID: "anthropic",
+    modelID: "claude-fable-5",
+    variant: "high",
+  });
+  assert.deepEqual(modelBody("anthropic/claude-fable-5/max"), {
+    providerID: "anthropic",
+    modelID: "claude-fable-5",
+    variant: "max",
+  });
+});
+
 test("opencode server client leaves routes unscoped without a directory", () => {
   const client = new OpenCodeServerClient({ baseUrl: "http://127.0.0.1:9333" });
   assert.equal(client.url("/session"), "http://127.0.0.1:9333/session");
@@ -54,7 +67,7 @@ test("opencode server backend is registered in the harness menu", () => {
   const backends = listAgentBackends();
   const serverIndex = backends.findIndex((backend) => backend.id === "opencode-server");
   assert.ok(serverIndex >= 0);
-  assert.equal(AGENT_BACKENDS["opencode-server"].label, "OpenCode Server");
+  assert.equal(AGENT_BACKENDS["opencode-server"].label, "OpenCode");
   assert.equal(AGENT_BACKENDS["opencode-server"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["opencode-server"].capabilities.supportsPermissions, true);
 });

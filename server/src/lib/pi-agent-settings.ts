@@ -384,6 +384,15 @@ export async function applyPiRuntimeApiKeys(
   for (const key of settings.providerKeys) {
     authStorage.setRuntimeApiKey(key.providerId, key.apiKey);
   }
+  try {
+    const { getValidXaiAccessToken, XAI_OAUTH_PROVIDER_ID } = await import("./xai-oauth.js");
+    const access = await getValidXaiAccessToken();
+    if (access) {
+      authStorage.setRuntimeApiKey(XAI_OAUTH_PROVIDER_ID, access);
+    }
+  } catch {
+    // SuperGrok token missing or refresh failed — API-key path still works.
+  }
 }
 
 export async function hasPiAgentStoredAuthConfig(): Promise<boolean> {

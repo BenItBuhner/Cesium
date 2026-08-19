@@ -35,6 +35,7 @@ import { isAgentComposerBusy } from "@/lib/agent-completion-error";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
+import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { isOrchestrationModeLocked } from "@/lib/chat-modes";
@@ -157,15 +158,16 @@ loadOlderConversationHistory,
   // Defer the events together with the conversation id they belong to so a
   // conversation switch can never project the previous conversation's stale
   // events under the new id (deferred values lag by design on slow devices).
-  const rawThreadFrame = useMemo(
-    () => ({ conversationId, events: rawThreadEvents }),
+  const threadEventState = useMemo(
+    () => ({ key: conversationId, value: rawThreadEvents }),
     [conversationId, rawThreadEvents]
   );
-  const deferredThreadFrame = useDeferredValue(rawThreadFrame);
-  const deferredThreadEvents =
-    deferredThreadFrame.conversationId === conversationId
-      ? deferredThreadFrame.events
-      : EMPTY_THREAD_EVENTS;
+  const deferredThreadEventState = useDeferredValue(threadEventState);
+  const deferredThreadEvents = selectKeyedDeferredValue(
+    conversationId,
+    rawThreadEvents,
+    deferredThreadEventState
+  );
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(rawThreadEvents),
     [rawThreadEvents]

@@ -1880,7 +1880,7 @@ export async function resolveCesiumApiKey(input: {
       apiKind: input.apiKind,
     };
   }
-  // OAuth subscription accounts (ChatGPT/Codex, Claude Pro/Max, Copilot, …)
+  // Official OAuth subscriptions (ChatGPT/Codex, SpaceXAI SuperGrok)
   // back providers with no stored/env API key.
   try {
     const { resolveCesiumOAuthRequestAuth } = await import("./cesium-oauth.js");

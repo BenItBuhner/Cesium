@@ -53,6 +53,7 @@ import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
+import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -206,6 +207,8 @@ export function AgentCenterPane() {
   const rawThreadEvents = conversation
     ? (eventsByConversationId[conversation.id] ?? EMPTY_THREAD_EVENTS)
     : EMPTY_THREAD_EVENTS;
+  const threadEventKey =
+    conversation?.id ?? selectedConversationId ?? "__no-conversation__";
   const openedPlanFilesRef = useRef(new Set<string>());
   useEffect(() => {
     for (const event of rawThreadEvents) {
@@ -224,21 +227,16 @@ export function AgentCenterPane() {
       });
     }
   }, [openExplorerFile, rawThreadEvents]);
-  // Defer the events *together with the conversation identity they belong
-  // to*. `useDeferredValue` lags behind by design (several frames on slow
-  // devices); deferring the bare array let a conversation switch project the
-  // PREVIOUS conversation's stale events under the new id, flashing the old
-  // chat before popping to the right one. When the deferred frame belongs to
-  // another conversation, treat the projection as empty instead.
-  const rawThreadFrame = useMemo(
-    () => ({ conversationId: conversation?.id ?? null, events: rawThreadEvents }),
-    [conversation?.id, rawThreadEvents]
+  const threadEventState = useMemo(
+    () => ({ key: threadEventKey, value: rawThreadEvents }),
+    [rawThreadEvents, threadEventKey]
   );
-  const deferredThreadFrame = useDeferredValue(rawThreadFrame);
-  const deferredThreadEvents =
-    deferredThreadFrame.conversationId === (conversation?.id ?? null)
-      ? deferredThreadFrame.events
-      : EMPTY_THREAD_EVENTS;
+  const deferredThreadEventState = useDeferredValue(threadEventState);
+  const deferredThreadEvents = selectKeyedDeferredValue(
+    threadEventKey,
+    rawThreadEvents,
+    deferredThreadEventState
+  );
   const contextUsageRefreshGeneration = useMemo(
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
@@ -1224,14 +1222,13 @@ export function AgentCenterPane() {
     hasConversationHistoryLoaded &&
     (!optimisticTurn || scrollMessages.length > 0);
   // The stable snapshot may only bridge a transition *into the same
-  // conversation it was captured from* (e.g. remount, deferred re-projection).
-  // Falling back to it for a different id resurrected whichever conversation
-  // was viewed last — the "old chat flashes before the new one" bug when
-  // spawning a chat from the landing or switching via the rail.
-  const transitionFallbackView =
-    showConversationTransitionState &&
-    stableConversationView &&
-    stableConversationView.conversationId === selectedConversationId
+  // conversation it was captured from*. Falling back to it for a different id
+  // resurrected whichever conversation was viewed last — the "old chat
+  // flashes before the new one" bug when spawning a chat from the landing or
+  // switching via the rail.
+  const stableSelectedConversationView =
+    selectedConversationId &&
+    stableConversationView?.conversationId === selectedConversationId
       ? stableConversationView
       : null;
   const visibleConversationView =
@@ -1246,7 +1243,8 @@ export function AgentCenterPane() {
           loadingOlderHistory: historyCursor.loadingOlder,
           initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
         }
-      : optimisticConversationView ?? transitionFallbackView;
+      : optimisticConversationView ??
+        (showConversationTransitionState ? stableSelectedConversationView : null);
   const visibleConversationId = visibleConversationView?.conversationId ?? null;
   // Stable identity so memoized permission rows don't re-render every flush.
   const handleResolvePermission = useCallback(

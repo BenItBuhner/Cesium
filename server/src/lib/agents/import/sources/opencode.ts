@@ -589,7 +589,7 @@ export function createOpenCodeImportSource(): HarnessImportSource {
 
   return {
     harnessKey: "opencode",
-    backendIds: ["opencode-server", "opencode-v2-beta"],
+    backendIds: ["opencode-server"],
     displayName: "OpenCode",
 
     async detect(): Promise<HarnessImportAvailability> {

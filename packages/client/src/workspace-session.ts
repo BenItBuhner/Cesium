@@ -900,6 +900,7 @@ export function mergeWorkspaceSessionFromImport(
     "claude-adapter": "claude-code-sdk",
     "cursor-acp": "cursor-sdk",
     "opencode-acp": "opencode-server",
+    "opencode-v2-beta": "opencode-server",
     "codex-adapter": "codex-app-server",
     "gemini-acp": "google-antigravity-cli",
   };

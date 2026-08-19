@@ -38,6 +38,54 @@ function prefersReducedMotion(): boolean {
 
 export type DrawerSide = "left" | "right";
 
+export type AgentShellSwipeAction =
+  | "open-left"
+  | "close-left"
+  | "open-right"
+  | "close-right";
+
+const DRAWER_OWNED_PROGRESS = 0.01;
+
+/**
+ * Shell swipe policy. The right workbench pane normally swallows every
+ * swipe so web pages / files / terminals keep their own gestures. The
+ * one exception: a vacant editor (zero tabs) can be dismissed with the
+ * same rightward swipe that closes every other overlay.
+ */
+export function resolveAgentShellSwipeAction(input: {
+  direction: DrawerSide;
+  leftProgress: number;
+  rightProgress: number;
+  rightOpenGestureEnabled: boolean;
+  rightCloseGestureEnabled: boolean;
+}): AgentShellSwipeAction | null {
+  const {
+    direction,
+    leftProgress,
+    rightProgress,
+    rightOpenGestureEnabled,
+    rightCloseGestureEnabled,
+  } = input;
+  if (rightProgress > DRAWER_OWNED_PROGRESS) {
+    return direction === "right" && rightCloseGestureEnabled
+      ? "close-right"
+      : null;
+  }
+  if (leftProgress > DRAWER_OWNED_PROGRESS) {
+    return direction === "left" ? "close-left" : null;
+  }
+  if (direction === "right") {
+    return "open-left";
+  }
+  return rightOpenGestureEnabled ? "open-right" : null;
+}
+
+export function isRightPaneSwipeAction(
+  action: AgentShellSwipeAction | null
+): action is "open-right" | "close-right" {
+  return action === "open-right" || action === "close-right";
+}
+
 /**
  * Imperative spring for one drawer. `apply` receives the current progress and
  * writes styles; `onSettle` fires once motion reaches an endpoint.
