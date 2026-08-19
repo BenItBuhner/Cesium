@@ -14,7 +14,6 @@ import {
   attachSessionToken,
   clearStoredAuth,
   getStoredSessionToken,
-  setStoredSessionToken,
   syncAuthTokenFromResponse,
   updateStoredAuthSession,
   type AuthSession,
@@ -23,36 +22,21 @@ import {
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { resolveClientServerBaseUrl } from "@/lib/resolve-server-base-url";
 
-type LoginInput = {
-  username: string;
-  password: string;
-  remember: boolean;
-};
-
 type AuthContextValue = {
   ready: boolean;
   enabled: boolean;
   authenticated: boolean;
   session: AuthSession | null;
-  loginPending: boolean;
-  error: string | null;
   connectionError: string | null;
   /** An actual auth-status response has been received for the active server. */
   hasServerStatus: boolean;
-  /**
-   * The latest *server response* said auth is enabled and this client is not
-   * authenticated. Network failures never set this — only real HTTP answers.
-   */
-  serverConfirmedSignedOut: boolean;
   refreshAuthStatus: () => Promise<void>;
-  login: (input: LoginInput) => Promise<boolean>;
   logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 // Generous on purpose: a PWA resuming on iPad/Android regularly needs several
-// seconds for the radio to wake and the socket to be usable again. The old 4s
-// budget produced spurious "Check Cesium server" screens on every resume.
+// seconds for the radio to wake and the socket to be usable again.
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 /** One silent retry before surfacing a boot connection error. */
 const AUTH_STATUS_RETRY_DELAY_MS = 1_500;
@@ -85,21 +69,25 @@ async function fetchAuth(
   }
 }
 
+/**
+ * Tracks the active server's auth status in the background. This never blocks
+ * or gates the UI: the workbench always mounts, and sign-in / server
+ * connection management happens inside the app (Settings -> Servers, the
+ * server picker, DeviceConnectPanel). The workspace layer owns
+ * disconnect/reconnect UX with toasts.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { activeServer } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [loginPending, setLoginPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [hasServerStatus, setHasServerStatus] = useState(false);
-  const [serverConfirmedSignedOut, setServerConfirmedSignedOut] = useState(false);
   /**
    * Server id whose auth status has been resolved (successfully or not) at
    * least once. Re-checks for the same server — including rendezvous base-URL
-   * re-resolves — must not tear the UI back down to the boot splash.
+   * re-resolves — must not reset `ready`.
    */
   const resolvedServerIdRef = useRef<string | null>(null);
   /** Server id for which a real auth-status response has been received. */
@@ -126,19 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setHasServerStatus(true);
     setEnabled(payload.enabled);
     setAuthenticated(payload.authenticated);
-    setSession(payload.session);
-    setServerConfirmedSignedOut(payload.enabled && !payload.authenticated);
-    if (!payload.enabled) {
-      clearStoredAuth(activeServer.baseUrl);
-    } else if (payload.authenticated) {
+    setSession(payload.authenticated ? payload.session : null);
+    if (payload.enabled && payload.authenticated) {
       updateStoredAuthSession(payload.session, activeServer.baseUrl);
     } else {
       clearStoredAuth(activeServer.baseUrl);
     }
-    if (!payload.authenticated) {
-      setSession(null);
-    }
-    setError(null);
     setConnectionError(null);
   }, [activeServer.baseUrl, activeServer.id]);
 
@@ -146,8 +127,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     // Switching to a *different server* is a real context change: forget what
-    // we knew and show the splash while the new server is checked. A base-URL
-    // update for the same server (rendezvous re-resolve) keeps everything up.
+    // we knew about the previous server. A base-URL update for the same server
+    // (rendezvous re-resolve) keeps everything up.
     if (
       resolvedServerIdRef.current !== null &&
       resolvedServerIdRef.current !== activeServer.id
@@ -155,7 +136,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resolvedServerIdRef.current = null;
       serverStatusServerIdRef.current = null;
       setHasServerStatus(false);
-      setServerConfirmedSignedOut(false);
     }
     const isRecheck = resolvedServerIdRef.current === activeServer.id;
 
@@ -179,7 +159,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
       setAuthenticated(false);
       setSession(null);
-      setError(null);
       setConnectionError(message);
     };
 
@@ -192,7 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         // Cold boots and PWA resumes routinely lose the very first request
         // while the network stack wakes up. Retry once before surfacing the
-        // failure and (potentially) blocking the UI on a connection screen.
+        // failure as a (non-blocking) connection error.
         await new Promise((resolve) =>
           setTimeout(resolve, AUTH_STATUS_RETRY_DELAY_MS)
         );
@@ -219,74 +198,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [activeServer.baseUrl, activeServer.id, refreshAuthStatus]);
 
-  const login = useCallback(
-    async (input: LoginInput) => {
-      setLoginPending(true);
-      setError(null);
-      setConnectionError(null);
-      try {
-        const response = await fetchAuth(activeServer.baseUrl, resolveClientServerBaseUrl(), "/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        syncAuthTokenFromResponse(response, activeServer.baseUrl);
-        const payload = (await response.json().catch(() => ({}))) as
-          | {
-              authenticated?: boolean;
-              session?: AuthSession | null;
-              token?: string;
-              error?: string;
-            }
-          | Record<string, never>;
-        if (!response.ok || payload.authenticated !== true || !payload.session) {
-          const message =
-            typeof payload.error === "string"
-              ? payload.error
-              : "Invalid username or password.";
-          setAuthenticated(false);
-          setSession(null);
-          setError(message);
-          if (response.status === 401) {
-            clearStoredAuth(activeServer.baseUrl);
-            serverStatusServerIdRef.current = activeServer.id;
-            setHasServerStatus(true);
-            setServerConfirmedSignedOut(true);
-          }
-          return false;
-        }
-        setStoredSessionToken(
-          typeof payload.token === "string"
-            ? payload.token
-            : getStoredSessionToken(activeServer.baseUrl),
-          payload.session,
-          activeServer.baseUrl
-        );
-        updateStoredAuthSession(payload.session, activeServer.baseUrl);
-        serverStatusServerIdRef.current = activeServer.id;
-        setHasServerStatus(true);
-        setServerConfirmedSignedOut(false);
-        setEnabled(true);
-        setAuthenticated(true);
-        setSession(payload.session);
-        setError(null);
-        setConnectionError(null);
-        return true;
-      } catch (nextError) {
-        const message =
-          nextError instanceof Error ? nextError.message : "Login failed.";
-        setConnectionError(message);
-        setError(null);
-        setAuthenticated(false);
-        setSession(null);
-        return false;
-      } finally {
-        setLoginPending(false);
-      }
-    },
-    [activeServer.baseUrl, activeServer.id]
-  );
-
   const logout = useCallback(async () => {
     try {
       const response = await fetchAuth(activeServer.baseUrl, resolveClientServerBaseUrl(), "/api/auth/logout", {
@@ -301,16 +212,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearStoredAuth(activeServer.baseUrl);
       setAuthenticated(false);
       setSession(null);
-      setError(null);
       setConnectionError(null);
-      if (enabled) {
-        setEnabled(true);
-        // An explicit logout is the user confirming the signed-out state; the
-        // gate must come back even though the workbench was latched open.
-        setServerConfirmedSignedOut(true);
-      }
     }
-  }, [activeServer.baseUrl, enabled]);
+  }, [activeServer.baseUrl]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -319,26 +223,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authenticated,
       connectionError,
       session,
-      loginPending,
-      error,
       hasServerStatus,
-      serverConfirmedSignedOut,
       refreshAuthStatus,
-      login,
       logout,
     }),
     [
       authenticated,
       connectionError,
       enabled,
-      error,
       hasServerStatus,
-      login,
-      loginPending,
       logout,
       ready,
       refreshAuthStatus,
-      serverConfirmedSignedOut,
       session,
     ]
   );
