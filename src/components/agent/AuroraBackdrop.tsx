@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useAuroraScene } from "@/components/agent/AuroraSceneContext";
+import { recentMainThreadCongestionMs } from "@/lib/main-thread-congestion";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 import { resolveAuroraColors, type AuroraSettingsState } from "@/lib/global-settings";
 import {
@@ -102,6 +103,13 @@ function isSoftwareRenderer(): boolean {
 
 const SOFTWARE_GL_FRAME_INTERVAL_MS = 1000 / 12;
 const SOFTWARE_GL_CALM_FRAME_INTERVAL_MS = 1000 / 8;
+/**
+ * Ambient effects yield first when the main thread is drowning (slow device,
+ * DevTools CPU throttling, heavy agent load): moderate congestion halves the
+ * drift to 6fps, severe congestion parks it at 3fps until the backlog drains.
+ */
+const CONGESTED_FRAME_INTERVAL_MS = 1000 / 6;
+const SEVERELY_CONGESTED_FRAME_INTERVAL_MS = 1000 / 3;
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
 const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
@@ -335,8 +343,15 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
 
     const softwareGl = isSoftwareRenderer();
     const frameIntervalMs = (): number => {
+      const congestion = recentMainThreadCongestionMs();
+      if (congestion > 1_000) {
+        return SEVERELY_CONGESTED_FRAME_INTERVAL_MS;
+      }
       if (windowBlurred) {
         return UNFOCUSED_FRAME_INTERVAL_MS;
+      }
+      if (congestion > 300) {
+        return CONGESTED_FRAME_INTERVAL_MS;
       }
       // Completed conversations sit open indefinitely; after the brief bloom
       // transition the scene is ambient drift, same as idle.

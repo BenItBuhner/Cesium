@@ -696,6 +696,16 @@ workspaceSession.chat.mode,
     [tabs]
   );
   const rawPanelThreadEvents = useConversationEvents(activeTabId);
+  const panelThreadEventState = useMemo(
+    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
+    [activeTabId, rawPanelThreadEvents]
+  );
+  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
+  const deferredPanelThreadEvents = selectKeyedDeferredValue(
+    activeTabId,
+    rawPanelThreadEvents,
+    deferredPanelThreadEventState
+  );
   const panelHistoryCursor = useMemo(() => {
     if (!activeTabId || activeTabId === "__empty__") {
       return { hasOlder: false, loadingOlder: false };
@@ -752,7 +762,7 @@ workspaceSession.chat.mode,
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation: activeConversation,
-    events: activeTabId ? rawPanelThreadEvents : undefined,
+    events: activeTabId ? deferredPanelThreadEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -860,23 +870,16 @@ workspaceSession.chat.mode,
       resolveDraftModelForBackend(draftBackend)
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
+  // Full-log derivations key off the DEFERRED events so each stream flush's
+  // synchronous render stays O(1); the O(n) scans run in the interruptible
+  // deferred lane alongside the projection (critical on throttled devices).
   const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
-  );
-  const panelThreadEventState = useMemo(
-    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
-    [activeTabId, rawPanelThreadEvents]
-  );
-  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
-  const deferredPanelThreadEvents = selectKeyedDeferredValue(
-    activeTabId,
-    rawPanelThreadEvents,
-    deferredPanelThreadEventState
+    () => computeContextUsageRefreshGeneration(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const composerUserMessageHistory = useMemo(
-    () => extractComposerUserMessageHistory(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
+    () => extractComposerUserMessageHistory(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
@@ -1016,14 +1019,14 @@ workspaceSession.chat.model,
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawPanelThreadEvents,
+        events: deferredPanelThreadEvents,
         conversation: activeConversation,
       }),
-    [activeConversation, rawPanelThreadEvents]
+    [activeConversation, deferredPanelThreadEvents]
   );
   const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawPanelThreadEvents, activeConversation?.status),
-    [activeConversation?.status, rawPanelThreadEvents]
+    () => latestGoalProgressStatus(deferredPanelThreadEvents, activeConversation?.status),
+    [activeConversation?.status, deferredPanelThreadEvents]
   );
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
@@ -2717,7 +2720,7 @@ const cancelPromptForDraft = useCallback(
           composerDraftId={composerDraftId}
           conversationBusy={
             activeConversation
-              ? isAgentComposerBusy(activeConversation, rawPanelThreadEvents) ||
+              ? isAgentComposerBusy(activeConversation, deferredPanelThreadEvents) ||
                 activeConversation.status === "awaiting_permission"
               : false
           }

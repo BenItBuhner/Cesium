@@ -64,6 +64,7 @@ import {
   ConversationEventsStore,
   EMPTY_CONVERSATION_EVENTS,
 } from "@/lib/conversation-events-store";
+import { recentMainThreadCongestionMs } from "@/lib/main-thread-congestion";
 import { devPerfEnabled, recordPerfSample } from "@/lib/dev-perf";
 import {
   KeyedEventBatcher,
@@ -544,6 +545,48 @@ export function mergeAgentConversationEventBatch(
   if (incoming.length === 0) {
     return existing;
   }
+  // Fast path — pure tail append (the overwhelmingly common streaming case):
+  // every incoming seq is strictly beyond the existing tail and strictly
+  // increasing. Skipping the two full-log Set rebuilds turns the per-flush
+  // merge from O(existing + incoming) into O(incoming), which is what keeps
+  // thousands of long conversations streaming concurrently cheap.
+  const tailSeq = existing.at(-1)?.seq ?? Number.NEGATIVE_INFINITY;
+  let pureAppend = existing.length > 0;
+  let previousSeq = tailSeq;
+  for (let i = 0; pureAppend && i < incoming.length; i += 1) {
+    const seq = incoming[i]!.seq;
+    if (!(seq > previousSeq) || seq <= 0) {
+      pureAppend = false;
+      break;
+    }
+    previousSeq = seq;
+  }
+  if (pureAppend) {
+    // Optimistic local events (client-guessed seq, shared eventId with the
+    // real event the server later assigns) always live near the tail; a
+    // duplicate eventId there must take the slow path's full dedupe.
+    const tailIds = new Set<string>();
+    for (let i = Math.max(0, existing.length - 8); i < existing.length; i += 1) {
+      tailIds.add(existing[i]!.eventId);
+    }
+    const tailDuplicate = incoming.some((event) => tailIds.has(event.eventId));
+    if (!tailDuplicate) {
+      let next = existing;
+      for (const event of incoming) {
+        if (isIncomingEventDroppedByAcpToolStrip(next, event)) {
+          continue;
+        }
+        if (next === existing) {
+          next = [...existing];
+        }
+        next.push(event);
+      }
+      if (next === existing) {
+        return existing;
+      }
+      return compactConversationEvents(compactAdjacentAgentMessageChunks(next));
+    }
+  }
   const seenSeq = new Set(existing.map((event) => event.seq));
   const seenEventIds = new Set(existing.map((event) => event.eventId));
   let next: AgentStoredEvent[] = existing;
@@ -694,6 +737,10 @@ export function AgentConversationsProvider({
       new KeyedEventBatcher<AgentStoredEvent>({
         enabled: globalSettings.general.batchStreamEvents,
         onFlush: (batches) => commitEventBatchesRef.current(batches),
+        // Slow or artificially throttled devices can't hold the frame budget
+        // at the default commit cadence — instead of dropping frames, commits
+        // get rarer: the window stretches with main-thread congestion and
+        // relaxes as it drains.
         resolveWindowMs: (pendingKeys) => {
           let largest = 0;
           for (const key of pendingKeys) {
@@ -702,12 +749,23 @@ export function AgentConversationsProvider({
               largest = length;
             }
           }
-          return resolveStreamBatchWindowMs(largest);
+          const base = resolveStreamBatchWindowMs(largest);
+          const congestion = recentMainThreadCongestionMs();
+          if (congestion <= 60) {
+            return base;
+          }
+          return Math.min(
+            1_200,
+            Math.round(base * Math.min(6, 1 + congestion / 200))
+          );
         },
         // Tool completions force an immediate commit for visible feedback;
         // with the tab hidden there is nothing to see, so let them coalesce.
+        // Under main-thread congestion they coalesce too — an immediate
+        // commit would only widen the frame gap it is trying to explain.
         allowImmediateFlush: () =>
-          typeof document === "undefined" || !document.hidden,
+          (typeof document === "undefined" || !document.hidden) &&
+          recentMainThreadCongestionMs() <= 250,
       })
   );
 

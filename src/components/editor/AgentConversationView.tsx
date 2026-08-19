@@ -147,14 +147,6 @@ loadOlderConversationHistory,
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const rawThreadEvents = useConversationEvents(conversationId);
-  const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawThreadEvents),
-    [rawThreadEvents]
-  );
-  const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
-    [conversation?.status, rawThreadEvents]
-  );
   // Defer the events together with the conversation id they belong to so a
   // conversation switch can never project the previous conversation's stale
   // events under the new id (deferred values lag by design on slow devices).
@@ -168,9 +160,22 @@ loadOlderConversationHistory,
     rawThreadEvents,
     deferredThreadEventState
   );
+  // Every full-log derivation keys off the DEFERRED events: the synchronous
+  // render triggered by each stream flush then does O(1) work, and the O(n)
+  // scans run in the interruptible deferred lane alongside the projection.
+  // On throttled/low-end devices this is the difference between dropped
+  // frames per flush and a flat frame rate.
+  const contextUsageRefreshGeneration = useMemo(
+    () => computeContextUsageRefreshGeneration(deferredThreadEvents),
+    [deferredThreadEvents]
+  );
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+    [conversation?.status, deferredThreadEvents]
+  );
   const composerUserMessageHistory = useMemo(
-    () => extractComposerUserMessageHistory(rawThreadEvents),
-    [rawThreadEvents]
+    () => extractComposerUserMessageHistory(deferredThreadEvents),
+    [deferredThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
@@ -183,10 +188,10 @@ loadOlderConversationHistory,
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawThreadEvents,
+        events: deferredThreadEvents,
         conversation,
       }),
-    [conversation, rawThreadEvents]
+    [conversation, deferredThreadEvents]
   );
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
@@ -205,7 +210,7 @@ loadOlderConversationHistory,
     workspaceSession.chat.dismissedCompletionErrorKeyByConversationId?.[conversationId];
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation,
-    events: rawThreadEvents,
+    events: deferredThreadEvents,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -763,7 +768,7 @@ const showRecentChatsSection =
             composerDraftId={composerDraftId}
             conversationBusy={
               conversation
-                ? isAgentComposerBusy(conversation, rawThreadEvents) ||
+                ? isAgentComposerBusy(conversation, deferredThreadEvents) ||
                   conversation.status === "awaiting_permission"
                 : false
             }
