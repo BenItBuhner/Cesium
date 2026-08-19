@@ -1,0 +1,95 @@
+name: desktop-macos
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "cursor/**"
+    paths:
+      - "apps/desktop/**"
+      - "apps/desktop-renderer/**"
+      - "packages/**"
+      - "server/src/**"
+      - "server/package.json"
+      - "scripts/prepare-desktop-*.mjs"
+      - "scripts/prepare-desktop-*.cjs"
+      - "scripts/assert-desktop-package-safe.cjs"
+      - ".github/workflows/desktop-macos-ci.yml"
+
+concurrency:
+  group: desktop-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-and-smoke:
+    name: Package, smoke-test, and screenshot the macOS app
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          # The server's file:.. dependency symlinks back to the repo root;
+          # never let it into staged/packaged output.
+          rm -f server/node_modules/cesium
+
+      - name: Package the macOS app (dmg + zip, arm64)
+        run: npm --prefix apps/desktop run package:mac
+
+      - name: List packaged output
+        run: |
+          ls -la apps/desktop/out
+          ls -la "apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/Resources" | head -30
+
+      - name: Smoke-test the packaged app (embedded backend + window load)
+        run: |
+          APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
+          "$APP_BIN" --smoke 2>&1 | tee smoke.log
+          grep -q "Cesium packaged smoke passed" smoke.log
+
+      - name: Launch the packaged app and capture screenshots
+        run: |
+          mkdir -p screenshots
+          APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
+          "$APP_BIN" > app.log 2>&1 &
+          APP_PID=$!
+          echo "Launched Cesium Desktop with PID $APP_PID"
+          sleep 20
+          screencapture -x screenshots/macos_app_boot.png || true
+          sleep 25
+          screencapture -x screenshots/macos_app_workbench.png || true
+          # Bring the app frontmost in case another window stole focus.
+          osascript -e 'tell application "System Events" to set frontmost of (first process whose name is "Cesium Desktop") to true' || true
+          sleep 5
+          screencapture -x screenshots/macos_app_front.png || true
+          kill "$APP_PID" || true
+          sleep 3
+          tail -50 app.log
+
+      - name: Upload macOS app artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-macos
+          if-no-files-found: warn
+          path: |
+            apps/desktop/out/*.dmg
+            apps/desktop/out/*.zip
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-macos-evidence
+          if-no-files-found: warn
+          path: |
+            screenshots/
+            smoke.log
+            app.log

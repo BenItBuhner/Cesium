@@ -67,6 +67,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 import { openDocumentation } from "@/lib/open-documentation";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
+import { isDesktopNativeAvailable } from "@/lib/desktop-native-bridge";
 import {
   buildSettingsSearchIndex,
   searchSettingsIndex,
@@ -480,6 +481,8 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         // Mobile-native rows only exist inside the Android shell's WebView.
         includeMobileNative:
           typeof window !== "undefined" && window.ReactNativeWebView != null,
+        // Desktop-native rows only exist inside the Electron shell.
+        includeDesktopNative: isDesktopNativeAvailable(),
       }),
     [ipadBetaSettings, settings.models.byBackend]
   );

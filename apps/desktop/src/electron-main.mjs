@@ -4,6 +4,13 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCesiumBackend } from "./main.mjs";
 import { resolvePackagedDesktopDataDir } from "./desktop-data-dir.mjs";
+import {
+  applyPlatformApplicationMenu,
+  destroyDesktopNativeIntegrations,
+  handleStartupArgv,
+  installDesktopNativeIntegrations,
+  registerDesktopDeepLinkAndFileHandlers,
+} from "./desktop-native.mjs";
 
 process.title = "Cesium Desktop";
 app.setName("Cesium Desktop");
@@ -707,7 +714,7 @@ async function openDocsWindow(sourceWebContents) {
     minWidth: 720,
     minHeight: 520,
   });
-  Menu.setApplicationMenu(null);
+  applyPlatformApplicationMenu();
   attachRendererNavigationGuards(docsWindow.webContents);
   docsWindow.on("closed", () => {
     docsWindow = null;
@@ -811,7 +818,7 @@ async function createMainWindow(options = {}) {
     destroyNativeBrowserSessionsForWindow(mainWindow);
     mainWindow = null;
   });
-  Menu.setApplicationMenu(null);
+  applyPlatformApplicationMenu();
 
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[cesium-desktop] preload failed", preloadPath, error);
@@ -862,13 +869,18 @@ if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
   if (!gotLock) {
     console.warn("[cesium-desktop] single instance lock unavailable; continuing startup");
   }
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
       void probeMainRenderer(mainWindow, "second-instance focus");
     }
+    // Deep links / "Open with Cesium" files land in the second instance's
+    // argv on Windows and Linux.
+    void handleStartupArgv(argv, workingDirectory).catch(() => undefined);
   });
+
+  registerDesktopDeepLinkAndFileHandlers();
 
   app.whenReady().then(async () => {
     app.setName("Cesium Desktop");
@@ -880,7 +892,23 @@ if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
       app.quit();
       return;
     }
+    installDesktopNativeIntegrations({
+      getMainWindow: () => mainWindow,
+      focusMainWindow: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          void createMainWindow();
+          return;
+        }
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+      },
+      appIconPath: APP_ICON_PATH,
+    });
     await createMainWindow();
+    void handleStartupArgv(process.argv, process.cwd()).catch(() => undefined);
   }).catch((error) => {
     console.error("[cesium-desktop] failed to start", error);
     dialog.showErrorBox(
@@ -1288,6 +1316,7 @@ ipcMain.handle("cesium:window-is-maximized", (event) => {
 function cleanupBackend() {
   if (cleanupStarted) return;
   cleanupStarted = true;
+  destroyDesktopNativeIntegrations();
   clearMainRendererRecoveryTimer();
   mainRendererRecovering = false;
   mainRendererCrashReloading = false;

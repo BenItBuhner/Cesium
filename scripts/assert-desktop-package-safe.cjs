@@ -4,7 +4,12 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..");
 
 const recursiveRootLinks = ["server/node_modules/cesium"];
-const forbiddenPaths = ["apps/desktop/out/win-unpacked/resources/server/node_modules/cesium"];
+const forbiddenPaths = [
+  "apps/desktop/out/win-unpacked/resources/server/node_modules/cesium",
+  "apps/desktop/out/mac/Cesium Desktop.app/Contents/Resources/server/node_modules/cesium",
+  "apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/Resources/server/node_modules/cesium",
+  "apps/desktop/out/linux-unpacked/resources/server/node_modules/cesium",
+];
 
 const forbiddenSegments = [
   `${path.sep}g${path.sep}caches${path.sep}`,

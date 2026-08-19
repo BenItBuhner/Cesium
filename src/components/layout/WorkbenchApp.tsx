@@ -16,6 +16,7 @@ import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { VoiceProvider, useVoice } from "@/components/voice/VoiceProvider";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
+import { DesktopNativeSync } from "@/components/desktop/DesktopNativeSync";
 import { MobileBackController } from "@/components/mobile/MobileBackController";
 import {
   BACK_INTENT_PRIORITY,
@@ -153,6 +154,7 @@ function WorkbenchWithConversationProviders() {
       <AgentConversationsProvider>
         <VoiceProvider>
           <MobileBridgeSync />
+          <DesktopNativeSync />
           <MobileBackController />
           <WorkbenchShell />
           <VoiceOrbGate />

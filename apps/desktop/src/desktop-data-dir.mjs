@@ -7,6 +7,7 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 function dirHasEntries(targetDir) {
@@ -68,16 +69,38 @@ function mergeLegacyDesktopData(legacyDesktopDir, canonicalDir) {
   cpSync(legacyDesktopDir, canonicalDir, { recursive: true, force: true });
 }
 
+function resolveCanonicalDataDir(userDataPath, options) {
+  const platform = options?.platform ?? process.platform;
+  const env = options?.env ?? process.env;
+  const home = options?.homeDir ?? homedir();
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    return localAppData
+      ? resolve(localAppData, "Cesium", "data")
+      : resolve(userDataPath, "server-data");
+  }
+  if (platform === "darwin") {
+    return resolve(home, "Library", "Application Support", "Cesium", "data");
+  }
+  const xdgStateHome = env.XDG_STATE_HOME?.trim();
+  if (xdgStateHome) {
+    return resolve(xdgStateHome, "cesium");
+  }
+  return resolve(home, ".local", "state", "cesium");
+}
+
 /**
  * Packaged desktop must use the same persisted profile directory as the dev
- * server (`%LOCALAPPDATA%\\Cesium\\data` on Windows). Older builds wrote to
- * `%APPDATA%\\…\\server-data`, which forked settings like theme/design mode.
+ * server (`server/src/lib/persistence.ts` defaults: `%LOCALAPPDATA%\\Cesium\\data`
+ * on Windows, `~/Library/Application Support/Cesium/data` on macOS, XDG state
+ * on Linux). Older builds wrote to `%APPDATA%\\…\\server-data`, which forked
+ * settings like theme/design mode.
+ *
+ * `options` ({ platform, env, homeDir }) exists for tests; production callers
+ * pass only `userDataPath`.
  */
-export function resolvePackagedDesktopDataDir(userDataPath) {
-  const localAppData = process.env.LOCALAPPDATA?.trim();
-  const canonicalDir = localAppData
-    ? resolve(localAppData, "Cesium", "data")
-    : resolve(userDataPath, "server-data");
+export function resolvePackagedDesktopDataDir(userDataPath, options) {
+  const canonicalDir = resolveCanonicalDataDir(userDataPath, options);
   const legacyDesktopDir = resolve(userDataPath, "server-data");
 
   if (legacyDesktopDir !== canonicalDir) {

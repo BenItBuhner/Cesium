@@ -25,6 +25,7 @@ import {
   normalizeQuickOpenScope,
   normalizeQuickSwitcherScope,
 } from "@/lib/quick-open-scopes";
+import { DesktopNativeSettings } from "./DesktopNativeSettings";
 import { MobileNativeSettings } from "./MobileNativeSettings";
 
 export function GeneralSettingsPanel() {
@@ -226,6 +227,7 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <DesktopNativeSettings />
       <MobileNativeSettings />
     </>
   );

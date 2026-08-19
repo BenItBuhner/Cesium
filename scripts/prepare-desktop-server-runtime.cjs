@@ -77,7 +77,15 @@ async function main() {
     }
   }
 
-  await fs.copyFile(process.execPath, path.join(stagingRoot, "node.exe"));
+  // Windows keeps the historic `node.exe` name; POSIX (macOS/Linux) stages a
+  // plain executable `node`. `electron-builder.config.cjs` picks the matching
+  // resource per platform.
+  const nodeBinName = process.platform === "win32" ? "node.exe" : "node";
+  const stagedNode = path.join(stagingRoot, nodeBinName);
+  await fs.copyFile(process.execPath, stagedNode);
+  if (process.platform !== "win32") {
+    await fs.chmod(stagedNode, 0o755);
+  }
   console.log("Bundled Node.js runtime for desktop backend startup.");
 }
 
