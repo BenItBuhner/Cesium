@@ -29,7 +29,10 @@ import {
   DEFAULT_MODE_OPTIONS,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
-import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
+import {
+  resolveLastUsedDraftModel,
+  updateChatDraftDefault,
+} from "@/lib/chat-draft-defaults";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -119,13 +122,11 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   );
   const draftModel = useMemo(() => {
     if (!draftBackend) return workspaceSession.chat.model;
-    const currentModelValue =
-      workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
     return (
-      draftModels.find((m) => (m.modelValue ?? m.id) === currentModelValue) ??
+      resolveLastUsedDraftModel(workspaceSession.chat, draftBackend, draftModels) ??
       resolveDraftModelForBackend(draftBackend)
     );
-  }, [draftBackend, draftModels, workspaceSession.chat.model]);
+  }, [draftBackend, draftModels, workspaceSession.chat]);
   const draftModeOptions = useMemo(
     () =>
       draftBackend
@@ -195,13 +196,19 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       const nextMode =
         buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
         workspaceSession.chat.mode;
-      const nextModel = resolveDraftModelForBackend(nextBackend);
       updateWorkspaceSession((current) => ({
         ...current,
         chat: updateChatDraftDefault(current.chat, {
           backendId: nextBackend.id,
           mode: nextMode ?? current.chat.mode,
-          model: nextModel,
+          // Restore the model the user last used on this backend; only fall
+          // back to the backend default when nothing was remembered.
+          model:
+            resolveLastUsedDraftModel(
+              current.chat,
+              nextBackend,
+              buildDraftModelOptionsForBackend(nextBackend)
+            ) ?? resolveDraftModelForBackend(nextBackend),
         }),
       }));
     },

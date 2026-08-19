@@ -44,7 +44,10 @@ import {
   conversationHasCompletionFailure,
   isAgentComposerBusy,
 } from "@/lib/agent-completion-error";
-import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
+import {
+  resolveLastUsedDraftModel,
+  updateChatDraftDefault,
+} from "@/lib/chat-draft-defaults";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
@@ -377,13 +380,11 @@ export function AgentCenterPane() {
     if (!draftBackend) {
       return workspaceSession.chat.model;
     }
-    const currentModelValue =
-      workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
     return (
-      draftModels.find((model) => (model.modelValue ?? model.id) === currentModelValue) ??
+      resolveLastUsedDraftModel(workspaceSession.chat, draftBackend, draftModels) ??
       resolveDraftModelForBackend(draftBackend)
     );
-  }, [draftBackend, draftModels, workspaceSession.chat.model]);
+  }, [draftBackend, draftModels, workspaceSession.chat]);
   const draftModeOptions = useMemo(
     () =>
       draftBackend
@@ -843,7 +844,14 @@ export function AgentCenterPane() {
           backendId: nextBackend.id,
           mode: (buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
             current.chat.mode) as EditorMode,
-          model: resolveDraftModelForBackend(nextBackend),
+          // Restore the model the user last used on this backend; only fall
+          // back to the backend default when nothing was remembered.
+          model:
+            resolveLastUsedDraftModel(
+              current.chat,
+              nextBackend,
+              buildDraftModelOptionsForBackend(nextBackend)
+            ) ?? resolveDraftModelForBackend(nextBackend),
         }),
       }));
     },
@@ -987,18 +995,22 @@ export function AgentCenterPane() {
   const handleComposerBackendChange = useCallback(
     (next: AgentBackendId) => {
       const nextBackend = pickAvailableBackend(backends, next);
-      const nextModel = nextBackend ? resolveDraftModelForBackend(nextBackend) : null;
       const nextMode = nextBackend
         ? (buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? composerMode)
         : composerMode;
       if (selectedConversationId) {
-        if (nextBackend && nextModel) {
+        if (nextBackend) {
           updateWorkspaceSession((current) => ({
             ...current,
             chat: updateChatDraftDefault(current.chat, {
               backendId: nextBackend.id,
               mode: nextMode as EditorMode,
-              model: nextModel,
+              model:
+                resolveLastUsedDraftModel(
+                  current.chat,
+                  nextBackend,
+                  buildDraftModelOptionsForBackend(nextBackend)
+                ) ?? resolveDraftModelForBackend(nextBackend),
             }),
           }));
         }
@@ -1209,6 +1221,11 @@ export function AgentCenterPane() {
     !!conversation &&
     hasConversationHistoryLoaded &&
     (!optimisticTurn || scrollMessages.length > 0);
+  // The stable snapshot may only bridge a transition *into the same
+  // conversation it was captured from*. Falling back to it for a different id
+  // resurrected whichever conversation was viewed last — the "old chat
+  // flashes before the new one" bug when spawning a chat from the landing or
+  // switching via the rail.
   const stableSelectedConversationView =
     selectedConversationId &&
     stableConversationView?.conversationId === selectedConversationId
@@ -1286,6 +1303,25 @@ export function AgentCenterPane() {
     </div>
   );
 
+  // Live height of the floating composer dock, mirrored into the message
+  // list's bottom padding so the transcript can always scroll fully clear of
+  // the dock (and never gains fake scroll range when the dock is short).
+  const [bottomDockEl, setBottomDockEl] = useState<HTMLDivElement | null>(null);
+  const [bottomDockHeightPx, setBottomDockHeightPx] = useState(0);
+  useLayoutEffect(() => {
+    if (!bottomDockEl) {
+      return;
+    }
+    const measure = () => {
+      const next = Math.round(bottomDockEl.getBoundingClientRect().height);
+      setBottomDockHeightPx((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bottomDockEl);
+    return () => observer.disconnect();
+  }, [bottomDockEl]);
+
   // Single shared root for both the landing and the conversation views: the
   // aurora backdrop must not remount across the new-chat commit so its
   // placement can glide instead of snapping.
@@ -1351,15 +1387,21 @@ export function AgentCenterPane() {
               renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
               editingUserMessageId={redoFlow.editingUserMessageId}
               bottomDockVisible={!composerHiddenForExpanded && !showConversationTransitionState}
+              bottomDockHeightPx={bottomDockHeightPx}
             />
           </div>
+        ) : showConversationTransitionState || optimisticTurn ? (
+          // Mid-transition (selection pending / history loading / optimistic
+          // swap): keep the pane quiet instead of flashing instructional
+          // filler text between conversation states.
+          null
         ) : (
           emptyState
         )}
 
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-            <div className="pointer-events-auto chat-bottom-dock">
+            <div ref={setBottomDockEl} className="pointer-events-auto chat-bottom-dock">
               <VoiceSessionDock wrapperClassName="pointer-events-none flex justify-center pb-[6px] pt-[8px] px-0 @min-[481px]:px-[10px]" />
               {dockedAsk && visibleConversationView ? (
                 <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
