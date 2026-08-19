@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { BROWSER_MCP_TOOLS } from "../../mcp/builtin-browser-tools.js";
 import { runAdapter } from "./cesium-model-adapters.js";
 import { normalizeCesiumToolResultForModel } from "./cesium-history.js";
@@ -7,6 +8,7 @@ import type {
   CesiumHistoryMessage,
 } from "./cesium-types.js";
 import type { CesiumProviderKind } from "../../cesium-agent-settings.js";
+import type { AgentStoredEvent } from "../types.js";
 
 /**
  * Tool surface handed to Cesium subagents.
@@ -124,12 +126,185 @@ export type SubagentToolLoopToolEvent = {
   ok: boolean;
 };
 
+export type SubagentToolLoopToolStartEvent = {
+  toolCallId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
 export type SubagentToolLoopResult = {
   text: string;
   toolCallCount: number;
 };
 
 const SUBAGENT_MAX_TOOL_ITERATIONS = 40;
+
+/** Default minimum spacing between live subagent progress cards on the parent event stream. */
+export const SUBAGENT_PROGRESS_MIN_INTERVAL_MS = 900;
+
+export type SubagentProgressBroadcaster = {
+  /** Mark progress dirty. Emits immediately when outside the throttle window, otherwise schedules a trailing emission so the last update always lands. */
+  notify: () => void;
+  /** Permanently stop emissions (call right before persisting the terminal card so a stale "running" card can never land after it). */
+  stop: () => void;
+};
+
+/**
+ * Throttled live-progress fan-out for subagent runs.
+ *
+ * Subagents used to persist a `kind: "subagent"` card only at spawn and at the
+ * terminal state, so an open transcript tab showed a frozen "Working" row for
+ * the whole run. This broadcaster lets the tool loop re-emit the running card
+ * with the growing transcript, rate-limited so rapid tool bursts do not flood
+ * the event store (transcripts are cumulative, so skipped ticks lose nothing —
+ * the next emission carries every row).
+ */
+export function createSubagentProgressBroadcaster(input: {
+  emit: () => Promise<void>;
+  minIntervalMs?: number;
+}): SubagentProgressBroadcaster {
+  const minIntervalMs = Math.max(0, input.minIntervalMs ?? SUBAGENT_PROGRESS_MIN_INTERVAL_MS);
+  let lastEmitAt = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let inFlight = false;
+  let dirty = false;
+
+  const run = (): void => {
+    if (stopped || inFlight) {
+      return;
+    }
+    dirty = false;
+    inFlight = true;
+    lastEmitAt = Date.now();
+    void input
+      .emit()
+      .catch(() => undefined)
+      .finally(() => {
+        inFlight = false;
+        if (dirty && !stopped) {
+          schedule();
+        }
+      });
+  };
+
+  const schedule = (): void => {
+    if (stopped || timer) {
+      return;
+    }
+    const waitMs = Math.max(0, lastEmitAt + minIntervalMs - Date.now());
+    if (waitMs === 0) {
+      run();
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      if (!stopped && dirty) {
+        run();
+      }
+    }, waitMs);
+  };
+
+  return {
+    notify: () => {
+      if (stopped) {
+        return;
+      }
+      dirty = true;
+      schedule();
+    },
+    stop: () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+/** Compact single-line preview of tool arguments shown while a subagent tool is executing. */
+function subagentToolArgsPreview(args: Record<string, unknown>): string {
+  try {
+    const json = JSON.stringify(args);
+    return json && json !== "{}" ? json.slice(0, 200) : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Append an in-flight tool row so open transcript views show what the subagent is doing right now. */
+export function pushRunningSubagentToolRow(input: {
+  transcript: AgentStoredEvent[];
+  conversationId: string;
+  toolCallId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}): void {
+  input.transcript.push({
+    // Transcript rows need distinct seqs: projection dedupes stored events by seq.
+    seq: input.transcript.length + 1,
+    eventId: randomUUID(),
+    conversationId: input.conversationId,
+    createdAt: Date.now(),
+    kind: "tool_call",
+    toolCallId: input.toolCallId,
+    title: input.name,
+    toolKind: "mcp",
+    status: "in_progress",
+    detail: subagentToolArgsPreview(input.arguments),
+  });
+}
+
+/** Settle a previously pushed running tool row (or append one when the tool never started, e.g. unknown tool). */
+export function settleSubagentToolRow(input: {
+  transcript: AgentStoredEvent[];
+  conversationId: string;
+  toolCallId: string;
+  name: string;
+  result: string;
+  ok: boolean;
+}): void {
+  const status = input.ok ? ("completed" as const) : ("failed" as const);
+  const detail = input.result.slice(0, 600);
+  for (let index = input.transcript.length - 1; index >= 0; index -= 1) {
+    const row = input.transcript[index]!;
+    if (row.kind === "tool_call" && row.toolCallId === input.toolCallId) {
+      // Replace instead of mutating: earlier progress emissions shallow-copied
+      // the transcript array and must keep their point-in-time row objects.
+      input.transcript[index] = { ...row, status, detail };
+      return;
+    }
+  }
+  input.transcript.push({
+    seq: input.transcript.length + 1,
+    eventId: randomUUID(),
+    conversationId: input.conversationId,
+    createdAt: Date.now(),
+    kind: "tool_call",
+    toolCallId: input.toolCallId,
+    title: input.name,
+    toolKind: "mcp",
+    status,
+    detail,
+  });
+}
+
+/** Most recent human-readable activity from a subagent transcript, for the collapsed card. */
+export function latestSubagentTranscriptActivity(
+  transcript: AgentStoredEvent[]
+): string | null {
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const event = transcript[index]!;
+    if (event.kind === "tool_call" && event.title) {
+      return event.status === "in_progress" ? `Running ${event.title}` : event.title;
+    }
+    if (event.kind === "assistant_message_chunk" && event.text.trim()) {
+      return event.text.trim().slice(0, 240);
+    }
+  }
+  return null;
+}
 
 /**
  * Minimal assistant/tool round-trip loop for subagent turns. Mirrors the main
@@ -149,6 +324,8 @@ export async function runSubagentToolLoop(input: {
   toolset?: CesiumSubagentToolset | null;
   maxIterations?: number;
   isAborted?: () => boolean;
+  /** Fires before a tool executes so live progress can show in-flight work, not just results. */
+  onToolCallStart?: (event: SubagentToolLoopToolStartEvent) => void | Promise<void>;
   onToolCall?: (event: SubagentToolLoopToolEvent) => void | Promise<void>;
   /** Test seam: overrides the model adapter call. */
   runAdapterImpl?: typeof runAdapter;
@@ -201,6 +378,11 @@ export async function runSubagentToolLoop(input: {
         ok = false;
         toolResult = `Tool ${request.name} is not available to this subagent. Available tools: ${[...toolset.toolNames].join(", ")}.`;
       } else {
+        await input.onToolCallStart?.({
+          toolCallId: request.id,
+          name: request.name,
+          arguments: request.arguments,
+        });
         try {
           toolResult = await toolset.execute(request.name, request.arguments);
         } catch (error) {

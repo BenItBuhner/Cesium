@@ -694,18 +694,36 @@ function appendTimelineMessage(turn: ProjectedTurn, message: ChatMessage): void 
   turn.timeline.push({ kind: "message", message });
 }
 
+/**
+ * Whether `incoming` is a newer snapshot of the same transcript row. Live
+ * subagent progress re-emits the growing transcript, and re-projections keep
+ * stable row ids while a worked-session dropdown accumulates tool entries —
+ * so a same-id worked-session row with at least as many entries supersedes
+ * the stale one (equal counts still carry entry status updates).
+ */
+function transcriptRowSupersedes(incoming: ChatMessage, current: ChatMessage): boolean {
+  if (incoming.type !== "worked-session" || current.type !== "worked-session") {
+    return false;
+  }
+  return (incoming.workedEntries?.length ?? 0) >= (current.workedEntries?.length ?? 0);
+}
+
 function mergeTranscriptRowsById(
   current: ChatMessage[] | undefined,
   incoming: ChatMessage[] | undefined
 ): ChatMessage[] {
   const merged: ChatMessage[] = [];
-  const seen = new Set<string>();
+  const indexById = new Map<string, number>();
   for (const row of [...(current ?? []), ...(incoming ?? [])]) {
-    if (seen.has(row.id)) {
+    const existingIndex = indexById.get(row.id);
+    if (existingIndex === undefined) {
+      indexById.set(row.id, merged.length);
+      merged.push(row);
       continue;
     }
-    merged.push(row);
-    seen.add(row.id);
+    if (transcriptRowSupersedes(row, merged[existingIndex]!)) {
+      merged[existingIndex] = row;
+    }
   }
   return merged;
 }
@@ -4047,7 +4065,7 @@ export function extractLiveSubagentTranscriptFromMessages(
     return null;
   }
   const mergedTranscript: ChatMessage[] = [];
-  const seenRowIds = new Set<string>();
+  const rowIndexById = new Map<string, number>();
   let bestTitle: string | undefined;
   let bestScore = -1;
   let lastMatch: ChatMessage | undefined;
@@ -4062,18 +4080,28 @@ export function extractLiveSubagentTranscriptFromMessages(
       bestTitle = m.subagentTitle;
     }
     for (const row of m.subagentTranscript ?? []) {
-      if (!seenRowIds.has(row.id)) {
+      const existingIndex = rowIndexById.get(row.id);
+      if (existingIndex === undefined) {
+        rowIndexById.set(row.id, mergedTranscript.length);
         mergedTranscript.push(row);
-        seenRowIds.add(row.id);
+      } else if (transcriptRowSupersedes(row, mergedTranscript[existingIndex]!)) {
+        mergedTranscript[existingIndex] = row;
       }
     }
   }
   if (bestScore < 0) {
     return null;
   }
+  const subagentRunning = lastMatch?.subagentStatus === "running";
   return {
-    transcript: mergedTranscript,
-    subagentRunning: lastMatch?.subagentStatus === "running",
+    // A settled run must not keep live "Working" placeholder rows unioned in
+    // from earlier running-state cards.
+    transcript: subagentRunning
+      ? mergedTranscript
+      : mergedTranscript.filter(
+          (row) => !(row.type === "worked-session" && row.loading)
+        ),
+    subagentRunning,
     title: bestTitle,
   };
 }

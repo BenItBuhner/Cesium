@@ -227,8 +227,12 @@ import {
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
 import {
+  createSubagentProgressBroadcaster,
   createSubagentToolset,
+  latestSubagentTranscriptActivity,
+  pushRunningSubagentToolRow,
   runSubagentToolLoop,
+  settleSubagentToolRow,
   subagentToolDefinitions,
   subagentToolsetGuidance,
   type CesiumSubagentToolset,
@@ -4274,6 +4278,33 @@ class CesiumSessionHandle implements AgentSessionHandle {
         raw: args,
       },
     ]);
+    // Live progress: re-emit the running card (with the growing transcript) on
+    // the parent event stream so an open subagent tab updates in real time
+    // instead of freezing on "Working" until the terminal card lands.
+    let finished = false;
+    const progress = createSubagentProgressBroadcaster({
+      emit: () => {
+        if (finished) {
+          return Promise.resolve();
+        }
+        return this.callbacks
+          .appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "subagent",
+              subagentId,
+              title,
+              status: "running",
+              transcript: [...transcript],
+              recentActivity:
+                latestSubagentTranscriptActivity(transcript) ?? instructions.slice(0, 240),
+              raw: args,
+            },
+          ])
+          .then(() => undefined);
+      },
+    });
     let status: "completed" | "failed" = "completed";
     let resultText = "";
     try {
@@ -4307,19 +4338,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ],
         toolset,
         isAborted: () => this.cancelled || this.disposed,
-        onToolCall: async (event) => {
-          transcript.push({
-            seq: transcript.length + 1,
-            eventId: randomUUID(),
+        onToolCallStart: (event) => {
+          pushRunningSubagentToolRow({
+            transcript,
             conversationId: this.callbacks.conversation.id,
-            createdAt: Date.now(),
-            kind: "tool_call",
             toolCallId: event.toolCallId,
-            title: event.name,
-            toolKind: "mcp",
-            status: event.ok ? "completed" : "failed",
-            detail: event.result.slice(0, 600),
+            name: event.name,
+            arguments: event.arguments,
           });
+          progress.notify();
+        },
+        onToolCall: (event) => {
+          settleSubagentToolRow({
+            transcript,
+            conversationId: this.callbacks.conversation.id,
+            toolCallId: event.toolCallId,
+            name: event.name,
+            result: event.result,
+            ok: event.ok,
+          });
+          progress.notify();
         },
       });
       resultText =
@@ -4331,6 +4369,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
       status = "failed";
       resultText = error instanceof Error ? error.message : String(error);
     }
+    // Stop live progress before the terminal card so a stale running card can
+    // never land after (and re-open) the settled state.
+    finished = true;
+    progress.stop();
     transcript.push(
       {
         seq: transcript.length + 1,
@@ -4351,7 +4393,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         subagentId,
         title,
         status,
-        transcript,
+        transcript: [...transcript],
         recentActivity: resultText.slice(0, 240),
         raw: args,
       },
