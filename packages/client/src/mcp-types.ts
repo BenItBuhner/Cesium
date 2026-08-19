@@ -15,6 +15,8 @@ export type McpAuthConfig =
       authorizationUrl?: string;
       tokenUrl?: string;
       discoveryUrl?: string;
+      registrationUrl?: string;
+      resource?: string;
     };
 
 export type McpServerConfig = {
@@ -54,10 +56,21 @@ export type McpServerPublic = McpServerConfig & {
   removable?: boolean;
 };
 
+export type McpAuthOnboarding =
+  | { kind: "none" }
+  | { kind: "oauth-dcr" }
+  | { kind: "oauth-manual" }
+  | { kind: "bearer"; label?: string; docsUrl?: string }
+  | {
+      kind: "headers";
+      fields: Array<{ name: string; label: string; docsUrl?: string }>;
+    };
+
 export type McpPresetDefinition = {
   presetId: string;
   label: string;
   description: string;
+  onboarding?: McpAuthOnboarding;
   config: Omit<
     McpServerConfig,
     "id" | "label" | "enabled" | "createdAt" | "updatedAt" | "presetId"

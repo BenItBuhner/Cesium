@@ -1,6 +1,7 @@
 import type { McpServerConfig } from "@cesium/core/mcp";
 import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
 import { builtinMcpHttpUrl } from "../mcp/http-bridge-url.js";
+import { refreshMcpOAuthAccessToken } from "../mcp/oauth.js";
 import {
   getMcpSecret,
   isBuiltInBrowserMcpEnabled,
@@ -51,9 +52,9 @@ async function requestHeadersForSdkMcp(
       }
     }
   } else if (config.auth.kind === "oauth") {
-    const secret = await getMcpSecret(workspaceId, `${config.id}:oauth:access`);
-    if (secret?.kind === "oauth" && secret.accessToken.trim()) {
-      headers.Authorization = `Bearer ${secret.accessToken.trim()}`;
+    const accessToken = await refreshMcpOAuthAccessToken({ workspaceId, config });
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
     }
   }
   return headers;

@@ -3,6 +3,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpServerConfig } from "@cesium/core/mcp";
+import { refreshMcpOAuthAccessToken } from "./oauth.js";
 import { getMcpSecret } from "./server-store.js";
 import { validateMcpRemoteUrl } from "./url-policy.js";
 
@@ -29,10 +30,9 @@ async function resolveRequestHeaders(
       }
     }
   } else if (config.auth.kind === "oauth") {
-    const tokenSecretId = `${config.id}:oauth:access`;
-    const secret = await getMcpSecret(workspaceId, tokenSecretId);
-    if (secret?.kind === "oauth" && secret.accessToken.trim()) {
-      headers.Authorization = `Bearer ${secret.accessToken.trim()}`;
+    const accessToken = await refreshMcpOAuthAccessToken({ workspaceId, config });
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
     }
   }
   return headers;
@@ -78,9 +78,8 @@ export async function connectMcpClient(input: {
   const headers = await resolveRequestHeaders(workspaceId, config);
 
   if (config.auth.kind === "oauth") {
-    const tokenSecretId = `${config.id}:oauth:access`;
-    const secret = await getMcpSecret(workspaceId, tokenSecretId);
-    if (!secret || secret.kind !== "oauth" || !secret.accessToken.trim()) {
+    const accessToken = await refreshMcpOAuthAccessToken({ workspaceId, config });
+    if (!accessToken) {
       throw new Error("MCP server requires OAuth authentication. Connect it from Settings → Plugins.");
     }
   }

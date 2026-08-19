@@ -25,6 +25,7 @@ import {
   verifyClaudeCodeSdkSettings,
 } from "../lib/claude-code-sdk-settings.js";
 import { forceRefreshAllBackendCaches } from "../lib/agents/provider-cache-store.js";
+import { resolveOAuthPublicOrigin } from "../lib/oauth/public-origin.js";
 import {
   buildPiAgentOAuthCallbackUrl,
   completePiAgentOAuthCallback,
@@ -94,13 +95,7 @@ function allBackendIds(): AgentBackendId[] {
 function publicOriginFromRequest(c: {
   req: { url: string; header: (name: string) => string | undefined };
 }): string {
-  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-  const forwardedHost = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-  const url = new URL(c.req.url);
-  return `${url.protocol}//${url.host}`;
+  return resolveOAuthPublicOrigin(c.req);
 }
 
 settingsRoutes.get("/api/settings/global", async (c) => {

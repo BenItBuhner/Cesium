@@ -226,6 +226,8 @@ export type McpAuthConfig =
       authorizationUrl?: string;
       tokenUrl?: string;
       discoveryUrl?: string;
+      registrationUrl?: string;
+      resource?: string;
     };
 
 export type McpServerConfig = {
