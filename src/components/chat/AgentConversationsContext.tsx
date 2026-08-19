@@ -85,8 +85,13 @@ import {
   promptAgentConversation,
   resumeAgentConversation,
   retryAgentConversation,
+  sendAgentConversationQueueItem,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
+import {
+  endQueuedPromptFlush,
+  tryBeginQueuedPromptFlush,
+} from "@/lib/queued-prompt-flush-guard";
 
 function toConversationMap(
   conversations: AgentConversationRecord[]
@@ -312,6 +317,7 @@ type AgentConversationsContextValue = {
     delivery?: "normal" | "steer",
     planHandoff?: PlanBuildHandoff
   ) => Promise<boolean>;
+  sendQueuedPromptNow: (conversationId: string, itemId: string) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   pauseConversation: (conversationId: string) => Promise<void>;
@@ -1605,6 +1611,62 @@ const executePrompt = useCallback(
     [clearEditingQueuedPromptForConversation, executePrompt]
   );
 
+  const sendQueuedPromptNow = useCallback(
+    async (conversationId: string, itemId: string) => {
+      if (!tryBeginQueuedPromptFlush(conversationId)) {
+        return false;
+      }
+      const startedAt = performance.now();
+      flushAgentSubscriptionRef.current([conversationId]);
+      try {
+        const snapshot = await sendAgentConversationQueueItem(conversationId, itemId);
+        recordPerfSample("conversation.queue_send.ack", startedAt, {
+          conversationId,
+        });
+        mergeConversationSnapshot(snapshot.snapshot);
+        dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
+        flushAgentSubscriptionRef.current([conversationId]);
+        scheduleConversationCatchUpRef.current(conversationId);
+        void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
+        clearEditingQueuedPromptForConversation(conversationId);
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to send the queued message.";
+        setEventsByConversationId((current) => {
+          const existing = current[conversationId] ?? [];
+          const nextSeq = getConversationLatestSeq(existing) + 1;
+          return {
+            ...current,
+            [conversationId]: [
+              ...existing,
+              {
+                seq: nextSeq,
+                eventId:
+                  globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
+                conversationId,
+                createdAt: Date.now(),
+                kind: "system",
+                level: "error",
+                text: message,
+              },
+            ],
+          };
+        });
+        return false;
+      } finally {
+        endQueuedPromptFlush(conversationId);
+      }
+    },
+    [
+      clearEditingQueuedPromptForConversation,
+      markWorkspaceActivity,
+      mergeConversationSnapshot,
+    ]
+  );
+
   const retryConversation = useCallback(
     async (conversationId: string) => {
       try {
@@ -2419,6 +2481,7 @@ busy,
       setConversationBackend,
       setConversationConfigOption,
       promptConversation,
+      sendQueuedPromptNow,
       retryConversation,
       cancelConversation,
       pauseConversation,
@@ -2454,6 +2517,7 @@ getConversationComposerState,
 mergeConversationSnapshot,
 pendingConfigByConversationId,
 promptConversation,
+sendQueuedPromptNow,
 pauseConversation,
 resumeConversation,
 retryConversation,

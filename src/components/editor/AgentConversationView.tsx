@@ -113,6 +113,7 @@ answerPermissionForConversation,
 answerQuestionForConversation,
 getConversationComposerState,
 promptConversation,
+sendQueuedPromptNow,
 mergeConversationSnapshot,
 refreshConversations,
 cancelConversation,
@@ -383,34 +384,11 @@ loadOlderConversationHistory,
     },
     [conversationId, syncConversationSnapshot, upsertConversation]
   );
-  const unqueuePromptToComposer = useCallback(
+  const sendQueuedPrompt = useCallback(
     (item: QueuedChatPrompt) => {
-      void (async () => {
-        try {
-          const { conversation: nextConv } = await deleteAgentConversationQueueItem(
-            conversationId,
-            item.id
-          );
-          upsertConversation(nextConv);
-        } catch {
-          void syncConversationSnapshot(conversationId).catch(() => undefined);
-          return;
-        }
-        upsertComposerDraft(composerDraftId, {
-          title: composerDraftTitle,
-          content: item.text,
-          attachments: item.attachments,
-        });
-      })();
+      void sendQueuedPromptNow(conversationId, item.id);
     },
-    [
-      composerDraftId,
-      composerDraftTitle,
-      conversationId,
-      syncConversationSnapshot,
-      upsertComposerDraft,
-      upsertConversation,
-    ]
+    [conversationId, sendQueuedPromptNow]
   );
 
   const editQueuedPrompt = useCallback(
@@ -726,7 +704,7 @@ const showRecentChatsSection =
                   <ComposerQueueDock
                     items={queuedPrompts}
                     onDelete={removeQueuedPrompt}
-                    onUnqueue={unqueuePromptToComposer}
+                    onSendNow={sendQueuedPrompt}
                     onEdit={editQueuedPrompt}
                     conversationConfig={conversation?.config}
                     backendLabels={backendLabels}
@@ -871,7 +849,7 @@ const showRecentChatsSection =
                       <ComposerQueueDock
                         items={queuedPrompts}
                         onDelete={removeQueuedPrompt}
-                        onUnqueue={unqueuePromptToComposer}
+                        onSendNow={sendQueuedPrompt}
                         onEdit={editQueuedPrompt}
                         conversationConfig={conversation?.config}
                         backendLabels={backendLabels}

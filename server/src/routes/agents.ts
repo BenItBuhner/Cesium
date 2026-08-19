@@ -390,6 +390,32 @@ agentRoutes.delete(
   }
 );
 
+agentRoutes.post(
+  "/api/agents/conversations/:conversationId/queue/:itemId/send",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    const conversationId = c.req.param("conversationId");
+    const itemId = c.req.param("itemId");
+    if (!itemId) {
+      return c.json({ error: "Expected itemId." }, 400);
+    }
+    try {
+      const snapshot = await agentRuntimeManager.sendQueuedPromptNow(
+        workspace,
+        conversationId,
+        itemId
+      );
+      return c.json({ snapshot });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to send queued prompt.";
+      const notFound =
+        message.startsWith("Unknown conversation:") ||
+        message.startsWith("Unknown queued prompt:");
+      return c.json({ error: message }, notFound ? 404 : 400);
+    }
+  }
+);
+
 agentRoutes.post("/api/agents/conversations/:conversationId/cancel", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");

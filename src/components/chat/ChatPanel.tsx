@@ -313,6 +313,7 @@ setConversationMode,
 setConversationModel,
 setConversationConfigOption,
 promptConversation,
+sendQueuedPromptNow,
 retryConversation,
 pendingConfigByConversationId,
 setPendingConfigForConversation,
@@ -1055,34 +1056,15 @@ workspaceSession.chat.model,
     [activeConversation?.id, syncConversationSnapshot, upsertConversation]
   );
 
-  const unqueuePromptToComposer = useCallback(
+  const sendQueuedPromptForActiveChat = useCallback(
     (item: QueuedChatPrompt) => {
       const cid = activeConversation?.id;
       if (!cid) {
         return;
       }
-      void (async () => {
-        try {
-          const { conversation } = await deleteAgentConversationQueueItem(cid, item.id);
-          upsertConversation(conversation);
-        } catch {
-          void syncConversationSnapshot(cid).catch(() => undefined);
-          return;
-        }
-        upsertComposerDraft(composerDraftId, {
-          title: composerDraftTitle,
-          content: item.text,
-          attachments: item.attachments,
-        });
-      })();
+      void sendQueuedPromptNow(cid, item.id);
     },
-    [
-      activeConversation?.id,
-      composerDraftId,
-      composerDraftTitle,
-      syncConversationSnapshot,
-      upsertComposerDraft,
-    ]
+    [activeConversation?.id, sendQueuedPromptNow]
   );
 
   const editQueuedPromptForActiveChat = useCallback(
@@ -2679,7 +2661,7 @@ const cancelPromptForDraft = useCallback(
 <ComposerQueueDock
                   items={activeQueuedPrompts}
                   onDelete={removeQueuedPromptForActiveChat}
-                  onUnqueue={unqueuePromptToComposer}
+                  onSendNow={sendQueuedPromptForActiveChat}
                   onEdit={editQueuedPromptForActiveChat}
                   conversationConfig={activeConversation?.config}
                   backendLabels={Object.fromEntries(
@@ -2773,7 +2755,7 @@ const cancelPromptForDraft = useCallback(
                     <ComposerQueueDock
                       items={activeQueuedPrompts}
                       onDelete={removeQueuedPromptForActiveChat}
-                      onUnqueue={unqueuePromptToComposer}
+                      onSendNow={sendQueuedPromptForActiveChat}
                       onEdit={editQueuedPromptForActiveChat}
                       conversationConfig={activeConversation?.config}
                       backendLabels={Object.fromEntries(
