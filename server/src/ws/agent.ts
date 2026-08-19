@@ -25,7 +25,22 @@ type AgentSocketState = {
   subscribeChain: Promise<void>;
 };
 
-const agentWebSocketServer = new WebSocketServer({ noServer: true });
+// Node/desktop fallback path (Bun.serve configures its own compression).
+// Agent frames are repetitive JSON that deflates 5-10x; the threshold keeps
+// tiny control frames uncompressed and no-context-takeover keeps per-socket
+// memory flat with thousands of connected clients.
+const agentWebSocketServer = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate:
+    process.env.NODE_WS_PERMESSAGE_DEFLATE === "0"
+      ? false
+      : {
+          threshold: 1_024,
+          serverNoContextTakeover: true,
+          clientNoContextTakeover: true,
+          zlibDeflateOptions: { level: 3 },
+        },
+});
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
 const MAX_EVENT_BATCH_EVENTS = 100;
 const MAX_SOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -330,6 +345,59 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
       }
       if (message.type === "ping") {
         send(ws, { type: "pong" });
+        return;
+      }
+      if (message.type === "request_events_since") {
+        const conversationId =
+          typeof message.conversationId === "string" ? message.conversationId.trim() : "";
+        const sinceSeq =
+          typeof message.sinceSeq === "number" && Number.isFinite(message.sinceSeq)
+            ? Math.max(0, Math.floor(message.sinceSeq))
+            : -1;
+        if (!conversationId || sinceSeq < 0) {
+          send(ws, {
+            type: "error",
+            message: "request_events_since requires conversationId and sinceSeq.",
+          });
+          return;
+        }
+        if (!state.subscribedConversationIds.has(conversationId)) {
+          send(ws, {
+            type: "error",
+            message: "Subscribe to the conversation before requesting a delta.",
+          });
+          return;
+        }
+        void (async () => {
+          try {
+            const replay = await readConversationEventsSince(
+              state.workspaceId,
+              conversationId,
+              sinceSeq
+            );
+            // Recovery deltas are never dropped for backpressure — the client
+            // asked precisely because earlier droppable frames were lost.
+            for (let i = 0; i < replay.length; i += MAX_EVENT_BATCH_EVENTS) {
+              send(ws, {
+                type: "event_batch",
+                workspaceId: state.workspaceId,
+                conversationId,
+                events: replay.slice(i, i + MAX_EVENT_BATCH_EVENTS),
+              });
+            }
+          } catch (error) {
+            console.error("[ws/agent] request_events_since failed:", error);
+            send(ws, {
+              type: "error",
+              message:
+                error instanceof Error
+                  ? `Delta fetch failed: ${error.message}`
+                  : "Delta fetch failed.",
+              conversationId,
+              op: "request_events_since",
+            });
+          }
+        })();
         return;
       }
       if (message.type === "request_history") {

@@ -704,6 +704,18 @@ export type AgentSocketClientMessage =
       limitTurns?: number;
       limitEvents?: number;
     }
+  | {
+      /**
+       * Gap recovery: replay events after `sinceSeq` for a subscribed
+       * conversation. Sent when the client detects a sequence gap in the live
+       * stream or when a pushed record's `lastEventSeq` runs ahead of the
+       * local log (stream frames are droppable under backpressure by design —
+       * this is the heal path).
+       */
+      type: "request_events_since";
+      conversationId: string;
+      sinceSeq: number;
+    }
   | { type: "ping" };
 
 export type AgentSocketServerMessage =
@@ -751,7 +763,7 @@ export type AgentSocketServerMessage =
       type: "error";
       message: string;
       conversationId?: string;
-      op?: "request_history";
+      op?: "request_history" | "request_events_since";
     };
 
 /**

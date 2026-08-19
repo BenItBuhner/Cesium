@@ -30,6 +30,25 @@ const CALM_FRAME_INTERVAL_MS = 1000 / 15;
 const LOW_POWER_CALM_FRAME_INTERVAL_MS = 1000 / 10;
 /** Window visible but not focused (another window on top / beside it). */
 const UNFOCUSED_FRAME_INTERVAL_MS = 1000 / 8;
+/**
+ * Every aurora frame damages the whole window, so composite cost scales with
+ * DISPLAY pixels (device pixels, not CSS pixels) even though the canvas
+ * paints at a tiny internal resolution. Above QHD the drift drops to 20fps
+ * and above 4K to 12fps — imperceptible under the heavy blur, but it keeps
+ * the standing GPU cost flat instead of quadrupling at 4K and 16x-ing at 8K.
+ */
+const QHD_DEVICE_PIXELS = 2_560 * 1_440;
+const UHD_4K_DEVICE_PIXELS = 3_840 * 2_160;
+const LARGE_DISPLAY_FRAME_INTERVAL_MS = 1000 / 20;
+const HUGE_DISPLAY_FRAME_INTERVAL_MS = 1000 / 12;
+
+function displayDevicePixels(): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  return window.innerWidth * dpr * (window.innerHeight * dpr);
+}
 
 let lowPowerDisplayCache: boolean | null = null;
 function isLowPowerDisplay(): boolean {
@@ -45,6 +64,44 @@ function isLowPowerDisplay(): boolean {
   }
   return lowPowerDisplayCache;
 }
+
+/**
+ * GPU-less compositing (SwiftShader / llvmpipe / headless fallbacks) pays for
+ * every full-window damage in CPU; the aurora's whole-window canvas is the
+ * dominant standing cost there (~38% of a core at 4K/15fps measured under
+ * SwiftShader). Such machines get survival frame rates — the drift stays
+ * alive, the tax collapses.
+ */
+let softwareRendererCache: boolean | null = null;
+function isSoftwareRenderer(): boolean {
+  if (softwareRendererCache !== null) {
+    return softwareRendererCache;
+  }
+  let result = false;
+  try {
+    const probe = document.createElement("canvas");
+    const gl =
+      probe.getContext("webgl") ??
+      (probe.getContext("experimental-webgl") as WebGLRenderingContext | null);
+    if (!gl) {
+      result = true;
+    } else {
+      const info = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = info
+        ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) ?? "")
+        : "";
+      result = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(renderer);
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    }
+  } catch {
+    result = false;
+  }
+  softwareRendererCache = result;
+  return result;
+}
+
+const SOFTWARE_GL_FRAME_INTERVAL_MS = 1000 / 12;
+const SOFTWARE_GL_CALM_FRAME_INTERVAL_MS = 1000 / 8;
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
 const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
@@ -276,15 +333,38 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
       typeof document !== "undefined" && !document.hasFocus();
     const lowPower = isLowPowerDisplay();
 
+    const softwareGl = isSoftwareRenderer();
     const frameIntervalMs = (): number => {
       if (windowBlurred) {
         return UNFOCUSED_FRAME_INTERVAL_MS;
       }
-      const calm = moodRef.current === "idle" || moodRef.current === "paused";
-      if (calm) {
-        return lowPower ? LOW_POWER_CALM_FRAME_INTERVAL_MS : CALM_FRAME_INTERVAL_MS;
+      // Completed conversations sit open indefinitely; after the brief bloom
+      // transition the scene is ambient drift, same as idle.
+      const calm =
+        moodRef.current === "idle" ||
+        moodRef.current === "paused" ||
+        moodRef.current === "completed";
+      let baseInterval = calm
+        ? lowPower
+          ? LOW_POWER_CALM_FRAME_INTERVAL_MS
+          : CALM_FRAME_INTERVAL_MS
+        : lowPower
+          ? LOW_POWER_FRAME_INTERVAL_MS
+          : FRAME_INTERVAL_MS;
+      if (softwareGl) {
+        baseInterval = Math.max(
+          baseInterval,
+          calm ? SOFTWARE_GL_CALM_FRAME_INTERVAL_MS : SOFTWARE_GL_FRAME_INTERVAL_MS
+        );
       }
-      return lowPower ? LOW_POWER_FRAME_INTERVAL_MS : FRAME_INTERVAL_MS;
+      const pixels = displayDevicePixels();
+      if (pixels >= UHD_4K_DEVICE_PIXELS) {
+        return Math.max(baseInterval, HUGE_DISPLAY_FRAME_INTERVAL_MS);
+      }
+      if (pixels >= QHD_DEVICE_PIXELS) {
+        return Math.max(baseInterval, LARGE_DISPLAY_FRAME_INTERVAL_MS);
+      }
+      return baseInterval;
     };
 
     const tick = (now: number) => {

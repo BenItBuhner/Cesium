@@ -136,6 +136,40 @@ function pickAvailableBackend(
   );
 }
 
+/**
+ * Structural equality for record meta fields (pending permission/question,
+ * queued prompts). Reference and empty checks short-circuit the overwhelmingly
+ * common cases (null / empty) so record-batch merges stay cheap with
+ * thousands of running conversations; only genuinely differing values pay for
+ * a stringify compare.
+ */
+function conversationMetaFieldEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  const aEmpty = a == null || (Array.isArray(a) && a.length === 0);
+  const bEmpty = b == null || (Array.isArray(b) && b.length === 0);
+  if (aEmpty || bEmpty) {
+    return aEmpty === bEmpty;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function conversationMetaChanged(
+  existing: AgentConversationRecord,
+  incoming: AgentConversationRecord
+): boolean {
+  return (
+    existing.status !== incoming.status ||
+    existing.title !== incoming.title ||
+    existing.lastError !== incoming.lastError ||
+    existing.archivedAt !== incoming.archivedAt ||
+    !conversationMetaFieldEqual(existing.pendingPermission, incoming.pendingPermission) ||
+    !conversationMetaFieldEqual(existing.pendingQuestion, incoming.pendingQuestion) ||
+    !conversationMetaFieldEqual(existing.queuedPrompts ?? [], incoming.queuedPrompts ?? [])
+  );
+}
+
 function mergeConversationByRecency(
   existing: AgentConversationRecord | undefined,
   incoming: AgentConversationRecord
@@ -154,18 +188,7 @@ function mergeConversationByRecency(
     if (incomingWithQueue.lastEventSeq > existing.lastEventSeq) {
       return { ...incomingWithQueue, updatedAt: existing.updatedAt };
     }
-    const metaChanged =
-      existing.status !== incomingWithQueue.status ||
-      JSON.stringify(existing.pendingPermission) !==
-        JSON.stringify(incomingWithQueue.pendingPermission) ||
-      JSON.stringify(existing.pendingQuestion) !==
-        JSON.stringify(incomingWithQueue.pendingQuestion) ||
-      existing.title !== incomingWithQueue.title ||
-      existing.lastError !== incomingWithQueue.lastError ||
-      existing.archivedAt !== incomingWithQueue.archivedAt ||
-      JSON.stringify(existing.queuedPrompts ?? []) !==
-        JSON.stringify(incomingWithQueue.queuedPrompts ?? []);
-    if (metaChanged) {
+    if (conversationMetaChanged(existing, incomingWithQueue)) {
       return {
         ...existing,
         ...incomingWithQueue,
@@ -174,17 +197,7 @@ function mergeConversationByRecency(
     }
     return existing;
   }
-  const metaChanged =
-    existing.status !== incomingWithQueue.status ||
-    JSON.stringify(existing.pendingPermission) !==
-      JSON.stringify(incomingWithQueue.pendingPermission) ||
-    JSON.stringify(existing.pendingQuestion) !==
-      JSON.stringify(incomingWithQueue.pendingQuestion) ||
-    existing.title !== incomingWithQueue.title ||
-    existing.lastError !== incomingWithQueue.lastError ||
-    existing.archivedAt !== incomingWithQueue.archivedAt ||
-    JSON.stringify(existing.queuedPrompts ?? []) !==
-      JSON.stringify(incomingWithQueue.queuedPrompts ?? []);
+  const metaChanged = conversationMetaChanged(existing, incomingWithQueue);
   if (metaChanged || incomingWithQueue.lastEventSeq !== existing.lastEventSeq) {
     const lastError = incomingWithQueue.lastError ?? existing.lastError;
     const status =
@@ -417,6 +430,10 @@ const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
 const CONVERSATION_UPSERT_COALESCE_MS = 250;
 /** Stream commit window while the tab is hidden — nobody sees the frames. */
 const HIDDEN_STREAM_BATCH_WINDOW_MS = 1_000;
+/** At most one gap-recovery delta request per conversation per window. */
+const EVENT_DELTA_REQUEST_COOLDOWN_MS = 2_000;
+/** Grace before treating record.lastEventSeq > local tail as lost frames. */
+const EVENT_CONSISTENCY_GRACE_MS = 2_000;
 /**
  * Very long transcripts make each commit expensive (full projection +
  * reconciliation downstream), so the batch window stretches with the largest
@@ -455,6 +472,8 @@ type StreamRenderPerfControl = {
   flush: () => void;
   reset: () => void;
   snapshot: () => StreamRenderPerfSnapshot;
+  /** Diagnostics: committed tail seq of a conversation's local event log. */
+  tailSeq: (conversationId: string) => number;
 };
 
 declare global {
@@ -869,6 +888,14 @@ export function AgentConversationsProvider({
           [incoming.id]: { hasOlder: false },
         }));
       }
+      // Snapshots reset the gap-detection baseline to the merged tail.
+      {
+        const ledger = lastSeenSeqByConversationRef.current;
+        const tailSeq = getConversationLatestSeq(eventsStore.get(incoming.id));
+        if (tailSeq > (ledger.get(incoming.id) ?? 0)) {
+          ledger.set(incoming.id, tailSeq);
+        }
+      }
 
 updateWorkspaceSession((current) => {
       const unreadMap = nextUnreadCompletionMap(current, prev, merged);
@@ -1115,11 +1142,85 @@ updateWorkspaceSession((current) => {
     commitEventBatchesRef.current = commitConversationEventBatches;
   }, [commitConversationEventBatches]);
 
+  /**
+   * Highest event seq seen per conversation (including events still pending
+   * in the render batcher). Live stream frames are droppable under socket
+   * backpressure by design; this is the ledger that lets the client notice a
+   * hole and request a delta instead of silently rendering a stale transcript.
+   */
+  const lastSeenSeqByConversationRef = useRef(new Map<string, number>());
+  const deltaRequestCooldownUntilRef = useRef(new Map<string, number>());
+  const consistencyCheckTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const requestEventsDelta = useCallback((conversationId: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      return;
+    }
+    const now = Date.now();
+    const cooldownUntil = deltaRequestCooldownUntilRef.current.get(conversationId) ?? 0;
+    if (cooldownUntil > now) {
+      return;
+    }
+    deltaRequestCooldownUntilRef.current.set(
+      conversationId,
+      now + EVENT_DELTA_REQUEST_COOLDOWN_MS
+    );
+    socket.send({
+      type: "request_events_since",
+      conversationId,
+      sinceSeq: lastSeenSeqByConversationRef.current.get(conversationId) ?? 0,
+    });
+  }, []);
+
+  /**
+   * A pushed record whose `lastEventSeq` runs ahead of the local log means
+   * frames were lost (or never subscribed-through). Give in-flight batches a
+   * grace period, then heal with a delta if the hole is still there.
+   */
+  const scheduleEventConsistencyCheck = useCallback(
+    (conversationId: string) => {
+      if (consistencyCheckTimersRef.current.has(conversationId)) {
+        return;
+      }
+      const timer = setTimeout(() => {
+        consistencyCheckTimersRef.current.delete(conversationId);
+        const record = conversationsByIdRef.current[conversationId];
+        if (!record) {
+          return;
+        }
+        const lastSeen = lastSeenSeqByConversationRef.current.get(conversationId) ?? 0;
+        if (record.lastEventSeq > lastSeen && lastSeen > 0) {
+          requestEventsDelta(conversationId);
+        }
+      }, EVENT_CONSISTENCY_GRACE_MS);
+      consistencyCheckTimersRef.current.set(conversationId, timer);
+    },
+    [requestEventsDelta]
+  );
+
   const ingestConversationEvents = useCallback(
     (conversationId: string, incoming: AgentStoredEvent[]) => {
       if (incoming.length === 0) {
         return;
       }
+      const ledger = lastSeenSeqByConversationRef.current;
+      const lastSeen = ledger.get(conversationId) ?? 0;
+      let minIncoming = Number.POSITIVE_INFINITY;
+      let maxIncoming = lastSeen;
+      for (const event of incoming) {
+        if (event.seq < minIncoming) {
+          minIncoming = event.seq;
+        }
+        if (event.seq > maxIncoming) {
+          maxIncoming = event.seq;
+        }
+      }
+      if (lastSeen > 0 && minIncoming > lastSeen + 1) {
+        // Sequence hole: frames between lastSeen and this batch were dropped.
+        requestEventsDelta(conversationId);
+      }
+      ledger.set(conversationId, maxIncoming);
       streamRenderPerfRef.current.receivedEvents += incoming.length;
       eventRenderBatcher.enqueue(
         conversationId,
@@ -1127,7 +1228,7 @@ updateWorkspaceSession((current) => {
         shouldFlushAgentEventRenderBatch(incoming)
       );
     },
-    [eventRenderBatcher]
+    [eventRenderBatcher, requestEventsDelta]
   );
 
   useEffect(() => {
@@ -1171,6 +1272,8 @@ updateWorkspaceSession((current) => {
         ...streamRenderPerfRef.current,
         pendingEvents: eventRenderBatcher.pendingEventCount(),
       }),
+      tailSeq: (conversationId) =>
+        getConversationLatestSeq(eventsStore.get(conversationId)),
     };
     window.__opencursorStreamRenderPerf = control;
     return () => {
@@ -1178,7 +1281,7 @@ updateWorkspaceSession((current) => {
         delete window.__opencursorStreamRenderPerf;
       }
     };
-  }, [eventRenderBatcher]);
+  }, [eventRenderBatcher, eventsStore]);
 
   useEffect(
     () => () => {
@@ -1235,11 +1338,24 @@ updateWorkspaceSession((current) => {
         }
         return session;
       });
+      // Record pushes double as a consistency signal: for subscribed
+      // conversations, a lastEventSeq ahead of the local log means live
+      // frames were dropped — heal with a delta after a short grace.
+      const openIds = new Set(openConversationIdsRef.current);
+      for (const { merged } of applied) {
+        if (!openIds.has(merged.id)) {
+          continue;
+        }
+        const lastSeen = lastSeenSeqByConversationRef.current.get(merged.id) ?? 0;
+        if (lastSeen > 0 && merged.lastEventSeq > lastSeen) {
+          scheduleEventConsistencyCheck(merged.id);
+        }
+      }
       if (options.dispatch) {
         dispatchAgentConversationsUpsertedBatch(applied.map((entry) => entry.merged));
       }
     },
-    [updateWorkspaceSession]
+    [scheduleEventConsistencyCheck, updateWorkspaceSession]
   );
   const applyConversationRecordBatchRef = useRef(applyConversationRecordBatch);
   useEffect(() => {
@@ -2096,6 +2212,7 @@ busy,
       setBackends([]);
       setConversationsById({});
       eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setConversationLoadStatusById({});
@@ -2126,6 +2243,7 @@ busy,
     setBootstrapped(false);
     setConversationsById({});
     eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
     loadedSnapshotConversationIdsRef.current.clear();
     backgroundSnapshotCooldownUntilRef.current = {};
     setHistoryMetaById({});
@@ -2145,6 +2263,7 @@ busy,
 
       setConversationsById(toConversationMap(nextConversations));
       eventsStore.clear();
+      lastSeenSeqByConversationRef.current.clear();
       loadedSnapshotConversationIdsRef.current.clear();
       backgroundSnapshotCooldownUntilRef.current = {};
       setHistoryMetaById({});
@@ -2435,6 +2554,13 @@ busy,
           const deletedId = message.conversationId;
           eventRenderBatcher.discard(deletedId);
           pendingSocketUpsertsRef.current.delete(deletedId);
+          lastSeenSeqByConversationRef.current.delete(deletedId);
+          deltaRequestCooldownUntilRef.current.delete(deletedId);
+          const consistencyTimer = consistencyCheckTimersRef.current.get(deletedId);
+          if (consistencyTimer != null) {
+            clearTimeout(consistencyTimer);
+            consistencyCheckTimersRef.current.delete(deletedId);
+          }
           setConversationsById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2536,6 +2662,11 @@ busy,
       }
       pendingSocketUpsertsRef.current.clear();
       pendingForeignUpsertsRef.current.clear();
+      for (const timer of consistencyCheckTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      consistencyCheckTimersRef.current.clear();
+      deltaRequestCooldownUntilRef.current.clear();
     };
   }, [
     activeWorkspaceId,

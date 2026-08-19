@@ -69,6 +69,7 @@ import {
   dispatchAgentConversationUpserted,
   type AgentConversationDeletedDetail,
   type AgentConversationsUpsertedBatchDetail,
+  type AgentConversationUpsertedDetail,
 } from "@/lib/agent-conversation-events";
 import {
   patchAgentConversationGroups,
@@ -926,20 +927,27 @@ export function AgentShellStateProvider({
   }, [refreshConversationGroupsIfStale]);
 
   useEffect(() => {
-    const onUpsertBatch = (ev: Event) => {
-      const detail = (ev as CustomEvent<AgentConversationsUpsertedBatchDetail>).detail;
-      const records = (detail?.conversations ?? []).filter(
-        (record) => record?.id && record.workspaceId
-      );
-      if (records.length === 0) {
+    // The rail renders every conversation row, so each groups update is the
+    // most expensive state application in the shell. Pushed record batches
+    // coalesce here for up to a second under sustained load (latest record
+    // per conversation wins); a quiet period applies the first batch
+    // immediately so light activity still feels instant.
+    const pendingRecords = new Map<string, AgentConversationUpsertedDetail>();
+    let applyTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastApplyAt = 0;
+    const RAIL_PATCH_COALESCE_MS = 1_000;
+
+    const applyPending = () => {
+      applyTimer = null;
+      if (pendingRecords.size === 0) {
         return;
       }
+      const records = [...pendingRecords.values()];
+      pendingRecords.clear();
+      lastApplyAt = Date.now();
       if (railInitialLoadCompletedRef.current) {
         railFetchGenerationRef.current += 1;
       }
-      // One state update per batch: with hundreds of concurrently running
-      // agents this is the difference between 1 rail render per window and 1
-      // per agent per window.
       setGroups((prev) =>
         records.reduce(
           (acc, record) =>
@@ -948,11 +956,31 @@ export function AgentShellStateProvider({
         )
       );
     };
+
+    const onUpsertBatch = (ev: Event) => {
+      const detail = (ev as CustomEvent<AgentConversationsUpsertedBatchDetail>).detail;
+      const records = (detail?.conversations ?? []).filter(
+        (record) => record?.id && record.workspaceId
+      );
+      if (records.length === 0) {
+        return;
+      }
+      for (const record of records) {
+        pendingRecords.set(record.id, record);
+      }
+      if (applyTimer != null) {
+        return;
+      }
+      const delay = Math.max(0, RAIL_PATCH_COALESCE_MS - (Date.now() - lastApplyAt));
+      applyTimer = setTimeout(applyPending, delay);
+    };
     const onDeleted = (ev: Event) => {
       const detail = (ev as CustomEvent<AgentConversationDeletedDetail>).detail;
       if (!detail?.conversationId || !detail.workspaceId) {
         return;
       }
+      // A queued upsert for the deleted conversation must not resurrect it.
+      pendingRecords.delete(detail.conversationId);
       if (railInitialLoadCompletedRef.current) {
         railFetchGenerationRef.current += 1;
       }
@@ -970,6 +998,9 @@ export function AgentShellStateProvider({
     return () => {
       window.removeEventListener(AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT, onUpsertBatch);
       window.removeEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
+      if (applyTimer != null) {
+        clearTimeout(applyTimer);
+      }
     };
   }, [activeServer.id]);
 
