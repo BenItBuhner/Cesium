@@ -131,11 +131,12 @@ import {
   getCaretOffset,
   getPlainTextRangeOffsets,
   parseTriggerToken,
-  planComposerReconcile,
-  pushComposerEcho,
+  recordComposerDomReport,
   reconcileComposerEditorDom,
   replaceTextRange,
   setCaretOffset,
+  shouldDeferComposerReconcile,
+  type ComposerDomReport,
   type ComposerPillDescriptor,
 } from "./composer-editor-utils";
 import {
@@ -1238,9 +1239,10 @@ export function ChatComposer({
   const animationFrameRef = useRef<number | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const reconcilingRef = useRef(false);
-  /** Texts already reported upward while the DOM held them; incoming `value`
-   * renders matching an entry are echoes, not external changes. */
-  const pendingEchoesRef = useRef<string[]>([]);
+  /** Recent texts reported upward while the DOM held them; incoming `value`
+   * renders matching an entry are echoes, not external changes. Entries age
+   * out instead of being consumed — the same report can echo several times. */
+  const domReportsRef = useRef<ComposerDomReport[]>([]);
   /** True between compositionstart/compositionend — the DOM must not be
    * rebuilt while an IME is composing. */
   const composingRef = useRef(false);
@@ -2593,7 +2595,7 @@ export function ChatComposer({
       }
       // The DOM now holds "" — treat it as the newest report so late echoes of
       // the submitted prompt are skipped instead of resurrecting it.
-      pushComposerEcho(pendingEchoesRef.current, "");
+      recordComposerDomReport(domReportsRef.current, "");
     }
     valueRef.current = "";
     setComposerValue("");
@@ -2650,7 +2652,7 @@ export function ChatComposer({
     // Remember what the DOM itself reported: when this exact string comes back
     // down as the (by then possibly stale) controlled `value`, the reconcile
     // effect must treat it as an echo instead of rebuilding the DOM with it.
-    pushComposerEcho(pendingEchoesRef.current, text);
+    recordComposerDomReport(domReportsRef.current, text);
     setComposerValue(text);
     setComposerSelection({ start: caret, end: caret });
   }, [hardwareInputEnabled, setComposerSelection, setComposerValue]);
@@ -2724,28 +2726,19 @@ export function ChatComposer({
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (composerEditorDomInSync(el, value, pillDescriptors)) {
-      // Fully caught up: this render confirmed the echo, drop it and anything
-      // older so those strings regain "external change" semantics.
-      const confirmed = pendingEchoesRef.current.lastIndexOf(value);
-      if (confirmed !== -1) {
-        pendingEchoesRef.current = pendingEchoesRef.current.slice(confirmed + 1);
-      }
-      return;
-    }
+    if (composerEditorDomInSync(el, value, pillDescriptors)) return;
     // On slow devices (Android WebViews especially) input events outrun
     // React's passive-effect flush, so this effect can run with a `value`
     // older than the live DOM. Rebuilding from it would destroy the newer
     // keystrokes and shift the caret — skip stale echoes of text the DOM
     // itself reported, and never rewrite mid-IME-composition.
-    const plan = planComposerReconcile({
+    const defer = shouldDeferComposerReconcile({
       value,
       domText: getComposerPlainText(el),
       isComposing: composingRef.current,
-      pendingEchoes: pendingEchoesRef.current,
+      reportHistory: domReportsRef.current,
     });
-    pendingEchoesRef.current = plan.pendingEchoes;
-    if (plan.action === "skip") return;
+    if (defer) return;
     reconcilingRef.current = true;
     reconcileComposerEditorDom(el, value, pillDescriptors);
     queueMicrotask(() => { reconcilingRef.current = false; });

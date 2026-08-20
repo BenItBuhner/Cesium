@@ -1,141 +1,167 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
-  COMPOSER_ECHO_QUEUE_LIMIT,
-  planComposerReconcile,
-  pushComposerEcho,
+  COMPOSER_REPORT_HISTORY_LIMIT,
+  COMPOSER_REPORT_MAX_AGE_MS,
+  recordComposerDomReport,
+  shouldDeferComposerReconcile,
+  type ComposerDomReport,
 } from "../src/components/chat/composer-editor-utils.ts";
 
-describe("pushComposerEcho", () => {
+const T0 = 1_000_000;
+
+function history(...texts: string[]): ComposerDomReport[] {
+  return texts.map((text, i) => ({ text, at: T0 + i }));
+}
+
+describe("recordComposerDomReport", () => {
   test("appends reports and dedupes consecutive duplicates", () => {
-    const queue: string[] = [];
-    pushComposerEcho(queue, "a");
-    pushComposerEcho(queue, "ab");
-    pushComposerEcho(queue, "ab"); // selectionchange re-report of the same text
-    pushComposerEcho(queue, "abc");
-    assert.deepEqual(queue, ["a", "ab", "abc"]);
+    const reports: ComposerDomReport[] = [];
+    recordComposerDomReport(reports, "a", T0);
+    recordComposerDomReport(reports, "ab", T0 + 1);
+    recordComposerDomReport(reports, "ab", T0 + 2); // selectionchange re-report
+    recordComposerDomReport(reports, "abc", T0 + 3);
+    assert.deepEqual(reports.map((r) => r.text), ["a", "ab", "abc"]);
+    // The duplicate refreshed the timestamp instead of adding an entry.
+    assert.equal(reports[1]!.at, T0 + 2);
   });
 
-  test("caps the queue at the configured limit", () => {
-    const queue: string[] = [];
-    for (let i = 0; i < COMPOSER_ECHO_QUEUE_LIMIT + 25; i += 1) {
-      pushComposerEcho(queue, `text-${i}`);
+  test("caps the history at the configured limit", () => {
+    const reports: ComposerDomReport[] = [];
+    for (let i = 0; i < COMPOSER_REPORT_HISTORY_LIMIT + 25; i += 1) {
+      recordComposerDomReport(reports, `text-${i}`, T0 + i);
     }
-    assert.equal(queue.length, COMPOSER_ECHO_QUEUE_LIMIT);
-    assert.equal(queue[0], "text-25");
-    assert.equal(queue[queue.length - 1], `text-${COMPOSER_ECHO_QUEUE_LIMIT + 24}`);
+    assert.equal(reports.length, COMPOSER_REPORT_HISTORY_LIMIT);
+    assert.equal(reports[0]!.text, "text-25");
   });
 });
 
-describe("planComposerReconcile", () => {
-  test("skips a stale echo so newer keystrokes in the DOM survive", () => {
+describe("shouldDeferComposerReconcile", () => {
+  test("defers a stale echo so newer keystrokes in the DOM survive", () => {
     // Android fast-typing race: user typed "ab"; the DOM already holds it, but
     // the reconcile effect flushes with the echo of the earlier "a" report.
-    const plan = planComposerReconcile({
-      value: "a",
-      domText: "ab",
-      isComposing: false,
-      pendingEchoes: ["a", "ab"],
-    });
-    assert.equal(plan.action, "skip");
-    // "a" is consumed; "ab" stays queued for its own echo.
-    assert.deepEqual(plan.pendingEchoes, ["ab"]);
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "a",
+        domText: "ab",
+        isComposing: false,
+        reportHistory: history("a", "ab"),
+        now: T0 + 10,
+      }),
+      true
+    );
   });
 
-  test("skips echoes that lag multiple keystrokes behind", () => {
-    // Burst "abc" where the parent round-trip lags two keystrokes.
-    let queue = ["a", "ab", "abc"];
-    const first = planComposerReconcile({
-      value: "a",
-      domText: "abc",
-      isComposing: false,
-      pendingEchoes: queue,
-    });
-    assert.equal(first.action, "skip");
-    queue = first.pendingEchoes;
-    assert.deepEqual(queue, ["ab", "abc"]);
-
-    const second = planComposerReconcile({
-      value: "ab",
-      domText: "abc",
-      isComposing: false,
-      pendingEchoes: queue,
-    });
-    assert.equal(second.action, "skip");
-    assert.deepEqual(second.pendingEchoes, ["abc"]);
+  test("defers echoes that lag multiple keystrokes behind", () => {
+    const reports = history("t", "ty", "typ", "typi");
+    for (const stale of ["t", "ty", "typ"]) {
+      assert.equal(
+        shouldDeferComposerReconcile({
+          value: stale,
+          domText: "typi",
+          isComposing: false,
+          reportHistory: reports,
+          now: T0 + 10,
+        }),
+        true,
+        `echo ${JSON.stringify(stale)} must defer`
+      );
+    }
   });
 
-  test("reconciles genuine external changes and resets the queue", () => {
+  test("defers the same echo arriving repeatedly from different state paths", () => {
+    // Draft stores can echo one report several times (immediate parent state
+    // plus a slower persistence round-trip). Entries are not consumed, so the
+    // second arrival of "t" is still recognized as an echo.
+    const reports = history("t", "ty");
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal(
+        shouldDeferComposerReconcile({
+          value: "t",
+          domText: "ty",
+          isComposing: false,
+          reportHistory: reports,
+          now: T0 + 10 + i,
+        }),
+        true
+      );
+    }
+  });
+
+  test("reconciles genuine external changes", () => {
     // Draft switch / history recall: the incoming value was never reported
     // from this DOM, so the DOM must be rebuilt even though the user typed.
-    const plan = planComposerReconcile({
-      value: "restored older draft",
-      domText: "ab",
-      isComposing: false,
-      pendingEchoes: ["a", "ab"],
-    });
-    assert.equal(plan.action, "reconcile");
-    assert.deepEqual(plan.pendingEchoes, []);
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "restored older draft",
+        domText: "ab",
+        isComposing: false,
+        reportHistory: history("a", "ab"),
+        now: T0 + 10,
+      }),
+      false
+    );
   });
 
-  test("a consumed echo regains external-change semantics", () => {
-    // Once "he" is pruned (its echo confirmed), a later external reset to the
-    // very same string must reconcile instead of being mistaken for an echo.
-    const first = planComposerReconcile({
-      value: "he",
-      domText: "hello",
-      isComposing: false,
-      pendingEchoes: ["he", "hel", "hell", "hello"],
-    });
-    assert.equal(first.action, "skip");
-
-    const second = planComposerReconcile({
-      value: "he",
-      domText: "hello",
-      isComposing: false,
-      pendingEchoes: first.pendingEchoes,
-    });
-    assert.equal(second.action, "reconcile");
+  test("reports age out and regain external-change semantics", () => {
+    const reports = history("hi");
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "hi",
+        domText: "something else",
+        isComposing: false,
+        reportHistory: reports,
+        now: T0 + COMPOSER_REPORT_MAX_AGE_MS + 1000,
+      }),
+      false
+    );
   });
 
   test("never rebuilds the DOM during IME composition", () => {
-    // Even a genuine external change waits until compositionend; the queue is
-    // preserved so echo tracking resumes intact afterwards.
-    const plan = planComposerReconcile({
-      value: "external",
-      domText: "typing with ime",
-      isComposing: true,
-      pendingEchoes: ["typing with ime"],
-    });
-    assert.equal(plan.action, "skip");
-    assert.deepEqual(plan.pendingEchoes, ["typing with ime"]);
+    // Even a genuine external change waits until compositionend.
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "external",
+        domText: "typing with ime",
+        isComposing: true,
+        reportHistory: [],
+        now: T0,
+      }),
+      true
+    );
   });
 
-  test("reconciles pill-only mismatches when the text is already in sync", () => {
+  test("allows pill-only rebuilds when the text is already in sync", () => {
     // composerEditorDomInSync can fail on pill metadata (link title resolved)
     // while the plain text matches; that rebuild is safe and must proceed.
-    const plan = planComposerReconcile({
-      value: "see \u27E6link:abc\u27E7",
-      domText: "see \u27E6link:abc\u27E7",
-      isComposing: false,
-      pendingEchoes: ["see \u27E6link:abc\u27E7"],
-    });
-    assert.equal(plan.action, "reconcile");
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "see \u27E6link:abc\u27E7",
+        domText: "see \u27E6link:abc\u27E7",
+        isComposing: false,
+        reportHistory: history("see \u27E6link:abc\u27E7"),
+        now: T0 + 10,
+      }),
+      false
+    );
   });
 
-  test("post-submit clear skips a late echo of the submitted prompt", () => {
+  test("post-submit clear defers a late echo of the submitted prompt", () => {
     // submitComposer wipes the DOM to "" and records "" as the newest report.
     // A parent that re-applies the stale prompt afterwards must not resurrect
     // it in the editor.
-    const queue: string[] = ["deploy the fix"];
-    pushComposerEcho(queue, "");
-    const plan = planComposerReconcile({
-      value: "deploy the fix",
-      domText: "",
-      isComposing: false,
-      pendingEchoes: queue,
-    });
-    assert.equal(plan.action, "skip");
-    assert.deepEqual(plan.pendingEchoes, [""]);
+    const reports: ComposerDomReport[] = [];
+    recordComposerDomReport(reports, "deploy the fix", T0);
+    recordComposerDomReport(reports, "", T0 + 1);
+    assert.equal(
+      shouldDeferComposerReconcile({
+        value: "deploy the fix",
+        domText: "",
+        isComposing: false,
+        reportHistory: reports,
+        now: T0 + 10,
+      }),
+      true
+    );
   });
 });
