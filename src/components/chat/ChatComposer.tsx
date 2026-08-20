@@ -131,6 +131,8 @@ import {
   getCaretOffset,
   getPlainTextRangeOffsets,
   parseTriggerToken,
+  planComposerReconcile,
+  pushComposerEcho,
   reconcileComposerEditorDom,
   replaceTextRange,
   setCaretOffset,
@@ -1236,6 +1238,15 @@ export function ChatComposer({
   const animationFrameRef = useRef<number | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const reconcilingRef = useRef(false);
+  /** Texts already reported upward while the DOM held them; incoming `value`
+   * renders matching an entry are echoes, not external changes. */
+  const pendingEchoesRef = useRef<string[]>([]);
+  /** True between compositionstart/compositionend — the DOM must not be
+   * rebuilt while an IME is composing. */
+  const composingRef = useRef(false);
+  /** Bumped on compositionend so the reconcile effect re-runs any pass it
+   * deferred while the IME was composing. */
+  const [imeGeneration, setImeGeneration] = useState(0);
   menuRef.current = menu;
   modeRef.current = mode;
   modeOptionsRef.current = modeOptions;
@@ -2580,6 +2591,9 @@ export function ChatComposer({
           reconcilingRef.current = false;
         });
       }
+      // The DOM now holds "" — treat it as the newest report so late echoes of
+      // the submitted prompt are skipped instead of resurrecting it.
+      pushComposerEcho(pendingEchoesRef.current, "");
     }
     valueRef.current = "";
     setComposerValue("");
@@ -2633,9 +2647,27 @@ export function ChatComposer({
     if (!el) return;
     const text = getComposerPlainText(el);
     const caret = getCaretOffset(el);
+    // Remember what the DOM itself reported: when this exact string comes back
+    // down as the (by then possibly stale) controlled `value`, the reconcile
+    // effect must treat it as an echo instead of rebuilding the DOM with it.
+    pushComposerEcho(pendingEchoesRef.current, text);
     setComposerValue(text);
     setComposerSelection({ start: caret, end: caret });
   }, [hardwareInputEnabled, setComposerSelection, setComposerValue]);
+
+  const handleCompositionStart = useCallback(() => {
+    if (!hardwareInputEnabled) {
+      composingRef.current = true;
+    }
+  }, [hardwareInputEnabled]);
+
+  const handleCompositionEnd = useCallback(() => {
+    if (hardwareInputEnabled) return;
+    composingRef.current = false;
+    syncNativeState();
+    // Re-run whatever reconcile pass was deferred while the IME composed.
+    setImeGeneration((generation) => generation + 1);
+  }, [hardwareInputEnabled, syncNativeState]);
 
   /**
    * Map compact references into the minimal shape the DOM reconciler needs.
@@ -2692,12 +2724,32 @@ export function ChatComposer({
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (!composerEditorDomInSync(el, value, pillDescriptors)) {
-      reconcilingRef.current = true;
-      reconcileComposerEditorDom(el, value, pillDescriptors);
-      queueMicrotask(() => { reconcilingRef.current = false; });
+    if (composerEditorDomInSync(el, value, pillDescriptors)) {
+      // Fully caught up: this render confirmed the echo, drop it and anything
+      // older so those strings regain "external change" semantics.
+      const confirmed = pendingEchoesRef.current.lastIndexOf(value);
+      if (confirmed !== -1) {
+        pendingEchoesRef.current = pendingEchoesRef.current.slice(confirmed + 1);
+      }
+      return;
     }
-  }, [hardwareInputEnabled, pillDescriptors, value]);
+    // On slow devices (Android WebViews especially) input events outrun
+    // React's passive-effect flush, so this effect can run with a `value`
+    // older than the live DOM. Rebuilding from it would destroy the newer
+    // keystrokes and shift the caret — skip stale echoes of text the DOM
+    // itself reported, and never rewrite mid-IME-composition.
+    const plan = planComposerReconcile({
+      value,
+      domText: getComposerPlainText(el),
+      isComposing: composingRef.current,
+      pendingEchoes: pendingEchoesRef.current,
+    });
+    pendingEchoesRef.current = plan.pendingEchoes;
+    if (plan.action === "skip") return;
+    reconcilingRef.current = true;
+    reconcileComposerEditorDom(el, value, pillDescriptors);
+    queueMicrotask(() => { reconcilingRef.current = false; });
+  }, [hardwareInputEnabled, imeGeneration, pillDescriptors, value]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
@@ -3928,6 +3980,8 @@ const handleNativeComposerKeyDown = useCallback(
                   syncNativeState();
                 }
               }}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
               onPaste={(event: ReactClipboardEvent<HTMLDivElement>) => {
                 const cd = event.clipboardData;
                 const imageFiles = collectClipboardImageFiles(cd);
@@ -4172,6 +4226,8 @@ const handleNativeComposerKeyDown = useCallback(
               syncNativeState();
             }
           }}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onPaste={(event: ReactClipboardEvent<HTMLDivElement>) => {
             const cd = event.clipboardData;
             const imageFiles = collectClipboardImageFiles(cd);

@@ -477,6 +477,78 @@ export function reconcileComposerEditorDom(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reconcile planning (fast-typing / IME safety)
+// ---------------------------------------------------------------------------
+
+/** Upper bound for {@link pushComposerEcho}'s queue. Typing bursts on very slow
+ * devices can stack many un-echoed reports; anything beyond this is ancient
+ * enough that treating it as an external change is harmless. */
+export const COMPOSER_ECHO_QUEUE_LIMIT = 50;
+
+/**
+ * Record a composer text that was reported upward (via `onValueChange`) while
+ * the contenteditable DOM already held it. When that exact string later comes
+ * back down as the controlled `value` prop, it is an *echo* of our own report
+ * — not an external change — and must never trigger a DOM rebuild that would
+ * clobber keystrokes typed in the meantime.
+ */
+export function pushComposerEcho(queue: string[], text: string): void {
+  if (queue[queue.length - 1] === text) return;
+  queue.push(text);
+  if (queue.length > COMPOSER_ECHO_QUEUE_LIMIT) {
+    queue.splice(0, queue.length - COMPOSER_ECHO_QUEUE_LIMIT);
+  }
+}
+
+export interface ComposerReconcilePlan {
+  action: "reconcile" | "skip";
+  /** The echo queue after this pass (consumed echoes pruned / queue cleared). */
+  pendingEchoes: string[];
+}
+
+/**
+ * Decide whether the contenteditable may be rebuilt from `value` right now.
+ * Callers invoke this only after {@link composerEditorDomInSync} already
+ * failed for the current render.
+ *
+ * Two situations make an immediate rebuild destructive:
+ *
+ * 1. **Stale echo.** Input events mutate the DOM *before* they dispatch, and
+ *    React flushes the reconcile effect lazily (typically at the start of the
+ *    next discrete event). On slow devices — Android WebViews above all —
+ *    keystroke N+1 arrives before the effect for keystroke N's value has run,
+ *    so the effect sees a `value` older than the live DOM. Rebuilding from it
+ *    would delete the newer keystrokes and teleport the caret. If `value`
+ *    matches something we previously reported from the DOM itself, a newer
+ *    report is already in flight; skip and let the states converge.
+ * 2. **Active IME composition.** Replacing the DOM under a composing IME
+ *    cancels/commits the composition mid-word, which drops or reorders
+ *    characters. Defer until `compositionend`.
+ *
+ * Anything else (a `value` we never reported: draft switches, history recall,
+ * transcription inserts, programmatic clears) is a genuine external change and
+ * reconciles immediately, resetting the echo queue.
+ */
+export function planComposerReconcile(args: {
+  value: string;
+  domText: string;
+  isComposing: boolean;
+  pendingEchoes: readonly string[];
+}): ComposerReconcilePlan {
+  const { value, domText, isComposing, pendingEchoes } = args;
+  if (isComposing) {
+    return { action: "skip", pendingEchoes: [...pendingEchoes] };
+  }
+  if (domText !== value) {
+    const echoIndex = pendingEchoes.lastIndexOf(value);
+    if (echoIndex !== -1) {
+      return { action: "skip", pendingEchoes: pendingEchoes.slice(echoIndex + 1) };
+    }
+  }
+  return { action: "reconcile", pendingEchoes: [] };
+}
+
 /** `@query` or `/query` token ending at `cursor`, with char offsets into plain text. */
 export function parseTriggerToken(
   text: string,
