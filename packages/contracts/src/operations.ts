@@ -57,6 +57,7 @@ export const CESIUM_SDK_OPERATIONS = [
   operation("conversations.create", "POST", "/api/agents/conversations", "workspace"),
   operation("conversations.createAndPrompt", "POST", "/api/agents/conversations/create-and-prompt", "workspace"),
   operation("conversations.createStandalone", "POST", "/api/agents/conversations/standalone/create-and-prompt"),
+  operation("conversations.createStandaloneDraft", "POST", "/api/agents/conversations/standalone"),
   operation("conversations.get", "GET", "/api/agents/conversations/:conversationId", "workspace"),
   operation("conversations.prompt", "POST", "/api/agents/conversations/:conversationId/prompt", "workspace"),
   operation("conversations.retry", "POST", "/api/agents/conversations/:conversationId/retry", "workspace"),

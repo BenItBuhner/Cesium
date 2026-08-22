@@ -1210,6 +1210,24 @@ export async function createAndPromptAgentConversation(
   });
 }
 
+/** Persist a no-workspace new-chat composer as an empty standalone draft. */
+export async function createStandaloneAgentConversation(
+  input: AgentConversationCreateInput,
+  title?: string
+): Promise<{ conversation: AgentConversationRecord; workspace: WorkspaceRecord }> {
+  return request(
+    `/api/agents/conversations/standalone`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        conversation: input,
+        title,
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
 /** Create a no-workspace chat (temp dir sandbox) and send the first prompt. */
 export async function createAndPromptStandaloneAgentConversation(
   input: AgentConversationCreateInput,

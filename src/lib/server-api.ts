@@ -25,6 +25,7 @@ export {
   createAgentConversation,
   createAndPromptAgentConversation,
   createAndPromptStandaloneAgentConversation,
+  createStandaloneAgentConversation,
   createBrowserDebugSession,
   createCustomAgentPlugin,
   createExtensionSurfaceSession,

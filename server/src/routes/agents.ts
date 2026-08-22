@@ -186,6 +186,29 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
 });
 
 /**
+ * Persist a new-chat composer as a standalone draft: sandbox workspace +
+ * empty conversation with a provisional title. No prompt yet.
+ */
+agentRoutes.post("/api/agents/conversations/standalone", async (c) => {
+  const body = await c.req.json<{
+    conversation?: AgentConversationCreateInput;
+    title?: string;
+  }>();
+  const title = body.title?.trim() || body.conversation?.title?.trim();
+  const workspace = await createStandaloneChatWorkspace(title, {
+    backendId: body.conversation?.backendId,
+    mode: body.conversation?.mode,
+    modelId: body.conversation?.modelId,
+    modelName: body.conversation?.modelName,
+  });
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    ...(body.conversation ?? {}),
+    ...(title ? { title } : {}),
+  });
+  return c.json({ conversation, workspace }, 201);
+});
+
+/**
  * Create a chat with no project workspace: spins up a temporary directory +
  * ephemeral workspace, then creates and prompts the conversation there.
  * Does not require `x-opencursor-workspace-id`.

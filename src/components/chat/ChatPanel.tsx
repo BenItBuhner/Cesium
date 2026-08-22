@@ -51,6 +51,7 @@ import {
 } from "@/components/editor/OpenInEditorContext";
 import type { ComposerDraftRecord } from "@/components/editor/OpenInEditorContext";
 import { hasMeaningfulComposerContent } from "@/components/editor/OpenInEditorContext";
+import { formatProvisionalChatTitleFromComposer } from "@/lib/chat-draft-title";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import type {
@@ -82,7 +83,6 @@ import {
   deleteAgentConversationQueueItem,
   fetchAgentConversationSnapshot,
   forkAgentConversation,
-  generateDraftTitle,
   handoffAgentConversation,
   patchAgentConversationMetadata,
   prepareRedoAgentConversation,
@@ -212,6 +212,9 @@ function isRecentConversationCandidate(
   if (conversation.title.startsWith("Draft: ")) {
     return true;
   }
+  if (conversation.title.trim() && conversation.title !== "New chat") {
+    return true;
+  }
   const draft = composerDrafts[conversation.id];
   return Boolean(draft && hasMeaningfulComposerContent(draft));
 }
@@ -278,6 +281,7 @@ export function ChatPanel() {
   openComposerDraft,
   openAgentConversation,
   upsertComposerDraft,
+  migrateComposerDraft,
   setComposerSelection,
   expandedComposerDraftId,
   setExpandedComposerDraft,
@@ -1286,12 +1290,7 @@ workspaceSession.chat.model,
     }
 
     const prevTab = tabs.find((t) => t.id === prevTabId);
-    if (prevTab?.isDraft) {
-      return;
-    }
-
-    const prevConversation = conversationsById[prevTabId];
-    if (!prevConversation || prevConversation.lastEventSeq > 0) {
+    if (!prevTab) {
       return;
     }
 
@@ -1300,41 +1299,81 @@ workspaceSession.chat.model,
       return;
     }
 
+    const draftTitle = formatProvisionalChatTitleFromComposer(draft);
+    const prevConversation = conversationsById[prevTabId];
+    if (prevConversation && prevConversation.lastEventSeq > 0) {
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
-        const result = await generateDraftTitle(draft.content);
-        if (cancelled) return;
-        const generatedTitle = result.title ?? "Untitled";
-        const draftTabTitle = `Draft: ${generatedTitle}`;
+        if (isLocalDraftChatTab(prevTab)) {
+          const chat = chatDraftRef.current;
+          const conversation = await createConversation({
+            backendId: chat.backendId,
+            mode: chat.mode,
+            modelId: chat.model.modelValue ?? chat.model.id,
+            modelName: chat.model.name,
+            ...(chat.backendId === "cesium-agent" && chat.profileId
+              ? { profileId: chat.profileId }
+              : {}),
+            title: draftTitle,
+          });
+          if (cancelled) return;
+          migrateComposerDraft(prevTabId, conversation.id);
+          setTabs((current) =>
+            current.map((tab) =>
+              tab.id === prevTabId
+                ? {
+                    id: conversation.id,
+                    title: draftTitle,
+                    active: tab.active,
+                    isDraft: true,
+                  }
+                : tab
+            )
+          );
+          unhideConversationIds([conversation.id]);
+          return;
+        }
+
+        if (!prevConversation) {
+          return;
+        }
+
         setTabs((current) =>
           current.map((tab) =>
             tab.id === prevTabId
-              ? { ...tab, title: draftTabTitle, isDraft: true }
+              ? { ...tab, title: draftTitle, isDraft: true }
               : tab
           )
         );
         unhideConversationIds([prevTabId]);
-        void updateAgentConversationConfig(prevTabId, { title: draftTabTitle }).catch(() => undefined);
+        if (prevConversation.title !== draftTitle) {
+          void updateAgentConversationConfig(prevTabId, { title: draftTitle }).catch(
+            () => undefined
+          );
+        }
       } catch {
-        if (cancelled) return;
-        const fallbackTitle = "Draft: Untitled";
-        setTabs((current) =>
-          current.map((tab) =>
-            tab.id === prevTabId
-              ? { ...tab, title: fallbackTitle, isDraft: true }
-              : tab
-          )
-        );
-        unhideConversationIds([prevTabId]);
-        void updateAgentConversationConfig(prevTabId, { title: fallbackTitle }).catch(() => undefined);
+        // Keep the composer contents even if the draft conversation could not
+        // be persisted; the local tab still holds the new-chat state.
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeTabId, tabs, conversationsById, composerDrafts, setTabs, unhideConversationIds]);
+  }, [
+    activeTabId,
+    composerDrafts,
+    conversationsById,
+    createConversation,
+    migrateComposerDraft,
+    setTabs,
+    tabs,
+    unhideConversationIds,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -1881,7 +1920,7 @@ workspaceSession.chat.model,
           setTabs((current) =>
             current.map((tab) =>
               tab.id === conversation.id
-                ? { ...tab, title: "New chat", isDraft: undefined }
+                ? { ...tab, isDraft: undefined }
                 : tab
             )
           );
