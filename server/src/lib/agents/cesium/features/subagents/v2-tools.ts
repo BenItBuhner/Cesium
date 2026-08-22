@@ -41,7 +41,11 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
           },
           modelId: {
             type: "string",
-            description: "Optional model override for the child (provider/model).",
+            description:
+              "Optional model override for the child (provider/model, e.g. openai/gpt-5.1). " +
+              "Spawned agents inherit your current model by default — omit unless a different model genuinely fits the task " +
+              "(or the user asked for one). Only models enabled under Settings → Agents → Cesium Agent → Model access are accepted; " +
+              "the available roster (with per-model notes) is listed in this tool's description and your harness reminder.",
           },
           fork_turns: {
             type: "string",
@@ -166,6 +170,8 @@ export function createSubagentsV2Module(limits: CesiumHarnessLimits): CesiumFeat
     toolNames: tools.map((tool) => tool.name),
     reminder:
       "Subagents V2 is active. Prefer spawn_agent + wait_agent + followup_task for parallel collaborative work. " +
+      "Spawned agents inherit your current model by default; pass spawn_agent.modelId only when a different enabled model " +
+      "genuinely fits the task (see the available-models roster for per-model notes). " +
       "Spawn returns immediately; poll with wait_agent using short timeouts when you can keep working. " +
       "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2. " +
       "Children are equally capable agents: they share your workspace tool surface (files, terminal, MCP, browser) and all agents share the same filesystem and working directory, so edits by one agent are immediately visible to the others. " +

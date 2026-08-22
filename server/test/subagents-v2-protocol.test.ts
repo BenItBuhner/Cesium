@@ -125,3 +125,70 @@ test("relative targets resolve under the caller path", async () => {
   assert.equal(resolved.path, "/root/parent_task/leaf");
   runtime.dispose();
 });
+
+// Deliberately unresolvable model ids (unknown provider, no credentials) so
+// spawned child turns error immediately instead of reaching a live provider.
+const UNIT_MODEL_A = "unittestprov/model-a-for-unit-test";
+const UNIT_MODEL_B = "unittestprov/model-b-for-unit-test";
+
+test("spawned agents inherit the parent's current model (not the construction snapshot)", async () => {
+  let currentModel = UNIT_MODEL_A;
+  const runtime = new SubagentsV2Runtime({
+    conversationId: "conv-model-inherit",
+    limits: testLimits(),
+    defaultModelId: "unittestprov/stale-construction-snapshot",
+    resolveDefaultModelId: () => currentModel,
+    appendEvents: async () => {},
+  });
+  const first = JSON.parse(await runtime.spawnAgent({ task_name: "first", message: "work" }));
+  assert.equal(first.model, UNIT_MODEL_A);
+  assert.equal(first.model_inherited, true);
+  // Parent switches model mid-conversation → new children inherit the switch.
+  currentModel = UNIT_MODEL_B;
+  const second = JSON.parse(await runtime.spawnAgent({ task_name: "second", message: "work" }));
+  assert.equal(second.model, UNIT_MODEL_B);
+  assert.equal(runtime.resolveAgent("/root/second").modelId, UNIT_MODEL_B);
+  runtime.dispose();
+});
+
+test("spawn model overrides pass through resolveSpawnModel and rejections abort the spawn", async () => {
+  const runtime = new SubagentsV2Runtime({
+    conversationId: "conv-model-override",
+    limits: testLimits({ maxConcurrentSubagents: 8 }),
+    defaultModelId: UNIT_MODEL_A,
+    resolveSpawnModel: async (requested, defaultModelId) => {
+      if (!requested) return defaultModelId;
+      if (requested === "model-b-for-unit-test") return UNIT_MODEL_B; // shorthand resolution
+      if (requested === UNIT_MODEL_B) return requested;
+      throw new Error(`Model "${requested}" is not available for subagents.`);
+    },
+    appendEvents: async () => {},
+  });
+  const overridden = JSON.parse(
+    await runtime.spawnAgent({
+      task_name: "special",
+      message: "work",
+      modelId: "model-b-for-unit-test",
+    })
+  );
+  assert.equal(overridden.model, UNIT_MODEL_B);
+  assert.equal(overridden.model_inherited, false);
+  // Codex arg-name parity: `model` works as an alias for `modelId`.
+  const aliased = JSON.parse(
+    await runtime.spawnAgent({ task_name: "aliased", message: "work", model: UNIT_MODEL_B })
+  );
+  assert.equal(aliased.model, UNIT_MODEL_B);
+  // A disallowed model fails validation before any agent state is created.
+  await assert.rejects(
+    runtime.spawnAgent({ task_name: "blocked", message: "work", modelId: "acme/forbidden" }),
+    /not available for subagents/
+  );
+  const listed = runtime.listAgents();
+  assert.ok(!listed.some((agent) => agent.agent_name === "/root/blocked"));
+  // list_agents reports each agent's model.
+  assert.equal(
+    listed.find((agent) => agent.agent_name === "/root/special")?.model,
+    UNIT_MODEL_B
+  );
+  runtime.dispose();
+});

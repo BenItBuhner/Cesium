@@ -38,6 +38,7 @@ import {
 } from "../lib/pi-agent-oauth.js";
 import { upsertPiAgentProviderKey } from "../lib/pi-agent-settings.js";
 import {
+  CESIUM_MODEL_DESCRIPTION_MAX_LENGTH,
   deleteCesiumProviderKey,
   getCesiumAgentSettingsPublic,
   getCesiumModelCatalog,
@@ -500,10 +501,30 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       limits?: Record<string, unknown>;
     };
     toolPermissions?: Record<string, unknown>;
+    modelAccess?: {
+      entries?: Record<
+        string,
+        { enabled?: boolean; description?: string | null } | null
+      >;
+    };
     customProviders?: CesiumCustomProvider[];
     profiles?: unknown[];
     defaultProfileId?: string;
   }>();
+  for (const [modelId, entry] of Object.entries(body.modelAccess?.entries ?? {})) {
+    const description = entry?.description;
+    if (
+      typeof description === "string" &&
+      description.trim().length > CESIUM_MODEL_DESCRIPTION_MAX_LENGTH
+    ) {
+      return c.json(
+        {
+          error: `Model description for ${modelId} must be at most ${CESIUM_MODEL_DESCRIPTION_MAX_LENGTH} characters.`,
+        },
+        400
+      );
+    }
+  }
   const settings = await patchCesiumAgentSettings({
     ...(body.defaultProviderKeyId !== undefined
       ? { defaultProviderKeyId: body.defaultProviderKeyId }
@@ -556,6 +577,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(body.toolPermissions
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }
       : {}),
+    ...(body.modelAccess ? { modelAccess: body.modelAccess } : {}),
     ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
     ...(Array.isArray(body.profiles)
       ? {

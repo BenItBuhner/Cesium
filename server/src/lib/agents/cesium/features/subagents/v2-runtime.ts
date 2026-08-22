@@ -65,6 +65,9 @@ export type SubagentsV2SpawnResult = {
   path: string;
   nickname: string;
   status: SubagentsV2StatusKind;
+  /** Model the child runs: the requested override or the inherited parent model. */
+  model: string;
+  model_inherited: boolean;
 };
 
 export type SubagentsV2WaitResult = {
@@ -81,6 +84,22 @@ export type SubagentsV2RuntimeOptions = {
   limits: CesiumHarnessLimits;
   defaultModelId: string;
   defaultApiKind?: CesiumProviderKind;
+  /**
+   * Codex parity: spawned agents inherit the parent's *current* model. When
+   * provided this wins over the construction-time `defaultModelId` snapshot,
+   * so mid-conversation model switches propagate to new children.
+   */
+  resolveDefaultModelId?: () => string;
+  /**
+   * Validates a requested spawn override against the user's Model access
+   * settings and resolves shorthand ids. Omitted → requested value is trusted.
+   */
+  resolveSpawnModel?: (
+    requested: string | undefined,
+    defaultModelId: string
+  ) => Promise<string>;
+  /** Roster block (models + user notes) injected into child system prompts. */
+  modelRoster?: () => string;
   appendEvents: AppendEvents;
   getParentHistory?: () => Promise<CesiumHistoryMessage[]>;
   isCancelled?: () => boolean;
@@ -169,13 +188,16 @@ export class SubagentsV2Runtime {
     this.options.limits = limits;
   }
 
-  listAgents(pathPrefix?: string): Array<{ agent_name: string; agent_status: string }> {
+  listAgents(
+    pathPrefix?: string
+  ): Array<{ agent_name: string; agent_status: string; model: string }> {
     const prefix = pathPrefix?.trim();
     return [...this.agents.values()]
       .filter((agent) => !prefix || agent.path.startsWith(prefix))
       .map((agent) => ({
         agent_name: agent.path,
         agent_status: this.formatStatus(agent.status),
+        model: agent.modelId,
       }));
   }
 
@@ -258,8 +280,16 @@ export class SubagentsV2Runtime {
       throw new Error('spawn_agent.fork_turns must be "none", "all", or a positive integer string.');
     }
 
-    const modelId =
-      asString(args.modelId) ?? asString(args.model_id) ?? this.options.defaultModelId;
+    // Codex parity: children inherit the parent's current model unless the
+    // call carries an explicit override, which must pass the Model access
+    // filter (validated before any agent state is created).
+    const requestedModelId =
+      asString(args.modelId) ?? asString(args.model_id) ?? asString(args.model);
+    const inheritedModelId =
+      this.options.resolveDefaultModelId?.() ?? this.options.defaultModelId;
+    const modelId = this.options.resolveSpawnModel
+      ? await this.options.resolveSpawnModel(requestedModelId, inheritedModelId)
+      : requestedModelId ?? inheritedModelId;
     const title = asString(args.title)?.trim() || taskName;
     const agent: SubagentsV2Agent = {
       id: randomUUID(),
@@ -309,6 +339,8 @@ export class SubagentsV2Runtime {
       path,
       nickname: title,
       status: "running",
+      model: modelId,
+      model_inherited: modelId === inheritedModelId,
     };
     return JSON.stringify(result);
   }
@@ -630,18 +662,23 @@ export class SubagentsV2Runtime {
       const toolset = this.options.toolsetForAgent?.(agent.path) ?? null;
       const toolGuidance = subagentToolsetGuidance(toolset);
       const canSpawnChildren = toolset?.toolNames.has("spawn_agent") === true;
+      // Recursive model configuration: every child sees the same user-curated
+      // roster the parent saw, so grandchildren spawns pick models just as
+      // intelligently (and pass the same Model access validation).
+      const modelRoster = this.options.modelRoster?.() ?? "";
       const messages: CesiumHistoryMessage[] = [
         {
           role: "system",
           content:
             `${CESIUM_SYSTEM_PROMPT}\n\n` +
-            `You are collaborative subagent ${agent.path} (${agent.title}). ` +
+            `You are collaborative subagent ${agent.path} (${agent.title}), running model ${agent.modelId}. ` +
             "Complete the assigned task. " +
             (canSpawnChildren
-              ? "You may spawn your own sub-agents with spawn_agent when parallel delegation genuinely helps, subject to the configured spawn depth limit. "
+              ? "You may spawn your own sub-agents with spawn_agent when parallel delegation genuinely helps, subject to the configured spawn depth limit. Your children inherit your model unless you pass an enabled modelId override. "
               : "Do not spawn additional subagents. ") +
             "Reply with a clear final summary of findings or work completed." +
-            (toolGuidance ? `\n\n${toolGuidance}` : ""),
+            (toolGuidance ? `\n\n${toolGuidance}` : "") +
+            (modelRoster ? `\n\n${modelRoster}` : ""),
         },
         ...agent.forkHistory.filter((message) => message.role !== "system"),
         { role: "user", content: taskText },
@@ -764,6 +801,7 @@ export class SubagentsV2Runtime {
             path: agent.path,
             taskName: agent.taskName,
             agentStatus: statusKind(agent.status),
+            modelId: agent.modelId,
           },
         },
       ]);
