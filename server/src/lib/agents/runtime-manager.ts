@@ -1356,7 +1356,10 @@ export class AgentRuntimeManager {
     }
 
     if (record.title === "New chat" || record.lastEventSeq === 0) {
-      void generateConversationTitle(workspace.id, conversationId, trimmed);
+      void generateConversationTitle(workspace.id, conversationId, trimmed, {
+        attachmentCount: attachments?.length ?? 0,
+        expectedTitle: record.title,
+      });
     }
 
     const recentContextEvents =

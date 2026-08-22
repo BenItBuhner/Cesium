@@ -21,7 +21,15 @@ import type {
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
 import type { ChatMessage } from "@/lib/types";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
+  formatProvisionalChatTitleFromComposer,
+  landingDraftUsesStandaloneWorkspace,
+  resolveLandingComposerDraftId,
+} from "@/lib/chat-draft-title";
+import {
+  createAgentConversation,
+  createStandaloneAgentConversation,
   listCrossWorkspaceAgentConversations,
   listCrossWorkspaceAgentConversationsForServer,
   patchAgentConversationMetadata,
@@ -94,6 +102,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import {
   AGENT_STANDALONE_COMPOSER_DRAFT_ID,
   agentWorkspaceComposerDraftId,
+  hasMeaningfulComposerContent,
   useOpenInEditor,
 } from "@/components/editor/OpenInEditorContext";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
@@ -575,7 +584,13 @@ export function AgentShellStateProvider({
   } = useServerConnections();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
-  const { resetComposerDraft } = useOpenInEditor();
+  const {
+    composerDrafts,
+    resetComposerDraft,
+    upsertComposerDraft,
+  } = useOpenInEditor();
+  const composerDraftsRef = useRef(composerDrafts);
+  composerDraftsRef.current = composerDrafts;
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -606,6 +621,8 @@ export function AgentShellStateProvider({
     conversationId: string;
   } | null>(null);
   const [standaloneDraftActive, setStandaloneDraftActive] = useState(false);
+  const standaloneDraftActiveRef = useRef(standaloneDraftActive);
+  standaloneDraftActiveRef.current = standaloneDraftActive;
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
   const [persistedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState<
@@ -1775,6 +1792,78 @@ export function AgentShellStateProvider({
     [sidePaneScopeId, updateWorkspaceSession]
   );
 
+  const persistLandingComposerDraft = useCallback(async () => {
+    const activeIsStandaloneChat = Boolean(
+      activeWorkspaceGroup && isStandaloneChatWorkspace(activeWorkspaceGroup.workspace)
+    );
+    const draftId = resolveLandingComposerDraftId({
+      standaloneDraftActive: standaloneDraftActiveRef.current,
+      activeWorkspaceId: activeWorkspaceGroup?.workspace.id ?? activeWorkspaceId,
+      activeIsStandaloneChat,
+    });
+    const draft = composerDraftsRef.current[draftId];
+    if (!draft || !hasMeaningfulComposerContent(draft)) {
+      return null;
+    }
+
+    const snapshot = draft;
+    const title = formatProvisionalChatTitleFromComposer(snapshot);
+    resetComposerDraft(draftId);
+
+    const chat = workspaceSession.chat;
+    const input = {
+      backendId: chat.backendId,
+      mode: chat.mode,
+      modelId: chat.model.modelValue ?? chat.model.id,
+      modelName: chat.model.name,
+      ...(chat.backendId === "cesium-agent" && chat.profileId?.trim()
+        ? { profileId: chat.profileId.trim() }
+        : {}),
+      title,
+    };
+
+    try {
+      const useStandalone = landingDraftUsesStandaloneWorkspace({
+        standaloneDraftActive: standaloneDraftActiveRef.current,
+        activeWorkspaceId: activeWorkspaceId,
+        activeIsStandaloneChat,
+      });
+      const result = useStandalone
+        ? await createStandaloneAgentConversation(input, title)
+        : await createAgentConversation(input);
+      const conversation = result.conversation;
+      upsertComposerDraft(conversation.id, {
+        title: snapshot.title,
+        content: snapshot.content,
+        attachments: snapshot.attachments,
+        captures: snapshot.captures,
+        textReferences: snapshot.textReferences,
+        linkReferences: snapshot.linkReferences,
+      });
+      dispatchAgentConversationUpserted(conversation);
+      void refreshConversationGroups();
+      return conversation;
+    } catch (error) {
+      upsertComposerDraft(draftId, {
+        title: snapshot.title,
+        content: snapshot.content,
+        attachments: snapshot.attachments,
+        captures: snapshot.captures,
+        textReferences: snapshot.textReferences,
+        linkReferences: snapshot.linkReferences,
+      });
+      console.warn("[agent] failed to persist new-chat draft:", error);
+      return null;
+    }
+  }, [
+    activeWorkspaceGroup,
+    activeWorkspaceId,
+    refreshConversationGroups,
+    resetComposerDraft,
+    upsertComposerDraft,
+    workspaceSession.chat,
+  ]);
+
   const bumpAgentConversationMruForServer = useCallback(
     (conversationId: string) => {
       if (!isValidAgentConversationMruId(conversationId)) {
@@ -1807,6 +1896,13 @@ export function AgentShellStateProvider({
 
   const setSelectedConversationId = useCallback(
     (conversationId: string | null) => {
+      if (
+        conversationId &&
+        conversationId !== AGENT_NEW_CHAT_SESSION_ID &&
+        isDraftConversationSelected
+      ) {
+        void persistLandingComposerDraft();
+      }
       markConversationSwitchStart(conversationId, "setSelectedConversationId");
       if (conversationId && isValidAgentConversationMruId(conversationId)) {
         bumpAgentConversationMruForServer(conversationId);
@@ -1820,12 +1916,19 @@ export function AgentShellStateProvider({
       }));
       replaceConversationIdInLocation(conversationId);
     },
-    [bumpAgentConversationMruForServer, replaceConversationIdInLocation, updateWorkspaceSession]
+    [
+      bumpAgentConversationMruForServer,
+      isDraftConversationSelected,
+      persistLandingComposerDraft,
+      replaceConversationIdInLocation,
+      updateWorkspaceSession,
+    ]
   );
 
   const startNewConversation = useCallback(() => {
-    // New Chat must not inherit stuck / previously-sent composer text from the
-    // stable landing draft ids (submit used to race and re-apply stale content).
+    // Persist the in-progress landing composer as a rail draft, then clear
+    // the stable landing ids so New Chat never inherits leftover text.
+    void persistLandingComposerDraft();
     resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
     resetComposerDraft(agentWorkspaceComposerDraftId(activeWorkspaceId));
     updateWorkspaceSession((current) => ({
@@ -1842,6 +1945,7 @@ export function AgentShellStateProvider({
   }, [
     activeWorkspaceId,
     isMobile,
+    persistLandingComposerDraft,
     replaceConversationIdInLocation,
     resetComposerDraft,
     setLeftRailCollapsed,
@@ -1849,13 +1953,14 @@ export function AgentShellStateProvider({
   ]);
 
   const startStandaloneChat = useCallback(() => {
-    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
+    void persistLandingComposerDraft();
     setStandaloneDraftActive(true);
     startNewConversation();
-  }, [resetComposerDraft, startNewConversation]);
+  }, [persistLandingComposerDraft, startNewConversation]);
 
   const startNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {
+      void persistLandingComposerDraft();
       // Must run before any `await`. `loadWorkspaceState` rewrites `workspaceId` in the URL but
       // keeps the old `conversationId` until loading finishes. While the async fetch runs, the
       // effect below sees (active workspace B + URL conversation owned by A) and calls
@@ -1871,6 +1976,7 @@ export function AgentShellStateProvider({
     [
       activeWorkspaceId,
       openWorkspaceById,
+      persistLandingComposerDraft,
       replaceConversationIdInLocation,
       startNewConversation,
     ]

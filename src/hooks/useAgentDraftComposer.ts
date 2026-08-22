@@ -12,11 +12,7 @@
  */
 
 import { useCallback, useMemo, useRef } from "react";
-import {
-  AGENT_STANDALONE_COMPOSER_DRAFT_ID,
-  agentWorkspaceComposerDraftId,
-  useOpenInEditor,
-} from "@/components/editor/OpenInEditorContext";
+import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
@@ -40,6 +36,7 @@ import type {
 } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, ModelInfo } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
+import { resolveLandingComposerDraftId } from "@/lib/chat-draft-title";
 
 export function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -85,6 +82,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     composerSelections,
     setComposerSelection,
     upsertComposerDraft,
+    resetComposerDraft,
   } = useOpenInEditor();
   const {
     backends,
@@ -163,9 +161,11 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   const noWorkspaceDraft =
     standaloneDraftActive || activeIsStandaloneChat || !activeWorkspaceId;
 
-  const composerDraftId = noWorkspaceDraft
-    ? AGENT_STANDALONE_COMPOSER_DRAFT_ID
-    : agentWorkspaceComposerDraftId(activeWorkspaceGroup?.workspace.id);
+  const composerDraftId = resolveLandingComposerDraftId({
+    standaloneDraftActive,
+    activeWorkspaceId: activeWorkspaceGroup?.workspace.id ?? activeWorkspaceId,
+    activeIsStandaloneChat,
+  });
   const composerDraftTitle = "Agent prompt";
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
@@ -249,6 +249,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
           attachments
         );
         if (!created) return false;
+        resetComposerDraft(composerDraftId);
         // Carry the chosen backend/mode/model into the fresh sandbox before
         // opening it, so its session does not reset to default drafts.
         seedWorkspaceSessionChatDraft(created.workspaceId, {
@@ -297,6 +298,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         ...(draftProfileId ? { profileId: draftProfileId } : {}),
       };
       if (onInstantSubmit) {
+        resetComposerDraft(composerDraftId);
         return onInstantSubmit(conversationInput, promptText, attachments);
       }
       const created = await createAndPromptConversation(
@@ -305,6 +307,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         attachments
       );
       if (!created) return false;
+      resetComposerDraft(composerDraftId);
       setSelectedConversationId(created.id);
       onConversationCreated?.(created.id);
       void refreshConversationGroups();
@@ -329,6 +332,8 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       setSelectedConversationId,
       setStandaloneDraftActive,
       workspaceSession.chat.profileId,
+      composerDraftId,
+      resetComposerDraft,
     ]
   );
 
