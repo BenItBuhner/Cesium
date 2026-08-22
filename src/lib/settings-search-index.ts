@@ -474,6 +474,20 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
   row(
     "agents",
+    "cesium-model-access",
+    "Model access",
+    "Filter which models the Cesium agent and its subagents may use, with short per-model notes.",
+    ["cesium", "models", "filter", "allowlist", "subagent", "spawn", "description"]
+  ),
+  row(
+    "agents",
+    "cesium-subagent-models",
+    "Subagent model overrides",
+    "spawn_agent inherits the current model by default; overrides must be enabled under Model access.",
+    ["cesium", "subagents", "spawn_agent", "model", "override", "inherit"]
+  ),
+  row(
+    "agents",
     "cesium-oauth-accounts",
     "OAuth accounts",
     "ChatGPT Codex and SpaceXAI SuperGrok subscription sign-in.",

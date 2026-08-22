@@ -77,6 +77,7 @@ import {
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   SettingsBreadcrumbs,
+  SettingsDisclosure,
   SettingsRow,
   SettingsSection,
   SettingsSubsectionHeading,
@@ -85,6 +86,10 @@ import {
   settingsSelectTriggerClass,
   tagClass,
 } from "@/components/editor/settings-ui";
+import {
+  CesiumModelAccessSection,
+  summarizeCesiumModelAccess,
+} from "@/components/editor/settings/CesiumModelAccessSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { ACTIVE_AGENT_BACKEND_IDS } from "@cesium/core";
@@ -1785,9 +1790,68 @@ function CesiumAgentHarnessSettings() {
     ? Object.values(settings.modes.enabled).filter(Boolean).length
     : 0;
 
+  // Terse per-layer rollups shown while a section is collapsed.
+  const modelAccessSummary = useMemo(
+    () => summarizeCesiumModelAccess(catalog, settings?.modelAccess?.entries ?? {}),
+    [catalog, settings]
+  );
+  const providersSummary = settings
+    ? [
+        settings.configured ? "Configured" : "Not configured",
+        `${uniqueProviderKeys.length} key${uniqueProviderKeys.length === 1 ? "" : "s"}`,
+        settings.customProviders.length > 0
+          ? `${settings.customProviders.length} custom`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "Loading…";
+  const modelsSummary = settings
+    ? `${settings.defaultModelId} · ${modelAccessSummary.enabled}/${modelAccessSummary.total} models on`
+    : "";
+  const behaviorSummary = settings
+    ? `${enabledModeCount}/${settings.modeCatalog.length} modes · compression ${
+        settings.compression.enabled ? "on" : "off"
+      }`
+    : "";
+  const profilesSummary = settings
+    ? `${settings.profileCatalog.length} profiles · ${triggers?.length ?? 0} trigger${
+        (triggers?.length ?? 0) === 1 ? "" : "s"
+      }`
+    : "";
+  const enabledPluginCount = settings
+    ? settings.harnessCatalog.filter(
+        (feature) =>
+          settings.harness.features[feature.id]?.enabled ?? feature.enabledByDefault
+      ).length
+    : 0;
+  const pluginsSummary = settings
+    ? `subagents v${settings.harness.features.subagents.version} · ${enabledPluginCount}/${settings.harnessCatalog.length} plugins on`
+    : "";
+  const permissionsSummary = settings
+    ? (["ask", "allow", "deny"] as const)
+        .map(
+          (value) =>
+            [
+              Object.values(settings.toolPermissions).filter((entry) => entry === value)
+                .length,
+              value,
+            ] as const
+        )
+        .filter(([count]) => count > 0)
+        .map(([count, value]) => `${count} ${value}`)
+        .join(" · ")
+    : "";
+
   return (
     <>
-      <div className="flex flex-col gap-[28px]">
+      <div className="flex flex-col gap-[12px]">
+        <SettingsDisclosure
+          title="Providers & credentials"
+          summary={providersSummary}
+          defaultOpen={settings ? !settings.configured : false}
+        >
+        <div className="flex flex-col gap-[24px]">
         <HarnessDetailBlock>
           <SettingsSubsectionHeading>Provider API keys</SettingsSubsectionHeading>
         <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
@@ -2010,8 +2074,33 @@ function CesiumAgentHarnessSettings() {
         </HarnessDetailBlock>
       ) : null}
 
+      {settings && settings.customProviders.length > 0 ? (
+        <HarnessDetailBlock>
+          <SettingsSubsectionHeading>Custom providers</SettingsSubsectionHeading>
+          <ul className="mt-[8px] divide-y divide-[var(--border-subtle)]">
+            {settings.customProviders.map((provider) => (
+              <li
+                key={provider.id}
+                className="-mx-[6px] rounded-[var(--radius-tab)] px-[6px] py-[8px] transition-colors first:pt-[8px] last:pb-[8px] hover:bg-[var(--accent-bg)]"
+              >
+                <p className="font-sans text-[13px] text-[var(--text-primary)]">{provider.name}</p>
+                <p className="mt-[2px] font-mono text-[11px] text-[var(--text-secondary)]">
+                  {apiKindLabel(provider.apiKind)}
+                  {provider.baseUrl ? ` · ${provider.baseUrl}` : ""} · {provider.models.length}{" "}
+                  model{provider.models.length === 1 ? "" : "s"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </HarnessDetailBlock>
+      ) : null}
+      </div>
+      </SettingsDisclosure>
+
       {settings ? (
         <>
+          <SettingsDisclosure title="Models & defaults" summary={modelsSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Defaults</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
@@ -2049,6 +2138,18 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <CesiumModelAccessSection
+              catalog={catalog}
+              entries={settings.modelAccess?.entries ?? {}}
+              defaultModelId={settings.defaultModelId}
+              busy={busy}
+              onPatchEntries={(entriesPatch) =>
+                void patchSettings({ modelAccess: { entries: entriesPatch } })
+              }
+            />
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Conversation titles</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Model used to auto-title new conversations. Pick any configured catalog model —
@@ -2072,7 +2173,11 @@ function CesiumAgentHarnessSettings() {
               />
             </label>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Behavior & modes" summary={behaviorSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
             <HarnessDetailToggleRow
               title="Context compression"
@@ -2169,7 +2274,11 @@ function CesiumAgentHarnessSettings() {
               })}
             </div>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Profiles & triggers" summary={profilesSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
             <div className="flex flex-wrap items-center justify-between gap-[10px]">
               <SettingsSubsectionHeading>Agent profiles</SettingsSubsectionHeading>
@@ -2365,7 +2474,10 @@ function CesiumAgentHarnessSettings() {
               )}
             </div>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Harness plugins & limits" summary={pluginsSummary}>
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Harness plugins</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
@@ -2669,7 +2781,9 @@ function CesiumAgentHarnessSettings() {
               </div>
             </div>
           </HarnessDetailBlock>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Tool permissions" summary={permissionsSummary}>
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Tool permissions</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
@@ -2751,27 +2865,7 @@ function CesiumAgentHarnessSettings() {
               </label>
             </div>
           </HarnessDetailBlock>
-
-          {settings.customProviders.length > 0 ? (
-            <HarnessDetailBlock>
-              <SettingsSubsectionHeading>Custom providers</SettingsSubsectionHeading>
-              <ul className="mt-[8px] divide-y divide-[var(--border-subtle)]">
-                {settings.customProviders.map((provider) => (
-                  <li
-                    key={provider.id}
-                    className="-mx-[6px] rounded-[var(--radius-tab)] px-[6px] py-[8px] transition-colors first:pt-[8px] last:pb-[8px] hover:bg-[var(--accent-bg)]"
-                  >
-                    <p className="font-sans text-[13px] text-[var(--text-primary)]">{provider.name}</p>
-                    <p className="mt-[2px] font-mono text-[11px] text-[var(--text-secondary)]">
-                      {apiKindLabel(provider.apiKind)}
-                      {provider.baseUrl ? ` · ${provider.baseUrl}` : ""} · {provider.models.length}{" "}
-                      model{provider.models.length === 1 ? "" : "s"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </HarnessDetailBlock>
-          ) : null}
+          </SettingsDisclosure>
         </>
       ) : null}
 
