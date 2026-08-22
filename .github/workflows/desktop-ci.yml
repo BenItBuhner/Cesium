@@ -157,6 +157,76 @@ jobs:
             smoke.log
             app.log
 
+  package-windows:
+    name: Package, smoke-test, and screenshot the Windows app
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          # The server's file:.. dependency links back to the repo root;
+          # never let it into staged/packaged output.
+          rm -rf server/node_modules/cesium
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Package the Windows app (NSIS installer, x64)
+        run: npm --prefix apps/desktop run package:win
+
+      - name: List packaged output
+        run: |
+          ls -la apps/desktop/out
+          ls -la apps/desktop/out/win-unpacked/resources | head -30
+
+      - name: Smoke-test the packaged app (embedded backend + window load)
+        run: |
+          "apps/desktop/out/win-unpacked/Cesium.exe" --smoke 2>&1 | tee smoke.log
+          grep -q "Cesium packaged smoke passed" smoke.log
+
+      - name: Launch the packaged app and capture its window
+        run: |
+          mkdir -p screenshots
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/windows_app_window.png" \
+            "apps/desktop/out/win-unpacked/Cesium.exe" > app.log 2>&1 &
+          APP_PID=$!
+          echo "Launched Cesium Desktop with PID $APP_PID"
+          sleep 45
+          kill "$APP_PID" || true
+          sleep 3
+          tail -50 app.log
+          ls -la screenshots
+
+      - name: Upload Windows app artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-windows
+          if-no-files-found: warn
+          path: apps/desktop/out/*.exe
+
+      - name: Upload Windows smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-desktop-windows-evidence
+          if-no-files-found: warn
+          path: |
+            screenshots/
+            smoke.log
+            app.log
+
   package-linux:
     name: Package, smoke-test, and screenshot the Linux app
     runs-on: ubuntu-latest

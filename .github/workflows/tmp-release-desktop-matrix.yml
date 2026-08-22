@@ -1,0 +1,117 @@
+# TEMPORARY: branch-only validation of the release desktop matrix legs that
+# desktop-ci does not already cover (Intel macOS, ARM Windows, ARM Linux).
+# Mirrors the `desktop` job in release.yml; deleted before merge.
+name: tmp-release-desktop-matrix
+
+on:
+  push:
+    branches:
+      - "cursor/multi-platform-release-builds-8e6d"
+
+concurrency:
+  group: tmp-release-desktop-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Build desktop app (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: x64
+            runner: macos-15-intel
+          - platform: win
+            arch: arm64
+            runner: windows-11-arm
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Assert the runner architecture matches the target
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          HOST_ARCH=$(node -p "process.arch")
+          if [ "$HOST_ARCH" != "$TARGET_ARCH" ]; then
+            echo "Runner arch $HOST_ARCH does not match target arch $TARGET_ARCH" >&2
+            exit 1
+          fi
+
+      - name: Ensure xvfb is available (Linux only)
+        if: matrix.platform == 'linux'
+        run: |
+          if ! command -v xvfb-run > /dev/null; then
+            sudo timeout 300 apt-get update -q
+            sudo timeout 300 apt-get install -y -q xvfb
+          fi
+          xvfb-run --help > /dev/null && echo "xvfb-run OK"
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          rm -rf server/node_modules/cesium
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Package the desktop app
+        if: matrix.platform != 'linux'
+        run: npm --prefix apps/desktop run package:${{ matrix.platform }}
+
+      - name: Package the desktop app (Linux, under Xvfb)
+        if: matrix.platform == 'linux'
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
+        run: xvfb-run --auto-servernum npm --prefix apps/desktop run package:linux
+
+      - name: Collect release assets
+        env:
+          VERSION: 0.0.0-ci
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          ls -la apps/desktop/out
+          mkdir -p dist/release
+          case "$PLATFORM" in
+            mac)
+              cp apps/desktop/out/*.dmg "dist/release/cesium-desktop-${VERSION}-mac-${ARCH}.dmg"
+              cp apps/desktop/out/*.zip "dist/release/cesium-desktop-${VERSION}-mac-${ARCH}.zip"
+              ;;
+            win)
+              cp apps/desktop/out/*.exe "dist/release/cesium-desktop-${VERSION}-win-${ARCH}-setup.exe"
+              ;;
+            linux)
+              cp apps/desktop/out/*.AppImage "dist/release/cesium-desktop-${VERSION}-linux-${ARCH}.AppImage"
+              cp apps/desktop/out/*.deb "dist/release/cesium-desktop-${VERSION}-linux-${ARCH}.deb"
+              ;;
+          esac
+          ls -la dist/release
+
+      - name: Upload desktop release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-release-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 3
