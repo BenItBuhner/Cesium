@@ -475,6 +475,13 @@ export type CesiumAgentSettingsPublic = {
     }>;
   }>;
   toolPermissions: Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">;
+  /**
+   * Per-model access filter and user notes (≤ 250 chars) surfaced to the
+   * primary agent and subagents. Models without an entry stay enabled.
+   */
+  modelAccess: {
+    entries: Record<string, { enabled: boolean; description?: string }>;
+  };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: Array<{
     id: string;

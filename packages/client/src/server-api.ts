@@ -2425,6 +2425,13 @@ export type CesiumAgentSettingsPayload = {
     mcpCall: "ask" | "allow" | "deny";
     switchMode: "ask" | "allow" | "deny";
   };
+  /**
+   * Per-model access filter and short notes (≤ 250 chars) surfaced to the
+   * primary agent and every subagent. Models without an entry stay enabled.
+   */
+  modelAccess: {
+    entries: Record<string, { enabled: boolean; description?: string }>;
+  };
   providerKeys: CesiumProviderKeyStatus[];
   oauthProviders: CesiumOAuthProviderStatus[];
   customProviders: CesiumCustomProvider[];
@@ -2538,7 +2545,15 @@ export async function patchCesiumAgentSettings(
       | "profiles"
       | "defaultProfileId"
     >
-  >
+  > & {
+    /** Per-entry merge: null deletes an entry, omitted entries are untouched. */
+    modelAccess?: {
+      entries?: Record<
+        string,
+        { enabled?: boolean; description?: string | null } | null
+      >;
+    };
+  }
 ): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
   return request<{ ok: true; settings: CesiumAgentSettingsPayload }>("/api/settings/cesium-agent", {
     method: "PATCH",

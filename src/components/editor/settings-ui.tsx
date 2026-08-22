@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useId,
+  useState,
   type ChangeEvent,
   type FocusEvent,
   type ReactNode,
@@ -69,6 +70,67 @@ export function SettingsSection({
       ) : (
         children
       )}
+    </section>
+  );
+}
+
+/**
+ * Collapsible settings layer: a card with a clickable header (title + terse
+ * summary) that reveals its content on demand. Keeps dense panels tidy when
+ * first opened — detail only appears when the user clicks into a section.
+ */
+export function SettingsDisclosure({
+  title,
+  summary,
+  children,
+  defaultOpen = false,
+  searchId,
+}: {
+  title: string;
+  /** One-line state summary shown while the section is collapsed. */
+  summary?: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  /** Stable id for global settings search scroll/highlight. */
+  searchId?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
+  return (
+    <section
+      data-settings-search-id={searchId}
+      className="overflow-hidden rounded-[var(--radius-card)] bg-[var(--bg-card)]"
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-[48px] w-full items-center justify-between gap-[12px] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+      >
+        <span className="flex min-w-0 items-center gap-[10px]">
+          <ChevronRight
+            className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${
+              open ? "rotate-90" : ""
+            }`}
+            strokeWidth={1.75}
+            aria-hidden
+          />
+          <span className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            {title}
+          </span>
+        </span>
+        {summary ? (
+          <span className="min-w-0 shrink truncate text-right font-sans text-[12px] text-[var(--text-secondary)]">
+            {summary}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div id={contentId} className="border-t border-[var(--border-subtle)] px-[16px] py-[16px]">
+          {children}
+        </div>
+      ) : null}
     </section>
   );
 }

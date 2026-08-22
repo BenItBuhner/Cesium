@@ -22,10 +22,13 @@ import {
 import {
   createCesiumAgentConfigOptions,
   findCesiumModelCatalogEntry,
+  formatCesiumModelRoster,
   getCesiumAgentSettings,
   getCesiumModelCatalog,
+  listCesiumAgentModelRoster,
   resolveCesiumModelContextWindow,
   resolveCesiumAuth,
+  resolveCesiumSpawnModelId,
   CESIUM_MODE_DEFINITIONS,
   type CesiumModeId,
   type CesiumProviderKind,
@@ -514,6 +517,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /** Active capability profile (Code by default); refreshed with the harness each turn. */
   private activeProfile: CesiumAgentProfile = CESIUM_CODE_PROFILE;
   private subagentsV2: SubagentsV2Runtime | null = null;
+  /**
+   * Model access roster (enabled models + user notes) advertised to the
+   * primary agent and subagents; refreshed with the harness each turn.
+   */
+  private modelRosterText = "";
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -644,10 +652,44 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /**
    * Tool schemas advertised to the model: the resolved harness filtered to the
    * active profile envelope. Unlike mode policy, excluded tools are hidden
-   * from the model entirely.
+   * from the model entirely. Subagent-spawning tools carry the live Model
+   * access roster in their descriptions (Codex spawn_agent parity) — and
+   * because children receive these same definitions, the roster propagates
+   * recursively to every spawn depth.
    */
   private advertisedTools(): CesiumToolDefinition[] {
-    return filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
+    const tools = filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
+    if (!this.modelRosterText) {
+      return tools;
+    }
+    return tools.map((tool) =>
+      tool.name === "spawn_agent" || tool.name === "subagent"
+        ? { ...tool, description: `${tool.description}\n\n${this.modelRosterText}` }
+        : tool
+    );
+  }
+
+  /** Model driving the current turn (composer selection, else conversation config). */
+  private currentModelId(): string {
+    return String(
+      optionValue(
+        this.configOptions,
+        "model",
+        this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
+      )
+    );
+  }
+
+  /** Best-effort roster refresh; an unreachable catalog never blocks the turn. */
+  private async refreshModelRoster(): Promise<void> {
+    try {
+      const roster = await listCesiumAgentModelRoster({
+        defaultModelId: this.currentModelId(),
+      });
+      this.modelRosterText = formatCesiumModelRoster(roster);
+    } catch {
+      this.modelRosterText = "";
+    }
   }
 
   /** Whether the active profile exposes the curated `memory` tool. */
@@ -915,6 +957,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }),
         featureReminder
           ? `<harness-features>\n${featureReminder}\n</harness-features>`
+          : "",
+        this.modelRosterText
+          ? `<available-models>\n${this.modelRosterText}\n</available-models>`
           : "",
       ]
         .filter(Boolean)
@@ -1596,6 +1641,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       });
       await this.pluginRuntime.start();
     }
+    await this.refreshModelRoster();
     this.activeSystemPrompt =
       (await this.pluginRuntime?.transformSystemPrompt(this.profileSystemPrompt())) ??
       this.profileSystemPrompt();
@@ -1623,6 +1669,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
         conversationId: this.callbacks.conversation.id,
         limits: this.harness.settings.limits,
         defaultModelId: modelId,
+        // Children inherit the parent's live model (mid-conversation switches
+        // included) and overrides must clear the user's Model access filter.
+        resolveDefaultModelId: () => this.currentModelId(),
+        resolveSpawnModel: (requested, defaultModelId) =>
+          resolveCesiumSpawnModelId({ requested, defaultModelId }),
+        modelRoster: () => this.modelRosterText,
         defaultApiKind: optionValue(
           this.configOptions,
           "api_kind",
@@ -4250,9 +4302,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // subagent events merge into a single card instead of duplicating.
     const subagentId = toolCallId || randomUUID();
     const title = asString(args.title) ?? "Cesium subagent";
-    const modelId =
-      asString(args.modelId) ||
-      resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions);
+    // Same inherit-by-default + Model access validation as spawn_agent (V2).
+    const modelId = await resolveCesiumSpawnModelId({
+      requested: asString(args.modelId),
+      defaultModelId: resolvedModelId(
+        this.callbacks.conversation.config.modelId,
+        this.configOptions
+      ),
+    });
     // Transcript events need distinct seqs: projection dedupes stored events by seq.
     const transcript: AgentStoredEvent[] = [
       {
