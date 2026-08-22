@@ -2455,6 +2455,11 @@ export type CesiumAgentSettingsPayload = {
   customProviders: CesiumCustomProvider[];
   /** Custom profiles only (persisted). */
   profiles: CesiumAgentProfilePayload[];
+  /**
+   * Visibility flags for the new-chat profile toggle. Built-ins stay in
+   * `profileCatalog` even when disabled so Settings can turn them back on.
+   */
+  enabledProfiles: Record<string, boolean>;
   defaultProfileId: string;
   /** Built-in presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfilePayload[];
@@ -2561,6 +2566,7 @@ export async function patchCesiumAgentSettings(
       | "toolPermissions"
       | "customProviders"
       | "profiles"
+      | "enabledProfiles"
       | "defaultProfileId"
     >
   > & {

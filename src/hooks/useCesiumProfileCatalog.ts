@@ -16,6 +16,19 @@ export type CesiumProfileCatalogState = {
   loaded: boolean;
 };
 
+/** Profiles offered in the new-chat toggle. Missing flags stay visible (legacy). */
+export function visibleCesiumProfiles<T extends { id: string }>(
+  catalog: T[],
+  enabledProfiles?: Record<string, boolean> | null
+): T[] {
+  return catalog.filter((profile) => enabledProfiles?.[profile.id] !== false);
+}
+
+/** Hide the Code/Work toggle when only one profile is actually configured. */
+export function shouldShowCesiumProfileToggle(visibleCount: number): boolean {
+  return visibleCount > 1;
+}
+
 const EMPTY_STATE: CesiumProfileCatalogState = {
   catalog: [],
   defaultProfileId: "code",
@@ -39,7 +52,10 @@ function loadCatalog(): Promise<void> {
   inflight = fetchCesiumAgentSettings()
     .then(({ settings }) => {
       state = {
-        catalog: settings.profileCatalog.map((profile) => ({
+        catalog: visibleCesiumProfiles(
+          settings.profileCatalog,
+          settings.enabledProfiles
+        ).map((profile) => ({
           id: profile.id,
           name: profile.name,
           description: profile.description,
@@ -83,8 +99,9 @@ function getServerSnapshot(): CesiumProfileCatalogState {
 }
 
 /**
- * Cesium capability-profile catalog (built-in Code/Work presets + custom
- * profiles), cached module-wide across composer instances.
+ * Cesium capability-profile catalog (enabled built-in Code/Work presets +
+ * custom profiles), cached module-wide across composer instances. Disabled
+ * profiles stay in Settings so they can be turned back on.
  */
 export function useCesiumProfileCatalog(enabled: boolean): CesiumProfileCatalogState {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);

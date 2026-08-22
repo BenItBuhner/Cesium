@@ -509,6 +509,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     };
     customProviders?: CesiumCustomProvider[];
     profiles?: unknown[];
+    enabledProfiles?: Record<string, boolean>;
     defaultProfileId?: string;
   }>();
   for (const [modelId, entry] of Object.entries(body.modelAccess?.entries ?? {})) {
@@ -585,6 +586,9 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
             typeof patchCesiumAgentSettings
           >[0]["profiles"],
         }
+      : {}),
+    ...(body.enabledProfiles && typeof body.enabledProfiles === "object"
+      ? { enabledProfiles: body.enabledProfiles }
       : {}),
     ...(typeof body.defaultProfileId === "string"
       ? { defaultProfileId: body.defaultProfileId }

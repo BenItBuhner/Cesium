@@ -25,8 +25,10 @@ const [
     CESIUM_DEFAULT_PROFILE_ID,
     CESIUM_PROFILE_LOCKED_TOOLS,
     filterCesiumToolsForProfile,
+    listCesiumEnabledProfiles,
     listCesiumProfileCatalog,
     normalizeCesiumDefaultProfileId,
+    normalizeCesiumEnabledProfiles,
     normalizeCesiumProfile,
     normalizeCesiumProfiles,
     resolveCesiumProfile,
@@ -216,6 +218,42 @@ test("default profile id normalization falls back to code for unknown ids", () =
     { id: "mine", name: "Mine", tools: { allowed: "all", mcpServers: "all" } },
   ]);
   assert.equal(normalizeCesiumDefaultProfileId("mine", custom), "mine");
+});
+
+test("first-install profile visibility hides Work and keeps Code on", () => {
+  assert.deepEqual(normalizeCesiumEnabledProfiles({ code: true, work: false }, []), {
+    code: true,
+    work: false,
+  });
+  assert.deepEqual(listCesiumEnabledProfiles([], { code: true, work: false }).map((p) => p.id), [
+    "code",
+  ]);
+  assert.equal(
+    normalizeCesiumDefaultProfileId("work", [], { code: true, work: false }),
+    "code"
+  );
+});
+
+test("missing enabledProfiles map is treated as legacy all-on", () => {
+  assert.deepEqual(normalizeCesiumEnabledProfiles(undefined, []), {
+    code: true,
+    work: true,
+  });
+  const custom = normalizeCesiumProfiles([
+    { id: "mine", name: "Mine", tools: { allowed: "all", mcpServers: "all" } },
+  ]);
+  assert.deepEqual(normalizeCesiumEnabledProfiles(undefined, custom), {
+    code: true,
+    work: true,
+    mine: true,
+  });
+});
+
+test("enabledProfiles refuses to disable the last remaining profile", () => {
+  assert.deepEqual(normalizeCesiumEnabledProfiles({ code: false, work: false }, []), {
+    code: true,
+    work: false,
+  });
 });
 
 test("resolveCesiumProfile falls back requested -> default -> code", () => {
@@ -485,14 +523,36 @@ test("settings persist custom profiles and default profile id through the public
   assert.equal(reloaded.defaultProfileId, "custom-writer");
   assert.equal(reloaded.profileCatalog.length, 3);
 
-  // The conversation config option exposes the catalog with the default marked.
+  // Fresh installs hide Work from the live picker; the full catalog stays intact.
+  assert.equal(publicSettings.enabledProfiles.work, false);
+  assert.equal(publicSettings.enabledProfiles.code, true);
   const options = await createCesiumAgentConfigOptions();
   const profileOption = options.find((option) => option.id === "profile");
   assert.ok(profileOption, "profile config option must exist");
   assert.equal(profileOption!.currentValue, "custom-writer");
   assert.deepEqual(
     profileOption!.options.map((value) => value.value),
+    ["code", "custom-writer"]
+  );
+
+  const withWork = await patchCesiumAgentSettings({ enabledProfiles: { work: true } });
+  assert.equal(withWork.enabledProfiles.work, true);
+  const enabledOptions = await createCesiumAgentConfigOptions();
+  assert.deepEqual(
+    enabledOptions.find((option) => option.id === "profile")?.options.map((value) => value.value),
     ["code", "work", "custom-writer"]
+  );
+
+  const asWorkDefault = await patchCesiumAgentSettings({ defaultProfileId: "work" });
+  assert.equal(asWorkDefault.defaultProfileId, "work");
+  const hiddenWork = await patchCesiumAgentSettings({ enabledProfiles: { work: false } });
+  assert.equal(hiddenWork.enabledProfiles.work, false);
+  assert.equal(hiddenWork.defaultProfileId, "code");
+  assert.deepEqual(
+    (await createCesiumAgentConfigOptions())
+      .find((option) => option.id === "profile")
+      ?.options.map((value) => value.value),
+    ["code", "custom-writer"]
   );
 
   // An unknown default falls back to code on the next patch.

@@ -253,6 +253,20 @@ export const CESIUM_BUILTIN_PROFILES: readonly CesiumAgentProfile[] = [
 
 export const CESIUM_DEFAULT_PROFILE_ID = CESIUM_CODE_PROFILE.id;
 
+/**
+ * First-install visibility for built-in profiles. Work stays in the catalog so
+ * it can be flipped on in Settings, but it is not offered in the new-chat
+ * toggle until the user enables it. Custom profiles default to visible.
+ */
+export const CESIUM_DEFAULT_ENABLED_PROFILES: Readonly<Record<string, boolean>> = {
+  [CESIUM_CODE_PROFILE.id]: true,
+  [CESIUM_WORK_PROFILE.id]: false,
+};
+
+export function defaultEnabledFlagForProfileId(profileId: string): boolean {
+  return CESIUM_DEFAULT_ENABLED_PROFILES[profileId] ?? true;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -397,15 +411,58 @@ export function listCesiumProfileCatalog(
   return [...CESIUM_BUILTIN_PROFILES, ...customProfiles];
 }
 
-export function normalizeCesiumDefaultProfileId(
+/**
+ * Normalize the persisted enable map.
+ *
+ * A missing map is treated as legacy-all-on so existing installs keep seeing
+ * Code + Work. A present map uses explicit booleans, then first-install
+ * defaults for omitted built-ins (Work off) and `true` for custom ids.
+ */
+export function normalizeCesiumEnabledProfiles(
   raw: unknown,
   customProfiles: CesiumAgentProfile[]
+): Record<string, boolean> {
+  const catalog = listCesiumProfileCatalog(customProfiles);
+  const record = asRecord(raw);
+  const enabled: Record<string, boolean> = {};
+  const legacyAllOn = record == null;
+  for (const profile of catalog) {
+    if (typeof record?.[profile.id] === "boolean") {
+      enabled[profile.id] = record[profile.id] as boolean;
+    } else if (legacyAllOn) {
+      enabled[profile.id] = true;
+    } else {
+      enabled[profile.id] = defaultEnabledFlagForProfileId(profile.id);
+    }
+  }
+  if (!Object.values(enabled).some(Boolean)) {
+    enabled[CESIUM_DEFAULT_PROFILE_ID] = true;
+  }
+  return enabled;
+}
+
+export function listCesiumEnabledProfiles(
+  customProfiles: CesiumAgentProfile[],
+  enabledProfiles: Record<string, boolean>
+): CesiumAgentProfile[] {
+  return listCesiumProfileCatalog(customProfiles).filter(
+    (profile) => enabledProfiles[profile.id] !== false
+  );
+}
+
+export function normalizeCesiumDefaultProfileId(
+  raw: unknown,
+  customProfiles: CesiumAgentProfile[],
+  enabledProfiles?: Record<string, boolean>
 ): string {
+  const catalog = enabledProfiles
+    ? listCesiumEnabledProfiles(customProfiles, enabledProfiles)
+    : listCesiumProfileCatalog(customProfiles);
   const id = asTrimmedString(raw);
-  if (id && listCesiumProfileCatalog(customProfiles).some((profile) => profile.id === id)) {
+  if (id && catalog.some((profile) => profile.id === id)) {
     return id;
   }
-  return CESIUM_DEFAULT_PROFILE_ID;
+  return catalog[0]?.id ?? CESIUM_DEFAULT_PROFILE_ID;
 }
 
 /** Resolve the active profile, falling back to the default and then Code. */
