@@ -3587,7 +3587,7 @@ function HarnessRememberedPermissionsList({
     }
     return (
       <p className="font-sans text-[12px] text-[var(--text-disabled)]">
-        No remembered permissions for {HARNESS_LABELS[backendId]} yet.
+        No remembered permissions for {harnessDisplayName(backendId)} yet.
       </p>
     );
   }
