@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to release (e.g. v0.1.0 or mobile-v0.1.0). Leave empty when pushing a tag."
+        description: "Existing tag to release (e.g. v0.8.0 or mobile-v0.8.0). Leave empty when pushing a tag."
         required: false
         type: string
 
@@ -47,6 +47,17 @@ jobs:
             exit 1
           fi
           echo "value=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tagged revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+          fetch-depth: 0
+
+      - name: Assert shipped versions match the tag
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: node scripts/assert-release-versions.mjs "$RELEASE_VERSION"
 
   android:
     name: Build Android + Wear OS APKs
@@ -345,6 +356,7 @@ jobs:
             echo "| Windows (arm64) | \`cesium-desktop-${V}-win-arm64-setup.exe\` |"
             echo "| Linux (x64) | \`cesium-desktop-${V}-linux-x64.AppImage\` / \`.deb\` |"
             echo "| Linux (arm64) | \`cesium-desktop-${V}-linux-arm64.AppImage\` / \`.deb\` |"
+            echo "| iOS | Source + CI simulator build only (no signed IPA yet) |"
             echo
             echo "## Install"
             echo
