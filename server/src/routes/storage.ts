@@ -278,6 +278,7 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
     "devin-acp",
     "grok-build",
     "codex-app-server",
+    "codex-acp",
     "claude-code-sdk",
     "pi-agent",
     "google-antigravity-cli",
@@ -341,6 +342,7 @@ function isAgentBackendId(value: string): boolean {
     value === "devin-acp" ||
     value === "grok-build" ||
     value === "codex-app-server" ||
+    value === "codex-acp" ||
     value === "claude-code-sdk" ||
     value === "pi-agent" ||
     value === "google-antigravity-cli"

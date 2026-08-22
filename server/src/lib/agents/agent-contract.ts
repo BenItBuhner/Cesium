@@ -149,6 +149,20 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
   },
+  "codex-acp": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: true,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: true,
+    supportsTodos: true,
+    supportsSessionResume: true,
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+  },
   "claude-code-sdk": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -355,6 +369,19 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       "system",
     ],
     notes: "plan_file is produced by the OpenCursor mirroring layer, not Codex itself.",
+  },
+  "codex-acp": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "plan",
+      "plan_file",
+      "question",
+      ...permissionEvents,
+      "system",
+    ],
+    notes: "Codex CLI over ACP (`codex acp`). Same ambient Codex login as the app server.",
   },
   "claude-code-sdk": {
     expectedEventKinds: [

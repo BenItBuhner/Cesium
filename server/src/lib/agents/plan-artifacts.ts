@@ -20,6 +20,7 @@ const BACKEND_PLAN_SEGMENTS: Record<AgentBackendId, string> = {
   "devin-acp": "devin",
   "grok-build": "grok-build",
   "codex-app-server": "codex",
+  "codex-acp": "codex-acp",
   "claude-code-sdk": "claude",
   "pi-agent": "pi-agent",
   "google-antigravity-cli": "antigravity",

@@ -23,7 +23,7 @@ import {
   settingsSelectTriggerClass,
   tagClass,
 } from "./settings-ui";
-import { HARNESS_LABELS, HARNESS_ORDER } from "./agent-harness-settings";
+import { HARNESS_LABELS, HARNESS_ORDER, harnessDisplayName } from "./agent-harness-settings";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { openExternalUrl } from "@/lib/mobile-bridge";
 import {
@@ -514,7 +514,7 @@ export function CloudAgentsSettingsPanel() {
             >
               {HARNESS_ORDER.map((backendId) => (
                 <option key={backendId} value={backendId}>
-                  {HARNESS_LABELS[backendId]}
+                  {harnessDisplayName(backendId)}
                 </option>
               ))}
             </select>

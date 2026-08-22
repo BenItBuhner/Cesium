@@ -339,6 +339,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "grok-build":
       return "xai";
     case "codex-app-server":
+    case "codex-acp":
       return "codex";
     case "claude-code-sdk":
       return "claude";
@@ -348,7 +349,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
 }
 
 function isCodexBackendId(backendId: AgentBackendId | undefined): boolean {
-  return backendId === "codex-app-server";
+  return backendId === "codex-app-server" || backendId === "codex-acp";
 }
 
 function isOpenCodeBackendId(backendId: AgentBackendId | undefined): boolean {

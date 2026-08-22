@@ -346,7 +346,7 @@ export function mapCodexRecordsToEvents(
 export function createCodexImportSource(): HarnessImportSource {
   return {
     harnessKey: "codex",
-    backendIds: ["codex-app-server"],
+    backendIds: ["codex-app-server", "codex-acp"],
     displayName: "Codex",
 
     async detect(): Promise<HarnessImportAvailability> {

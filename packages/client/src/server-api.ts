@@ -2710,6 +2710,7 @@ export type HarnessCliAuthBackendId =
   | "opencode-server"
   | "devin-acp"
   | "codex-app-server"
+  | "codex-acp"
   | "claude-code-sdk"
   | "google-antigravity-cli";
 
@@ -2738,6 +2739,7 @@ export function isHarnessCliAuthBackendId(
     backendId === "opencode-server" ||
     backendId === "devin-acp" ||
     backendId === "codex-app-server" ||
+    backendId === "codex-acp" ||
     backendId === "claude-code-sdk" ||
     backendId === "google-antigravity-cli"
   );

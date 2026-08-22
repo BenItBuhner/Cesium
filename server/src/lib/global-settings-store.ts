@@ -18,6 +18,7 @@ import {
   normalizeEnabledHarnesses,
   pruneModelToggleByBackend,
 } from "./active-agent-backends.js";
+import { normalizeHarnessTransports, type HarnessTransportsState } from "@cesium/core";
 import { refreshCesiumModelCatalog } from "./cesium-agent-settings.js";
 import { measureServerPerf } from "./perf.js";
 
@@ -113,6 +114,11 @@ export type GlobalSettings = {
      * Existing chats on a turned-off harness still run.
      */
     enabledHarnesses: Partial<Record<string, boolean>>;
+    /**
+     * Preferred transport inside a multi-runtime harness family.
+     * Cursor defaults to SDK; Codex defaults to the app server.
+     */
+    harnessTransports: HarnessTransportsState;
   };
   models: {
     byBackend: Record<string, ModelToggleEntry[]>;
@@ -247,6 +253,7 @@ function createDefaultSettings(): GlobalSettings {
       autoAcceptAllAgentPermissions: false,
       rememberedPermissions: [],
       enabledHarnesses: {},
+      harnessTransports: {},
     },
     models: {
       byBackend: {},
@@ -945,6 +952,9 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       ),
       enabledHarnesses: normalizeEnabledHarnesses(
         (r.agents as Record<string, unknown>)?.enabledHarnesses
+      ),
+      harnessTransports: normalizeHarnessTransports(
+        (r.agents as Record<string, unknown>)?.harnessTransports
       ),
     },
     models: {

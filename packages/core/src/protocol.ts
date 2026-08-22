@@ -17,6 +17,7 @@ export type AgentBackendId =
   | "devin-acp"
   | "grok-build"
   | "codex-app-server"
+  | "codex-acp"
   | "claude-code-sdk"
   | "pi-agent"
   | "google-antigravity-cli";

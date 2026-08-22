@@ -202,6 +202,7 @@ import { buildBrowserProxyUrl } from "@/lib/browser-proxy-url";
 import {
   buildConversationReferenceBlock,
   COMPOSER_CONVERSATION_REFERENCE_TOKEN_REGEX,
+  composerVisibleHarnesses,
   type AtConversationSource,
   type ConversationReference,
 } from "@cesium/core";
@@ -1351,7 +1352,11 @@ export function ChatComposer({
         activeBackend,
         modeOptions,
         models,
-        backends,
+        backends: composerVisibleHarnesses(backends, {
+          currentBackendId: backendId,
+          enabledHarnesses: settings.agents.enabledHarnesses,
+          harnessTransports: settings.agents.harnessTransports,
+        }),
         sessionConfigOptions,
         gitSlashCommands,
         configLocked,
@@ -1359,6 +1364,7 @@ export function ChatComposer({
       }),
     [
       activeBackend,
+      backendId,
       backends,
       configLocked,
       gitSlashCommands,
@@ -1366,6 +1372,8 @@ export function ChatComposer({
       modeOptions,
       models,
       sessionConfigOptions,
+      settings.agents.enabledHarnesses,
+      settings.agents.harnessTransports,
     ]
   );
 
@@ -2802,7 +2810,11 @@ export function ChatComposer({
  if (configLocked) {
  return false;
  }
- const cyclable = backends.filter((b) => b.available && b.enabled !== false);
+ const cyclable = composerVisibleHarnesses(backends, {
+          currentBackendId: backendId,
+          enabledHarnesses: settings.agents.enabledHarnesses,
+          harnessTransports: settings.agents.harnessTransports,
+        }).filter((b) => b.available && b.enabled !== false);
  if (cyclable.length < 2) {
  return false;
  }
@@ -2828,6 +2840,8 @@ export function ChatComposer({
  configLocked,
  onBackendChange,
  onRequestHandoff,
+ settings.agents.enabledHarnesses,
+ settings.agents.harnessTransports,
  ]
  );
 

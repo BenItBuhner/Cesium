@@ -7,6 +7,8 @@ import {
 
 test("isHarnessCliAuthBackendId covers CLI-login harnesses including Cursor ACP", () => {
   assert.equal(isHarnessCliAuthBackendId("cursor-acp"), true);
+  assert.equal(isHarnessCliAuthBackendId("codex-acp"), true);
+  assert.equal(isHarnessCliAuthBackendId("codex-app-server"), true);
   assert.equal(isHarnessCliAuthBackendId("grok-build"), true);
   assert.equal(isHarnessCliAuthBackendId("cursor-sdk"), false);
   assert.equal(isHarnessCliAuthBackendId("cesium-agent"), false);

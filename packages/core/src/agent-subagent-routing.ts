@@ -792,6 +792,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "devin-acp": isStrictAcpSubagentTaskToolEvent,
   "grok-build": isStrictAcpSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
+  "codex-acp": isStrictAcpSubagentTaskToolEvent,
   "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
   "pi-agent": isStrictAcpSubagentTaskToolEvent,
   "google-antigravity-cli": isGoogleAntigravitySubagentTaskToolEvent,

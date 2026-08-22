@@ -5,6 +5,7 @@ export * from "./workspace";
 export * from "./mcp";
 export * from "./agent-harness";
 export * from "./active-agent-backends";
+export * from "./harness-families";
 export * from "./agent-completion-error";
 export * from "./ask-question-utils";
 export * from "./ask-question-dock";

@@ -93,24 +93,45 @@ import {
 } from "@/components/editor/settings/CesiumModelAccessSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
-import { ACTIVE_AGENT_BACKEND_IDS } from "@cesium/core";
+import {
+  ACTIVE_AGENT_BACKEND_IDS,
+  HARNESS_FAMILIES,
+  HARNESS_FAMILY_SETTINGS_IDS,
+  applyHarnessFamilyEnabled,
+  applyHarnessFamilyTransport,
+  familyBackendIds,
+  harnessFamilyForBackend,
+  harnessFamilyHasMultipleTransports,
+  isHarnessFamilyEnabled,
+  resolveHarnessFamilyTransport,
+  type HarnessFamily,
+  type HarnessTransportId,
+} from "@cesium/core";
 
-/** Derived from the shared registry so settings never drift from the server menu. */
-export const HARNESS_ORDER: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
+/** One settings row per harness family (Cursor/Codex collapse SDK+ACP). */
+export const HARNESS_ORDER: AgentBackendId[] = [...HARNESS_FAMILY_SETTINGS_IDS];
+
+/** All runtime backend ids, including sibling transports. */
+export const HARNESS_BACKEND_IDS: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
 
 export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
-  "cursor-sdk": "Cursor SDK",
-  "cursor-acp": "Cursor ACP",
+  "cursor-sdk": "Cursor (SDK)",
+  "cursor-acp": "Cursor (ACP)",
   "opencode-server": "OpenCode",
   "opencode-v2-beta": "OpenCode",
   "devin-acp": "Devin",
   "grok-build": "Grok Build",
-  "codex-app-server": "Codex App Server",
+  "codex-app-server": "Codex (Server)",
+  "codex-acp": "Codex (ACP)",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
   "google-antigravity-cli": "Google Antigravity",
 };
+
+export function harnessDisplayName(backendId: AgentBackendId | string): string {
+  return harnessFamilyForBackend(backendId)?.label ?? HARNESS_LABELS[backendId as AgentBackendId] ?? backendId;
+}
 
 const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "cesium-agent":
@@ -128,7 +149,9 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "grok-build":
     "SpaceXAI Grok Build CLI over official ACP (`grok agent stdio`). Authenticate with `grok login --device-auth` or set `XAI_API_KEY`; Cesium performs the non-interactive ACP handshake.",
   "codex-app-server":
-    "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
+    "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files. This is the default Codex transport.",
+  "codex-acp":
+    "Codex CLI over ACP (`codex acp`). Same ambient Codex login as the app server, with the Agent Client Protocol session model.",
   "claude-code-sdk":
     "Anthropic Claude Agent SDK with stock Claude Code tools. Uses configured API/proxy auth and enabled MCP servers from Plugins.",
   "pi-agent":
@@ -218,15 +241,32 @@ const HARNESS_BLURBS: Record<AgentBackendId, string> = {
   "devin-acp": "Devin CLI · ACP",
   "grok-build": "Grok CLI · device auth",
   "codex-app-server": "Codex app-server · CLI login",
+  "codex-acp": "Codex CLI · ACP",
   "claude-code-sdk": "Claude Agent SDK · API key or CLI login",
   "pi-agent": "Pi coding agent · OAuth or API keys",
   "google-antigravity-cli": "agy CLI · Google OAuth",
+};
+
+const FAMILY_BLURBS: Record<string, string> = {
+  cesium: "First-party inference · API keys & OAuth",
+  cursor: "SDK or ACP · API key / CLI OAuth",
+  codex: "Server or ACP · CLI login",
+  opencode: "OpenCode HTTP/SSE · CLI login",
+  devin: "Devin CLI · ACP",
+  grok: "Grok CLI · device auth",
+  claude: "Claude Agent SDK · API key or CLI login",
+  pi: "Pi coding agent · OAuth or API keys",
+  antigravity: "agy CLI · Google OAuth",
 };
 
 const modelsLinkClass =
   "font-sans text-[12px] text-[var(--accent)] underline-offset-2 transition-colors hover:underline";
 
 function parseHarnessId(value: string | null | undefined): AgentBackendId | null {
+  const family = harnessFamilyForBackend(value);
+  if (family) {
+    return family.settingsId;
+  }
   if (!value || !HARNESS_ORDER.includes(value as AgentBackendId)) {
     return null;
   }
@@ -491,8 +531,8 @@ function CursorSdkCredentialSettings() {
         </div>
         <p className="leading-relaxed">
           The key stays server-side and is used only by the Cursor SDK harness. Cursor
-          account OAuth is not available on the SDK — enable Cursor ACP and sign in there
-          if you need `agent login`.
+          account OAuth is not available on the SDK — switch this harness to ACP above
+          and sign in there if you need `agent login`.
         </p>
         {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
       </div>
@@ -3459,6 +3499,69 @@ function HarnessGenericSettings() {
   );
 }
 
+function HarnessTransportPicker({
+  family,
+  agents,
+  onPatchAgents,
+}: {
+  family: HarnessFamily;
+  agents: AgentsSettingsState;
+  onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
+}) {
+  if (!harnessFamilyHasMultipleTransports(family)) {
+    return null;
+  }
+  const selected = resolveHarnessFamilyTransport(family, {
+    harnessTransports: agents.harnessTransports,
+    enabledHarnesses: agents.enabledHarnesses,
+  });
+  return (
+    <HarnessDetailBlock>
+      <SettingsSubsectionHeading>Runtime</SettingsSubsectionHeading>
+      <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+        Choose how Cesium talks to {family.label}. Existing chats keep their
+        current runtime until you start a new conversation or hand off.
+      </p>
+      <div className="mt-[12px] inline-flex rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] p-[2px]">
+        {family.transports.map((transport) => {
+          const active = transport.id === selected.id;
+          const isDefault = transport.id === family.defaultTransportId;
+          return (
+            <button
+              key={transport.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                const next = applyHarnessFamilyTransport(
+                  {
+                    enabledHarnesses: agents.enabledHarnesses,
+                    harnessTransports: agents.harnessTransports,
+                  },
+                  family,
+                  transport.id as HarnessTransportId
+                );
+                onPatchAgents(next);
+                notifyAgentBackendsChanged();
+              }}
+              className={`rounded-[calc(var(--radius-tab)-2px)] px-[12px] py-[6px] font-sans text-[12px] font-medium transition-colors ${
+                active
+                  ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {transport.label}
+              {isDefault ? " · default" : ""}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-[10px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+        {selected.description}
+      </p>
+    </HarnessDetailBlock>
+  );
+}
+
 function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
   switch (backendId) {
     case "cesium-agent":
@@ -3480,6 +3583,7 @@ function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
     case "opencode-server":
     case "devin-acp":
     case "codex-app-server":
+    case "codex-acp":
     case "google-antigravity-cli":
       return (
         <>
@@ -3516,7 +3620,7 @@ function HarnessRememberedPermissionsList({
     }
     return (
       <p className="font-sans text-[12px] text-[var(--text-disabled)]">
-        No remembered permissions for {HARNESS_LABELS[backendId]} yet.
+        No remembered permissions for {harnessDisplayName(backendId)} yet.
       </p>
     );
   }
@@ -3579,17 +3683,28 @@ function HarnessRememberedPermissionsList({
 
 function HarnessDetailView({
   backendId,
+  agents,
   rememberedForHarness,
   workspaceNameById,
   onPatchAgents,
   onOpenModels,
 }: {
   backendId: AgentBackendId;
+  agents: AgentsSettingsState;
   rememberedForHarness: RememberedAgentPermissionRule[];
   workspaceNameById: Map<string, string>;
   onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
   onOpenModels: () => void;
 }) {
+  const family = harnessFamilyForBackend(backendId);
+  const selectedTransport = family
+    ? resolveHarnessFamilyTransport(family, {
+        harnessTransports: agents.harnessTransports,
+        enabledHarnesses: agents.enabledHarnesses,
+      })
+    : null;
+  const settingsBackendId = selectedTransport?.backendId ?? backendId;
+  const familyLabel = family?.label ?? HARNESS_LABELS[backendId];
   const removeRemembered = useCallback(
     (id: string) => {
       void (async () => {
@@ -3607,25 +3722,42 @@ function HarnessDetailView({
   const clearHarnessRemembered = useCallback(() => {
     void (async () => {
       try {
-        const result = await clearRememberedAgentPermissions({ backendId });
-        onPatchAgents({ rememberedPermissions: result.rememberedPermissions });
+        const ids = family ? familyBackendIds(family) : [backendId];
+        let rememberedPermissions = agents.rememberedPermissions;
+        for (const id of ids) {
+          const result = await clearRememberedAgentPermissions({ backendId: id });
+          rememberedPermissions = result.rememberedPermissions;
+        }
+        onPatchAgents({ rememberedPermissions });
       } catch {
         // Keep local list; next settings refetch will reconcile.
       }
     })();
-  }, [backendId, onPatchAgents]);
+  }, [agents.rememberedPermissions, backendId, family, onPatchAgents]);
 
   return (
     <>
       <div className="mb-[16px] flex items-center gap-[10px] px-[2px]">
-        <AgentBackendIcon backendId={backendId} className="size-[20px] shrink-0" strokeWidth={1.5} />
+        <AgentBackendIcon backendId={settingsBackendId} className="size-[20px] shrink-0" strokeWidth={1.5} />
         <h1 className="min-w-0 font-sans text-[17px] font-semibold tracking-tight text-[var(--text-primary)]">
-          {HARNESS_LABELS[backendId]}
+          {familyLabel}
         </h1>
       </div>
+      {!family || !harnessFamilyHasMultipleTransports(family) ? (
+        <p className="mb-[16px] px-[2px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+          {HARNESS_DESCRIPTIONS[backendId]}
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-[28px]">
-        <HarnessSpecificSettings backendId={backendId} />
+        {family ? (
+          <HarnessTransportPicker
+            family={family}
+            agents={agents}
+            onPatchAgents={onPatchAgents}
+          />
+        ) : null}
+        <HarnessSpecificSettings backendId={settingsBackendId} />
         <HarnessDetailBlock>
           <div className="mb-[10px] flex flex-wrap items-center justify-between gap-[8px]">
             <div className="min-w-0">
@@ -3819,36 +3951,43 @@ function HarnessListView({
           Turn on only the agent runtimes you want in the model picker. Configure sign-in from
           each harness page.
         </p>
-        {HARNESS_ORDER.map((backendId, index) => {
-          const remembered = rememberedByHarness.get(backendId) ?? [];
-          const enabled = (agents.enabledHarnesses ?? {})[backendId] !== false;
+        {HARNESS_FAMILIES.map((family, index) => {
+          const remembered = rememberedByHarness.get(family.settingsId) ?? [];
+          const enabled = isHarnessFamilyEnabled(agents.enabledHarnesses, family);
+          const selected = resolveHarnessFamilyTransport(family, {
+            harnessTransports: agents.harnessTransports,
+            enabledHarnesses: agents.enabledHarnesses,
+          });
+          const blurb = harnessFamilyHasMultipleTransports(family)
+            ? `${FAMILY_BLURBS[family.id] ?? family.label} · ${selected.label}`
+            : FAMILY_BLURBS[family.id] ?? HARNESS_BLURBS[family.settingsId];
           return (
             <div
-              key={backendId}
+              key={family.id}
               className={`flex min-h-[56px] w-full items-center gap-[12px] px-[16px] py-[12px] ${
-                index < HARNESS_ORDER.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
+                index < HARNESS_FAMILIES.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
               }`}
             >
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center justify-between gap-[12px] text-left transition-colors"
-                onClick={() => onOpenHarness(backendId)}
+                onClick={() => onOpenHarness(family.settingsId)}
               >
                 <div className="flex min-w-0 items-center gap-[10px]">
                   <AgentBackendIcon
-                    backendId={backendId}
+                    backendId={selected.backendId}
                     className="size-[18px] shrink-0"
                     strokeWidth={1.5}
                   />
                   <div className="min-w-0">
                     <p
-                      id={`harness-enable-${backendId}`}
+                      id={`harness-enable-${family.id}`}
                       className="font-sans text-[13px] font-medium text-[var(--text-primary)]"
                     >
-                      {HARNESS_LABELS[backendId]}
+                      {family.label}
                     </p>
                     <p className="mt-[2px] truncate font-sans text-[11px] text-[var(--text-secondary)]">
-                      {HARNESS_BLURBS[backendId]}
+                      {blurb}
                     </p>
                   </div>
                 </div>
@@ -3871,16 +4010,17 @@ function HarnessListView({
                   checked={enabled}
                   onChange={(value) => {
                     onPatchAgents({
-                      enabledHarnesses: {
-                        ...(agents.enabledHarnesses ?? {}),
-                        [backendId]: value,
-                      },
+                      enabledHarnesses: applyHarnessFamilyEnabled(
+                        agents.enabledHarnesses,
+                        family,
+                        value
+                      ),
                     });
                     notifyAgentBackendsChanged();
                   }}
                   size="md"
                   variant="green"
-                  labelledBy={`harness-enable-${backendId}`}
+                  labelledBy={`harness-enable-${family.id}`}
                 />
               </div>
             </div>
@@ -3909,13 +4049,17 @@ export function AgentsHarnessSettingsPanel() {
 
   const rememberedByHarness = useMemo(() => {
     const map = new Map<AgentBackendId, RememberedAgentPermissionRule[]>();
-    for (const backendId of HARNESS_ORDER) {
-      map.set(backendId, []);
+    for (const family of HARNESS_FAMILIES) {
+      map.set(family.settingsId, []);
     }
     for (const rule of agents.rememberedPermissions) {
-      const list = map.get(rule.backendId as AgentBackendId);
+      const family = harnessFamilyForBackend(rule.backendId);
+      const key = family?.settingsId ?? (rule.backendId as AgentBackendId);
+      const list = map.get(key);
       if (list) {
         list.push(rule);
+      } else {
+        map.set(key, [rule]);
       }
     }
     return map;
@@ -3940,7 +4084,7 @@ export function AgentsHarnessSettingsPanel() {
         <SettingsBreadcrumbs
           segments={[
             { label: "Agents", onClick: openAgentsList },
-            { label: HARNESS_LABELS[activeHarnessId] },
+            { label: harnessDisplayName(activeHarnessId) },
           ]}
         />
       ) : (
@@ -3949,6 +4093,7 @@ export function AgentsHarnessSettingsPanel() {
       {activeHarnessId ? (
         <HarnessDetailView
           backendId={activeHarnessId}
+          agents={agents}
           rememberedForHarness={rememberedByHarness.get(activeHarnessId) ?? []}
           workspaceNameById={workspaceNameById}
           onPatchAgents={patchAgents}

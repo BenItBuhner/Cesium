@@ -1497,6 +1497,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createGrokBuildConfigOptions();
     case "codex-app-server":
       return createCodexAppServerConfigOptions();
+    case "codex-acp":
+      return [];
     case "claude-code-sdk":
       return createClaudeCodeSdkConfigOptions();
     case "pi-agent":

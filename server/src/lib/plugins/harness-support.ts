@@ -47,6 +47,13 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     attachment: "sdk-mcp",
     notes: "Codex app server accepts mcpServers on turns when exportable; skills arrive via prompt.",
   },
+  "codex-acp": {
+    backendId: "codex-acp",
+    nativeMcp: true,
+    promptSkills: true,
+    attachment: "acp-mcp",
+    notes: "Codex ACP sessions receive MCP servers through the ACP mcpServers array.",
+  },
   "devin-acp": {
     backendId: "devin-acp",
     nativeMcp: true,

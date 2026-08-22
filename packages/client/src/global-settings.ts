@@ -1,4 +1,9 @@
-import { normalizeEnabledHarnesses, pruneModelToggleByBackend } from "@cesium/core";
+import {
+  normalizeEnabledHarnesses,
+  normalizeHarnessTransports,
+  pruneModelToggleByBackend,
+  type HarnessTransportsState,
+} from "@cesium/core";
 import { normalizeAgentConversationMruByServer } from "./agent-conversation-mru";
 import {
   createDefaultAuroraSettings,
@@ -249,6 +254,11 @@ export type AgentsSettingsState = {
    * Existing chats on a turned-off harness still run.
    */
   enabledHarnesses: Partial<Record<string, boolean>>;
+  /**
+   * Preferred transport inside a multi-runtime harness family.
+   * Cursor defaults to SDK; Codex defaults to the app server.
+   */
+  harnessTransports: HarnessTransportsState;
 };
 
 export type RememberedAgentPermissionRule = {
@@ -375,6 +385,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       autoAcceptAllAgentPermissions: false,
       rememberedPermissions: [],
       enabledHarnesses: {},
+      harnessTransports: {},
     },
     models: {
       byBackend: {},
@@ -873,6 +884,7 @@ export function normalizeLoadedGlobalSettings(
         r.agents?.rememberedPermissions
       ),
       enabledHarnesses: normalizeEnabledHarnesses(r.agents?.enabledHarnesses),
+      harnessTransports: normalizeHarnessTransports(r.agents?.harnessTransports),
     },
     models: {
       byBackend:

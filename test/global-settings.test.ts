@@ -158,6 +158,7 @@ describe("global settings", () => {
   test("normalizes harness enable toggles and defaults missing keys to on", () => {
     const base = createDefaultGlobalSettings();
     assert.deepEqual(base.agents.enabledHarnesses, {});
+    assert.deepEqual(base.agents.harnessTransports, {});
     const settings = normalizeLoadedGlobalSettings({
       ...base,
       agents: {
@@ -172,6 +173,23 @@ describe("global settings", () => {
     assert.equal(settings.agents.enabledHarnesses["cursor-sdk"], false);
     assert.equal(settings.agents.enabledHarnesses["cursor-acp"], undefined);
     assert.equal("not-a-boolean" in settings.agents.enabledHarnesses, false);
+  });
+
+  test("normalizes Cursor/Codex harness transport preferences", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      agents: {
+        ...base.agents,
+        harnessTransports: {
+          cursor: "acp",
+          codex: "nope",
+          extra: "sdk",
+        } as never,
+      },
+    });
+    assert.equal(settings.agents.harnessTransports.cursor, "acp");
+    assert.equal(settings.agents.harnessTransports.codex, undefined);
   });
 
   test("drops retired harness ids from model toggle settings", () => {
