@@ -13,6 +13,7 @@ import {
   CircleAlert,
   CircleCheck,
   CirclePause,
+  Cloud,
   LoaderCircle,
   MessageCircleQuestion,
   Moon,
@@ -338,6 +339,14 @@ export const AgentConversationRow = memo(function AgentConversationRow({
 
   const badges = (
     <>
+      {conversation.executionTarget === "cloud" ? (
+        <span
+          title="Runs on the harness vendor's cloud (e.g. Cursor Cloud)"
+          className="inline-flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)]"
+        >
+          <Cloud className="size-[11px]" strokeWidth={1.7} aria-hidden />
+        </span>
+      ) : null}
       {showMachineBadge && conversation.serverLabel ? (
         <span className="max-w-[72px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[4px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
           {conversation.serverLabel}

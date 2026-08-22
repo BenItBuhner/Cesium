@@ -37,6 +37,8 @@ import type {
 import type { EditorMode, ImageAttachment, ModelInfo } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import { resolveLandingComposerDraftId } from "@/lib/chat-draft-title";
+import { backendSupportsCloudExecution } from "@/lib/cloud-execution-devices";
+import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
 
 export function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -85,10 +87,22 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     resetComposerDraft,
   } = useOpenInEditor();
   const {
-    backends,
+    backends: allBackends,
     createAndPromptConversation,
     createAndPromptStandaloneConversation,
   } = useAgentConversations();
+  const { activeCloudDevice } = useCloudExecutionDevice(allBackends);
+  // While the cloud pseudo-device is active, the composer only offers
+  // cloud-capable backends; new conversations execute on the vendor's cloud.
+  const backends = useMemo(
+    () =>
+      activeCloudDevice
+        ? allBackends.filter(
+            (backend) => backendSupportsCloudExecution(backend) && backend.available
+          )
+        : allBackends,
+    [activeCloudDevice, allBackends]
+  );
   const {
     activeWorkspaceId,
     workspaceSession,
@@ -108,8 +122,12 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   } = useAgentShellState();
 
   const draftBackend = useMemo(
-    () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
-    [backends, workspaceSession.chat.backendId]
+    () =>
+      pickAvailableBackend(
+        backends,
+        activeCloudDevice ? activeCloudDevice.backendId : workspaceSession.chat.backendId
+      ),
+    [activeCloudDevice, backends, workspaceSession.chat.backendId]
   );
   const draftModels = useMemo(
     () =>
@@ -236,6 +254,11 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         backend.id === "cesium-agent"
           ? workspaceSession.chat.profileId?.trim() || undefined
           : undefined;
+      // Cloud execution rides along only when the pinned backend actually
+      // advertises it (the pseudo-device pins the composer to such backends).
+      const cloudExecution = Boolean(
+        activeCloudDevice && backendSupportsCloudExecution(backend)
+      );
       if (noWorkspaceDraft) {
         const created = await createAndPromptStandaloneConversation(
           {
@@ -244,6 +267,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
             ...(draftProfileId ? { profileId: draftProfileId } : {}),
+            ...(cloudExecution ? { executionTarget: "cloud" as const } : {}),
           },
           text,
           attachments
@@ -296,6 +320,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
         ...(draftProfileId ? { profileId: draftProfileId } : {}),
+        ...(cloudExecution ? { executionTarget: "cloud" as const } : {}),
       };
       if (onInstantSubmit) {
         resetComposerDraft(composerDraftId);
@@ -314,6 +339,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       return true;
     },
     [
+      activeCloudDevice,
       createAndPromptConversation,
       onInstantSubmit,
       onConversationCreated,
@@ -360,6 +386,8 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     noWorkspaceDraft,
     gitStatus,
     handleSubmit,
+    /** Non-null while new chats are pinned to a cloud pseudo-device. */
+    activeCloudDevice,
   };
 }
 

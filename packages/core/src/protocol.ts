@@ -130,7 +130,21 @@ export type AgentProviderCapabilities = {
   supportsPromptImages: boolean;
   supportsInlineReasoning: boolean;
   supportsCompletionRetry: boolean;
+  /**
+   * True when the backend can run conversations on its vendor-hosted cloud
+   * infrastructure (e.g. Cursor Cloud Agents) instead of a local device.
+   * Optional for stored-record compatibility; absent means unsupported.
+   */
+  supportsCloudExecution?: boolean;
 };
+
+/**
+ * Where a conversation's agent actually executes. "local" runs on the engine
+ * (device) that owns the conversation; "cloud" runs on the harness vendor's
+ * hosted infrastructure (e.g. Cursor Cloud). Chosen at creation and immutable
+ * afterwards — a cloud agent lives on the vendor's infra for its lifetime.
+ */
+export type AgentExecutionTarget = "local" | "cloud";
 
 /** Live CLI detection details for a harness-backed agent backend. */
 export type AgentBackendRuntimeInfo = {
@@ -167,6 +181,11 @@ export type AgentConversationConfig = {
   modelName: string;
   /** Cesium capability profile id ("code", "work", or a custom profile id). */
   profileId?: string;
+  /**
+   * Where the agent executes. Absent = "local". Only backends advertising
+   * `supportsCloudExecution` accept "cloud"; set at creation, never patched.
+   */
+  executionTarget?: AgentExecutionTarget;
 };
 
 export type AgentToolLocation = {
@@ -636,6 +655,8 @@ export type AgentRailConversationSummary = Pick<
   /** First line of the last error, truncated for rail display. */
   lastErrorSummary?: string | null;
   origin?: AgentConversationOrigin | null;
+  /** Where the agent executes ("cloud" = vendor-hosted, e.g. Cursor Cloud). */
+  executionTarget?: AgentExecutionTarget;
   serverId?: string;
   serverLabel?: string;
   workspaceKey?: string;
@@ -789,6 +810,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsPromptImages",
   "supportsInlineReasoning",
   "supportsCompletionRetry",
+  "supportsCloudExecution",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 export const AGENT_STORED_EVENT_KINDS = [

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleUserRound,
+  Cloud,
   FolderPlus,
   GitBranchPlus,
   ListFilter,
@@ -44,6 +45,7 @@ import {
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
   AGENT_RAIL_FILTER_TOGGLE_KEYS,
@@ -247,6 +249,7 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   unread: "Unread",
   read: "Read",
   external: "External sources",
+  cloud: "Cloud agents",
 };
 
 const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
@@ -468,6 +471,7 @@ export function AgentWorkspaceRail() {
   const { pushNotification } = useWorkbenchNotifications();
   const { openAgentConversation } = useOpenInEditor();
   const {
+    backends,
     groups,
     leftRailCollapsed,
     railLoading,
@@ -511,6 +515,8 @@ export function AgentWorkspaceRail() {
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { cloudDevices, activeCloudDevice, setActiveCloudDeviceId } =
+    useCloudExecutionDevice(backends);
   const { byServerId: directoryByServerId, workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
@@ -580,6 +586,8 @@ export function AgentWorkspaceRail() {
     () => getServerDisplayLabel(activeServer, activeServerAppearance),
     [activeServer, activeServerAppearance]
   );
+  /** Footer label: the cloud pseudo-device masks the underlying host server. */
+  const activeDeviceDisplayLabel = activeCloudDevice?.label ?? activeServerDisplayLabel;
   const machineOptions = useMemo(
     () =>
       servers.map((server, index) => ({
@@ -838,6 +846,11 @@ export function AgentWorkspaceRail() {
 
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
+      // Picking a real device always leaves cloud execution mode.
+      if (activeCloudDevice) {
+        setRailFilterToggle("cloud", false);
+      }
+      setActiveCloudDeviceId(null);
       if (serverId === activeServer.id) {
         setServerPickerOpen(false);
         return;
@@ -859,12 +872,26 @@ export function AgentWorkspaceRail() {
       }
     },
     [
+      activeCloudDevice,
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
       openWorkspaceById,
+      setActiveCloudDeviceId,
       setActiveServer,
+      setRailFilterToggle,
     ]
+  );
+
+  const handleCloudDeviceSelect = useCallback(
+    (cloudDeviceId: string) => {
+      setActiveCloudDeviceId(cloudDeviceId);
+      // Focus the rail on cloud conversations while the cloud device is
+      // active; the toggle stays user-controllable from the filter menu.
+      setRailFilterToggle("cloud", true);
+      setServerPickerOpen(false);
+    },
+    [setActiveCloudDeviceId, setRailFilterToggle]
   );
 
   useEffect(() => {
@@ -3763,12 +3790,18 @@ export function AgentWorkspaceRail() {
                     );
                   }}
                   className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
-                  aria-label={`Switch server (${activeServerDisplayLabel})`}
+                  aria-label={`Switch server (${activeDeviceDisplayLabel})`}
                   aria-expanded={serverPickerOpen}
                   aria-haspopup="menu"
-                  title={activeServerDisplayLabel}
+                  title={activeDeviceDisplayLabel}
                 >
-                  {isLocalDeviceServer(activeServer) ? (
+                  {activeCloudDevice ? (
+                    <Cloud
+                      className="size-[var(--d2-rail-control-size)] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    />
+                  ) : isLocalDeviceServer(activeServer) ? (
                     <CircleUserRound
                       className="size-[var(--d2-rail-control-size)] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
@@ -3783,7 +3816,7 @@ export function AgentWorkspaceRail() {
                     />
                   )}
                   <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-                    {activeServerDisplayLabel}
+                    {activeDeviceDisplayLabel}
                   </span>
                   <ChevronDown
                     className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -3834,6 +3867,9 @@ export function AgentWorkspaceRail() {
         onSelect={handleActiveServerChange}
         placement="above"
         variant="device"
+        cloudDevices={cloudDevices}
+        selectedCloudDeviceId={activeCloudDevice?.id ?? null}
+        onSelectCloudDevice={handleCloudDeviceSelect}
       />
 
       <WorkspacePickerMenu

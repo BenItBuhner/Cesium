@@ -29,6 +29,7 @@ export const AGENT_RAIL_FILTER_TOGGLE_KEYS = [
   "unread",
   "read",
   "external",
+  "cloud",
 ] as const;
 
 export type AgentRailFilterToggleKey = (typeof AGENT_RAIL_FILTER_TOGGLE_KEYS)[number];
@@ -44,6 +45,7 @@ export function defaultAgentRailFilterToggles(): AgentRailFilterToggleState {
     unread: false,
     read: false,
     external: false,
+    cloud: false,
   };
 }
 
@@ -179,6 +181,10 @@ export function matchesAgentRailMultiFilter(
   // Conversations triggered from external sources (Linear/GitHub/Slack via
   // Cloud Agents) carry an `origin`; the toggle narrows the rail to them.
   if (toggles.external && conversation.origin?.kind !== "cloud") {
+    return false;
+  }
+  // Conversations executing on a vendor-hosted cloud (e.g. Cursor Cloud).
+  if (toggles.cloud && conversation.executionTarget !== "cloud") {
     return false;
   }
 

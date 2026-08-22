@@ -28,6 +28,8 @@ export type AgentConversationsAllSummary = {
   pendingPermissionTitle: string | null;
   lastErrorSummary: string | null;
   origin?: AgentConversationRecord["origin"];
+  /** Where the agent executes ("cloud" = vendor-hosted, e.g. Cursor Cloud). */
+  executionTarget?: AgentConversationRecord["config"]["executionTarget"];
   repository?: AgentRailRepositoryInfo;
 };
 
@@ -143,6 +145,9 @@ function summarizeConversation(
     pendingPermissionTitle: summarizeRailDetailText(conversation.pendingPermission?.title),
     lastErrorSummary: summarizeRailDetailText(conversation.lastError),
     ...(conversation.origin ? { origin: conversation.origin } : {}),
+    ...(conversation.config.executionTarget
+      ? { executionTarget: conversation.config.executionTarget }
+      : {}),
     repository,
   };
 }

@@ -43,6 +43,7 @@ import {
   unsupportedContextUsageSnapshot,
 } from "./cesium-context-usage.js";
 import { normalizeCesiumMode } from "./cesium-mode-policy.js";
+import { propagateCloudExecutionLifecycle } from "./cloud-execution-lifecycle.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
 import { goalContinuationContext } from "./goal-steering.js";
 import {
@@ -491,6 +492,14 @@ export class AgentRuntimeManager {
     const backendId = this.resolveBackendId(input.backendId);
     this.assertRunnableBackend(backendId);
     const backend = this.backends[backendId];
+    if (
+      input.executionTarget === "cloud" &&
+      backend.capabilities.supportsCloudExecution !== true
+    ) {
+      throw new Error(
+        `Backend ${backendId} does not support cloud execution. Choose a cloud-capable harness (e.g. Cursor) or run on a device.`
+      );
+    }
     const now = nextConversationRankTimestamp();
     const record: AgentConversationRecord = {
       schemaVersion: 1,
@@ -507,6 +516,7 @@ export class AgentRuntimeManager {
         modelId: input.modelId ?? backend.defaultModelId,
         modelName: input.modelName ?? backend.defaultModelName,
         ...(input.profileId?.trim() ? { profileId: input.profileId.trim() } : {}),
+        ...(input.executionTarget === "cloud" ? { executionTarget: "cloud" as const } : {}),
       },
       providerSessionId: null,
       configOptions: [],
@@ -982,7 +992,15 @@ export class AgentRuntimeManager {
     conversationId: string,
     patch: AgentConversationConfigPatch
   ): Promise<AgentConversationRecord> {
-    const { setConfigOption, setConfigOptions, title: titlePatch, ...configPatch } = patch;
+    const {
+      setConfigOption,
+      setConfigOptions,
+      title: titlePatch,
+      // Execution target is chosen at creation and immutable afterwards — a
+      // cloud agent lives on the vendor's infrastructure for its lifetime.
+      executionTarget: _ignoredExecutionTarget,
+      ...configPatch
+    } = patch;
     const nextTitle =
       titlePatch !== undefined ? truncateConversationTitle(titlePatch) : undefined;
 
@@ -1000,11 +1018,15 @@ export class AgentRuntimeManager {
 
     if (backendChanged) {
       await this.disposeRuntime(conversationId);
+      // Handing the conversation to a different backend starts a fresh
+      // provider session on this device; the cloud execution target does not
+      // carry over.
+      const { executionTarget: _droppedExecutionTarget, ...portableConfig } = record.config;
       record = await updateConversationRecord(workspace.id, conversationId, {
         ...record,
         ...(nextTitle !== undefined ? { title: nextTitle } : {}),
         config: {
-          ...record.config,
+          ...portableConfig,
           ...configPatch,
           backendId: nextBackendId,
           modelId: configPatch.modelId ?? nextBackend.defaultModelId,
@@ -1171,11 +1193,14 @@ export class AgentRuntimeManager {
     conversationId: string,
     patch: AgentConversationMetadataPatch
   ): Promise<AgentConversationRecord> {
-    return updateConversationRecord(workspace.id, conversationId, (current) => {
+    let archiveTransition: "archive" | "unarchive" | null = null;
+    const record = await updateConversationRecord(workspace.id, conversationId, (current) => {
       let next: AgentConversationRecord = { ...current };
       if (patch.archived === true) {
+        archiveTransition = current.archivedAt == null ? "archive" : null;
         next = { ...next, archivedAt: Date.now() };
       } else if (patch.archived === false) {
+        archiveTransition = current.archivedAt != null ? "unarchive" : null;
         next = { ...next, archivedAt: null };
       }
       if (patch.settled === true) {
@@ -1192,6 +1217,12 @@ export class AgentRuntimeManager {
       }
       return next;
     });
+    if (archiveTransition) {
+      // Fire-and-forget: mirroring onto the vendor's cloud dashboard must
+      // never delay or fail the local metadata patch.
+      void propagateCloudExecutionLifecycle(record, archiveTransition);
+    }
+    return record;
   }
 
   async promptConversation(

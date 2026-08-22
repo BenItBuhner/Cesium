@@ -19,6 +19,7 @@ import {
   createCursorSdkProvider,
   type CursorSdkProviderDependencies,
 } from "../src/lib/agents/cursor-sdk-provider.js";
+import { buildCursorSdkCloudOptions } from "../src/lib/agents/cursor-sdk-cloud-options.js";
 import { AGENT_CAPABILITIES } from "../src/lib/agents/agent-contract.js";
 import type {
   AgentBackendInfo,
@@ -235,6 +236,7 @@ test("live sandbox and setting-source changes rebind the local SDK agent", async
         toolDisplays: [],
       } satisfies AgentPluginAttachmentSnapshot;
     },
+    buildCloudOptions: buildCursorSdkCloudOptions,
   };
 
   const configOptions = cursorSdkConfigOptionsFromModels([]);

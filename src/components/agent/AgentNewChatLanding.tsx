@@ -133,6 +133,7 @@ export function AgentNewChatLanding({
     setDraftBackend,
     noWorkspaceDraft,
     handleSubmit,
+    activeCloudDevice,
   } = useAgentDraftComposer({ onInstantSubmit });
 
   const isHomeWorkspace = Boolean(
@@ -518,6 +519,14 @@ export function AgentNewChatLanding({
 
           {!composerHiddenForExpanded ? (
             <>
+              {activeCloudDevice ? (
+                <div className="mb-[6px] inline-flex items-center gap-[6px] self-start rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[8px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)]">
+                  <Cloud className="size-[12px] shrink-0" strokeWidth={1.5} aria-hidden />
+                  <span>
+                    New chats run on <span className="text-[var(--text-primary)]">{activeCloudDevice.label}</span>
+                  </span>
+                </div>
+              ) : null}
               <ChatComposer
                 key={composerDraftId}
                 mode={draftMode}
