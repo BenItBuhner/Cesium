@@ -1662,6 +1662,9 @@ function CesiumAgentHarnessSettings() {
       try {
         const result = await patchCesiumAgentSettings(patch);
         setSettings(result.settings);
+        if (patch.profiles || patch.enabledProfiles || patch.defaultProfileId) {
+          invalidateCesiumProfileCatalog();
+        }
         notifyAgentBackendsChanged();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Failed to update Cesium settings.");
@@ -1789,6 +1792,11 @@ function CesiumAgentHarnessSettings() {
   const enabledModeCount = settings
     ? Object.values(settings.modes.enabled).filter(Boolean).length
     : 0;
+  const enabledProfileCount = settings
+    ? settings.profileCatalog.filter(
+        (profile) => settings.enabledProfiles?.[profile.id] !== false
+      ).length
+    : 0;
 
   // Terse per-layer rollups shown while a section is collapsed.
   const modelAccessSummary = useMemo(
@@ -1815,7 +1823,7 @@ function CesiumAgentHarnessSettings() {
       }`
     : "";
   const profilesSummary = settings
-    ? `${settings.profileCatalog.length} profiles · ${triggers?.length ?? 0} trigger${
+    ? `${enabledProfileCount}/${settings.profileCatalog.length} profiles · ${triggers?.length ?? 0} trigger${
         (triggers?.length ?? 0) === 1 ? "" : "s"
       }`
     : "";
@@ -2280,7 +2288,10 @@ function CesiumAgentHarnessSettings() {
           <SettingsDisclosure title="Profiles & triggers" summary={profilesSummary}>
           <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
-            <div className="flex flex-wrap items-center justify-between gap-[10px]">
+            <div
+              className="flex flex-wrap items-center justify-between gap-[10px]"
+              data-settings-search-id="cesium-profiles"
+            >
               <SettingsSubsectionHeading>Agent profiles</SettingsSubsectionHeading>
               <button
                 type="button"
@@ -2295,11 +2306,15 @@ function CesiumAgentHarnessSettings() {
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Capability presets orthogonal to modes: each profile picks a persona, verbatim
               instructions, the advertised tool surface, MCP server access, and permission
-              overrides. Built-in Code and Work presets are read-only — duplicate to customize.
+              overrides. Toggle a profile off to hide it from the new-chat switch — the switch
+              itself disappears when only one profile is enabled. Built-in Code and Work presets
+              are read-only — duplicate to customize.
             </p>
             <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
               {settings.profileCatalog.map((profile) => {
                 const isDefault = profile.id === settings.defaultProfileId;
+                const isEnabled = settings.enabledProfiles?.[profile.id] !== false;
+                const labelId = `cesium-profile-${profile.id}`;
                 const toolSummary =
                   profile.tools.allowed === "all"
                     ? "All tools"
@@ -2318,7 +2333,10 @@ function CesiumAgentHarnessSettings() {
                     className="flex items-center justify-between gap-[12px] py-[10px] first:pt-0 last:pb-0"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      <p
+                        id={labelId}
+                        className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]"
+                      >
                         {profile.name}
                         {profile.builtIn ? <span className={tagClass}>built-in</span> : null}
                         {isDefault ? <span className={tagClass}>default</span> : null}
@@ -2333,15 +2351,29 @@ function CesiumAgentHarnessSettings() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-[6px]">
-                      {!isDefault ? (
+                      <ToggleSwitch
+                        checked={isEnabled}
+                        labelledBy={labelId}
+                        disabled={busy}
+                        onChange={(nextEnabled) => {
+                          if (!nextEnabled && enabledProfileCount <= 1) {
+                            setMessage("At least one agent profile must remain enabled.");
+                            return;
+                          }
+                          void patchSettings({
+                            enabledProfiles: { [profile.id]: nextEnabled },
+                          });
+                        }}
+                        size="md"
+                        variant="green"
+                      />
+                      {!isDefault && isEnabled ? (
                         <button
                           type="button"
                           className={rowButtonClass}
                           disabled={busy}
                           onClick={() => {
-                            void patchSettings({ defaultProfileId: profile.id }).then(() =>
-                              invalidateCesiumProfileCatalog()
-                            );
+                            void patchSettings({ defaultProfileId: profile.id });
                           }}
                         >
                           Set default

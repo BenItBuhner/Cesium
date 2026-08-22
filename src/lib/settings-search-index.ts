@@ -467,6 +467,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Orchestration Agent",
     ["cesium", "orchestration", "kanban", "todo"]
   ),
+  row(
+    "agents",
+    "cesium-profiles",
+    "Agent profiles",
+    "Enable or disable Code, Work, and custom Cesium capability profiles. The new-chat toggle hides when only one profile is on.",
+    ["cesium", "profile", "work", "code", "toggle", "mode"]
+  ),
   row("agents", "cesium-edit-file", "Edit file", "Cesium tool permissions"),
   row("agents", "cesium-terminal", "Terminal", "Cesium tool permissions"),
   row("agents", "cesium-mcp-call", "MCP call", "Cesium tool permissions"),

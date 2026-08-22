@@ -431,8 +431,13 @@ export function AgentCenterPane() {
       })),
     [cesiumProfileCatalog.catalog]
   );
+  const requestedProfileId = workspaceSession.chat.profileId?.trim();
   const draftProfileId =
-    workspaceSession.chat.profileId?.trim() || cesiumProfileCatalog.defaultProfileId;
+    (requestedProfileId &&
+    profileToggleOptions.some((option) => option.value === requestedProfileId)
+      ? requestedProfileId
+      : null) ||
+    cesiumProfileCatalog.defaultProfileId;
   const handleProfileToggle = useCallback(
     (next: string) => {
       updateWorkspaceSession((current) => ({
@@ -450,7 +455,7 @@ export function AgentCenterPane() {
     openSettingsView();
   }, [openSettingsView, updateWorkspaceSession]);
   const profileToggleEl =
-    isCesiumDraft && profileToggleOptions.length > 0 ? (
+    isCesiumDraft && profileToggleOptions.length > 1 ? (
       <CesiumProfileToggle
         options={profileToggleOptions}
         activeId={draftProfileId}

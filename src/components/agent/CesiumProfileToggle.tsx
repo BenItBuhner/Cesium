@@ -32,7 +32,8 @@ interface CesiumProfileToggleProps {
  * Capability-profile toggle pinned at the very top of the agent center pane.
  * Profiles are a layer above the harness (modes, models, tools live inside
  * it), so the switch renders above the transcript/composer and only for the
- * first-party Cesium agent harness.
+ * first-party Cesium agent harness. Hidden when fewer than two profiles are
+ * enabled — first install is Code-only, so this stays out of the way.
  */
 export function CesiumProfileToggle({
   options,
@@ -41,7 +42,7 @@ export function CesiumProfileToggle({
   onManage,
   disabled = false,
 }: CesiumProfileToggleProps) {
-  if (options.length === 0) {
+  if (options.length < 2) {
     return null;
   }
   const active = options.find((option) => option.value === activeId) ?? options[0];

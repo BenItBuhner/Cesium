@@ -18,11 +18,14 @@ import {
   type CesiumSubagentsVersion,
 } from "./agents/cesium/features/index.js";
 import {
+  CESIUM_DEFAULT_ENABLED_PROFILES,
   CESIUM_DEFAULT_PROFILE_ID,
   CESIUM_PROFILE_LOCKED_TOOLS,
   CESIUM_PROFILE_TOOL_GROUPS,
+  listCesiumEnabledProfiles,
   listCesiumProfileCatalog,
   normalizeCesiumDefaultProfileId,
+  normalizeCesiumEnabledProfiles,
   normalizeCesiumProfiles,
   type CesiumAgentProfile,
   type CesiumProfileToolGroup,
@@ -179,6 +182,11 @@ export type CesiumAgentSettings = {
   modelAccess: CesiumModelAccessSettings;
   /** Custom capability profiles only; built-in Code/Work presets live in code. */
   profiles: CesiumAgentProfile[];
+  /**
+   * Which catalog profiles appear in the new-chat toggle and config option.
+   * Built-ins always stay in `profileCatalog` so Settings can flip them.
+   */
+  enabledProfiles: Record<string, boolean>;
   /** Profile applied to new conversations when none is selected. */
   defaultProfileId: string;
   providerKeys: CesiumProviderKey[];
@@ -671,6 +679,7 @@ function defaultSettings(): CesiumAgentSettings {
     },
     modelAccess: { entries: {} },
     profiles: [],
+    enabledProfiles: { ...CESIUM_DEFAULT_ENABLED_PROFILES },
     defaultProfileId: CESIUM_DEFAULT_PROFILE_ID,
     providerKeys: [],
     customProviders: [],
@@ -860,6 +869,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
     record.profiles,
     getCesiumFeatureCatalog().flatMap((plugin) => plugin.toolNames)
   );
+  const enabledProfiles = normalizeCesiumEnabledProfiles(record.enabledProfiles, profiles);
   return {
     schemaVersion: 1,
     updatedAt: asNumber(record.updatedAt) ?? defaults.updatedAt,
@@ -916,7 +926,12 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
     },
     modelAccess: normalizeCesiumModelAccess(record.modelAccess),
     profiles,
-    defaultProfileId: normalizeCesiumDefaultProfileId(record.defaultProfileId, profiles),
+    enabledProfiles,
+    defaultProfileId: normalizeCesiumDefaultProfileId(
+      record.defaultProfileId,
+      profiles,
+      enabledProfiles
+    ),
     providerKeys: dedupeProviderKeys(
       Array.isArray(record.providerKeys)
         ? record.providerKeys
@@ -1232,9 +1247,19 @@ export async function patchCesiumAgentSettings(input: {
   customProviders?: CesiumCustomProvider[];
   /** Full replacement list of custom profiles (built-ins are never persisted). */
   profiles?: CesiumAgentProfile[];
+  /** Partial merge of profile-visibility flags (omitted ids stay as-is). */
+  enabledProfiles?: Record<string, boolean>;
   defaultProfileId?: string;
 }): Promise<CesiumAgentSettingsPublic> {
   const settings = await getCesiumAgentSettings();
+  const nextProfiles = input.profiles ?? settings.profiles;
+  const nextEnabledProfiles = normalizeCesiumEnabledProfiles(
+    {
+      ...settings.enabledProfiles,
+      ...(input.enabledProfiles ?? {}),
+    },
+    nextProfiles
+  );
   await saveCesiumAgentSettings({
     ...settings,
     defaultProviderKeyId:
@@ -1272,8 +1297,13 @@ export async function patchCesiumAgentSettings(input: {
       ? mergeCesiumModelAccess(settings.modelAccess, input.modelAccess)
       : settings.modelAccess,
     customProviders: input.customProviders ?? settings.customProviders,
-    profiles: input.profiles ?? settings.profiles,
-    defaultProfileId: input.defaultProfileId ?? settings.defaultProfileId,
+    profiles: nextProfiles,
+    enabledProfiles: nextEnabledProfiles,
+    defaultProfileId: normalizeCesiumDefaultProfileId(
+      input.defaultProfileId ?? settings.defaultProfileId,
+      nextProfiles,
+      nextEnabledProfiles
+    ),
   });
   return getCesiumAgentSettingsPublic();
 }
@@ -1775,7 +1805,10 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
   const enabledModes = CESIUM_MODE_DEFINITIONS.filter(
     (mode) => settings.modes.enabled[mode.id]
   );
-  const profileCatalog = listCesiumProfileCatalog(settings.profiles);
+  const profileCatalog = listCesiumEnabledProfiles(
+    settings.profiles,
+    settings.enabledProfiles
+  );
   return [
     {
       id: "mode",

@@ -499,6 +499,8 @@ export type CesiumAgentSettingsPublic = {
   }>;
   /** Custom capability profiles (persisted). */
   profiles: CesiumAgentProfile[];
+  /** Which catalog profiles appear in the new-chat toggle. */
+  enabledProfiles: Record<string, boolean>;
   defaultProfileId: string;
   /** Built-in Code/Work presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfile[];
