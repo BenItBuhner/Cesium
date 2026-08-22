@@ -6,6 +6,13 @@
 
 const isWindows = process.platform === "win32";
 
+// Packages always target the build host's CPU architecture: the staged
+// backend runtime (`.server-runtime/node`) is a copy of the running Node
+// binary and native modules are compiled in place during staging, so a
+// cross-arch electron-builder invocation would embed wrong-arch binaries.
+// CI builds each architecture on a native runner instead.
+const hostArch = process.arch === "arm64" ? "arm64" : "x64";
+
 /** @type {import("electron-builder").Configuration} */
 module.exports = {
   appId: "com.cesium.desktop",
@@ -55,6 +62,7 @@ module.exports = {
     executableName: "Cesium",
     icon: "build/icon.ico",
     signAndEditExecutable: false,
+    target: [{ target: "nsis", arch: [hostArch] }],
   },
   nsis: {
     oneClick: false,
@@ -71,8 +79,8 @@ module.exports = {
     executableName: "cesium-desktop",
     artifactName: "cesium-desktop-${version}-${arch}.${ext}",
     target: [
-      { target: "AppImage", arch: ["x64"] },
-      { target: "deb", arch: ["x64"] },
+      { target: "AppImage", arch: [hostArch] },
+      { target: "deb", arch: [hostArch] },
     ],
     icon: "build/icon.png",
     category: "Development",
@@ -99,8 +107,8 @@ module.exports = {
   },
   mac: {
     target: [
-      { target: "dmg", arch: ["arm64"] },
-      { target: "zip", arch: ["arm64"] },
+      { target: "dmg", arch: [hostArch] },
+      { target: "zip", arch: [hostArch] },
     ],
     icon: "build/icon.png",
     category: "public.app-category.developer-tools",
