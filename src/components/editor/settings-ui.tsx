@@ -455,6 +455,30 @@ export function SettingsBreadcrumbs({ segments }: { segments: SettingsBreadcrumb
   return <SettingsPageHeader segments={segments} />;
 }
 
+/** Back-link + current page for settings that live under a collapsed hub. */
+export function SettingsNestedBreadcrumbs({
+  parentNav,
+  parentLabel,
+  label,
+}: {
+  parentNav: string;
+  parentLabel: string;
+  label: string;
+}) {
+  const chrome = useSettingsShellChrome();
+  return (
+    <SettingsBreadcrumbs
+      segments={[
+        {
+          label: parentLabel,
+          onClick: chrome?.navigate ? () => chrome.navigate?.(parentNav) : undefined,
+        },
+        { label },
+      ]}
+    />
+  );
+}
+
 /** Styled select trigger matching server/workspace pickers in settings. */
 export const settingsSelectTriggerClass =
   "inline-flex min-w-[160px] w-full items-center justify-between gap-[8px] rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]";

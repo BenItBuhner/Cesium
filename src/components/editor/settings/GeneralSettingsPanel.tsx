@@ -1,10 +1,8 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   NEW_CHAT_WIDGET_DESCRIPTIONS,
   NEW_CHAT_WIDGET_LABELS,
-  useNewChatWidgetMove,
   useNewChatWidgetVisibilityToggle,
 } from "@/components/agent/NewChatWidgets";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -32,6 +30,10 @@ import {
 import { DesktopNativeSettings } from "./DesktopNativeSettings";
 import { MobileNativeSettings } from "./MobileNativeSettings";
 
+function composerFooterEnabled(visibility: ComposerStatusBarVisibility): boolean {
+  return visibility.repo || visibility.branch || visibility.goal || visibility.context;
+}
+
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const { updateWorkspaceSession, workspaceSession } = useWorkspace();
@@ -41,7 +43,6 @@ export function GeneralSettingsPanel() {
       workspaceSession.chat.composerStatusBarVisibility
   );
   const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
-  const moveNewChatWidget = useNewChatWidgetMove();
 
   const patchGeneral = (patch: Partial<typeof general>) => {
     updateSettings((current) => ({
@@ -63,14 +64,13 @@ export function GeneralSettingsPanel() {
     }));
   };
 
-  const patchComposerStatusBarDefault = (
-    key: keyof ComposerStatusBarVisibility,
-    value: boolean
-  ) => {
+  const setComposerFooter = (value: boolean) => {
     patchGeneral({
       composerStatusBarVisibility: {
-        ...composerStatusBarDefault,
-        [key]: value,
+        repo: value,
+        branch: value,
+        goal: value,
+        context: value,
       },
     });
   };
@@ -100,9 +100,8 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
       <SettingsSection title="New chat widgets">
-        {general.newChatWidgets.order.map((id, index) => {
+        {general.newChatWidgets.order.map((id) => {
           const hidden = general.newChatWidgets.hidden.includes(id);
-          const isLast = index === general.newChatWidgets.order.length - 1;
           return (
             <SettingsRow
               key={id}
@@ -110,31 +109,11 @@ export function GeneralSettingsPanel() {
               title={NEW_CHAT_WIDGET_LABELS[id]}
               description={NEW_CHAT_WIDGET_DESCRIPTIONS[id]}
               trailing={
-                <div className="flex items-center gap-[8px]">
-                  <button
-                    type="button"
-                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} up`}
-                    disabled={index === 0}
-                    onClick={() => moveNewChatWidget(id, -1)}
-                    className="flex size-[24px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-30"
-                  >
-                    <ChevronUp className="size-[13px]" strokeWidth={1.8} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move ${NEW_CHAT_WIDGET_LABELS[id]} down`}
-                    disabled={isLast}
-                    onClick={() => moveNewChatWidget(id, 1)}
-                    className="flex size-[24px] items-center justify-center rounded-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-30"
-                  >
-                    <ChevronDown className="size-[13px]" strokeWidth={1.8} aria-hidden />
-                  </button>
-                  <ToggleSwitch
-                    checked={!hidden}
-                    onChange={() => toggleNewChatWidget(id)}
-                    size="md"
-                  />
-                </div>
+                <ToggleSwitch
+                  checked={!hidden}
+                  onChange={() => toggleNewChatWidget(id)}
+                  size="md"
+                />
               }
             />
           );
@@ -147,51 +126,15 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <SettingsSection title="Composer status bar">
+      <SettingsSection title="Composer">
         <SettingsRow
-          searchId="composer-status-repo"
-          title="Repository"
-          description="Show the workspace or repository name beneath the composer in new chats."
+          searchId="composer-status-bar"
+          title="Composer footer"
+          description="Show repository, branch, goal progress, and context usage under the composer in new chats."
           trailing={
             <ToggleSwitch
-              checked={composerStatusBarDefault.repo}
-              onChange={(value) => patchComposerStatusBarDefault("repo", value)}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          searchId="composer-status-branch"
-          title="Git branch"
-          description="Show the current Git branch beneath the composer in new chats."
-          trailing={
-            <ToggleSwitch
-              checked={composerStatusBarDefault.branch}
-              onChange={(value) => patchComposerStatusBarDefault("branch", value)}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          searchId="composer-status-goal"
-          title="Goal progress"
-          description="Show tracked goal progress and runtime beneath the composer in new chats."
-          trailing={
-            <ToggleSwitch
-              checked={composerStatusBarDefault.goal}
-              onChange={(value) => patchComposerStatusBarDefault("goal", value)}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          searchId="composer-status-context"
-          title="Context usage"
-          description="Show the model context usage indicator beneath the composer in new chats."
-          trailing={
-            <ToggleSwitch
-              checked={composerStatusBarDefault.context}
-              onChange={(value) => patchComposerStatusBarDefault("context", value)}
+              checked={composerFooterEnabled(composerStatusBarDefault)}
+              onChange={setComposerFooter}
               size="md"
             />
           }
@@ -247,21 +190,6 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <SettingsSection title="Performance">
-        <SettingsRow
-          searchId="batch-stream-events"
-          title="Batch streamed events"
-          description="Render high-speed token and progress streams in short 50 ms batches. Turn this off for immediate per-event updates at the cost of higher CPU, GPU, and battery use."
-          trailing={
-            <ToggleSwitch
-              checked={general.batchStreamEvents}
-              onChange={(value) => patchGeneral({ batchStreamEvents: value })}
-              size="md"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
       <SettingsSection title="Notifications">
         <SettingsRow
           searchId="do-not-disturb"
@@ -274,27 +202,6 @@ export function GeneralSettingsPanel() {
               size="md"
             />
           }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="Voice">
-        <SettingsRow
-          searchId="show-voice-orb"
-          title="Voice orb"
-          description="Show the floating ambient voice orb. Hiding it also turns the voice plane off. You can also hide it from the orb's long-press menu."
-          trailing={
-            <ToggleSwitch
-              checked={general.showVoiceOrb}
-              onChange={(value) => patchGeneral({ showVoiceOrb: value })}
-              size="md"
-            />
-          }
-        />
-        <SettingsLinkRow
-          searchId="voice-settings-link"
-          title="Speech, titles, and spoken replies"
-          description="Choose the transcription model, title fallback, TTS engine, and voice controller without editing environment variables."
-          onClick={() => openNav("voice")}
           border={false}
         />
       </SettingsSection>

@@ -22,6 +22,7 @@ import {
 import { replaceRememberedAgentPermissions } from "@/lib/server-api";
 import {
   PageIntro,
+  SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
   SettingsSection,
@@ -248,6 +249,7 @@ export function ExportImportSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Import & export" />
       <PageIntro title="Import & export" />
       <SettingsSection title="Export">
         <SettingsBlock className="space-y-[14px]">

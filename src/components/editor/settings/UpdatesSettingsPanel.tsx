@@ -21,6 +21,7 @@ import {
 } from "@/lib/server-api";
 import {
   PageIntro,
+  SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
   SettingsRow,
@@ -260,6 +261,7 @@ export function UpdatesSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Updates" />
       <PageIntro title="Updates" />
       <SettingsSection
         title="This installation"

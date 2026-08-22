@@ -21,6 +21,7 @@ import { StorageSettingsPanel } from "./StorageSettingsPanel";
 import { UpdatesSettingsPanel } from "./UpdatesSettingsPanel";
 import { UsageSettingsPanel } from "./UsageSettingsPanel";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
+import { AdvancedSettingsPanel } from "./AdvancedSettingsPanel";
 
 export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
 
@@ -43,4 +44,5 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   exportImport: ExportImportSettingsPanel,
   storage: StorageSettingsPanel,
   updates: UpdatesSettingsPanel,
+  advanced: AdvancedSettingsPanel,
 };

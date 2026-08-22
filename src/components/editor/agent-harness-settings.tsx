@@ -78,6 +78,7 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   SettingsBreadcrumbs,
   SettingsDisclosure,
+  SettingsLinkRow,
   SettingsRow,
   SettingsSection,
   SettingsSubsectionHeading,
@@ -3672,13 +3673,47 @@ function HarnessListView({
   onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
   onOpenHarness: (backendId: AgentBackendId) => void;
 }) {
+  const { updateWorkspaceSession } = useWorkspace();
   const sortedRemembered = useMemo(
     () => [...agents.rememberedPermissions].sort((a, b) => b.updatedAt - a.updatedAt),
     [agents.rememberedPermissions]
   );
+  const openNav = useCallback(
+    (activeNav: string) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
 
   return (
     <>
+      <SettingsSection title="Catalog">
+        <SettingsLinkRow
+          searchId="agents-models-link"
+          title="Models"
+          description="Show or hide models in the composer picker for each harness."
+          onClick={() => openNav("models")}
+        />
+        <SettingsLinkRow
+          searchId="cloud-agents-default-harness"
+          title="Cloud Agents"
+          description="Offload Linear, GitHub, and Slack assignments to a harness."
+          onClick={() => openNav("cloudAgents")}
+        />
+        <SettingsLinkRow
+          searchId="usage-controls"
+          title="Usage"
+          description="Token, request, and subscription meters for connected harnesses."
+          onClick={() => openNav("usage")}
+          border={false}
+        />
+      </SettingsSection>
       <SettingsSection title="Chat composer">
         <SettingsRow
           title={`Submit with ${modLabel} + Enter`}

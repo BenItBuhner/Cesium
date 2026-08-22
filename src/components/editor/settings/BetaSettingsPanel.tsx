@@ -5,6 +5,7 @@ import { useUserPreferences } from "@/components/preferences/UserPreferencesProv
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import {
   PageIntro,
+  SettingsNestedBreadcrumbs,
   SettingsRow,
   SettingsSection,
 } from "@/components/editor/settings-ui";
@@ -29,6 +30,7 @@ export function BetaSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Beta" />
       <PageIntro title="Beta" />
       <SettingsSection title="Browser">
         <SettingsRow

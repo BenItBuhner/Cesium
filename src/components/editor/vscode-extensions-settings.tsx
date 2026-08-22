@@ -45,6 +45,7 @@ import {
 } from "@/lib/server-api";
 import {
   PageIntro,
+  SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
   SettingsRow,
@@ -406,6 +407,11 @@ export function VscodeExtensionsSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs
+        parentNav="plugins"
+        parentLabel="Integrations"
+        label="Extensions"
+      />
       <PageIntro title="VS Code Extensions" />
       {error ? (
         <SettingsCallout tone="danger" className="mb-[12px] px-[2px]">

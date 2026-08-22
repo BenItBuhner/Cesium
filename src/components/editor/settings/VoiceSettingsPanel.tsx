@@ -97,6 +97,9 @@ export function VoiceSettingsPanel() {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [showSttHints, setShowSttHints] = useState(false);
+  const [showRemoteTts, setShowRemoteTts] = useState(false);
+  const [showControllerOverride, setShowControllerOverride] = useState(false);
 
   const [sttBaseUrl, setSttBaseUrl] = useState("");
   const [sttApiKey, setSttApiKey] = useState("");
@@ -129,6 +132,20 @@ export function VoiceSettingsPanel() {
     setTtsVoice(next.tts.openaiCompat.voice ?? "");
     setControllerBaseUrl(next.controller.baseUrl ?? "");
     setControllerModel(next.controller.model ?? "");
+    if (next.transcription.language || next.transcription.prompt) {
+      setShowSttHints(true);
+    }
+    if (
+      next.tts.openaiCompat.baseUrl ||
+      next.tts.openaiCompat.model ||
+      next.tts.openaiCompat.voice ||
+      next.tts.openaiCompat.configured
+    ) {
+      setShowRemoteTts(true);
+    }
+    if (next.controller.baseUrl || next.controller.model || next.controller.configured) {
+      setShowControllerOverride(true);
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -206,8 +223,8 @@ export function VoiceSettingsPanel() {
     <>
       <PageIntro title="Voice" />
       <p className="mb-[18px] max-w-[640px] font-sans text-[13px] leading-[1.5] text-[var(--text-secondary)]">
-        Configure speech-to-text, spoken replies, and the ambient voice controller from the
-        app. Environment variables still work as a fallback when a field is left empty.
+        Leave host and key blank to reuse your Cesium Agent provider. Fill these in only
+        when speech should use a different model or service.
       </p>
       {message ? (
         <div className="mb-[16px]">
@@ -227,9 +244,7 @@ export function VoiceSettingsPanel() {
               : "Loading…"}
           </p>
           <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Used by the microphone button to turn recordings into composer text. Any
-            OpenAI-compatible <span className="font-mono">/audio/transcriptions</span> host
-            works — Groq, OpenAI, or a local proxy.
+            Microphone dictation. Uses your agent provider when these fields are empty.
           </p>
         </div>
         <VoiceField
@@ -261,21 +276,35 @@ export function VoiceSettingsPanel() {
           disabled={busy}
           searchId="transcription-model"
         />
-        <VoiceField
-          label="Language (optional)"
-          value={sttLanguage}
-          onChange={setSttLanguage}
-          placeholder="en"
-          disabled={busy}
-          searchId="transcription-language"
-        />
-        <VoiceField
-          label="Prompt (optional)"
-          value={sttPrompt}
-          onChange={setSttPrompt}
-          placeholder="Prefer technical terms and code identifiers"
-          disabled={busy}
-        />
+        <div className="px-[16px] py-[10px] border-b border-[var(--border-subtle)]">
+          <button
+            type="button"
+            className="font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            onClick={() => setShowSttHints((open) => !open)}
+            aria-expanded={showSttHints}
+          >
+            {showSttHints ? "Hide language and prompt" : "Language and prompt (optional)"}
+          </button>
+        </div>
+        {showSttHints ? (
+          <>
+            <VoiceField
+              label="Language (optional)"
+              value={sttLanguage}
+              onChange={setSttLanguage}
+              placeholder="en"
+              disabled={busy}
+              searchId="transcription-language"
+            />
+            <VoiceField
+              label="Prompt (optional)"
+              value={sttPrompt}
+              onChange={setSttPrompt}
+              placeholder="Prefer technical terms and code identifiers"
+              disabled={busy}
+            />
+          </>
+        ) : null}
         <div className="flex flex-wrap items-center gap-[8px] px-[16px] py-[12px]">
           <button
             type="button"
@@ -304,8 +333,8 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Conversation titles">
         <div className="px-[16px] py-[12px] border-b border-[var(--border-subtle)]">
           <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Fallback model for auto-titling new chats when Settings → Agents does not pick a
-            catalog model. Uses the same credentials as speech-to-text.
+            Optional fallback when Agents does not pick a catalog title model. Uses the same
+            credentials as speech-to-text.
             {settings?.titleGeneration.modelSource
               ? ` Currently ${sourceLabel(settings.titleGeneration.modelSource)?.toLowerCase()}.`
               : ""}
@@ -349,9 +378,8 @@ export function VoiceSettingsPanel() {
               : "Loading…"}
           </p>
           <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Pin a local engine or configure a remote OpenAI-compatible{" "}
-            <span className="font-mono">/audio/speech</span> host. Chat/transcription URLs
-            are not reused — most proxies do not route speech synthesis.
+            Automatic picks the first available local engine. Add a remote host only if you
+            want cloud speech.
           </p>
         </div>
         <label
@@ -373,41 +401,55 @@ export function VoiceSettingsPanel() {
             ))}
           </select>
         </label>
-        <VoiceField
-          label="Remote TTS base URL"
-          type="url"
-          value={ttsBaseUrl}
-          onChange={setTtsBaseUrl}
-          placeholder="https://api.openai.com/v1"
-          disabled={busy}
-          searchId="tts-remote"
-        />
-        <VoiceField
-          label="Remote TTS API key"
-          type="password"
-          value={ttsApiKey}
-          onChange={setTtsApiKey}
-          placeholder={
-            settings?.tts.openaiCompat.apiKeyLastFour
-              ? `Stored key ends with ${settings.tts.openaiCompat.apiKeyLastFour}`
-              : "Paste a TTS API key"
-          }
-          disabled={busy}
-        />
-        <VoiceField
-          label="Remote TTS model"
-          value={ttsModel}
-          onChange={setTtsModel}
-          placeholder="tts-1"
-          disabled={busy}
-        />
-        <VoiceField
-          label="Remote TTS voice"
-          value={ttsVoice}
-          onChange={setTtsVoice}
-          placeholder="alloy"
-          disabled={busy}
-        />
+        <div className="px-[16px] py-[10px] border-b border-[var(--border-subtle)]">
+          <button
+            type="button"
+            className="font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            onClick={() => setShowRemoteTts((open) => !open)}
+            aria-expanded={showRemoteTts}
+            data-settings-search-id="tts-remote"
+          >
+            {showRemoteTts ? "Hide remote TTS host" : "Remote TTS host (optional)"}
+          </button>
+        </div>
+        {showRemoteTts ? (
+          <>
+            <VoiceField
+              label="Remote TTS base URL"
+              type="url"
+              value={ttsBaseUrl}
+              onChange={setTtsBaseUrl}
+              placeholder="https://api.openai.com/v1"
+              disabled={busy}
+            />
+            <VoiceField
+              label="Remote TTS API key"
+              type="password"
+              value={ttsApiKey}
+              onChange={setTtsApiKey}
+              placeholder={
+                settings?.tts.openaiCompat.apiKeyLastFour
+                  ? `Stored key ends with ${settings.tts.openaiCompat.apiKeyLastFour}`
+                  : "Paste a TTS API key"
+              }
+              disabled={busy}
+            />
+            <VoiceField
+              label="Remote TTS model"
+              value={ttsModel}
+              onChange={setTtsModel}
+              placeholder="tts-1"
+              disabled={busy}
+            />
+            <VoiceField
+              label="Remote TTS voice"
+              value={ttsVoice}
+              onChange={setTtsVoice}
+              placeholder="alloy"
+              disabled={busy}
+            />
+          </>
+        ) : null}
         <div className="flex flex-wrap items-center gap-[8px] px-[16px] py-[12px]">
           <button
             type="button"
@@ -447,38 +489,52 @@ export function VoiceSettingsPanel() {
               : "Loading…"}
           </p>
           <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Fast model used by the ambient voice orb to decide whether to answer, ask a
-            clarifying question, or hand off to a full agent conversation.
+            Fast model the voice orb uses to answer or hand off to an agent. Inherits the
+            Cesium Agent provider unless you override it.
           </p>
         </div>
-        <VoiceField
-          label="Base URL"
-          type="url"
-          value={controllerBaseUrl}
-          onChange={setControllerBaseUrl}
-          placeholder="https://infer.example.com/v1"
-          disabled={busy}
-        />
-        <VoiceField
-          label="API key"
-          type="password"
-          value={controllerApiKey}
-          onChange={setControllerApiKey}
-          placeholder={
-            settings?.controller.apiKeyLastFour
-              ? `Stored key ends with ${settings.controller.apiKeyLastFour}`
-              : "Paste a controller API key"
-          }
-          disabled={busy}
-        />
-        <VoiceField
-          label="Model"
-          value={controllerModel}
-          onChange={setControllerModel}
-          placeholder="glm-5.2"
-          disabled={busy}
-          searchId="voice-controller"
-        />
+        <div className="px-[16px] py-[10px] border-b border-[var(--border-subtle)]">
+          <button
+            type="button"
+            className="font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            onClick={() => setShowControllerOverride((open) => !open)}
+            aria-expanded={showControllerOverride}
+            data-settings-search-id="voice-controller"
+          >
+            {showControllerOverride ? "Hide provider override" : "Override provider (optional)"}
+          </button>
+        </div>
+        {showControllerOverride ? (
+          <>
+            <VoiceField
+              label="Base URL"
+              type="url"
+              value={controllerBaseUrl}
+              onChange={setControllerBaseUrl}
+              placeholder="https://infer.example.com/v1"
+              disabled={busy}
+            />
+            <VoiceField
+              label="API key"
+              type="password"
+              value={controllerApiKey}
+              onChange={setControllerApiKey}
+              placeholder={
+                settings?.controller.apiKeyLastFour
+                  ? `Stored key ends with ${settings.controller.apiKeyLastFour}`
+                  : "Paste a controller API key"
+              }
+              disabled={busy}
+            />
+            <VoiceField
+              label="Model"
+              value={controllerModel}
+              onChange={setControllerModel}
+              placeholder="kimi-k3"
+              disabled={busy}
+            />
+          </>
+        ) : null}
         <div className="flex flex-wrap items-center gap-[8px] px-[16px] py-[12px]">
           <button
             type="button"
@@ -529,11 +585,8 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Stored overrides">
         <div className="flex flex-col gap-[10px] px-[16px] py-[14px]">
           <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Clearing stored settings falls back to{" "}
-            <span className="font-mono">OPENCURSOR_TRANSCRIPTION_*</span>,{" "}
-            <span className="font-mono">OPENCURSOR_VOICE_*</span>, and{" "}
-            <span className="font-mono">OPENCURSOR_TITLE_MODEL</span> if those are set on
-            the server.
+            Clearing stored settings falls back to the Cesium Agent provider and any
+            voice environment variables still set on the server.
           </p>
           <div>
             <button

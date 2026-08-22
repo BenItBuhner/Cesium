@@ -27,30 +27,21 @@ import {
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
-  ArrowUpCircle,
-  BookMarked,
   Bot,
-  Box,
   ChevronRight,
   CircleUserRound,
-  Cloud,
-  Database,
-  Download,
   ExternalLink,
-  FlaskConical,
-  Gauge,
   Keyboard,
   Mic,
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
-  Blocks,
   Search,
   Server,
   Settings,
+  SlidersHorizontal,
   X,
-  Zap,
 } from "lucide-react";
 import { BACK_INTENT_PRIORITY } from "@/components/mobile/BackIntentContext";
 import { MobileNavDrawerShell } from "@/components/mobile/MobileNavDrawerShell";
@@ -80,30 +71,40 @@ type NavEntry =
   | { kind: "divider" };
 
 /**
- * Settings categories we actually use in this shell (trimmed from full Cursor parity).
+ * Top-level settings hubs. Nested pages (models, storage, MCP, …) stay
+ * reachable from these hubs and from search; they are not sidebar items.
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "account", label: "Account", icon: CircleUserRound },
   { kind: "divider" },
   { kind: "item", id: "general", label: "General", icon: Settings },
-  { kind: "item", id: "voice", label: "Voice", icon: Mic },
-  { kind: "item", id: "actions", label: "Actions", icon: Zap },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
+  { kind: "item", id: "voice", label: "Voice", icon: Mic },
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
-  { kind: "item", id: "cloudAgents", label: "Cloud Agents", icon: Cloud },
-  { kind: "item", id: "models", label: "Models", icon: Box },
-  { kind: "item", id: "usage", label: "Usage", icon: Gauge },
-  { kind: "item", id: "plugins", label: "Plugins", icon: Puzzle },
-  { kind: "item", id: "extensions", label: "Extensions", icon: Blocks },
-  { kind: "divider" },
+  { kind: "item", id: "plugins", label: "Integrations", icon: Puzzle },
   { kind: "item", id: "servers", label: "Servers", icon: Server },
-  { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
-  { kind: "item", id: "exportImport", label: "Import & export", icon: Download },
-  { kind: "item", id: "storage", label: "Storage", icon: Database },
-  { kind: "item", id: "updates", label: "Updates", icon: ArrowUpCircle },
-  { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
+  { kind: "divider" },
+  { kind: "item", id: "advanced", label: "Advanced", icon: SlidersHorizontal },
 ];
+
+/** Nested panel → sidebar hub that should stay highlighted. */
+const SETTINGS_NAV_PARENT: Record<string, string> = {
+  models: "agents",
+  cloudAgents: "agents",
+  usage: "agents",
+  extensions: "plugins",
+  rulesSkills: "plugins",
+  actions: "general",
+  exportImport: "advanced",
+  storage: "advanced",
+  updates: "advanced",
+  beta: "advanced",
+};
+
+function settingsSidebarSelection(activeNav: string): string {
+  return SETTINGS_NAV_PARENT[activeNav] ?? activeNav;
+}
 
 const searchInputClass =
   "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] pr-[54px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
@@ -380,7 +381,7 @@ function SettingsNavContent({
                 );
               }
               const Icon = entry.icon;
-              const sel = activeNav === entry.id;
+              const sel = settingsSidebarSelection(activeNav) === entry.id;
               return (
                 <button
                   key={entry.id}
