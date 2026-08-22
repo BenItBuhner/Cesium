@@ -269,10 +269,39 @@ export type ResolveModelDisplayNameOptions = {
 };
 
 /**
+ * Memoized: this normalizer is regex-heavy and gets called for every catalog
+ * model whenever composer state derives (which under many concurrent agents
+ * is several times per second), always with the same handful of
+ * (name, modelId) inputs. Bounded; resets on overflow.
+ */
+// Sized to hold a full provider catalog (incl. variant expansions); an
+// undersized cache clears mid-pass and thrashes.
+const displayNameCache = new Map<string, string>();
+const MAX_DISPLAY_NAME_CACHE = 32_768;
+
+/**
  * Prefer a human display name when present; otherwise normalize from the API id.
  * If `name` equals the id / leaf id and looks like a slug, normalize it.
  */
 export function resolveModelDisplayName(
+  name: string | null | undefined,
+  modelId: string,
+  options?: ResolveModelDisplayNameOptions
+): string {
+  const cacheKey = `${name ?? ""}\u0000${modelId}\u0000${options?.preferExplicitName ? 1 : 0}`;
+  const cached = displayNameCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = resolveModelDisplayNameUncached(name, modelId, options);
+  if (displayNameCache.size >= MAX_DISPLAY_NAME_CACHE) {
+    displayNameCache.clear();
+  }
+  displayNameCache.set(cacheKey, result);
+  return result;
+}
+
+function resolveModelDisplayNameUncached(
   name: string | null | undefined,
   modelId: string,
   options?: ResolveModelDisplayNameOptions

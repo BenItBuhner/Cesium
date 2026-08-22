@@ -96,18 +96,35 @@ test("remembered permission backend ids are normalized from legacy harness ids",
     workspaceId: "workspace-legacy",
     backendId: "cursor-acp",
     toolKey: "acp:legacy",
-    toolLabel: "Legacy cursor rule",
+    toolLabel: "Cursor ACP rule",
     decision: "reject",
     optionId: "reject_always",
     optionKind: "reject_always",
   });
 
-  const cursorRule = await getRememberedAgentPermissionRule({
+  const cursorAcpRule = await getRememberedAgentPermissionRule({
     workspaceId: "workspace-legacy",
-    backendId: "cursor-sdk",
+    backendId: "cursor-acp",
     toolKey: "acp:legacy",
   });
-  assert.equal(cursorRule?.backendId, "cursor-sdk");
+  assert.equal(cursorAcpRule?.backendId, "cursor-acp");
+
+  await saveRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "claude-adapter",
+    toolKey: "claude:legacy",
+    toolLabel: "Legacy Claude adapter rule",
+    decision: "allow",
+    optionId: "allow_always",
+    optionKind: "allow_always",
+  });
+
+  const claudeRule = await getRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "claude-code-sdk",
+    toolKey: "claude:legacy",
+  });
+  assert.equal(claudeRule?.backendId, "claude-code-sdk");
 });
 
 test("remembered permission category matchStyle covers any tool key in that category", async () => {

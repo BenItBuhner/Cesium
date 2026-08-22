@@ -118,13 +118,17 @@ export async function listAgentPluginsPublic(
   ]);
   return definitions.map((definition) => {
     const install = file.installs.find((entry) => entry.pluginId === definition.pluginId) ?? null;
+    const managed = servers.filter((server) => server.pluginId === definition.pluginId);
     return {
       definition,
       install,
       enabled: install?.enabled ?? false,
-      managedMcpServerIds: servers
-        .filter((server) => server.pluginId === definition.pluginId)
-        .map((server) => server.id),
+      managedMcpServerIds: managed.map((server) => server.id),
+      needsAuth: managed.some(
+        (server) =>
+          server.auth.kind !== "none" &&
+          (server.connectionStatus?.needsAuth === true || !server.connectionStatus?.connected)
+      ),
     };
   });
 }

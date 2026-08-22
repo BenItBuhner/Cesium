@@ -1,4 +1,5 @@
 import type { AgentBackendId, AgentStoredEvent } from "./protocol";
+import { parseLooseJsonObjectCached } from "./loose-json";
 
 export type AcpToolCallEntry = {
   rawName: string;
@@ -23,22 +24,7 @@ export type ProjectAgentEventsOptions = {
   workspaceRoot?: string | null;
 };
 
-function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
+const parseLooseJsonObject = parseLooseJsonObjectCached;
 
 function pushParsedToolEntry(
   entries: AcpToolCallEntry[],
@@ -800,6 +786,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
 > = {
   "cesium-agent": isStrictAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
+  "cursor-acp": isCursorAcpSubagentTaskToolEvent,
   "opencode-server": isStrictAcpSubagentTaskToolEvent,
   "opencode-v2-beta": isStrictAcpSubagentTaskToolEvent,
   "devin-acp": isStrictAcpSubagentTaskToolEvent,

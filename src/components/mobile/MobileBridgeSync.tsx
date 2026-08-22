@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -25,6 +28,7 @@ import {
   isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@/lib/mobile-agent-projection";
+import { publishAgentProjectionFeed } from "@/lib/agent-projection-feed";
 import { toWatchAgentProjection, toWatchSyncEnvelope } from "@/lib/watch-agent-contract";
 
 // Cheap pre-filter before deriving a full projection per conversation.
@@ -83,7 +87,7 @@ export function MobileBridgeSync() {
     bootstrapped,
     cancelConversation,
     conversationsById,
-    eventsByConversationId,
+    conversationEventsStore,
     flushAgentSubscription,
     syncConversationSnapshot,
   } = useAgentConversations();
@@ -112,19 +116,16 @@ export function MobileBridgeSync() {
   const focusedConversation = focusedConversationId
     ? conversationsById[focusedConversationId] ?? null
     : null;
+  const focusedConversationEvents = useConversationEvents(focusedConversationId);
 
   const projection = useMemo(() => {
     if (!focusedConversation) {
       return null;
     }
-    return deriveMobileAgentProjection(
-      focusedConversation,
-      eventsByConversationId[focusedConversation.id] ?? [],
-      {
-        previous: previousProjectionRef.current,
-      }
-    );
-  }, [eventsByConversationId, focusedConversation]);
+    return deriveMobileAgentProjection(focusedConversation, focusedConversationEvents, {
+      previous: previousProjectionRef.current,
+    });
+  }, [focusedConversationEvents, focusedConversation]);
 
   // Project every conversation with an active agent run (not just the focused
   // one) so each agent keeps its own live notification. Terminal runs linger
@@ -135,49 +136,79 @@ export function MobileBridgeSync() {
     []
   );
   useEffect(() => {
-    const now = Date.now();
-    const tracked = trackedAgentsRef.current;
-    const result: MobileAgentProjection[] = [];
-    const seen = new Set<string>();
-    for (const conversation of Object.values(conversationsById)) {
-      const entry = tracked.get(conversation.id);
-      const maybeBusy =
-        BUSY_AGENT_STATUSES.has(conversation.status) ||
-        conversation.pendingPermission != null ||
-        conversation.pendingQuestion != null;
-      if (!maybeBusy && !entry) {
-        continue;
-      }
-      const nextProjection = deriveMobileAgentProjection(
-        conversation,
-        eventsByConversationId[conversation.id] ?? [],
-        { previous: entry?.previous ?? null }
-      );
-      if (isMobileAgentRunActive(nextProjection.status)) {
-        tracked.set(conversation.id, { previous: nextProjection, terminalSince: null });
-      } else if (entry == null) {
-        // Finished before we ever tracked it — nothing to notify about.
-        continue;
-      } else {
-        const terminalSince = entry.terminalSince ?? now;
-        if (now - terminalSince > TERMINAL_AGENT_LINGER_MS) {
-          tracked.delete(conversation.id);
+    const recompute = () => {
+      const now = Date.now();
+      const tracked = trackedAgentsRef.current;
+      const result: MobileAgentProjection[] = [];
+      const seen = new Set<string>();
+      for (const conversation of Object.values(conversationsById)) {
+        const entry = tracked.get(conversation.id);
+        const maybeBusy =
+          BUSY_AGENT_STATUSES.has(conversation.status) ||
+          conversation.pendingPermission != null ||
+          conversation.pendingQuestion != null;
+        if (!maybeBusy && !entry) {
           continue;
         }
-        tracked.set(conversation.id, { previous: nextProjection, terminalSince });
+        const nextProjection = deriveMobileAgentProjection(
+          conversation,
+          conversationEventsStore.get(conversation.id),
+          { previous: entry?.previous ?? null }
+        );
+        if (isMobileAgentRunActive(nextProjection.status)) {
+          tracked.set(conversation.id, { previous: nextProjection, terminalSince: null });
+        } else if (entry == null) {
+          // Finished before we ever tracked it — nothing to notify about.
+          continue;
+        } else {
+          const terminalSince = entry.terminalSince ?? now;
+          if (now - terminalSince > TERMINAL_AGENT_LINGER_MS) {
+            tracked.delete(conversation.id);
+            continue;
+          }
+          tracked.set(conversation.id, { previous: nextProjection, terminalSince });
+        }
+        seen.add(conversation.id);
+        result.push(nextProjection);
       }
-      seen.add(conversation.id);
-      result.push(nextProjection);
-    }
-    for (const conversationId of [...tracked.keys()]) {
-      if (!seen.has(conversationId) && !conversationsById[conversationId]) {
-        tracked.delete(conversationId);
+      for (const conversationId of [...tracked.keys()]) {
+        if (!seen.has(conversationId) && !conversationsById[conversationId]) {
+          tracked.delete(conversationId);
+        }
       }
-    }
-    setActiveProjections((current) =>
-      areProjectionListsEqual(current, result) ? current : result
-    );
-  }, [conversationsById, eventsByConversationId]);
+      setActiveProjections((current) =>
+        areProjectionListsEqual(current, result) ? current : result
+      );
+    };
+
+    recompute();
+    // Event-log churn is throttled: downstream native messages are already
+    // rate-limited (500ms), so re-projecting every busy conversation on every
+    // stream flush would be pure waste. Status/permission flips still land
+    // immediately through the `conversationsById` dependency.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = conversationEventsStore.subscribeAny(() => {
+      if (timer != null) {
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        recompute();
+      }, 500);
+    });
+    return () => {
+      unsubscribe();
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [conversationsById, conversationEventsStore]);
+
+  // Mirror the projection set to non-RN shells (Electron desktop) without
+  // re-deriving it there. No-op consumers simply never subscribe.
+  useEffect(() => {
+    publishAgentProjectionFeed({ projections: activeProjections, bootstrapped });
+  }, [activeProjections, bootstrapped]);
 
   const activeConversationIds = useMemo(
     () =>

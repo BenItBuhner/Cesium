@@ -9,6 +9,7 @@ export * from "./agent-completion-error";
 export * from "./ask-question-utils";
 export * from "./ask-question-dock";
 export * from "./chat-modes";
+export * from "./chat-draft-title";
 export * from "./composer-suggestions";
 export * from "./design-capture";
 export * from "./text-reference";

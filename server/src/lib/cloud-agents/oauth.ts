@@ -1,25 +1,15 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { oauthCompletionHtml } from "../oauth/callback-html.js";
+import {
+  createOAuthCoordinatorSession,
+  getOAuthCoordinatorSession,
+  updateOAuthCoordinatorSession,
+} from "../oauth/sessions.js";
 import { getCloudAgentOAuthApp, upsertCloudAgentConnection } from "./settings.js";
 import { CLOUD_AGENT_PROVIDER_LABELS, verifyCloudAgentToken } from "./connections.js";
 import type { CloudAgentProviderId } from "./types.js";
 
-type PendingOAuthState = {
-  providerId: CloudAgentProviderId;
-  createdAt: number;
-  redirectUri: string;
-};
-
-const pendingByState = new Map<string, PendingOAuthState>();
 const PENDING_TTL_MS = 15 * 60 * 1000;
-
-function cleanupPending(): void {
-  const now = Date.now();
-  for (const [state, pending] of pendingByState.entries()) {
-    if (now - pending.createdAt > PENDING_TTL_MS) {
-      pendingByState.delete(state);
-    }
-  }
-}
 
 export function buildCloudAgentOAuthCallbackUrl(publicOrigin: string): string {
   return `${publicOrigin.replace(/\/$/, "")}/api/cloud-agents/oauth/callback`;
@@ -38,11 +28,20 @@ const DEFAULT_OAUTH_SCOPES: Record<CloudAgentProviderId, string> = {
   slack: "app_mentions:read,chat:write,channels:history,channels:read",
 };
 
+function pkcePair(): { codeVerifier: string; challenge: string } {
+  const codeVerifier = randomBytes(32).toString("base64url");
+  return {
+    codeVerifier,
+    challenge: createHash("sha256").update(codeVerifier).digest("base64url"),
+  };
+}
+
 export function buildCloudAgentAuthorizeUrl(input: {
   providerId: CloudAgentProviderId;
   clientId: string;
   redirectUri: string;
   state: string;
+  codeChallenge?: string;
 }): string {
   switch (input.providerId) {
     case "linear": {
@@ -53,6 +52,9 @@ export function buildCloudAgentAuthorizeUrl(input: {
         scope: DEFAULT_OAUTH_SCOPES.linear,
         state: input.state,
         actor: "app",
+        ...(input.codeChallenge
+          ? { code_challenge: input.codeChallenge, code_challenge_method: "S256" }
+          : {}),
       });
       return `https://linear.app/oauth/authorize?${params.toString()}`;
     }
@@ -62,6 +64,9 @@ export function buildCloudAgentAuthorizeUrl(input: {
         redirect_uri: input.redirectUri,
         scope: DEFAULT_OAUTH_SCOPES.github,
         state: input.state,
+        ...(input.codeChallenge
+          ? { code_challenge: input.codeChallenge, code_challenge_method: "S256" }
+          : {}),
       });
       return `https://github.com/login/oauth/authorize?${params.toString()}`;
     }
@@ -80,8 +85,12 @@ export function buildCloudAgentAuthorizeUrl(input: {
 export async function startCloudAgentOAuth(input: {
   providerId: CloudAgentProviderId;
   publicOrigin: string;
-}): Promise<{ providerId: CloudAgentProviderId; authUrl: string; callbackUrl: string }> {
-  cleanupPending();
+}): Promise<{
+  providerId: CloudAgentProviderId;
+  authUrl: string;
+  callbackUrl: string;
+  sessionId: string;
+}> {
   const app = await getCloudAgentOAuthApp(input.providerId);
   if (!app) {
     throw new Error(
@@ -90,10 +99,17 @@ export async function startCloudAgentOAuth(input: {
   }
   const state = randomBytes(24).toString("base64url");
   const redirectUri = buildCloudAgentOAuthCallbackUrl(input.publicOrigin);
-  pendingByState.set(state, {
-    providerId: input.providerId,
-    createdAt: Date.now(),
-    redirectUri,
+  const pkce = input.providerId === "slack" ? null : pkcePair();
+  await createOAuthCoordinatorSession({
+    id: state,
+    kind: "cloud-agents",
+    label: CLOUD_AGENT_PROVIDER_LABELS[input.providerId],
+    ttlMs: PENDING_TTL_MS,
+    payload: {
+      providerId: input.providerId,
+      redirectUri,
+      ...(pkce ? { codeVerifier: pkce.codeVerifier } : {}),
+    },
   });
   return {
     providerId: input.providerId,
@@ -102,8 +118,10 @@ export async function startCloudAgentOAuth(input: {
       clientId: app.clientId,
       redirectUri,
       state,
+      ...(pkce ? { codeChallenge: pkce.challenge } : {}),
     }),
     callbackUrl: redirectUri,
+    sessionId: state,
   };
 }
 
@@ -117,6 +135,7 @@ async function exchangeCodeForToken(input: {
   providerId: CloudAgentProviderId;
   code: string;
   redirectUri: string;
+  codeVerifier?: string;
 }): Promise<TokenExchangeResult> {
   const app = await getCloudAgentOAuthApp(input.providerId);
   if (!app) {
@@ -134,6 +153,7 @@ async function exchangeCodeForToken(input: {
           redirect_uri: input.redirectUri,
           code: input.code,
           grant_type: "authorization_code",
+          ...(input.codeVerifier ? { code_verifier: input.codeVerifier } : {}),
         }).toString(),
       });
       const body = (await response.json().catch(() => null)) as {
@@ -161,6 +181,7 @@ async function exchangeCodeForToken(input: {
           client_secret: app.clientSecret,
           redirect_uri: input.redirectUri,
           code: input.code,
+          ...(input.codeVerifier ? { code_verifier: input.codeVerifier } : {}),
         }).toString(),
       });
       const body = (await response.json().catch(() => null)) as {
@@ -211,45 +232,71 @@ async function exchangeCodeForToken(input: {
 export async function completeCloudAgentOAuthCallback(input: {
   code: string;
   state: string;
-}): Promise<{ providerId: CloudAgentProviderId }> {
-  cleanupPending();
-  const pending = pendingByState.get(input.state);
-  if (!pending) {
+}): Promise<{ providerId: CloudAgentProviderId; sessionId: string }> {
+  const pending = await getOAuthCoordinatorSession(input.state);
+  if (!pending || pending.kind !== "cloud-agents" || pending.status !== "pending") {
     throw new Error("OAuth flow is invalid or expired.");
   }
-  pendingByState.delete(input.state);
+  const providerId = pending.payload.providerId as CloudAgentProviderId;
+  const redirectUri = String(pending.payload.redirectUri ?? "");
+  const codeVerifier =
+    typeof pending.payload.codeVerifier === "string" ? pending.payload.codeVerifier : undefined;
 
-  const exchanged = await exchangeCodeForToken({
-    providerId: pending.providerId,
-    code: input.code,
-    redirectUri: pending.redirectUri,
-  });
+  try {
+    const exchanged = await exchangeCodeForToken({
+      providerId,
+      code: input.code,
+      redirectUri,
+      codeVerifier,
+    });
 
-  let accountLabel = exchanged.accountLabel;
-  if (!accountLabel) {
-    try {
-      accountLabel = (
-        await verifyCloudAgentToken(pending.providerId, exchanged.accessToken)
-      ).accountLabel;
-    } catch {
-      // Identity lookup is best-effort; the token itself already exchanged fine.
+    let accountLabel = exchanged.accountLabel;
+    if (!accountLabel) {
+      try {
+        accountLabel = (await verifyCloudAgentToken(providerId, exchanged.accessToken)).accountLabel;
+      } catch {
+        // Identity lookup is best-effort; the token itself already exchanged fine.
+      }
     }
+
+    await upsertCloudAgentConnection({
+      providerId,
+      method: "oauth",
+      accessToken: exchanged.accessToken,
+      ...(accountLabel ? { accountLabel } : {}),
+      ...(exchanged.scopes ? { scopes: exchanged.scopes } : {}),
+    });
+    await updateOAuthCoordinatorSession(input.state, { status: "complete" });
+    return { providerId, sessionId: input.state };
+  } catch (error) {
+    await updateOAuthCoordinatorSession(input.state, {
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
+}
 
-  await upsertCloudAgentConnection({
-    providerId: pending.providerId,
-    method: "oauth",
-    accessToken: exchanged.accessToken,
-    ...(accountLabel ? { accountLabel } : {}),
-    ...(exchanged.scopes ? { scopes: exchanged.scopes } : {}),
+export function cloudAgentOAuthSuccessHtml(providerLabel: string, sessionId?: string): string {
+  return oauthCompletionHtml({
+    title: "Cloud Agents connected",
+    heading: "Connected",
+    message: `${providerLabel} is now linked to Cloud Agents.`,
+    postMessageType: "opencursor-cloud-agents-oauth",
+    sessionId,
+    kind: "cloud-agents",
+    ok: true,
   });
-  return { providerId: pending.providerId };
 }
 
-export function cloudAgentOAuthSuccessHtml(providerLabel: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cloud Agents connected</title></head><body style="font-family:system-ui;padding:2rem;"><h1>Connected</h1><p>${providerLabel} is now linked to Cloud Agents. You can close this window and return to Cesium.</p><script>if(window.opener){window.opener.postMessage({type:"opencursor-cloud-agents-oauth",ok:true}, "*");}</script></body></html>`;
-}
-
-export function cloudAgentOAuthFailureHtml(message: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cloud Agents OAuth failed</title></head><body style="font-family:system-ui;padding:2rem;"><h1>Connection failed</h1><p>${message}</p></body></html>`;
+export function cloudAgentOAuthFailureHtml(message: string, sessionId?: string): string {
+  return oauthCompletionHtml({
+    title: "Cloud Agents OAuth failed",
+    heading: "Connection failed",
+    message,
+    postMessageType: "opencursor-cloud-agents-oauth",
+    sessionId,
+    kind: "cloud-agents",
+    ok: false,
+  });
 }

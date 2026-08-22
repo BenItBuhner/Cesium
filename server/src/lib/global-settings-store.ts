@@ -15,6 +15,7 @@ import type {
 import { isAgentPermissionCategory } from "./agents/permission-options.js";
 import {
   isActiveAgentBackendId,
+  normalizeEnabledHarnesses,
   pruneModelToggleByBackend,
 } from "./active-agent-backends.js";
 import { refreshCesiumModelCatalog } from "./cesium-agent-settings.js";
@@ -107,6 +108,11 @@ export type GlobalSettings = {
      */
     autoAcceptAllAgentPermissions: boolean;
     rememberedPermissions: RememberedAgentPermissionRule[];
+    /**
+     * Per-harness visibility in the composer picker. Missing keys default to on.
+     * Existing chats on a turned-off harness still run.
+     */
+    enabledHarnesses: Partial<Record<string, boolean>>;
   };
   models: {
     byBackend: Record<string, ModelToggleEntry[]>;
@@ -240,6 +246,7 @@ function createDefaultSettings(): GlobalSettings {
       branchPrefix: "cursor/",
       autoAcceptAllAgentPermissions: false,
       rememberedPermissions: [],
+      enabledHarnesses: {},
     },
     models: {
       byBackend: {},
@@ -343,7 +350,6 @@ function isRememberedPermissionOptionKind(
 
 const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
   cesium: "cesium-agent",
-  "cursor-acp": "cursor-sdk",
   "claude-adapter": "claude-code-sdk",
   "opencode-acp": "opencode-server",
   "opencode-v2-beta": "opencode-server",
@@ -936,6 +942,9 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
           : defaults.agents.autoAcceptAllAgentPermissions,
       rememberedPermissions: normalizeRememberedAgentPermissionRules(
         (r.agents as Record<string, unknown>)?.rememberedPermissions
+      ),
+      enabledHarnesses: normalizeEnabledHarnesses(
+        (r.agents as Record<string, unknown>)?.enabledHarnesses
       ),
     },
     models: {

@@ -13,6 +13,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
 > = {
   "cesium-agent": { light: "Cesium-Light.svg", dark: "Cesium-Dark.svg" },
   "cursor-sdk": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
+  "cursor-acp": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "codex-app-server": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
   "claude-code-sdk": {
     light: "Claude-Code-Light.svg",

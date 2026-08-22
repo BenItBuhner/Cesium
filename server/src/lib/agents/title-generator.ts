@@ -1,3 +1,8 @@
+import {
+  formatProvisionalChatTitle,
+  resolveGeneratedOrFallbackTitle,
+  shouldReplaceConversationTitleOnFirstPrompt,
+} from "@cesium/core";
 import { titleGenerationProcessEnv } from "../transcription-env.js";
 import {
   getCesiumAgentSettings,
@@ -153,6 +158,15 @@ async function callEnvTitleModel(userMessage: string): Promise<string> {
  * Voice settings / env-configured pipeline (OPENCURSOR_TITLE_MODEL) is the
  * fallback so a broken selection degrades instead of silencing titles entirely.
  */
+export async function isTitleGenerationConfigured(): Promise<boolean> {
+  const configuredModelId = await configuredTitleModelId();
+  if (configuredModelId) {
+    return true;
+  }
+  const { baseUrl, apiKey } = titleGenerationProcessEnv();
+  return Boolean(baseUrl && apiKey);
+}
+
 async function callTitleModel(userMessage: string): Promise<string> {
   const configuredModelId = await configuredTitleModelId();
   if (configuredModelId) {
@@ -171,6 +185,13 @@ async function callTitleModel(userMessage: string): Promise<string> {
 export async function generateTitleFromText(
   userMessage: string
 ): Promise<string | null> {
+  if (!userMessage.trim()) {
+    return null;
+  }
+  if (!(await isTitleGenerationConfigured())) {
+    return null;
+  }
+
   let lastError: unknown;
   for (let attempt = 0; attempt <= TITLE_MAX_RETRIES; attempt++) {
     try {
@@ -200,14 +221,27 @@ export async function generateTitleFromText(
 export async function generateConversationTitle(
   workspaceId: string,
   conversationId: string,
-  userMessage: string
+  userMessage: string,
+  options?: { attachmentCount?: number; expectedTitle?: string | null }
 ): Promise<void> {
-  const title = await generateTitleFromText(userMessage);
-  if (title) {
-    await updateConversationRecord(workspaceId, conversationId, (current) =>
-      current.title === "New chat"
-        ? { ...current, title }
-        : current
-    );
+  const fallback = formatProvisionalChatTitle({
+    text: userMessage,
+    attachmentCount: options?.attachmentCount ?? 0,
+  });
+  const generated = await generateTitleFromText(userMessage);
+  const title = resolveGeneratedOrFallbackTitle(generated, fallback);
+  if (!title) {
+    return;
   }
+  await updateConversationRecord(workspaceId, conversationId, (current) => {
+    if (
+      !shouldReplaceConversationTitleOnFirstPrompt(
+        current.title,
+        options?.expectedTitle ?? current.title
+      )
+    ) {
+      return current;
+    }
+    return current.title === title ? current : { ...current, title };
+  });
 }

@@ -21,7 +21,15 @@ import type {
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
 import type { ChatMessage } from "@/lib/types";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
+  formatProvisionalChatTitleFromComposer,
+  landingDraftUsesStandaloneWorkspace,
+  resolveLandingComposerDraftId,
+} from "@/lib/chat-draft-title";
+import {
+  createAgentConversation,
+  createStandaloneAgentConversation,
   listCrossWorkspaceAgentConversations,
   listCrossWorkspaceAgentConversationsForServer,
   patchAgentConversationMetadata,
@@ -68,9 +76,10 @@ import {
 } from "@/lib/agent-left-rail";
 import {
   AGENT_CONVERSATION_DELETED_EVENT,
-  AGENT_CONVERSATION_UPSERTED_EVENT,
+  AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT,
   dispatchAgentConversationUpserted,
   type AgentConversationDeletedDetail,
+  type AgentConversationsUpsertedBatchDetail,
   type AgentConversationUpsertedDetail,
 } from "@/lib/agent-conversation-events";
 import {
@@ -93,6 +102,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import {
   AGENT_STANDALONE_COMPOSER_DRAFT_ID,
   agentWorkspaceComposerDraftId,
+  hasMeaningfulComposerContent,
   useOpenInEditor,
 } from "@/components/editor/OpenInEditorContext";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
@@ -103,6 +113,15 @@ import {
   resolveRailFetchServers,
   runRailFetchWithTimeout,
 } from "@/lib/rail-fetch";
+
+/**
+ * Push (WebSocket `conversation_upserted`) keeps the rail live; HTTP refetch
+ * is only a consistency backstop. It used to run every 20s AND on every
+ * focus/visibility flip, which multiplied by servers is serious network
+ * churn for data that almost never differs from the pushed state.
+ */
+const RAIL_PERIODIC_REFRESH_MS = 120_000;
+const RAIL_FOCUS_REFRESH_MIN_GAP_MS = 30_000;
 import {
   filterGroupsByMachine,
   filterGroupsByWorkspaceScope,
@@ -565,7 +584,13 @@ export function AgentShellStateProvider({
   } = useServerConnections();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
-  const { resetComposerDraft } = useOpenInEditor();
+  const {
+    composerDrafts,
+    resetComposerDraft,
+    upsertComposerDraft,
+  } = useOpenInEditor();
+  const composerDraftsRef = useRef(composerDrafts);
+  composerDraftsRef.current = composerDrafts;
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -596,6 +621,8 @@ export function AgentShellStateProvider({
     conversationId: string;
   } | null>(null);
   const [standaloneDraftActive, setStandaloneDraftActive] = useState(false);
+  const standaloneDraftActiveRef = useRef(standaloneDraftActive);
+  standaloneDraftActiveRef.current = standaloneDraftActive;
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
   const [persistedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState<
@@ -825,6 +852,7 @@ export function AgentShellStateProvider({
     };
   }, [connectionsReady, refreshConversationGroups]);
 
+  const lastRailRefreshAtRef = useRef(0);
   const refreshConversationGroupsWithState = useCallback(async () => {
     if (railRefreshInFlightRef.current) {
       return railRefreshInFlightRef.current;
@@ -838,6 +866,7 @@ export function AgentShellStateProvider({
     railRefreshInFlightRef.current = refreshPromise;
     try {
       await refreshPromise;
+      lastRailRefreshAtRef.current = Date.now();
     } catch {
       // A failed background refresh must not blank out an already-loaded
       // rail; stale conversations beat an error screen, and the periodic
@@ -850,6 +879,22 @@ export function AgentShellStateProvider({
       setRailRefreshing(false);
     }
   }, [refreshConversationGroups]);
+
+  /**
+   * Focus/visibility/online handlers used to refetch unconditionally, so
+   * window-switching sprayed full cross-workspace list fetches. Live updates
+   * arrive over the agent WebSocket; an HTTP refetch is only a staleness
+   * backstop and can skip when one ran recently.
+   */
+  const refreshConversationGroupsIfStale = useCallback(
+    (staleAfterMs: number) => {
+      if (Date.now() - lastRailRefreshAtRef.current < staleAfterMs) {
+        return;
+      }
+      void refreshConversationGroupsWithState();
+    },
+    [refreshConversationGroupsWithState]
+  );
 
   const applyOptimisticRailTitle = useCallback(
     (conversationId: string, title: string) => {
@@ -867,15 +912,16 @@ export function AgentShellStateProvider({
       typeof navigator !== "undefined" && navigator.onLine === false;
     const handleFocus = () => {
       if (document.visibilityState === "hidden" || browserIsOffline()) return;
-      void refreshConversationGroupsWithState();
+      refreshConversationGroupsIfStale(RAIL_FOCUS_REFRESH_MIN_GAP_MS);
     };
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && !browserIsOffline()) {
-        void refreshConversationGroupsWithState();
+        refreshConversationGroupsIfStale(RAIL_FOCUS_REFRESH_MIN_GAP_MS);
       }
     };
     const handleOnline = () => {
       if (document.visibilityState === "hidden") return;
+      // Coming back online is a real gap in push coverage — always refetch.
       void refreshConversationGroupsWithState();
     };
     window.addEventListener("focus", handleFocus);
@@ -886,7 +932,7 @@ export function AgentShellStateProvider({
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("online", handleOnline);
     };
-  }, [refreshConversationGroupsWithState]);
+  }, [refreshConversationGroupsIfStale, refreshConversationGroupsWithState]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -896,29 +942,66 @@ export function AgentShellStateProvider({
       ) {
         return;
       }
-      void refreshConversationGroupsWithState();
-    }, 20_000);
+      refreshConversationGroupsIfStale(RAIL_PERIODIC_REFRESH_MS - 5_000);
+    }, RAIL_PERIODIC_REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [refreshConversationGroupsWithState]);
+  }, [refreshConversationGroupsIfStale]);
 
   useEffect(() => {
-    const onUpsert = (ev: Event) => {
-      const detail = (ev as CustomEvent<AgentConversationUpsertedDetail>).detail;
-      if (!detail?.id || !detail.workspaceId) {
+    // The rail renders every conversation row, so each groups update is the
+    // most expensive state application in the shell. Pushed record batches
+    // coalesce here for up to a second under sustained load (latest record
+    // per conversation wins); a quiet period applies the first batch
+    // immediately so light activity still feels instant.
+    const pendingRecords = new Map<string, AgentConversationUpsertedDetail>();
+    let applyTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastApplyAt = 0;
+    const RAIL_PATCH_COALESCE_MS = 1_000;
+
+    const applyPending = () => {
+      applyTimer = null;
+      if (pendingRecords.size === 0) {
         return;
       }
+      const records = [...pendingRecords.values()];
+      pendingRecords.clear();
+      lastApplyAt = Date.now();
       if (railInitialLoadCompletedRef.current) {
         railFetchGenerationRef.current += 1;
       }
       setGroups((prev) =>
-        patchAgentConversationGroups(prev, detail, detail.serverId ?? activeServer.id)
+        records.reduce(
+          (acc, record) =>
+            patchAgentConversationGroups(acc, record, record.serverId ?? activeServer.id),
+          prev
+        )
       );
+    };
+
+    const onUpsertBatch = (ev: Event) => {
+      const detail = (ev as CustomEvent<AgentConversationsUpsertedBatchDetail>).detail;
+      const records = (detail?.conversations ?? []).filter(
+        (record) => record?.id && record.workspaceId
+      );
+      if (records.length === 0) {
+        return;
+      }
+      for (const record of records) {
+        pendingRecords.set(record.id, record);
+      }
+      if (applyTimer != null) {
+        return;
+      }
+      const delay = Math.max(0, RAIL_PATCH_COALESCE_MS - (Date.now() - lastApplyAt));
+      applyTimer = setTimeout(applyPending, delay);
     };
     const onDeleted = (ev: Event) => {
       const detail = (ev as CustomEvent<AgentConversationDeletedDetail>).detail;
       if (!detail?.conversationId || !detail.workspaceId) {
         return;
       }
+      // A queued upsert for the deleted conversation must not resurrect it.
+      pendingRecords.delete(detail.conversationId);
       if (railInitialLoadCompletedRef.current) {
         railFetchGenerationRef.current += 1;
       }
@@ -931,11 +1014,14 @@ export function AgentShellStateProvider({
         )
       );
     };
-    window.addEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
+    window.addEventListener(AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT, onUpsertBatch);
     window.addEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
     return () => {
-      window.removeEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
+      window.removeEventListener(AGENT_CONVERSATIONS_UPSERTED_BATCH_EVENT, onUpsertBatch);
       window.removeEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
+      if (applyTimer != null) {
+        clearTimeout(applyTimer);
+      }
     };
   }, [activeServer.id]);
 
@@ -1706,6 +1792,78 @@ export function AgentShellStateProvider({
     [sidePaneScopeId, updateWorkspaceSession]
   );
 
+  const persistLandingComposerDraft = useCallback(async () => {
+    const activeIsStandaloneChat = Boolean(
+      activeWorkspaceGroup && isStandaloneChatWorkspace(activeWorkspaceGroup.workspace)
+    );
+    const draftId = resolveLandingComposerDraftId({
+      standaloneDraftActive: standaloneDraftActiveRef.current,
+      activeWorkspaceId: activeWorkspaceGroup?.workspace.id ?? activeWorkspaceId,
+      activeIsStandaloneChat,
+    });
+    const draft = composerDraftsRef.current[draftId];
+    if (!draft || !hasMeaningfulComposerContent(draft)) {
+      return null;
+    }
+
+    const snapshot = draft;
+    const title = formatProvisionalChatTitleFromComposer(snapshot);
+    resetComposerDraft(draftId);
+
+    const chat = workspaceSession.chat;
+    const input = {
+      backendId: chat.backendId,
+      mode: chat.mode,
+      modelId: chat.model.modelValue ?? chat.model.id,
+      modelName: chat.model.name,
+      ...(chat.backendId === "cesium-agent" && chat.profileId?.trim()
+        ? { profileId: chat.profileId.trim() }
+        : {}),
+      title,
+    };
+
+    try {
+      const useStandalone = landingDraftUsesStandaloneWorkspace({
+        standaloneDraftActive: standaloneDraftActiveRef.current,
+        activeWorkspaceId: activeWorkspaceId,
+        activeIsStandaloneChat,
+      });
+      const result = useStandalone
+        ? await createStandaloneAgentConversation(input, title)
+        : await createAgentConversation(input);
+      const conversation = result.conversation;
+      upsertComposerDraft(conversation.id, {
+        title: snapshot.title,
+        content: snapshot.content,
+        attachments: snapshot.attachments,
+        captures: snapshot.captures,
+        textReferences: snapshot.textReferences,
+        linkReferences: snapshot.linkReferences,
+      });
+      dispatchAgentConversationUpserted(conversation);
+      void refreshConversationGroups();
+      return conversation;
+    } catch (error) {
+      upsertComposerDraft(draftId, {
+        title: snapshot.title,
+        content: snapshot.content,
+        attachments: snapshot.attachments,
+        captures: snapshot.captures,
+        textReferences: snapshot.textReferences,
+        linkReferences: snapshot.linkReferences,
+      });
+      console.warn("[agent] failed to persist new-chat draft:", error);
+      return null;
+    }
+  }, [
+    activeWorkspaceGroup,
+    activeWorkspaceId,
+    refreshConversationGroups,
+    resetComposerDraft,
+    upsertComposerDraft,
+    workspaceSession.chat,
+  ]);
+
   const bumpAgentConversationMruForServer = useCallback(
     (conversationId: string) => {
       if (!isValidAgentConversationMruId(conversationId)) {
@@ -1738,6 +1896,13 @@ export function AgentShellStateProvider({
 
   const setSelectedConversationId = useCallback(
     (conversationId: string | null) => {
+      if (
+        conversationId &&
+        conversationId !== AGENT_NEW_CHAT_SESSION_ID &&
+        isDraftConversationSelected
+      ) {
+        void persistLandingComposerDraft();
+      }
       markConversationSwitchStart(conversationId, "setSelectedConversationId");
       if (conversationId && isValidAgentConversationMruId(conversationId)) {
         bumpAgentConversationMruForServer(conversationId);
@@ -1751,12 +1916,19 @@ export function AgentShellStateProvider({
       }));
       replaceConversationIdInLocation(conversationId);
     },
-    [bumpAgentConversationMruForServer, replaceConversationIdInLocation, updateWorkspaceSession]
+    [
+      bumpAgentConversationMruForServer,
+      isDraftConversationSelected,
+      persistLandingComposerDraft,
+      replaceConversationIdInLocation,
+      updateWorkspaceSession,
+    ]
   );
 
   const startNewConversation = useCallback(() => {
-    // New Chat must not inherit stuck / previously-sent composer text from the
-    // stable landing draft ids (submit used to race and re-apply stale content).
+    // Persist the in-progress landing composer as a rail draft, then clear
+    // the stable landing ids so New Chat never inherits leftover text.
+    void persistLandingComposerDraft();
     resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
     resetComposerDraft(agentWorkspaceComposerDraftId(activeWorkspaceId));
     updateWorkspaceSession((current) => ({
@@ -1773,6 +1945,7 @@ export function AgentShellStateProvider({
   }, [
     activeWorkspaceId,
     isMobile,
+    persistLandingComposerDraft,
     replaceConversationIdInLocation,
     resetComposerDraft,
     setLeftRailCollapsed,
@@ -1780,13 +1953,14 @@ export function AgentShellStateProvider({
   ]);
 
   const startStandaloneChat = useCallback(() => {
-    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
+    void persistLandingComposerDraft();
     setStandaloneDraftActive(true);
     startNewConversation();
-  }, [resetComposerDraft, startNewConversation]);
+  }, [persistLandingComposerDraft, startNewConversation]);
 
   const startNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {
+      void persistLandingComposerDraft();
       // Must run before any `await`. `loadWorkspaceState` rewrites `workspaceId` in the URL but
       // keeps the old `conversationId` until loading finishes. While the async fetch runs, the
       // effect below sees (active workspace B + URL conversation owned by A) and calls
@@ -1802,6 +1976,7 @@ export function AgentShellStateProvider({
     [
       activeWorkspaceId,
       openWorkspaceById,
+      persistLandingComposerDraft,
       replaceConversationIdInLocation,
       startNewConversation,
     ]

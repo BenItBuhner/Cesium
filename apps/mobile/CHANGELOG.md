@@ -1,18 +1,55 @@
 # Changelog
 
-All notable changes to the Cesium native mobile apps (`@cesium/mobile`) are documented here.
+All notable changes to Cesium (desktop, Android, Wear OS, and iOS) are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases are tagged as `mobile-vX.Y.Z` on GitHub.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Product releases are tagged as `vX.Y.Z` on GitHub; `mobile-vX.Y.Z` is still accepted by the release workflow.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-22
+
+First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64.
+
+### Added
+
+- Cesium Desktop is a first-class shipped app on macOS (Apple silicon + Intel), Windows (x64 + arm64), and Linux (x64 + arm64). Tagged releases attach DMG/ZIP, NSIS setup, AppImage, and deb artifacts alongside the phone and Wear OS APKs. Each architecture builds on a native runner because the packaged app embeds the host Node binary and compiles native modules in place.
+- Desktop native surface ported from Android: agent-run notifications with the same completion / intervention preferences (always / background-only / never), a tray icon with live agent status, dock/taskbar attention (macOS badge + bounce; Windows/Linux frame flash), `cesium://` deep links, and Open With / dock-drop / argv share intake into the existing share sheet.
+- Native macOS window chrome: hidden-inset title bar with traffic lights, a real application menu so ⌘C/⌘V/⌘W/⌘Q work, and workbench insets that keep the rail, editor tabs, and settings search out from under the lights.
+- MCP plugins marketplace, Connect, and OAuth hardening.
+- SubAgents V2 model inheritance and Model access settings with layered Cesium harness UI.
+- New-chat composers persist as titled drafts (title is taken from the first typed character).
+- Voice settings for transcription, TTS, and title fallback.
+- Harness toggles, Cursor ACP revival, and CLI OAuth.
+- Live subagent progress streamed into open transcript views.
+- Unified OpenCode and OpenCode v2 Beta into one harness, with model-specific harness capability contracts.
+
+### Changed
+
+- Scale performance overhaul: per-conversation subscriptions, batched fan-out, poll reduction, and GPU cuts so large workspaces stay responsive.
+- Bundled mobile workbench is rebuilt from source for this release, so the removed server-gate and later shell work actually ship in the APK (the 0.7.0 APK still had stale assets from #168).
+- Subscription OAuth is restricted to ChatGPT and SpaceXAI SuperGrok.
+- Standalone Chat rail hides its title for No workspace.
+- Todo tool calls group into the same worked-session dropdown as other tools.
+
 ### Removed
 
-- The blocking "Check Cesium server" / "Sign in to Cesium" full-page gate is gone. The workbench now always mounts immediately on launch, even when the configured backend is unreachable or requires sign-in; connecting, switching, and signing in to servers (including the Termux on-device flow) live in-app under Settings -> Servers and the server picker. The gate's fix history kept missing the APK because the bundled workbench assets were last regenerated at #168 — this release rebuilds them from source with the gate removed.
+- The blocking "Check Cesium server" / "Sign in to Cesium" full-page gate is gone. The workbench now always mounts immediately on launch, even when the configured backend is unreachable or requires sign-in; connecting, switching, and signing in to servers (including the Termux on-device flow) live in-app under Settings -> Servers and the server picker.
+- The 40-iteration cap on Cesium subagent tool loops.
 
 ### Fixed
 
 - OAuth / Sign In / Authenticate redirects no longer die inside the Android (and iOS) WebView. `window.open` and foreign http(s) navigations now leave the bundled workbench and open in the system browser instead of being swallowed by `setSupportMultipleWindows={false}` or unloading the `file://` page.
+- Composer no longer drops keystrokes or shifts the caret when typing fast on Android.
+- Queued-message arrow force-sends instead of unqueueing.
+- Composer status defaults apply correctly across new chats.
+- Browsers no longer auto-split, and the workbench pane no longer auto-reopens.
+- Cesium pause/stop pill animates both ways.
+- Chat transition jank, model persistence, and dock-aware scroll padding.
+- Mobile workbench pane frost and empty-editor swipe-close.
+- First-turn conversation event reconciliation.
+- Cursor SDK local coding access across platforms.
+- Landing workbench CTAs actually open `/agent`.
+- Cursor SDK sandbox no longer fails fresh installs on hosts without kernel sandbox support.
 
 ## [0.7.0] - 2026-08-18
 

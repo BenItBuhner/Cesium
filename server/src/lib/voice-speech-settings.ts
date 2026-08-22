@@ -267,9 +267,9 @@ export function resolvePreferredField(
   return { source: null };
 }
 
-function applyNullableString<T extends Record<string, string | undefined>>(
+function applyNullableString<K extends string, T extends { [P in K]?: string }>(
   target: T,
-  key: keyof T,
+  key: K,
   value: string | null | undefined
 ): void {
   if (value === undefined) {
@@ -277,7 +277,7 @@ function applyNullableString<T extends Record<string, string | undefined>>(
   }
   const trimmed = value?.trim();
   if (trimmed) {
-    target[key] = trimmed as T[keyof T];
+    target[key] = trimmed as T[K];
   } else {
     delete target[key];
   }

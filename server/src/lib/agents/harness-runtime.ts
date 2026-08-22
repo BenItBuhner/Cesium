@@ -32,7 +32,8 @@ export type HarnessCliId =
   | "devin"
   | "grok"
   | "google-antigravity"
-  | "claude";
+  | "claude"
+  | "cursor";
 
 export type HarnessRuntimeSource = "env" | "path" | "well-known";
 
@@ -109,6 +110,18 @@ export const HARNESS_CLI_DESCRIPTORS: Record<HarnessCliId, HarnessCliDescriptor>
     envBinVars: ["OPENCURSOR_CLAUDE_CODE_SDK_PATH", "OPENCURSOR_CLAUDE_BIN"],
     // `claude install` places the launcher under ~/.claude/local.
     wellKnownHomeSubdirs: [[".claude", "local"], [".claude", "bin"]],
+  },
+  cursor: {
+    id: "cursor",
+    binaryNames: ["agent", "cursor-agent"],
+    envBinVars: ["OPENCURSOR_CURSOR_CLI_BIN", "OPENCURSOR_CURSOR_ACP_BIN"],
+    // Extra argv is prepended in providers.ts so `acp` always remains last.
+    defaultArgs: ["acp"],
+    wellKnownHomeSubdirs: [
+      [".local", "bin"],
+      [".cursor", "bin"],
+      [".cursor-agent", "bin"],
+    ],
   },
 };
 

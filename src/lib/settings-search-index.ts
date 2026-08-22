@@ -467,11 +467,32 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Orchestration Agent",
     ["cesium", "orchestration", "kanban", "todo"]
   ),
+  row(
+    "agents",
+    "cesium-profiles",
+    "Agent profiles",
+    "Enable or disable Code, Work, and custom Cesium capability profiles. The new-chat toggle hides when only one profile is on.",
+    ["cesium", "profile", "work", "code", "toggle", "mode"]
+  ),
   row("agents", "cesium-edit-file", "Edit file", "Cesium tool permissions"),
   row("agents", "cesium-terminal", "Terminal", "Cesium tool permissions"),
   row("agents", "cesium-mcp-call", "MCP call", "Cesium tool permissions"),
   row("agents", "cesium-switch-mode", "Switch mode", "Cesium tool permissions"),
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
+  row(
+    "agents",
+    "cesium-model-access",
+    "Model access",
+    "Filter which models the Cesium agent and its subagents may use, with short per-model notes.",
+    ["cesium", "models", "filter", "allowlist", "subagent", "spawn", "description"]
+  ),
+  row(
+    "agents",
+    "cesium-subagent-models",
+    "Subagent model overrides",
+    "spawn_agent inherits the current model by default; overrides must be enabled under Model access.",
+    ["cesium", "subagents", "spawn_agent", "model", "override", "inherit"]
+  ),
   row(
     "agents",
     "cesium-oauth-accounts",
@@ -481,6 +502,20 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
+  row(
+    "agents",
+    "cursor-acp",
+    "Cursor ACP",
+    "Cursor Agent CLI over ACP with host OAuth (`agent login`).",
+    ["cursor", "acp", "oauth", "agent login"]
+  ),
+  row(
+    "agents",
+    "enabled-harnesses",
+    "Enabled harnesses",
+    "Turn agent harnesses on or off in the model picker.",
+    ["toggle", "enable", "disable", "backend"]
+  ),
   row(
     "agents",
     "opencode-server",
@@ -583,7 +618,8 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Plugins ——
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
-  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7"),
+  section("plugins", "discover", "Discover", "plugin marketplace registry github search context7 official mcp"),
+  section("plugins", "sources", "Sources", "official mcp registry github url marketplace source"),
   section("plugins", "verify", "Verify harness sync", "plugin harness mcp skills verify"),
   section("plugins", "custom", "Custom Plugin", "custom mcp skill plugin"),
   row(
@@ -730,6 +766,51 @@ const MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
 ];
 
+/** Rows rendered only inside the Electron desktop shell (DesktopNativeSettings). */
+const DESKTOP_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  section(
+    "general",
+    "desktop-notifications-tray",
+    "Desktop notifications & tray",
+    "electron native notifications tray dock"
+  ),
+  row(
+    "general",
+    "desktop-notification-test",
+    "System notifications",
+    "Send a test native notification and learn how agent runs surface in the tray menu and dock/taskbar badge.",
+    ["notification", "test", "tray", "dock", "badge", "native", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-completion-alerts",
+    "Agent finished notifications",
+    "Choose whether agents that finish, fail, or are cancelled post a native notification: always, only while Cesium is in the background, or never.",
+    ["completion", "finished", "done", "alert", "notification", "background", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-intervention-alerts",
+    "Needs-input alerts",
+    "Choose when an agent asking a question or requesting permission posts a native notification: always, only in the background, or silent.",
+    ["permission", "question", "input", "alert", "notification", "silent", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-eta-mode",
+    "Time estimates",
+    "Show a time-remaining hint in tray entries for goal runs, all runs, or never.",
+    ["eta", "time", "estimate", "remaining", "tray", "desktop"]
+  ),
+  row(
+    "general",
+    "desktop-multi-agent-style",
+    "Multiple agents",
+    "Keep a tray entry per running agent or fold concurrent agents into one combined entry.",
+    ["multiple", "agents", "combined", "separate", "tray", "desktop"]
+  ),
+];
+
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   // —— Actions ——
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
@@ -871,14 +952,20 @@ function buildModelSearchEntries(
 
 export function buildSettingsSearchIndex(
   modelsByBackend: Record<string, ModelToggleState[]>,
-  options?: { includeIpadBeta?: boolean; includeMobileNative?: boolean }
+  options?: {
+    includeIpadBeta?: boolean;
+    includeMobileNative?: boolean;
+    includeDesktopNative?: boolean;
+  }
 ): SettingsSearchEntry[] {
   const includeIpadBeta = options?.includeIpadBeta !== false;
   const includeMobileNative = options?.includeMobileNative === true;
+  const includeDesktopNative = options?.includeDesktopNative === true;
   return [
     ...STATIC_SETTINGS_SEARCH_ENTRIES,
     ...(includeIpadBeta ? IPAD_BETA_SETTINGS_SEARCH_ENTRIES : []),
     ...(includeMobileNative ? MOBILE_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
+    ...(includeDesktopNative ? DESKTOP_NATIVE_SETTINGS_SEARCH_ENTRIES : []),
     ...STATIC_SETTINGS_SEARCH_ENTRIES_TAIL,
     ...SHORTCUT_SEARCH_ENTRIES,
     ...buildModelSearchEntries(modelsByBackend),

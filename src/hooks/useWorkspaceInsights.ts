@@ -72,13 +72,35 @@ export function useWorkspaceInsights(input: {
       setInsights(null);
       return;
     }
-    const initial = window.setTimeout(() => void load(), INITIAL_DEBOUNCE_MS);
-    const interval = window.setInterval(() => void load(), POLL_INTERVAL_MS);
-    const onRefresh = () => void load();
+    let lastLoadAt = 0;
+    const loadNow = () => {
+      lastLoadAt = Date.now();
+      void load();
+    };
+    const initial = window.setTimeout(loadNow, INITIAL_DEBOUNCE_MS);
+    // Hidden tabs skip the poll entirely; on return the snapshot refreshes
+    // immediately when stale instead of waiting out the interval.
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      loadNow();
+    }, POLL_INTERVAL_MS);
+    const onVisible = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastLoadAt >= POLL_INTERVAL_MS
+      ) {
+        loadNow();
+      }
+    };
+    const onRefresh = () => loadNow();
+    document.addEventListener("visibilitychange", onVisible);
     window.addEventListener(REFRESH_EVENT, onRefresh);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener(REFRESH_EVENT, onRefresh);
       abortRef.current?.abort();
     };

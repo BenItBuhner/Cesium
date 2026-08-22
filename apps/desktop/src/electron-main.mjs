@@ -4,6 +4,14 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCesiumBackend } from "./main.mjs";
 import { resolvePackagedDesktopDataDir } from "./desktop-data-dir.mjs";
+import {
+  applyPlatformApplicationMenu,
+  argvContainsIntakePayload,
+  destroyDesktopNativeIntegrations,
+  handleStartupArgv,
+  installDesktopNativeIntegrations,
+  registerDesktopDeepLinkAndFileHandlers,
+} from "./desktop-native.mjs";
 
 process.title = "Cesium Desktop";
 app.setName("Cesium Desktop");
@@ -613,6 +621,17 @@ function installRendererHealthRecovery(win) {
 }
 
 function createRendererBrowserWindow(options = {}) {
+  // macOS keeps the native traffic lights (close/minimize/zoom) overlaying
+  // the renderer via a hidden-inset title bar; the web layer pads its
+  // top-left chrome to clear them. Windows/Linux stay fully frameless with
+  // the preload-injected window controls on the top-right.
+  const platformChrome =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : { frame: false };
   return new BrowserWindow({
     title: options.title ?? "Cesium",
     icon: APP_ICON_PATH,
@@ -621,7 +640,7 @@ function createRendererBrowserWindow(options = {}) {
     height: options.height ?? 960,
     minWidth: options.minWidth ?? 980,
     minHeight: options.minHeight ?? 640,
-    frame: false,
+    ...platformChrome,
     autoHideMenuBar: true,
     backgroundColor: "#191919",
     webPreferences: {
@@ -707,7 +726,7 @@ async function openDocsWindow(sourceWebContents) {
     minWidth: 720,
     minHeight: 520,
   });
-  Menu.setApplicationMenu(null);
+  applyPlatformApplicationMenu();
   attachRendererNavigationGuards(docsWindow.webContents);
   docsWindow.on("closed", () => {
     docsWindow = null;
@@ -811,7 +830,7 @@ async function createMainWindow(options = {}) {
     destroyNativeBrowserSessionsForWindow(mainWindow);
     mainWindow = null;
   });
-  Menu.setApplicationMenu(null);
+  applyPlatformApplicationMenu();
 
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[cesium-desktop] preload failed", preloadPath, error);
@@ -830,6 +849,68 @@ async function createMainWindow(options = {}) {
   if (options.closeAfterLoad) {
     mainWindow.close();
   }
+  installWindowCaptureForCi(mainWindow);
+}
+
+/**
+ * CI evidence hook: when OPENCURSOR_DESKTOP_CAPTURE_PATH is set, capture the
+ * main window's rendered contents (TCC/permission-free, unlike macOS
+ * `screencapture`) shortly after load and again after the workbench settles.
+ *
+ * With OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS also set, keep capturing
+ * numbered frames at that interval (capped) — a scripted demo can then be
+ * assembled into a video offline.
+ */
+function installWindowCaptureForCi(win) {
+  const capturePath = process.env.OPENCURSOR_DESKTOP_CAPTURE_PATH;
+  if (!capturePath || !win || win.isDestroyed()) {
+    return;
+  }
+  const base = capturePath.replace(/\.png$/i, "");
+  const capture = async (target) => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      return false;
+    }
+    try {
+      const image = await win.webContents.capturePage();
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(target, image.toPNG());
+      return true;
+    } catch (error) {
+      console.warn("[cesium-desktop] window capture failed", error);
+      return false;
+    }
+  };
+
+  const intervalMs = Number(process.env.OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS);
+  if (Number.isFinite(intervalMs) && intervalMs >= 100) {
+    const MAX_FRAMES = 600;
+    let frame = 0;
+    const timer = setInterval(() => {
+      if (frame >= MAX_FRAMES || win.isDestroyed()) {
+        clearInterval(timer);
+        return;
+      }
+      frame += 1;
+      void capture(`${base}_${String(frame).padStart(4, "0")}.png`);
+    }, intervalMs);
+    win.on("closed", () => clearInterval(timer));
+    console.log(
+      `[cesium-desktop] capturing window frames every ${intervalMs}ms to ${base}_NNNN.png`
+    );
+    return;
+  }
+
+  setTimeout(() => {
+    void capture(`${base}_early.png`).then((ok) => {
+      if (ok) console.log("[cesium-desktop] captured window to", `${base}_early.png`);
+    });
+  }, 8_000);
+  setTimeout(() => {
+    void capture(`${base}.png`).then((ok) => {
+      if (ok) console.log("[cesium-desktop] captured window to", `${base}.png`);
+    });
+  }, 30_000);
 }
 
 function installDesktopLifecycleHandlers() {
@@ -855,20 +936,34 @@ function installDesktopLifecycleHandlers() {
 
 const gotLock = app.isPackaged ? app.requestSingleInstanceLock() : true;
 console.log("[cesium-desktop] single instance lock", gotLock);
-if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
-  console.error("[cesium-desktop] another desktop instance already has the lock");
+// Launches that only carry a payload (Open With file, cesium:// deep link)
+// hand it to the lock holder via the second-instance event and exit —
+// booting a second full app for them would duplicate backends and windows.
+const deferToLockHolder =
+  !gotLock &&
+  (process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1" ||
+    argvContainsIntakePayload(process.argv, process.cwd()));
+if (deferToLockHolder) {
+  console.log(
+    "[cesium-desktop] another instance holds the lock; forwarding launch arguments and exiting"
+  );
   app.quit();
 } else {
   if (!gotLock) {
     console.warn("[cesium-desktop] single instance lock unavailable; continuing startup");
   }
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
       void probeMainRenderer(mainWindow, "second-instance focus");
     }
+    // Deep links / "Open with Cesium" files land in the second instance's
+    // argv on Windows and Linux.
+    void handleStartupArgv(argv, workingDirectory).catch(() => undefined);
   });
+
+  registerDesktopDeepLinkAndFileHandlers();
 
   app.whenReady().then(async () => {
     app.setName("Cesium Desktop");
@@ -880,7 +975,23 @@ if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
       app.quit();
       return;
     }
+    installDesktopNativeIntegrations({
+      getMainWindow: () => mainWindow,
+      focusMainWindow: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          void createMainWindow();
+          return;
+        }
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+      },
+      appIconPath: APP_ICON_PATH,
+    });
     await createMainWindow();
+    void handleStartupArgv(process.argv, process.cwd()).catch(() => undefined);
   }).catch((error) => {
     console.error("[cesium-desktop] failed to start", error);
     dialog.showErrorBox(
@@ -1288,6 +1399,7 @@ ipcMain.handle("cesium:window-is-maximized", (event) => {
 function cleanupBackend() {
   if (cleanupStarted) return;
   cleanupStarted = true;
+  destroyDesktopNativeIntegrations();
   clearMainRendererRecoveryTimer();
   mainRendererRecovering = false;
   mainRendererCrashReloading = false;

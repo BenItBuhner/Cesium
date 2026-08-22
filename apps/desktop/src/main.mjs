@@ -7,8 +7,14 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const resourcesRoot = process.resourcesPath || repoRoot;
-const packagedServerHostExe = resolve(dirname(process.execPath), "Cesium Server.exe");
-const packagedNodeExe = resolve(resourcesRoot, "server/node.exe");
+const packagedServerHostExe =
+  process.platform === "win32"
+    ? resolve(dirname(process.execPath), "Cesium Server.exe")
+    : null;
+const packagedNodeExe = resolve(
+  resourcesRoot,
+  process.platform === "win32" ? "server/node.exe" : "server/node"
+);
 const packagedServerEntry = resolve(resourcesRoot, "server/dist/index.js");
 const repoServerEntry = resolve(repoRoot, "server/dist/index.js");
 const usingPackagedResources = Boolean(process.resourcesPath) && existsSync(packagedServerEntry);
@@ -97,7 +103,7 @@ function parseBackendPidFile(raw) {
 
 function expectedBackendBinNames() {
   const names = new Set(["node", "node.exe"]);
-  for (const bin of [packagedNodeExe, packagedServerHostExe, process.execPath]) {
+  for (const bin of [packagedNodeExe, packagedServerHostExe, process.execPath].filter(Boolean)) {
     try {
       names.add(basename(bin).toLowerCase());
     } catch {
@@ -206,7 +212,7 @@ export async function startCesiumBackend(options = {}) {
   const nodeBin = usingPackagedResources
     ? existsSync(packagedNodeExe)
       ? packagedNodeExe
-      : existsSync(packagedServerHostExe)
+      : packagedServerHostExe && existsSync(packagedServerHostExe)
         ? packagedServerHostExe
         : process.execPath
     : process.env.OPENCURSOR_NODE_BIN || "node";

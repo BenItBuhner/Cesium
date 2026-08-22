@@ -51,6 +51,7 @@ import {
 } from "@/components/editor/OpenInEditorContext";
 import type { ComposerDraftRecord } from "@/components/editor/OpenInEditorContext";
 import { hasMeaningfulComposerContent } from "@/components/editor/OpenInEditorContext";
+import { formatProvisionalChatTitleFromComposer } from "@/lib/chat-draft-title";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import type {
@@ -68,7 +69,10 @@ import type {
   QueuedChatPrompt,
 } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  useAgentConversations,
+  useConversationEvents,
+} from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
@@ -79,7 +83,6 @@ import {
   deleteAgentConversationQueueItem,
   fetchAgentConversationSnapshot,
   forkAgentConversation,
-  generateDraftTitle,
   handoffAgentConversation,
   patchAgentConversationMetadata,
   prepareRedoAgentConversation,
@@ -209,6 +212,9 @@ function isRecentConversationCandidate(
   if (conversation.title.startsWith("Draft: ")) {
     return true;
   }
+  if (conversation.title.trim() && conversation.title !== "New chat") {
+    return true;
+  }
   const draft = composerDrafts[conversation.id];
   return Boolean(draft && hasMeaningfulComposerContent(draft));
 }
@@ -246,6 +252,7 @@ function pickAvailableBackend(
 ): AgentBackendInfo | null {
   return (
     backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
+    backends.find((backend) => backend.available && backend.enabled !== false) ??
     backends.find((backend) => backend.available) ??
     backends[0] ??
     null
@@ -264,8 +271,6 @@ function isPersistedConversationTabId(tabId: string): boolean {
 }
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
-const EMPTY_THREAD_EVENTS: never[] = [];
-
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
   const { chatTrailingWindowControlsVisible } = useWorkbench();
@@ -276,6 +281,7 @@ export function ChatPanel() {
   openComposerDraft,
   openAgentConversation,
   upsertComposerDraft,
+  migrateComposerDraft,
   setComposerSelection,
   expandedComposerDraftId,
   setExpandedComposerDraft,
@@ -295,7 +301,7 @@ const {
 backends,
 conversationsById,
 conversations,
-eventsByConversationId,
+getConversationEvents,
 bootstrapped,
 mergeConversationSnapshot,
 refreshConversations,
@@ -321,8 +327,13 @@ clearPendingConfigForConversation,
 } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  // iPad-only trailing margin: the Electron shell has no top-right window
+  // controls needing clearance on macOS (native traffic lights sit top-left),
+  // and Windows/Linux clearance comes from the preload chrome CSS instead.
   const padTabsForWindowChrome =
-    experimentalIpadWindowedTabInset && chatTrailingWindowControlsVisible;
+    experimentalIpadWindowedTabInset &&
+    chatTrailingWindowControlsVisible &&
+    !isDesktopApp;
   const electronChatTrailingChrome =
     isDesktopApp && chatTrailingWindowControlsVisible;
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
@@ -695,6 +706,17 @@ workspaceSession.chat.mode,
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
+  const rawPanelThreadEvents = useConversationEvents(activeTabId);
+  const panelThreadEventState = useMemo(
+    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
+    [activeTabId, rawPanelThreadEvents]
+  );
+  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
+  const deferredPanelThreadEvents = selectKeyedDeferredValue(
+    activeTabId,
+    rawPanelThreadEvents,
+    deferredPanelThreadEventState
+  );
   const panelHistoryCursor = useMemo(() => {
     if (!activeTabId || activeTabId === "__empty__") {
       return { hasOlder: false, loadingOlder: false };
@@ -751,7 +773,7 @@ workspaceSession.chat.mode,
     : undefined;
   const completionErrorDock = useAgentCompletionErrorDock({
     conversation: activeConversation,
-    events: activeTabId ? eventsByConversationId[activeTabId] : undefined,
+    events: activeTabId ? deferredPanelThreadEvents : undefined,
     backend: activeBackend,
     dismissedKey: dismissedCompletionErrorKey,
     onDismiss: (dismissKey) => {
@@ -859,26 +881,16 @@ workspaceSession.chat.mode,
       resolveDraftModelForBackend(draftBackend)
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
-  const rawPanelThreadEvents = activeTabId
-    ? (eventsByConversationId[activeTabId] ?? EMPTY_THREAD_EVENTS)
-    : EMPTY_THREAD_EVENTS;
+  // Full-log derivations key off the DEFERRED events so each stream flush's
+  // synchronous render stays O(1); the O(n) scans run in the interruptible
+  // deferred lane alongside the projection (critical on throttled devices).
   const contextUsageRefreshGeneration = useMemo(
-    () => computeContextUsageRefreshGeneration(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
-  );
-  const panelThreadEventState = useMemo(
-    () => ({ key: activeTabId, value: rawPanelThreadEvents }),
-    [activeTabId, rawPanelThreadEvents]
-  );
-  const deferredPanelThreadEventState = useDeferredValue(panelThreadEventState);
-  const deferredPanelThreadEvents = selectKeyedDeferredValue(
-    activeTabId,
-    rawPanelThreadEvents,
-    deferredPanelThreadEventState
+    () => computeContextUsageRefreshGeneration(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const composerUserMessageHistory = useMemo(
-    () => extractComposerUserMessageHistory(rawPanelThreadEvents),
-    [rawPanelThreadEvents]
+    () => extractComposerUserMessageHistory(deferredPanelThreadEvents),
+    [deferredPanelThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
@@ -892,7 +904,7 @@ workspaceSession.chat.mode,
 const resolveComposerStateForDraft = useCallback(
 (draftId: string) => {
 const conversation = conversationsById[draftId] ?? null;
-const draftEvents = eventsByConversationId[draftId];
+const draftEvents = getConversationEvents(draftId);
 const busy = conversation ? isAgentComposerBusy(conversation, draftEvents) : false;
 const pendingConfig = pendingConfigByConversationId[draftId];
 const pendingBackendId = pendingConfig?.backendId;
@@ -972,7 +984,7 @@ busy,
 backends,
 conversationsById,
 draftBackend,
-eventsByConversationId,
+getConversationEvents,
 modelVisibility,
 pendingConfigByConversationId,
 workspaceSession.chat.backendId,
@@ -1018,14 +1030,14 @@ workspaceSession.chat.model,
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
-        events: rawPanelThreadEvents,
+        events: deferredPanelThreadEvents,
         conversation: activeConversation,
       }),
-    [activeConversation, rawPanelThreadEvents]
+    [activeConversation, deferredPanelThreadEvents]
   );
   const goalProgress = useMemo(
-    () => latestGoalProgressStatus(rawPanelThreadEvents, activeConversation?.status),
-    [activeConversation?.status, rawPanelThreadEvents]
+    () => latestGoalProgressStatus(deferredPanelThreadEvents, activeConversation?.status),
+    [activeConversation?.status, deferredPanelThreadEvents]
   );
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
@@ -1278,12 +1290,7 @@ workspaceSession.chat.model,
     }
 
     const prevTab = tabs.find((t) => t.id === prevTabId);
-    if (prevTab?.isDraft) {
-      return;
-    }
-
-    const prevConversation = conversationsById[prevTabId];
-    if (!prevConversation || prevConversation.lastEventSeq > 0) {
+    if (!prevTab) {
       return;
     }
 
@@ -1292,51 +1299,98 @@ workspaceSession.chat.model,
       return;
     }
 
+    const draftTitle = formatProvisionalChatTitleFromComposer(draft);
+    const prevConversation = conversationsById[prevTabId];
+    if (prevConversation && prevConversation.lastEventSeq > 0) {
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
-        const result = await generateDraftTitle(draft.content);
-        if (cancelled) return;
-        const generatedTitle = result.title ?? "Untitled";
-        const draftTabTitle = `Draft: ${generatedTitle}`;
+        if (isLocalDraftChatTab(prevTab)) {
+          const chat = chatDraftRef.current;
+          const conversation = await createConversation({
+            backendId: chat.backendId,
+            mode: chat.mode,
+            modelId: chat.model.modelValue ?? chat.model.id,
+            modelName: chat.model.name,
+            ...(chat.backendId === "cesium-agent" && chat.profileId
+              ? { profileId: chat.profileId }
+              : {}),
+            title: draftTitle,
+          });
+          if (cancelled) return;
+          migrateComposerDraft(prevTabId, conversation.id);
+          setTabs((current) =>
+            current.map((tab) =>
+              tab.id === prevTabId
+                ? {
+                    id: conversation.id,
+                    title: draftTitle,
+                    active: tab.active,
+                    isDraft: true,
+                  }
+                : tab
+            )
+          );
+          unhideConversationIds([conversation.id]);
+          return;
+        }
+
+        if (!prevConversation) {
+          return;
+        }
+
         setTabs((current) =>
           current.map((tab) =>
             tab.id === prevTabId
-              ? { ...tab, title: draftTabTitle, isDraft: true }
+              ? { ...tab, title: draftTitle, isDraft: true }
               : tab
           )
         );
         unhideConversationIds([prevTabId]);
-        void updateAgentConversationConfig(prevTabId, { title: draftTabTitle }).catch(() => undefined);
+        if (prevConversation.title !== draftTitle) {
+          void updateAgentConversationConfig(prevTabId, { title: draftTitle }).catch(
+            () => undefined
+          );
+        }
       } catch {
-        if (cancelled) return;
-        const fallbackTitle = "Draft: Untitled";
-        setTabs((current) =>
-          current.map((tab) =>
-            tab.id === prevTabId
-              ? { ...tab, title: fallbackTitle, isDraft: true }
-              : tab
-          )
-        );
-        unhideConversationIds([prevTabId]);
-        void updateAgentConversationConfig(prevTabId, { title: fallbackTitle }).catch(() => undefined);
+        // Keep the composer contents even if the draft conversation could not
+        // be persisted; the local tab still holds the new-chat state.
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeTabId, tabs, conversationsById, composerDrafts, setTabs, unhideConversationIds]);
+  }, [
+    activeTabId,
+    composerDrafts,
+    conversationsById,
+    createConversation,
+    migrateComposerDraft,
+    setTabs,
+    tabs,
+    unhideConversationIds,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
       return;
     }
+    // Push keeps the list live while visible; refetch on return only after a
+    // real absence so rapid window switching does not spray list fetches.
+    let hiddenAt: number | null = null;
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") {
+        hiddenAt = Date.now();
         return;
       }
-      void refreshConversations().catch(() => undefined);
+      if (hiddenAt != null && Date.now() - hiddenAt >= 15_000) {
+        void refreshConversations().catch(() => undefined);
+      }
+      hiddenAt = null;
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -1866,7 +1920,7 @@ workspaceSession.chat.model,
           setTabs((current) =>
             current.map((tab) =>
               tab.id === conversation.id
-                ? { ...tab, title: "New chat", isDraft: undefined }
+                ? { ...tab, isDraft: undefined }
                 : tab
             )
           );
@@ -2376,6 +2430,7 @@ const cancelPromptForDraft = useCallback(
     [conversationsById, resumeConversationFromHook, syncConversationSnapshot]
   );
 
+  const expandedComposerEvents = useConversationEvents(expandedComposerDraftId);
   const expandedComposerState = useMemo(() => {
     if (!expandedComposerDraftId) {
       return null;
@@ -2416,12 +2471,12 @@ const cancelPromptForDraft = useCallback(
       onResume: () => resumePromptForDraft(expandedComposerDraftId),
       conversationStatus: state.conversation?.status,
       goalProgress: latestGoalProgressStatus(
-        eventsByConversationId[expandedComposerDraftId] ?? [],
+        expandedComposerEvents,
         state.conversation?.status
       ),
       conversationId: state.conversation?.id ?? expandedComposerDraftId,
       contextUsageRefreshGeneration: computeContextUsageRefreshGeneration(
-        eventsByConversationId[expandedComposerDraftId] ?? []
+        expandedComposerEvents
       ),
       busy: state.busy,
       configLocked: false,
@@ -2445,7 +2500,7 @@ const cancelPromptForDraft = useCallback(
     resumePromptForDraft,
     composerDrafts,
     composerUserMessageHistory,
-    eventsByConversationId,
+    expandedComposerEvents,
     expandedComposerDraftId,
     handleRequestHandoff,
     loadOlderConversationHistory,
@@ -2692,10 +2747,7 @@ const cancelPromptForDraft = useCallback(
           composerDraftId={composerDraftId}
           conversationBusy={
             activeConversation
-              ? isAgentComposerBusy(
-                  activeConversation,
-                  activeTabId ? eventsByConversationId[activeTabId] : undefined
-                ) ||
+              ? isAgentComposerBusy(activeConversation, deferredPanelThreadEvents) ||
                 activeConversation.status === "awaiting_permission"
               : false
           }

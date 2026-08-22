@@ -25,6 +25,7 @@ import {
   verifyClaudeCodeSdkSettings,
 } from "../lib/claude-code-sdk-settings.js";
 import { forceRefreshAllBackendCaches } from "../lib/agents/provider-cache-store.js";
+import { resolveOAuthPublicOrigin } from "../lib/oauth/public-origin.js";
 import {
   buildPiAgentOAuthCallbackUrl,
   completePiAgentOAuthCallback,
@@ -37,6 +38,7 @@ import {
 } from "../lib/pi-agent-oauth.js";
 import { upsertPiAgentProviderKey } from "../lib/pi-agent-settings.js";
 import {
+  CESIUM_MODEL_DESCRIPTION_MAX_LENGTH,
   deleteCesiumProviderKey,
   getCesiumAgentSettingsPublic,
   getCesiumModelCatalog,
@@ -59,12 +61,22 @@ import {
   startGrokBuildDeviceLogin,
 } from "../lib/grok-build-login.js";
 import {
+  cancelHarnessCliLogin,
+  isHarnessCliAuthBackendId,
+  refreshHarnessCliAuthState,
+  startHarnessCliLogin,
+  startHarnessCliLogout,
+} from "../lib/harness-cli-auth.js";
+import {
   bumpRevision,
   formatEtag,
   getRevision,
   parseRevisionHeader,
 } from "../storage/revisions.js";
-import { ACTIVE_AGENT_BACKEND_IDS } from "../lib/active-agent-backends.js";
+import {
+  ACTIVE_AGENT_BACKEND_IDS,
+  isActiveAgentBackendId,
+} from "../lib/active-agent-backends.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
 import { measureServerPerf } from "../lib/perf.js";
 import {
@@ -94,13 +106,7 @@ function allBackendIds(): AgentBackendId[] {
 function publicOriginFromRequest(c: {
   req: { url: string; header: (name: string) => string | undefined };
 }): string {
-  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-  const forwardedHost = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-  const url = new URL(c.req.url);
-  return `${url.protocol}//${url.host}`;
+  return resolveOAuthPublicOrigin(c.req);
 }
 
 settingsRoutes.get("/api/settings/global", async (c) => {
@@ -189,7 +195,7 @@ settingsRoutes.post("/api/settings/remembered-permissions/clear", async (c) => {
     typeof body.backendId === "string" && body.backendId.trim()
       ? body.backendId.trim()
       : undefined;
-  if (backendId && !ACTIVE_AGENT_BACKEND_IDS.includes(backendId as AgentBackendId)) {
+  if (backendId && !isActiveAgentBackendId(backendId)) {
     return c.json({ error: `Unknown backendId: ${backendId}` }, 400);
   }
   const rememberedPermissions = await clearRememberedAgentPermissionRules(
@@ -495,10 +501,31 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       limits?: Record<string, unknown>;
     };
     toolPermissions?: Record<string, unknown>;
+    modelAccess?: {
+      entries?: Record<
+        string,
+        { enabled?: boolean; description?: string | null } | null
+      >;
+    };
     customProviders?: CesiumCustomProvider[];
     profiles?: unknown[];
+    enabledProfiles?: Record<string, boolean>;
     defaultProfileId?: string;
   }>();
+  for (const [modelId, entry] of Object.entries(body.modelAccess?.entries ?? {})) {
+    const description = entry?.description;
+    if (
+      typeof description === "string" &&
+      description.trim().length > CESIUM_MODEL_DESCRIPTION_MAX_LENGTH
+    ) {
+      return c.json(
+        {
+          error: `Model description for ${modelId} must be at most ${CESIUM_MODEL_DESCRIPTION_MAX_LENGTH} characters.`,
+        },
+        400
+      );
+    }
+  }
   const settings = await patchCesiumAgentSettings({
     ...(body.defaultProviderKeyId !== undefined
       ? { defaultProviderKeyId: body.defaultProviderKeyId }
@@ -551,6 +578,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(body.toolPermissions
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }
       : {}),
+    ...(body.modelAccess ? { modelAccess: body.modelAccess } : {}),
     ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
     ...(Array.isArray(body.profiles)
       ? {
@@ -558,6 +586,9 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
             typeof patchCesiumAgentSettings
           >[0]["profiles"],
         }
+      : {}),
+    ...(body.enabledProfiles && typeof body.enabledProfiles === "object"
+      ? { enabledProfiles: body.enabledProfiles }
       : {}),
     ...(typeof body.defaultProfileId === "string"
       ? { defaultProfileId: body.defaultProfileId }
@@ -641,6 +672,38 @@ settingsRoutes.post("/api/settings/grok-build/login/cancel", async (c) => {
     installed: isGrokCliInstalled(),
     login: cancelGrokBuildDeviceLogin(),
   });
+});
+
+settingsRoutes.get("/api/settings/harness-auth/:backendId", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await refreshHarnessCliAuthState(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/login", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await startHarnessCliLogin(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/logout", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(await startHarnessCliLogout(backendId));
+});
+
+settingsRoutes.post("/api/settings/harness-auth/:backendId/cancel", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  return c.json(cancelHarnessCliLogin(backendId));
 });
 
 settingsRoutes.get("/api/settings/cesium-agent/models", async (c) => {

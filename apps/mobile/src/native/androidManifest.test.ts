@@ -20,6 +20,11 @@ function declaredPermissions(): string[] {
 // grant the user sees, and MODIFY_AUDIO_SETTINGS is an install-time permission
 // Chromium requires to open the audio source. Dropping either regresses voice
 // input to "Could not start audio source" with no user-visible remedy.
+test("manifest declares cesium://oauth deep links so OAuth can return to the app", () => {
+  const xml = readFileSync(manifestPath, "utf8");
+  assert.match(xml, /android:scheme="cesium" android:host="oauth"/);
+});
+
 test("manifest declares VIEW queries for http and https so OAuth can leave the app", () => {
   const xml = readFileSync(manifestPath, "utf8");
   assert.match(

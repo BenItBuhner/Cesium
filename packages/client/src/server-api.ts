@@ -1210,6 +1210,24 @@ export async function createAndPromptAgentConversation(
   });
 }
 
+/** Persist a no-workspace new-chat composer as an empty standalone draft. */
+export async function createStandaloneAgentConversation(
+  input: AgentConversationCreateInput,
+  title?: string
+): Promise<{ conversation: AgentConversationRecord; workspace: WorkspaceRecord }> {
+  return request(
+    `/api/agents/conversations/standalone`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        conversation: input,
+        title,
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
 /** Create a no-workspace chat (temp dir sandbox) and send the first prompt. */
 export async function createAndPromptStandaloneAgentConversation(
   input: AgentConversationCreateInput,
@@ -2200,6 +2218,7 @@ export type PiAgentOAuthStartResponse = {
   verificationUri?: string;
   instructions?: string;
   callbackUrl?: string;
+  sessionId?: string;
 };
 
 export async function fetchPiAgentSettings(): Promise<PiAgentSettingsResponse> {
@@ -2424,11 +2443,23 @@ export type CesiumAgentSettingsPayload = {
     mcpCall: "ask" | "allow" | "deny";
     switchMode: "ask" | "allow" | "deny";
   };
+  /**
+   * Per-model access filter and short notes (≤ 250 chars) surfaced to the
+   * primary agent and every subagent. Models without an entry stay enabled.
+   */
+  modelAccess: {
+    entries: Record<string, { enabled: boolean; description?: string }>;
+  };
   providerKeys: CesiumProviderKeyStatus[];
   oauthProviders: CesiumOAuthProviderStatus[];
   customProviders: CesiumCustomProvider[];
   /** Custom profiles only (persisted). */
   profiles: CesiumAgentProfilePayload[];
+  /**
+   * Visibility flags for the new-chat profile toggle. Built-ins stay in
+   * `profileCatalog` even when disabled so Settings can turn them back on.
+   */
+  enabledProfiles: Record<string, boolean>;
   defaultProfileId: string;
   /** Built-in presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfilePayload[];
@@ -2535,9 +2566,18 @@ export async function patchCesiumAgentSettings(
       | "toolPermissions"
       | "customProviders"
       | "profiles"
+      | "enabledProfiles"
       | "defaultProfileId"
     >
-  >
+  > & {
+    /** Per-entry merge: null deletes an entry, omitted entries are untouched. */
+    modelAccess?: {
+      entries?: Record<
+        string,
+        { enabled?: boolean; description?: string | null } | null
+      >;
+    };
+  }
 ): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
   return request<{ ok: true; settings: CesiumAgentSettingsPayload }>("/api/settings/cesium-agent", {
     method: "PATCH",
@@ -2662,6 +2702,81 @@ export async function cancelGrokBuildLogin(): Promise<GrokBuildLoginResponse> {
   return request<GrokBuildLoginResponse>("/api/settings/grok-build/login/cancel", {
     method: "POST",
   });
+}
+
+export type HarnessCliAuthBackendId =
+  | "cursor-acp"
+  | "grok-build"
+  | "opencode-server"
+  | "devin-acp"
+  | "codex-app-server"
+  | "claude-code-sdk"
+  | "google-antigravity-cli";
+
+export type HarnessCliAuthState = {
+  backendId: HarnessCliAuthBackendId;
+  installed: boolean;
+  signedIn: boolean | null;
+  accountLabel?: string;
+  status: "idle" | "pending" | "awaiting-confirmation" | "success" | "failed";
+  verificationUrl?: string;
+  userCode?: string;
+  outputTail?: string;
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  loginCommand: string;
+  logoutCommand: string;
+};
+
+export function isHarnessCliAuthBackendId(
+  backendId: string
+): backendId is HarnessCliAuthBackendId {
+  return (
+    backendId === "cursor-acp" ||
+    backendId === "grok-build" ||
+    backendId === "opencode-server" ||
+    backendId === "devin-acp" ||
+    backendId === "codex-app-server" ||
+    backendId === "claude-code-sdk" ||
+    backendId === "google-antigravity-cli"
+  );
+}
+
+export async function fetchHarnessCliAuth(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}`,
+    { method: "GET" }
+  );
+}
+
+export async function startHarnessCliAuthLogin(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/login`,
+    { method: "POST" }
+  );
+}
+
+export async function startHarnessCliAuthLogout(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/logout`,
+    { method: "POST" }
+  );
+}
+
+export async function cancelHarnessCliAuthLogin(
+  backendId: HarnessCliAuthBackendId
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/cancel`,
+    { method: "POST" }
+  );
 }
 
 export async function fetchTree(depth?: number): Promise<{
@@ -3935,11 +4050,166 @@ export async function refreshMcpServerMirror(
 export async function startMcpOAuth(
   workspaceId: string,
   serverId: string
-): Promise<{ authorizationUrl: string; state: string }> {
+): Promise<{ authorizationUrl: string; state: string; sessionId: string; callbackUrl?: string }> {
   return await mcpJsonRequest(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/oauth/${encodeURIComponent(serverId)}/start`,
     { workspaceId }
   );
+}
+
+export async function disconnectMcpOAuth(
+  workspaceId: string,
+  serverId: string
+): Promise<void> {
+  await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/oauth/${encodeURIComponent(serverId)}`,
+    { method: "DELETE", workspaceId }
+  );
+}
+
+export async function probeMcpRemoteAuth(url: string): Promise<{
+  kind: "none" | "oauth" | "unknown";
+  resource?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+}> {
+  const result = await mcpJsonRequest<{ probe: {
+    kind: "none" | "oauth" | "unknown";
+    resource?: string;
+    authorizationUrl?: string;
+    tokenUrl?: string;
+    registrationUrl?: string;
+  } }>("/api/mcp/auth/probe", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+  return result.probe;
+}
+
+export async function fetchOAuthSession(sessionId: string): Promise<{
+  id: string;
+  kind: string;
+  status: "pending" | "complete" | "failed";
+  label?: string;
+  error?: string;
+}> {
+  const result = await mcpJsonRequest<{
+    session: {
+      id: string;
+      kind: string;
+      status: "pending" | "complete" | "failed";
+      label?: string;
+      error?: string;
+    };
+  }>(`/api/oauth/sessions/${encodeURIComponent(sessionId)}`);
+  return result.session;
+}
+
+export async function pollOAuthSession(
+  sessionId: string,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<{
+  id: string;
+  kind: string;
+  status: "pending" | "complete" | "failed";
+  label?: string;
+  error?: string;
+}> {
+  const timeoutMs = options?.timeoutMs ?? 180_000;
+  const intervalMs = options?.intervalMs ?? 2000;
+  const deadline = Date.now() + timeoutMs;
+  let last = await fetchOAuthSession(sessionId);
+  while (Date.now() < deadline && last.status === "pending") {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    last = await fetchOAuthSession(sessionId);
+  }
+  return last;
+}
+
+export async function fetchPluginRegistrySources(): Promise<
+  Array<{
+    id: string;
+    kind: "official-mcp" | "url" | "github" | "file";
+    enabled: boolean;
+    label: string;
+    url?: string;
+    repo?: string;
+    path?: string;
+  }>
+> {
+  const result = await mcpJsonRequest<{
+    sources: Array<{
+      id: string;
+      kind: "official-mcp" | "url" | "github" | "file";
+      enabled: boolean;
+      label: string;
+      url?: string;
+      repo?: string;
+      path?: string;
+    }>;
+  }>("/api/plugins/sources");
+  return result.sources;
+}
+
+export async function addPluginRegistrySource(input: {
+  kind: "official-mcp" | "url" | "github" | "file";
+  label: string;
+  enabled?: boolean;
+  url?: string;
+  repo?: string;
+  path?: string;
+}): Promise<
+  Array<{
+    id: string;
+    kind: "official-mcp" | "url" | "github" | "file";
+    enabled: boolean;
+    label: string;
+    url?: string;
+    repo?: string;
+    path?: string;
+  }>
+> {
+  const result = await mcpJsonRequest<{
+    sources: Array<{
+      id: string;
+      kind: "official-mcp" | "url" | "github" | "file";
+      enabled: boolean;
+      label: string;
+      url?: string;
+      repo?: string;
+      path?: string;
+    }>;
+  }>("/api/plugins/sources", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return result.sources;
+}
+
+export async function removePluginRegistrySource(sourceId: string): Promise<
+  Array<{
+    id: string;
+    kind: "official-mcp" | "url" | "github" | "file";
+    enabled: boolean;
+    label: string;
+    url?: string;
+    repo?: string;
+    path?: string;
+  }>
+> {
+  const result = await mcpJsonRequest<{
+    sources: Array<{
+      id: string;
+      kind: "official-mcp" | "url" | "github" | "file";
+      enabled: boolean;
+      label: string;
+      url?: string;
+      repo?: string;
+      path?: string;
+    }>;
+  }>(`/api/plugins/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+  return result.sources;
 }
 
 export async function fetchAgentPlugins(workspaceId: string): Promise<AgentPluginPublic[]> {
@@ -3950,9 +4220,14 @@ export async function fetchAgentPlugins(workspaceId: string): Promise<AgentPlugi
   return result.plugins;
 }
 
-export async function discoverAgentPlugins(query = ""): Promise<AgentPluginDiscoveryResult> {
+export async function discoverAgentPlugins(
+  query = "",
+  options?: { limit?: number; offset?: number }
+): Promise<AgentPluginDiscoveryResult> {
   const params = new URLSearchParams();
   if (query.trim()) params.set("q", query.trim());
+  if (options?.limit != null) params.set("limit", String(options.limit));
+  if (options?.offset != null) params.set("offset", String(options.offset));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return await mcpJsonRequest<AgentPluginDiscoveryResult>(`/api/plugins/discover${suffix}`);
 }
@@ -4958,8 +5233,18 @@ export async function saveCloudAgentOAuthApp(input: {
 
 export async function startCloudAgentOAuth(
   providerId: CloudAgentProviderId
-): Promise<{ providerId: CloudAgentProviderId; authUrl: string; callbackUrl: string }> {
-  return request<{ providerId: CloudAgentProviderId; authUrl: string; callbackUrl: string }>(
+): Promise<{
+  providerId: CloudAgentProviderId;
+  authUrl: string;
+  callbackUrl: string;
+  sessionId: string;
+}> {
+  return request<{
+    providerId: CloudAgentProviderId;
+    authUrl: string;
+    callbackUrl: string;
+    sessionId: string;
+  }>(
     `/api/cloud-agents/connections/${encodeURIComponent(providerId)}/oauth/start`,
     { method: "GET" },
     { skipWorkspaceHeader: true, cache: "no-store" }

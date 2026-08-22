@@ -212,7 +212,8 @@ export type MobileNativeToWebMessage =
   // so `backRequest` alone must stay sufficient.
   | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
-  | { type: "backCancelled" };
+  | { type: "backCancelled" }
+  | { type: "oauthCompleted"; sessionId?: string; ok: boolean; kind?: string };
 
 export type MobileWebToNativeMessage =
   | {

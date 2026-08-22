@@ -1,0 +1,396 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "mobile-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.8.0 or mobile-v0.8.0). Leave empty when pushing a tag."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            printf 'value=%s\n' "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            printf 'value=%s\n' "$REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Parse release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          TAG="$RELEASE_TAG"
+          if [[ ! "$TAG" =~ ^(mobile-)?v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Tag must look like v1.2.3 or mobile-v1.2.3 (got: $TAG)" >&2
+            exit 1
+          fi
+          echo "value=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tagged revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+          fetch-depth: 0
+
+      - name: Assert shipped versions match the tag
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: node scripts/assert-release-versions.mjs "$RELEASE_VERSION"
+
+  android:
+    name: Build Android + Wear OS APKs
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GRADLE_OPTS: -Dorg.gradle.workers.max=4 -Dkotlin.daemon.jvm.options=-Xmx2048m
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          cache-cleanup: on-success
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain and mobile dependencies
+        run: |
+          status=0
+          (
+            yes | sdkmanager --licenses >/dev/null
+            sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
+          ) & android_pid=$!
+          npm ci \
+            --include-workspace-root=false \
+            --workspace @cesium/mobile \
+            --workspace @cesium/desktop-renderer \
+            --workspace @cesium/core \
+            --workspace @cesium/design \
+            --workspace @cesium/client \
+            --workspace @cesium/config \
+            --workspace @cesium/ui-web & npm_pid=$!
+          wait "$android_pid" || status=1
+          wait "$npm_pid" || status=1
+          exit "$status"
+
+      - name: Build required shared packages
+        run: |
+          status=0
+          npm run build --workspace @cesium/core & core_pid=$!
+          npm run build --workspace @cesium/design & design_pid=$!
+          wait "$core_pid" || status=1
+          wait "$design_pid" || status=1
+          exit "$status"
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64 secret configured; release APKs will use debug signing."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/cesium-release.jks
+          echo "ANDROID_KEYSTORE_PATH=/tmp/cesium-release.jks" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build Android release APKs
+        working-directory: apps/mobile
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,armeabi-v7a
+        run: |
+          npm run prepare:android
+          node scripts/run-gradle.mjs --parallel --build-cache :app:assembleRelease :wear:assembleRelease
+
+      - name: Prepare release assets
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist/release
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            "dist/release/cesium-mobile-${VERSION}.apk"
+          cp apps/mobile/android/wear/build/outputs/apk/release/wear-release.apk \
+            "dist/release/cesium-wear-${VERSION}.apk"
+          ls -la dist/release
+
+      - name: Upload Android release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-release-android
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop:
+    name: Build desktop app (${{ matrix.platform }}-${{ matrix.arch }})
+    needs: version
+    strategy:
+      # Let every platform finish so a single flaky leg surfaces alone
+      # instead of cancelling the rest of the release build.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: arm64
+            runner: macos-latest
+          - platform: mac
+            arch: x64
+            runner: macos-15-intel
+          - platform: win
+            arch: x64
+            runner: windows-latest
+          - platform: win
+            arch: arm64
+            runner: windows-11-arm
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Assert the runner architecture matches the target
+        # The packaged app embeds the running Node binary and natively
+        # compiled modules, so each arch must build on native hardware.
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          HOST_ARCH=$(node -p "process.arch")
+          if [ "$HOST_ARCH" != "$TARGET_ARCH" ]; then
+            echo "Runner arch $HOST_ARCH does not match target arch $TARGET_ARCH" >&2
+            exit 1
+          fi
+
+      - name: Ensure xvfb is available (Linux only)
+        if: matrix.platform == 'linux'
+        run: |
+          # apt-get update can hang for many minutes on busy runners waiting
+          # for image maintenance locks; only fall back to apt when the
+          # preinstalled xvfb-run is somehow missing.
+          if ! command -v xvfb-run > /dev/null; then
+            sudo timeout 300 apt-get update -q
+            sudo timeout 300 apt-get install -y -q xvfb
+          fi
+          xvfb-run --help > /dev/null && echo "xvfb-run OK"
+
+      - name: Install workspace dependencies
+        run: |
+          npm ci
+          # The server's file:.. dependency symlinks back to the repo root;
+          # never let it into staged/packaged output.
+          rm -rf server/node_modules/cesium
+
+      - name: Build shared workspace packages
+        run: npm run build:packages
+
+      - name: Package the desktop app
+        if: matrix.platform != 'linux'
+        run: npm --prefix apps/desktop run package:${{ matrix.platform }}
+
+      - name: Package the desktop app (Linux, under Xvfb)
+        if: matrix.platform == 'linux'
+        # xvfb wraps the whole step because the desktop `check` script runs
+        # `electron --version`, which needs an X display on Linux; the SUID
+        # chrome-sandbox is not setuid-root on runners, so disable it.
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
+        run: xvfb-run --auto-servernum npm --prefix apps/desktop run package:linux
+
+      - name: Collect release assets
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          ls -la apps/desktop/out
+          mkdir -p dist/release
+          case "$PLATFORM" in
+            mac)
+              cp apps/desktop/out/*.dmg "dist/release/cesium-desktop-${VERSION}-mac-${ARCH}.dmg"
+              cp apps/desktop/out/*.zip "dist/release/cesium-desktop-${VERSION}-mac-${ARCH}.zip"
+              ;;
+            win)
+              cp apps/desktop/out/*.exe "dist/release/cesium-desktop-${VERSION}-win-${ARCH}-setup.exe"
+              ;;
+            linux)
+              cp apps/desktop/out/*.AppImage "dist/release/cesium-desktop-${VERSION}-linux-${ARCH}.AppImage"
+              cp apps/desktop/out/*.deb "dist/release/cesium-desktop-${VERSION}-linux-${ARCH}.deb"
+              ;;
+          esac
+          ls -la dist/release
+
+      - name: Upload desktop release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-release-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [version, android, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cesium-release-*
+          merge-multiple: true
+          path: dist/release
+
+      - name: List release assets
+        run: ls -la dist/release
+
+      - name: Extract changelog section
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if ! node apps/mobile/scripts/extract-changelog.mjs "$RELEASE_VERSION" \
+            > "$RUNNER_TEMP/changelog-section.md"; then
+            echo "_No changelog entry found for ${RELEASE_VERSION}; see the commit history for details._" \
+              > "$RUNNER_TEMP/changelog-section.md"
+          fi
+
+      - name: Build release notes
+        id: changelog
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          V="$RELEASE_VERSION"
+          {
+            echo "## What's changed"
+            echo
+            cat "$RUNNER_TEMP/changelog-section.md"
+            echo
+            echo "## Downloads"
+            echo
+            echo "| Platform | Assets |"
+            echo "| --- | --- |"
+            echo "| Android phone/tablet | \`cesium-mobile-${V}.apk\` |"
+            echo "| Wear OS | \`cesium-wear-${V}.apk\` |"
+            echo "| macOS (Apple silicon) | \`cesium-desktop-${V}-mac-arm64.dmg\` / \`.zip\` |"
+            echo "| macOS (Intel) | \`cesium-desktop-${V}-mac-x64.dmg\` / \`.zip\` |"
+            echo "| Windows (x64) | \`cesium-desktop-${V}-win-x64-setup.exe\` |"
+            echo "| Windows (arm64) | \`cesium-desktop-${V}-win-arm64-setup.exe\` |"
+            echo "| Linux (x64) | \`cesium-desktop-${V}-linux-x64.AppImage\` / \`.deb\` |"
+            echo "| Linux (arm64) | \`cesium-desktop-${V}-linux-arm64.AppImage\` / \`.deb\` |"
+            echo "| iOS | Source + CI simulator build only (no signed IPA yet) |"
+            echo
+            echo "## Install"
+            echo
+            echo "**Android** — sideload the phone APK on Android 8+ (the Wear OS companion APK is for paired watch installs):"
+            echo
+            echo '```bash'
+            echo "adb install -r cesium-mobile-${V}.apk"
+            echo '```'
+            echo
+            echo "**macOS** — open the DMG and drag Cesium Desktop into Applications. Builds are unsigned, so on first launch right-click the app and choose Open, or clear the quarantine flag:"
+            echo
+            echo '```bash'
+            echo 'xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app"'
+            echo '```'
+            echo
+            echo "**Windows** — run the setup executable. Builds are unsigned, so if SmartScreen appears choose \"More info\" then \"Run anyway\"."
+            echo
+            echo "**Linux** — make the AppImage executable and run it, or install the deb:"
+            echo
+            echo '```bash'
+            echo "chmod +x cesium-desktop-${V}-linux-x64.AppImage && ./cesium-desktop-${V}-linux-x64.AppImage"
+            echo "# or"
+            echo "sudo apt install ./cesium-desktop-${V}-linux-x64.deb"
+            echo '```'
+          } > "$NOTES_FILE"
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Cesium v${{ needs.version.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.path }}
+          files: dist/release/*
+          draft: false
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
+          generate_release_notes: false

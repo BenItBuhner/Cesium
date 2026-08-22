@@ -226,6 +226,8 @@ export type McpAuthConfig =
       authorizationUrl?: string;
       tokenUrl?: string;
       discoveryUrl?: string;
+      registrationUrl?: string;
+      resource?: string;
     };
 
 export type McpServerConfig = {
@@ -254,12 +256,26 @@ export type McpServerConfig = {
   updatedAt: number;
 };
 
+export type McpProtocolEra = "stateless" | "session";
+
+export type McpProtocolProbeStatus = {
+  ok: boolean;
+  version?: string;
+  error?: string;
+};
+
 export type McpConnectionStatus = {
   connected: boolean;
   lastCheckedAt: number;
   toolCount?: number;
   error?: string;
   needsAuth?: boolean;
+  protocol?: {
+    selected?: McpProtocolEra;
+    selectedVersion?: string;
+    stateless?: McpProtocolProbeStatus;
+    session?: McpProtocolProbeStatus;
+  };
 };
 
 export type McpServerPublic = McpServerConfig & {
@@ -459,6 +475,13 @@ export type CesiumAgentSettingsPublic = {
     }>;
   }>;
   toolPermissions: Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">;
+  /**
+   * Per-model access filter and user notes (≤ 250 chars) surfaced to the
+   * primary agent and subagents. Models without an entry stay enabled.
+   */
+  modelAccess: {
+    entries: Record<string, { enabled: boolean; description?: string }>;
+  };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: Array<{
     id: string;
@@ -476,6 +499,8 @@ export type CesiumAgentSettingsPublic = {
   }>;
   /** Custom capability profiles (persisted). */
   profiles: CesiumAgentProfile[];
+  /** Which catalog profiles appear in the new-chat toggle. */
+  enabledProfiles: Record<string, boolean>;
   defaultProfileId: string;
   /** Built-in Code/Work presets plus custom profiles, in picker order. */
   profileCatalog: CesiumAgentProfile[];

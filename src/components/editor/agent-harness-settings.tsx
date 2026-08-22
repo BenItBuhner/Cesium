@@ -14,12 +14,13 @@ import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { formatMcpServerDisplayName } from "@/lib/mcp-server-display";
 import { openExternalUrl } from "@/lib/mobile-bridge";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { AgentsSettingsState, RememberedAgentPermissionRule } from "@/lib/global-settings";
 import {
-  cancelGrokBuildLogin,
+  cancelHarnessCliAuthLogin,
   deleteCursorSdkApiKey,
   deleteClaudeCodeSdkSettings,
   deleteCesiumProviderKey,
@@ -33,8 +34,9 @@ import {
   deleteCesiumAgentTrigger,
   fetchCesiumModelCatalog,
   fetchCursorSdkCredentialStatus,
-  fetchGrokBuildLogin,
+  fetchMcpServers,
   fetchPiAgentSettings,
+  pollOAuthSession,
   patchCesiumAgentSettings,
   refreshCesiumModelCatalog,
   saveClaudeCodeSdkSettings,
@@ -43,8 +45,11 @@ import {
   savePiAgentHome,
   savePiAgentProviderKey,
   startCesiumOAuth,
-  startGrokBuildLogin,
+  startHarnessCliAuthLogin,
+  startHarnessCliAuthLogout,
   startPiAgentOAuth,
+  fetchHarnessCliAuth,
+  isHarnessCliAuthBackendId,
   removeRememberedAgentPermission,
   clearRememberedAgentPermissions,
   type ClaudeCodeSdkSettingsPayload,
@@ -60,7 +65,7 @@ import {
   type CesiumProviderKeyStatus,
   type CesiumProviderKind,
   type CursorSdkCredentialStatus,
-  type GrokBuildLoginResponse,
+  type HarnessCliAuthState,
   type PiAgentHomeMode,
   type PiAgentProviderStatus,
   type PiAgentSettingsResponse,
@@ -72,6 +77,7 @@ import {
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   SettingsBreadcrumbs,
+  SettingsDisclosure,
   SettingsRow,
   SettingsSection,
   SettingsSubsectionHeading,
@@ -80,6 +86,10 @@ import {
   settingsSelectTriggerClass,
   tagClass,
 } from "@/components/editor/settings-ui";
+import {
+  CesiumModelAccessSection,
+  summarizeCesiumModelAccess,
+} from "@/components/editor/settings/CesiumModelAccessSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { ACTIVE_AGENT_BACKEND_IDS } from "@cesium/core";
@@ -90,6 +100,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
 export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
   "cursor-sdk": "Cursor SDK",
+  "cursor-acp": "Cursor ACP",
   "opencode-server": "OpenCode",
   "opencode-v2-beta": "OpenCode",
   "devin-acp": "Devin",
@@ -104,7 +115,9 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "cesium-agent":
     "First-party Cesium harness with direct inference APIs, tools, subagents, and compression.",
   "cursor-sdk":
-    "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
+    "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins. Does not support Cursor CLI OAuth — use Cursor ACP for that.",
+  "cursor-acp":
+    "Cursor Agent CLI over ACP (`agent acp`). Sign in with `agent login` for the OAuth flow the TypeScript SDK does not expose.",
   "opencode-server":
     "OpenCode native HTTP/SSE harness. Current uses OpenCode 1 (`opencode serve`); the v2 Beta dialect is packaged in the same option for durable logs, background subagents, PTY/shell, and forms until OpenCode 2.0 is standardized.",
   "opencode-v2-beta":
@@ -194,6 +207,20 @@ const inputClass =
   "box-border min-h-[32px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
 
 const monoInputClass = `${inputClass} font-mono text-[11px]`;
+
+const HARNESS_BLURBS: Record<AgentBackendId, string> = {
+  "cesium-agent": "First-party inference · API keys & OAuth",
+  "cursor-sdk": "TypeScript SDK · API key",
+  "cursor-acp": "Cursor Agent CLI · OAuth",
+  "opencode-server": "OpenCode HTTP/SSE · CLI login",
+  "opencode-v2-beta": "Legacy OpenCode alias",
+  "devin-acp": "Devin CLI · ACP",
+  "grok-build": "Grok CLI · device auth",
+  "codex-app-server": "Codex app-server · CLI login",
+  "claude-code-sdk": "Claude Agent SDK · API key or CLI login",
+  "pi-agent": "Pi coding agent · OAuth or API keys",
+  "google-antigravity-cli": "agy CLI · Google OAuth",
+};
 
 const modelsLinkClass =
   "font-sans text-[12px] text-[var(--accent)] underline-offset-2 transition-colors hover:underline";
@@ -462,7 +489,9 @@ function CursorSdkCredentialSettings() {
           </button>
         </div>
         <p className="leading-relaxed">
-          The key stays server-side and is used only by the Cursor SDK harness.
+          The key stays server-side and is used only by the Cursor SDK harness. Cursor
+          account OAuth is not available on the SDK — enable Cursor ACP and sign in there
+          if you need `agent login`.
         </p>
         {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
       </div>
@@ -995,6 +1024,36 @@ function newCustomProfileId(): string {
   return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+type ProfileMcpOption = {
+  id: string;
+  label: string;
+};
+
+function mcpAllowlistLabel(serverId: string, options: ProfileMcpOption[]): string {
+  return (
+    options.find((option) => option.id === serverId)?.label ??
+    formatMcpServerDisplayName(serverId)
+  );
+}
+
+function mcpOptionsFromServers(servers: Array<{ id: string; label: string; displayName?: string; pluginId?: string }>): ProfileMcpOption[] {
+  const seen = new Set<string>();
+  const options: ProfileMcpOption[] = [];
+  for (const server of servers) {
+    const id = server.id.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    options.push({
+      id,
+      label:
+        server.displayName?.trim() ||
+        server.label.trim() ||
+        formatMcpServerDisplayName(server.pluginId || id),
+    });
+  }
+  return options;
+}
+
 type ProfileEditorModalProps = {
   open: boolean;
   onClose: () => void;
@@ -1003,6 +1062,7 @@ type ProfileEditorModalProps = {
   toolGroups: CesiumProfileToolGroupPayload[];
   lockedTools: string[];
   existingProfiles: CesiumAgentProfilePayload[];
+  mcpOptions: ProfileMcpOption[];
   onSave: (profile: CesiumAgentProfilePayload) => Promise<void>;
 };
 
@@ -1013,6 +1073,7 @@ function ProfileEditorModal({
   toolGroups,
   lockedTools,
   existingProfiles,
+  mcpOptions,
   onSave,
 }: ProfileEditorModalProps) {
   const [name, setName] = useState("");
@@ -1022,7 +1083,7 @@ function ProfileEditorModal({
   const [allTools, setAllTools] = useState(true);
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [allMcpServers, setAllMcpServers] = useState(true);
-  const [mcpServersText, setMcpServersText] = useState("");
+  const [selectedMcpServers, setSelectedMcpServers] = useState<Set<string>>(new Set());
   const [permissionOverrides, setPermissionOverrides] = useState<
     CesiumAgentProfilePayload["permissionOverrides"]
   >({});
@@ -1042,7 +1103,7 @@ function ProfileEditorModal({
     setSelectedTools(new Set(allowed === "all" ? lockedTools : [...allowed, ...lockedTools]));
     const mcpServers = draft?.tools.mcpServers ?? "all";
     setAllMcpServers(mcpServers === "all");
-    setMcpServersText(mcpServers === "all" ? "" : mcpServers.join(", "));
+    setSelectedMcpServers(new Set(mcpServers === "all" ? [] : mcpServers));
     setPermissionOverrides(draft?.permissionOverrides ?? {});
     setMessage(null);
   }, [open, draft, lockedTools]);
@@ -1084,12 +1145,7 @@ function ProfileEditorModal({
       },
       tools: {
         allowed: allTools ? "all" : [...new Set([...selectedTools, ...lockedTools])],
-        mcpServers: allMcpServers
-          ? "all"
-          : mcpServersText
-              .split(",")
-              .map((entry) => entry.trim().toLowerCase())
-              .filter(Boolean),
+        mcpServers: allMcpServers ? "all" : [...selectedMcpServers],
       },
       permissionOverrides,
     };
@@ -1257,8 +1313,7 @@ function ProfileEditorModal({
               <div>
                 <SettingsFieldLabel>MCP servers</SettingsFieldLabel>
                 <p className="mt-[2px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                  Restrict call_mcp_tool to specific server ids (comma-separated, e.g.
-                  browser, artifacts, phone).
+                  Restrict call_mcp_tool to installed plugins and built-in MCP servers.
                 </p>
               </div>
               <label className="flex shrink-0 items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
@@ -1272,13 +1327,51 @@ function ProfileEditorModal({
               </label>
             </div>
             {!allMcpServers ? (
-              <HardwareAwareTextInput
-                value={mcpServersText}
-                onChange={setMcpServersText}
-                placeholder="browser, artifacts, phone"
-                className={monoInputClass}
-                ariaLabel="Allowed MCP server ids"
-              />
+              <div className="flex flex-col gap-[4px] rounded-[var(--radius-tab)] border border-[var(--border-card)] p-[10px]">
+                {(() => {
+                  const listed = new Set(mcpOptions.map((option) => option.id));
+                  const extras = [...selectedMcpServers]
+                    .filter((id) => !listed.has(id))
+                    .map((id) => ({ id, label: formatMcpServerDisplayName(id) }));
+                  const rows = [...mcpOptions, ...extras];
+                  if (rows.length === 0) {
+                    return (
+                      <p className="font-sans text-[12px] text-[var(--text-secondary)]">
+                        No MCP servers in this workspace yet. Install a plugin or add a custom
+                        server first.
+                      </p>
+                    );
+                  }
+                  return rows.map((option) => {
+                    const checked = selectedMcpServers.has(option.id);
+                    return (
+                      <label
+                        key={option.id}
+                        className="flex items-center gap-[7px] font-sans text-[12px] text-[var(--text-secondary)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedMcpServers((current) => {
+                              const next = new Set(current);
+                              if (next.has(option.id)) {
+                                next.delete(option.id);
+                              } else {
+                                next.add(option.id);
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="min-w-0 truncate text-[var(--text-primary)]">
+                          {option.label}
+                        </span>
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
             ) : null}
             <div>
               <SettingsFieldLabel>Permission overrides</SettingsFieldLabel>
@@ -1339,7 +1432,9 @@ function ProfileEditorModal({
 }
 
 function CesiumAgentHarnessSettings() {
+  const { activeWorkspaceId } = useWorkspace();
   const [settings, setSettings] = useState<CesiumAgentSettingsPayload | null>(null);
+  const [mcpOptions, setMcpOptions] = useState<ProfileMcpOption[]>([]);
   const [catalog, setCatalog] = useState<CesiumModelCatalogEntry[]>([]);
   const [providerOptionId, setProviderOptionId] = useState("openai");
   const [label, setLabel] = useState("");
@@ -1406,6 +1501,16 @@ function CesiumAgentHarnessSettings() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!activeWorkspaceId) {
+      setMcpOptions([]);
+      return;
+    }
+    void fetchMcpServers(activeWorkspaceId)
+      .then((servers) => setMcpOptions(mcpOptionsFromServers(servers)))
+      .catch(() => setMcpOptions([]));
+  }, [activeWorkspaceId, profileModal.open]);
+
+  useEffect(() => {
     // The Cesium OAuth flow reuses the Pi callback page, which posts this
     // message to the opener window when the provider finishes connecting.
     const onMessage = (event: MessageEvent) => {
@@ -1424,6 +1529,14 @@ function CesiumAgentHarnessSettings() {
       setMessage(null);
       try {
         const result = await startCesiumOAuth(provider.id);
+        if (result.sessionId) {
+          void pollOAuthSession(result.sessionId).then((session) => {
+            if (session.status === "complete") {
+              void refresh().then(() => notifyAgentBackendsChanged());
+              setMessage(`${provider.name} connected.`);
+            }
+          });
+        }
         if (result.authUrl) {
           openExternalUrl(result.authUrl, {
             features: "noopener,noreferrer,width=520,height=720",
@@ -1549,6 +1662,9 @@ function CesiumAgentHarnessSettings() {
       try {
         const result = await patchCesiumAgentSettings(patch);
         setSettings(result.settings);
+        if (patch.profiles || patch.enabledProfiles || patch.defaultProfileId) {
+          invalidateCesiumProfileCatalog();
+        }
         notifyAgentBackendsChanged();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Failed to update Cesium settings.");
@@ -1676,10 +1792,74 @@ function CesiumAgentHarnessSettings() {
   const enabledModeCount = settings
     ? Object.values(settings.modes.enabled).filter(Boolean).length
     : 0;
+  const enabledProfileCount = settings
+    ? settings.profileCatalog.filter(
+        (profile) => settings.enabledProfiles?.[profile.id] !== false
+      ).length
+    : 0;
+
+  // Terse per-layer rollups shown while a section is collapsed.
+  const modelAccessSummary = useMemo(
+    () => summarizeCesiumModelAccess(catalog, settings?.modelAccess?.entries ?? {}),
+    [catalog, settings]
+  );
+  const providersSummary = settings
+    ? [
+        settings.configured ? "Configured" : "Not configured",
+        `${uniqueProviderKeys.length} key${uniqueProviderKeys.length === 1 ? "" : "s"}`,
+        settings.customProviders.length > 0
+          ? `${settings.customProviders.length} custom`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "Loading…";
+  const modelsSummary = settings
+    ? `${settings.defaultModelId} · ${modelAccessSummary.enabled}/${modelAccessSummary.total} models on`
+    : "";
+  const behaviorSummary = settings
+    ? `${enabledModeCount}/${settings.modeCatalog.length} modes · compression ${
+        settings.compression.enabled ? "on" : "off"
+      }`
+    : "";
+  const profilesSummary = settings
+    ? `${enabledProfileCount}/${settings.profileCatalog.length} profiles · ${triggers?.length ?? 0} trigger${
+        (triggers?.length ?? 0) === 1 ? "" : "s"
+      }`
+    : "";
+  const enabledPluginCount = settings
+    ? settings.harnessCatalog.filter(
+        (feature) =>
+          settings.harness.features[feature.id]?.enabled ?? feature.enabledByDefault
+      ).length
+    : 0;
+  const pluginsSummary = settings
+    ? `subagents v${settings.harness.features.subagents.version} · ${enabledPluginCount}/${settings.harnessCatalog.length} plugins on`
+    : "";
+  const permissionsSummary = settings
+    ? (["ask", "allow", "deny"] as const)
+        .map(
+          (value) =>
+            [
+              Object.values(settings.toolPermissions).filter((entry) => entry === value)
+                .length,
+              value,
+            ] as const
+        )
+        .filter(([count]) => count > 0)
+        .map(([count, value]) => `${count} ${value}`)
+        .join(" · ")
+    : "";
 
   return (
     <>
-      <div className="flex flex-col gap-[28px]">
+      <div className="flex flex-col gap-[12px]">
+        <SettingsDisclosure
+          title="Providers & credentials"
+          summary={providersSummary}
+          defaultOpen={settings ? !settings.configured : false}
+        >
+        <div className="flex flex-col gap-[24px]">
         <HarnessDetailBlock>
           <SettingsSubsectionHeading>Provider API keys</SettingsSubsectionHeading>
         <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
@@ -1902,8 +2082,33 @@ function CesiumAgentHarnessSettings() {
         </HarnessDetailBlock>
       ) : null}
 
+      {settings && settings.customProviders.length > 0 ? (
+        <HarnessDetailBlock>
+          <SettingsSubsectionHeading>Custom providers</SettingsSubsectionHeading>
+          <ul className="mt-[8px] divide-y divide-[var(--border-subtle)]">
+            {settings.customProviders.map((provider) => (
+              <li
+                key={provider.id}
+                className="-mx-[6px] rounded-[var(--radius-tab)] px-[6px] py-[8px] transition-colors first:pt-[8px] last:pb-[8px] hover:bg-[var(--accent-bg)]"
+              >
+                <p className="font-sans text-[13px] text-[var(--text-primary)]">{provider.name}</p>
+                <p className="mt-[2px] font-mono text-[11px] text-[var(--text-secondary)]">
+                  {apiKindLabel(provider.apiKind)}
+                  {provider.baseUrl ? ` · ${provider.baseUrl}` : ""} · {provider.models.length}{" "}
+                  model{provider.models.length === 1 ? "" : "s"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </HarnessDetailBlock>
+      ) : null}
+      </div>
+      </SettingsDisclosure>
+
       {settings ? (
         <>
+          <SettingsDisclosure title="Models & defaults" summary={modelsSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Defaults</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
@@ -1941,6 +2146,18 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <CesiumModelAccessSection
+              catalog={catalog}
+              entries={settings.modelAccess?.entries ?? {}}
+              defaultModelId={settings.defaultModelId}
+              busy={busy}
+              onPatchEntries={(entriesPatch) =>
+                void patchSettings({ modelAccess: { entries: entriesPatch } })
+              }
+            />
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Conversation titles</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Model used to auto-title new conversations. Pick any configured catalog model —
@@ -1964,7 +2181,11 @@ function CesiumAgentHarnessSettings() {
               />
             </label>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Behavior & modes" summary={behaviorSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
             <HarnessDetailToggleRow
               title="Context compression"
@@ -2061,9 +2282,16 @@ function CesiumAgentHarnessSettings() {
               })}
             </div>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Profiles & triggers" summary={profilesSummary}>
+          <div className="flex flex-col gap-[24px]">
           <HarnessDetailBlock>
-            <div className="flex flex-wrap items-center justify-between gap-[10px]">
+            <div
+              className="flex flex-wrap items-center justify-between gap-[10px]"
+              data-settings-search-id="cesium-profiles"
+            >
               <SettingsSubsectionHeading>Agent profiles</SettingsSubsectionHeading>
               <button
                 type="button"
@@ -2078,11 +2306,15 @@ function CesiumAgentHarnessSettings() {
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Capability presets orthogonal to modes: each profile picks a persona, verbatim
               instructions, the advertised tool surface, MCP server access, and permission
-              overrides. Built-in Code and Work presets are read-only — duplicate to customize.
+              overrides. Toggle a profile off to hide it from the new-chat switch — the switch
+              itself disappears when only one profile is enabled. Built-in Code and Work presets
+              are read-only — duplicate to customize.
             </p>
             <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
               {settings.profileCatalog.map((profile) => {
                 const isDefault = profile.id === settings.defaultProfileId;
+                const isEnabled = settings.enabledProfiles?.[profile.id] !== false;
+                const labelId = `cesium-profile-${profile.id}`;
                 const toolSummary =
                   profile.tools.allowed === "all"
                     ? "All tools"
@@ -2090,14 +2322,21 @@ function CesiumAgentHarnessSettings() {
                 const mcpSummary =
                   profile.tools.mcpServers === "all"
                     ? "all MCP servers"
-                    : `MCP: ${profile.tools.mcpServers.join(", ") || "none"}`;
+                    : `MCP: ${
+                        profile.tools.mcpServers
+                          .map((id) => mcpAllowlistLabel(id, mcpOptions))
+                          .join(", ") || "none"
+                      }`;
                 return (
                   <div
                     key={profile.id}
                     className="flex items-center justify-between gap-[12px] py-[10px] first:pt-0 last:pb-0"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      <p
+                        id={labelId}
+                        className="flex flex-wrap items-center gap-[6px] font-sans text-[13px] font-medium text-[var(--text-primary)]"
+                      >
                         {profile.name}
                         {profile.builtIn ? <span className={tagClass}>built-in</span> : null}
                         {isDefault ? <span className={tagClass}>default</span> : null}
@@ -2112,15 +2351,29 @@ function CesiumAgentHarnessSettings() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-[6px]">
-                      {!isDefault ? (
+                      <ToggleSwitch
+                        checked={isEnabled}
+                        labelledBy={labelId}
+                        disabled={busy}
+                        onChange={(nextEnabled) => {
+                          if (!nextEnabled && enabledProfileCount <= 1) {
+                            setMessage("At least one agent profile must remain enabled.");
+                            return;
+                          }
+                          void patchSettings({
+                            enabledProfiles: { [profile.id]: nextEnabled },
+                          });
+                        }}
+                        size="md"
+                        variant="green"
+                      />
+                      {!isDefault && isEnabled ? (
                         <button
                           type="button"
                           className={rowButtonClass}
                           disabled={busy}
                           onClick={() => {
-                            void patchSettings({ defaultProfileId: profile.id }).then(() =>
-                              invalidateCesiumProfileCatalog()
-                            );
+                            void patchSettings({ defaultProfileId: profile.id });
                           }}
                         >
                           Set default
@@ -2253,7 +2506,10 @@ function CesiumAgentHarnessSettings() {
               )}
             </div>
           </HarnessDetailBlock>
+          </div>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Harness plugins & limits" summary={pluginsSummary}>
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Harness plugins</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
@@ -2557,7 +2813,9 @@ function CesiumAgentHarnessSettings() {
               </div>
             </div>
           </HarnessDetailBlock>
+          </SettingsDisclosure>
 
+          <SettingsDisclosure title="Tool permissions" summary={permissionsSummary}>
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Tool permissions</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
@@ -2639,27 +2897,7 @@ function CesiumAgentHarnessSettings() {
               </label>
             </div>
           </HarnessDetailBlock>
-
-          {settings.customProviders.length > 0 ? (
-            <HarnessDetailBlock>
-              <SettingsSubsectionHeading>Custom providers</SettingsSubsectionHeading>
-              <ul className="mt-[8px] divide-y divide-[var(--border-subtle)]">
-                {settings.customProviders.map((provider) => (
-                  <li
-                    key={provider.id}
-                    className="-mx-[6px] rounded-[var(--radius-tab)] px-[6px] py-[8px] transition-colors first:pt-[8px] last:pb-[8px] hover:bg-[var(--accent-bg)]"
-                  >
-                    <p className="font-sans text-[13px] text-[var(--text-primary)]">{provider.name}</p>
-                    <p className="mt-[2px] font-mono text-[11px] text-[var(--text-secondary)]">
-                      {apiKindLabel(provider.apiKind)}
-                      {provider.baseUrl ? ` · ${provider.baseUrl}` : ""} · {provider.models.length}{" "}
-                      model{provider.models.length === 1 ? "" : "s"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </HarnessDetailBlock>
-          ) : null}
+          </SettingsDisclosure>
         </>
       ) : null}
 
@@ -2684,6 +2922,7 @@ function CesiumAgentHarnessSettings() {
         toolGroups={settings?.profileToolGroups ?? []}
         lockedTools={settings?.profileLockedTools ?? []}
         existingProfiles={settings?.profileCatalog ?? []}
+        mcpOptions={mcpOptions}
         onSave={saveProfile}
       />
     </>
@@ -3017,107 +3256,149 @@ function PiAgentHarnessSettings() {
   );
 }
 
-function GrokBuildHarnessSettings() {
-  const [payload, setPayload] = useState<GrokBuildLoginResponse | null>(null);
+function HarnessCliAuthSettings({ backendId }: { backendId: AgentBackendId }) {
+  const [payload, setPayload] = useState<HarnessCliAuthState | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try {
-      setPayload(await fetchGrokBuildLogin());
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to load Grok Build status.");
+    if (!isHarnessCliAuthBackendId(backendId)) {
+      return;
     }
-  }, []);
+    try {
+      setPayload(await fetchHarnessCliAuth(backendId));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load harness sign-in status.");
+    }
+  }, [backendId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const login = payload?.login;
-  const active = login?.status === "pending" || login?.status === "awaiting-confirmation";
+  const active = payload?.status === "pending" || payload?.status === "awaiting-confirmation";
 
   useEffect(() => {
-    if (!active) {
+    if (!active || !isHarnessCliAuthBackendId(backendId)) {
       return;
     }
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(timer);
-  }, [active, refresh]);
+  }, [active, backendId, refresh]);
 
   const startLogin = useCallback(async () => {
+    if (!isHarnessCliAuthBackendId(backendId)) {
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
-      const result = await startGrokBuildLogin();
+      const result = await startHarnessCliAuthLogin(backendId);
       setPayload(result);
-      if (result.login.status === "failed") {
-        setMessage(result.login.error ?? "Grok login failed to start.");
-      } else if (result.login.verificationUrl) {
-        openExternalUrl(result.login.verificationUrl, {
+      if (result.status === "failed") {
+        setMessage(result.error ?? "Sign-in failed to start.");
+      } else if (result.verificationUrl) {
+        openExternalUrl(result.verificationUrl, {
           features: "noopener,noreferrer,width=520,height=720",
         });
       }
       notifyAgentBackendsChanged();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to start Grok login.");
+      setMessage(error instanceof Error ? error.message : "Failed to start sign-in.");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [backendId]);
 
   const cancelLogin = useCallback(async () => {
+    if (!isHarnessCliAuthBackendId(backendId)) {
+      return;
+    }
     setBusy(true);
     try {
-      setPayload(await cancelGrokBuildLogin());
+      setPayload(await cancelHarnessCliAuthLogin(backendId));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to cancel Grok login.");
+      setMessage(error instanceof Error ? error.message : "Failed to cancel sign-in.");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [backendId]);
 
+  const signOut = useCallback(async () => {
+    if (!isHarnessCliAuthBackendId(backendId)) {
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await startHarnessCliAuthLogout(backendId);
+      setPayload(result);
+      if (result.status === "failed") {
+        setMessage(result.error ?? "Sign-out failed.");
+      } else {
+        setMessage("Signed out on the server host.");
+      }
+      notifyAgentBackendsChanged();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to sign out.");
+    } finally {
+      setBusy(false);
+    }
+  }, [backendId]);
+
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return null;
+  }
+
+  const signedIn = payload?.signedIn === true || payload?.status === "success";
   const statusLabel =
-    login == null
+    payload == null
       ? "Loading…"
-      : login.status === "success"
-        ? "Signed in — the CLI cached its token; Grok Build sessions authenticate automatically."
-        : login.status === "awaiting-confirmation"
-          ? "Waiting for you to approve the sign-in in your browser."
-          : login.status === "pending"
-            ? "Starting the Grok CLI device sign-in…"
-            : login.status === "failed"
-              ? login.error ?? "Sign-in failed."
-              : payload?.installed
-                ? "Not signed in. Start the device sign-in below, or set XAI_API_KEY."
-                : "Grok CLI not detected on the server host.";
+      : payload.status === "awaiting-confirmation"
+        ? "Waiting for you to approve the sign-in in your browser."
+        : payload.status === "pending"
+          ? "Starting the host CLI sign-in…"
+          : payload.status === "failed"
+            ? payload.error ?? "Sign-in failed."
+            : signedIn
+              ? "Signed in on the server host. This harness will use the cached CLI session."
+              : payload.installed
+                ? "Not signed in. Start the host CLI login below, or use an API key if this harness accepts one."
+                : "CLI not detected on the server host.";
 
   return (
     <HarnessDetailBlock>
-      <SettingsSubsectionHeading>Grok account</SettingsSubsectionHeading>
+      <SettingsSubsectionHeading>Account</SettingsSubsectionHeading>
       <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
         <p className="text-[13px] font-medium text-[var(--text-primary)]">{statusLabel}</p>
         <p className="leading-relaxed">
-          Runs <span className="font-mono text-[11px] text-[var(--text-primary)]">grok login
-          --device-auth</span> on the server host. Approve the request in your browser and the CLI
-          caches its token for the ACP handshake.
+          Runs{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">
+            {payload?.loginCommand ?? "CLI login"}
+          </span>{" "}
+          on the server host. Approve the request in your browser when a URL appears. Sign out
+          runs{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">
+            {payload?.logoutCommand ?? "CLI logout"}
+          </span>
+          .
         </p>
-        {login?.verificationUrl && active ? (
+        {payload?.verificationUrl && active ? (
           <div className="rounded-[8px] border border-[var(--border-subtle)] px-[12px] py-[10px]">
             <p className="font-sans text-[12px] text-[var(--text-primary)]">
               Open{" "}
               <a
-                href={login.verificationUrl}
+                href={payload.verificationUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline decoration-dotted underline-offset-2"
               >
-                {login.verificationUrl}
+                {payload.verificationUrl}
               </a>
-              {login.userCode ? (
+              {payload.userCode ? (
                 <>
                   {" "}and enter code{" "}
-                  <span className="font-mono text-[12px] font-semibold">{login.userCode}</span>
+                  <span className="font-mono text-[12px] font-semibold">{payload.userCode}</span>
                 </>
               ) : null}
               .
@@ -3132,8 +3413,18 @@ function GrokBuildHarnessSettings() {
             onClick={() => void startLogin()}
           >
             <ExternalLink className="size-[14px]" strokeWidth={1.5} />
-            Sign in with device auth
+            {signedIn ? "Sign in again" : "Sign in"}
           </button>
+          {signedIn ? (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={busy || active}
+              onClick={() => void signOut()}
+            >
+              Sign out
+            </button>
+          ) : null}
           {active ? (
             <button
               type="button"
@@ -3173,12 +3464,28 @@ function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
       return <CesiumAgentHarnessSettings />;
     case "cursor-sdk":
       return <CursorSdkCredentialSettings />;
+    case "cursor-acp":
+      return <HarnessCliAuthSettings backendId={backendId} />;
     case "claude-code-sdk":
-      return <ClaudeCodeSdkHarnessSettings />;
+      return (
+        <>
+          <ClaudeCodeSdkHarnessSettings />
+          <HarnessCliAuthSettings backendId={backendId} />
+        </>
+      );
     case "pi-agent":
       return <PiAgentHarnessSettings />;
     case "grok-build":
-      return <GrokBuildHarnessSettings />;
+    case "opencode-server":
+    case "devin-acp":
+    case "codex-app-server":
+    case "google-antigravity-cli":
+      return (
+        <>
+          <HarnessCliAuthSettings backendId={backendId} />
+          <HarnessGenericSettings />
+        </>
+      );
     default:
       return <HarnessGenericSettings />;
   }
@@ -3473,41 +3780,75 @@ function HarnessListView({
       </SettingsSection>
 
       <SettingsSection title="Harnesses">
+        <p className="px-[16px] pb-[8px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+          Turn on only the agent runtimes you want in the model picker. Configure sign-in from
+          each harness page.
+        </p>
         {HARNESS_ORDER.map((backendId, index) => {
           const remembered = rememberedByHarness.get(backendId) ?? [];
+          const enabled = (agents.enabledHarnesses ?? {})[backendId] !== false;
           return (
-            <button
+            <div
               key={backendId}
-              type="button"
-              className={`flex min-h-[56px] w-full items-center justify-between gap-[12px] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)] ${
+              className={`flex min-h-[56px] w-full items-center gap-[12px] px-[16px] py-[12px] ${
                 index < HARNESS_ORDER.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
               }`}
-              onClick={() => onOpenHarness(backendId)}
             >
-              <div className="flex min-w-0 items-center gap-[10px]">
-                <AgentBackendIcon
-                  backendId={backendId}
-                  className="size-[18px] shrink-0"
-                  strokeWidth={1.5}
-                />
-                <div className="min-w-0">
-                  <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                    {HARNESS_LABELS[backendId]}
-                  </p>
-                  <p className="mt-[2px] truncate font-sans text-[11px] text-[var(--text-secondary)]">
-                    {HARNESS_DESCRIPTIONS[backendId]}
-                  </p>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center justify-between gap-[12px] text-left transition-colors"
+                onClick={() => onOpenHarness(backendId)}
+              >
+                <div className="flex min-w-0 items-center gap-[10px]">
+                  <AgentBackendIcon
+                    backendId={backendId}
+                    className="size-[18px] shrink-0"
+                    strokeWidth={1.5}
+                  />
+                  <div className="min-w-0">
+                    <p
+                      id={`harness-enable-${backendId}`}
+                      className="font-sans text-[13px] font-medium text-[var(--text-primary)]"
+                    >
+                      {HARNESS_LABELS[backendId]}
+                    </p>
+                    <p className="mt-[2px] truncate font-sans text-[11px] text-[var(--text-secondary)]">
+                      {HARNESS_BLURBS[backendId]}
+                    </p>
+                  </div>
                 </div>
+                <div className="flex shrink-0 items-center gap-[8px]">
+                  {remembered.length > 0 ? (
+                    <span className="rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                      {remembered.length} rule{remembered.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                  <span className={tagClass}>{enabled ? "On" : "Off"}</span>
+                  <ChevronRight className="size-[14px] text-[var(--text-secondary)]" strokeWidth={1.5} />
+                </div>
+              </button>
+              <div
+                className="shrink-0"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <ToggleSwitch
+                  checked={enabled}
+                  onChange={(value) => {
+                    onPatchAgents({
+                      enabledHarnesses: {
+                        ...(agents.enabledHarnesses ?? {}),
+                        [backendId]: value,
+                      },
+                    });
+                    notifyAgentBackendsChanged();
+                  }}
+                  size="md"
+                  variant="green"
+                  labelledBy={`harness-enable-${backendId}`}
+                />
               </div>
-              <div className="flex shrink-0 items-center gap-[8px]">
-                {remembered.length > 0 ? (
-                  <span className="rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
-                    {remembered.length} rule{remembered.length === 1 ? "" : "s"}
-                  </span>
-                ) : null}
-                <ChevronRight className="size-[14px] text-[var(--text-secondary)]" strokeWidth={1.5} />
-              </div>
-            </button>
+            </div>
           );
         })}
       </SettingsSection>

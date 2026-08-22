@@ -10,10 +10,13 @@ import {
 import {
   buildMcpOAuthCallbackUrl,
   completeMcpOAuthCallback,
+  disconnectMcpOAuth,
   oauthFailureHtml,
   oauthSuccessHtml,
   startMcpOAuth,
 } from "../lib/mcp/oauth.js";
+import { probeMcpRemoteAuth } from "../lib/mcp/oauth-discovery.js";
+import { resolveOAuthPublicOrigin } from "../lib/oauth/public-origin.js";
 import { MCP_PRESETS, getMcpPreset } from "../lib/mcp/presets.js";
 import {
   createSecretId,
@@ -37,13 +40,7 @@ export const mcpRoutes = new Hono();
 function publicOriginFromRequest(c: {
   req: { url: string; header: (name: string) => string | undefined };
 }): string {
-  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-  const forwardedHost = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-  const url = new URL(c.req.url);
-  return `${url.protocol}//${url.host}`;
+  return resolveOAuthPublicOrigin(c.req);
 }
 
 mcpRoutes.get("/api/mcp/presets", (c) => c.json({ presets: MCP_PRESETS }));
@@ -202,6 +199,28 @@ mcpRoutes.post("/api/workspaces/:workspaceId/mcp/servers/:serverId/refresh", asy
   return c.json({ ok: true, server });
 });
 
+mcpRoutes.post("/api/mcp/auth/probe", async (c) => {
+  const body = await c.req.json<{ url?: string }>().catch(() => ({ url: "" }));
+  const url = body.url?.trim();
+  if (!url) {
+    return c.json({ error: "Expected url." }, 400);
+  }
+  try {
+    return c.json({ probe: await probeMcpRemoteAuth(url) });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to probe MCP auth." },
+      400
+    );
+  }
+});
+
+mcpRoutes.delete("/api/workspaces/:workspaceId/mcp/oauth/:serverId", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  await disconnectMcpOAuth(workspace.id, c.req.param("serverId"));
+  return c.json({ ok: true });
+});
+
 mcpRoutes.get("/api/workspaces/:workspaceId/mcp/oauth/:serverId/start", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const serverId = c.req.param("serverId");
@@ -222,10 +241,10 @@ mcpRoutes.get("/api/mcp/oauth/callback", async (c) => {
   const state = c.req.query("state")?.trim();
   const error = c.req.query("error")?.trim();
   if (error) {
-    return c.html(oauthFailureHtml(error), 400);
+    return c.html(oauthFailureHtml(error, state), 400);
   }
   if (!code || !state) {
-    return c.html(oauthFailureHtml("Missing code or state."), 400);
+    return c.html(oauthFailureHtml("Missing code or state.", state), 400);
   }
   try {
     const result = await completeMcpOAuthCallback({ code, state });
@@ -239,11 +258,11 @@ mcpRoutes.get("/api/mcp/oauth/callback", async (c) => {
         workspaceRoot: workspace.root,
       });
     }
-    return c.html(oauthSuccessHtml(server?.label ?? result.serverId));
+    return c.html(oauthSuccessHtml(server?.label ?? result.serverId, result.sessionId));
   } catch (callbackError) {
     const message =
       callbackError instanceof Error ? callbackError.message : String(callbackError);
-    return c.html(oauthFailureHtml(message), 500);
+    return c.html(oauthFailureHtml(message, state), 500);
   }
 });
 
