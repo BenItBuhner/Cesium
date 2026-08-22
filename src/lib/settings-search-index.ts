@@ -42,7 +42,7 @@ const NAV_LABELS: Record<string, string> = {
   cloudAgents: "Cloud Agents",
   models: "Models",
   usage: "Usage",
-  plugins: "Plugins",
+  plugins: "Integrations",
   extensions: "Extensions",
   servers: "Servers",
   rulesSkills: "Rules, Skills, Subagents",
@@ -50,6 +50,7 @@ const NAV_LABELS: Record<string, string> = {
   storage: "Storage",
   updates: "Updates",
   beta: "Beta",
+  advanced: "Advanced",
 };
 
 function entry(
@@ -204,36 +205,15 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section(
     "general",
     "composer-status-bar",
-    "Composer status bar",
+    "Composer footer",
     "footer repo branch goal context defaults"
   ),
   row(
     "general",
-    "composer-status-repo",
-    "Repository",
-    "Show the workspace or repository name beneath the composer in new chats.",
-    ["status bar", "footer", "repo", "workspace", "default"]
-  ),
-  row(
-    "general",
-    "composer-status-branch",
-    "Git branch",
-    "Show the current Git branch beneath the composer in new chats.",
-    ["status bar", "footer", "branch", "default"]
-  ),
-  row(
-    "general",
-    "composer-status-goal",
-    "Goal progress",
-    "Show tracked goal progress and runtime beneath the composer in new chats.",
-    ["status bar", "footer", "goal", "runtime", "default"]
-  ),
-  row(
-    "general",
-    "composer-status-context",
-    "Context usage",
-    "Show the model context usage indicator beneath the composer in new chats.",
-    ["status bar", "footer", "context", "tokens", "default"]
+    "composer-status-bar",
+    "Composer footer",
+    "Show repository, branch, goal progress, and context usage under the composer.",
+    ["status bar", "footer", "repo", "branch", "goal", "context", "workspace", "tokens"]
   ),
   section("general", "quick-open", "Quick Open & switcher", "palette search"),
   row(
@@ -250,14 +230,6 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Cycle agent conversations, open editor tabs, or both with the hold-to-cycle switcher.",
     ["ctrl+tab", "switcher", "mru", "tabs", "conversations", "cycle"]
   ),
-  section("general", "performance", "Performance", "stream rendering"),
-  row(
-    "general",
-    "batch-stream-events",
-    "Batch streamed events",
-    "Render high-speed token and progress streams in short batches.",
-    ["streaming", "tokens", "render", "repaint", "gpu", "cpu", "battery", "performance"]
-  ),
   section("general", "notifications", "Notifications"),
   row(
     "general",
@@ -266,22 +238,6 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type.",
     ["dnd", "notifications", "quiet"]
   ),
-  section("general", "voice", "Voice"),
-  row(
-    "general",
-    "show-voice-orb",
-    "Voice orb",
-    "Show the floating ambient voice orb. Hiding it also turns the voice plane off.",
-    ["voice", "orb", "ambient", "microphone", "assistant", "overlay", "bubble"]
-  ),
-  row(
-    "general",
-    "voice-settings-link",
-    "Speech, titles, and spoken replies",
-    "Open Voice settings for transcription, title fallback, TTS, and the voice controller.",
-    ["transcription", "speech", "stt", "tts", "whisper"]
-  ),
-
   section("voice", "stt", "Speech to text", "transcription whisper stt microphone"),
   row(
     "voice",
@@ -401,34 +357,21 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row(
     "appearance",
-    "aurora-placement",
-    "Aurora placement",
-    "Where the aurora sits: dynamic, top, center, full pane, or bottom.",
-    ["aurora", "placement", "position", "top", "center", "bottom", "full", "dynamic"]
-  ),
-  row(
-    "appearance",
     "aurora-intensity",
     "Aurora intensity",
     "Overall visibility of the aurora backdrop.",
     ["aurora", "intensity", "opacity", "brightness"]
   ),
-  row(
-    "appearance",
-    "aurora-speed",
-    "Aurora speed",
-    "Animation pace of the aurora backdrop.",
-    ["aurora", "speed", "animation", "motion"]
-  ),
-  row(
-    "appearance",
-    "aurora-react",
-    "Aurora reacts to agent activity",
-    "Shift the aurora with conversation state: typing, working, waiting, completed, error.",
-    ["aurora", "activity", "state", "mood", "react"]
-  ),
 
   // —— Agents ——
+  section("agents", "catalog", "Catalog", "models cloud usage"),
+  row(
+    "agents",
+    "agents-models-link",
+    "Models",
+    "Show or hide models in the composer picker for each harness.",
+    ["catalog", "picker"]
+  ),
   section("agents", "composer", "Chat composer"),
   row("agents", "submit-mod-enter", "Submit with modifier + Enter", "Agents"),
   section("agents", "tool-permissions", "Tool permissions (all harnesses)"),
@@ -812,6 +755,37 @@ const DESKTOP_NATIVE_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 ];
 
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
+  section("advanced", "maintenance", "Maintenance", "import export storage updates"),
+  row(
+    "advanced",
+    "export-link",
+    "Import & export",
+    "Back up or restore theme, shortcuts, and app settings as JSON.",
+    ["backup", "restore", "json"]
+  ),
+  row(
+    "advanced",
+    "storage-link",
+    "Storage",
+    "Current driver and migrate between file storage and Postgres.",
+    ["postgres", "legacy-json", "migrate"]
+  ),
+  row(
+    "advanced",
+    "updates-link",
+    "Updates",
+    "Check for new builds and apply an in-place update.",
+    ["upgrade", "release", "version"]
+  ),
+  section("advanced", "experiments", "Experiments", "beta"),
+  row(
+    "advanced",
+    "beta-link",
+    "Beta",
+    "Optional experimental features.",
+    ["experimental", "browser", "ipad"]
+  ),
+
   // —— Actions ——
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
   row(

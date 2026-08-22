@@ -5,8 +5,7 @@ import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextFiel
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
-  TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX,
-  TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX,
+  TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
   type CustomThemeEntry,
 } from "@/lib/theme-config";
 import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
@@ -19,7 +18,6 @@ import {
 import {
   PageIntro,
   SettingsBlock,
-  SettingsPxRangeControl,
   SettingsRadioList,
   SettingsRow,
   SettingsSection,
@@ -35,6 +33,26 @@ const APPEARANCE_MODE_OPTIONS: Array<{ value: ThemePreference; label: string }> 
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+];
+
+const TOOL_CALL_HEIGHT_PRESETS = {
+  small: 160,
+  medium: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
+  large: 400,
+} as const;
+
+type ToolCallHeightPreset = keyof typeof TOOL_CALL_HEIGHT_PRESETS;
+
+function toolCallHeightPreset(px: number): ToolCallHeightPreset {
+  if (px <= 180) return "small";
+  if (px >= 360) return "large";
+  return "medium";
+}
+
+const TOOL_CALL_HEIGHT_OPTIONS: Array<{ value: ToolCallHeightPreset; label: string }> = [
+  { value: "small", label: "Small" },
+  { value: "medium", label: "Medium" },
+  { value: "large", label: "Large" },
 ];
 
 /** Shared height for Custom theme row (name input, duplicate select, Create). */
@@ -261,19 +279,19 @@ export function AppearanceSettingsPanel() {
           <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
             Tool call dropdown height
           </p>
-          <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Maximum height of expanded agent tool-call blocks in chat (for example &quot;Read 1
-            file, called MCP tool&quot;). Content scrolls inside the limit.
+          <p className="mt-[4px] mb-[10px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+            How tall expanded agent tool-call blocks can get before they scroll.
           </p>
-          <SettingsPxRangeControl
-            className="mt-[12px]"
-            ariaLabel="Tool call dropdown max height"
-            min={TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX}
-            max={TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX}
-            value={themeConfig.toolCallDropdownMaxHeightPx}
-            onChange={(toolCallDropdownMaxHeightPx) =>
-              setThemeConfig({ ...themeConfig, toolCallDropdownMaxHeightPx })
+          <SettingsRadioList
+            aria-label="Tool call dropdown height"
+            value={toolCallHeightPreset(themeConfig.toolCallDropdownMaxHeightPx)}
+            onChange={(value) =>
+              setThemeConfig({
+                ...themeConfig,
+                toolCallDropdownMaxHeightPx: TOOL_CALL_HEIGHT_PRESETS[value],
+              })
             }
+            options={TOOL_CALL_HEIGHT_OPTIONS}
           />
         </SettingsBlock>
       </SettingsSection>

@@ -1,7 +1,16 @@
 "use client";
 
-import { PageIntro } from "@/components/editor/settings-ui";
+import { PageIntro, SettingsNestedBreadcrumbs } from "@/components/editor/settings-ui";
 
 export function RulesSkillsSubagentsPanel() {
-  return <PageIntro title="Rules, Skills, Subagents" />;
+  return (
+    <>
+      <SettingsNestedBreadcrumbs
+        parentNav="plugins"
+        parentLabel="Integrations"
+        label="Rules, Skills, Subagents"
+      />
+      <PageIntro title="Rules, Skills, Subagents" />
+    </>
+  );
 }

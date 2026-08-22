@@ -15,6 +15,7 @@ import {
 } from "@/lib/server-api";
 import {
   PageIntro,
+  SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
   SettingsRow,
@@ -233,6 +234,7 @@ export function StorageSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Storage" />
       <PageIntro title="Storage" />
       <SettingsSection
         title="Storage drivers"

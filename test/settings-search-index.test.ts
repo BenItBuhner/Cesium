@@ -15,10 +15,24 @@ describe("settings search index", () => {
     assert.ok(dnd.some((hit) => hit.rowId === "do-not-disturb"));
   });
 
-  test("finds the streamed event batching performance setting", () => {
+  test("indexes the composer footer under General", () => {
     const index = buildSettingsSearchIndex({});
-    const hits = searchSettingsIndex(index, "streaming performance");
-    assert.ok(hits.some((hit) => hit.rowId === "batch-stream-events"));
+    const hits = searchSettingsIndex(index, "composer footer");
+    assert.ok(hits.some((hit) => hit.rowId === "composer-status-bar"));
+  });
+
+  test("indexes Advanced hub links", () => {
+    const index = buildSettingsSearchIndex({});
+    const nav = searchSettingsIndex(index, "advanced");
+    assert.ok(nav.some((hit) => hit.kind === "nav" && hit.navId === "advanced"));
+    const storage = searchSettingsIndex(index, "storage postgres");
+    assert.ok(storage.some((hit) => hit.rowId === "storage-link" || hit.navId === "storage"));
+  });
+
+  test("indexes Integrations as the plugins hub", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "integrations");
+    assert.ok(hits.some((hit) => hit.kind === "nav" && hit.navId === "plugins"));
   });
 
   test("indexes model names from the catalog", () => {

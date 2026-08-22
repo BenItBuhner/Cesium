@@ -12,6 +12,7 @@ import {
 import {
   PageIntro,
   SettingsEmptyState,
+  SettingsNestedBreadcrumbs,
   SettingsRow,
   SettingsSection,
 } from "@/components/editor/settings-ui";
@@ -221,6 +222,7 @@ export function ModelsSettingsPanel() {
 
   return (
     <>
+      <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Models" />
       <PageIntro title="Models" />
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">

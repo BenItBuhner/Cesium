@@ -84,7 +84,18 @@ export function usePluginsMcpNavigation() {
     }));
   }, [updateWorkspaceSession]);
 
-  return { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills };
+  const openExtensions = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        activeNav: "extensions",
+        mcpsOpen: false,
+      },
+    }));
+  }, [updateWorkspaceSession]);
+
+  return { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills, openExtensions };
 }
 
 function PluginIcon({
@@ -337,7 +348,7 @@ function VerificationReportBlock({
 }
 
 export function PluginsSettingsPanel() {
-  const { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills } =
+  const { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills, openExtensions } =
     usePluginsMcpNavigation();
   const { workspaceInfo } = useWorkspace();
   const [plugins, setPlugins] = useState<AgentPluginPublic[]>([]);
@@ -565,7 +576,7 @@ export function PluginsSettingsPanel() {
       <>
         <SettingsBreadcrumbs
           segments={[
-            { label: "Plugins", onClick: closeMcpServers },
+            { label: "Integrations", onClick: closeMcpServers },
             { label: "MCP servers" },
           ]}
         />
@@ -576,7 +587,7 @@ export function PluginsSettingsPanel() {
 
   return (
     <>
-      <SettingsBreadcrumbs segments={[{ label: "Plugins" }]} />
+      <SettingsBreadcrumbs segments={[{ label: "Integrations" }]} />
       <SettingsSection
         title="Agent Plugins"
         action={
@@ -875,6 +886,12 @@ export function PluginsSettingsPanel() {
           title="Rules, skills, and subagents"
           description="Instruction files, skills, and subagent presets."
           onClick={openRulesSkills}
+        />
+        <SettingsLinkRow
+          searchId="marketplace"
+          title="VS Code extensions"
+          description="Desktop extension marketplace and host runtime."
+          onClick={openExtensions}
           border={false}
         />
       </SettingsSection>

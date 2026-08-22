@@ -1,7 +1,6 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
 import { AuroraBackdrop } from "@/components/agent/AuroraBackdrop";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
@@ -14,18 +13,11 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   AURORA_MAX_CUSTOM_COLORS,
   AURORA_MIN_CUSTOM_COLORS,
-  AURORA_PLACEMENT_IDS,
-  AURORA_PLACEMENT_LABELS,
   AURORA_PRESET_CATALOG,
   type AuroraPresetId,
   type AuroraSettingsState,
 } from "@/lib/global-settings";
-import {
-  AURORA_MOODS,
-  AURORA_MOOD_LABELS,
-  type AuroraMood,
-  type AuroraPlacement,
-} from "@/lib/aurora/aurora-renderer";
+import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
 
 function presetGradient(colors: string[]): string {
   return `linear-gradient(115deg, ${colors.join(", ")})`;
@@ -35,7 +27,6 @@ function presetGradient(colors: string[]): string {
 export function AuroraSettingsSection() {
   const { settings, updateSettings } = useGlobalSettings();
   const aurora = settings.aurora;
-  const [previewMood, setPreviewMood] = useState<AuroraMood>("working");
 
   const patchAurora = (patch: Partial<AuroraSettingsState>) => {
     updateSettings((current) => ({
@@ -56,7 +47,7 @@ export function AuroraSettingsSection() {
       <SettingsRow
         searchId="aurora-background"
         title="Aurora background"
-        description="Soft aurora-borealis color field behind agent conversations. It shifts with the conversation — calm when idle, flowing while the agent works, a brief bloom on completion."
+        description="Soft aurora-borealis color field behind agent conversations."
         trailing={
           <ToggleSwitch
             checked={aurora.enabled}
@@ -68,73 +59,12 @@ export function AuroraSettingsSection() {
       {aurora.enabled ? (
         <>
           <SettingsBlock searchId="aurora-preview">
-            <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-              Live preview
-            </p>
-            <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-              Pick a conversation state to see how the backdrop responds. Changes to colors and
-              sliders apply instantly.
-            </p>
-            <div className="mt-[10px] flex flex-wrap gap-[6px]">
-              {AURORA_MOODS.map((mood) => {
-                const selected = previewMood === mood;
-                return (
-                  <button
-                    key={mood}
-                    type="button"
-                    onClick={() => setPreviewMood(mood)}
-                    aria-pressed={selected}
-                    className={`rounded-[var(--radius-pill)] border px-[10px] py-[4px] font-sans text-[11px] transition-colors ${
-                      selected
-                        ? "border-[var(--accent)] bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
-                        : "border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    {AURORA_MOOD_LABELS[mood]}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="relative mt-[10px] h-[180px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)]">
+            <div className="relative h-[140px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)]">
               <AuroraBackdrop
-                mood={previewMood}
+                mood="working"
                 placement={previewPlacement}
                 settingsOverride={aurora}
               />
-              <div className="pointer-events-none absolute inset-x-0 bottom-[12px] z-10 flex justify-center">
-                <span className="rounded-[var(--radius-pill)] bg-[var(--bg-panel)]/70 px-[10px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] backdrop-blur-sm">
-                  {AURORA_MOOD_LABELS[previewMood]}
-                </span>
-              </div>
-            </div>
-          </SettingsBlock>
-          <SettingsBlock searchId="aurora-placement">
-            <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-              Placement
-            </p>
-            <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-              Where the aurora sits in the pane. Dynamic centers it around the composer on a new
-            chat and glides it to the top once the conversation starts.
-            </p>
-            <div className="mt-[10px] flex flex-wrap gap-[6px]">
-              {AURORA_PLACEMENT_IDS.map((placementId) => {
-                const selected = aurora.placement === placementId;
-                return (
-                  <button
-                    key={placementId}
-                    type="button"
-                    onClick={() => patchAurora({ placement: placementId })}
-                    aria-pressed={selected}
-                    className={`rounded-[var(--radius-pill)] border px-[12px] py-[5px] font-sans text-[12px] transition-colors ${
-                      selected
-                        ? "border-[var(--accent)] bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
-                        : "border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    {AURORA_PLACEMENT_LABELS[placementId]}
-                  </button>
-                );
-              })}
             </div>
           </SettingsBlock>
           <SettingsBlock searchId="aurora-preset">
@@ -270,35 +200,6 @@ export function AuroraSettingsSection() {
               onChange={(intensity) => patchAurora({ intensity })}
             />
           </SettingsBlock>
-          <SettingsBlock searchId="aurora-speed">
-            <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">Speed</p>
-            <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-              Animation pace. 50% is the designed drift; the system reduced-motion preference
-              always freezes it to a still gradient.
-            </p>
-            <SettingsPxRangeControl
-              className="mt-[12px]"
-              ariaLabel="Aurora speed"
-              min={0}
-              max={100}
-              unit="%"
-              value={aurora.speed}
-              onChange={(speed) => patchAurora({ speed })}
-            />
-          </SettingsBlock>
-          <SettingsRow
-            searchId="aurora-react"
-            title="React to agent activity"
-            description="Shift color, brightness, and motion with the conversation lifecycle (typing, working, waiting for input, completed, error). When off, the backdrop stays in its calm ambient state."
-            trailing={
-              <ToggleSwitch
-                checked={aurora.reactToActivity}
-                onChange={(value) => patchAurora({ reactToActivity: value })}
-                size="md"
-              />
-            }
-            border={false}
-          />
         </>
       ) : null}
     </SettingsSection>
