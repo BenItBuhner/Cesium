@@ -13,9 +13,9 @@ export function getAgentLabel(agentId: string): string {
     case "cesium-agent":
       return "Cesium Agent";
     case "cursor-acp":
-      return "Cursor ACP";
+      return "Cursor (ACP)";
     case "cursor-sdk":
-      return "Cursor SDK";
+      return "Cursor (SDK)";
     case "opencode-acp":
       return "OpenCode";
     case "opencode-server":
@@ -30,7 +30,9 @@ export function getAgentLabel(agentId: string): string {
     case "codex-adapter":
       return "Codex";
     case "codex-app-server":
-      return "Codex App Server";
+      return "Codex (Server)";
+    case "codex-acp":
+      return "Codex (ACP)";
     case "claude-code-sdk":
       return "Claude Code";
     case "pi-agent":
@@ -54,6 +56,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "devin-acp":
     case "grok-build":
     case "codex-app-server":
+    case "codex-acp":
     case "claude-code-sdk":
     case "pi-agent":
     case "google-antigravity-cli":

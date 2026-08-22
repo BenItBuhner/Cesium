@@ -15,6 +15,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   "cursor-sdk": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "cursor-acp": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "codex-app-server": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
+  "codex-acp": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
   "claude-code-sdk": {
     light: "Claude-Code-Light.svg",
     dark: "Claude-Code-Dark.svg",

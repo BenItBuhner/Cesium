@@ -6,8 +6,8 @@ import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextFiel
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
+  HARNESS_BACKEND_IDS,
   HARNESS_LABELS,
-  HARNESS_ORDER,
 } from "@/components/editor/agent-harness-settings";
 import {
   PageIntro,
@@ -92,7 +92,7 @@ export function ModelsSettingsPanel() {
   const byBackend = useMemo(() => {
     const raw = settings.models.byBackend ?? {};
     const activeOnly: Record<string, ModelToggleState[]> = {};
-    for (const backendId of HARNESS_ORDER) {
+    for (const backendId of HARNESS_BACKEND_IDS) {
       const rows = raw[backendId];
       if (rows && rows.length > 0) {
         activeOnly[backendId] = rows;
@@ -216,7 +216,7 @@ export function ModelsSettingsPanel() {
 
   const sortedBackendIds = useMemo(() => {
     const present = new Set(Object.keys(filteredByBackend));
-    return HARNESS_ORDER.filter((id) => present.has(id));
+    return HARNESS_BACKEND_IDS.filter((id) => present.has(id));
   }, [filteredByBackend]);
 
   return (

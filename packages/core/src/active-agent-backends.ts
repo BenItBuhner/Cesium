@@ -6,6 +6,7 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "cursor-sdk",
   "cursor-acp",
   "codex-app-server",
+  "codex-acp",
   "opencode-server",
   "devin-acp",
   "grok-build",

@@ -5,6 +5,11 @@ import {
   ACTIVE_AGENT_BACKEND_IDS,
   isHarnessEnabled,
 } from "../active-agent-backends.js";
+import {
+  harnessFamilyForBackend,
+  isHarnessFamilyEnabled,
+  resolvePreferredHarnessBackendId,
+} from "@cesium/core";
 import { getGlobalSettings } from "../global-settings-store.js";
 import { AGENT_CAPABILITIES } from "./agent-contract.js";
 import { getCursorSdkCredentialStatus } from "../cursor-sdk-credentials.js";
@@ -36,6 +41,7 @@ import {
 import { AcpSessionHandle } from "./acp/acp-session.js";
 import {
   buildCliInvocation,
+  buildHarnessInvocation,
   detectHarnessCli,
   harnessDefaultArgs,
   probeHarnessCliVersion,
@@ -57,6 +63,7 @@ const BACKEND_HARNESS_CLI: Partial<Record<AgentBackendId, HarnessCliId>> = {
   "devin-acp": "devin",
   "grok-build": "grok",
   "codex-app-server": "codex",
+  "codex-acp": "codex",
   "google-antigravity-cli": "google-antigravity",
   "claude-code-sdk": "claude",
   "cursor-acp": "cursor",
@@ -79,6 +86,26 @@ function parseCursorAgentExtraArgs(): string[] {
     return ["--permission-mode", permissionMode];
   }
   return [];
+}
+
+function parseCodexAcpExtraArgs(): string[] {
+  const rawJson = process.env.OPENCURSOR_CODEX_ACP_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+  return [];
+}
+
+function resolveCodexAcpRuntime(): CliRuntimeSpec | null {
+  const extra = parseCodexAcpExtraArgs();
+  return buildHarnessInvocation("codex", [...extra, "acp"]);
 }
 
 function resolveCursorAcpRuntime(): CliRuntimeSpec | null {
@@ -161,7 +188,7 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
     case "cursor-sdk":
       return createBackendInfo({
         id: "cursor-sdk",
-        label: "Cursor SDK",
+        label: "Cursor",
         description:
           "Cursor TypeScript SDK local agent runtime with OpenCursor MCP settings bridged in memory.",
         experimental: true,
@@ -176,7 +203,7 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
       const runtime = resolveCursorAcpRuntime();
       return createBackendInfo({
         id: "cursor-acp",
-        label: "Cursor ACP",
+        label: "Cursor",
         description:
           "Cursor Agent CLI over ACP (`agent acp`). Supports CLI OAuth (`agent login`) that the TypeScript SDK does not expose.",
         experimental: true,
@@ -240,7 +267,7 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
       const runtime = resolveHarnessRuntimeSpec("codex");
       return createBackendInfo({
         id: "codex-app-server",
-        label: "Codex App Server",
+        label: "Codex",
         description:
           "Official Codex App Server over JSON-RPC stdio with canonical tool and plan-file mirroring.",
         experimental: true,
@@ -252,6 +279,22 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultMode: "agent",
         defaultModelId: "__default__",
         defaultModelName: "Codex App Server Default",
+      });
+    }
+    case "codex-acp": {
+      const runtime = resolveCodexAcpRuntime();
+      return createBackendInfo({
+        id: "codex-acp",
+        label: "Codex",
+        description:
+          "Codex CLI over ACP (`codex acp`). Uses ambient Codex auth; choose this when you prefer the Agent Client Protocol session model.",
+        experimental: true,
+        commandPreview: runtime?.commandPreview ?? "Codex CLI not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["codex-acp"],
+        defaultMode: "agent",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
       });
     }
     case "claude-code-sdk": {
@@ -381,16 +424,24 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
     getGlobalSettings().catch(() => null),
   ]);
   const enabledHarnesses = globalSettings?.agents.enabledHarnesses;
+  const harnessTransports = globalSettings?.agents.harnessTransports;
   return Promise.all(
     AGENT_BACKEND_MENU_ORDER.map(async (id) => {
       const backend = computeBackendInfo(id);
+      const family = harnessFamilyForBackend(backend.id);
+      const familyEnabled = family
+        ? isHarnessFamilyEnabled(enabledHarnesses, family)
+        : isHarnessEnabled(enabledHarnesses, backend.id);
+      const preferredId = family
+        ? resolvePreferredHarnessBackendId(family, { enabledHarnesses, harnessTransports })
+        : backend.id;
       const [cachedConfigOptions, runtime] = await Promise.all([
         readAgentBackendConfigCache(backend.id),
         describeBackendRuntime(backend.id),
       ]);
       return {
         ...backend,
-        enabled: isHarnessEnabled(enabledHarnesses, backend.id),
+        enabled: familyEnabled && backend.id === preferredId,
         available:
           backend.id === "cesium-agent"
             ? cesiumStatus.configured
@@ -412,6 +463,8 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             ? "Cursor SDK requires a Cursor API key. Open Settings -> Agents to configure it."
             : backend.id === "cursor-acp" && !backend.available
             ? "Cursor ACP requires the Cursor Agent CLI (`agent`) on the server host. Install it or set OPENCURSOR_CURSOR_CLI_BIN, then sign in with `agent login`."
+            : backend.id === "codex-acp" && !backend.available
+            ? "Codex ACP requires the Codex CLI on the server host. Install it or set OPENCURSOR_CODEX_BIN, then sign in with `codex login`."
             : backend.id === "pi-agent" && !piAgentStatus
             ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
             : backend.description,
@@ -537,6 +590,20 @@ export async function createAgentProvider(
       backend,
       runtime,
       configOptions: await readAgentBackendConfigCache(backendId),
+    });
+  }
+
+  if (backendId === "codex-acp") {
+    const runtime = resolveCodexAcpRuntime();
+    if (!runtime) {
+      throw new Error(
+        `${backend.label} requires the Codex CLI. Install it or set OPENCURSOR_CODEX_BIN.`
+      );
+    }
+    return createAcpProvider({
+      backend,
+      runtime,
+      seedConfigOptions: await readAgentBackendConfigCache(backendId),
     });
   }
 

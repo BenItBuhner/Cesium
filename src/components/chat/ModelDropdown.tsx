@@ -28,7 +28,7 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
-import { composerVisibleBackends, isHarnessEnabled } from "@cesium/core";
+import { composerVisibleHarnesses } from "@cesium/core";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
@@ -347,12 +347,17 @@ export function ModelDropdown({
 
   const visibleBackends = useMemo(
     () =>
-      composerVisibleBackends(backends ?? [], backendId).filter(
-        (backend) =>
-          backend.id === backendId ||
-          isHarnessEnabled(settings.agents.enabledHarnesses, backend.id)
-      ),
-    [backendId, backends, settings.agents.enabledHarnesses]
+      composerVisibleHarnesses(backends ?? [], {
+        currentBackendId: backendId,
+        enabledHarnesses: settings.agents.enabledHarnesses,
+        harnessTransports: settings.agents.harnessTransports,
+      }),
+    [
+      backendId,
+      backends,
+      settings.agents.enabledHarnesses,
+      settings.agents.harnessTransports,
+    ]
   );
 
   const showHarnessFlyoutUi = Boolean(

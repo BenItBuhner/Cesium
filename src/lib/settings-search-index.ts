@@ -1,4 +1,5 @@
-import { HARNESS_LABELS, HARNESS_ORDER } from "@/components/editor/agent-harness-settings";
+import { HARNESS_LABELS } from "@/components/editor/agent-harness-settings";
+import { HARNESS_FAMILIES } from "@cesium/core";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";
 import { SHORTCUT_COMMAND_DEFINITIONS } from "@/lib/keyboard-shortcuts";
@@ -440,15 +441,22 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["permissions", "allow"]
   ),
   section("agents", "harnesses", "Harnesses"),
-  ...HARNESS_ORDER.map((backendId) =>
+  ...HARNESS_FAMILIES.map((family) =>
     entry({
-      id: `harness::${backendId}`,
+      id: `harness::${family.settingsId}`,
       kind: "harness",
-      label: HARNESS_LABELS[backendId],
+      label: family.label,
       subtitle: "Agents harness",
       navId: "agents",
-      agentsHarnessId: backendId,
-      keywords: [backendId, "agent", "backend", "harness"],
+      agentsHarnessId: family.settingsId,
+      keywords: [
+        family.id,
+        family.settingsId,
+        "agent",
+        "backend",
+        "harness",
+        ...family.transports.flatMap((transport) => [transport.id, transport.backendId, transport.label]),
+      ],
     })
   ),
   row("agents", "cesium-default-api", "Default API", "Cesium Agent", ["cesium", "api"]),
@@ -493,14 +501,21 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "ChatGPT Codex and SpaceXAI SuperGrok subscription sign-in.",
     ["oauth", "chatgpt", "codex", "xai", "grok", "spacexai", "supergrok"]
   ),
-  row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
-  row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
+  row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor"),
+  row("agents", "cursor-sdk", "Cursor", "Cursor SDK API key or ACP OAuth"),
   row(
     "agents",
     "cursor-acp",
     "Cursor ACP",
-    "Cursor Agent CLI over ACP with host OAuth (`agent login`).",
-    ["cursor", "acp", "oauth", "agent login"]
+    "Cursor Agent CLI over ACP with host OAuth (`agent login`). Toggle ACP inside the Cursor harness.",
+    ["cursor", "acp", "oauth", "agent login", "transport"]
+  ),
+  row(
+    "agents",
+    "codex-acp",
+    "Codex ACP",
+    "Codex CLI over ACP (`codex acp`). Toggle ACP inside the Codex harness; Server is the default.",
+    ["codex", "acp", "app-server", "transport"]
   ),
   row(
     "agents",

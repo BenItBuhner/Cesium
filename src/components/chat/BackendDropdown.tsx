@@ -14,6 +14,8 @@ import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { composerVisibleHarnesses } from "@cesium/core";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { AgentBackendIcon } from "./AgentBackendIcon";
 
@@ -48,6 +50,7 @@ export function BackendDropdown({
 }: BackendDropdownProps) {
   const { openSettingsView } = useShellView();
   const { updateWorkspaceSession } = useWorkspace();
+  const { settings } = useGlobalSettings();
   const [open, setOpen] = useState(false);
   const [keyboardLabelPeek, setKeyboardLabelPeek] = useState(false);
   const [expandedWidth, setExpandedWidth] = useState(28);
@@ -58,7 +61,20 @@ export function BackendDropdown({
   useClickOutside(triggerRef, close, open, [popoverRef]);
   const labelMeasureRef = useRef<HTMLSpanElement>(null);
 
-  const options = useMemo(() => backends, [backends]);
+  const options = useMemo(
+    () =>
+      composerVisibleHarnesses(backends, {
+        currentBackendId: backendId,
+        enabledHarnesses: settings.agents.enabledHarnesses,
+        harnessTransports: settings.agents.harnessTransports,
+      }),
+    [
+      backendId,
+      backends,
+      settings.agents.enabledHarnesses,
+      settings.agents.harnessTransports,
+    ]
+  );
   const current = options.find((option) => option.id === backendId) ?? null;
   const showLabelExpanded = open || keyboardLabelPeek;
   const openBackendSettings = useCallback(

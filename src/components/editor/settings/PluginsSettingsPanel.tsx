@@ -29,8 +29,8 @@ import type {
   AgentPluginVerificationReport,
 } from "@/lib/plugin-types";
 import {
+  HARNESS_BACKEND_IDS,
   HARNESS_LABELS,
-  HARNESS_ORDER,
 } from "@/components/editor/agent-harness-settings";
 import { McpServersSettingsPanel } from "@/components/editor/mcp-servers-settings";
 import {
@@ -130,7 +130,7 @@ function InstalledPluginBlock({
 }) {
   const installed = Boolean(plugin.install);
   const enabled = plugin.enabled;
-  const limitedHarnesses = HARNESS_ORDER.filter((backendId) => {
+  const limitedHarnesses = HARNESS_BACKEND_IDS.filter((backendId) => {
     const capability = capabilityById.get(backendId);
     const pluginSupport = plugin.definition.harnesses?.[backendId];
     const nativeMcp = pluginSupport?.nativeMcp ?? capability?.nativeMcp ?? true;
@@ -233,7 +233,7 @@ function InstalledPluginBlock({
       ) : null}
       {installed ? (
         <div className="mt-[12px] grid gap-[6px] sm:grid-cols-2">
-          {HARNESS_ORDER.map((backendId) => {
+          {HARNESS_BACKEND_IDS.map((backendId) => {
             const override = plugin.install?.harnessOverrides.find(
               (entry) => entry.backendId === backendId
             );

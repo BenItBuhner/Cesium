@@ -25,6 +25,7 @@ export type HarnessCliAuthBackendId =
   | "opencode-server"
   | "devin-acp"
   | "codex-app-server"
+  | "codex-acp"
   | "claude-code-sdk"
   | "google-antigravity-cli";
 
@@ -111,6 +112,15 @@ const AUTH_SPECS: Record<HarnessCliAuthBackendId, AuthSpec> = {
   },
   "codex-app-server": {
     backendId: "codex-app-server",
+    harnessCliId: "codex",
+    loginArgs: ["login"],
+    logoutArgs: ["logout"],
+    credentialRelPaths: [[".codex", "auth.json"], [".codex", "config.toml"]],
+    loginCommand: "codex login",
+    logoutCommand: "codex logout",
+  },
+  "codex-acp": {
+    backendId: "codex-acp",
     harnessCliId: "codex",
     loginArgs: ["login"],
     logoutArgs: ["logout"],
