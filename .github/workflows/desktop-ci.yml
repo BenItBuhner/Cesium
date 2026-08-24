@@ -13,8 +13,15 @@ on:
       - "server/package.json"
       - "scripts/prepare-desktop-*.mjs"
       - "scripts/prepare-desktop-*.cjs"
-      - "scripts/assert-desktop-package-safe.cjs"
-      - "scripts/desktop-demo-driver.mjs"
+      - "scripts/generate-desktop-icons.mjs"
+      - "scripts/generate-icons.mjs"
+      - "scripts/desktop-icons.mjs"
+      - "scripts/assert-desktop-*.cjs"
+      - "scripts/assert-desktop-*.mjs"
+      - "scripts/edit-desktop-exe-metadata.cjs"
+      - "scripts/desktop-ci-capture-screen.ps1"
+      - "public/desktop/**"
+      - "public/icon-source.svg"
       - ".github/workflows/desktop-ci.yml"
 
 concurrency:
@@ -51,6 +58,15 @@ jobs:
         run: |
           ls -la apps/desktop/out
           ls -la "apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/Resources" | head -30
+
+      - name: Assert the app icon is Cesium, not Electron's default
+        run: |
+          APP="apps/desktop/out/mac-arm64/Cesium Desktop.app"
+          node scripts/assert-desktop-packaged-icons.mjs --mac-app "$APP"
+          ICNS=$(find "$APP/Contents/Resources" -name '*.icns' -print)
+          echo "$ICNS"
+          test -n "$ICNS"
+          ! echo "$ICNS" | grep -qi 'electron.icns'
 
       - name: Smoke-test the packaged app (embedded backend + window load)
         run: |
@@ -109,6 +125,7 @@ jobs:
           sudo defaults write /Library/Preferences/com.apple.applicationaccess forceBypassScreenCaptureAlert -bool true || true
           DMG=$(ls apps/desktop/out/*.dmg | head -1)
           hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/CesiumDesktop
+          ls -la /Volumes/CesiumDesktop
           sudo cp -R "/Volumes/CesiumDesktop/Cesium Desktop.app" /Applications/
           hdiutil detach /Volumes/CesiumDesktop
           xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app" || true
@@ -124,6 +141,11 @@ jobs:
           APP_PID=$(pgrep -x "Cesium Desktop" | head -1)
           if [ -n "$APP_PID" ]; then kill "$APP_PID" || true; fi
           sleep 3
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/CesiumDesktop
+          open /Volumes/CesiumDesktop
+          sleep 4
+          screencapture -x screenshots/macos_dmg_install_window.png || true
+          hdiutil detach /Volumes/CesiumDesktop || true
           ls -la screenshots
 
       - name: Upload macOS demo frames
@@ -190,6 +212,65 @@ jobs:
           ls -la apps/desktop/out
           ls -la apps/desktop/out/win-unpacked/resources | head -30
 
+      - name: Assert installer and exe icons are Cesium, not Electron's default
+        shell: bash
+        run: |
+          SETUP=$(ls apps/desktop/out/*[Ss]etup*.exe 2>/dev/null | head -1)
+          if [ -z "$SETUP" ]; then
+            SETUP=$(ls apps/desktop/out/*.exe | head -1)
+          fi
+          echo "Setup executable: $SETUP"
+          node scripts/assert-desktop-packaged-icons.mjs \
+            --ico apps/desktop/build/icon.ico \
+            --win-unpacked apps/desktop/out/win-unpacked \
+            --win-setup "$SETUP"
+          echo "SETUP_PATH=$SETUP" >> "$GITHUB_ENV"
+
+      - name: Run the one-click installer and capture branded UI
+        shell: bash
+        run: |
+          mkdir -p screenshots
+          SETUP="${SETUP_PATH}"
+          # Non-silent one-click so the progress window is what users see.
+          "$SETUP" &
+          sleep 5
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-ci-capture-screen.ps1 -Path "$PWD/screenshots/windows_oneclick_installer.png"
+          # Give the per-user copy time to finish if the GUI path is still writing files.
+          sleep 15
+          # Silent install is idempotent and does not require admin.
+          "$SETUP" /S || true
+          for i in $(seq 1 30); do
+            if [ -f "$LOCALAPPDATA/Programs/Cesium/Cesium.exe" ]; then
+              echo "Installed Cesium.exe"
+              break
+            fi
+            sleep 2
+          done
+          test -f "$LOCALAPPDATA/Programs/Cesium/Cesium.exe"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-ci-capture-screen.ps1 -Path "$PWD/screenshots/windows_desktop_after_install.png"
+          # Per-user install must not have required elevation.
+          if ls "$PROGRAMFILES/Cesium" >/dev/null 2>&1; then
+            echo "Unexpected machine-wide install under Program Files" >&2
+            exit 1
+          fi
+          taskkill //IM Cesium.exe //F || true
+          taskkill //IM "Cesium Desktop.exe" //F || true
+
+      - name: Launch the installed app and capture its window
+        shell: bash
+        run: |
+          mkdir -p screenshots
+          OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/windows_installed_app_window.png" \
+            "$LOCALAPPDATA/Programs/Cesium/Cesium.exe" > installed-app.log 2>&1 &
+          APP_PID=$!
+          echo "Launched installed Cesium with PID $APP_PID"
+          sleep 45
+          kill "$APP_PID" || true
+          taskkill //IM Cesium.exe //F || true
+          sleep 3
+          tail -50 installed-app.log || true
+          ls -la screenshots
+
       - name: Smoke-test the packaged app (embedded backend + window load)
         run: |
           "apps/desktop/out/win-unpacked/Cesium.exe" --smoke 2>&1 | tee smoke.log
@@ -226,6 +307,7 @@ jobs:
             screenshots/
             smoke.log
             app.log
+            installed-app.log
 
   package-linux:
     name: Package, smoke-test, and screenshot the Linux app
@@ -273,13 +355,19 @@ jobs:
 
       - name: Verify desktop-file integration (cesium:// scheme + mime types)
         run: |
-          # Extract the .desktop entry from the AppImage without FUSE.
+          # Extract the AppImage without FUSE so we can inspect icons + .desktop.
           APPIMAGE=$(ls apps/desktop/out/*.AppImage | head -1)
+          DEB=$(ls apps/desktop/out/*.deb | head -1)
           chmod +x "$APPIMAGE"
-          "$APPIMAGE" --appimage-extract "*.desktop" > /dev/null
+          rm -rf squashfs-root
+          "$APPIMAGE" --appimage-extract > /dev/null
           cat squashfs-root/*.desktop
           grep -q "x-scheme-handler/cesium" squashfs-root/*.desktop
           grep -q "text/markdown" squashfs-root/*.desktop
+          node scripts/assert-desktop-packaged-icons.mjs \
+            --linux-appdir squashfs-root \
+            --linux-deb "$DEB"
+          echo "AppImage Icon=$(grep -E '^Icon=' squashfs-root/*.desktop)"
 
       - name: Smoke-test the AppImage under Xvfb (embedded backend + window load)
         run: |
