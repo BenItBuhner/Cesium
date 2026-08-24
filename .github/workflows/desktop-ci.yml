@@ -61,12 +61,17 @@ jobs:
 
       - name: Assert the app icon is Cesium, not Electron's default
         run: |
+          mkdir -p screenshots
           APP="apps/desktop/out/mac-arm64/Cesium Desktop.app"
           node scripts/assert-desktop-packaged-icons.mjs --mac-app "$APP"
           ICNS=$(find "$APP/Contents/Resources" -name '*.icns' -print)
           echo "$ICNS"
           test -n "$ICNS"
           ! echo "$ICNS" | grep -qi 'electron.icns'
+          # Rasterize the bundled icns so the branded mark is visible without
+          # a Finder/DMG screenshot (those can pick up runner permission sheets).
+          sips -s format png "$ICNS" --out screenshots/macos_app_icon.png
+          sips -g pixelWidth -g pixelHeight screenshots/macos_app_icon.png
 
       - name: Smoke-test the packaged app (embedded backend + window load)
         run: |
@@ -231,28 +236,46 @@ jobs:
         run: |
           mkdir -p screenshots
           SETUP="${SETUP_PATH}"
-          # Non-silent one-click so the progress window is what users see.
+          # electron-builder per-user one-click uses
+          # %LOCALAPPDATA%\Programs\${productName}\Cesium.exe
+          # ("Cesium Desktop"), not Programs\Cesium.
+          # Non-silent so the progress window is what users see. Do not
+          # start a second /S copy while this one is still writing files.
           "$SETUP" &
+          SETUP_PID=$!
           sleep 5
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-ci-capture-screen.ps1 -Path "$PWD/screenshots/windows_oneclick_installer.png"
-          # Give the per-user copy time to finish if the GUI path is still writing files.
-          sleep 15
-          # Silent install is idempotent and does not require admin.
-          "$SETUP" /S || true
-          for i in $(seq 1 30); do
-            if [ -f "$LOCALAPPDATA/Programs/Cesium/Cesium.exe" ]; then
-              echo "Installed Cesium.exe"
+          for i in $(seq 1 90); do
+            if ! kill -0 "$SETUP_PID" 2>/dev/null; then
+              echo "Installer process exited after ${i} polls"
               break
             fi
             sleep 2
           done
-          test -f "$LOCALAPPDATA/Programs/Cesium/Cesium.exe"
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-ci-capture-screen.ps1 -Path "$PWD/screenshots/windows_desktop_after_install.png"
-          # Per-user install must not have required elevation.
-          if ls "$PROGRAMFILES/Cesium" >/dev/null 2>&1; then
-            echo "Unexpected machine-wide install under Program Files" >&2
-            exit 1
+          wait "$SETUP_PID" || true
+          INSTALLED=$(find "$LOCALAPPDATA/Programs" -name 'Cesium.exe' 2>/dev/null | head -1 || true)
+          if [ -z "$INSTALLED" ]; then
+            echo "GUI install did not produce Cesium.exe; trying silent /S"
+            "$SETUP" /S || true
+            for i in $(seq 1 60); do
+              INSTALLED=$(find "$LOCALAPPDATA/Programs" -name 'Cesium.exe' 2>/dev/null | head -1 || true)
+              if [ -n "$INSTALLED" ]; then
+                break
+              fi
+              sleep 2
+            done
           fi
+          echo "Installed executable: $INSTALLED"
+          test -n "$INSTALLED"
+          test -f "$INSTALLED"
+          case "$INSTALLED" in
+            *"/Program Files/"*|*"/Program Files (x86)/"*)
+              echo "Unexpected machine-wide install: $INSTALLED" >&2
+              exit 1
+              ;;
+          esac
+          echo "INSTALLED_EXE=$INSTALLED" >> "$GITHUB_ENV"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-ci-capture-screen.ps1 -Path "$PWD/screenshots/windows_desktop_after_install.png"
           taskkill //IM Cesium.exe //F || true
           taskkill //IM "Cesium Desktop.exe" //F || true
 
@@ -261,9 +284,9 @@ jobs:
         run: |
           mkdir -p screenshots
           OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/windows_installed_app_window.png" \
-            "$LOCALAPPDATA/Programs/Cesium/Cesium.exe" > installed-app.log 2>&1 &
+            "$INSTALLED_EXE" > installed-app.log 2>&1 &
           APP_PID=$!
-          echo "Launched installed Cesium with PID $APP_PID"
+          echo "Launched installed Cesium ($INSTALLED_EXE) with PID $APP_PID"
           sleep 45
           kill "$APP_PID" || true
           taskkill //IM Cesium.exe //F || true
