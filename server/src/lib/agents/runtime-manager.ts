@@ -58,6 +58,7 @@ import {
 import { harnessLog } from "./harness-diagnostics.js";
 import { buildAttachmentsReminderText } from "./attachment-reminders.js";
 import { getImportSourceForBackend } from "./import/registry.js";
+import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -485,6 +486,30 @@ export class AgentRuntimeManager {
     };
   }
 
+  /**
+   * The Cesium Agent's effective default model lives in settings (env
+   * bootstrap / user choice), not the static registry entry — mirror the
+   * `/api/agents/backends` listing so conversations created without an
+   * explicit model run against the same provider the UI advertises.
+   */
+  private async resolveDefaultModelForBackend(
+    backendId: AgentBackendId,
+    backend: AgentBackendInfo
+  ): Promise<{ modelId: string; modelName: string }> {
+    if (backendId === "cesium-agent") {
+      try {
+        const settings = await getCesiumAgentSettings();
+        const modelId = settings.defaultModelId?.trim();
+        if (modelId && modelId !== backend.defaultModelId) {
+          return { modelId, modelName: modelId };
+        }
+      } catch {
+        // Settings are best-effort here; fall back to the registry default.
+      }
+    }
+    return { modelId: backend.defaultModelId, modelName: backend.defaultModelName };
+  }
+
   async createConversation(
     workspace: WorkspaceRecord,
     input: AgentConversationCreateInput
@@ -500,6 +525,7 @@ export class AgentRuntimeManager {
         `Backend ${backendId} does not support cloud execution. Choose a cloud-capable harness (e.g. Cursor) or run on a device.`
       );
     }
+    const defaultModel = await this.resolveDefaultModelForBackend(backendId, backend);
     const now = nextConversationRankTimestamp();
     const record: AgentConversationRecord = {
       schemaVersion: 1,
@@ -513,8 +539,8 @@ export class AgentRuntimeManager {
       config: {
         backendId,
         mode: input.mode ?? backend.defaultMode,
-        modelId: input.modelId ?? backend.defaultModelId,
-        modelName: input.modelName ?? backend.defaultModelName,
+        modelId: input.modelId ?? defaultModel.modelId,
+        modelName: input.modelName ?? defaultModel.modelName,
         ...(input.profileId?.trim() ? { profileId: input.profileId.trim() } : {}),
         ...(input.executionTarget === "cloud" ? { executionTarget: "cloud" as const } : {}),
       },
@@ -722,6 +748,10 @@ export class AgentRuntimeManager {
   await appendConversationEvents(workspace.id, sourceConversationId, handoffEvents);
 
     await this.disposeRuntime(sourceConversationId);
+    const handoffDefaultModel = await this.resolveDefaultModelForBackend(
+      resolvedTargetBackendId,
+      targetBackend
+    );
     const updatedRecord = await updateConversationRecord(
       workspace.id,
       sourceConversationId,
@@ -731,8 +761,8 @@ export class AgentRuntimeManager {
           ...current.config,
           backendId: resolvedTargetBackendId,
           mode: targetBackend.defaultMode,
-          modelId: targetBackend.defaultModelId,
-          modelName: targetBackend.defaultModelName,
+          modelId: handoffDefaultModel.modelId,
+          modelName: handoffDefaultModel.modelName,
         },
         providerSessionId: null,
         configOptions: [],
@@ -786,6 +816,10 @@ export class AgentRuntimeManager {
     ]);
 
     await this.disposeRuntime(sourceRecord.id);
+    const resumeDefaultModel = await this.resolveDefaultModelForBackend(
+      targetBackendId,
+      targetBackend
+    );
     const updatedRecord = await updateConversationRecord(
       workspace.id,
       sourceRecord.id,
@@ -795,8 +829,8 @@ export class AgentRuntimeManager {
           ...current.config,
           backendId: targetBackendId,
           mode: targetBackend.defaultMode,
-          modelId: targetBackend.defaultModelId,
-          modelName: targetBackend.defaultModelName,
+          modelId: resumeDefaultModel.modelId,
+          modelName: resumeDefaultModel.modelName,
         },
         providerSessionId: nativeSessionId,
         configOptions: [],
@@ -1018,6 +1052,10 @@ export class AgentRuntimeManager {
 
     if (backendChanged) {
       await this.disposeRuntime(conversationId);
+      const switchDefaultModel = await this.resolveDefaultModelForBackend(
+        nextBackendId,
+        nextBackend
+      );
       // Handing the conversation to a different backend starts a fresh
       // provider session on this device; the cloud execution target does not
       // carry over.
@@ -1029,8 +1067,8 @@ export class AgentRuntimeManager {
           ...portableConfig,
           ...configPatch,
           backendId: nextBackendId,
-          modelId: configPatch.modelId ?? nextBackend.defaultModelId,
-          modelName: configPatch.modelName ?? nextBackend.defaultModelName,
+          modelId: configPatch.modelId ?? switchDefaultModel.modelId,
+          modelName: configPatch.modelName ?? switchDefaultModel.modelName,
           mode: configPatch.mode ?? nextBackend.defaultMode,
         },
         capabilities: nextBackend.capabilities,
