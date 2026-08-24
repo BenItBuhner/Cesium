@@ -211,9 +211,16 @@ async function assertLinuxAppdir(appDir, needle) {
 }
 
 function assertLinuxDeb(debPath) {
-  const listed = spawnSync("dpkg-deb", ["-c", debPath], { encoding: "utf8" });
+  const listed = spawnSync(
+    "bash",
+    [
+      "-lc",
+      `dpkg-deb -c ${JSON.stringify(debPath)} | grep -E 'usr/share/icons|usr/share/pixmaps|\\.desktop'`,
+    ],
+    { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }
+  );
   if (listed.status !== 0) {
-    throw new Error(`dpkg-deb -c failed: ${listed.stderr || listed.stdout}`);
+    throw new Error(`dpkg-deb listing failed: ${listed.stderr || listed.stdout || listed.status}`);
   }
   if (!/usr\/share\/icons\//.test(listed.stdout) && !/usr\/share\/pixmaps\//.test(listed.stdout)) {
     throw new Error(`${debPath} does not ship icons under usr/share/icons or pixmaps`);
@@ -221,11 +228,18 @@ function assertLinuxDeb(debPath) {
   if (!/\.desktop/.test(listed.stdout)) {
     throw new Error(`${debPath} is missing a .desktop file`);
   }
-  const desktop = spawnSync("dpkg-deb", ["--fsys-tarfile", debPath], { encoding: "buffer" });
+  const desktop = spawnSync(
+    "bash",
+    [
+      "-lc",
+      `dpkg-deb --fsys-tarfile ${JSON.stringify(debPath)} | tar -xO --wildcards '*.desktop'`,
+    ],
+    { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }
+  );
   if (desktop.status !== 0) {
-    throw new Error(`dpkg-deb --fsys-tarfile failed`);
+    throw new Error(`failed to extract .desktop from ${debPath}: ${desktop.stderr || desktop.stdout}`);
   }
-  const text = desktop.stdout.toString("utf8");
+  const text = desktop.stdout;
   if (!/x-scheme-handler\/cesium/.test(text)) {
     throw new Error(`${debPath} desktop entry is missing x-scheme-handler/cesium`);
   }
