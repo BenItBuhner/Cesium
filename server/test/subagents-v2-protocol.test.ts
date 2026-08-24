@@ -30,7 +30,10 @@ function runtimeWith(limits = testLimits()) {
   return new SubagentsV2Runtime({
     conversationId: "conv-protocol",
     limits,
-    defaultModelId: "openai/missing-model-for-unit-test",
+    // Unknown provider on purpose: auth resolution fails instantly, so child
+    // turns error without touching the network even when OPENAI_API_KEY (or
+    // another provider key) is present in the test environment.
+    defaultModelId: "unittestprov/missing-model-for-unit-test",
     appendEvents: async () => {},
   });
 }
@@ -73,7 +76,7 @@ test("fork_turns defaults to all (full-history fork, Codex parity)", async () =>
   const runtime = new SubagentsV2Runtime({
     conversationId: "conv-fork",
     limits: testLimits(),
-    defaultModelId: "openai/missing-model-for-unit-test",
+    defaultModelId: "unittestprov/missing-model-for-unit-test",
     appendEvents: async () => {},
     getParentHistory: async () => parentHistory,
   });

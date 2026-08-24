@@ -70,7 +70,7 @@ test("pollXaiDeviceCodeToken waits through authorization_pending then succeeds",
   const sleeps: number[] = [];
   const http: XaiOAuthHttp = {
     now: (() => {
-      let t = 0;
+      const t = 0;
       return () => t;
     })(),
     sleep: async (ms) => {
