@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { AGENT_BACKENDS } from "../src/lib/agents/providers.js";
 import type { AgentConversationRecord } from "../src/lib/agents/types.js";
 
 const TEST_DATA_DIR = path.join(
@@ -24,7 +23,12 @@ const repoRoot = path.resolve(
   ".."
 );
 
+// All runtime imports of src modules must stay dynamic and come after the
+// OPENCURSOR_DATA_DIR override: a hoisted static import would transitively
+// load persistence.ts first and freeze DATA_DIR to the real data directory,
+// leaking the failure fixtures seeded here into the user's actual store.
 const [
+  { AGENT_BACKENDS },
   { ensureWorkspaceRegistered },
   { AgentRuntimeManager },
   {
@@ -34,6 +38,7 @@ const [
     appendConversationEvents,
   },
 ] = await Promise.all([
+  import("../src/lib/agents/providers.js"),
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/runtime-manager.js"),
   import("../src/lib/agents/session-store.js"),

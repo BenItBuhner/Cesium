@@ -120,24 +120,24 @@ export class CesiumHarnessPluginRuntime {
     return this.diagnostics.map((diagnostic) => ({ ...diagnostic }));
   }
 
-  private context(module: CesiumFeatureModule): CesiumHarnessPluginContext {
+  private context(plugin: CesiumFeatureModule): CesiumHarnessPluginContext {
     return {
       ...this.options.context(),
-      pluginId: module.id,
-      pluginVersion: module.version,
-      config: module.config ?? {},
+      pluginId: plugin.id,
+      pluginVersion: plugin.version,
+      config: plugin.config ?? {},
     };
   }
 
   private async report(
-    module: CesiumFeatureModule,
+    plugin: CesiumFeatureModule,
     hook: string,
     error: unknown
   ): Promise<never | void> {
     const normalized = asError(error);
     const diagnostic: CesiumHarnessPluginDiagnostic = {
-      pluginId: module.id,
-      pluginVersion: module.version,
+      pluginId: plugin.id,
+      pluginVersion: plugin.version,
       hook,
       message: normalized.message,
       createdAt: Date.now(),
@@ -150,20 +150,20 @@ export class CesiumHarnessPluginRuntime {
       await this.options.onDiagnostic?.(diagnostic);
     } catch (diagnosticError) {
       console.warn(
-        `[cesium-harness-plugin] failed to publish diagnostic for ${module.id}/${hook}:`,
+        `[cesium-harness-plugin] failed to publish diagnostic for ${plugin.id}/${hook}:`,
         asError(diagnosticError).message
       );
     }
-    if (module.failureMode === "fatal") {
+    if (plugin.failureMode === "fatal") {
       throw new Error(
-        `Cesium harness plugin "${module.id}" failed in ${hook}: ${normalized.message}`,
+        `Cesium harness plugin "${plugin.id}" failed in ${hook}: ${normalized.message}`,
         { cause: normalized }
       );
     }
   }
 
   private async invoke(
-    module: CesiumFeatureModule,
+    plugin: CesiumFeatureModule,
     hook: string,
     operation: () => unknown | Promise<unknown>
   ): Promise<unknown> {
@@ -171,10 +171,10 @@ export class CesiumHarnessPluginRuntime {
       return await withTimeout(
         Promise.resolve().then(operation),
         this.hookTimeoutMs,
-        `Cesium harness plugin "${module.id}" hook ${hook}`
+        `Cesium harness plugin "${plugin.id}" hook ${hook}`
       );
     } catch (error) {
-      await this.report(module, hook, error);
+      await this.report(plugin, hook, error);
       return undefined;
     }
   }
@@ -182,25 +182,25 @@ export class CesiumHarnessPluginRuntime {
   async start(): Promise<void> {
     if (this.started || this.disposed) return;
     this.started = true;
-    for (const module of this.modules) {
-      const hook = module.hooks?.onSessionStart;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.onSessionStart;
       if (hook) {
-        await this.invoke(module, "onSessionStart", () => hook(this.context(module)));
+        await this.invoke(plugin, "onSessionStart", () => hook(this.context(plugin)));
       }
     }
   }
 
   async turnStart(input: CesiumHarnessTurnInput): Promise<CesiumHarnessTurnInput> {
     let current = input;
-    for (const module of this.modules) {
-      const hook = module.hooks?.onTurnStart;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.onTurnStart;
       if (!hook) continue;
-      const next = await this.invoke(module, "onTurnStart", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "onTurnStart", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         if (!next || typeof next !== "object" || typeof (next as CesiumHarnessTurnInput).text !== "string") {
-          await this.report(module, "onTurnStart", new Error("onTurnStart returned an invalid turn input."));
+          await this.report(plugin, "onTurnStart", new Error("onTurnStart returned an invalid turn input."));
           continue;
         }
         current = next as CesiumHarnessTurnInput;
@@ -211,16 +211,16 @@ export class CesiumHarnessPluginRuntime {
 
   async transformSystemPrompt(prompt: string): Promise<string> {
     let current = prompt;
-    for (const module of this.modules) {
-      const hook = module.hooks?.transformSystemPrompt;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.transformSystemPrompt;
       if (!hook) continue;
-      const next = await this.invoke(module, "transformSystemPrompt", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "transformSystemPrompt", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         if (typeof next !== "string") {
           await this.report(
-            module,
+            plugin,
             "transformSystemPrompt",
             new Error("transformSystemPrompt must return a string.")
           );
@@ -234,17 +234,17 @@ export class CesiumHarnessPluginRuntime {
 
   async transformMessages(messages: CesiumHistoryMessage[]): Promise<CesiumHistoryMessage[]> {
     let current = messages;
-    for (const module of this.modules) {
-      const hook = module.hooks?.transformMessages;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.transformMessages;
       if (!hook) continue;
-      const next = await this.invoke(module, "transformMessages", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "transformMessages", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         try {
           current = validateMessages(next);
         } catch (error) {
-          await this.report(module, "transformMessages", error);
+          await this.report(plugin, "transformMessages", error);
         }
       }
     }
@@ -253,11 +253,11 @@ export class CesiumHarnessPluginRuntime {
 
   async beforeModel(request: CesiumHarnessModelRequest): Promise<CesiumHarnessModelRequest> {
     let current = request;
-    for (const module of this.modules) {
-      const hook = module.hooks?.beforeModel;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.beforeModel;
       if (!hook) continue;
-      const next = await this.invoke(module, "beforeModel", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "beforeModel", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         const candidate = next as CesiumHarnessModelRequest;
@@ -269,7 +269,7 @@ export class CesiumHarnessPluginRuntime {
           !Array.isArray(candidate.messages) ||
           !Array.isArray(candidate.tools)
         ) {
-          await this.report(module, "beforeModel", new Error("beforeModel returned an invalid model request."));
+          await this.report(plugin, "beforeModel", new Error("beforeModel returned an invalid model request."));
           continue;
         }
         try {
@@ -278,7 +278,7 @@ export class CesiumHarnessPluginRuntime {
             messages: validateMessages(candidate.messages),
           };
         } catch (error) {
-          await this.report(module, "beforeModel", error);
+          await this.report(plugin, "beforeModel", error);
         }
       }
     }
@@ -287,15 +287,15 @@ export class CesiumHarnessPluginRuntime {
 
   async afterModel(result: CesiumAdapterResult): Promise<CesiumAdapterResult> {
     let current = result;
-    for (const module of this.modules) {
-      const hook = module.hooks?.afterModel;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.afterModel;
       if (!hook) continue;
-      const next = await this.invoke(module, "afterModel", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "afterModel", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         if (!next || typeof next !== "object" || !Array.isArray((next as CesiumAdapterResult).toolRequests)) {
-          await this.report(module, "afterModel", new Error("afterModel returned an invalid adapter result."));
+          await this.report(plugin, "afterModel", new Error("afterModel returned an invalid adapter result."));
           continue;
         }
         current = next as CesiumAdapterResult;
@@ -306,17 +306,17 @@ export class CesiumHarnessPluginRuntime {
 
   async beforeTool(request: CesiumToolRequest): Promise<CesiumToolRequest> {
     let current = request;
-    for (const module of this.modules) {
-      const hook = module.hooks?.beforeTool;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.beforeTool;
       if (!hook) continue;
-      const next = await this.invoke(module, "beforeTool", () =>
-        hook(this.context(module), current)
+      const next = await this.invoke(plugin, "beforeTool", () =>
+        hook(this.context(plugin), current)
       );
       if (next !== undefined) {
         try {
           current = validateToolRequest(next, current);
         } catch (error) {
-          await this.report(module, "beforeTool", error);
+          await this.report(plugin, "beforeTool", error);
         }
       }
     }
@@ -325,15 +325,15 @@ export class CesiumHarnessPluginRuntime {
 
   async afterTool(request: CesiumToolRequest, result: string): Promise<string> {
     let current = result;
-    for (const module of this.modules) {
-      const hook = module.hooks?.afterTool;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.afterTool;
       if (!hook) continue;
-      const next = await this.invoke(module, "afterTool", () =>
-        hook(this.context(module), request, current)
+      const next = await this.invoke(plugin, "afterTool", () =>
+        hook(this.context(plugin), request, current)
       );
       if (next !== undefined) {
         if (typeof next !== "string") {
-          await this.report(module, "afterTool", new Error("afterTool must return a string."));
+          await this.report(plugin, "afterTool", new Error("afterTool must return a string."));
           continue;
         }
         current = next;
@@ -344,22 +344,22 @@ export class CesiumHarnessPluginRuntime {
 
   async toolError(request: CesiumToolRequest, error: unknown): Promise<void> {
     const normalized = asError(error);
-    for (const module of this.modules) {
-      const hook = module.hooks?.onToolError;
+    for (const plugin of this.modules) {
+      const hook = plugin.hooks?.onToolError;
       if (hook) {
-        await this.invoke(module, "onToolError", () =>
-          hook(this.context(module), request, normalized)
+        await this.invoke(plugin, "onToolError", () =>
+          hook(this.context(plugin), request, normalized)
         );
       }
     }
   }
 
   async turnEnd(outcome: CesiumHarnessTurnOutcome): Promise<void> {
-    for (const module of [...this.modules].reverse()) {
-      const hook = module.hooks?.onTurnEnd;
+    for (const plugin of [...this.modules].reverse()) {
+      const hook = plugin.hooks?.onTurnEnd;
       if (hook) {
-        await this.invoke(module, "onTurnEnd", () =>
-          hook(this.context(module), outcome)
+        await this.invoke(plugin, "onTurnEnd", () =>
+          hook(this.context(plugin), outcome)
         );
       }
     }
@@ -368,11 +368,11 @@ export class CesiumHarnessPluginRuntime {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    for (const module of [...this.modules].reverse()) {
-      const hook = module.hooks?.onSessionDispose;
+    for (const plugin of [...this.modules].reverse()) {
+      const hook = plugin.hooks?.onSessionDispose;
       if (hook) {
-        await this.invoke(module, "onSessionDispose", () =>
-          hook(this.context(module))
+        await this.invoke(plugin, "onSessionDispose", () =>
+          hook(this.context(plugin))
         );
       }
     }

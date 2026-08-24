@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
 import { createCesiumApp } from "../src/app.js";
 
 describe("Android bundled workbench CORS", () => {
@@ -7,9 +8,9 @@ describe("Android bundled workbench CORS", () => {
       headers: { Origin: "null" },
     });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBe("null");
-    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), "null");
+    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
   });
 
   test("preserves the Android origin when ALLOWED_ORIGINS replaces browser defaults", async () => {
@@ -21,13 +22,14 @@ describe("Android bundled workbench CORS", () => {
       const mobileResponse = await createCesiumApp().request("/api/agents/imports/sources", {
         headers: { Origin: "null" },
       });
-      expect(mobileResponse.status).toBe(200);
-      expect(mobileResponse.headers.get("access-control-allow-origin")).toBe("null");
+      assert.equal(mobileResponse.status, 200);
+      assert.equal(mobileResponse.headers.get("access-control-allow-origin"), "null");
 
       const browserResponse = await createCesiumApp().request("/health", {
         headers: { Origin: "https://workbench.example" },
       });
-      expect(browserResponse.headers.get("access-control-allow-origin")).toBe(
+      assert.equal(
+        browserResponse.headers.get("access-control-allow-origin"),
         "https://workbench.example"
       );
     } finally {
@@ -53,7 +55,7 @@ describe("Android bundled workbench CORS", () => {
       const response = await createCesiumApp().request("/health", {
         headers: { Origin: "null" },
       });
-      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+      assert.equal(response.headers.get("access-control-allow-origin"), null);
     } finally {
       if (previousAllowedOrigins === undefined) {
         delete process.env.ALLOWED_ORIGINS;
@@ -77,7 +79,7 @@ describe("Android bundled workbench CORS", () => {
       const response = await createCesiumApp().request("/health", {
         headers: { Origin: origin },
       });
-      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+      assert.equal(response.headers.get("access-control-allow-origin"), origin);
     }
   });
 });
