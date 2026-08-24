@@ -21,12 +21,6 @@ const hostArch = process.arch === "arm64" ? "arm64" : "x64";
 module.exports = {
   appId: "com.cesium.desktop",
   productName: "Cesium Desktop",
-  // one-click per-user NSIS uses sanitized package name as the
-  // %LOCALAPPDATA%\Programs\<dir> folder. The workspace name
-  // "@cesium/desktop" becomes "@cesiumdesktop" unless we override it.
-  extraMetadata: {
-    name: "Cesium",
-  },
   npmRebuild: false,
   directories: {
     output: "out",

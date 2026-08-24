@@ -19,7 +19,3 @@ test("Windows NSIS is one-click with Cesium installer icons and no license page"
 test("Linux packaging uses the icon pyramid directory", () => {
   assert.equal(config.linux.icon, "build/icons");
 });
-
-test("one-click per-user install folder is Cesium, not the scoped package name", () => {
-  assert.equal(config.extraMetadata.name, "Cesium");
-});
