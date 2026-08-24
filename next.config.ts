@@ -60,6 +60,19 @@ const allowedDevOrigins =
       "192.168.4.150",
     ];
 
+/**
+ * Production security headers, applied to every route on public deployments.
+ * Kept conservative on purpose: the workbench uses microphone capture (voice
+ * input), WebSockets, and cross-origin engine APIs, so no CSP/permission that
+ * would break those is set here.
+ */
+const productionSecurityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=(self)" },
+];
+
 const nextConfig: NextConfig = {
   // The React Compiler is currently crashing Next.js during page compilation
   // in this deployment. Keep it off so production and dev builds can complete.
@@ -67,6 +80,7 @@ const nextConfig: NextConfig = {
   turbopack: {},
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
+  poweredByHeader: false,
   /** Hide the floating Next dev indicator so it stops covering the bottom-left rail. */
   devIndicators: false,
   env: {
@@ -82,7 +96,12 @@ const nextConfig: NextConfig = {
         },
       ];
     }
-    return [];
+    return [
+      {
+        source: "/(.*)",
+        headers: productionSecurityHeaders,
+      },
+    ];
   },
 };
 

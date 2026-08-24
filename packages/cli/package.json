@@ -1,0 +1,29 @@
+{
+  "name": "cesium-workbench",
+  "version": "0.8.0",
+  "description": "Bare-bones CLI to install, start, and manage a local Cesium engine (the Bun + Hono backend of the Cesium AI workbench).",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "bin": {
+    "cesium": "./bin/cesium.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BenItBuhner/Cesium.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/BenItBuhner/Cesium#readme",
+  "keywords": [
+    "cesium",
+    "ai",
+    "workbench",
+    "agent",
+    "cli"
+  ]
+}

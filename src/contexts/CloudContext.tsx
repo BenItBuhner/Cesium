@@ -449,7 +449,13 @@ export function CloudProviders({ children }: { children: ReactNode }) {
   }
   if (mode === "clerk") {
     return (
-      <ClerkProvider publishableKey={getClerkPublishableKey() ?? undefined}>
+      <ClerkProvider
+        publishableKey={getClerkPublishableKey() ?? undefined}
+        signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
+        signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
+        signInFallbackRedirectUrl="/agent"
+        signUpFallbackRedirectUrl="/agent"
+      >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>
         </ConvexProviderWithClerk>

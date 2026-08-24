@@ -4,6 +4,7 @@ import Script from "next/script";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { CloudProviders } from "@/contexts/CloudContext";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
+import { getSiteUrl } from "@/lib/site-url";
 import { buildThemeBootstrapScript } from "@/lib/theme-bootstrap";
 import "./globals.css";
 
@@ -18,6 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getSiteUrl()),
   title: "Cesium",
   description: "An open-source AI-powered IDE",
   applicationName: "Cesium",

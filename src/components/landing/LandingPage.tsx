@@ -6,6 +6,7 @@ import {
   Cloud,
   Cpu,
   Database,
+  Download as DownloadIcon,
   FolderOpen,
   Globe,
   MessagesSquare,
@@ -291,6 +292,12 @@ export function LandingPage() {
           </div>
           <nav className="flex items-center gap-[6px]">
             <Link
+              href="/download"
+              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            >
+              Download
+            </Link>
+            <Link
               href="/docs"
               className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             >
@@ -340,6 +347,13 @@ export function LandingPage() {
                   Launch the workbench
                   <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
                 </WorkbenchLink>
+                <Link
+                  href="/download"
+                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
+                >
+                  <DownloadIcon className="size-[15px]" strokeWidth={1.75} aria-hidden />
+                  Download the app
+                </Link>
                 <Link
                   href="/docs"
                   className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
@@ -567,6 +581,9 @@ export function LandingPage() {
             <span className="text-[12px]">Cesium — local-first AI workbench</span>
           </div>
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
+            <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">
+              Download
+            </Link>
             <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
               Docs
             </Link>

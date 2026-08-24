@@ -38,6 +38,7 @@ test("parsePbxprojMarketingVersions reads every MARKETING_VERSION assignment", (
 test("findReleaseVersionMismatches reports each drifted surface", () => {
   const mismatches = findReleaseVersionMismatches("0.8.0", {
     root: "0.8.0",
+    cli: "0.6.0",
     desktop: "0.1.0",
     mobile: "0.7.0",
     androidApp: "0.8.0",
@@ -45,6 +46,7 @@ test("findReleaseVersionMismatches reports each drifted surface", () => {
     iosMarketing: ["0.8.0", "0.7.0"],
   });
   assert.deepEqual(mismatches, [
+    "packages/cli/package.json: 0.6.0 (expected 0.8.0)",
     "apps/desktop/package.json: 0.1.0 (expected 0.8.0)",
     "apps/mobile/package.json: 0.7.0 (expected 0.8.0)",
     "iOS MARKETING_VERSION[1]: 0.7.0 (expected 0.8.0)",
@@ -58,7 +60,9 @@ test("assertReleaseVersions reads a fixture tree", () => {
     mkdirSync(join(root, "apps/mobile/android/app"), { recursive: true });
     mkdirSync(join(root, "apps/mobile/android/wear"), { recursive: true });
     mkdirSync(join(root, "apps/mobile/ios/CesiumMobile.xcodeproj"), { recursive: true });
+    mkdirSync(join(root, "packages/cli"), { recursive: true });
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.2.3" }));
+    writeFileSync(join(root, "packages/cli/package.json"), JSON.stringify({ version: "1.2.3" }));
     writeFileSync(join(root, "apps/desktop/package.json"), JSON.stringify({ version: "1.2.3" }));
     writeFileSync(join(root, "apps/mobile/package.json"), JSON.stringify({ version: "1.2.3" }));
     writeFileSync(

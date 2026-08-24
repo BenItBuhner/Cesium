@@ -125,6 +125,41 @@ If your shell supports `bash`, `npm run prod` builds both and uses the repo `sta
 - Use `OPENCURSOR_AUTH_USERNAME` and `OPENCURSOR_AUTH_PASSWORD` if the app is reachable by anyone besides you.
 - Use Postgres/Redis for persistent multi-process deployments; use legacy JSON only for simple local installs.
 
+### Deploying the client to Vercel (custom domain, Clerk + Convex)
+
+The Next.js client is designed to run on Vercel while every user brings their
+own engine (desktop app, or `cesium install` on their hardware). To stand up a
+public production deployment:
+
+1. **Vercel project** — import the repo (root directory is the Next app;
+   `vercel.json` already pins the framework). Add the custom domain and set
+   `NEXT_PUBLIC_SITE_URL=https://your.domain` so robots/sitemap/OG metadata
+   use the canonical origin.
+2. **Convex (database)** — `npx convex deploy` from the repo root (schema and
+   functions live in `convex/`). Set `NEXT_PUBLIC_CONVEX_URL` on Vercel to the
+   deployment URL.
+3. **Clerk (authentication)** — create a Clerk app, add a JWT template named
+   `convex`, and set `CLERK_JWT_ISSUER_DOMAIN` on the Convex deployment
+   (`npx convex env set CLERK_JWT_ISSUER_DOMAIN https://...`). On Vercel set
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`. Hosted sign-in
+   and sign-up pages ship at `/sign-in` and `/sign-up`.
+4. **Gate the workbench (optional)** — set
+   `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` to require a Clerk account for the
+   workbench routes. The landing page, `/download`, `/docs`, the auth pages,
+   and the engine rendezvous API stay public.
+5. **Engine rendezvous** — add an Upstash Redis (or Vercel KV) integration so
+   `/api/rendezvous` can pair installed engines with signed-in browsers
+   (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or
+   `KV_REST_API_URL`/`KV_REST_API_TOKEN`).
+6. **Downloads** — `/download` auto-detects the visitor's platform and serves
+   the latest GitHub release assets via `/api/releases/latest` (cached; set
+   `GITHUB_RELEASES_TOKEN` for a higher upstream rate limit if needed).
+
+End-user flow once deployed: install the desktop app from `/download` (or run
+`npx cesium-workbench install` for a headless engine), sign up at
+`/sign-up`, and the workbench connects the account to the engine. Servers,
+preferences, and conversation snapshots sync across devices through Convex.
+
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.

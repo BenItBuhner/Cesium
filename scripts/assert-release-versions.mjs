@@ -68,6 +68,7 @@ export function collectReleaseVersions(rootDir = DEFAULT_ROOT) {
 
   return {
     root: readPackageVersion(path.join(rootDir, "package.json")),
+    cli: readPackageVersion(path.join(rootDir, "packages/cli/package.json")),
     desktop: readPackageVersion(path.join(rootDir, "apps/desktop/package.json")),
     mobile: readPackageVersion(path.join(rootDir, "apps/mobile/package.json")),
     androidApp: parseGradleVersionName(readFileSync(androidAppPath, "utf8"), androidAppPath),
@@ -86,6 +87,7 @@ export function findReleaseVersionMismatches(expected, versions) {
   const mismatches = [];
   const scalarEntries = [
     ["root package.json", versions.root],
+    ["packages/cli/package.json", versions.cli],
     ["apps/desktop/package.json", versions.desktop],
     ["apps/mobile/package.json", versions.mobile],
     ["Android phone versionName", versions.androidApp],
