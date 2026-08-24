@@ -32,6 +32,30 @@ describe("composer slash menu", () => {
       "Goal",
       "Ask",
     ]);
+    assert.equal(
+      modes?.items.find((item) => item.label === "Plan")?.description,
+      "Research and draft a reviewable implementation plan before building."
+    );
+    assert.equal(
+      modes?.items.find((item) => item.label === "Ask")?.description,
+      "Answer questions without making edits."
+    );
+  });
+
+  test("prefers an explicit mode description over the catalog fallback", () => {
+    const sections = getSlashMenuSections({
+      activeBackend: {
+        id: "cesium-agent",
+        label: "Cesium Agent",
+        available: true,
+        capabilities: { supportsModeSelection: true, supportsModelSelection: true },
+      },
+      modeOptions: [{ id: "plan", label: "Plan", description: "Custom plan copy." }],
+    });
+    const plan = sections
+      .find((section) => section.id === "modes")
+      ?.items.find((item) => item.id === "mode:plan");
+    assert.equal(plan?.description, "Custom plan copy.");
   });
 
   test("filters slash menu modes by slash alias", () => {
