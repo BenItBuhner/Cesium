@@ -162,6 +162,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
+    supportsCloudExecution: false,
   },
   "claude-code-sdk": {
     supportsLoadSession: true,
