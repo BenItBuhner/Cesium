@@ -314,7 +314,34 @@ export function killTerminalSession(id: string): boolean {
   }
   session.pendingOutputChunks = [];
   session.pendingOutputSize = 0;
-  session.pty.kill();
+  if (session.exited) {
+    session.pty.kill();
+  } else {
+    // Polite teardown first, then guarantee it: interactive shells ignore
+    // SIGTERM, and PTY-backend kill() paths swallow signal-delivery errors,
+    // which can leave an immortal shell + open PTY master behind (leaked fd
+    // in a long-running server; a hung event loop in tests). SIGKILL cannot
+    // be ignored.
+    const pid = session.pty.pid;
+    let confirmedExit = false;
+    const exitWatch = session.pty.onExit(() => {
+      confirmedExit = true;
+      exitWatch.dispose();
+    });
+    session.pty.kill();
+    const escalation = setTimeout(() => {
+      exitWatch.dispose();
+      if (confirmedExit || session.exited || !Number.isInteger(pid) || pid <= 0) {
+        return;
+      }
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Process exited between the check and the kill.
+      }
+    }, 1500);
+    escalation.unref?.();
+  }
   terminalSessions.delete(id);
   return true;
 }
