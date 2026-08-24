@@ -27,8 +27,9 @@ import {
   readStoredServerConnectionsState,
   SERVER_CONNECTIONS_EVENT,
   setStoredSessionToken,
-  upsertServerConnection,
   writeStoredServerConnectionsState,
+  type RendezvousLocator,
+  type ServerConnection,
 } from "@cesium/client";
 import { api } from "@convex/_generated/api";
 import {
@@ -42,6 +43,16 @@ import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
 } from "@/lib/cloud/personalization";
+import {
+  buildCloudServerPushPayloads,
+  CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+  cloudServerIdentity,
+  diffRemovedCloudServers,
+  mergeCloudServersIntoState,
+  parseCloudServerTombstones,
+  serializeCloudServerTombstones,
+  type CloudServerRemoval,
+} from "@/lib/cloud/cloud-servers";
 
 /**
  * Cesium Cloud Context — the client side of the cross-device user context.
@@ -58,6 +69,8 @@ export type CloudServer = {
   baseUrl: string;
   kind: "remote" | "local";
   sessionToken: string | null;
+  /** Present for tunnel-backed engines shared through public access. */
+  rendezvous: RendezvousLocator | null;
   notes: string | null;
   lastConnectedAt: number | null;
 };
@@ -111,10 +124,11 @@ export type CloudActions = {
     baseUrl: string;
     kind: "remote" | "local";
     sessionToken?: string;
+    rendezvous?: RendezvousLocator;
     notes?: string;
     markConnected?: boolean;
   }): Promise<void>;
-  removeServer(baseUrl: string): Promise<void>;
+  removeServer(input: CloudServerRemoval): Promise<void>;
   savePreferences(payload: string): Promise<void>;
   saveAgentPref(input: {
     backendId: string;
@@ -212,33 +226,29 @@ function reconcilePersonalization(
   }
 }
 
-/** Merge cloud servers into the local connection list (additive). */
+/**
+ * Merge cloud servers into the local connection list (additive). Tombstoned
+ * identities — servers the user removed on this device — are skipped so they
+ * do not resurrect on every bootstrap.
+ */
 function mergeCloudServersIntoLocal(servers: CloudServer[]): void {
   if (servers.length === 0) {
     return;
   }
-  const configuredDefault = getConfiguredServerBaseUrl();
-  let state = readStoredServerConnectionsState(configuredDefault);
-  let changed = false;
-  for (const server of servers) {
-    const before = state;
-    try {
-      state = upsertServerConnection(state, {
-        label: server.name,
-        baseUrl: server.baseUrl,
-      });
-    } catch {
-      continue;
-    }
-    if (state !== before) {
-      changed = true;
-    }
-    if (server.sessionToken && !getStoredSessionToken(server.baseUrl)) {
-      setStoredSessionToken(server.sessionToken, null, server.baseUrl);
+  const tombstones = parseCloudServerTombstones(
+    clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
+  );
+  const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
+  const merged = mergeCloudServersIntoState(state, servers, {
+    skipIdentities: tombstones,
+  });
+  for (const entry of merged.sessionTokens) {
+    if (!getStoredSessionToken(entry.baseUrl)) {
+      setStoredSessionToken(entry.sessionToken, null, entry.baseUrl);
     }
   }
-  if (changed) {
-    writeStoredServerConnectionsState(state);
+  if (merged.changed) {
+    writeStoredServerConnectionsState(merged.state);
   }
 }
 
@@ -306,8 +316,8 @@ function CloudBridge({
       async saveServer(input) {
         await saveServerMutation({ ...identityArgs, ...input });
       },
-      async removeServer(baseUrl) {
-        await removeServerMutation({ ...identityArgs, baseUrl });
+      async removeServer(input) {
+        await removeServerMutation({ ...identityArgs, ...input });
       },
       async savePreferences(payload) {
         await savePreferencesMutation({ ...identityArgs, payload });
@@ -352,26 +362,60 @@ function CloudBridge({
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
   }, [bootstrap, actions]);
 
-  // Local server-list changes push up (additive, idempotent upserts).
+  // Local server-list changes push up (additive, idempotent upserts). The
+  // initial push on activation matters: a server adopted before sign-in
+  // completed (e.g. via a connect link) still reaches the account. Local
+  // removals propagate too, and leave a tombstone so the next bootstrap does
+  // not resurrect the server on this device.
+  const lastPushedServersRef = useRef<ServerConnection[] | null>(null);
   useEffect(() => {
     if (!active) {
+      lastPushedServersRef.current = null;
       return;
     }
-    const platform = getClientPlatform();
-    return platform.addEventListener(SERVER_CONNECTIONS_EVENT, () => {
+    const pushLocalServers = () => {
       const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
+      const store = clientKeyValueStore();
+      const tombstones = parseCloudServerTombstones(
+        store.getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
+      );
+      let tombstonesChanged = false;
       for (const server of state.servers) {
-        const sessionToken = getStoredSessionToken(server.baseUrl);
-        void actions
-          .saveServer({
-            name: server.label,
-            baseUrl: server.baseUrl,
-            kind: "remote",
-            ...(sessionToken ? { sessionToken } : {}),
-          })
-          .catch(() => undefined);
+        if (tombstones.delete(cloudServerIdentity(server))) {
+          tombstonesChanged = true;
+        }
       }
-    });
+      const previous = lastPushedServersRef.current;
+      if (previous) {
+        for (const removal of diffRemovedCloudServers(previous, state.servers)) {
+          const identity = removal.rendezvousServerId
+            ? `rendezvous:${removal.rendezvousServerId}`
+            : removal.baseUrl
+              ? cloudServerIdentity({ baseUrl: removal.baseUrl })
+              : null;
+          if (identity) {
+            tombstones.add(identity);
+            tombstonesChanged = true;
+          }
+          void actions.removeServer(removal).catch(() => undefined);
+        }
+      }
+      if (tombstonesChanged) {
+        store.setItem(
+          CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+          serializeCloudServerTombstones(tombstones)
+        );
+      }
+      lastPushedServersRef.current = state.servers;
+      for (const payload of buildCloudServerPushPayloads(
+        state.servers,
+        (baseUrl) => getStoredSessionToken(baseUrl)
+      )) {
+        void actions.saveServer(payload).catch(() => undefined);
+      }
+    };
+    pushLocalServers();
+    return getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, pushLocalServers);
   }, [active, actions]);
 
   const status: CloudStatus = !authReady

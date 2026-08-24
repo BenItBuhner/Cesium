@@ -36,6 +36,20 @@ export default defineSchema({
      * TODO(production hardening): replace with per-device scoped tokens.
      */
     sessionToken: v.optional(v.string()),
+    /**
+     * Rendezvous locator for tunnel-backed engines shared via public access.
+     * `baseUrl` is only the last known endpoint for these — tunnel URLs
+     * rotate — so every signed-in device uses this locator to re-resolve the
+     * engine's current public URL from the encrypted rendezvous registry.
+     */
+    rendezvous: v.optional(
+      v.object({
+        version: v.number(),
+        serverId: v.string(),
+        secret: v.string(),
+        registryBaseUrl: v.string(),
+      })
+    ),
     notes: v.optional(v.string()),
     lastConnectedAt: v.optional(v.number()),
     createdAt: v.number(),
