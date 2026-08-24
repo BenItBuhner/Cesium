@@ -617,6 +617,16 @@ export function AgentWorkspaceRail() {
   );
 
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
+
+  // The "Chat: Open Recent Chats" command (and legacy quick-switcher paths)
+  // broadcast this event; the rail's conversation search modal is the live
+  // surface for it in the agent workbench.
+  useEffect(() => {
+    const handler = () => setRecentChatsOpen(true);
+    window.addEventListener("opencursor:openRecentChats", handler);
+    return () => window.removeEventListener("opencursor:openRecentChats", handler);
+  }, []);
+
   const [renameState, setRenameState] = useState<{
     conversationId: string;
     conversation: AgentRailConversationSummary;
