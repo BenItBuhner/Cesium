@@ -137,7 +137,10 @@ public production deployment:
    use the canonical origin.
 2. **Convex (database)** — `npx convex deploy` from the repo root (schema and
    functions live in `convex/`). Set `NEXT_PUBLIC_CONVEX_URL` on Vercel to the
-   deployment URL.
+   deployment URL. Also commit the deployment URL and Clerk publishable key
+   (both public-safe) to `src/lib/cloud/cloud-defaults.ts` so the packaged
+   desktop and mobile apps default to production cloud behavior too — every
+   client keeps a runtime local-only switch in Settings → Account.
 3. **Clerk (authentication)** — create a Clerk app, add a JWT template named
    `convex`, and set `CLERK_JWT_ISSUER_DOMAIN` on the Convex deployment
    (`npx convex env set CLERK_JWT_ISSUER_DOMAIN https://...`). On Vercel set
