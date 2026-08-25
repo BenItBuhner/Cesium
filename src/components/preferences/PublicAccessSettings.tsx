@@ -4,11 +4,17 @@ import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   attachSessionToken,
+  getStoredSessionToken,
   setStoredSessionToken,
   syncAuthTokenFromResponse,
   updateStoredAuthSession,
   type AuthSession,
 } from "@/lib/auth-client";
+import {
+  parseRendezvousBootstrapHash,
+  type RendezvousBootstrap,
+} from "@cesium/client";
+import { useCloudContext } from "@/contexts/CloudContext";
 import {
   SettingsFieldLabel,
   SettingsRow,
@@ -24,6 +30,8 @@ type PublicAccessStatus = {
   webAppUrl: string | null;
   provider: "auto" | "localhost-run" | "cloudflare-quick" | "custom" | null;
   customPublicUrl: string | null;
+  serverId: string | null;
+  label: string | null;
   publicUrl: string | null;
   connectUrl: string | null;
   auth: {
@@ -64,6 +72,7 @@ export function PublicAccessSettings({
   serverBaseUrl: string;
 }) {
   const { refreshAuthStatus } = useAuth();
+  const cloud = useCloudContext();
   const [status, setStatus] = useState<PublicAccessStatus | null>(null);
   const [webAppUrl, setWebAppUrl] = useState(defaultWebAppUrl);
   const [provider, setProvider] = useState<"auto" | "localhost-run" | "cloudflare-quick">(
@@ -167,11 +176,18 @@ export function PublicAccessSettings({
       setCredentials(null);
       try {
         if (!enabled) {
+          const sharedRendezvousServerId = status?.serverId ?? null;
           const next = (await request("/api/public-access/disable", {
             method: "POST",
           })) as PublicAccessStatus;
           setStatus(next);
           draftDirtyRef.current = false;
+          if (sharedRendezvousServerId && cloud.actions) {
+            lastAccountPublishRef.current = null;
+            void cloud.actions
+              .removeServer({ rendezvousServerId: sharedRendezvousServerId })
+              .catch(() => undefined);
+          }
           await refreshAuthStatus();
           return;
         }
@@ -201,6 +217,7 @@ export function PublicAccessSettings({
       }
     },
     [
+      cloud.actions,
       customPublicUrl,
       loginGeneratedCredentials,
       pending,
@@ -208,6 +225,7 @@ export function PublicAccessSettings({
       refresh,
       request,
       refreshAuthStatus,
+      status?.serverId,
       webAppUrl,
     ]
   );
@@ -230,6 +248,51 @@ export function PublicAccessSettings({
       setPending(false);
     }
   }, [loginGeneratedCredentials, pending, request]);
+
+  // With an account signed in on this client, the shared engine is published
+  // straight into the user's cloud context: every device signed into the same
+  // account inherits the server (rendezvous locator + current endpoint +
+  // session token) automatically, no connect link required.
+  const lastAccountPublishRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!status?.enabled || !status.connectUrl || !cloud.actions) {
+      return;
+    }
+    let bootstrap: RendezvousBootstrap | null = null;
+    try {
+      bootstrap = parseRendezvousBootstrapHash(new URL(status.connectUrl).hash);
+    } catch {
+      bootstrap = null;
+    }
+    if (!bootstrap) {
+      return;
+    }
+    const publicBaseUrl = status.publicUrl ?? bootstrap.initialBaseUrl;
+    if (!publicBaseUrl) {
+      return;
+    }
+    const sessionToken = getStoredSessionToken(serverBaseUrl);
+    const publishKey = `${bootstrap.serverId}|${publicBaseUrl}|${sessionToken ?? ""}`;
+    if (lastAccountPublishRef.current === publishKey) {
+      return;
+    }
+    lastAccountPublishRef.current = publishKey;
+    const saveServer = cloud.actions.saveServer;
+    void saveServer({
+      name: bootstrap.label ?? status.label ?? "Shared Cesium server",
+      baseUrl: publicBaseUrl,
+      kind: "remote",
+      ...(sessionToken ? { sessionToken } : {}),
+      rendezvous: {
+        version: 1,
+        serverId: bootstrap.serverId,
+        secret: bootstrap.secret,
+        registryBaseUrl: bootstrap.registryBaseUrl,
+      },
+    }).catch(() => {
+      lastAccountPublishRef.current = null;
+    });
+  }, [cloud.actions, serverBaseUrl, status]);
 
   const copy = useCallback(async (key: string, value: string | null | undefined) => {
     if (!value) return;
@@ -320,6 +383,7 @@ export function PublicAccessSettings({
           title="Permanent connection link"
           description={status.connectUrl}
           searchId="stable-link"
+          border={false}
           trailing={
             <div className="flex items-center gap-[6px]">
               <button
@@ -346,6 +410,13 @@ export function PublicAccessSettings({
             </div>
           }
         />
+      ) : null}
+      {status?.connectUrl ? (
+        <div className="border-b border-[var(--border-subtle)] px-[16px] pb-[10px] font-sans text-[10.5px] text-[var(--text-disabled)]">
+          {cloud.status === "ready"
+            ? "Synced to your account — every device signed in as you inherits this server automatically."
+            : "Open this link once on a device where you're signed in; every device on your account then inherits this server automatically."}
+        </div>
       ) : null}
       <SettingsRow
         title="Connection credentials"
