@@ -1,6 +1,6 @@
 "use client";
 
-import { clientKeyValueStore } from "@cesium/client";
+import { clientKeyValueStore, getClientPlatform } from "@cesium/client";
 import { getCloudMode } from "./cloud-flags";
 
 /**
@@ -20,6 +20,47 @@ export {
 } from "./cloud-flags";
 
 export const CLOUD_DEVICE_KEY_STORAGE_KEY = "cesium-cloud-device-key";
+
+/* ------------------------------------------------------------------------ */
+/* Runtime local-only override                                              */
+/* ------------------------------------------------------------------------ */
+
+export const CLOUD_LOCAL_ONLY_STORAGE_KEY = "cesium-cloud-local-only";
+
+/** Broadcast when the runtime local-only override flips (same tab). */
+export const CLOUD_LOCAL_ONLY_EVENT = "cesium:cloud-local-only-changed";
+
+/**
+ * Per-device runtime opt-out. Build config (env or committed defaults)
+ * decides whether cloud is *available*; this persisted switch lets any user
+ * flip a cloud-capable client — web, Electron, Android, iOS — back to pure
+ * local-only behavior from Settings, without rebuilding anything.
+ *
+ * Note this is a client preference, not a security boundary: hosted
+ * deployments gated with `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` still enforce
+ * sign-in at the network boundary regardless of this switch.
+ */
+export function isCloudLocallyDisabled(): boolean {
+  return clientKeyValueStore().getItem(CLOUD_LOCAL_ONLY_STORAGE_KEY) === "1";
+}
+
+export function setCloudLocallyDisabled(disabled: boolean): void {
+  const store = clientKeyValueStore();
+  if (disabled) {
+    store.setItem(CLOUD_LOCAL_ONLY_STORAGE_KEY, "1");
+  } else {
+    store.removeItem(CLOUD_LOCAL_ONLY_STORAGE_KEY);
+  }
+  getClientPlatform().emitEvent(CLOUD_LOCAL_ONLY_EVENT);
+}
+
+/**
+ * The mode the running client should actually use: build-time configuration
+ * (`getCloudMode`) unless this device opted out at runtime.
+ */
+export function getEffectiveCloudMode(): ReturnType<typeof getCloudMode> {
+  return isCloudLocallyDisabled() ? "disabled" : getCloudMode();
+}
 
 const DEVICE_KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
 

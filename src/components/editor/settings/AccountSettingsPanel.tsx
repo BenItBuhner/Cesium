@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignInButton, SignOutButton, UserButton } from "@clerk/nextjs";
 import { Check, ChevronDown, CircleUserRound, Link2 } from "lucide-react";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import {
+  getCloudMode,
+  isCloudLocallyDisabled,
+  setCloudLocallyDisabled,
+} from "@/lib/cloud/cloud-env";
 import {
   PageIntro,
   SettingsBlock,
@@ -99,16 +105,74 @@ function AccountIdentityCard() {
   );
 }
 
+/**
+ * Runtime cloud switch: shown whenever the build is cloud-capable (env vars
+ * or committed defaults). Cloud is on by default; turning it off keeps this
+ * device fully local-first without rebuilding — on every platform (web,
+ * Electron, Android, iOS). CloudProviders listens for the change and
+ * remounts the provider tree live.
+ */
+function CloudSyncToggleRow({
+  localOnly,
+  onChange,
+}: {
+  localOnly: boolean;
+  onChange: (localOnly: boolean) => void;
+}) {
+  return (
+    <SettingsRow
+      title="Cloud sync"
+      description={
+        localOnly
+          ? "Off — this device runs local-only. Nothing leaves this device or your engine servers."
+          : "On — servers, personalization, and snapshots can sync through Cesium Cloud."
+      }
+      trailing={
+        <ToggleSwitch
+          checked={!localOnly}
+          variant="green"
+          onChange={(on) => {
+            setCloudLocallyDisabled(!on);
+            onChange(!on);
+          }}
+        />
+      }
+      searchId="account-cloud-sync-toggle"
+    />
+  );
+}
+
 function CloudAccountSection() {
   const cloud = useCloudContext();
   const [copied, setCopied] = useState(false);
+  const configuredMode = getCloudMode();
+  const [localOnly, setLocalOnly] = useState(false);
+  useEffect(() => {
+    setLocalOnly(isCloudLocallyDisabled());
+  }, []);
 
-  if (cloud.mode === "disabled") {
+  if (configuredMode === "disabled") {
     return (
       <SettingsSection title="Cloud account">
         <SettingsRow
           title="Local mode"
           description="Cloud sync is not configured for this build. Everything stays on this device and your engine servers — no account is required."
+          trailing={<span className={tagClass}>Local-only</span>}
+          searchId="account-cloud-mode"
+        />
+      </SettingsSection>
+    );
+  }
+
+  if (cloud.mode === "disabled") {
+    // Cloud-capable build, but this device opted out at runtime (or the
+    // provider tree is about to remount after a toggle).
+    return (
+      <SettingsSection title="Cloud account">
+        <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
+        <SettingsRow
+          title="Local-only mode"
+          description="Cloud sync is turned off on this device. Flip the switch to reconnect — your account and synced data are untouched."
           trailing={<span className={tagClass}>Local-only</span>}
           searchId="account-cloud-mode"
         />
@@ -135,6 +199,7 @@ function CloudAccountSection() {
     };
     return (
       <SettingsSection title="Cloud account">
+        <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
         <SettingsRow
           title="Device sync"
           description="Synced under a per-browser device identity. Configure Clerk for real account sign-in."
@@ -168,6 +233,7 @@ function CloudAccountSection() {
   // clerk mode
   return (
     <SettingsSection title="Cloud account">
+      <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
       {cloud.status === "signed-out" ? (
         <SettingsRow
           title="Not signed in"
