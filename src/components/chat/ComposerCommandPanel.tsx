@@ -55,7 +55,7 @@ export function ComposerCommandPanel({
       data-ide-input-sink
       data-composer-command-panel
       data-placement={position.placement}
-      className="chat-composer-surface fixed z-[10050] flex flex-col overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] shadow-[0_18px_48px_rgba(0,0,0,0.42)]"
+      className="chat-composer-surface fixed z-[10050] flex flex-col overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)]"
       style={{ ...positionStyle, opacity: ready ? 1 : 0 }}
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
