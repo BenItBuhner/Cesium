@@ -30,9 +30,32 @@ export type SlashMenuItem = {
   label: string;
   searchText: string;
   searchKey?: string;
+  description?: string;
   disabled?: boolean;
   action: SlashMenuAction;
 };
+
+/** Fallback copy when a mode option does not carry its own description. */
+export const SLASH_MODE_DESCRIPTIONS: Record<string, string> = {
+  agent: "Build, edit, run commands, and complete implementation work.",
+  plan: "Research and draft a reviewable implementation plan before building.",
+  debug: "Pinpoint the root cause of an issue.",
+  ask: "Answer questions without making edits.",
+  goal: "Work toward a defined outcome with continuation and milestones.",
+  workflow: "Run structured scripts for fan-out, pipelines, and verification.",
+  orchestration: "Orchestrate multiple subagents in parallel.",
+};
+
+export function slashModeDescription(
+  modeId: string,
+  explicit?: string
+): string | undefined {
+  const trimmed = explicit?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  return SLASH_MODE_DESCRIPTIONS[modeId.trim().toLowerCase()];
+}
 
 export type SlashMenuSection = {
   id: string;
@@ -156,13 +179,18 @@ export function getSlashMenuSections(input: {
     sections.push({
       id: "modes",
       label: "Modes",
-      items: (input.modeOptions ?? []).map((mode) => ({
-        id: `mode:${mode.id}`,
-        label: mode.label,
-        searchText: `${mode.label} ${mode.id} /${mode.id} mode`,
-        searchKey: slashSearchKey(mode.label, `${mode.label} ${mode.id} /${mode.id} mode`),
-        action: { kind: "mode", modeId: mode.id },
-      })),
+      items: (input.modeOptions ?? []).map((mode) => {
+        const description = slashModeDescription(mode.id, mode.description);
+        const searchText = `${mode.label} ${mode.id} /${mode.id} mode ${description ?? ""}`;
+        return {
+          id: `mode:${mode.id}`,
+          label: mode.label,
+          description,
+          searchText,
+          searchKey: slashSearchKey(mode.label, searchText),
+          action: { kind: "mode", modeId: mode.id },
+        };
+      }),
     });
   }
 
@@ -172,9 +200,14 @@ export function getSlashMenuSections(input: {
       label: "Models",
       items: (input.models ?? []).map((model) => {
         const modelValue = model.modelValue ?? model.id;
+        const description =
+          model.description?.trim() ||
+          model.detail?.trim() ||
+          "Switch the conversation model.";
         return {
           id: `model:${modelValue}`,
           label: model.name,
+          description,
           searchText: `${model.name} ${modelValue} model`,
           searchKey: slashSearchKey(model.name, `${model.name} ${modelValue} model`),
           action: { kind: "model", model },
@@ -193,6 +226,9 @@ export function getSlashMenuSections(input: {
         .map((entry) => ({
         id: `backend:${entry.id}`,
         label: entry.experimental ? `${entry.label} (experimental)` : entry.label,
+        description: entry.available
+          ? "Switch the agent harness."
+          : "This harness is unavailable.",
         searchText: `${entry.label} ${entry.id} harness backend`,
         searchKey: slashSearchKey(
           entry.experimental ? `${entry.label} (experimental)` : entry.label,
@@ -215,6 +251,7 @@ export function getSlashMenuSections(input: {
         commandItems.push({
           id: `config:${option.id}:${choice.value}`,
           label,
+          description: option.description?.trim() || `Set ${option.name}.`,
           searchText,
           searchKey: slashSearchKey(label, searchText),
           action: { kind: "config", configId: option.id, value: choiceValue },
@@ -227,6 +264,7 @@ export function getSlashMenuSections(input: {
     commandItems.push({
       id: "worktree",
       label: "Worktree",
+      description: "Create or switch to a git worktree.",
       searchText: "worktree git branch checkout",
       searchKey: slashSearchKey("Worktree", "worktree git branch checkout"),
       action: { kind: "insert", insert: "/worktree " },
@@ -234,6 +272,7 @@ export function getSlashMenuSections(input: {
     commandItems.push({
       id: "delete-worktree",
       label: "Delete Worktree",
+      description: "Remove a git worktree from this workspace.",
       searchText: "delete worktree git checkout",
       searchKey: slashSearchKey("Delete Worktree", "delete worktree git checkout"),
       action: { kind: "insert", insert: "/delete-worktree " },

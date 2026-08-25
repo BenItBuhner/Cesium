@@ -1,6 +1,8 @@
 // Moved to @cesium/core. Re-export shim keeps @/lib/composer-suggestions imports stable.
 export {
   SLASH_MENU_MAX_VISIBLE_ITEMS,
+  SLASH_MODE_DESCRIPTIONS,
+  slashModeDescription,
   applyComposerDirectives,
   filterAtSuggestions,
   filterSlashMenuSections,

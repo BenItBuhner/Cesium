@@ -106,6 +106,12 @@ import {
   type ComposerPopoverPosition,
 } from "./ComposerAutocomplete";
 import { ComposerSlashMenu } from "./ComposerSlashMenu";
+import {
+  hasVisibleFollowingSibling,
+  positionComposerCommandPanel,
+  resolveComposerCommandPanelPlacement,
+  type ComposerCommandPanelPosition,
+} from "@/lib/composer-command-panel";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
 import { shouldSubmitComposerOnEnter } from "@/lib/composer-submit-key";
@@ -1183,6 +1189,13 @@ export function ChatComposer({
     placement: "above",
     bottom: 100,
     left: 8,
+    maxHeight: 280,
+  });
+  const [commandPanelPos, setCommandPanelPos] = useState<ComposerCommandPanelPosition>({
+    placement: "above",
+    bottom: 100,
+    left: 8,
+    width: 320,
     maxHeight: 280,
   });
   const [dockComposerHeightExpanded, setDockComposerHeightExpanded] = useState(false);
@@ -2449,7 +2462,7 @@ export function ChatComposer({
   }, [menu?.query, menu?.kind, menu?.start]);
 
   useLayoutEffect(() => {
-    if (!menu || !editorRef.current) return;
+    if (!menu || menu.kind !== "at" || !editorRef.current) return;
     const rect =
       (hardwareInputEnabled
         ? caretRef.current?.getBoundingClientRect()
@@ -2475,6 +2488,43 @@ export function ChatComposer({
       setMenuPos({ placement: "below", top, left, maxHeight });
     }
   }, [hardwareInputEnabled, menu, selection.end, value]);
+
+  useLayoutEffect(() => {
+    if (!menu || menu.kind !== "slash") {
+      return;
+    }
+    const update = () => {
+      const shell = composerRootRef.current;
+      if (!shell) {
+        return;
+      }
+      const rect = shell.getBoundingClientRect();
+      const placement = resolveComposerCommandPanelPlacement({
+        layout,
+        isExpanded,
+        hasBeneathWidgets: hasVisibleFollowingSibling(shell),
+      });
+      setCommandPanelPos(
+        positionComposerCommandPanel(
+          {
+            left: rect.left,
+            top: rect.top,
+            bottom: rect.bottom,
+            width: rect.width,
+          },
+          placement,
+          { width: window.innerWidth, height: window.innerHeight }
+        )
+      );
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [isExpanded, layout, menu, selection.end, value]);
 
   const pointerDownOutsideComposerEditor = useCallback((target: Node) => {
     return (
@@ -3780,6 +3830,10 @@ const handleNativeComposerKeyDown = useCallback(
         disabled={configLocked}
         onPickFiles={() => anyFileInputRef.current?.click()}
         onPickMedia={() => fileInputRef.current?.click()}
+        anchorRef={composerRootRef}
+        composerLayout={layout}
+        composerExpanded={isExpanded}
+        suppressed={menu?.kind === "slash"}
       />
     );
 
@@ -4084,10 +4138,11 @@ const handleNativeComposerKeyDown = useCallback(
             totalItems={filteredSlashResult.totalCount}
             truncated={filteredSlashResult.truncated}
             selectedIndex={selectedIndex}
+            query={menu.query}
             mode={mode}
             model={model}
             backendId={backendId}
-            position={menuPos}
+            position={commandPanelPos}
             onSelect={pickSlashItem}
             onHighlight={setSelectedIndex}
             listRef={listRef}
@@ -4331,10 +4386,11 @@ const handleNativeComposerKeyDown = useCallback(
           totalItems={filteredSlashResult.totalCount}
           truncated={filteredSlashResult.truncated}
           selectedIndex={selectedIndex}
+          query={menu.query}
           mode={mode}
           model={model}
           backendId={backendId}
-          position={menuPos}
+          position={commandPanelPos}
           onSelect={pickSlashItem}
           onHighlight={setSelectedIndex}
           listRef={listRef}
@@ -4425,6 +4481,10 @@ const handleNativeComposerKeyDown = useCallback(
             variant="icon"
             onPickFiles={() => anyFileInputRef.current?.click()}
             onPickMedia={() => fileInputRef.current?.click()}
+            anchorRef={composerRootRef}
+            composerLayout={layout}
+            composerExpanded={isExpanded}
+            suppressed={menu?.kind === "slash"}
           />
           <input
             ref={fileInputRef}
