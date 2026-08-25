@@ -4,7 +4,11 @@
  * `.server-runtime/node.exe` on Windows, `.server-runtime/node` on POSIX).
  */
 
+const { editWindowsExecutables } = require("../../scripts/edit-desktop-exe-metadata.cjs");
+
 const isWindows = process.platform === "win32";
+const hasWindowsCert = Boolean(process.env.CSC_LINK || process.env.WIN_CSC_LINK);
+const macIdentity = process.env.APPLE_IDENTITY || process.env.CSC_NAME || null;
 
 // Packages always target the build host's CPU architecture: the staged
 // backend runtime (`.server-runtime/node`) is a copy of the running Node
@@ -61,19 +65,23 @@ module.exports = {
   win: {
     executableName: "Cesium",
     icon: "build/icon.ico",
-    signAndEditExecutable: false,
+    // rcedit still runs in afterPack so unsigned builds get a Cesium icon.
+    // electron-builder's own sign+edit path only turns on when a cert is present.
+    signAndEditExecutable: hasWindowsCert,
     target: [{ target: "nsis", arch: [hostArch] }],
   },
   nsis: {
-    oneClick: false,
+    oneClick: true,
     perMachine: false,
-    allowToChangeInstallationDirectory: true,
+    allowToChangeInstallationDirectory: false,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     runAfterFinish: true,
     shortcutName: "Cesium",
     uninstallDisplayName: "Cesium",
-    license: "build/terms.txt",
+    installerIcon: "build/icon.ico",
+    uninstallerIcon: "build/icon.ico",
+    include: "installer.nsh",
   },
   linux: {
     executableName: "cesium-desktop",
@@ -82,7 +90,7 @@ module.exports = {
       { target: "AppImage", arch: [hostArch] },
       { target: "deb", arch: [hostArch] },
     ],
-    icon: "build/icon.png",
+    icon: "build/icons",
     category: "Development",
     maintainer: "Cesium <cesium@localhost>",
     synopsis: "Cesium Desktop AI workbench",
@@ -113,8 +121,8 @@ module.exports = {
     icon: "build/icon.png",
     category: "public.app-category.developer-tools",
     darkModeSupport: true,
-    // Unsigned local/CI builds; distribution signing happens elsewhere.
-    identity: null,
+    // Unsigned local/CI builds unless an Apple signing identity is provided.
+    identity: macIdentity || null,
     extendInfo: {
       // "Open with Cesium" / dock drops feed the share-intake UI via the
       // app's open-file handler.
@@ -130,5 +138,11 @@ module.exports = {
   },
   dmg: {
     writeUpdateInfo: false,
+  },
+  afterPack: async (context) => {
+    if (context.electronPlatformName !== "win32") {
+      return;
+    }
+    await editWindowsExecutables(context.appOutDir);
   },
 };
