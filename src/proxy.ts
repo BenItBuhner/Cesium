@@ -1,4 +1,4 @@
-import { clerkMiddleware } from "@clerk/nextjs/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
   getClerkPublishableKey,
@@ -12,17 +12,43 @@ import {
  *   any build with the `NEXT_PUBLIC_CESIUM_CLOUD=0` kill switch): every
  *   request passes straight through — identical to pre-cloud behavior.
  * - Clerk mode: Clerk's handler runs. With
- *   `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1`, every matched route requires a
- *   signed-in user (public production posture); otherwise sign-in stays
- *   optional and only powers sync.
+ *   `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1`, workbench routes require a
+ *   signed-in user (public production posture) while the marketing surface
+ *   (landing, download, docs), the auth pages themselves, and
+ *   machine-to-machine APIs (engine rendezvous) stay public; otherwise
+ *   sign-in stays optional and only powers sync.
  */
 const clerkEnabled = Boolean(getClerkPublishableKey());
 const requireSignIn = isSignInRequired();
 
+/**
+ * Routes that must stay reachable signed-out even in the gated posture:
+ * - `/`, `/download`, `/docs` — the public marketing/documentation surface.
+ * - `/sign-in`, `/sign-up` — the Clerk pages (gating these would loop).
+ * - `/api/rendezvous` — engines (curl, no browser session) publish here.
+ * - `/api/releases` — powers the download page for signed-out visitors.
+ * - `/~offline`, `/manifest.json` — PWA plumbing fetched without credentials.
+ */
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/download(.*)",
+  "/docs(.*)",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/rendezvous(.*)",
+  "/api/releases(.*)",
+  "/~offline",
+  "/manifest.json",
+]);
+
+const signInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in";
+
 export default clerkEnabled
-  ? clerkMiddleware(async (auth) => {
-      if (requireSignIn) {
-        await auth.protect();
+  ? clerkMiddleware(async (auth, request) => {
+      if (requireSignIn && !isPublicRoute(request)) {
+        await auth.protect({
+          unauthenticatedUrl: new URL(signInUrl, request.url).toString(),
+        });
       }
     })
   : () => NextResponse.next();

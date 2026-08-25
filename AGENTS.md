@@ -36,10 +36,21 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   path stays as a Node/desktop fallback only — do **not** switch the server to
   Node just for terminals. Deno is not used or supported.
 - **Agent backends need external CLIs / API keys** (Cursor, Codex, Claude, Gemini,
-  OpenCode) that are not installed. The app still boots and lists them as
-  unavailable; sending a chat without a configured backend surfaces a
-  "Compilation failed / Provider responded" toast. This is expected, not an
-  environment break.
+ OpenCode) that are not installed. The app still boots and lists them as
+ unavailable; sending a chat without a configured backend surfaces a
+ "Compilation failed / Provider responded" toast. This is expected, not an
+ environment break.
+- **Cloud (Convex + Clerk) config resolution** is env vars first, then the
+ committed defaults in `src/lib/cloud/cloud-defaults.ts`; every client has a
+ runtime local-only toggle (Settings → Account → Cloud sync). To test cloud
+ modes without accounts: `npx convex dev` (anonymous local deployment on
+ `127.0.0.1:3210`; it appends to `.env.local` — verify it didn't clobber
+ `NEXT_PUBLIC_SERVER_URL`/`WORKSPACE_ROOT`), then
+ `npx convex env set CESIUM_ALLOW_DEVICE_KEYS 1` for device mode. The
+ standalone renderer (Electron + mobile WebView bundle) takes
+ `NEXT_PUBLIC_CONVEX_URL` at vite build time; for the Android APK export it
+ for the WHOLE pipeline — `prepare:android` re-runs `build:web-assets` and
+ silently overwrites assets built earlier with different env.
 
 ### Android emulator (mobile app testing)
 
@@ -103,10 +114,16 @@ TCG survival kit (all learned the hard way):
   Do NOT `settings put global hide_error_dialogs 1` — that silently kills the
   app instead.
 - **Stale screencaps**: the Android compositor can lag the WebView by minutes
-  under SwiftShader. When `screencap` looks frozen, verify the real UI state
-  over CDP: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
-  (find the socket via `adb shell cat /proc/net/unix | grep webview_devtools`),
-  then query/screenshot Chromium directly (`http://localhost:9222/json`).
+ under SwiftShader. When `screencap` looks frozen, verify the real UI state
+ over CDP: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
+ (find the socket via `adb shell cat /proc/net/unix | grep webview_devtools`),
+ then query/screenshot Chromium directly (`http://localhost:9222/json`).
+ `adb shell screenrecord` freezes the same way — prefer CDP
+ `Page.captureScreenshot` for evidence. Driving the UI: CDP
+ `Runtime.evaluate` + element `.click()` is reliable;
+ `Input.dispatchTouchEvent` hangs on the API 30 WebView (Chromium 83), and
+ physical `adb shell input tap` needs the WebView's on-screen offset, not
+ just CSS×devicePixelRatio.
 - **Share-intent testing**: `am start -a android.intent.action.SEND` with a
   `content://media/...` EXTRA_STREAM fails with SecurityException (shell can't
   grant URI perms on extras). Instead `run-as com.cesium.mobile` to drop a file

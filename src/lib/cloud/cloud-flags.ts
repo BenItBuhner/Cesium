@@ -18,6 +18,8 @@
  * client bundles at build time.
  */
 
+import { CESIUM_CLOUD_DEFAULTS } from "./cloud-defaults";
+
 export type CloudMode = "disabled" | "device" | "clerk";
 
 const OFF_VALUES = new Set(["0", "off", "false", "disabled", "no"]);
@@ -37,7 +39,9 @@ export function getConvexUrl(): string | null {
   if (isCloudExplicitlyDisabled()) {
     return null;
   }
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
+  const url =
+    process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ||
+    CESIUM_CLOUD_DEFAULTS.convexUrl.trim();
   return url ? url : null;
 }
 
@@ -45,7 +49,9 @@ export function getClerkPublishableKey(): string | null {
   if (isCloudExplicitlyDisabled()) {
     return null;
   }
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
+  const key =
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim() ||
+    CESIUM_CLOUD_DEFAULTS.clerkPublishableKey.trim();
   return key ? key : null;
 }
 

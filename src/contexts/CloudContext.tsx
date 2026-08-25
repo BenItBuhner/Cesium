@@ -33,10 +33,12 @@ import {
 } from "@cesium/client";
 import { api } from "@convex/_generated/api";
 import {
+  CLOUD_LOCAL_ONLY_EVENT,
   getClerkPublishableKey,
   getCloudMode,
   getConvexUrl,
   getOrCreateDeviceKey,
+  isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
 import {
@@ -477,13 +479,28 @@ function getConvexClient(): ConvexReactClient | null {
 }
 
 /**
- * Mounts the cloud provider tree appropriate for this build's mode. With
- * cloud disabled (e.g. the Electron desktop default) this renders children
+ * Mounts the cloud provider tree appropriate for this client's mode:
+ * build-time configuration (env vars or the committed production defaults in
+ * cloud-defaults.ts) unless this device flipped the runtime local-only
+ * switch in Settings → Account. With cloud disabled this renders children
  * directly — zero cloud code paths execute.
+ *
+ * The runtime override is read after mount (and re-read on the toggle
+ * event) so the first client render always matches SSR markup on the Next
+ * app; the standalone Electron/mobile renderer has no SSR and just flips one
+ * state update after mount.
  */
 export function CloudProviders({ children }: { children: ReactNode }) {
-  const mode = getCloudMode();
-  const client = getConvexClient();
+  const configuredMode = getCloudMode();
+  const [localOnly, setLocalOnly] = useState(false);
+  useEffect(() => {
+    setLocalOnly(isCloudLocallyDisabled());
+    return getClientPlatform().addEventListener(CLOUD_LOCAL_ONLY_EVENT, () => {
+      setLocalOnly(isCloudLocallyDisabled());
+    });
+  }, []);
+  const mode = localOnly ? "disabled" : configuredMode;
+  const client = mode === "disabled" ? null : getConvexClient();
   if (mode === "disabled" || !client) {
     return (
       <CloudContext.Provider value={DISABLED_VALUE}>
@@ -493,7 +510,13 @@ export function CloudProviders({ children }: { children: ReactNode }) {
   }
   if (mode === "clerk") {
     return (
-      <ClerkProvider publishableKey={getClerkPublishableKey() ?? undefined}>
+      <ClerkProvider
+        publishableKey={getClerkPublishableKey() ?? undefined}
+        signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
+        signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
+        signInFallbackRedirectUrl="/agent"
+        signUpFallbackRedirectUrl="/agent"
+      >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>
         </ConvexProviderWithClerk>
