@@ -9,14 +9,20 @@
  * `process.env.*` var is unset).
  */
 function readOptionalEnv(name: string): string | undefined {
-  const env = process.env as unknown as Record<string, string | undefined>;
-  // Membership check first: Convex's auth-config evaluator throws on `get`
-  // of unset vars (get-convex/convex-backend#309), but not on `in`.
-  if (!(name in env)) {
+  // Convex's push-time auth-config evaluator exposes env vars through a
+  // proxy with quirky semantics: `get` of an unset var can throw
+  // (get-convex/convex-backend#309), and the `in` membership trap is not
+  // implemented on cloud deployments — an `in` guard reads as false even
+  // when the variable IS set, which silently emptied the provider list and
+  // broke Clerk sign-in in production. Direct access inside try/catch is
+  // correct under both behaviors: set vars come through, unset vars either
+  // throw (caught) or return undefined.
+  try {
+    const value = (process.env as unknown as Record<string, string | undefined>)[name];
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  } catch {
     return undefined;
   }
-  const value = env[name];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 const clerkIssuerDomain = readOptionalEnv("CLERK_JWT_ISSUER_DOMAIN");
