@@ -169,3 +169,11 @@ artifacts/browser/
 
 # Cesium local data (plans, artifacts, worktrees)
 .cesium/
+
+# Convex AI-assistant boilerplate (installed locally via `npx convex ai-files install`;
+# commit deliberately if ever wanted in the repo)
+/.agents/
+/.claude/
+/CLAUDE.md
+/skills-lock.json
+/convex/_generated/ai/
