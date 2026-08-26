@@ -6,6 +6,7 @@ import { useServerConnections } from "@/components/preferences/ServerConnections
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
 import {
   assertEngineConnectionAllowed,
+  REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
   normalizeServerBaseUrl,
   setStoredSessionToken,
 } from "@cesium/client";
@@ -62,10 +63,11 @@ export function DeviceConnectPanel({
       }
       finalize(baseUrl);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
-        err instanceof Error
-          ? `Could not reach the engine: ${err.message}`
-          : "Could not reach the engine."
+        message === REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE
+          ? message
+          : `Could not reach the engine: ${message}`
       );
       setPhase("idle");
     }

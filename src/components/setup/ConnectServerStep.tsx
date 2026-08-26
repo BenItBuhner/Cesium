@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CheckCircle2, Loader2, Server } from "lucide-react";
 import {
   assertEngineConnectionAllowed,
+  REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
   getConfiguredServerBaseUrl,
   getStoredSessionToken,
   markServerConnectionUsed,
@@ -96,10 +97,11 @@ export function ConnectServerStep({
       }
       finalizeConnection(baseUrl, getStoredSessionToken(baseUrl));
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
-        err instanceof Error
-          ? `Could not reach the engine: ${err.message}`
-          : "Could not reach the engine."
+        message === REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE
+          ? message
+          : `Could not reach the engine: ${message}`
       );
       setPhase("idle");
     }
