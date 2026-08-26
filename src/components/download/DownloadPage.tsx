@@ -261,9 +261,12 @@ export function DownloadPage() {
             >
               Docs
             </Link>
-            <WorkbenchLink className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]">
-              Launch workbench
-            </WorkbenchLink>
+            <Link
+              href="/sign-in"
+              className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
+            >
+              Sign in
+            </Link>
           </nav>
         </div>
       </header>

@@ -18,7 +18,12 @@ import {
   Tablet,
   TerminalSquare,
 } from "lucide-react";
-import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
+import {
+  LandingClosingActions,
+  LandingFooterActions,
+  LandingHeaderActions,
+  LandingHeroActions,
+} from "@/components/landing/LandingAuthActions";
 
 /* ------------------------------------------------------------------------ */
 /* Shared bits                                                              */
@@ -309,11 +314,7 @@ export function LandingPage() {
             >
               Get started
             </Link>
-            <WorkbenchLink
-              className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
-            >
-              Launch workbench
-            </WorkbenchLink>
+            <LandingHeaderActions />
           </nav>
         </div>
       </header>
@@ -341,12 +342,7 @@ export function LandingPage() {
                 terminals — from anywhere.
               </p>
               <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
-                <WorkbenchLink
-                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
-                >
-                  Launch the workbench
-                  <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-                </WorkbenchLink>
+                <LandingHeroActions />
                 <Link
                   href="/download"
                   className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
@@ -564,12 +560,7 @@ export function LandingPage() {
           wired.
         </p>
         <div className="mt-[28px] flex flex-wrap items-center justify-center gap-[12px]">
-          <WorkbenchLink
-            className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
-          >
-            Open the workbench
-            <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-          </WorkbenchLink>
+          <LandingClosingActions />
         </div>
       </section>
 
@@ -587,9 +578,7 @@ export function LandingPage() {
             <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
               Docs
             </Link>
-            <WorkbenchLink className="transition-colors hover:text-[var(--text-primary)]">
-              Workbench
-            </WorkbenchLink>
+            <LandingFooterActions />
             <span className="font-mono">AGPL-3.0</span>
           </div>
         </div>
