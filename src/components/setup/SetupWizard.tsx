@@ -31,7 +31,7 @@ import { FirstChatStep } from "./FirstChatStep";
 
 const STEP_DESCRIPTIONS: Record<SetupStepId, string> = {
   "connect-server":
-    "Point Cesium at the engine that runs where your code lives.",
+    "Install or attach an engine. Production uses Clerk; a pasted URL cannot expose an open server.",
   agents:
     "Pick the coding agents you want. Missing CLIs install with one click.",
   import: "Bring conversations from other tools or from your cloud account.",

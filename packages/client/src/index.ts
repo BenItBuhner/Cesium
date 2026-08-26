@@ -9,6 +9,7 @@ export * from "./auth-client";
 export * from "./ws-client";
 export * from "./dev-perf";
 export * from "./safe-url";
+export * from "./engine-url-policy";
 export * from "./mcp-types";
 export * from "./artifact-types";
 export * from "./plugin-types";

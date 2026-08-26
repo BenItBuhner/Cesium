@@ -9,6 +9,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile } from "./persistence.js";
 import { isAuthEnabled, rotateAuthSecurityState } from "./auth.js";
+import { assertEngineExposureAllowed } from "./engine-exposure-policy.js";
+import { getEngineInstanceId } from "./engine-instance.js";
 
 export type PublicAccessProvider = "auto" | "localhost-run" | "cloudflare-quick";
 
@@ -378,6 +380,12 @@ export class PublicAccessManager {
     await this.load();
     this.config = this.buildConfig(input, true);
     const generatedCredentials = await this.ensureAuthentication(true);
+    assertEngineExposureAllowed({
+      bindHost: this.localHost,
+      authEnabled: isAuthEnabled(),
+      publicAccessEnabled: true,
+      customPublicUrl: this.config.customPublicUrl ?? null,
+    });
     this.config.enabled = true;
     this.config.updatedAt = this.now();
     try {
@@ -882,9 +890,19 @@ export class PublicAccessManager {
     if (!response.ok) {
       throw new PublicAccessError(`Public health check failed with HTTP ${response.status}.`, 502);
     }
-    const payload = (await response.json().catch(() => null)) as { ok?: unknown } | null;
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+      instanceId?: unknown;
+    } | null;
     if (!payload || payload.ok !== true) {
       throw new PublicAccessError("Public health check did not return the Cesium health payload.", 502);
+    }
+    const expectedInstanceId = getEngineInstanceId();
+    if (payload.instanceId !== expectedInstanceId) {
+      throw new PublicAccessError(
+        "Public URL did not prove it reaches this Cesium engine. A pasted URL is not enough — the endpoint must reverse-proxy this process.",
+        502
+      );
     }
   }
 

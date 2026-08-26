@@ -1,5 +1,10 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { isAuthEnabled } from "../lib/auth.js";
+import {
+  isLoopbackControlRequest,
+  PUBLIC_ACCESS_LOCAL_CONTROL_MESSAGE,
+} from "../lib/engine-exposure-policy.js";
 import {
   publicAccessManager,
   PublicAccessError,
@@ -39,6 +44,15 @@ async function readBody(c: Context) {
   return (await c.req.json().catch(() => ({}))) as unknown;
 }
 
+function assertLocalControlWhenUnauthenticated(c: Context) {
+  if (isAuthEnabled()) {
+    return;
+  }
+  if (!isLoopbackControlRequest(c.req.url)) {
+    throw new PublicAccessError(PUBLIC_ACCESS_LOCAL_CONTROL_MESSAGE, 403);
+  }
+}
+
 function errorResponse(c: Context, error: unknown) {
   if (error instanceof PublicAccessError) {
     return c.json({ error: error.message }, error.status as 400 | 401 | 403 | 404 | 409 | 502 | 503);
@@ -52,6 +66,7 @@ publicAccessRoutes.get("/api/public-access/status", async (c) => {
 
 publicAccessRoutes.put("/api/public-access/config", async (c) => {
   try {
+    assertLocalControlWhenUnauthenticated(c);
     const status = await publicAccessManager.updateConfig(publicAccessInput(await readBody(c)));
     return c.json(status);
   } catch (error) {
@@ -61,6 +76,7 @@ publicAccessRoutes.put("/api/public-access/config", async (c) => {
 
 publicAccessRoutes.post("/api/public-access/enable", async (c) => {
   try {
+    assertLocalControlWhenUnauthenticated(c);
     return c.json(await publicAccessManager.enable(publicAccessInput(await readBody(c))));
   } catch (error) {
     return errorResponse(c, error);
@@ -69,6 +85,7 @@ publicAccessRoutes.post("/api/public-access/enable", async (c) => {
 
 publicAccessRoutes.post("/api/public-access/disable", async (c) => {
   try {
+    assertLocalControlWhenUnauthenticated(c);
     return c.json(await publicAccessManager.disable());
   } catch (error) {
     return errorResponse(c, error);
@@ -77,6 +94,7 @@ publicAccessRoutes.post("/api/public-access/disable", async (c) => {
 
 publicAccessRoutes.post("/api/public-access/rotate-auth", async (c) => {
   try {
+    assertLocalControlWhenUnauthenticated(c);
     return c.json(await publicAccessManager.rotateAuth());
   } catch (error) {
     return errorResponse(c, error);
