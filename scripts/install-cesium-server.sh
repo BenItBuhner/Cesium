@@ -37,6 +37,13 @@ existing_env_value() {
   )
 }
 SOURCE_DIR="$CESIUM_HOME/source"
+if [[ -n "${CESIUM_EXISTING_SOURCE:-}" ]]; then
+  if [[ ! -d "$CESIUM_EXISTING_SOURCE" ]]; then
+    printf 'CESIUM_EXISTING_SOURCE does not exist: %s\n' "$CESIUM_EXISTING_SOURCE" >&2
+    exit 1
+  fi
+  SOURCE_DIR="$(cd "$CESIUM_EXISTING_SOURCE" && pwd)"
+fi
 RUNTIME_DIR="$CESIUM_HOME/runtime"
 BIN_DIR="$CESIUM_HOME/bin"
 USER_BIN_DIR="${CESIUM_BIN_DIR:-$HOME/.local/bin}"
@@ -248,7 +255,9 @@ if [[ "$SERVICE_MANAGER" == "auto" ]]; then
   fi
 fi
 
-if [[ -d "$SOURCE_DIR/.git" ]]; then
+if [[ -n "${CESIUM_EXISTING_SOURCE:-}" || "${CESIUM_SKIP_SOURCE_UPDATE:-0}" == "1" ]]; then
+  printf 'Using existing Cesium source at %s.\n' "$SOURCE_DIR"
+elif [[ -d "$SOURCE_DIR/.git" ]]; then
   printf 'Updating Cesium source...\n'
   # The clone below is single-branch: its fetch refspec only covers the branch
   # it was created from. If this run targets a different branch (an earlier
