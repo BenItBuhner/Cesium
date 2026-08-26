@@ -9,19 +9,43 @@ const landingPage = readFileSync(
   fileURLToPath(new URL("../src/components/landing/LandingPage.tsx", import.meta.url)),
   "utf8"
 );
+const landingAuth = readFileSync(
+  fileURLToPath(new URL("../src/components/landing/LandingAuthActions.tsx", import.meta.url)),
+  "utf8"
+);
+const downloadPage = readFileSync(
+  fileURLToPath(new URL("../src/components/download/DownloadPage.tsx", import.meta.url)),
+  "utf8"
+);
 
 describe("landing workbench CTAs", () => {
   test("workbench route is the agent shell", () => {
     assert.equal(WORKSPACE_ROUTE, "/agent");
   });
 
-  test("header, hero, closing CTA, and footer use WorkbenchLink", () => {
-    const uses = landingPage.match(/<WorkbenchLink\b/g) ?? [];
-    assert.equal(uses.length, 4);
-    assert.match(landingPage, /Launch workbench/);
-    assert.match(landingPage, /Launch the workbench/);
-    assert.match(landingPage, /Open the workbench/);
+  test("signed-out landing leads with sign-up and sign-in, not a workbench launch", () => {
+    assert.match(landingPage, /<LandingHeaderActions \/>/);
+    assert.match(landingPage, /<LandingHeroActions \/>/);
+    assert.match(landingPage, /<LandingClosingActions \/>/);
+    assert.match(landingPage, /<LandingFooterActions \/>/);
+    assert.doesNotMatch(landingPage, /Launch workbench/);
+    assert.doesNotMatch(landingPage, /Launch the workbench/);
+    assert.doesNotMatch(landingPage, /<WorkbenchLink\b/);
     assert.doesNotMatch(landingPage, /href=\{WORKSPACE_ROUTE\}/);
+  });
+
+  test("signed-out visitors only reach the workbench via Continue as guest", () => {
+    assert.match(landingAuth, /href="\/sign-in"/);
+    assert.match(landingAuth, /href="\/sign-up"/);
+    assert.match(landingAuth, /Continue as guest/);
+    assert.match(landingAuth, /<WorkbenchLink\b/);
+    assert.doesNotMatch(landingAuth, /Launch workbench/);
+    assert.doesNotMatch(landingAuth, /Launch the workbench/);
+  });
+
+  test("download header also signs in instead of launching the workbench", () => {
+    assert.match(downloadPage, /href="\/sign-in"/);
+    assert.doesNotMatch(downloadPage, /Launch workbench/);
   });
 });
 
