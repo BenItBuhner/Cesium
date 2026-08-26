@@ -73,6 +73,11 @@ function makeManager(options: {
   fetch?: typeof fetch;
   child?: FakeChild;
   findExecutable?: (name: string, envOverride?: string) => Promise<string | null>;
+  runCommand?: (
+    command: string,
+    args: string[],
+    timeoutMs?: number
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
 } = {}) {
   return createPublicAccessManagerForTests({
     configFilePath: path.join(
@@ -91,6 +96,7 @@ function makeManager(options: {
     findExecutable:
       options.findExecutable ??
       (async (name) => (name === "ssh" ? "/usr/bin/ssh" : null)),
+    runCommand: options.runCommand,
     tunnelStartupTimeoutMs: 1000,
     heartbeatIntervalMs: 60_000,
     healthIntervalMs: 60_000,
@@ -288,4 +294,82 @@ test("disable stops only the owned child and status redacts password and write s
   assert.equal(statusJson.includes("rendezvousWriteSecret"), false);
   assert.equal(statusJson.includes("managedAuthPassword"), false);
   assert.equal(disabled.publicUrl, null);
+});
+
+test("status reports Tailscale as optional when the CLI is missing", async () => {
+  const manager = makeManager({
+    findExecutable: async (name) => (name === "ssh" ? "/usr/bin/ssh" : null),
+  });
+  const status = await manager.getStatus();
+  assert.equal(status.tailscale.installed, false);
+  assert.match(status.tailscale.doctor, /not installed/);
+});
+
+test("auto still prefers localhost.run when ssh exists even if Tailscale is present", async () => {
+  const manager = makeManager({
+    findExecutable: async (name) =>
+      name === "ssh" ? "/usr/bin/ssh" : name === "tailscale" ? "/usr/bin/tailscale" : null,
+    runCommand: async () => {
+      throw new Error("auto must not invoke Tailscale");
+    },
+  });
+  const result = await manager.enable({ webAppUrl: "https://web.example" });
+  assert.equal(result.status.tunnel.provider, "localhost-run");
+  await manager.disable();
+});
+
+test("explicit Tailscale provider fails closed without a logged-in CLI", async () => {
+  const manager = makeManager({
+    findExecutable: async (name) => (name === "ssh" ? "/usr/bin/ssh" : null),
+  });
+  await assert.rejects(
+    () => manager.enable({ webAppUrl: "https://web.example", provider: "tailscale" }),
+    /Tailscale CLI is not installed/
+  );
+  const status = await manager.getStatus();
+  assert.equal(status.enabled, false);
+});
+
+test("explicit Tailscale provider publishes the MagicDNS URL and a cesium connect fragment", async () => {
+  const requests: FetchRequest[] = [];
+  const serveConfig = JSON.stringify({
+    Web: {
+      "home.tail123.ts.net:443": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:9100" } },
+      },
+    },
+  });
+  const manager = makeManager({
+    fetch: makeFetch(requests),
+    findExecutable: async (name) => (name === "tailscale" ? "/usr/bin/tailscale" : null),
+    runCommand: async (_command, args) => {
+      const key = args.join(" ");
+      if (key === "status --json") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            BackendState: "Running",
+            Self: { DNSName: "home.tail123.ts.net." },
+          }),
+          stderr: "",
+        };
+      }
+      if (key === "serve status --json") {
+        return { code: 0, stdout: serveConfig, stderr: "" };
+      }
+      throw new Error(`unexpected tailscale ${key}`);
+    },
+  });
+  const result = await manager.enable({
+    webAppUrl: "https://web.example",
+    provider: "tailscale",
+  });
+  assert.equal(result.status.enabled, true);
+  assert.equal(result.status.publicUrl, "https://home.tail123.ts.net");
+  assert.equal(result.status.tunnel.provider, "tailscale");
+  assert.equal(result.status.tunnel.running, true);
+  assert.match(result.status.connectUrl ?? "", /^https:\/\/web\.example\/agent#cesiumConnect=/);
+  assert.equal(result.status.tailscale.loggedIn, true);
+  await manager.disable();
+  assert.equal((await manager.getStatus()).enabled, false);
 });

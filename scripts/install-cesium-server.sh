@@ -61,6 +61,8 @@ SERVICE_MANAGER="${CESIUM_SERVICE_MANAGER:-$(existing_env_value CESIUM_SERVICE_M
 SERVICE_MANAGER="${SERVICE_MANAGER:-auto}"
 TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-$(existing_env_value CESIUM_TUNNEL_PROVIDER)}"
 TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-auto}"
+TAILSCALE_EXPOSE="${CESIUM_TAILSCALE_EXPOSE:-$(existing_env_value CESIUM_TAILSCALE_EXPOSE)}"
+TAILSCALE_EXPOSE="${TAILSCALE_EXPOSE:-tailnet}"
 TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-$(existing_env_value CESIUM_TUNNEL_TOKEN)}"
 PUBLIC_URL="${CESIUM_PUBLIC_URL:-$(existing_env_value CESIUM_PUBLIC_URL)}"
 TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-$(existing_env_value CESIUM_TUNNEL_REQUIRED)}"
@@ -108,9 +110,16 @@ if [[ -n "$TUNNEL_TOKEN" && -z "$PUBLIC_URL" ]]; then
   exit 1
 fi
 case "$TUNNEL_PROVIDER" in
-  auto | localhost-run | cloudflare-quick) ;;
+  auto | localhost-run | cloudflare-quick | tailscale) ;;
   *)
-    printf 'CESIUM_TUNNEL_PROVIDER must be auto, localhost-run, or cloudflare-quick.\n' >&2
+    printf 'CESIUM_TUNNEL_PROVIDER must be auto, localhost-run, cloudflare-quick, or tailscale.\n' >&2
+    exit 1
+    ;;
+esac
+case "$TAILSCALE_EXPOSE" in
+  tailnet | funnel) ;;
+  *)
+    printf 'CESIUM_TAILSCALE_EXPOSE must be tailnet or funnel.\n' >&2
     exit 1
     ;;
 esac
@@ -165,6 +174,9 @@ install_bun() {
 install_cloudflared() {
   local target="$RUNTIME_DIR/bin/cloudflared"
   if [[ "$SKIP_TUNNEL" == "1" || -z "$WEB_URL" || -x "$target" ]]; then
+    return 0
+  fi
+  if [[ "$TUNNEL_PROVIDER" == "tailscale" ]]; then
     return 0
   fi
   if [[ -z "$TUNNEL_TOKEN" && "$TUNNEL_PROVIDER" != "cloudflare-quick" ]] &&
@@ -234,6 +246,22 @@ if [[ ! "$RENDEZVOUS_WRITE_SECRET" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
 fi
 install_cloudflared
 SSH_BIN="$(command -v ssh 2>/dev/null || true)"
+TAILSCALE_BIN="${CESIUM_TAILSCALE_BIN:-$(existing_env_value CESIUM_TAILSCALE_BIN)}"
+if [[ -z "$TAILSCALE_BIN" ]]; then
+  TAILSCALE_BIN="$(command -v tailscale 2>/dev/null || true)"
+fi
+if [[ "$TUNNEL_PROVIDER" == "tailscale" && "$SKIP_TUNNEL" != "1" && -n "$WEB_URL" ]]; then
+  if [[ -z "$TAILSCALE_BIN" || ! -x "$TAILSCALE_BIN" ]]; then
+    printf 'Tailscale is selected but the tailscale CLI was not found.\n' >&2
+    printf 'Install Tailscale, or use CESIUM_TUNNEL_PROVIDER=auto for localhost.run / Cloudflare.\n' >&2
+    if [[ "$TUNNEL_REQUIRED" == "1" ]]; then
+      exit 1
+    fi
+  else
+    printf 'Optional Tailscale path selected. cesium connect still uses rendezvous; expose mode is %s.\n' \
+      "$TAILSCALE_EXPOSE"
+  fi
+fi
 
 if [[ "$SERVICE_MANAGER" == "auto" ]]; then
   if [[ "$(uname -s)" == "Linux" ]] &&
@@ -358,6 +386,8 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_TUNNEL_ENABLED "$TUNNEL_ENABLED"
   write_env_value CESIUM_TUNNEL_REQUIRED "$TUNNEL_REQUIRED"
   write_env_value CESIUM_TUNNEL_PROVIDER "$TUNNEL_PROVIDER"
+  write_env_value CESIUM_TAILSCALE_BIN "$TAILSCALE_BIN"
+  write_env_value CESIUM_TAILSCALE_EXPOSE "$TAILSCALE_EXPOSE"
   write_env_value CESIUM_TUNNEL_TOKEN "$TUNNEL_TOKEN"
   write_env_value CESIUM_PUBLIC_URL "${PUBLIC_URL%/}"
   write_env_value HOST "127.0.0.1"

@@ -624,13 +624,18 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("servers", "active-chat", "Active chat server", "New chats and workspace actions."),
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
-  section("servers", "public-access-section", "Public access", "share expose tunnel remote link"),
+  section(
+    "servers",
+    "public-access-section",
+    "Public access",
+    "share expose tunnel remote link tailscale"
+  ),
   row(
     "servers",
     "public-access",
     "Share this backend",
     "Enable a secure public tunnel for this machine.",
-    ["remote access", "electron", "laptop"]
+    ["remote access", "electron", "laptop", "tailscale"]
   ),
   row(
     "servers",

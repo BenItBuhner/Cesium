@@ -44,6 +44,8 @@ LOCAL_URL="http://${HOST:-127.0.0.1}:${PORT:-9100}"
 BUN_BIN="${CESIUM_BUN_BIN:-$CESIUM_HOME/runtime/bin/bun}"
 CLOUDFLARED_BIN="${CESIUM_CLOUDFLARED_BIN:-$CESIUM_HOME/runtime/bin/cloudflared}"
 SSH_BIN="${CESIUM_SSH_BIN:-}"
+TAILSCALE_BIN="${CESIUM_TAILSCALE_BIN:-}"
+TAILSCALE_EXPOSE="${CESIUM_TAILSCALE_EXPOSE:-tailnet}"
 SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
 SUPERVISOR_PROCESS_SIGNATURE="cesium-server supervise"
 MANAGER_BIN="${CESIUM_MANAGER_BIN:-$CESIUM_HOME/bin/cesium-server}"
@@ -111,6 +113,76 @@ find_ssh() {
   command -v ssh 2>/dev/null
 }
 
+find_tailscale() {
+  if [[ -n "$TAILSCALE_BIN" && -x "$TAILSCALE_BIN" ]]; then
+    printf '%s' "$TAILSCALE_BIN"
+    return 0
+  fi
+  command -v tailscale 2>/dev/null
+}
+
+tailscale_https_url_from_dns() {
+  local dns_name="$1"
+  dns_name="${dns_name%.}"
+  [[ -n "$dns_name" && "$dns_name" == *.ts.net ]] || return 1
+  printf 'https://%s' "$dns_name"
+}
+
+tailscale_status_field() {
+  local command="$1"
+  "$command" status --json 2>/dev/null | awk '
+    {
+      line = $0
+      if (state == "" && match(line, /"BackendState":[[:space:]]*"[^"]+"/)) {
+        state = substr(line, RSTART, RLENGTH)
+        gsub(/^"BackendState":[[:space:]]*"/, "", state)
+        gsub(/"$/, "", state)
+      }
+      if (dns == "" && match(line, /"DNSName":[[:space:]]*"[^"]+"/)) {
+        dns = substr(line, RSTART, RLENGTH)
+        gsub(/^"DNSName":[[:space:]]*"/, "", dns)
+        gsub(/"$/, "", dns)
+      }
+    }
+    END {
+      if (state != "") print state
+      else print "unknown"
+      if (dns != "") print dns
+    }
+  '
+}
+
+describe_tailscale() {
+  local command state dns url
+  if ! command="$(find_tailscale)"; then
+    printf 'Tailscale: not installed (optional; localhost.run / Cloudflare still work)\n'
+    return 0
+  fi
+  mapfile -t _ts_fields < <(tailscale_status_field "$command")
+  state="${_ts_fields[0]:-unknown}"
+  dns="${_ts_fields[1]:-}"
+  if [[ "$state" != "Running" ]]; then
+    printf 'Tailscale: needs login (%s). Run `tailscale login`, then set CESIUM_TUNNEL_PROVIDER=tailscale.\n' "$state"
+    return 0
+  fi
+  if url="$(tailscale_https_url_from_dns "$dns")"; then
+    if tailscale_is_serving; then
+      printf 'Tailscale: serving %s (%s)\n' "${TAILSCALE_EXPOSE:-tailnet}" "$url"
+    else
+      printf 'Tailscale: ready (%s), not serving\n' "$url"
+    fi
+    return 0
+  fi
+  printf 'Tailscale: ready (%s), MagicDNS name unavailable\n' "$state"
+}
+
+tailscale_is_serving() {
+  local command output
+  command="$(find_tailscale)" || return 1
+  output="$("$command" serve status --json 2>/dev/null || true)"
+  [[ -n "$output" && "$output" != *[Nn]o\ serve\ config* ]]
+}
+
 resolve_tunnel_provider() {
   if [[ -n "${CESIUM_TUNNEL_TOKEN:-}" ]]; then
     printf 'cloudflare-named'
@@ -129,6 +201,9 @@ resolve_tunnel_provider() {
     cloudflare-quick)
       printf 'cloudflare-quick'
       ;;
+    tailscale)
+      printf 'tailscale'
+      ;;
     *)
       printf 'Unsupported tunnel provider: %s\n' "$configured" >&2
       return 1
@@ -141,7 +216,7 @@ active_tunnel_provider() {
     local provider
     provider="$(tr -d '[:space:]' <"$TUNNEL_PROVIDER_FILE")"
     case "$provider" in
-      cloudflare-named | cloudflare-quick | localhost-run)
+      cloudflare-named | cloudflare-quick | localhost-run | tailscale)
         printf '%s' "$provider"
         return 0
         ;;
@@ -158,6 +233,7 @@ tunnel_process_signature() {
   case "$1" in
     cloudflare-named | cloudflare-quick) printf '%s' "$CLOUDFLARED_BIN" ;;
     localhost-run) printf 'localhost.run' ;;
+    tailscale) return 1 ;;
     *) return 1 ;;
   esac
 }
@@ -165,6 +241,10 @@ tunnel_process_signature() {
 tunnel_is_running() {
   local provider signature
   provider="$(active_tunnel_provider)" || return 1
+  if [[ "$provider" == "tailscale" ]]; then
+    tailscale_is_serving
+    return
+  fi
   signature="$(tunnel_process_signature "$provider")" || return 1
   managed_process_is_running "$TUNNEL_PID_FILE" "$signature"
 }
@@ -212,6 +292,14 @@ extract_tunnel_url() {
       ;;
     localhost-run)
       candidate="$(awk 'match($0, /https:\/\/[-a-z0-9]+\.lhr\.life/) {
+        candidate = substr($0, RSTART, RLENGTH)
+      }
+      END {
+        if (candidate != "") print candidate
+      }' "$TUNNEL_LOG" 2>/dev/null)"
+      ;;
+    tailscale)
+      candidate="$(awk 'match($0, /https:\/\/[-a-z0-9.]+\.ts\.net/) {
         candidate = substr($0, RSTART, RLENGTH)
       }
       END {
@@ -298,9 +386,22 @@ wait_for_public_health() {
   return 1
 }
 
+stop_tailscale_tunnel() {
+  local command
+  command="$(find_tailscale)" || return 0
+  "$command" serve reset >/dev/null 2>&1 || true
+  "$command" funnel reset >/dev/null 2>&1 || true
+  "$command" serve off >/dev/null 2>&1 || true
+}
+
 stop_tunnel() {
   local provider signature
   provider="$(active_tunnel_provider || true)"
+  if [[ "$provider" == "tailscale" ]]; then
+    stop_tailscale_tunnel
+    rm -f "$TUNNEL_PID_FILE" "$PUBLIC_URL_FILE" "$TUNNEL_PROVIDER_FILE"
+    return 0
+  fi
   if [[ -n "$provider" ]]; then
     signature="$(tunnel_process_signature "$provider")"
     stop_managed_process "$TUNNEL_PID_FILE" "$signature" "Tunnel"
@@ -364,6 +465,54 @@ start_cloudflare_quick_tunnel() {
   printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
 }
 
+start_tailscale_tunnel() {
+  local command state dns remote expose
+  command="$(find_tailscale)" || {
+    printf 'The Tailscale CLI is not installed. Install Tailscale or keep CESIUM_TUNNEL_PROVIDER=auto.\n' >&2
+    return 1
+  }
+  mapfile -t _ts_fields < <(tailscale_status_field "$command")
+  state="${_ts_fields[0]:-unknown}"
+  dns="${_ts_fields[1]:-}"
+  if [[ "$state" != "Running" ]]; then
+    printf 'Tailscale is installed but not logged in (%s). Run `tailscale login`.\n' "$state" >&2
+    return 1
+  fi
+  remote="$(tailscale_https_url_from_dns "$dns")" || {
+    printf 'Tailscale has no MagicDNS name. Enable HTTPS / MagicDNS in the Tailscale admin console.\n' >&2
+    return 1
+  }
+  printf '%s\n' "tailscale" >"$TUNNEL_PROVIDER_FILE"
+  expose="${TAILSCALE_EXPOSE:-tailnet}"
+  if ! tailscale_is_serving; then
+    if [[ "$expose" == "funnel" ]]; then
+      "$command" funnel --bg --yes "${PORT:-9100}" >>"$TUNNEL_LOG" 2>&1 ||
+        "$command" funnel --bg --yes --https=443 "http://127.0.0.1:${PORT:-9100}" >>"$TUNNEL_LOG" 2>&1 || {
+          printf 'tailscale funnel failed. Inspect the tunnel log with: cesium-server logs tunnel\n' >&2
+          stop_tunnel
+          return 1
+        }
+    else
+      "$command" serve --bg --yes "${PORT:-9100}" >>"$TUNNEL_LOG" 2>&1 ||
+        "$command" serve --bg --yes --https=443 "http://127.0.0.1:${PORT:-9100}" >>"$TUNNEL_LOG" 2>&1 || {
+          printf 'tailscale serve failed. Enable HTTPS on the tailnet and retry.\n' >&2
+          stop_tunnel
+          return 1
+        }
+    fi
+  fi
+  printf 'Starting tunnel provider: tailscale\n%s\n' "$remote" >>"$TUNNEL_LOG"
+  if ! wait_for_public_health "$remote"; then
+    if ! curl -fsS --max-time 5 "$LOCAL_URL/health" >/dev/null 2>&1; then
+      printf 'Tailscale published %s, but neither the MagicDNS nor local health check passed.\n' "$remote" >&2
+      stop_tunnel
+      return 1
+    fi
+    printf 'Tailscale MagicDNS health timed out; publishing %s because the local engine is healthy.\n' "$remote" >>"$TUNNEL_LOG"
+  fi
+  printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
+}
+
 start_localhost_run_tunnel() {
   local ssh_command
   ssh_command="$(find_ssh)" || {
@@ -417,6 +566,7 @@ start_tunnel() {
     cloudflare-named) start_cloudflare_named_tunnel ;;
     cloudflare-quick) start_cloudflare_quick_tunnel ;;
     localhost-run) start_localhost_run_tunnel ;;
+    tailscale) start_tailscale_tunnel ;;
   esac
 }
 
@@ -457,7 +607,7 @@ refresh_public_url() {
   local provider
   provider="$(active_tunnel_provider)" || return 0
   case "$provider" in
-    cloudflare-quick | localhost-run) ;;
+    cloudflare-quick | localhost-run | tailscale) ;;
     *) return 0 ;;
   esac
 
@@ -616,6 +766,7 @@ status() {
       printf 'Rendezvous: waiting\n'
     fi
   fi
+  describe_tailscale
 }
 
 show_logs() {
@@ -801,6 +952,8 @@ update_install() {
     CESIUM_SERVICE_MANAGER="${CESIUM_SERVICE_MANAGER:-auto}" \
     CESIUM_TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-0}" \
     CESIUM_TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-auto}" \
+    CESIUM_TAILSCALE_BIN="${CESIUM_TAILSCALE_BIN:-}" \
+    CESIUM_TAILSCALE_EXPOSE="${CESIUM_TAILSCALE_EXPOSE:-tailnet}" \
     CESIUM_TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}" \
     CESIUM_PUBLIC_URL="${CESIUM_PUBLIC_URL:-}" \
     exec "$SOURCE_DIR/scripts/install-cesium-server.sh"

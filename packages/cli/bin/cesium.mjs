@@ -37,26 +37,39 @@ const MANAGED_COMMANDS = [
 const HELP = `cesium ${CLI_VERSION} — local Cesium engine manager
 
 Usage:
-  cesium install [--web-url <url>]   Install (or repair) the engine under ~/.cesium
-  cesium start                       Start the engine (plus tunnel when configured)
-  cesium stop                        Stop the engine
-  cesium restart                     Restart the engine
-  cesium status                      Show engine / tunnel / rendezvous status
-  cesium health                      Check the local health endpoint
-  cesium logs [server|tunnel|...]    Tail engine logs
-  cesium connect                     Print the URL + credentials to connect a client
-  cesium credentials                 Show or rotate access credentials
-  cesium update                      Update the engine to the latest release
-  cesium help                        Show this help
-  cesium version                     Show the CLI version
+  cesium install [--web-url <url>] [--tunnel-provider <name>]
+                                 Install (or repair) the engine under ~/.cesium
+  cesium start                   Start the engine (plus tunnel when configured)
+  cesium stop                    Stop the engine
+  cesium restart                 Restart the engine
+  cesium status                  Show engine / tunnel / rendezvous / Tailscale status
+  cesium health                  Check the local health endpoint
+  cesium logs [server|tunnel|...]  Tail engine logs
+  cesium connect                 Print the URL + credentials to connect a client
+  cesium credentials             Show or rotate access credentials
+  cesium update                  Update the engine to the latest release
+  cesium help                    Show this help
+  cesium version                 Show the CLI version
 
 Options for install:
-  --web-url <url>   The Cesium web deployment this engine should register with
-                    (sets CESIUM_WEB_URL; enables tunnel + rendezvous discovery).
+  --web-url <url>              Hosted Cesium web app this engine registers with
+                               (sets CESIUM_WEB_URL; enables tunnel + rendezvous).
+  --tunnel-provider <name>     auto (default), localhost-run, cloudflare-quick,
+                               or tailscale. Tailscale is opt-in and never
+                               selected by auto.
+  --tailscale-expose <mode>    tailnet (default, Serve) or funnel (public).
 
 Environment:
-  CESIUM_HOME       Install root (default: ~/.cesium)
+  CESIUM_HOME              Install root (default: ~/.cesium)
+  CESIUM_TUNNEL_PROVIDER   Same as --tunnel-provider
+  CESIUM_TAILSCALE_BIN     Optional path to the Tailscale CLI
+  CESIUM_TAILSCALE_EXPOSE  tailnet | funnel
   All CESIUM_* installer variables pass through to \`cesium install\`.
+
+Pairing:
+  cesium connect still prints the rendezvous fragment URL. Tailscale only
+  changes the published engine HTTPS endpoint (https://<machine>.<tailnet>.ts.net).
+  localhost.run and Cloudflare keep working when Tailscale is missing.
 
 Windows is supported through WSL: run this CLI inside a WSL distribution.
 The desktop app needs none of this — it ships with an embedded engine.`;
@@ -94,6 +107,32 @@ async function runInstall(args) {
         fail("--web-url requires a value, e.g. --web-url https://cesium.example.com");
       }
       env.CESIUM_WEB_URL = value;
+      i += 1;
+    } else if (args[i] === "--tunnel-provider") {
+      const value = args[i + 1];
+      if (!value) {
+        fail(
+          "--tunnel-provider requires auto, localhost-run, cloudflare-quick, or tailscale"
+        );
+      }
+      if (
+        value !== "auto" &&
+        value !== "localhost-run" &&
+        value !== "cloudflare-quick" &&
+        value !== "tailscale"
+      ) {
+        fail(
+          `Unknown tunnel provider: ${value}. Use auto, localhost-run, cloudflare-quick, or tailscale.`
+        );
+      }
+      env.CESIUM_TUNNEL_PROVIDER = value;
+      i += 1;
+    } else if (args[i] === "--tailscale-expose") {
+      const value = args[i + 1];
+      if (value !== "tailnet" && value !== "funnel") {
+        fail("--tailscale-expose requires tailnet or funnel");
+      }
+      env.CESIUM_TAILSCALE_EXPOSE = value;
       i += 1;
     } else {
       fail(`Unknown install option: ${args[i]}\n\n${HELP}`);

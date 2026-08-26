@@ -9,8 +9,19 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile } from "./persistence.js";
 import { isAuthEnabled, rotateAuthSecurityState } from "./auth.js";
+import {
+  disableTailscaleAccess,
+  enableTailscaleAccess,
+  extractTailscaleHttpsUrl,
+  formatTailscaleDoctorLine,
+  normalizeTailscaleExpose,
+  probeTailscale,
+  type TailscaleAccessDeps,
+  type TailscaleExposeMode,
+  type TailscaleProbe,
+} from "./tailscale-access.js";
 
-export type PublicAccessProvider = "auto" | "localhost-run" | "cloudflare-quick";
+export type PublicAccessProvider = "auto" | "localhost-run" | "cloudflare-quick" | "tailscale";
 
 export type PublicAccessConfig = {
   schemaVersion: 1;
@@ -61,6 +72,7 @@ export type PublicAccessStatus = {
     healthFailures: number;
     lastError: string | null;
   };
+  tailscale: TailscaleProbe & { doctor: string };
   rendezvous: {
     registryOrigin: string | null;
     lastPublishedAt: number | null;
@@ -91,6 +103,7 @@ type PublicAccessManagerDeps = {
     options: SpawnOptions
   ) => PublicAccessChild;
   findExecutable?: (name: string, envOverride?: string) => Promise<string | null>;
+  runCommand?: TailscaleAccessDeps["runCommand"];
   healthTimeoutMs?: number;
   tunnelStartupTimeoutMs?: number;
   heartbeatIntervalMs?: number;
@@ -109,6 +122,12 @@ const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const LHR_URL_PATTERN = /https:\/\/[-a-z0-9]+\.lhr\.life/gi;
 const TRY_CLOUDFLARE_PATTERN = /https:\/\/[-a-z0-9]+\.trycloudflare\.com/gi;
+const TUNNEL_PROVIDERS = new Set<PublicAccessProvider>([
+  "auto",
+  "localhost-run",
+  "cloudflare-quick",
+  "tailscale",
+]);
 
 export class PublicAccessError extends Error {
   constructor(
@@ -175,10 +194,12 @@ function normalizeProvider(value: unknown): PublicAccessProvider {
   if (value === undefined || value === null || value === "") {
     return "auto";
   }
-  if (value === "auto" || value === "localhost-run" || value === "cloudflare-quick") {
-    return value;
+  if (typeof value === "string" && TUNNEL_PROVIDERS.has(value as PublicAccessProvider)) {
+    return value as PublicAccessProvider;
   }
-  throw new PublicAccessError("provider must be auto, localhost-run, or cloudflare-quick.");
+  throw new PublicAccessError(
+    "provider must be auto, localhost-run, cloudflare-quick, or tailscale."
+  );
 }
 
 function normalizeLabel(value: unknown): string | undefined {
@@ -255,6 +276,9 @@ async function defaultFindExecutable(
 }
 
 function extractLatestUrl(input: string, provider: PublicAccessProvider): string | null {
+  if (provider === "tailscale") {
+    return extractTailscaleHttpsUrl(input);
+  }
   const pattern = provider === "cloudflare-quick" ? TRY_CLOUDFLARE_PATTERN : LHR_URL_PATTERN;
   pattern.lastIndex = 0;
   let latest: string | null = null;
@@ -313,6 +337,8 @@ export class PublicAccessManager {
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private runtimeAuthOwnedByManager = false;
+  private ownsTailscaleServe = false;
+  private tailscaleProbe: TailscaleProbe | null = null;
   private signalsRegistered = false;
   private readonly initialEnvAuthUsername = process.env.OPENCURSOR_AUTH_USERNAME?.trim() || null;
   private readonly initialEnvAuthPassword = process.env.OPENCURSOR_AUTH_PASSWORD?.trim() || null;
@@ -349,6 +375,7 @@ export class PublicAccessManager {
 
   async getStatus(): Promise<PublicAccessStatus> {
     await this.load();
+    await this.refreshTailscaleProbe().catch(() => undefined);
     return this.status();
   }
 
@@ -387,6 +414,7 @@ export class PublicAccessManager {
     } catch (error) {
       this.stopTimers();
       await this.stopOwnedChild();
+      await this.releaseTailscaleIfOwned();
       this.currentPublicUrl = null;
       this.activeProvider = null;
       this.config.enabled = false;
@@ -413,6 +441,7 @@ export class PublicAccessManager {
     await this.stopOwnedChild();
     this.currentPublicUrl = null;
     this.activeProvider = null;
+    await this.releaseTailscaleIfOwned();
     await this.clearRunStatusFiles();
     await this.writeDisabledMarker(true);
     this.clearManagerGeneratedRuntimeAuth();
@@ -469,6 +498,8 @@ export class PublicAccessManager {
     this.lastRendezvousError = null;
     this.lastPublishedAt = null;
     this.runtimeAuthOwnedByManager = false;
+    this.ownsTailscaleServe = false;
+    this.tailscaleProbe = null;
   }
 
   replaceConfigForTests(config: PublicAccessConfig | null): void {
@@ -661,11 +692,59 @@ export class PublicAccessManager {
     await this.writeDisabledMarker(false);
   }
 
+  private tailscaleDeps(): TailscaleAccessDeps {
+    return {
+      findExecutable: this.findExecutable,
+      runCommand: this.deps.runCommand,
+      localPort: this.localPort,
+      expose: this.tailscaleExpose,
+    };
+  }
+
+  private get tailscaleExpose(): TailscaleExposeMode {
+    try {
+      return normalizeTailscaleExpose(process.env.CESIUM_TAILSCALE_EXPOSE);
+    } catch {
+      return "tailnet";
+    }
+  }
+
+  private async refreshTailscaleProbe(): Promise<TailscaleProbe> {
+    const probe = await probeTailscale(this.tailscaleDeps());
+    this.tailscaleProbe = probe;
+    return probe;
+  }
+
+  private async releaseTailscaleIfOwned(): Promise<void> {
+    if (!this.ownsTailscaleServe) return;
+    await disableTailscaleAccess(this.tailscaleDeps()).catch(() => undefined);
+    this.ownsTailscaleServe = false;
+    await this.refreshTailscaleProbe().catch(() => undefined);
+  }
+
   private async startTunnel(provider: PublicAccessProvider): Promise<void> {
     await this.stopOwnedChild();
+    if (provider !== "tailscale") {
+      await this.releaseTailscaleIfOwned();
+    }
     this.tunnelLog = "";
     const selected = await this.resolveProvider(provider);
     this.activeProvider = selected;
+    if (selected === "tailscale") {
+      try {
+        const enabled = await enableTailscaleAccess(this.tailscaleDeps());
+        this.ownsTailscaleServe = true;
+        this.tailscaleProbe = enabled.probe;
+        this.currentPublicUrl = enabled.url;
+        await this.writePublicUrlFile(enabled.url);
+        return;
+      } catch (error) {
+        throw new PublicAccessError(
+          error instanceof Error ? error.message : String(error),
+          503
+        );
+      }
+    }
     const { command, args } = await this.commandForProvider(selected);
     const child = this.spawn(command, args, {
       env: process.env,
@@ -694,7 +773,11 @@ export class PublicAccessManager {
 
   private appendTunnelLog(chunk: string): void {
     this.tunnelLog = `${this.tunnelLog}${chunk}`.slice(-64_000);
-    if (this.activeProvider === "localhost-run" || this.activeProvider === "cloudflare-quick") {
+    if (
+      this.activeProvider === "localhost-run" ||
+      this.activeProvider === "cloudflare-quick" ||
+      this.activeProvider === "tailscale"
+    ) {
       const latest = extractLatestUrl(this.tunnelLog, this.activeProvider);
       if (latest) {
         void this.promoteTunnelUrlIfHealthy(latest);
@@ -735,12 +818,29 @@ export class PublicAccessManager {
       }
       return "cloudflare-quick";
     }
+    if (provider === "tailscale") {
+      const probe = await this.refreshTailscaleProbe();
+      if (!probe.installed) {
+        throw new PublicAccessError(
+          "The Tailscale CLI is not installed. Install Tailscale and run `tailscale login`, or keep using localhost.run / Cloudflare.",
+          503
+        );
+      }
+      if (!probe.loggedIn) {
+        throw new PublicAccessError(
+          probe.lastError ??
+            "Tailscale is installed but not logged in. Run `tailscale login`, then retry.",
+          503
+        );
+      }
+      return "tailscale";
+    }
     const ssh = await this.findExecutable("ssh", process.env.CESIUM_SSH_BIN);
     if (ssh) return "localhost-run";
     const cloudflared = await this.ensureCloudflared();
     if (cloudflared) return "cloudflare-quick";
     throw new PublicAccessError(
-      "ssh is unavailable and cloudflared was not found. Install OpenSSH, install cloudflared, or configure a HTTPS custom public URL.",
+      "ssh is unavailable and cloudflared was not found. Install OpenSSH, install cloudflared, choose Tailscale after `tailscale login`, or configure a HTTPS custom public URL.",
       503
     );
   }
@@ -869,7 +969,9 @@ export class PublicAccessManager {
     throw new PublicAccessError(
       provider === "localhost-run"
         ? "localhost.run did not publish a *.lhr.life URL. Inspect tunnel logs and retry."
-        : "cloudflared did not publish a trycloudflare.com URL. Inspect tunnel logs and retry.",
+        : provider === "tailscale"
+          ? "Tailscale did not publish a *.ts.net URL. Run `tailscale status` and retry."
+          : "cloudflared did not publish a trycloudflare.com URL. Inspect tunnel logs and retry.",
       502
     );
   }
@@ -1041,6 +1143,26 @@ export class PublicAccessManager {
     return `${new URL(config.webAppUrl).origin}/agent#cesiumConnect=${fragment}`;
   }
 
+  private emptyTailscaleProbe(): TailscaleProbe {
+    return {
+      installed: false,
+      binary: null,
+      loggedIn: false,
+      backendState: null,
+      dnsName: null,
+      httpsUrl: null,
+      serving: false,
+      servingOurPort: false,
+      expose: null,
+      lastError: null,
+    };
+  }
+
+  private tailscaleStatus(): TailscaleProbe & { doctor: string } {
+    const probe = this.tailscaleProbe ?? this.emptyTailscaleProbe();
+    return { ...probe, doctor: formatTailscaleDoctorLine(probe) };
+  }
+
   private status(): PublicAccessStatus {
     const config = this.config;
     const publicUrl = this.currentPublicUrl;
@@ -1068,12 +1190,16 @@ export class PublicAccessManager {
         externallyConfigured: externalAuth,
       },
       tunnel: {
-        running: Boolean(this.child && !this.child.killed) || this.activeProvider === "custom",
+        running:
+          Boolean(this.child && !this.child.killed) ||
+          this.activeProvider === "custom" ||
+          (this.activeProvider === "tailscale" && this.ownsTailscaleServe),
         provider: this.activeProvider,
         pid: this.child?.pid ?? null,
         healthFailures: this.healthFailures,
         lastError: this.lastTunnelError,
       },
+      tailscale: this.tailscaleStatus(),
       rendezvous: {
         registryOrigin: config ? new URL(config.webAppUrl).origin : null,
         lastPublishedAt: this.lastPublishedAt,
