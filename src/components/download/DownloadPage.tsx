@@ -28,7 +28,10 @@ import {
   type ReleaseAsset,
   type ReleaseCatalog,
 } from "@/lib/releases";
-import { buildCesiumServerInstallCommand } from "@/lib/server-install-command";
+import {
+  buildCesiumServerInstallCommand,
+  buildCesiumWindowsInstallCommand,
+} from "@/lib/server-install-command";
 
 /* ------------------------------------------------------------------------ */
 /* Shared bits                                                              */
@@ -229,6 +232,13 @@ export function DownloadPage() {
       return null;
     }
   }, [origin]);
+  const windowsInstallCommand = useMemo(() => {
+    try {
+      return buildCesiumWindowsInstallCommand(origin ?? "http://localhost:3000");
+    } catch {
+      return null;
+    }
+  }, [origin]);
 
   const desktopSections = useMemo(() => {
     if (!catalog) {
@@ -238,7 +248,7 @@ export function DownloadPage() {
       catalog.assets.filter((asset) => asset.platform === platform);
     return [
       { key: "mac", title: "macOS", icon: Apple, note: "macOS 12+, DMG or ZIP", assets: byPlatform("mac") },
-      { key: "win", title: "Windows", icon: AppWindow, note: "Windows 10+, NSIS installer", assets: byPlatform("win") },
+      { key: "win", title: "Windows", icon: AppWindow, note: "Windows 10+, unsigned one-click NSIS", assets: byPlatform("win") },
       { key: "linux", title: "Linux", icon: Monitor, note: "AppImage or Debian package", assets: byPlatform("linux") },
       { key: "android", title: "Android", icon: Smartphone, note: "Android 8+, sideload APK", assets: byPlatform("android") },
       { key: "wear", title: "Wear OS", icon: Watch, note: "Companion APK for paired watches", assets: byPlatform("wear") },
@@ -310,6 +320,12 @@ export function DownloadPage() {
                     ? " · detected from your browser — pick another build below if this looks wrong"
                     : " · detected from your browser"}
                 </p>
+                {detected?.os === "win" ? (
+                  <p className="max-w-[460px] text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+                    Unsigned build: if SmartScreen appears, choose More info → Run anyway.
+                    Installs per-user to %LOCALAPPDATA%\Programs\Cesium (no admin).
+                  </p>
+                ) : null}
               </>
             ) : catalogState.status === "ready" && detected?.os === "ios" ? (
               <div className="max-w-[440px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[16px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
@@ -384,6 +400,15 @@ export function DownloadPage() {
                       <AssetButton key={asset.name} asset={asset} />
                     ))}
                   </div>
+                  {key === "win" ? (
+                    <p className="mt-[12px] text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                      Builds are <strong className="font-medium text-[var(--text-primary)]">unsigned</strong>.
+                      Windows SmartScreen may say the app is unrecognized — choose{" "}
+                      <strong className="font-medium text-[var(--text-primary)]">More info</strong>, then{" "}
+                      <strong className="font-medium text-[var(--text-primary)]">Run anyway</strong>.
+                      There is no code-signing certificate on these releases.
+                    </p>
+                  ) : null}
                 </article>
               ))}
               <article className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-[20px]">
@@ -427,15 +452,18 @@ export function DownloadPage() {
               <code className="rounded bg-[var(--accent-bg)] px-[5px] py-[2px] font-mono text-[12px]">
                 npx cesium-workbench start
               </code>
-              .
+              . On native Windows that path is real (Git for Windows + Bun) — WSL is no longer required.
             </p>
           </div>
           <div className="space-y-[12px]">
             {installCommand ? (
               <CopyableCommand command={installCommand} label="Linux · macOS · WSL" />
             ) : null}
+            {windowsInstallCommand ? (
+              <CopyableCommand command={windowsInstallCommand} label="Windows (PowerShell or cmd)" />
+            ) : null}
             <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-              Installs to ~/.cesium · manage it afterwards with `cesium-server status | logs | update`
+              Installs to ~/.cesium · manage it afterwards with `cesium status | logs | update`
             </p>
           </div>
         </div>

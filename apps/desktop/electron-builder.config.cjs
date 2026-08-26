@@ -67,7 +67,10 @@ module.exports = {
     icon: "build/icon.ico",
     // rcedit still runs in afterPack so unsigned builds get a Cesium icon.
     // electron-builder's own sign+edit path only turns on when a cert is present.
+    // There is no cert in CI / Cloud Agent VMs — do not pretend these are signed.
     signAndEditExecutable: hasWindowsCert,
+    // Matches the GitHub release asset name (also copied in release.yml).
+    artifactName: "cesium-desktop-${version}-win-${arch}-setup.${ext}",
     target: [{ target: "nsis", arch: [hostArch] }],
   },
   nsis: {
@@ -81,6 +84,9 @@ module.exports = {
     uninstallDisplayName: "Cesium",
     installerIcon: "build/icon.ico",
     uninstallerIcon: "build/icon.ico",
+    // oneClick+per-user otherwise installs to %LOCALAPPDATA%\Programs\@cesiumdesktop
+    // because APP_FILENAME falls back to the sanitized package name. installer.nsh
+    // forces %LOCALAPPDATA%\Programs\Cesium and removes the #214 leftover folder.
     include: "installer.nsh",
   },
   linux: {

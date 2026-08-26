@@ -64,6 +64,14 @@ if ($installed -match '\\Program Files( \(x86\))?\\') {
   throw "Unexpected machine-wide install: $installed"
 }
 
+if ($installed -match '\\@cesiumdesktop\\') {
+  throw "Leftover scoped install path from #214: $installed (expected %LOCALAPPDATA%\Programs\Cesium)"
+}
+$expectedDir = Join-Path $env:LOCALAPPDATA "Programs\Cesium"
+if ($installed -notlike "$expectedDir*") {
+  Write-Host "Warning: installed outside Programs\Cesium: $installed"
+}
+
 Write-Host "Installed executable: $installed"
 "INSTALLED_EXE=$installed" | Add-Content -Path $env:GITHUB_ENV
 & $capture -Path $afterShot

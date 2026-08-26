@@ -372,7 +372,7 @@ jobs:
             echo 'xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app"'
             echo '```'
             echo
-            echo "**Windows** — double-click the setup executable for a per-user one-click install (no admin, no directory wizard). Builds are unsigned, so if SmartScreen appears choose \"More info\" then \"Run anyway\"."
+            echo "**Windows** — double-click the setup executable for a per-user one-click install (no admin, no directory wizard). It lands at \`%LOCALAPPDATA%\\Programs\\Cesium\\\` with Desktop + Start Menu shortcuts named Cesium. Builds are **not code-signed** (no certificate in CI). SmartScreen / \"Windows protected your PC\" is expected: choose **More info**, then **Run anyway**. Native \`npx cesium-workbench install\` works in PowerShell without WSL (Git for Windows required); localhost-run tunnels stay POSIX-only."
             echo
             echo "**Linux** — make the AppImage executable and run it, or install the deb:"
             echo

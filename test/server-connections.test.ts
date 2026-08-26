@@ -33,6 +33,7 @@ import {
 import {
   CESIUM_SERVER_INSTALLER_URL,
   buildCesiumServerInstallCommand,
+  buildCesiumWindowsInstallCommand,
   normalizeWebAppOrigin,
 } from "../src/lib/server-install-command.ts";
 
@@ -657,6 +658,13 @@ describe("server installer command", () => {
 
   test("rejects non-http web app URLs", () => {
     assert.throws(() => normalizeWebAppOrigin("file:///tmp/cesium"), /http or https/);
+  });
+
+  test("Windows-native install uses the npm CLI instead of bash", () => {
+    assert.equal(
+      buildCesiumWindowsInstallCommand("https://cesium-example.vercel.app/workspace?tab=server"),
+      "npx cesium-workbench install --web-url https://cesium-example.vercel.app"
+    );
   });
 });
 

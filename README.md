@@ -114,6 +114,16 @@ The frontend serves Next with `next start`; the backend serves the Bun runtime o
 
 If your shell supports `bash`, `npm run prod` builds both and uses the repo `start:all` helper. On Windows PowerShell, the two-process flow above is clearer and easier to debug.
 
+## Windows
+
+**Desktop app.** Releases ship an unsigned per-user one-click NSIS installer (`cesium-desktop-<version>-win-<arch>-setup.exe`). No admin, no directory wizard. It installs to `%LOCALAPPDATA%\Programs\Cesium\` and creates Desktop + Start Menu shortcuts named **Cesium**.
+
+These binaries are **not code-signed**. There is no certificate in CI. Microsoft SmartScreen / “Windows protected your PC” is expected on first launch. Choose **More info**, then **Run anyway**. Do not treat a SmartScreen warning as a broken installer.
+
+**Engine CLI.** `npx cesium-workbench` is native on Windows (PowerShell or cmd). `cesium install` downloads Bun, clones the engine into `%USERPROFILE%\.cesium`, adds that `bin` directory to the user `PATH`, and can start the server without WSL. You need [Git for Windows](https://git-scm.com/download/win). `localhost-run` SSH tunnels and systemd/launchd units are still POSIX-only — set `CESIUM_PUBLIC_URL` or use the desktop app if you need a public URL.
+
+WSL remains supported: the bash installer (`scripts/install-cesium-server.sh`) still runs inside a Linux distribution.
+
 **PWA note:** The service worker is disabled by default. To opt in, build/run the frontend with `ENABLE_NEXT_PWA=1`.
 
 ### Deployment Checklist
@@ -362,6 +372,8 @@ npm test --prefix server
 - **Agent backend “not available”:** Install the CLI or set the corresponding `OPENCURSOR_*_BIN` path; for OpenCode in containers, set `OPENCURSOR_REAL_HOME`.
 - **Transcription 503 / not configured:** Set transcription env vars or a config file; check `GET /health` on the server.
 - **ChunkLoadError after upgrade:** The PWA service worker is disabled by default. If you opted in with `ENABLE_NEXT_PWA=1`, hard-refresh or unregister the service worker after local rebuilds.
+- **Windows SmartScreen / “Windows protected your PC”:** The desktop installer is unsigned. More info → Run anyway. This is documented, not a signing failure in your download.
+- **`cesium` used to require WSL:** Current CLI builds install and run the engine natively. If install fails, confirm `git --version` works in the same shell.
 
 ## License / project meta
 
