@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookMarked,
   Bug,
   Check,
   Flame,
@@ -186,6 +187,8 @@ export function ComposerSlashMenu({
                             />
                           ) : ModeIcon ? (
                             <ModeIcon className="size-[15px] shrink-0" strokeWidth={1.6} aria-hidden />
+                          ) : item.id.startsWith("skill:") ? (
+                            <BookMarked className="size-[15px] shrink-0" strokeWidth={1.5} aria-hidden />
                           ) : null}
                         </span>
                         <span className="min-w-0 flex-1">

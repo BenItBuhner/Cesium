@@ -612,6 +612,12 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Rules ——
   section("rulesSkills", "workspace-files", "Workspace files", "rules skills subagents"),
+  section(
+    "rulesSkills",
+    "skills",
+    "Skills",
+    "skill catalog discovery SKILL.md agents cursor claude codex opencode"
+  ),
 
   // —— Servers ——
   section("servers", "default", "Default settings server"),

@@ -119,6 +119,29 @@ Do the thing.
   });
 });
 
+test("discoverWorkspaceSkills finds .opencode/skills SKILL.md catalog entries", async () => {
+  await withTempDir(async (dir) => {
+    const skillDir = path.join(dir, ".opencode", "skills", "oc-demo");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      `---
+name: oc-demo
+description: OpenCode skill for discovery tests.
+---
+
+# OpenCode demo
+`,
+      "utf8"
+    );
+    const skills = await discoverWorkspaceSkills(dir);
+    assert.equal(skills.length, 1);
+    assert.equal(skills[0].name, "oc-demo");
+    assert.equal(skills[0].relativePath, ".opencode/skills/oc-demo/SKILL.md");
+    assert.equal(skills[0].source, "opencode");
+  });
+});
+
 test("discoverWorkspaceSkills prefers .agents/skills over .cursor on name collision", async () => {
   await withTempDir(async (dir) => {
     for (const root of [

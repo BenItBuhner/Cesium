@@ -83,6 +83,50 @@ describe("composer slash menu", () => {
     );
   });
 
+  test("lists discovered workspace skills in a Skills section", () => {
+    const sections = getSlashMenuSections({
+      skills: [
+        {
+          name: "demo-skill",
+          description: "Demo skill for slash menu.",
+          relativePath: ".cursor/skills/demo-skill/SKILL.md",
+          source: "cursor",
+          disableModelInvocation: false,
+        },
+        {
+          name: "oc-demo",
+          description: "OpenCode skill.",
+          relativePath: ".opencode/skills/oc-demo/SKILL.md",
+          source: "opencode",
+          disableModelInvocation: true,
+        },
+      ],
+    });
+
+    const skills = sections.find((section) => section.id === "skills");
+    assert.deepEqual(
+      skills?.items.map((item) => item.label),
+      ["demo-skill", "oc-demo"]
+    );
+    assert.equal(skills?.items[0]?.action.kind, "insert");
+    if (skills?.items[0]?.action.kind === "insert") {
+      assert.equal(skills.items[0].action.insert, "demo-skill");
+    }
+    const filtered = filterSlashMenuSections(sections, "opencode");
+    assert.deepEqual(
+      filtered.find((section) => section.id === "skills")?.items.map((item) => item.label),
+      ["oc-demo"]
+    );
+  });
+
+  test("omits the Skills section when the workspace has none", () => {
+    const sections = getSlashMenuSections({ skills: [] });
+    assert.equal(
+      sections.some((section) => section.id === "skills"),
+      false
+    );
+  });
+
   test("caps visible slash results while preserving total match metadata", () => {
     const models = Array.from({ length: 125 }, (_, index) => ({
       id: `proxy-model-${index}`,

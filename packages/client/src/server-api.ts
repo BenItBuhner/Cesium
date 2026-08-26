@@ -38,6 +38,7 @@ import type {
   WorkspaceInfo,
   WorkspaceInsights,
   WorkspaceRecord,
+  WorkspaceSkillCatalogItem,
   WorkspaceWindowRecord,
 } from "@cesium/core";
 import { toWebSocketUrl } from "./ws-client";
@@ -818,6 +819,17 @@ export async function fetchWorkspaceInsights(
 ): Promise<{ insights: WorkspaceInsights }> {
   return request(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/insights`,
+    options?.signal ? { signal: options.signal } : undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchWorkspaceSkills(
+  workspaceId: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ skills: WorkspaceSkillCatalogItem[] }> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/skills`,
     options?.signal ? { signal: options.signal } : undefined,
     { skipWorkspaceHeader: true }
   );

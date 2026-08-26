@@ -12,6 +12,7 @@ export * from "./ask-question-dock";
 export * from "./chat-modes";
 export * from "./chat-draft-title";
 export * from "./composer-suggestions";
+export * from "./workspace-skills";
 export * from "./design-capture";
 export * from "./text-reference";
 export * from "./link-reference";
