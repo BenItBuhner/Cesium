@@ -117,6 +117,10 @@ describe("settings search index", () => {
         (hit) => hit.navId === "servers" && hit.rowId === "stable-link"
       )
     );
+    const tailscale = searchSettingsIndex(index, "tailscale");
+    assert.ok(
+      tailscale.some((hit) => hit.navId === "servers" && hit.rowId === "public-access")
+    );
   });
 
   test("finds keyboard shortcut commands", () => {

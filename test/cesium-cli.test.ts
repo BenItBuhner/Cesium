@@ -23,6 +23,9 @@ describe("cesium CLI", () => {
     for (const command of ["install", "start", "stop", "status", "logs", "connect", "update"]) {
       assert.ok(result.stdout.includes(`cesium ${command}`), `help missing ${command}`);
     }
+    assert.ok(result.stdout.includes("--tunnel-provider"));
+    assert.ok(result.stdout.includes("tailscale"));
+    assert.ok(result.stdout.includes("cesium connect still prints the rendezvous"));
   });
 
   test("no arguments prints help and exits 0", () => {
@@ -58,5 +61,21 @@ describe("cesium CLI", () => {
     const result = runCli(["install", "--web-url"]);
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes("--web-url requires a value"));
+  });
+
+  test("install validates the optional Tailscale tunnel flags without contacting the installer", {
+    skip: process.platform === "win32",
+  }, () => {
+    const missing = runCli(["install", "--tunnel-provider"]);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /--tunnel-provider requires/);
+
+    const unknown = runCli(["install", "--tunnel-provider", "wireguard"]);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /Unknown tunnel provider: wireguard/);
+
+    const expose = runCli(["install", "--tailscale-expose", "public"]);
+    assert.equal(expose.status, 1);
+    assert.match(expose.stderr, /tailnet or funnel/);
   });
 });

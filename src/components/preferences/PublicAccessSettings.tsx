@@ -28,7 +28,7 @@ type PublicAccessStatus = {
   configured: boolean;
   enabled: boolean;
   webAppUrl: string | null;
-  provider: "auto" | "localhost-run" | "cloudflare-quick" | "custom" | null;
+  provider: "auto" | "localhost-run" | "cloudflare-quick" | "tailscale" | "custom" | null;
   customPublicUrl: string | null;
   serverId: string | null;
   label: string | null;
@@ -49,7 +49,24 @@ type PublicAccessStatus = {
     lastPublishedAt: number | null;
     lastError: string | null;
   };
+  tailscale?: {
+    installed: boolean;
+    loggedIn: boolean;
+    doctor: string;
+    httpsUrl: string | null;
+  };
 };
+
+type TunnelProviderChoice = "auto" | "localhost-run" | "cloudflare-quick" | "tailscale";
+
+function isTunnelProviderChoice(value: string | null | undefined): value is TunnelProviderChoice {
+  return (
+    value === "auto" ||
+    value === "localhost-run" ||
+    value === "cloudflare-quick" ||
+    value === "tailscale"
+  );
+}
 
 type GeneratedCredentials = {
   username: string;
@@ -75,9 +92,7 @@ export function PublicAccessSettings({
   const cloud = useCloudContext();
   const [status, setStatus] = useState<PublicAccessStatus | null>(null);
   const [webAppUrl, setWebAppUrl] = useState(defaultWebAppUrl);
-  const [provider, setProvider] = useState<"auto" | "localhost-run" | "cloudflare-quick">(
-    "auto"
-  );
+  const [provider, setProvider] = useState<TunnelProviderChoice>("auto");
   const [customPublicUrl, setCustomPublicUrl] = useState("");
   const [credentials, setCredentials] = useState<GeneratedCredentials | null>(null);
   const [pending, setPending] = useState(false);
@@ -117,11 +132,7 @@ export function PublicAccessSettings({
       setStatus(next);
       if (!draftDirtyRef.current) {
         setWebAppUrl(next.webAppUrl ?? defaultWebAppUrl());
-        setProvider(
-          next.provider === "localhost-run" || next.provider === "cloudflare-quick"
-            ? next.provider
-            : "auto"
-        );
+        setProvider(isTunnelProviderChoice(next.provider) ? next.provider : "auto");
         setCustomPublicUrl(next.customPublicUrl ?? "");
       }
       setError(null);
@@ -345,9 +356,7 @@ export function PublicAccessSettings({
               onChange={(event) =>
                 {
                   draftDirtyRef.current = true;
-                  setProvider(
-                    event.target.value as "auto" | "localhost-run" | "cloudflare-quick"
-                  );
+                  setProvider(event.target.value as TunnelProviderChoice);
                 }
               }
               disabled={pending || enabled}
@@ -356,9 +365,16 @@ export function PublicAccessSettings({
               <option value="auto">Automatic</option>
               <option value="localhost-run">localhost.run</option>
               <option value="cloudflare-quick">Cloudflare Quick Tunnel</option>
+              <option value="tailscale">Tailscale (optional)</option>
             </select>
           </label>
         </div>
+        {provider === "tailscale" || status?.tailscale ? (
+          <p className="mt-[8px] font-sans text-[10.5px] leading-relaxed text-[var(--text-disabled)]">
+            {status?.tailscale?.doctor ??
+              "Tailscale is optional. Install the CLI, run tailscale login, then enable this provider. Automatic still uses localhost.run or Cloudflare. cesium connect keeps the same rendezvous link."}
+          </p>
+        ) : null}
         <label className="mt-[10px] flex min-w-0 flex-col gap-[6px]">
           <SettingsFieldLabel>Custom backend URL (optional, advanced)</SettingsFieldLabel>
           <input

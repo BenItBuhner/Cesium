@@ -64,6 +64,17 @@ CESIUM_TUNNEL_PROVIDER="cloudflare-quick"
 assert_equal "cloudflare-quick" "$(resolve_tunnel_provider)" \
   "Cloudflare Quick Tunnel can be selected explicitly"
 
+find_ssh() { printf '/usr/bin/ssh'; }
+find_tailscale() { printf '/usr/bin/tailscale'; }
+CESIUM_TUNNEL_PROVIDER="auto"
+assert_equal "localhost-run" "$(resolve_tunnel_provider)" \
+  "auto never selects Tailscale even when the CLI is present"
+CESIUM_TUNNEL_PROVIDER="tailscale"
+assert_equal "tailscale" "$(resolve_tunnel_provider)" \
+  "Tailscale is available as an explicit provider"
+CESIUM_TUNNEL_PROVIDER="auto"
+find_tailscale() { return 1; }
+
 printf '%s\n' \
   'Manage at https://admin.localhost.run/' \
   'Connect to https://stale-first.lhr.life with this tunnel' \
@@ -77,6 +88,13 @@ printf '%s\n' \
 assert_equal "https://sample-quick-tunnel.trycloudflare.com" \
   "$(extract_tunnel_url cloudflare-quick)" \
   "Cloudflare Quick Tunnel URL is parsed"
+
+printf '%s\n' \
+  'Available within your tailnet:' \
+  'https://home.tail123.ts.net' >"$TUNNEL_LOG"
+assert_equal "https://home.tail123.ts.net" \
+  "$(extract_tunnel_url tailscale)" \
+  "Tailscale MagicDNS URL is parsed"
 
 bash -c 'exec -a "ssh -R 80:127.0.0.1:19100 nokey@localhost.run" sleep 30' &
 TEST_PROCESS_PID="$!"
@@ -188,6 +206,58 @@ kill "$SUPERVISOR_TEST_PID"
 wait "$SUPERVISOR_TEST_PID"
 [[ ! -e "$SUPERVISOR_PID_FILE" && ! -d "$SUPERVISOR_LOCK_DIR" ]] || {
   printf 'FAIL: supervisor did not clean up its PID and lock\n' >&2
+  exit 1
+}
+
+FAKE_TAILSCALE="$TEST_HOME/fake-tailscale"
+cat >"$FAKE_TAILSCALE" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+marker="$TEST_HOME/tailscale-serving"
+case "\${1-} \${2-}" in
+  "status --json")
+    printf '%s\\n' '{"BackendState":"Running","Self":{"DNSName":"home.tail123.ts.net."}}'
+    ;;
+  "serve status")
+    if [[ -f "\$marker" ]]; then
+      printf '%s\\n' '{"Web":{"home.tail123.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:19100"}}}}}'
+    else
+      printf 'No serve config\\n'
+    fi
+    ;;
+  "serve --bg"|"funnel --bg")
+    : >"\$marker"
+    printf 'Available within your tailnet:\\nhttps://home.tail123.ts.net\\n'
+    ;;
+  "serve reset"|"serve off"|"funnel reset")
+    rm -f "\$marker"
+    ;;
+  *)
+    printf 'unexpected fake tailscale: %s\\n' "\$*" >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod +x "$FAKE_TAILSCALE"
+find_tailscale() { printf '%s' "$FAKE_TAILSCALE"; }
+tailscale_is_serving() {
+  [[ -f "$TEST_HOME/tailscale-serving" ]]
+}
+curl() { printf '{"ok":true}'; }
+CESIUM_TUNNEL_PROVIDER="tailscale"
+start_tailscale_tunnel
+assert_equal "https://home.tail123.ts.net" "$(<"$PUBLIC_URL_FILE")" \
+  "Tailscale start writes the MagicDNS public URL"
+assert_equal "tailscale" "$(<"$TUNNEL_PROVIDER_FILE")" \
+  "Tailscale start records the provider"
+status_output="$(status)"
+[[ "$status_output" == *"Tailscale: serving tailnet (https://home.tail123.ts.net)"* ]] || {
+  printf 'FAIL: status did not report the Tailscale doctor line\n%s\n' "$status_output" >&2
+  exit 1
+}
+stop_tunnel
+[[ ! -f "$TEST_HOME/tailscale-serving" ]] || {
+  printf 'FAIL: stop_tunnel left Tailscale Serve configured\n' >&2
   exit 1
 }
 

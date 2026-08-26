@@ -163,6 +163,28 @@ End-user flow once deployed: install the desktop app from `/download` (or run
 `/sign-up`, and the workbench connects the account to the engine. Servers,
 preferences, and conversation snapshots sync across devices through Convex.
 
+### Optional Tailscale pairing
+
+Cesium pairing stays **rendezvous + `cesium connect`**. Tunnels default to
+**localhost.run** or **Cloudflare Quick Tunnel**. Tailscale is an extra
+provider, not a replacement and not a dependency.
+
+1. Install the [Tailscale CLI](https://tailscale.com/download) and run `tailscale login`.
+2. Enable HTTPS / MagicDNS on the tailnet (required for Serve).
+3. Opt in with one of:
+   - `cesium install --web-url https://your-hosted-cesium --tunnel-provider tailscale`
+   - `CESIUM_TUNNEL_PROVIDER=tailscale` in `~/.cesium/server.env`
+   - Settings → Servers → Public access → Tunnel provider → **Tailscale**
+4. `cesium connect` still prints the same `#cesiumConnect=` rendezvous link.
+   The published engine URL becomes `https://<machine>.<tailnet>.ts.net`.
+5. Default expose is tailnet-only Serve (`CESIUM_TAILSCALE_EXPOSE=tailnet`).
+   Use `funnel` only if you want a public Funnel URL.
+6. `cesium status` reports `Tailscale: not installed` / `needs login` / `ready`
+   even when you keep using localhost.run or Cloudflare.
+
+`auto` never selects Tailscale. If the CLI is missing, core install / connect /
+hosted flows keep working unchanged.
+
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.
