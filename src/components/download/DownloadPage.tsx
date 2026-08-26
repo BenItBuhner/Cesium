@@ -416,13 +416,18 @@ export function DownloadPage() {
               registers with this deployment so your devices can find it.
             </p>
             <p className="mt-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-              Prefer npm? The same lifecycle is available as a CLI:{" "}
+              Prefer npm? The same lifecycle is one CLI — install, start, and
+              doctor a broken machine:{" "}
               <code className="rounded bg-[var(--accent-bg)] px-[5px] py-[2px] font-mono text-[12px]">
                 npx cesium-workbench install
-              </code>{" "}
-              then{" "}
+              </code>
+              ,{" "}
               <code className="rounded bg-[var(--accent-bg)] px-[5px] py-[2px] font-mono text-[12px]">
                 npx cesium-workbench start
+              </code>
+              ,{" "}
+              <code className="rounded bg-[var(--accent-bg)] px-[5px] py-[2px] font-mono text-[12px]">
+                npx cesium-workbench doctor
               </code>
               .
             </p>
@@ -432,7 +437,7 @@ export function DownloadPage() {
               <CopyableCommand command={installCommand} label="Linux · macOS · WSL" />
             ) : null}
             <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-              Installs to ~/.cesium · manage it afterwards with `cesium-server status | logs | update`
+              Installs to ~/.cesium · afterwards: `cesium status`, `cesium logs`, `cesium doctor`
             </p>
           </div>
         </div>
