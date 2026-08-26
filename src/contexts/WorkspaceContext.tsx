@@ -92,6 +92,23 @@ const RECONNECT_TOAST_MS = 2_000;
 const DISCONNECT_TOAST_MS = 3_000;
 const SESSION_SAVE_DEBOUNCE_MS = 350;
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
+const WORKSPACE_ERROR_MESSAGE_MAX_LENGTH = 240;
+
+/**
+ * Toast-safe error text. Error messages can carry entire response bodies
+ * (worst case: a full HTML document when the configured server is not a
+ * Cesium engine) — markup blobs and multi-kilobyte dumps help nobody in a
+ * notification, so fall back to the friendly message and cap the length.
+ */
+function compactWorkspaceErrorMessage(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message.trim() : "";
+  if (!raw || raw.startsWith("<")) {
+    return fallback;
+  }
+  return raw.length > WORKSPACE_ERROR_MESSAGE_MAX_LENGTH
+    ? `${raw.slice(0, WORKSPACE_ERROR_MESSAGE_MAX_LENGTH)}…`
+    : raw;
+}
 
 type WorkspaceSessionBackup = {
   savedAt: number;
@@ -957,8 +974,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             if (!isCurrentLoad()) {
               return;
             }
-            const msg =
-              error instanceof Error ? error.message : "Failed to finish loading workspace.";
+            const msg = compactWorkspaceErrorMessage(
+              error,
+              "Failed to finish loading workspace."
+            );
             pushNotificationRef.current({
               kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
               severity: "error",
@@ -1353,8 +1372,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await loadWorkspaceStateRef.current(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
-        const msg =
-          nextError instanceof Error ? nextError.message : "Failed to load workspace";
+        const msg = compactWorkspaceErrorMessage(nextError, "Failed to load workspace");
     pushNotificationRef.current({
       kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
       severity: "error",

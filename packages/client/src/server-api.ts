@@ -157,21 +157,50 @@ function revisionKeyForServer(revisionKey: string, server?: ServerRequestContext
   return server?.baseUrl ? `${server.baseUrl}\0${revisionKey}` : revisionKey;
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
-  const text = await response.text();
-  if (!text) {
-    return `Request failed with status ${response.status}`;
+const ERROR_MESSAGE_MAX_LENGTH = 300;
+
+/**
+ * Turn an error response body into a message safe to surface in the UI.
+ *
+ * Guards against the "wrong server" failure mode: when the configured base
+ * URL points at something that is not a Cesium engine (most commonly a
+ * hosted web deployment answering its own origin with a Next.js HTML page),
+ * the body is an entire HTML document — throwing it verbatim floods error
+ * toasts with markup. Exported for tests.
+ */
+export function extractServerErrorMessage(
+  text: string,
+  status: number,
+  fallback?: string
+): string {
+  const fallbackMessage = fallback ?? `Request failed with status ${status}`;
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return fallbackMessage;
   }
   try {
-    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const parsed = JSON.parse(trimmed) as { error?: unknown; message?: unknown };
     const message = parsed.error ?? parsed.message;
     if (typeof message === "string" && message.trim()) {
-      return message;
+      return message.trim().slice(0, ERROR_MESSAGE_MAX_LENGTH);
     }
   } catch {
-    // Fall through to the raw response body.
+    // Fall through to the raw response body checks.
   }
-  return text;
+  if (/^<!doctype\s|^<html[\s>]|<\/html>/i.test(trimmed) || /^</.test(trimmed)) {
+    return (
+      `The server did not respond like a Cesium engine (HTTP ${status}). ` +
+      "Check that the active server connection points at a running engine."
+    );
+  }
+  return trimmed.length > ERROR_MESSAGE_MAX_LENGTH
+    ? `${trimmed.slice(0, ERROR_MESSAGE_MAX_LENGTH)}…`
+    : trimmed;
+}
+
+async function readErrorMessage(response: Response, fallback?: string): Promise<string> {
+  const text = await response.text().catch(() => "");
+  return extractServerErrorMessage(text, response.status, fallback);
 }
 
 export type FileReadResult = {
@@ -1694,14 +1723,7 @@ export async function transcribeAudio(
     clearStoredAuth();
   }
   if (!response.ok) {
-    const message = await response.text();
-    let parsedError = "";
-    try {
-      parsedError = (JSON.parse(message) as { error?: string })?.error ?? "";
-    } catch {
-      parsedError = "";
-    }
-    throw new Error(parsedError || message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as AudioTranscriptionResult;
 }
@@ -1734,14 +1756,7 @@ export async function saveVoiceRecording(file: File): Promise<SavedVoiceRecordin
     clearStoredAuth();
   }
   if (!response.ok) {
-    const message = await response.text();
-    let parsedError = "";
-    try {
-      parsedError = (JSON.parse(message) as { error?: string })?.error ?? "";
-    } catch {
-      parsedError = "";
-    }
-    throw new Error(parsedError || message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as SavedVoiceRecording;
 }
@@ -2867,8 +2882,7 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
     clearStoredAuth();
   }
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   await response.json();
 }
@@ -2917,8 +2931,7 @@ export async function uploadAttachments(
     clearStoredAuth();
   }
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   const result = await response.json();
   return result.attachments;
@@ -3085,8 +3098,9 @@ export async function runStorageMigration(
     clearStoredAuth();
   }
   if (!response.ok || !response.body) {
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `Migration failed with status ${response.status}`);
+    throw new Error(
+      await readErrorMessage(response, `Migration failed with status ${response.status}`)
+    );
   }
 
   const reader = response.body.getReader();
@@ -3184,8 +3198,9 @@ export async function importStorageArchive(
     clearStoredAuth();
   }
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `Import failed with status ${response.status}`);
+    throw new Error(
+      await readErrorMessage(response, `Import failed with status ${response.status}`)
+    );
   }
   return (await response.json()) as StorageImportResponse;
 }
@@ -3333,15 +3348,9 @@ export async function applyServerUpdate(
     clearStoredAuth();
   }
   if (!response.ok || !response.body) {
-    const text = await response.text().catch(() => "");
-    let message = text;
-    try {
-      const parsed = JSON.parse(text) as { error?: string };
-      if (parsed.error) message = parsed.error;
-    } catch {
-      // not JSON — keep raw text
-    }
-    throw new Error(message || `Update failed with status ${response.status}`);
+    throw new Error(
+      await readErrorMessage(response, `Update failed with status ${response.status}`)
+    );
   }
 
   const reader = response.body.getReader();
@@ -3712,8 +3721,7 @@ export async function deleteBrowserDebugSession(sessionId: string): Promise<void
     clearStoredAuth();
   }
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
 }
 
