@@ -40,7 +40,9 @@ import {
   startStaleAgentRunWatchdog,
 } from "./lib/agents/stale-run-reconciler.js";
 import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
-import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
+import { authMiddleware, isAuthEnabled, SESSION_TOKEN_HEADER } from "./lib/auth.js";
+import { assertEngineExposureAllowed } from "./lib/engine-exposure-policy.js";
+import { getEngineInstanceId } from "./lib/engine-instance.js";
 import { startUpdateAutoCheck } from "./lib/updates/update-manager.js";
 import { startCesiumTriggerScheduler } from "./lib/agents/trigger-scheduler.js";
 import { publicAccessManager, startPublicAccessManager } from "./lib/public-access-manager.js";
@@ -63,7 +65,7 @@ export type CesiumServerConfig = {
 
 export const serverConfig: CesiumServerConfig = (() => {
   const port = Number.parseInt(process.env.PORT ?? "9100", 10);
-  const host = process.env.HOST?.trim() || "0.0.0.0";
+  const host = process.env.HOST?.trim() || "127.0.0.1";
   return {
     port,
     host,
@@ -158,7 +160,11 @@ export function createCesiumApp(): Hono {
   });
 
   app.get("/health", (c) =>
-    c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
+    c.json({
+      ok: true,
+      instanceId: getEngineInstanceId(),
+      transcription: { configured: isTranscriptionConfigured() },
+    })
   );
   app.route("/", metaRoutes);
   app.route("/", authRoutes);
@@ -196,6 +202,10 @@ export function createCesiumApp(): Hono {
 let backgroundStarted = false;
 
 export function startCesiumBackgroundServices(): void {
+  assertEngineExposureAllowed({
+    bindHost: serverConfig.host,
+    authEnabled: isAuthEnabled(),
+  });
   if (backgroundStarted) {
     return;
   }

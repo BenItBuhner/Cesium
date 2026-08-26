@@ -19,6 +19,7 @@ import process from "node:process";
 const CLI_VERSION = createRequire(import.meta.url)("../package.json").version;
 const INSTALLER_URL =
   "https://raw.githubusercontent.com/BenItBuhner/Cesium/main/scripts/install-cesium-server.sh";
+const DEFAULT_PRODUCTION_WEB_URL = "https://open-cursor.vercel.app";
 
 const MANAGED_COMMANDS = [
   "start",
@@ -37,7 +38,10 @@ const MANAGED_COMMANDS = [
 const HELP = `cesium ${CLI_VERSION} — local Cesium engine manager
 
 Usage:
-  cesium install [--web-url <url>]   Install (or repair) the engine under ~/.cesium
+  cesium install [--web-url <url>] [--local]
+                                 Install (or repair) the engine under ~/.cesium.
+                                 Defaults to production Cesium (Clerk sign-in +
+                                 tunnel). Pass --local for loopback-only.
   cesium start                       Start the engine (plus tunnel when configured)
   cesium stop                        Stop the engine
   cesium restart                     Restart the engine
@@ -51,8 +55,14 @@ Usage:
   cesium version                     Show the CLI version
 
 Options for install:
-  --web-url <url>   The Cesium web deployment this engine should register with
-                    (sets CESIUM_WEB_URL; enables tunnel + rendezvous discovery).
+  --web-url <url>   Cesium web origin to register with (default:
+                    ${DEFAULT_PRODUCTION_WEB_URL}). Enables tunnel + rendezvous.
+  --local           Loopback only. No tunnel, no public URL. Auth is still
+                    generated so the engine is never left open.
+
+A pasted URL is never enough to expose this machine. Public access requires
+engine authentication (generated on install) and a tunnel or a reverse proxy
+that proves it reaches this process.
 
 Environment:
   CESIUM_HOME       Install root (default: ~/.cesium)
@@ -87,6 +97,7 @@ function requirePosix(action) {
 async function runInstall(args) {
   requirePosix("cesium install");
   const env = { ...process.env };
+  let localOnly = env.CESIUM_LOCAL_ONLY === "1";
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--web-url") {
       const value = args[i + 1];
@@ -95,9 +106,17 @@ async function runInstall(args) {
       }
       env.CESIUM_WEB_URL = value;
       i += 1;
+    } else if (args[i] === "--local") {
+      localOnly = true;
     } else {
       fail(`Unknown install option: ${args[i]}\n\n${HELP}`);
     }
+  }
+  if (localOnly) {
+    env.CESIUM_LOCAL_ONLY = "1";
+    delete env.CESIUM_WEB_URL;
+  } else if (!env.CESIUM_WEB_URL?.trim()) {
+    env.CESIUM_WEB_URL = DEFAULT_PRODUCTION_WEB_URL;
   }
 
   let script;

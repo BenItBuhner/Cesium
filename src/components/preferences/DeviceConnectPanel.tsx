@@ -4,7 +4,12 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
-import { normalizeServerBaseUrl, setStoredSessionToken } from "@cesium/client";
+import {
+  assertEngineConnectionAllowed,
+  REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
+  normalizeServerBaseUrl,
+  setStoredSessionToken,
+} from "@cesium/client";
 import {
   checkEngineHealth,
   getEngineAuthStatus,
@@ -47,6 +52,10 @@ export function DeviceConnectPanel({
     try {
       await checkEngineHealth(baseUrl);
       const auth = await getEngineAuthStatus(baseUrl);
+      assertEngineConnectionAllowed({
+        baseUrl,
+        authEnabled: auth.enabled,
+      });
       if (auth.enabled && !auth.authenticated) {
         setBaseUrlInput(baseUrl);
         setPhase("needs-auth");
@@ -54,10 +63,11 @@ export function DeviceConnectPanel({
       }
       finalize(baseUrl);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
-        err instanceof Error
-          ? `Could not reach the engine: ${err.message}`
-          : "Could not reach the engine."
+        message === REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE
+          ? message
+          : `Could not reach the engine: ${message}`
       );
       setPhase("idle");
     }
@@ -80,13 +90,14 @@ export function DeviceConnectPanel({
   return (
     <div className="flex flex-col gap-[8px] px-[8px] py-[6px]">
       <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
-        Paste an engine URL, or install Cesium on the other machine and paste the connect URL it prints.
+        Install the engine on the other machine (`cesium install`), then paste
+        its connect URL. A bare host URL with no sign-in is rejected.
       </p>
       <input
         type="url"
         value={baseUrlInput}
         onChange={(event) => setBaseUrlInput(event.target.value)}
-        placeholder="http://192.168.1.12:9100"
+        placeholder="https://your-engine.example or cesium connect URL"
         className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[6px] font-mono text-[11.5px] text-[var(--text-primary)] outline-none"
       />
       <input

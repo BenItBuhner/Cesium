@@ -19,6 +19,7 @@ delete process.env.OPENCURSOR_AUTH_PASSWORD;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 process.env.OPENCURSOR_ALLOW_PRIVATE_LAN_ORIGINS = "0";
 process.env.ALLOWED_ORIGINS = "http://localhost:3000";
+process.env.CESIUM_INSTANCE_ID = "cesium_public_access_test_instance";
 
 const fs = await import("node:fs/promises");
 const {
@@ -49,10 +50,16 @@ function makeFetch(requests: FetchRequest[] = []): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
     const href = url instanceof Request ? url.url : String(url);
     if (href.endsWith("/health")) {
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          instanceId: process.env.CESIUM_INSTANCE_ID,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
     }
     if (href.includes("/api/rendezvous/")) {
       requests.push({
@@ -272,6 +279,45 @@ test("public proxy targets are dynamically disabled while public access is enabl
     () => assertBrowserProxyHostAllowed("example.com"),
     /disallowed|not allowed|Could not resolve/i
   );
+});
+
+test("custom public URL must prove it reaches this engine", async () => {
+  delete process.env.OPENCURSOR_AUTH_USERNAME;
+  delete process.env.OPENCURSOR_AUTH_PASSWORD;
+  const manager = makeManager({
+    fetch: (async (url: string | URL | Request) => {
+      const href = url instanceof Request ? url.url : String(url);
+      if (href.endsWith("/health")) {
+        return new Response(JSON.stringify({ ok: true, instanceId: "someone-else" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "unexpected fetch" }), { status: 500 });
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () =>
+      manager.enable({
+        webAppUrl: "https://web.example",
+        customPublicUrl: "https://random-host.example",
+      }),
+    /did not prove it reaches this Cesium engine/
+  );
+});
+
+test("unauthenticated public-access enable is refused off loopback", async () => {
+  delete process.env.OPENCURSOR_AUTH_USERNAME;
+  delete process.env.OPENCURSOR_AUTH_PASSWORD;
+  const app = createCesiumApp();
+  const response = await app.request("https://fresh-public.lhr.life/api/public-access/enable", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ webAppUrl: "https://web.example" }),
+  });
+  assert.equal(response.status, 403);
+  const payload = (await response.json()) as { error?: string };
+  assert.match(payload.error ?? "", /from this machine/);
 });
 
 test("disable stops only the owned child and status redacts password and write secret", async () => {

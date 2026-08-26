@@ -373,8 +373,8 @@ export function PublicAccessSettings({
             className={inputClass}
           />
           <span className="font-sans text-[10.5px] text-[var(--text-disabled)]">
-            The generated Cesium connection link is already permanent. Set this only when an
-            existing HTTPS reverse proxy points to this backend.
+            Pasting a random URL will not expose this engine. The address must reverse-proxy
+            this process and return this engine&apos;s health instance id.
           </span>
         </label>
       </div>

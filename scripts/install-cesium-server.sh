@@ -46,6 +46,8 @@ WORKSPACE_ROOT="${CESIUM_WORKSPACE_ROOT:-$(existing_env_value WORKSPACE_ROOT)}"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$INSTALL_CWD}"
 PORT="${CESIUM_PORT:-$(existing_env_value PORT)}"
 PORT="${PORT:-9100}"
+DEFAULT_PRODUCTION_WEB_URL="${CESIUM_DEFAULT_WEB_URL:-https://open-cursor.vercel.app}"
+LOCAL_ONLY="${CESIUM_LOCAL_ONLY:-0}"
 WEB_URL="${CESIUM_WEB_URL:-$(existing_env_value CESIUM_WEB_URL)}"
 AUTH_USERNAME="${CESIUM_AUTH_USERNAME:-$(existing_env_value OPENCURSOR_AUTH_USERNAME)}"
 AUTH_USERNAME="${AUTH_USERNAME:-cesium}"
@@ -66,6 +68,12 @@ PUBLIC_URL="${CESIUM_PUBLIC_URL:-$(existing_env_value CESIUM_PUBLIC_URL)}"
 TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-$(existing_env_value CESIUM_TUNNEL_REQUIRED)}"
 SKIP_TUNNEL="${CESIUM_SKIP_TUNNEL:-0}"
 SKIP_AUTOSTART="${CESIUM_SKIP_AUTOSTART:-0}"
+if [[ "$LOCAL_ONLY" == "1" ]]; then
+  WEB_URL=""
+  SKIP_TUNNEL=1
+elif [[ -z "$WEB_URL" ]]; then
+  WEB_URL="$DEFAULT_PRODUCTION_WEB_URL"
+fi
 
 if [[ ! "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
   printf 'CESIUM_PORT must be an integer from 1 to 65535.\n' >&2
@@ -98,6 +106,10 @@ if [[ -n "$RENDEZVOUS_URL" ]]; then
     printf 'CESIUM_RENDEZVOUS_URL must use HTTPS (or local HTTP for development).\n' >&2
     exit 1
   fi
+fi
+if [[ "$LOCAL_ONLY" == "1" && -n "$PUBLIC_URL" ]]; then
+  printf 'CESIUM_PUBLIC_URL cannot be used with CESIUM_LOCAL_ONLY / cesium install --local.\n' >&2
+  exit 1
 fi
 if [[ -n "$PUBLIC_URL" && ! "$PUBLIC_URL" =~ ^https:// ]]; then
   printf 'CESIUM_PUBLIC_URL must be an HTTPS URL.\n' >&2

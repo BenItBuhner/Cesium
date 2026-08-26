@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
+import { assertEngineConnectionAllowed } from "@cesium/client";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
   setStoredSessionToken,
@@ -68,6 +69,13 @@ export function ServerConnectionsManager({
     setSavePending(true);
     setFormError(null);
     try {
+      const probe = await probeServer(baseUrl);
+      if (probe.ok) {
+        assertEngineConnectionAllowed({
+          baseUrl,
+          authEnabled: probe.authEnabled,
+        });
+      }
       const saved = saveServer({
         id: editingId ?? undefined,
         label,
@@ -83,7 +91,7 @@ export function ServerConnectionsManager({
     } finally {
       setSavePending(false);
     }
-  }, [baseUrl, editingId, label, resetForm, saveServer]);
+  }, [baseUrl, editingId, label, probeServer, resetForm, saveServer]);
 
   const runProbe = useCallback(
     async (serverId: string, candidateBaseUrl: string) => {

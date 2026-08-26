@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { CheckCircle2, Loader2, Server } from "lucide-react";
 import {
+  assertEngineConnectionAllowed,
+  REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
   getConfiguredServerBaseUrl,
   getStoredSessionToken,
   markServerConnectionUsed,
@@ -12,6 +14,7 @@ import {
   upsertServerConnection,
   writeStoredServerConnectionsState,
 } from "@cesium/client";
+import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
 import { useCloudContext, type CloudServer } from "@/contexts/CloudContext";
 import {
   checkEngineHealth,
@@ -83,6 +86,10 @@ export function ConnectServerStep({
     try {
       await checkEngineHealth(baseUrl);
       const auth = await getEngineAuthStatus(baseUrl);
+      assertEngineConnectionAllowed({
+        baseUrl,
+        authEnabled: auth.enabled,
+      });
       if (auth.enabled && !auth.authenticated) {
         setBaseUrlInput(baseUrl);
         setPhase("needs-auth");
@@ -90,10 +97,11 @@ export function ConnectServerStep({
       }
       finalizeConnection(baseUrl, getStoredSessionToken(baseUrl));
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
-        err instanceof Error
-          ? `Could not reach the engine: ${err.message}`
-          : "Could not reach the engine."
+        message === REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE
+          ? message
+          : `Could not reach the engine: ${message}`
       );
       setPhase("idle");
     }
@@ -167,6 +175,15 @@ export function ConnectServerStep({
           </div>
         </div>
       ) : null}
+
+      {cloud.mode === "clerk" && cloud.status === "signed-out" ? (
+        <p className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[14px] py-[12px] text-[13px] leading-relaxed text-[var(--text-secondary)]">
+          Sign in with the header control to use production sync. You can still
+          attach a local engine, or install one with the command below.
+        </p>
+      ) : null}
+
+      <ServerSetupCommand />
 
       <div className="space-y-[10px]">
         <label className="block">
