@@ -128,8 +128,9 @@ async function installShortcuts(exe, target, localAppData) {
     target,
     path.resolve(localAppData, "Programs", "OpenCursor"),
     path.resolve(localAppData, "OpenCursor"),
+    path.resolve(localAppData, "Programs", "@cesiumdesktop"),
   ];
-  const staleShortcutNames = ["OpenCursor.lnk", "Open Cursor.lnk"];
+  const staleShortcutNames = ["OpenCursor.lnk", "Open Cursor.lnk", "@cesiumdesktop.lnk"];
   for (const dir of shortcutDirs) {
     for (const shortcutName of staleShortcutNames) {
       const removed = await removeShortcutIfTargetsKnownInstall(

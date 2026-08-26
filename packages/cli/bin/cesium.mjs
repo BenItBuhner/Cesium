@@ -2,11 +2,12 @@
 /**
  * cesium — bare-bones CLI for the Cesium engine.
  *
- * `cesium install` runs the official installer (scripts/install-cesium-server.sh),
- * which sets up the Bun runtime, credentials, tunnel, and autostart under
- * ~/.cesium. Every other command delegates to the `cesium-server` manager the
- * installer drops at ~/.cesium/bin/cesium-server, so this CLI stays a thin,
- * dependency-free wrapper that never drifts from the installed engine.
+ * POSIX: `cesium install` runs the official installer (scripts/install-cesium-server.sh)
+ * and every other command delegates to ~/.cesium/bin/cesium-server.
+ *
+ * Windows: the bash installer is not used. The native manager in
+ * packages/cli/lib/windows-engine.mjs installs Bun, builds the engine, and
+ * handles start/stop/status without WSL.
  */
 
 import { spawnSync } from "node:child_process";
@@ -15,6 +16,7 @@ import { createRequire } from "node:module";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { runWindowsCommand, windowsHelpExtra } from "../lib/windows-engine.mjs";
 
 const CLI_VERSION = createRequire(import.meta.url)("../package.json").version;
 const INSTALLER_URL =
@@ -33,6 +35,14 @@ const MANAGED_COMMANDS = [
   "update",
   "supervise",
 ];
+
+function cliPlatform() {
+  return process.env.CESIUM_CLI_PLATFORM?.trim() || process.platform;
+}
+
+function isWindows() {
+  return cliPlatform() === "win32";
+}
 
 const HELP = `cesium ${CLI_VERSION} — local Cesium engine manager
 
@@ -57,9 +67,7 @@ Options for install:
 Environment:
   CESIUM_HOME       Install root (default: ~/.cesium)
   All CESIUM_* installer variables pass through to \`cesium install\`.
-
-Windows is supported through WSL: run this CLI inside a WSL distribution.
-The desktop app needs none of this — it ships with an embedded engine.`;
+${windowsHelpExtra()}`;
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -74,18 +82,11 @@ function managerPath() {
   return path.join(cesiumHome(), "bin", "cesium-server");
 }
 
-function requirePosix(action) {
-  if (process.platform === "win32") {
-    fail(
-      `${action} requires Linux or macOS (the engine runs on Bun/POSIX).\n` +
-        "On Windows, run this command inside WSL — or use the Cesium desktop app, " +
-        "which bundles the engine natively."
-    );
-  }
-}
-
 async function runInstall(args) {
-  requirePosix("cesium install");
+  if (isWindows()) {
+    await runWindowsCommand("install", args);
+    return;
+  }
   const env = { ...process.env };
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--web-url") {
@@ -121,7 +122,9 @@ async function runInstall(args) {
 }
 
 function delegate(command, args) {
-  requirePosix(`cesium ${command}`);
+  if (isWindows()) {
+    return runWindowsCommand(command, args);
+  }
   const manager = managerPath();
   if (!existsSync(manager)) {
     fail(
@@ -151,7 +154,7 @@ async function main() {
     return;
   }
   if (MANAGED_COMMANDS.includes(command)) {
-    delegate(command, args);
+    await delegate(command, args);
     return;
   }
   fail(`Unknown command: ${command}\n\n${HELP}`);

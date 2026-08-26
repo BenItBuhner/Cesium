@@ -23,6 +23,8 @@ describe("cesium CLI", () => {
     for (const command of ["install", "start", "stop", "status", "logs", "connect", "update"]) {
       assert.ok(result.stdout.includes(`cesium ${command}`), `help missing ${command}`);
     }
+    assert.ok(result.stdout.includes("Windows (native)"));
+    assert.ok(result.stdout.includes("SmartScreen"));
   });
 
   test("no arguments prints help and exits 0", () => {
@@ -46,16 +48,36 @@ describe("cesium CLI", () => {
     assert.ok(result.stderr.includes("Unknown command: frobnicate"));
   });
 
-  test("managed commands demand an installed engine", { skip: process.platform === "win32" }, () => {
+  test("managed commands demand an installed engine", () => {
     const emptyHome = mkdtempSync(path.join(tmpdir(), "cesium-cli-test-"));
-    const result = runCli(["status"], { CESIUM_HOME: emptyHome });
+    const result = runCli(["status"], {
+      CESIUM_HOME: emptyHome,
+      CESIUM_CLI_PLATFORM: "linux",
+    });
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes("not installed"));
     assert.ok(result.stderr.includes("cesium install"));
   });
 
-  test("install rejects a dangling --web-url flag", { skip: process.platform === "win32" }, () => {
-    const result = runCli(["install", "--web-url"]);
+  test("Windows-native status fails honestly when the engine is missing", () => {
+    const emptyHome = mkdtempSync(path.join(tmpdir(), "cesium-cli-win-"));
+    const result = runCli(["status"], {
+      CESIUM_HOME: emptyHome,
+      CESIUM_CLI_PLATFORM: "win32",
+    });
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes("not installed"));
+    assert.ok(result.stderr.includes("cesium install"));
+  });
+
+  test("install rejects a dangling --web-url flag", () => {
+    const result = runCli(["install", "--web-url"], { CESIUM_CLI_PLATFORM: "linux" });
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes("--web-url requires a value"));
+  });
+
+  test("Windows-native install rejects a dangling --web-url flag", () => {
+    const result = runCli(["install", "--web-url"], { CESIUM_CLI_PLATFORM: "win32" });
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes("--web-url requires a value"));
   });

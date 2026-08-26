@@ -17,3 +17,8 @@ export function buildCesiumServerInstallCommand(webAppUrl: string): string {
   const origin = normalizeWebAppOrigin(webAppUrl);
   return `curl -fsSL ${CESIUM_SERVER_INSTALLER_URL} | env CESIUM_WEB_URL=${shellSingleQuote(origin)} bash`;
 }
+
+export function buildCesiumWindowsInstallCommand(webAppUrl: string): string {
+  const origin = normalizeWebAppOrigin(webAppUrl);
+  return `npx cesium-workbench install --web-url ${origin}`;
+}
