@@ -20,7 +20,6 @@ import {
   type CesiumUpdateStatusPayload,
 } from "@/lib/server-api";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -262,7 +261,6 @@ export function UpdatesSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Updates" />
-      <PageIntro title="Updates" />
       <SettingsSection
         title="This installation"
         action={

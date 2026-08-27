@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, Check, ChevronRight } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -11,6 +11,8 @@ import {
   type FocusEvent,
   type ReactNode,
 } from "react";
+import { useViewport } from "@/hooks/useViewport";
+import { resolveSettingsHeaderModel } from "@/lib/settings-header";
 
 export const rowButtonClass =
   "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--bg-card-hover)] px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
@@ -358,10 +360,11 @@ export type SettingsBreadcrumbSegment = {
 };
 
 /**
- * Standardized settings page chrome: a universal back button, a
- * "Settings › …" breadcrumb trail, and the page title. Back goes to the
- * parent segment when one exists (nested views), otherwise it leaves the
- * settings shell entirely (back to Agents).
+ * Settings page chrome. Mobile (and native Android/iOS) gets a 44px parent
+ * back control and no crumb trail — the tiny "Settings › Page" row was
+ * untappable and collided with the nav drawer toggle. Desktop nested views
+ * keep a clickable ancestor trail; top-level pages are just the title
+ * because the sidebar already lists categories and "Back to Agents".
  */
 export function SettingsPageHeader({
   segments,
@@ -375,69 +378,72 @@ export function SettingsPageHeader({
   actions?: ReactNode;
 }) {
   const chrome = useSettingsShellChrome();
-  if (segments.length === 0) {
+  const { isMobile } = useViewport();
+  const model = resolveSettingsHeaderModel(segments, {
+    isMobile,
+    canCloseShell: Boolean(chrome?.closeShell),
+  });
+  if (!model) {
     return null;
   }
-  const current = segments[segments.length - 1];
-  const parent = segments.length > 1 ? segments[segments.length - 2] : null;
-  const handleBack = onBack ?? parent?.onClick ?? chrome?.closeShell;
-  const backTitle = parent ? `Back to ${parent.label}` : "Back to Agents";
+  const handleBack = onBack ?? model.parent?.onClick ?? chrome?.closeShell;
+  const showBack = Boolean(isMobile && handleBack && model.backLabel);
   return (
-    <header className="mb-[18px]">
-      <nav
-        aria-label="Breadcrumb"
-        className="mb-[10px] flex flex-wrap items-center gap-[6px] font-sans text-[12px]"
-      >
-        {handleBack ? (
+    <header className={`mb-[20px] ${isMobile ? "pl-[22px]" : ""}`}>
+      {showBack ? (
+        <div className="mb-[4px]">
           <button
             type="button"
             onClick={handleBack}
-            aria-label={backTitle}
-            title={backTitle}
-            className="mr-[4px] inline-flex h-[24px] items-center gap-[6px] rounded-full bg-[var(--accent-bg)] pl-[8px] pr-[11px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+            aria-label={model.backAriaLabel ?? "Back"}
+            title={model.backAriaLabel ?? "Back"}
+            className="-ml-[10px] inline-flex min-h-[44px] min-w-[44px] max-w-full items-center gap-[4px] rounded-[var(--radius-tab)] pl-[6px] pr-[12px] font-sans text-[15px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] active:bg-[var(--bg-card-hover)]"
           >
-            <ArrowLeft className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
-            Back
+            <ChevronLeft className="size-[20px] shrink-0" strokeWidth={1.75} aria-hidden />
+            <span className="truncate">{model.backLabel}</span>
           </button>
-        ) : null}
-        <span className="select-none text-[var(--text-disabled)]">Settings</span>
-        {segments.map((segment, index) => {
-          const isLast = index === segments.length - 1;
-          return (
-            <span
-              key={`${segment.label}-${index}`}
-              className="inline-flex min-w-0 items-center gap-[6px]"
-            >
-              <span className="select-none text-[var(--text-disabled)]" aria-hidden>
-                ›
-              </span>
-              {segment.onClick && !isLast ? (
-                <button
-                  type="button"
-                  onClick={segment.onClick}
-                  className="truncate text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-                >
-                  {segment.label}
-                </button>
-              ) : (
-                <span
-                  className={`truncate ${
-                    isLast
-                      ? "font-medium text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)]"
-                  }`}
-                  aria-current={isLast ? "page" : undefined}
-                >
-                  {segment.label}
-                </span>
-              )}
-            </span>
-          );
-        })}
-      </nav>
+        </div>
+      ) : null}
+      {model.showTrail ? (
+        <nav aria-label="Breadcrumb" className="mb-[8px] -ml-[8px]">
+          <ol className="flex min-w-0 flex-wrap items-center">
+            {model.ancestors.map((segment, index) => (
+              <li
+                key={`${segment.label}-${index}`}
+                className="inline-flex min-w-0 items-center"
+              >
+                {index > 0 ? (
+                  <ChevronRight
+                    className="size-[14px] shrink-0 text-[var(--text-disabled)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                ) : null}
+                {segment.onClick ? (
+                  <button
+                    type="button"
+                    onClick={segment.onClick}
+                    className="inline-flex min-h-[32px] max-w-[240px] items-center truncate rounded-[var(--radius-tab)] px-[8px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                  >
+                    {segment.label}
+                  </button>
+                ) : (
+                  <span className="inline-flex min-h-[32px] max-w-[240px] items-center truncate px-[8px] font-sans text-[13px] text-[var(--text-secondary)]">
+                    {segment.label}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-[12px]">
-        <h1 className="font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
-          {current.label}
+        <h1
+          className={`font-sans font-semibold tracking-tight text-[var(--text-primary)] ${
+            isMobile ? "text-[20px]" : "text-[22px]"
+          }`}
+        >
+          {model.currentLabel}
         </h1>
         {actions}
       </div>
