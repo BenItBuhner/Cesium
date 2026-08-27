@@ -7,6 +7,10 @@ import type { SetupStepId } from "./platform";
  * Local onboarding progress. The cloud copy (Convex `onboarding` table) is
  * merged in additively, so a step completed on any device is completed on
  * every device.
+ *
+ * Progress is account-scoped once we know a user key (`clerk:*` / `device:*`).
+ * Guest/local-only sessions keep the unscoped key so a later sign-in on the
+ * same device can adopt that progress into the new account.
  */
 
 export const ONBOARDING_STORAGE_KEY = "cesium-onboarding";
@@ -25,29 +29,62 @@ const VALID_STEPS = new Set<SetupStepId>([
   "first-chat",
 ]);
 
-export function readOnboardingState(): OnboardingState {
+export function onboardingStorageKey(accountKey?: string | null): string {
+  const trimmed = accountKey?.trim();
+  return trimmed ? `${ONBOARDING_STORAGE_KEY}:${trimmed}` : ONBOARDING_STORAGE_KEY;
+}
+
+function parseOnboardingState(raw: string | null): OnboardingState {
+  if (!raw) {
+    return EMPTY_STATE;
+  }
+  const parsed = JSON.parse(raw) as Partial<OnboardingState>;
+  return {
+    completedSteps: Array.isArray(parsed.completedSteps)
+      ? parsed.completedSteps.filter((step): step is SetupStepId =>
+          VALID_STEPS.has(step as SetupStepId)
+        )
+      : [],
+    completedAt:
+      typeof parsed.completedAt === "number" ? parsed.completedAt : null,
+  };
+}
+
+export function readOnboardingState(accountKey?: string | null): OnboardingState {
   try {
-    const raw = clientKeyValueStore().getItem(ONBOARDING_STORAGE_KEY);
-    if (!raw) {
-      return EMPTY_STATE;
-    }
-    const parsed = JSON.parse(raw) as Partial<OnboardingState>;
-    return {
-      completedSteps: Array.isArray(parsed.completedSteps)
-        ? parsed.completedSteps.filter((step): step is SetupStepId =>
-            VALID_STEPS.has(step as SetupStepId)
-          )
-        : [],
-      completedAt:
-        typeof parsed.completedAt === "number" ? parsed.completedAt : null,
-    };
+    return parseOnboardingState(
+      clientKeyValueStore().getItem(onboardingStorageKey(accountKey))
+    );
   } catch {
     return EMPTY_STATE;
   }
 }
 
-export function writeOnboardingState(state: OnboardingState): void {
-  clientKeyValueStore().setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(state));
+export function writeOnboardingState(
+  state: OnboardingState,
+  accountKey?: string | null
+): void {
+  clientKeyValueStore().setItem(
+    onboardingStorageKey(accountKey),
+    JSON.stringify(state)
+  );
+}
+
+/**
+ * Bind guest/local progress to a newly signed-in account on this device.
+ * Never overwrite an account that already has its own steps.
+ */
+export function adoptOnboardingForAccount(accountKey: string): OnboardingState {
+  const scoped = readOnboardingState(accountKey);
+  if (scoped.completedSteps.length > 0 || scoped.completedAt != null) {
+    return scoped;
+  }
+  const guest = readOnboardingState(null);
+  if (guest.completedSteps.length > 0 || guest.completedAt != null) {
+    writeOnboardingState(guest, accountKey);
+    return guest;
+  }
+  return scoped;
 }
 
 export function mergeOnboardingState(
@@ -77,4 +114,11 @@ export function markStepComplete(
     return state;
   }
   return { ...state, completedSteps: [...state.completedSteps, step] };
+}
+
+export function isOnboardingFinished(
+  state: OnboardingState,
+  requiredSteps: SetupStepId[]
+): boolean {
+  return requiredSteps.every((step) => state.completedSteps.includes(step));
 }

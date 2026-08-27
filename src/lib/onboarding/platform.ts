@@ -38,11 +38,39 @@ function isMobileShell(): boolean {
 }
 
 export const SETUP_STEP_LABELS: Record<SetupStepId, string> = {
-  "connect-server": "Connect your server",
+  "connect-server": "Connect your first server",
   agents: "Set up your agents",
   import: "Import previous work",
   "first-chat": "Start your first chat",
 };
+
+/** Agents, import, and first chat talk to the engine. They stay locked until one is attached. */
+export function setupStepRequiresEngine(step: SetupStepId): boolean {
+  return step !== "connect-server";
+}
+
+export function visibleSetupSteps(
+  profile: PlatformSetupProfile,
+  engineConnected: boolean
+): SetupStepId[] {
+  if (profile.serverConnection === "footnote" || engineConnected) {
+    return profile.steps;
+  }
+  return profile.steps.filter((step) => !setupStepRequiresEngine(step));
+}
+
+export function isSetupStepLocked(
+  step: SetupStepId,
+  input: { profile: PlatformSetupProfile; engineConnected: boolean }
+): boolean {
+  if (!setupStepRequiresEngine(step)) {
+    return false;
+  }
+  if (input.profile.serverConnection === "footnote") {
+    return false;
+  }
+  return !input.engineConnected;
+}
 
 export function getPlatformSetupProfile(): PlatformSetupProfile {
   if (isCesiumDesktopApp()) {

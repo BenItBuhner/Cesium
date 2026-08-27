@@ -35,7 +35,7 @@ export default function SignInPage() {
   }
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignIn />
+      <SignIn forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
     </main>
   );
 }

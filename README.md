@@ -148,7 +148,7 @@ public production deployment:
    and sign-up pages ship at `/sign-in` and `/sign-up`.
 4. **Gate the workbench (optional)** - set
    `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` to require a Clerk account for the
-   workbench routes. The landing page, `/download`, `/docs`, the auth pages,
+   workbench routes. The landing page, `/download`, the auth pages,
    and the engine rendezvous API stay public.
 5. **Engine rendezvous** - add an Upstash Redis (or Vercel KV) integration so
    `/api/rendezvous` can pair installed engines with signed-in browsers

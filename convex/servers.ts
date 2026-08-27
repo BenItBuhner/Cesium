@@ -76,6 +76,20 @@ export const save = mutation({
     if (!/^https?:\/\//.test(baseUrl)) {
       throw new Error("Server base URL must be http(s).");
     }
+    let hostname = "";
+    try {
+      hostname = new URL(baseUrl).hostname.toLowerCase();
+    } catch {
+      throw new Error("Server base URL must be http(s).");
+    }
+    if (
+      hostname === "cesium.techlitnow.com" ||
+      hostname === "www.cesium.techlitnow.com"
+    ) {
+      throw new Error(
+        "cesium.techlitnow.com is the Cesium account site, not an engine."
+      );
+    }
     const rendezvous = args.rendezvous ? validateRendezvous(args.rendezvous) : undefined;
     const now = Date.now();
     const existing =

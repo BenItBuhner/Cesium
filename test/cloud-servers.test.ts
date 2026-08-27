@@ -132,6 +132,40 @@ describe("cloud server sync helpers", () => {
     );
   });
 
+  test("merge never inherits the Cesium account site as a server", () => {
+    const merged = mergeCloudServersIntoState(defaultState(), [
+      { name: "Account site", baseUrl: "https://cesium.techlitnow.com" },
+      { name: "Real engine", baseUrl: "https://engine.example.com" },
+    ]);
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl.includes("cesium.techlitnow.com")),
+      false
+    );
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
+      true
+    );
+  });
+
+  test("push payloads omit the Cesium account site", () => {
+    const payloads = buildCloudServerPushPayloads(
+      [
+        createServerConnection({
+          label: "Account site",
+          baseUrl: "https://engine.example.com",
+        }),
+      ],
+      () => null
+    );
+    assert.equal(payloads.length, 1);
+    assert.throws(() =>
+      createServerConnection({
+        label: "Banned",
+        baseUrl: "https://cesium.techlitnow.com",
+      })
+    );
+  });
+
   test("merge ignores cloud rows with invalid locators or base URLs", () => {
     const merged = mergeCloudServersIntoState(defaultState(), [
       {

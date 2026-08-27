@@ -28,6 +28,7 @@ import {
   SERVER_CONNECTIONS_EVENT,
   setStoredSessionToken,
   writeStoredServerConnectionsState,
+  isCesiumAccountSiteUrl,
   type RendezvousLocator,
   type ServerConnection,
 } from "@cesium/client";
@@ -45,6 +46,11 @@ import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
 } from "@/lib/cloud/personalization";
+import {
+  adoptOnboardingForAccount,
+  mergeOnboardingState,
+  writeOnboardingState,
+} from "@/lib/onboarding/state";
 import {
   buildCloudServerPushPayloads,
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
@@ -233,25 +239,51 @@ function reconcilePersonalization(
  * identities - servers the user removed on this device - are skipped so they
  * do not resurrect on every bootstrap.
  */
-function mergeCloudServersIntoLocal(servers: CloudServer[]): void {
-  if (servers.length === 0) {
-    return;
-  }
+function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
+  const banned = servers.filter((server) => isCesiumAccountSiteUrl(server.baseUrl));
+  const usable = servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl));
   const tombstones = parseCloudServerTombstones(
     clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
   );
   const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
-  const merged = mergeCloudServersIntoState(state, servers, {
+  const withoutAccountSite = {
+    ...state,
+    servers: state.servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl)),
+  };
+  if (withoutAccountSite.servers.length === 0) {
+    withoutAccountSite.activeServerId = null;
+    withoutAccountSite.defaultServerId = null;
+  } else {
+    if (
+      !withoutAccountSite.servers.some((server) => server.id === withoutAccountSite.activeServerId)
+    ) {
+      withoutAccountSite.activeServerId = withoutAccountSite.servers[0]?.id ?? null;
+    }
+    if (
+      !withoutAccountSite.servers.some((server) => server.id === withoutAccountSite.defaultServerId)
+    ) {
+      withoutAccountSite.defaultServerId =
+        withoutAccountSite.servers.length === 1
+          ? (withoutAccountSite.servers[0]?.id ?? null)
+          : null;
+    }
+  }
+  const merged = mergeCloudServersIntoState(withoutAccountSite, usable, {
     skipIdentities: tombstones,
   });
+  const localChanged =
+    merged.changed ||
+    withoutAccountSite.servers.length !== state.servers.length ||
+    withoutAccountSite.activeServerId !== state.activeServerId;
   for (const entry of merged.sessionTokens) {
     if (!getStoredSessionToken(entry.baseUrl)) {
       setStoredSessionToken(entry.sessionToken, null, entry.baseUrl);
     }
   }
-  if (merged.changed) {
+  if (localChanged) {
     writeStoredServerConnectionsState(merged.state);
   }
+  return banned;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -360,8 +392,16 @@ function CloudBridge({
       return;
     }
     lastAppliedBootstrapRef.current = bootstrap;
-    mergeCloudServersIntoLocal(bootstrap.servers);
+    const banned = mergeCloudServersIntoLocal(bootstrap.servers);
+    for (const server of banned) {
+      void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
+    }
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
+    const adopted = adoptOnboardingForAccount(bootstrap.user.key);
+    writeOnboardingState(
+      mergeOnboardingState(adopted, bootstrap.onboarding),
+      bootstrap.user.key
+    );
   }, [bootstrap, actions]);
 
   // Local server-list changes push up (additive, idempotent upserts). The
@@ -514,8 +554,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         publishableKey={getClerkPublishableKey() ?? undefined}
         signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
         signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
-        signInFallbackRedirectUrl="/agent"
-        signUpFallbackRedirectUrl="/agent"
+        signInFallbackRedirectUrl="/setup?resume=1"
+        signUpFallbackRedirectUrl="/setup?resume=1"
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

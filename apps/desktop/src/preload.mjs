@@ -19,7 +19,6 @@ contextBridge.exposeInMainWorld("cesiumDesktop", {
     },
   },
   openExternal: (url) => ipcRenderer.invoke("cesium:open-external", url),
-  openDocsWindow: () => ipcRenderer.invoke("cesium:open-docs-window"),
   setTaskbarGoalProgress: (input) =>
     ipcRenderer.invoke("cesium:set-taskbar-goal-progress", input),
   minimizeWindow: () => ipcRenderer.invoke("cesium:window-minimize"),

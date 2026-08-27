@@ -32,6 +32,13 @@ describe("landing workbench CTAs", () => {
     assert.doesNotMatch(landingPage, /Launch the workbench/);
     assert.doesNotMatch(landingPage, /<WorkbenchLink\b/);
     assert.doesNotMatch(landingPage, /href=\{WORKSPACE_ROUTE\}/);
+    assert.doesNotMatch(landingPage, /Download the app/);
+    assert.doesNotMatch(landingPage, /Read the docs/);
+    assert.doesNotMatch(landingPage, /npm run dev/);
+    assert.doesNotMatch(landingPage, /Get started/);
+    assert.doesNotMatch(landingPage, /Next\.js/);
+    assert.doesNotMatch(landingPage, /Bun-powered/);
+    assert.doesNotMatch(landingPage, /Local-first AI workbench/);
   });
 
   test("signed-out visitors only reach the workbench via Continue as guest", () => {
@@ -41,6 +48,25 @@ describe("landing workbench CTAs", () => {
     assert.match(landingAuth, /<WorkbenchLink\b/);
     assert.doesNotMatch(landingAuth, /Launch workbench/);
     assert.doesNotMatch(landingAuth, /Launch the workbench/);
+  });
+
+  test("sign-in and sign-up land on account setup instead of the workbench", () => {
+    const cloudContext = readFileSync(
+      fileURLToPath(new URL("../src/contexts/CloudContext.tsx", import.meta.url)),
+      "utf8"
+    );
+    const signIn = readFileSync(
+      fileURLToPath(new URL("../src/app/sign-in/[[...sign-in]]/page.tsx", import.meta.url)),
+      "utf8"
+    );
+    const signUp = readFileSync(
+      fileURLToPath(new URL("../src/app/sign-up/[[...sign-up]]/page.tsx", import.meta.url)),
+      "utf8"
+    );
+    assert.match(cloudContext, /signInFallbackRedirectUrl="\/setup\?resume=1"/);
+    assert.match(cloudContext, /signUpFallbackRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signIn, /forceRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signUp, /forceRedirectUrl="\/setup\?resume=1"/);
   });
 
   test("download header also signs in instead of launching the workbench", () => {

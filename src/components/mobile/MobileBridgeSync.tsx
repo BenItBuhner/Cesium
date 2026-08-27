@@ -76,7 +76,7 @@ function readNativeReadyMessage(): MobileNativeToWebMessage | null {
 }
 
 export function MobileBridgeSync() {
-  const { activeServer } = useServerConnections();
+  const { activeServer, hasServer } = useServerConnections();
   const {
     activeWorkspaceId,
     flushWorkspaceSessionNow,
@@ -240,6 +240,9 @@ export function MobileBridgeSync() {
   // pointed at whichever server the workbench is actually using, e.g. after
   // switching to the on-device Termux server from the connection screen.
   useEffect(() => {
+    if (!hasServer) {
+      return;
+    }
     postMobileBridgeMessage({
       type: "serverConfigured",
       server: {
@@ -248,7 +251,7 @@ export function MobileBridgeSync() {
         authToken: getStoredSessionToken(activeServer.baseUrl),
       },
     });
-  }, [activeServer.baseUrl, activeServer.label]);
+  }, [activeServer.baseUrl, activeServer.label, hasServer]);
 
   const activeConversationIdsKey = activeConversationIds.join(",");
   useEffect(() => {

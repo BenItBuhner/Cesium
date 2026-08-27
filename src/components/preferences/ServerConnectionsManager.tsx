@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
-import { assertEngineConnectionAllowed } from "@cesium/client";
+import { assertEngineConnectionAllowed, assertEngineServerUrlAllowed } from "@cesium/client";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
   setStoredSessionToken,
@@ -35,6 +35,7 @@ export function ServerConnectionsManager({
 }) {
   const {
     activeServer,
+    hasServer,
     settingsServer,
     servers,
     onlineServers,
@@ -69,6 +70,7 @@ export function ServerConnectionsManager({
     setSavePending(true);
     setFormError(null);
     try {
+      assertEngineServerUrlAllowed(baseUrl);
       const probe = await probeServer(baseUrl);
       if (probe.ok) {
         assertEngineConnectionAllowed({
@@ -169,7 +171,7 @@ export function ServerConnectionsManager({
     () =>
       servers.map((server) => {
         const probe = probeByServerId[server.id] ?? { status: "idle", message: null };
-        const isActiveChat = server.id === activeServer.id;
+        const isActiveChat = hasServer && server.id === activeServer.id;
         const isDefaultSettings = server.id === settingsServer?.id;
         const runtimeStatus = serverStatusById[server.id];
         const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
@@ -177,6 +179,7 @@ export function ServerConnectionsManager({
       }),
     [
       activeServer.id,
+      hasServer,
       onlineServers,
       probeByServerId,
       serverStatusById,

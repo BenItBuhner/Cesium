@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-27
+
+Hosted production cut. Tag `v0.9.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64.
+
+### Added
+
+- Public `/download` page that auto-detects OS and CPU architecture and offers the latest GitHub release catalog (macOS DMG/ZIP, Windows setup, Linux AppImage/deb, Android + Wear APKs, plus PWA guidance). `/api/releases/latest` caches the GitHub payload for the page.
+- Clerk `/sign-in` and `/sign-up` routes, with an optional gated workbench (`NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN`) that still leaves marketing, auth, rendezvous, and the release catalog public.
+- Cloud sync is on by default for web, Electron, Android, and iOS (committed Convex + Clerk defaults), with a live Settings → Account **Cloud sync** toggle that flips any client to local-only without a rebuild.
+- `cesium` CLI (`cesium-workbench` on npm) to install, start, and manage a local engine (`install`, `start`/`stop`/`status`, `connect`, `update`, `supervise`).
+- Cursor Cloud agent conversations as a device-system execution target: pick **Cursor Cloud** in the rail footer, pin new chats to vendor-hosted runs, filter and badge those conversations, and archive/unarchive them on Cursor's side.
+- Shared servers sync through the signed-in account using rendezvous locators, so a phone, desktop, and web client can point at the same engine without pasting URLs.
+- Full-width slash-command and attach panels in the composer.
+
+### Changed
+
+- Settings is a short hub sidebar instead of a long stacked nav.
+- Cursor and Codex harnesses are grouped with explicit SDK/server vs ACP toggles.
+- Work profile stays hidden on first install, and the new-chat profile toggle disappears when only one profile is enabled.
+- Landing page uses Sign up, Sign in, and Continue as guest (no more Launch workbench CTAs), with tighter copy.
+- Production site and cloud defaults point at `cesium.techlitnow.com`.
+- Desktop installers use Cesium product icons; Windows is a per-user one-click setup with no directory wizard.
+- Engine exposure requires auth; URL-only publish is gone.
+
+### Fixed
+
+- Clerk → Convex auth config on the hosted app, and engine error messages no longer leak internals.
+- Default model for headless/API/voice-created chats now follows Cesium Agent settings instead of a hardcoded registry id.
+- Unpinning the last pinned conversation no longer gets undone by the legacy pin migration.
+- **Chat: Open Recent Chats** opens the rail search modal again.
+- Terminal kill escalates to SIGKILL when a polite PTY kill is ignored.
+- Test fixtures no longer write phantom conversations into the real user store.
+
 ## [0.8.0] - 2026-08-22
 
 First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64.
