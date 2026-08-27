@@ -256,12 +256,6 @@ export function DownloadPage() {
           </Link>
           <nav className="flex items-center gap-[6px]">
             <Link
-              href="/docs"
-              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-            >
-              Docs
-            </Link>
-            <Link
               href="/sign-in"
               className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
             >
@@ -451,9 +445,6 @@ export function DownloadPage() {
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/" className="transition-colors hover:text-[var(--text-primary)]">
               Home
-            </Link>
-            <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
-              Docs
             </Link>
             <WorkbenchLink className="transition-colors hover:text-[var(--text-primary)]">
               Workbench

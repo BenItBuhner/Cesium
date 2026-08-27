@@ -299,12 +299,6 @@ export function LandingPage() {
             >
               Download
             </Link>
-            <Link
-              href="/docs"
-              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-            >
-              Docs
-            </Link>
             <LandingHeaderActions />
           </nav>
         </div>
@@ -535,9 +529,6 @@ export function LandingPage() {
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">
               Download
-            </Link>
-            <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
-              Docs
             </Link>
             <LandingFooterActions />
             <span className="font-mono">AGPL-3.0</span>

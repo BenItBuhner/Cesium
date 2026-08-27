@@ -1294,7 +1294,7 @@ function humanizeToolCallName(value: string): string {
 function inferUserSegmentKind(token: string): UserMessageSegment["type"] | null {
   const bare = token.startsWith("@") ? token.slice(1) : token;
   const lowered = bare.toLowerCase();
-  if (["codebase", "docs", "web", "terminal"].includes(lowered)) {
+  if (["codebase", "web", "terminal"].includes(lowered)) {
     return "context";
   }
   if (

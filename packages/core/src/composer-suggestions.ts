@@ -107,13 +107,6 @@ const TOOL_AT: AtSuggestion[] = [
     category: "tool",
   },
   {
-    id: "docs",
-    label: "Docs",
-    subtitle: "Reference documentation",
-    insert: "@Docs",
-    category: "tool",
-  },
-  {
     id: "web",
     label: "Web",
     subtitle: "Search the web",

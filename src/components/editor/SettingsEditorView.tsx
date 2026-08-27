@@ -30,7 +30,6 @@ import {
   Bot,
   ChevronRight,
   CircleUserRound,
-  ExternalLink,
   Keyboard,
   Mic,
   Palette,
@@ -56,7 +55,6 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
-import { openDocumentation } from "@/lib/open-documentation";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import { isDesktopNativeAvailable } from "@/lib/desktop-native-bridge";
 import {
@@ -227,7 +225,6 @@ function SettingsNavContent({
   onSearchChange,
   onSearchKeyDown,
   onSelectSearchResult,
-  onOpenDocs,
   closeMobileDrawer,
   isMobile,
   padSettingsSearchForWindowChrome,
@@ -246,7 +243,6 @@ function SettingsNavContent({
     event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => void;
   onSelectSearchResult: (hit: SettingsSearchEntry) => void;
-  onOpenDocs: () => void;
   closeMobileDrawer?: () => void;
   isMobile: boolean;
   /** Windowed tab inset (beta): extra leading padding on the search field only (mobile drawer + desktop aside). */
@@ -403,16 +399,6 @@ function SettingsNavContent({
                 </button>
               );
             })}
-            <div className="my-[8px] h-px bg-[var(--border-subtle)]" role="separator" />
-            <button
-              type="button"
-              onClick={onOpenDocs}
-              className={`${navItemClass} font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]`}
-              title="Open documentation in a new browser tab"
-            >
-              <ExternalLink className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-left">Docs</span>
-            </button>
           </>
         )}
       </nav>
@@ -871,7 +857,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       onSearchChange={setSearchQuery}
       onSearchKeyDown={onSearchKeyDown}
       onSelectSearchResult={applySearchHit}
-      onOpenDocs={openDocumentation}
       closeMobileDrawer={closeMobileDrawer}
       isMobile={isMobile}
       padSettingsSearchForWindowChrome={padSettingsSearchForWindowChrome}
