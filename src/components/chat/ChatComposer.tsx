@@ -181,6 +181,7 @@ import {
   uploadAttachments,
 } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   buildDesignCaptureBlock,
   COMPOSER_CAPTURE_TOKEN_REGEX,
@@ -1104,6 +1105,7 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const { fileTree, gitStatus, workspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const { themeConfig } = useTheme();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
   const hasHardwareKeyboard = useHardwareKeyboard();
@@ -3693,8 +3695,10 @@ const handleNativeComposerKeyDown = useCallback(
   }, [hookMeasuresMultiline, value]);
 
   const useStickyMultiline = variant === "docked" && !isExpanded;
+  const preferDetailedComposer = themeConfig.composerLayout === "detailed";
+  const effectiveForceMultiline = forceMultiline || preferDetailedComposer;
   const isMultiLine = resolveComposerIsMultiLine({
-    forceMultiline,
+    forceMultiline: effectiveForceMultiline,
     useStickyMultiline,
     hookMeasuresMultiline,
     latchedMultiline: multilineLatch,
@@ -3726,14 +3730,21 @@ const handleNativeComposerKeyDown = useCallback(
   canBackspaceClearModeChipRef.current =
     variant === "docked" &&
     !isExpanded &&
-    !forceMultiline &&
+    !effectiveForceMultiline &&
     !isMultiLine &&
     attachedImages.length === 0 &&
     !(showComposerHeightOverlay && dockComposerHeightExpanded);
 
-  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
-  const showFloatingPlaceholder =
-    composerTrimmedLength === 0 && !isMultiLine;
+  /**
+   * Hide the overlay after a real wrap (including Shift+Enter blank lines).
+   * `trim()` alone is wrong: `\\n`-only input trims to "" while the field is
+   * visibly multi-line. Treat phantom empty newlines as empty so detailed
+   * (always-stacked) mode still shows the placeholder.
+   */
+  const showFloatingPlaceholder = isComposerEffectivelyEmptyForMultiline(
+    value,
+    hookMeasuresMultiline
+  );
 
   const composerScrollFadeKey = [
     layout,
@@ -3974,6 +3985,8 @@ const handleNativeComposerKeyDown = useCallback(
         ref={composerRootRef}
         data-ide-input-sink
         data-composer-shell
+        data-composer-layout={themeConfig.composerLayout}
+        data-composer-stacked={isMultiLine ? "true" : "false"}
         className={`${shellMargin} chat-composer-surface relative flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] p-[10px]`}
       >
         {inlineOverflowProbe}
