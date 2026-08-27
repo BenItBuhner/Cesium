@@ -51,8 +51,11 @@ import {
   eventMatchesAgentSwitcherChord,
   matchesShortcutStep,
   parseShortcutBinding,
+  eventMatchesVoiceShortcutRelease,
+  applyVoiceShortcutKeyDown,
+  applyVoiceShortcutKeyUp,
+  createVoiceShortcutGestureState,
   type ShortcutChordState,
-  type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import {
   nextAgentSwitcherIndex,
@@ -166,9 +169,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
   const chordRef = useRef<ShortcutChordState | null>(null);
-  const voiceHoldActiveRef = useRef(false);
-  const voiceInputModeRef = useRef<VoiceInputMode>(settings.keyboardShortcuts.voiceInputMode);
-  voiceInputModeRef.current = settings.keyboardShortcuts.voiceInputMode;
+  const voiceShortcutGestureRef = useRef(createVoiceShortcutGestureState());
 
   const {
     activeWorkspaceId,
@@ -1056,18 +1057,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.openBackendDropdown":
           dispatchChatComposerShortcut("openBackendDropdown");
           break;
-        case "chat.action.toggleVoiceInput": {
-          const mode = voiceInputModeRef.current;
-          if (mode === "hold") {
-            if (!voiceHoldActiveRef.current) {
-              voiceHoldActiveRef.current = true;
-              dispatchChatComposerShortcut("startVoiceInput");
-            }
-          } else {
-            dispatchChatComposerShortcut("toggleVoiceInput");
-          }
+        case "chat.action.toggleVoiceInput":
+          dispatchChatComposerShortcut("toggleVoiceInput");
           break;
-        }
         case "chat.action.toggleComposerExpand":
           dispatchChatComposerShortcut("toggleComposerExpand");
           break;
@@ -1132,6 +1124,26 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     ]
   );
 
+  const runKeyboardShortcutCommand = useCallback(
+    (id: string, event: KeyboardEvent) => {
+      if (id === "chat.action.toggleVoiceInput") {
+        if (event.repeat) {
+          return;
+        }
+        const action = applyVoiceShortcutKeyDown(
+          voiceShortcutGestureRef.current,
+          performance.now()
+        );
+        if (action === "toggle") {
+          dispatchChatComposerShortcut("toggleVoiceInput");
+        }
+        return;
+      }
+      runShortcutCommand(id);
+    },
+    [runShortcutCommand]
+  );
+
   const handleWorkbenchKeyDown = useCallback(
     (e: KeyboardEvent) =>
       tryDispatchKeyboardShortcut({
@@ -1139,10 +1151,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         platform: shortcutPlatform,
         bindings: shortcutBindings,
         chordRef,
-        onCommand: runShortcutCommand,
+        onCommand: (id) => runKeyboardShortcutCommand(id, e),
         editableTarget: isEditableShortcutTarget(e.target),
       }),
-    [runShortcutCommand, shortcutBindings, shortcutPlatform]
+    [runKeyboardShortcutCommand, shortcutBindings, shortcutPlatform]
   );
 
   const { effectiveActions: quickActions } = useQuickActionsConfig();
@@ -1224,10 +1236,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         platform: shortcutPlatform,
         bindings: inputSinkWorkbenchBindings,
         chordRef,
-        onCommand: runShortcutCommand,
+        onCommand: (id) => runKeyboardShortcutCommand(id, e),
         editableTarget: isEditableShortcutTarget(e.target),
       }),
-    [inputSinkWorkbenchBindings, runShortcutCommand, shortcutPlatform]
+    [inputSinkWorkbenchBindings, runKeyboardShortcutCommand, shortcutPlatform]
   );
 
   const commands: PaletteCommand[] = useMemo(
@@ -1883,36 +1895,40 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!voiceHoldActiveRef.current) return;
-      const voiceBindings = getShortcutBindingsForCommand(
-        shortcutBindings,
-        "chat.action.toggleVoiceInput"
-      );
-      for (const bindingStr of voiceBindings) {
-        const parsed = parseShortcutBinding(bindingStr);
-        if (!parsed || parsed.length !== 1) continue;
-        const step = parsed[0];
-        if (!step) continue;
-        if (matchesShortcutStep(e, step, shortcutPlatform)) {
-          voiceHoldActiveRef.current = false;
-          dispatchChatComposerShortcut("stopVoiceInput");
-          return;
-        }
+      if (
+        !eventMatchesVoiceShortcutRelease(e, shortcutBindings, shortcutPlatform)
+      ) {
+        return;
       }
-      if (e.key === "Meta" || e.key === "Control") {
-        voiceHoldActiveRef.current = false;
+      const action = applyVoiceShortcutKeyUp(
+        voiceShortcutGestureRef.current,
+        performance.now()
+      );
+      if (action === "stop") {
+        dispatchChatComposerShortcut("stopVoiceInput");
+      }
+    };
+
+    const onWindowBlur = () => {
+      const action = applyVoiceShortcutKeyUp(
+        voiceShortcutGestureRef.current,
+        performance.now()
+      );
+      if (action === "stop") {
         dispatchChatComposerShortcut("stopVoiceInput");
       }
     };
 
     document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onWindowBlur);
     document.addEventListener("paste", onPaste, true);
     document.addEventListener("copy", onCopy, true);
     document.addEventListener("cut", onCut, true);
   return () => {
     document.removeEventListener("keydown", onKeyDown, true);
     document.removeEventListener("keyup", onKeyUp, true);
+    window.removeEventListener("blur", onWindowBlur);
     document.removeEventListener("paste", onPaste, true);
       document.removeEventListener("copy", onCopy, true);
       document.removeEventListener("cut", onCut, true);

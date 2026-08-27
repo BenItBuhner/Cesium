@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
+  eventMatchesVoiceShortcutRelease,
   isNativeEditableShortcutEvent,
+  normalizeKeyboardShortcutsState,
   tryDispatchKeyboardShortcut,
   type KeyboardShortcutBindingsMap,
   type ShortcutChordState,
@@ -134,6 +136,51 @@ test("start voice agent defaults to Mod+Alt+V and runs in editable targets", () 
   assert.equal(result.consumed, true);
   assert.equal(result.defaultPrevented, true);
   assert.equal(result.commandId, "workbench.action.startVoiceAgent");
+});
+
+test("voice transcription defaults to Mod+T and runs in editable targets", () => {
+  assert.deepEqual(
+    DEFAULT_KEYBOARD_SHORTCUT_BINDINGS["chat.action.toggleVoiceInput"],
+    ["Mod+T"]
+  );
+
+  const result = dispatchShortcut({
+    event: keyEvent({ key: "t", ctrlKey: true }),
+    editableTarget: true,
+  });
+
+  assert.equal(result.consumed, true);
+  assert.equal(result.defaultPrevented, true);
+  assert.equal(result.commandId, "chat.action.toggleVoiceInput");
+});
+
+test("legacy voiceInputMode is ignored when normalizing shortcut settings", () => {
+  const state = normalizeKeyboardShortcutsState({
+    bindings: {},
+    voiceInputMode: "hold",
+  });
+  assert.equal("voiceInputMode" in state, false);
+  assert.ok(state.bindings["chat.action.toggleVoiceInput"]);
+});
+
+test("voice shortcut release matches the bound key or the modifier", () => {
+  const bindings = DEFAULT_KEYBOARD_SHORTCUT_BINDINGS;
+  assert.equal(
+    eventMatchesVoiceShortcutRelease(
+      keyEvent({ key: "t", ctrlKey: true }),
+      bindings,
+      "other"
+    ),
+    true
+  );
+  assert.equal(
+    eventMatchesVoiceShortcutRelease(keyEvent({ key: "Control" }), bindings, "other"),
+    true
+  );
+  assert.equal(
+    eventMatchesVoiceShortcutRelease(keyEvent({ key: "a", ctrlKey: true }), bindings, "other"),
+    false
+  );
 });
 
 test("start voice agent binding does not collide with plain paste", () => {

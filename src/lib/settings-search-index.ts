@@ -846,7 +846,12 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   section("actions", "presets", "Preset actions", "quick actions presets"),
   section("actions", "custom", "Custom actions", "custom quick action command prompt keybinding"),
 
-  section("keyboardShortcuts", "voice", "Voice input", "hold toggle"),
+  section(
+    "keyboardShortcuts",
+    "voice",
+    "Voice input",
+    "press hold release tap record transcription"
+  ),
 
   // -- Import & export --
   section("exportImport", "export", "Export", "json backup"),
@@ -903,7 +908,16 @@ const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITI
       subtitle: `${def.section} · Keyboard shortcuts`,
       navId: "keyboardShortcuts",
       panelQuery: def.label,
-      keywords: [def.id, def.section, "shortcut", "keybinding", "hotkey"],
+      keywords: [
+        def.id,
+        def.section,
+        "shortcut",
+        "keybinding",
+        "hotkey",
+        ...(def.id === "chat.action.toggleVoiceInput"
+          ? ["press", "hold", "release", "tap", "record", "transcription"]
+          : []),
+      ],
     })
 );
 

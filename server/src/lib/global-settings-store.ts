@@ -130,6 +130,7 @@ export type GlobalSettings = {
   };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
+    /** @deprecated Unified tap/hold shortcut; ignored if present in older profiles. */
     voiceInputMode?: "hold" | "toggle";
   };
 };
@@ -264,7 +265,6 @@ function createDefaultSettings(): GlobalSettings {
     },
     keyboardShortcuts: {
       bindings: {},
-      voiceInputMode: "toggle",
     },
   };
 }
@@ -973,9 +973,6 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts
         ? (r.keyboardShortcuts as GlobalSettings["keyboardShortcuts"]).bindings ?? {}
         : {},
-      voiceInputMode: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts
-        ? (r.keyboardShortcuts as GlobalSettings["keyboardShortcuts"]).voiceInputMode ?? "toggle"
-        : "toggle",
     },
   };
 }

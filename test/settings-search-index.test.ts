@@ -192,6 +192,15 @@ describe("settings search index", () => {
         (hit) => hit.kind === "shortcut" && hit.id === "shortcut::chat.action.newChat"
       )
     );
+
+    const voiceHold = searchSettingsIndex(index, "hold record");
+    assert.ok(
+      voiceHold.some(
+        (hit) =>
+          hit.kind === "shortcut" &&
+          hit.id === "shortcut::chat.action.toggleVoiceInput"
+      )
+    );
   });
 
   test("indexes Cursor ACP and harness enable toggles", () => {
