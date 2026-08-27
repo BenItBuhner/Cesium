@@ -20,6 +20,7 @@ export type AgentConversationsAllSummary = {
   status: AgentConversationRecord["status"];
   archivedAt: number | null;
   settledAt: number | null;
+  settledUntil: number | null;
   backendId: AgentConversationRecord["config"]["backendId"];
   mode: AgentConversationRecord["config"]["mode"];
   experimental: boolean;
@@ -137,6 +138,7 @@ function summarizeConversation(
     status: conversation.status,
     archivedAt: conversation.archivedAt ?? null,
     settledAt: conversation.settledAt ?? null,
+    settledUntil: conversation.settledUntil ?? null,
     backendId: conversation.config.backendId,
     mode: conversation.config.mode,
     experimental: conversation.experimental,

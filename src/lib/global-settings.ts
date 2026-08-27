@@ -9,6 +9,7 @@ export {
 } from "@cesium/client";
 export type {
   AgentRailGroupByMode,
+  AgentRailOrderByMode,
   AgentRailScope,
   AgentRailSectionId,
   AgentRailSettingsState,
@@ -30,8 +31,13 @@ export type {
   WorkspaceSortMode,
 } from "@cesium/client";
 export {
+  AGENT_RAIL_GROUP_BY_LABELS,
+  AGENT_RAIL_GROUP_BY_MODES,
+  AGENT_RAIL_ORDER_BY_LABELS,
+  AGENT_RAIL_ORDER_BY_MODES,
   AGENT_RAIL_SECTION_IDS,
   AGENT_RAIL_VIEW_PRESETS,
+  AGENT_RAIL_VIEW_PRESET_INFO,
   NEW_CHAT_WIDGET_IDS,
   createDefaultNewChatWidgetsState,
   isNewChatWidgetId,

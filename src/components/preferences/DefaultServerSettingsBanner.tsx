@@ -16,8 +16,9 @@ export function DefaultServerSettingsBanner({ className = "" }: { className?: st
     >
       <p className="font-medium">Choose a default settings server</p>
       <p className="mt-[4px] text-[var(--text-secondary)]">
-        With multiple servers connected, theme, keyboard shortcuts, and model preferences are stored on
-        one home server so they stay consistent when you switch chats.
+        Client preferences (theme, shortcuts, layout) stay uniform via one home server when you
+        switch chats. Engine pages — models, usage, voice, plugins — always follow the connected
+        server.
       </p>
       <div className="mt-[8px] flex flex-wrap gap-[6px]">
         {servers.map((server) => (

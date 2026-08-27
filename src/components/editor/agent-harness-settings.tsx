@@ -3947,10 +3947,6 @@ function HarnessListView({
       </SettingsSection>
 
       <SettingsSection title="Harnesses">
-        <p className="px-[16px] pb-[8px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-          Turn on only the agent runtimes you want in the model picker. Configure sign-in from
-          each harness page.
-        </p>
         {HARNESS_FAMILIES.map((family, index) => {
           const remembered = rememberedByHarness.get(family.settingsId) ?? [];
           const enabled = isHarnessFamilyEnabled(agents.enabledHarnesses, family);

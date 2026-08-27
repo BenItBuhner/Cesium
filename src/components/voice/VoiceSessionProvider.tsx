@@ -194,6 +194,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   transcriptRef.current = transcript;
 
   const captureRef = useRef<VoiceCapture | null>(null);
+  const captureGenerationRef = useRef(0);
+  const captureStartingRef = useRef(false);
   const vadRef = useRef<VadEngine | null>(null);
   const endpointerRef = useRef<Endpointer | null>(null);
   const playerRef = useRef<TtsPlayer | null>(null);
@@ -404,6 +406,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   );
 
   const teardownCapture = useCallback(() => {
+    captureGenerationRef.current += 1;
+    captureStartingRef.current = false;
     const capture = captureRef.current;
     captureRef.current = null;
     endpointerRef.current = null;
@@ -426,44 +430,61 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
    * frame path, so text-only and synthetic-audio sessions work without a mic.
    */
   const setupCapture = useCallback(async () => {
-    if (captureRef.current) return;
-    if (!vadRef.current) {
-      vadRef.current = await createBestVad();
-    }
-    const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
-    endpointerRef.current = endpointer;
-    const capture = new VoiceCapture({
-      onFrame: (frame) => {
-        const vad = vadRef.current;
-        if (!vad || endpointerRef.current !== endpointer) return;
-        const result = vad.process(frame);
-        if (typeof result === "number") {
-          handleEndpointerEvents(endpointer.processFrame(result));
-        } else {
-          void result.then((prob) => {
-            if (endpointerRef.current !== endpointer) return;
-            handleEndpointerEvents(endpointer.processFrame(prob));
-          });
-        }
-      },
-      onLevel: (rms) => {
-        micLevelRef.current = Math.min(1, rms * 8);
-      },
-      onError: (captureError) => {
-        setMicError(`Capture: ${captureError.message}`);
-      },
-    });
-    captureRef.current = capture;
-    setMicState("starting");
-    setMicError(null);
+    if (captureRef.current || captureStartingRef.current) return;
+    const generation = captureGenerationRef.current;
+    captureStartingRef.current = true;
     try {
-      await capture.start();
-      if (captureRef.current !== capture) return;
-      setMicState("on");
-    } catch (captureError) {
-      if (captureRef.current !== capture) return;
-      setMicState("error");
-      setMicError(describeMicError(captureError));
+      if (!vadRef.current) {
+        vadRef.current = await createBestVad();
+        if (generation !== captureGenerationRef.current) return;
+      }
+      if (generation !== captureGenerationRef.current) return;
+      const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
+      endpointerRef.current = endpointer;
+      const capture = new VoiceCapture({
+        onFrame: (frame) => {
+          const vad = vadRef.current;
+          if (!vad || endpointerRef.current !== endpointer) return;
+          const result = vad.process(frame);
+          if (typeof result === "number") {
+            handleEndpointerEvents(endpointer.processFrame(result));
+          } else {
+            void result.then((prob) => {
+              if (endpointerRef.current !== endpointer) return;
+              handleEndpointerEvents(endpointer.processFrame(prob));
+            });
+          }
+        },
+        onLevel: (rms) => {
+          micLevelRef.current = Math.min(1, rms * 8);
+        },
+        onError: (captureError) => {
+          setMicError(`Capture: ${captureError.message}`);
+        },
+      });
+      captureRef.current = capture;
+      setMicState("starting");
+      setMicError(null);
+      try {
+        await capture.start();
+        if (
+          generation !== captureGenerationRef.current ||
+          captureRef.current !== capture
+        ) {
+          await capture.stop().catch(() => {});
+          return;
+        }
+        setMicState("on");
+      } catch (captureError) {
+        if (generation !== captureGenerationRef.current) return;
+        if (captureRef.current !== capture) return;
+        setMicState("error");
+        setMicError(describeMicError(captureError));
+      }
+    } finally {
+      if (generation === captureGenerationRef.current) {
+        captureStartingRef.current = false;
+      }
     }
   }, [handleEndpointerEvents]);
 

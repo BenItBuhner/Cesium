@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
+import { CESIUM_CLOUD_DEFAULTS } from "../src/lib/cloud/cloud-defaults.ts";
 import {
   getClerkPublishableKey,
   getCloudMode,
@@ -35,18 +36,28 @@ function setEnv(values: Partial<Record<(typeof VARS)[number], string>>) {
 describe("cloud flags", () => {
   afterEach(() => setEnv({}));
 
-  test("default (no env) is local-only - pre-cloud behavior", () => {
+  test("default (no env) uses committed production clerk defaults", () => {
     setEnv({});
-    assert.equal(getCloudMode(), "disabled");
-    assert.equal(getConvexUrl(), null);
-    assert.equal(getClerkPublishableKey(), null);
+    assert.equal(getCloudMode(), "clerk");
+    assert.equal(getConvexUrl(), CESIUM_CLOUD_DEFAULTS.convexUrl);
+    assert.equal(getClerkPublishableKey(), CESIUM_CLOUD_DEFAULTS.clerkPublishableKey);
     assert.equal(isSignInRequired(), false);
     assert.equal(isCloudExplicitlyDisabled(), false);
   });
 
-  test("convex url alone enables device mode", () => {
+  test("convex url alone still uses the committed clerk default", () => {
     setEnv({ NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:3210" });
+    assert.equal(getCloudMode(), "clerk");
+    assert.equal(isSignInRequired(), false);
+  });
+
+  test("explicit clerk off-value keeps device mode", () => {
+    setEnv({
+      NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:3210",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "0",
+    });
     assert.equal(getCloudMode(), "device");
+    assert.equal(getClerkPublishableKey(), null);
     assert.equal(isSignInRequired(), false);
   });
 
@@ -79,6 +90,7 @@ describe("cloud flags", () => {
     setEnv({
       NEXT_PUBLIC_CESIUM_CLOUD: "1",
       NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:3210",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "0",
     });
     assert.equal(getCloudMode(), "device");
   });
@@ -86,6 +98,7 @@ describe("cloud flags", () => {
   test("require-sign-in only applies in clerk mode", () => {
     setEnv({
       NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:3210",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "0",
       NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN: "1",
     });
     assert.equal(isSignInRequired(), false, "device mode never requires sign-in");

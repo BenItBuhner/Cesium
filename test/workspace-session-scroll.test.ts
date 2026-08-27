@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolvePersistedChatScroll } from "../src/lib/workspace-session";
+import {
+  normalizeSettingsViewSession,
+  resolvePersistedChatScroll,
+} from "../src/lib/workspace-session";
 
 test("resolvePersistedChatScroll defaults missing state to bottom", () => {
   const result = resolvePersistedChatScroll({}, {}, "conv-1", "workspace-1", "window-1", "server");
@@ -39,4 +42,39 @@ test("resolvePersistedChatScroll can restore from anchor without y", () => {
     mode: "restore",
     anchor: { messageId: "msg-2", delta: 16 },
   });
+});
+
+test("normalizeSettingsViewSession keeps plugin catalog off when MCP is open", () => {
+  const fallback = {
+    activeNav: "general",
+    searchQuery: "",
+    scrollTop: 0,
+  };
+  const next = normalizeSettingsViewSession(
+    {
+      activeNav: "plugins",
+      mcpsOpen: true,
+      pluginsCatalogOpen: true,
+    },
+    fallback
+  );
+  assert.equal(next.mcpsOpen, true);
+  assert.equal(next.pluginsCatalogOpen, false);
+});
+
+test("normalizeSettingsViewSession opens the plugin catalog on the Integrations hub", () => {
+  const fallback = {
+    activeNav: "general",
+    searchQuery: "",
+    scrollTop: 0,
+  };
+  const next = normalizeSettingsViewSession(
+    {
+      activeNav: "plugins",
+      pluginsCatalogOpen: true,
+    },
+    fallback
+  );
+  assert.equal(next.mcpsOpen, false);
+  assert.equal(next.pluginsCatalogOpen, true);
 });

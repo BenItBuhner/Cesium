@@ -14,6 +14,8 @@ import { DeviceConnectPanel } from "@/components/preferences/DeviceConnectPanel"
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useCloudContext } from "@/contexts/CloudContext";
+import { shouldShowServerUrlInDevicePicker } from "@/lib/account-server-sync";
 import type { ServerRailAppearance } from "@/lib/global-settings";
 import {
   getServerDisplayLabel,
@@ -87,6 +89,7 @@ export function ServerPickerPopover({
   const { saveServer, removeServer } = useServerConnections();
   const { updateWorkspaceSession } = useWorkspace();
   const { openSettingsView } = useShellView();
+  const cloud = useCloudContext();
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -281,9 +284,14 @@ export function ServerPickerPopover({
                         {displayLabel}
                       </span>
                     )}
-                    <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
-                      {server.baseUrl}
-                    </span>
+                    {shouldShowServerUrlInDevicePicker({
+                      cloud,
+                      isLocalDevice,
+                    }) ? (
+                      <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
+                        {server.baseUrl}
+                      </span>
+                    ) : null}
                   </span>
                   {selected ? (
                     <Check className="size-[13px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />

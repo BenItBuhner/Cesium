@@ -46,11 +46,13 @@ import { BACK_INTENT_PRIORITY } from "@/components/mobile/BackIntentContext";
 import { MobileNavDrawerShell } from "@/components/mobile/MobileNavDrawerShell";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
 import { SettingsPanelErrorBoundary } from "@/components/editor/settings/SettingsPanelErrorBoundary";
+import { SettingsServerRequiredState } from "@/components/editor/settings/SettingsServerRequiredState";
 import { SettingsShellChromeContext } from "@/components/editor/settings-ui";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -58,7 +60,14 @@ import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-sho
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import { isDesktopNativeAvailable } from "@/lib/desktop-native-bridge";
 import {
+  filterSettingsNavEntries,
+  filterSettingsSearchEntries,
+  isSettingsNavAvailable,
+  settingsNavRequiresServer,
+} from "@/lib/settings-availability";
+import {
   buildSettingsSearchIndex,
+  pluginsSettingsSubviewForSearchHit,
   searchSettingsIndex,
   settingsSearchHitToFocus,
   type SettingsSearchEntry,
@@ -69,11 +78,13 @@ type NavEntry =
   | { kind: "divider" };
 
 /**
- * Top-level settings hubs. Nested pages (models, storage, MCP, …) stay
- * reachable from these hubs and from search; they are not sidebar items.
+ * Top-level settings hubs. Account is the identity card at the top of the
+ * nav (not a plain row). Servers sits with it in the first cluster
+ * (identity + engine connections). Nested pages (models, storage, MCP, …)
+ * stay reachable from these hubs and from search; they are not sidebar items.
  */
 const NAV_ENTRIES: NavEntry[] = [
-  { kind: "item", id: "account", label: "Account", icon: CircleUserRound },
+  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "divider" },
   { kind: "item", id: "general", label: "General", icon: Settings },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
@@ -81,7 +92,6 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "plugins", label: "Integrations", icon: Puzzle },
-  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "divider" },
   { kind: "item", id: "advanced", label: "Advanced", icon: SlidersHorizontal },
 ];
@@ -105,7 +115,11 @@ function settingsSidebarSelection(activeNav: string): string {
 }
 
 const searchInputClass =
-  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] pr-[54px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+
+/** Solid keycap so the search field does not show through a translucent chip. */
+const searchShortcutHintClass =
+  "pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-main)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]";
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
@@ -114,9 +128,8 @@ const searchResultClass =
   "flex w-full flex-col gap-[2px] rounded-[var(--radius-tab)] px-[10px] py-[7px] text-left transition-colors hover:bg-[var(--accent-bg)]";
 
 /**
- * Compact identity card pinned to the bottom of the settings nav, right above
- * the back button. Shows who is signed in (cloud account, device sync, engine
- * session, or local) and opens the Account panel.
+ * Compact identity card at the top of the settings nav. Shows who is signed
+ * in (cloud account, device sync, engine session, or local) and opens Account.
  */
 function SettingsNavAccountPreview({
   active,
@@ -214,6 +227,7 @@ export type SettingsEditorViewProps = {
 
 function SettingsNavContent({
   activeNav,
+  navEntries,
   searchQuery,
   searchModLabel,
   searchResults,
@@ -230,6 +244,7 @@ function SettingsNavContent({
   padSettingsSearchForWindowChrome,
 }: {
   activeNav: string;
+  navEntries: NavEntry[];
   searchQuery: string;
   searchModLabel: string;
   searchResults: SettingsSearchEntry[];
@@ -256,7 +271,7 @@ function SettingsNavContent({
   }, [closeMobileDrawer, isMobile, onNavChange]);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-panel)]">
+    <div className="aurora-settings-nav flex h-full flex-col bg-[var(--bg-panel)]">
       <div className="mobile-safe-top-pad flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
         {isMobile ? (
           <button
@@ -289,7 +304,9 @@ function SettingsNavContent({
               onChange={onSearchChange}
               onNativeKeyDown={onSearchKeyDown}
               placeholder="Search settings"
-              className={searchInputClass}
+              className={`${searchInputClass} ${
+                searchQuery.length > 0 || !isMobile ? "pr-[54px]" : "pr-[10px]"
+              }`}
               ariaLabel="Search settings"
               ariaControls="settings-search-results"
               ariaExpanded={isSearching}
@@ -307,11 +324,8 @@ function SettingsNavContent({
               >
                 <X className="size-[13px]" strokeWidth={1.75} aria-hidden />
               </button>
-            ) : (
-              <span
-                className="pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] bg-[var(--accent-bg)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]"
-                aria-hidden
-              >
+            ) : isMobile ? null : (
+              <span className={searchShortcutHintClass} aria-hidden>
                 {searchModLabel}+F
               </span>
             )}
@@ -366,7 +380,13 @@ function SettingsNavContent({
           </div>
         ) : (
           <>
-            {NAV_ENTRIES.map((entry, i) => {
+            <div className="mb-[4px]">
+              <SettingsNavAccountPreview
+                active={settingsSidebarSelection(activeNav) === "account"}
+                onOpen={handleOpenAccount}
+              />
+            </div>
+            {navEntries.map((entry, i) => {
               if (entry.kind === "divider") {
                 return (
                   <div
@@ -403,12 +423,8 @@ function SettingsNavContent({
         )}
       </nav>
 
-      <div className="flex shrink-0 flex-col gap-[6px] px-[11px] pb-[10px] pt-[6px]">
-        <SettingsNavAccountPreview
-          active={activeNav === "account"}
-          onOpen={handleOpenAccount}
-        />
-        {onCloseShell ? (
+      {onCloseShell ? (
+        <div className="flex shrink-0 flex-col px-[11px] pb-[10px] pt-[6px]">
           <button
             type="button"
             onClick={onCloseShell}
@@ -419,8 +435,8 @@ function SettingsNavContent({
             <ArrowLeft className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
             <span className="min-w-0 flex-1 truncate">Back to Agents</span>
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -428,6 +444,7 @@ function SettingsNavContent({
 export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {}) {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const { availability, enginePagesVisible, engineConnected } = useSettingsEngineAvailability();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { ipadBetaSettings } = useCesiumRendererFeatureFlags();
   const { isMobile } = useViewport();
@@ -455,7 +472,15 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
   const resolvedNav = activeNav;
-  const SettingsPanel = SETTINGS_PANELS[resolvedNav] ?? SETTINGS_PANELS.general;
+  const serverBoundPageBlocked =
+    settingsNavRequiresServer(resolvedNav) && !engineConnected;
+  const SettingsPanel = serverBoundPageBlocked
+    ? null
+    : SETTINGS_PANELS[resolvedNav] ?? SETTINGS_PANELS.general;
+  const visibleNavEntries = useMemo(
+    () => filterSettingsNavEntries(NAV_ENTRIES, enginePagesVisible),
+    [enginePagesVisible]
+  );
   const searchModLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
     []
@@ -475,8 +500,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   );
 
   const searchResults = useMemo(
-    () => searchSettingsIndex(settingsSearchIndex, debouncedSearchQuery),
-    [settingsSearchIndex, debouncedSearchQuery]
+    () =>
+      filterSettingsSearchEntries(
+        searchSettingsIndex(settingsSearchIndex, debouncedSearchQuery),
+        enginePagesVisible
+      ),
+    [enginePagesVisible, settingsSearchIndex, debouncedSearchQuery]
   );
 
   const isSearching = debouncedSearchQuery.trim().length > 0;
@@ -607,6 +636,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           ...current.settingsView,
           activeNav: "plugins",
           mcpsOpen: true,
+          pluginsCatalogOpen: false,
         },
       }));
       setActiveNav("plugins");
@@ -732,23 +762,25 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           },
         }));
       }
-      if (id === "plugins" && activeNav !== "plugins") {
+      if (id === "plugins") {
         updateWorkspaceSession((current) => ({
           ...current,
           settingsView: {
             ...current.settingsView,
             mcpsOpen: false,
+            pluginsCatalogOpen: false,
           },
         }));
       }
       if (id !== "plugins") {
         updateWorkspaceSession((current) =>
-          current.settingsView.mcpsOpen
+          current.settingsView.mcpsOpen || current.settingsView.pluginsCatalogOpen
             ? {
                 ...current,
                 settingsView: {
                   ...current.settingsView,
                   mcpsOpen: false,
+                  pluginsCatalogOpen: false,
                 },
               }
             : current
@@ -760,16 +792,13 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
   const applySearchHit = useCallback(
     (hit: SettingsSearchEntry) => {
-      const focus = settingsSearchHitToFocus(hit);
       const legacyMcpNav = hit.navId === "mcps" || hit.navId === "tools";
       const nextNav = legacyMcpNav ? "plugins" : hit.navId;
-      const opensMcpsSubview =
-        legacyMcpNav ||
-        (nextNav === "plugins" &&
-          (hit.rowId === "mcp-link" ||
-            hit.id === "plugins::section::mcp-presets" ||
-            hit.id === "plugins::section::mcp-custom" ||
-            hit.id === "plugins::section::mcp-connected"));
+      if (!isSettingsNavAvailable(nextNav, enginePagesVisible)) {
+        return;
+      }
+      const focus = settingsSearchHitToFocus(hit);
+      const pluginsSubview = pluginsSettingsSubviewForSearchHit(hit);
       setActiveNav(nextNav);
       updateWorkspaceSession((current) => ({
         ...current,
@@ -782,7 +811,8 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
               : hit.navId === "agents" && hit.kind !== "harness"
                 ? null
                 : current.settingsView.agentsHarnessId ?? null,
-          mcpsOpen: opensMcpsSubview,
+          mcpsOpen: pluginsSubview === "mcp",
+          pluginsCatalogOpen: pluginsSubview === "catalog",
           panelSearchFocus: focus
             ? focus.kind === "scroll"
               ? {
@@ -797,7 +827,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         setNavDrawerOpen(false);
       }
     },
-    [isMobile, updateWorkspaceSession]
+    [enginePagesVisible, isMobile, updateWorkspaceSession]
   );
 
   const onSearchKeyDown = useCallback(
@@ -846,6 +876,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const navContent = (
     <SettingsNavContent
       activeNav={activeNav}
+      navEntries={visibleNavEntries}
       searchQuery={searchQuery}
       searchModLabel={searchModLabel}
       searchResults={searchResults}
@@ -877,7 +908,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         drawerClassName="border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
         drawer={navContent}
       >
-        <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
+        <div className="aurora-settings-main flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
           {!navDrawerOpen ? (
             <button
               type="button"
@@ -891,12 +922,17 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
           <main
             ref={scrollRootRef}
-            className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+            className="aurora-settings-main mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
             onScroll={onMainScroll}
           >
             <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
               <DefaultServerSettingsBanner className="mb-[16px]" />
-              {SettingsPanel ? (
+              {serverBoundPageBlocked ? (
+                <SettingsServerRequiredState
+                  navId={resolvedNav}
+                  phase={availability === "checking" ? "checking" : "none"}
+                />
+              ) : SettingsPanel ? (
                 <SettingsPanelErrorBoundary panelId={resolvedNav}>
                   <SettingsPanel />
                 </SettingsPanelErrorBoundary>
@@ -916,7 +952,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       groupRef={groupRef}
       key="settings-shell-desktop"
       orientation="horizontal"
-      className="h-full min-w-0 bg-[var(--bg-main)]"
+      className="aurora-settings-shell h-full min-w-0 bg-[var(--bg-main)]"
       defaultLayout={settingsDesktopLayout}
     >
       <Panel
@@ -942,12 +978,17 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       >
         <main
           ref={scrollRootRef}
-          className="hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+          className="aurora-settings-main hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
             <DefaultServerSettingsBanner className="mb-[16px]" />
-            {SettingsPanel ? (
+            {serverBoundPageBlocked ? (
+              <SettingsServerRequiredState
+                navId={resolvedNav}
+                phase={availability === "checking" ? "checking" : "none"}
+              />
+            ) : SettingsPanel ? (
               <SettingsPanelErrorBoundary panelId={resolvedNav}>
                 <SettingsPanel />
               </SettingsPanelErrorBoundary>

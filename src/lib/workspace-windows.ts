@@ -3,7 +3,7 @@ import {
   WORKBENCH_VIEW_SEARCH_PARAM,
   WORKSPACE_ROUTE,
 } from "@/lib/workbench-view";
-import { currentModel } from "@/lib/mock-data";
+import { NO_MODEL_PLACEHOLDER } from "@/lib/agent-chat";
 import {
   createDefaultWorkspaceSession,
   mergeWorkspaceSessionFromImport,
@@ -122,7 +122,7 @@ export function normalizeWorkspaceWindowSession(
   raw: WorkspaceSessionState | null | undefined
 ): WorkspaceSessionState {
   return mergeWorkspaceSessionFromImport(
-    createDefaultWorkspaceSession([], currentModel),
+    createDefaultWorkspaceSession([], NO_MODEL_PLACEHOLDER),
     raw
   );
 }

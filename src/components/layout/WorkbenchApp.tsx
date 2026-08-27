@@ -8,6 +8,9 @@ import {
 } from "react";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { AuroraSceneProvider } from "@/components/agent/AuroraSceneContext";
+import { AuroraShellBackdrop } from "@/components/agent/AuroraBackdrop";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
 import { DesktopNativeSync } from "@/components/desktop/DesktopNativeSync";
@@ -92,13 +95,36 @@ function WorkbenchShell() {
     return (
       <div
         ref={settingsSurfaceRef}
-        className="h-screen w-screen overflow-hidden bg-[var(--bg-main)] will-change-transform"
+        className="aurora-settings-shell relative z-[1] h-full w-full overflow-hidden will-change-transform"
       >
         <SettingsShellView />
       </div>
     );
   }
   return <AgentLayout />;
+}
+
+/**
+ * One window-sized aurora canvas that outlives the agent <-> settings swap.
+ * Settings and the agent shell both sit on top as translucent windows so the
+ * same backdrop keeps drifting instead of going black the moment settings
+ * opens.
+ */
+function WorkbenchAuroraHost({ children }: { children: ReactNode }) {
+  const { settings } = useGlobalSettings();
+  const auroraEnabled = settings.aurora.enabled;
+  return (
+    <AuroraSceneProvider>
+      <div
+        className="relative isolate h-screen w-screen overflow-hidden bg-[var(--bg-main)]"
+        data-aurora-scene={auroraEnabled ? "on" : undefined}
+        data-aurora-surface={auroraEnabled ? "on" : undefined}
+      >
+        <AuroraShellBackdrop />
+        {children}
+      </div>
+    </AuroraSceneProvider>
+  );
 }
 
 function WorkbenchWithConversationProviders() {
@@ -108,7 +134,9 @@ function WorkbenchWithConversationProviders() {
         <MobileBridgeSync />
         <DesktopNativeSync />
         <MobileBackController />
-        <WorkbenchShell />
+        <WorkbenchAuroraHost>
+          <WorkbenchShell />
+        </WorkbenchAuroraHost>
       </AgentConversationsProvider>
     </OpenInEditorProvider>
   );

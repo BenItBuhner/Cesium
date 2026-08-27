@@ -16,9 +16,14 @@ import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { SETUP_ROUTE } from "@/lib/onboarding/workspace-errors";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
+  NO_MODEL_PLACEHOLDER,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
 import {
@@ -120,6 +125,36 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     standaloneDraftActive,
     setStandaloneDraftActive,
   } = useAgentShellState();
+  const { hasServer } = useServerConnections();
+  const { pushNotification, dismissByKind } = useWorkbenchNotifications();
+
+  /**
+   * Submitting without any usable backend must not silently no-op: surface a
+   * persistent prompt that pushes the user to connect a server (fresh account)
+   * or fix the connection (engine offline / no harnesses).
+   */
+  const notifyNoBackendAvailable = useCallback(() => {
+    dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectFirstServer);
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.connectFirstServer,
+      severity: "info",
+      title: hasServer ? "Server unavailable" : "Connect a server to chat",
+      message: hasServer
+        ? "Your server isn't reachable or has no agent harnesses available. Reconnect or pick another server to send prompts."
+        : "Cesium needs a connected server before agents can run. Connect one to start chatting - it syncs to your account.",
+      persistent: true,
+      actions: [
+        {
+          id: "open-setup",
+          label: "Connect server",
+          primary: true,
+          onClick: () => {
+            window.location.assign(SETUP_ROUTE);
+          },
+        },
+      ],
+    });
+  }, [dismissByKind, hasServer, pushNotification]);
 
   const draftBackend = useMemo(
     () =>
@@ -129,12 +164,12 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       ),
     [activeCloudDevice, backends, workspaceSession.chat.backendId]
   );
+  // No backend (no connected server / engine offline) means no model catalog.
+  // Never fall back to the persisted session model: it would parade a model
+  // the user cannot actually run in the picker.
   const draftModels = useMemo(
-    () =>
-      draftBackend
-        ? buildDraftModelOptionsForBackend(draftBackend)
-        : [workspaceSession.chat.model],
-    [draftBackend, workspaceSession.chat.model]
+    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : []),
+    [draftBackend]
   );
   // Depend on the narrow chat fields the resolution actually reads - the
   // whole `chat` object is replaced by unrelated session folds (unread maps,
@@ -146,7 +181,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   const chatBackendId = workspaceSession.chat.backendId;
   const chatLastModelByBackend = workspaceSession.chat.lastModelByBackend;
   const draftModel = useMemo(() => {
-    if (!draftBackend) return chatModel;
+    if (!draftBackend) return NO_MODEL_PLACEHOLDER;
     return (
       resolveLastUsedDraftModel(chatRef.current, draftBackend, draftModels) ??
       resolveDraftModelForBackend(draftBackend)
@@ -246,7 +281,10 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   const handleSubmit = useCallback(
     async (text: string, attachments?: ImageAttachment[]) => {
       const backend = draftBackend;
-      if (!backend) return false;
+      if (!backend) {
+        notifyNoBackendAvailable();
+        return false;
+      }
 
       // Capability profile (Code / Work / custom presets) rides along for the
       // built-in agent only; other backends do not understand profile ids.
@@ -351,6 +389,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       deleteWorktree,
       gitStatus?.currentBranch,
       gitStatus?.worktrees,
+      notifyNoBackendAvailable,
       noWorkspaceDraft,
       openWorkspaceById,
       refreshConversationGroups,

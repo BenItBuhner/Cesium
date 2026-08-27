@@ -60,9 +60,18 @@ const STATUS_PRIORITY: Record<AgentRailStatusKind, number> = {
 
 /** True when the user marked the conversation settled (and nothing cleared it since). */
 export function agentRailConversationIsSettled(
-  conversation: Pick<AgentRailConversationSummary, "settledAt">
+  conversation: Pick<AgentRailConversationSummary, "settledAt" | "settledUntil">,
+  now = Date.now()
 ): boolean {
-  return conversation.settledAt != null;
+  if (conversation.settledAt == null) {
+    return false;
+  }
+  // Timed settle ("ignore for a day"): treated as unsettled once it elapses,
+  // even before the server's lazy expiry catches up on the next refresh.
+  if (conversation.settledUntil != null && conversation.settledUntil <= now) {
+    return false;
+  }
+  return true;
 }
 
 export type AgentRailStatusContext = {
@@ -76,7 +85,7 @@ export type AgentRailStatusContext = {
 export function agentRailConversationNeedsAttention(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil"
   >,
   ctx?: AgentRailStatusContext
 ): boolean {
@@ -98,7 +107,7 @@ export function agentRailConversationNeedsAttention(
 export function getAgentRailStatusKind(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailStatusKind {
@@ -147,6 +156,7 @@ export function getAgentRailStatusInfo(
     | "pendingPermissionTitle"
     | "lastErrorSummary"
     | "settledAt"
+    | "settledUntil"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailStatusInfo {
@@ -199,11 +209,11 @@ export function getAgentRailStatusInfo(
 export function compareAgentRailByStatusPriority(
   a: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "updatedAt" | "id"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil" | "updatedAt" | "id"
   >,
   b: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "updatedAt" | "id"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil" | "updatedAt" | "id"
   >,
   ctx?: {
     unreadCompletionByConversationId?: Record<string, true>;
@@ -290,7 +300,7 @@ export const AGENT_RAIL_PRIORITY_BUCKET_LABELS: Record<AgentRailPriorityBucket, 
 export function getAgentRailPriorityBucket(
   conversation: Pick<
     AgentRailConversationSummary,
-    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
+    "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil"
   >,
   ctx?: AgentRailStatusContext
 ): AgentRailPriorityBucket {

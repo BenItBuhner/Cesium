@@ -14,15 +14,16 @@ import {
   CircleCheck,
   CirclePause,
   Cloud,
+  GitBranch,
   LoaderCircle,
   MessageCircleQuestion,
-  Moon,
   MoreVertical,
   ShieldAlert,
   Square,
 } from "lucide-react";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
+  agentRailConversationIsSettled,
   getAgentRailStatusInfo,
   type AgentRailRowDetailMode,
   type AgentRailStatusInfo,
@@ -156,7 +157,6 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   onOverflowMenu,
   onEditValueChange,
   onSelect,
-  onToggleSettled,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -167,6 +167,8 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   bulkSelected = false,
   showOverflowMenu = false,
   showMachineBadge = false,
+  showEnvironmentBadge = true,
+  showBranchBadge = false,
   unreadCompletion = false,
   acknowledgedFailure = false,
 }: {
@@ -188,8 +190,6 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
-  /** Small settle toggle on the row card; settled rows sink until a new prompt. */
-  onToggleSettled?: (conversation: AgentRailConversationSummary) => void;
   onDragStart?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragEnd?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragOver?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
@@ -200,6 +200,10 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   bulkSelected?: boolean;
   showOverflowMenu?: boolean;
   showMachineBadge?: boolean;
+  /** Show the cloud badge when the agent executes on a vendor cloud. */
+  showEnvironmentBadge?: boolean;
+  /** Show the git branch badge when the conversation carries repository info. */
+  showBranchBadge?: boolean;
   unreadCompletion?: boolean;
   acknowledgedFailure?: boolean;
 }) {
@@ -239,7 +243,7 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   }
   const hasDetailLine = detailText != null;
 
-  const settled = conversation.settledAt != null;
+  const settled = agentRailConversationIsSettled(conversation);
   const rowHighlighted = bulkSelectMode ? bulkSelected : selected;
   const rowClassName = `flex w-full gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left select-none ${
     hasDetailLine
@@ -339,12 +343,21 @@ export const AgentConversationRow = memo(function AgentConversationRow({
 
   const badges = (
     <>
-      {conversation.executionTarget === "cloud" ? (
+      {showEnvironmentBadge && conversation.executionTarget === "cloud" ? (
         <span
           title="Runs on the harness vendor's cloud (e.g. Cursor Cloud)"
           className="inline-flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)]"
         >
           <Cloud className="size-[11px]" strokeWidth={1.7} aria-hidden />
+        </span>
+      ) : null}
+      {showBranchBadge && conversation.repository?.currentBranch ? (
+        <span
+          title={`Branch ${conversation.repository.currentBranch}`}
+          className="inline-flex max-w-[92px] shrink items-center gap-[3px] truncate rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[4px] py-px font-mono text-[9px] text-[var(--text-disabled)]"
+        >
+          <GitBranch className="size-[9px] shrink-0" strokeWidth={1.8} aria-hidden />
+          <span className="min-w-0 truncate">{conversation.repository.currentBranch}</span>
         </span>
       ) : null}
       {showMachineBadge && conversation.serverLabel ? (
@@ -455,34 +468,6 @@ export const AgentConversationRow = memo(function AgentConversationRow({
           </>
         )}
       </button>
-      {onToggleSettled && !bulkSelectMode ? (
-        <button
-          type="button"
-          data-perf="agent-rail-row-settle"
-          className={`flex size-[22px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] ${
-            settled ? "" : "rail-settle-hit"
-          }`}
-          aria-label={
-            settled
-              ? `Unsettle ${conversation.title}`
-              : `Settle ${conversation.title}`
-          }
-          aria-pressed={settled}
-          title={settled ? "Settled · click to unsettle" : "Settle conversation"}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleSettled(conversation);
-          }}
-        >
-          <Moon
-            className="size-[13px]"
-            strokeWidth={1.6}
-            fill={settled ? "currentColor" : "none"}
-            aria-hidden
-          />
-        </button>
-      ) : null}
       {showOverflowMenu && onOverflowMenu ? (
         <button
           type="button"

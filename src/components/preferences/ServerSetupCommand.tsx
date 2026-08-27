@@ -16,7 +16,14 @@ function hostedWebAppOrigin(): string {
     : "";
 }
 
-export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
+export function ServerSetupCommand({
+  compact = false,
+  accountLinked = false,
+}: {
+  compact?: boolean;
+  /** Signed-in production/device sync: engines attach to the account automatically. */
+  accountLinked?: boolean;
+}) {
   const [origin] = useState(hostedWebAppOrigin);
   const [command, setCommand] = useState("");
   const [copied, setCopied] = useState(false);
@@ -75,21 +82,31 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
             Install a server
           </h3>
           <p className="mt-[4px] font-sans text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
-            Run this on the machine Cesium should access. It installs into{" "}
-            <span className="font-mono">~/.cesium</span>, starts immediately, and prints a secure
-            permanent Connect URL plus sign-in credentials. Use this instead of SSH.
+            {accountLinked ? (
+              <>
+                Run this on the machine Cesium should access. It installs into{" "}
+                <span className="font-mono">~/.cesium</span>, starts immediately, and attaches
+                to your account so every signed-in device can use it.
+              </>
+            ) : (
+              <>
+                Run this on the machine Cesium should access. It installs into{" "}
+                <span className="font-mono">~/.cesium</span>, starts immediately, and prints a
+                secure permanent Connect URL plus sign-in credentials. Use this instead of SSH.
+              </>
+            )}
           </p>
         </div>
       </div>
-      <div className="mt-[9px] flex min-w-0 items-stretch gap-[7px]">
-        <code className="min-w-0 flex-1 overflow-x-auto rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[8px] font-mono text-[10.5px] leading-relaxed text-[var(--text-primary)]">
+      <div className="mt-[9px] flex min-w-0 items-center gap-[7px]">
+        <code className="hide-scrollbar-x block min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[7px] font-mono text-[10.5px] leading-none text-[var(--text-primary)]">
           {command || "Preparing install command..."}
         </code>
         <button
           type="button"
           disabled={!command || rendezvousStatus !== "ready"}
           onClick={() => void copyCommand()}
-          className="inline-flex w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
+          className="inline-flex h-[30px] w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
           aria-label="Copy Cesium server install command"
         >
           {copied ? (
