@@ -13,6 +13,10 @@ export const update = mutation({
     completeSteps: v.optional(v.array(v.string())),
     markComplete: v.optional(v.boolean()),
   },
+  returns: v.object({
+    completedSteps: v.array(v.string()),
+    completedAt: v.union(v.number(), v.null()),
+  }),
   handler: async (ctx, args) => {
     const userId = await ensureUser(ctx, args.deviceKey);
     const existing = await ctx.db
