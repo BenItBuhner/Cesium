@@ -477,6 +477,7 @@ function ActiveServerSection() {
  * local-first builds show local mode, production builds show real sign-in.
  */
 export function AccountSettingsPanel() {
+  const { hasServer } = useServerConnections();
   return (
     <>
       <PageIntro title="Account" />
@@ -484,7 +485,7 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
-      <ServerSessionSection />
+      {hasServer ? <ServerSessionSection /> : null}
       <ActiveServerSection />
       <SettingsCallout className="px-[2px]">
         Account and session state vary by deployment: local-first builds keep

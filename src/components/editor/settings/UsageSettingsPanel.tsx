@@ -26,6 +26,7 @@ import {
   SettingsSection,
   tagClass,
 } from "@/components/editor/settings-ui";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -1060,6 +1061,7 @@ function ProviderDetail({
 /* --------------------------------- panel -------------------------------- */
 
 export function UsageSettingsPanel() {
+  const { hasServer } = useServerConnections();
   const [overview, setOverview] = useState<UsageOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1067,6 +1069,12 @@ export function UsageSettingsPanel() {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const load = useCallback(async (background: boolean) => {
+    if (!hasServer) {
+      setOverview(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     if (!background) setLoading(true);
     try {
       const payload = await fetchUsageOverview({ days: FETCH_DAYS, refresh: true });
@@ -1078,9 +1086,13 @@ export function UsageSettingsPanel() {
     } finally {
       if (!background) setLoading(false);
     }
-  }, []);
+  }, [hasServer]);
 
   useEffect(() => {
+    if (!hasServer) {
+      setLoading(false);
+      return;
+    }
     void load(false);
     const poll = setInterval(() => void load(true), POLL_INTERVAL_MS);
     // Keep countdowns and "x ago" labels honest between polls.

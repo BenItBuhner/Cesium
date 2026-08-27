@@ -1,6 +1,7 @@
 "use client";
 
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
   PageIntro,
   SettingsLinkRow,
@@ -8,6 +9,7 @@ import {
 } from "@/components/editor/settings-ui";
 
 export function AdvancedSettingsPanel() {
+  const { hasServer } = useServerConnections();
   const { updateWorkspaceSession } = useWorkspace();
 
   const openNav = (activeNav: string) => {
@@ -29,20 +31,25 @@ export function AdvancedSettingsPanel() {
           title="Import & export"
           description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
           onClick={() => openNav("exportImport")}
+          border={hasServer}
         />
-        <SettingsLinkRow
-          searchId="storage-link"
-          title="Storage"
-          description="See the current driver and migrate between file storage and Postgres."
-          onClick={() => openNav("storage")}
-        />
-        <SettingsLinkRow
-          searchId="updates-link"
-          title="Updates"
-          description="Check for new builds and apply an in-place update on this server."
-          onClick={() => openNav("updates")}
-          border={false}
-        />
+        {hasServer ? (
+          <>
+            <SettingsLinkRow
+              searchId="storage-link"
+              title="Storage"
+              description="See the current driver and migrate between file storage and Postgres."
+              onClick={() => openNav("storage")}
+            />
+            <SettingsLinkRow
+              searchId="updates-link"
+              title="Updates"
+              description="Check for new builds and apply an in-place update on this server."
+              onClick={() => openNav("updates")}
+              border={false}
+            />
+          </>
+        ) : null}
       </SettingsSection>
       <SettingsSection title="Experiments">
         <SettingsLinkRow
