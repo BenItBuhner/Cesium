@@ -1,7 +1,8 @@
 "use client";
 
-import { PanelRightClose } from "lucide-react";
+import { PanelLeftClose, PanelRightClose } from "lucide-react";
 import { EditorPanel } from "@/components/editor/EditorPanel";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
@@ -16,6 +17,8 @@ export function AgentSidePane() {
     setExpandedComposerDraft,
     sidePaneScopeId,
   } = useAgentShellState();
+  const { settings } = useGlobalSettings();
+  const sideColumnsSwapped = settings.general.sideColumnsSwapped && !isMobile;
   const isDesktopApp = useIsCesiumDesktopApp();
   const electronTrailingChrome = isDesktopApp && !isMobile;
 
@@ -33,7 +36,11 @@ export function AgentSidePane() {
           aria-label="Hide workbench pane"
           title="Hide workbench pane"
         >
-          <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
+          {sideColumnsSwapped ? (
+            <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+          ) : (
+            <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
+          )}
         </button>
       ) : null}
       <div className="mobile-safe-top-content h-full min-h-0 w-full overflow-hidden">

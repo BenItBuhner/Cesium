@@ -299,7 +299,8 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "appearance",
     "swap-columns",
     "Swap side columns",
-    "Move the agent/chat pane to the left and the file sidebar to the right while keeping the editor centered."
+    "Mirror the layout: move the workbench pane to the left and the workspace sidebar to the right while keeping the chat centered.",
+    ["swap", "mirror", "layout", "columns", "sidebar", "rail", "left", "right"]
   ),
   row(
     "appearance",

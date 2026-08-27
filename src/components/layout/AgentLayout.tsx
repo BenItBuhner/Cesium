@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { PanelLeftOpen, PanelRightOpen } from "lucide-react";
 import { Group, Panel, Separator, useGroupRef, usePanelRef } from "react-resizable-panels";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
@@ -67,8 +67,9 @@ function AgentCenterStage({
 
 function AgentLayoutShell() {
   const { activeWorkspaceId, fileTree, loading, sessionReady, workspaceInfo } = useWorkspace();
-  const { settings: globalSettingsForAurora } = useGlobalSettings();
-  const auroraSceneEnabled = globalSettingsForAurora.aurora.enabled;
+  const { settings: globalSettings } = useGlobalSettings();
+  const auroraSceneEnabled = globalSettings.aurora.enabled;
+  const sideColumnsSwapped = globalSettings.general.sideColumnsSwapped;
   const {
     isMobile,
     leftRailCollapsed,
@@ -379,92 +380,131 @@ function AgentLayoutShell() {
                 ) : null}
               </MobileAgentShell>
             ) : (
-              <div ref={desktopShellRef} className="h-full min-w-0 [&>[data-group]]:h-full">
+              <div
+                ref={desktopShellRef}
+                className="h-full min-w-0 [&>[data-group]]:h-full"
+                data-side-columns-swapped={sideColumnsSwapped ? "true" : undefined}
+              >
               <Group
                 id="agent-shell-panels"
                 groupRef={groupRef}
-                key="agent-shell-desktop"
+                key={sideColumnsSwapped ? "agent-shell-desktop-swapped" : "agent-shell-desktop"}
                 orientation="horizontal"
                 className="h-full min-w-0"
                 defaultLayout={agentShellLayout}
               >
-                <Panel
-                  id={AGENT_SHELL_PANEL_IDS.rail}
-                  panelRef={railPanelRef}
-                  minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
-                  maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
-                  collapsible
-                  collapsedSize={`${AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT}%`}
-                  onResize={(panelSize) => {
-                    if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
-                      return;
-                    }
-                    setAgentShellDesktopLayout({
-                      [AGENT_SHELL_PANEL_IDS.rail]: panelSize.asPercentage,
-                    });
-                  }}
-                  className={`min-h-0 overflow-hidden ${
-                    leftRailCollapsed ? "" : "border-r border-[var(--border-subtle)]"
-                  }`}
-                >
-                  <AgentWorkspaceRail />
-                </Panel>
-                <AgentShellResizeHandle />
-                <Panel
-                  id={AGENT_SHELL_PANEL_IDS.center}
-                  minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
-                  className="relative min-h-0 min-w-0 overflow-hidden"
-                >
-                  {/* z-20 drag host for window dragging; AgentCenterStage at z-[21] layers chat content above. */}
-                  <div
-                    aria-hidden
-                    className="absolute left-0 right-[148px] top-0 z-20 h-[32px]"
-                    data-electron-drag-host
-                  />
-                  {!rightPaneOpen && !isDraftConversationSelected ? (
-                    <button
-                      type="button"
-                      onClick={toggleRightPaneOpen}
-                        data-workbench-pane-toggle
-                        data-electron-no-drag
-                        data-electron-trailing-chrome={
-                          electronTrailingChromeForToggle ? "true" : undefined
+                {(() => {
+                  const railPanel = (
+                    <Panel
+                      id={AGENT_SHELL_PANEL_IDS.rail}
+                      panelRef={railPanelRef}
+                      minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
+                      maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
+                      collapsible
+                      collapsedSize={`${AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT}%`}
+                      onResize={(panelSize) => {
+                        if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
+                          return;
                         }
-                        className="mobile-safe-top-offset absolute top-[11px] right-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                      aria-label="Show workbench pane"
+                        setAgentShellDesktopLayout({
+                          [AGENT_SHELL_PANEL_IDS.rail]: panelSize.asPercentage,
+                        });
+                      }}
+                      className={`min-h-0 overflow-hidden ${
+                        leftRailCollapsed
+                          ? ""
+                          : `${sideColumnsSwapped ? "border-l" : "border-r"} border-[var(--border-subtle)]`
+                      }`}
                     >
-                      <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
-                    </button>
-                  ) : null}
+                      <AgentWorkspaceRail />
+                    </Panel>
+                  );
+                  const centerPanel = (
+                    <Panel
+                      id={AGENT_SHELL_PANEL_IDS.center}
+                      minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
+                      className="relative min-h-0 min-w-0 overflow-hidden"
+                    >
+                      {/* z-20 drag host for window dragging; AgentCenterStage at z-[21] layers chat content above. */}
+                      <div
+                        aria-hidden
+                        className="absolute left-0 right-[148px] top-0 z-20 h-[32px]"
+                        data-electron-drag-host
+                      />
+                      {!rightPaneOpen && !isDraftConversationSelected ? (
+                        <button
+                          type="button"
+                          onClick={toggleRightPaneOpen}
+                          data-workbench-pane-toggle
+                          data-electron-no-drag
+                          data-electron-trailing-chrome={
+                            electronTrailingChromeForToggle && !sideColumnsSwapped
+                              ? "true"
+                              : undefined
+                          }
+                          className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                            sideColumnsSwapped ? "left-[11px]" : "right-[11px]"
+                          }`}
+                          aria-label="Show workbench pane"
+                        >
+                          {sideColumnsSwapped ? (
+                            <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
+                          ) : (
+                            <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
+                          )}
+                        </button>
+                      ) : null}
 
-                  <AgentCenterStage>
-                    <AgentCenterPane />
-                  </AgentCenterStage>
-                </Panel>
-                <AgentShellResizeHandle />
-                <Panel
-                  id={AGENT_SHELL_PANEL_IDS.side}
-                  panelRef={sidePanelRef}
-                  minSize={`${AGENT_SHELL_SIDE_MIN_PERCENT}%`}
-                  maxSize={`${AGENT_SHELL_SIDE_MAX_PERCENT}%`}
-                  collapsible
-                  collapsedSize="0%"
-                  onResize={(panelSize) => {
-                    if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
-                      return;
-                    }
-                    setAgentShellDesktopLayout({
-                      [AGENT_SHELL_PANEL_IDS.side]: panelSize.asPercentage,
-                    });
-                  }}
-                  className={`min-h-0 overflow-hidden ${
-                    rightPaneOpen ? "border-l border-[var(--border-subtle)]" : ""
-                  }`}
-                >
-                  <div className="h-full min-h-0 w-full overflow-hidden">
-                    <AgentSidePane />
-                  </div>
-                </Panel>
+                      <AgentCenterStage>
+                        <AgentCenterPane />
+                      </AgentCenterStage>
+                    </Panel>
+                  );
+                  const sidePanel = (
+                    <Panel
+                      id={AGENT_SHELL_PANEL_IDS.side}
+                      panelRef={sidePanelRef}
+                      minSize={`${AGENT_SHELL_SIDE_MIN_PERCENT}%`}
+                      maxSize={`${AGENT_SHELL_SIDE_MAX_PERCENT}%`}
+                      collapsible
+                      collapsedSize="0%"
+                      onResize={(panelSize) => {
+                        if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
+                          return;
+                        }
+                        setAgentShellDesktopLayout({
+                          [AGENT_SHELL_PANEL_IDS.side]: panelSize.asPercentage,
+                        });
+                      }}
+                      className={`min-h-0 overflow-hidden ${
+                        rightPaneOpen
+                          ? `${sideColumnsSwapped ? "border-r" : "border-l"} border-[var(--border-subtle)]`
+                          : ""
+                      }`}
+                    >
+                      <div className="h-full min-h-0 w-full overflow-hidden">
+                        <AgentSidePane />
+                      </div>
+                    </Panel>
+                  );
+                  return sideColumnsSwapped ? (
+                    <Fragment>
+                      {sidePanel}
+                      <AgentShellResizeHandle />
+                      {centerPanel}
+                      <AgentShellResizeHandle />
+                      {railPanel}
+                    </Fragment>
+                  ) : (
+                    <Fragment>
+                      {railPanel}
+                      <AgentShellResizeHandle />
+                      {centerPanel}
+                      <AgentShellResizeHandle />
+                      {sidePanel}
+                    </Fragment>
+                  );
+                })()}
               </Group>
               <AgentWorkspaceRailCollapsedOverlay />
               </div>

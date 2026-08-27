@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   MessageSquare,
   PanelLeftClose,
+  PanelRightClose,
   Pin,
   Plus,
   Search,
@@ -3545,7 +3546,11 @@ export function AgentWorkspaceRail() {
                 aria-label="Collapse workspace rail"
                 title="Collapse workspace rail"
               >
-                <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+                {settings.general.sideColumnsSwapped ? (
+                  <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
+                ) : (
+                  <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+                )}
               </button>
               <button
                 type="button"
