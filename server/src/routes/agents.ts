@@ -395,6 +395,42 @@ agentRoutes.post("/api/agents/conversations/:conversationId/retry", async (c) =>
   return c.json({ snapshot });
 });
 
+agentRoutes.patch(
+  "/api/agents/conversations/:conversationId/queue/:itemId",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    const conversationId = c.req.param("conversationId");
+    const itemId = c.req.param("itemId");
+    if (!itemId) {
+      return c.json({ error: "Expected itemId." }, 400);
+    }
+    const body = await c.req.json().catch(() => null);
+    const delivery =
+      body && typeof body === "object" && "delivery" in body
+        ? (body as { delivery?: unknown }).delivery
+        : undefined;
+    if (delivery !== "normal" && delivery !== "steer") {
+      return c.json({ error: "Expected delivery to be normal or steer." }, 400);
+    }
+    try {
+      const conversation = await agentRuntimeManager.updateQueuedPromptDelivery(
+        workspace,
+        conversationId,
+        itemId,
+        delivery
+      );
+      return c.json({ conversation });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to update queued prompt.";
+      const notFound =
+        message.startsWith("Unknown conversation:") ||
+        message.startsWith("Unknown queued prompt:");
+      return c.json({ error: message }, notFound ? 404 : 400);
+    }
+  }
+);
+
 agentRoutes.delete(
   "/api/agents/conversations/:conversationId/queue/:itemId",
   async (c) => {

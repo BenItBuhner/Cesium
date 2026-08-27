@@ -1245,6 +1245,17 @@ export async function deleteAgentConversationQueueItem(
   );
 }
 
+export async function updateAgentConversationQueueItem(
+  conversationId: string,
+  itemId: string,
+  patch: { delivery: "normal" | "steer" }
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(itemId)}`,
+    { method: "PATCH", body: JSON.stringify(patch) }
+  );
+}
+
 export async function sendAgentConversationQueueItem(
   conversationId: string,
   itemId: string

@@ -268,6 +268,13 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     allowInEditableContexts: true,
   },
   {
+    id: "chat.action.steerMessage",
+    label: "Chat: Steer message",
+    section: "Chat",
+    defaultBindings: [],
+    allowInEditableContexts: true,
+  },
+  {
     id: "workbench.action.openFile",
     label: "File: Open File…",
     section: "File",
@@ -368,6 +375,23 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Backquote"],
   },
 ];
+
+export const STEER_MESSAGE_COMMAND_ID = "chat.action.steerMessage";
+
+export function withToggledPlainShortcutBinding(
+  bindings: string[],
+  key: string,
+  enabled: boolean
+): string[] {
+  const has = bindings.includes(key);
+  if (enabled === has) {
+    return bindings;
+  }
+  if (enabled) {
+    return [...bindings, key];
+  }
+  return bindings.filter((binding) => binding !== key);
+}
 
 export const DEFAULT_KEYBOARD_SHORTCUT_BINDINGS: KeyboardShortcutBindingsMap =
   Object.fromEntries(

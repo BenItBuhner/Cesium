@@ -375,6 +375,20 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   section("agents", "composer", "Chat composer"),
   row("agents", "submit-mod-enter", "Submit with modifier + Enter", "Agents"),
+  row(
+    "agents",
+    "steer-with-tab",
+    "Steer with Tab",
+    "Send steering guidance with Tab instead of queuing a follow-up.",
+    ["steer", "tab", "composer", "guidance"]
+  ),
+  row(
+    "agents",
+    "composer-keyboard-shortcuts",
+    "Keyboard shortcuts",
+    "Remap steer and other chat composer bindings.",
+    ["steer", "shortcuts", "keybind"]
+  ),
   section("agents", "tool-permissions", "Tool permissions (all harnesses)"),
   row(
     "agents",

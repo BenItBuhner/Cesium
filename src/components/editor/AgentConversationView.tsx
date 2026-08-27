@@ -114,6 +114,7 @@ answerQuestionForConversation,
 getConversationComposerState,
 promptConversation,
 sendQueuedPromptNow,
+setQueuedPromptDelivery,
 mergeConversationSnapshot,
 refreshConversations,
 cancelConversation,
@@ -394,6 +395,16 @@ loadOlderConversationHistory,
       void sendQueuedPromptNow(conversationId, item.id);
     },
     [conversationId, sendQueuedPromptNow]
+  );
+  const toggleQueuedPromptSteer = useCallback(
+    (item: QueuedChatPrompt) => {
+      void setQueuedPromptDelivery(
+        conversationId,
+        item.id,
+        item.delivery === "steer" ? "normal" : "steer"
+      );
+    },
+    [conversationId, setQueuedPromptDelivery]
   );
 
   const editQueuedPrompt = useCallback(
@@ -710,6 +721,7 @@ const showRecentChatsSection =
                     items={queuedPrompts}
                     onDelete={removeQueuedPrompt}
                     onSendNow={sendQueuedPrompt}
+                    onToggleSteer={toggleQueuedPromptSteer}
                     onEdit={editQueuedPrompt}
                     conversationConfig={conversation?.config}
                     backendLabels={backendLabels}
@@ -855,6 +867,7 @@ const showRecentChatsSection =
                         items={queuedPrompts}
                         onDelete={removeQueuedPrompt}
                         onSendNow={sendQueuedPrompt}
+                        onToggleSteer={toggleQueuedPromptSteer}
                         onEdit={editQueuedPrompt}
                         conversationConfig={conversation?.config}
                         backendLabels={backendLabels}

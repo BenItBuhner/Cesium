@@ -115,6 +115,8 @@ import {
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
 import { shouldSubmitComposerOnEnter } from "@/lib/composer-submit-key";
+import { shouldSteerComposerOnKey } from "@/lib/composer-steer-key";
+import { detectShortcutPlatform } from "@/lib/keyboard-shortcuts";
 import {
   getAllAtSuggestions,
   filterAtSuggestions,
@@ -1104,7 +1106,8 @@ export function ChatComposer({
   const { fileTree, gitStatus, workspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
-  const steerCtrlEnter = settings.agents.steerCtrlEnter;
+  const shortcutBindings = settings.keyboardShortcuts.bindings;
+  const shortcutPlatform = detectShortcutPlatform();
   const hasHardwareKeyboard = useHardwareKeyboard();
 
   // The Cesium capability-profile toggle renders at the top of the agent
@@ -2269,6 +2272,9 @@ export function ChatComposer({
           case "attachImage":
             if (!busy && !configLocked) fileInputRef.current?.click();
             break;
+          case "steerMessage":
+            void submitComposer("steer");
+            break;
           default:
             break;
         }
@@ -3227,6 +3233,19 @@ export function ChatComposer({
       }
       if (
         !currentMenu &&
+        shouldSteerComposerOnKey(event, {
+          hasHardwareKeyboard,
+          bindings: shortcutBindings,
+          platform: shortcutPlatform,
+          obstructed: modelDropdownOpen,
+        })
+      ) {
+        event.preventDefault();
+        void submitComposer("steer");
+        return true;
+      }
+      if (
+        !currentMenu &&
         event.key === "Enter" &&
         shouldSubmitComposerOnEnter(event, {
           hasHardwareKeyboard,
@@ -3234,9 +3253,7 @@ export function ChatComposer({
         })
       ) {
         event.preventDefault();
-        void submitComposer(
-          steerCtrlEnter && (event.ctrlKey || event.metaKey) ? "steer" : "normal"
-        );
+        void submitComposer("normal");
         return true;
       }
 
@@ -3313,8 +3330,9 @@ export function ChatComposer({
     setComposerSelection,
     setComposerValue,
     submitComposer,
+    shortcutBindings,
+    shortcutPlatform,
     submitCtrlEnter,
-    steerCtrlEnter,
     tryClearModeChipWithBackspace,
     tryCycleBackendWithModAltTab,
     tryCycleModeWithShiftTab,
@@ -3337,6 +3355,18 @@ const handleNativeComposerKeyDown = useCallback(
           return;
         }
         if (tryCycleModeWithShiftTab(native, modelDropdownOpen)) {
+          return;
+        }
+        if (
+          shouldSteerComposerOnKey(native, {
+            hasHardwareKeyboard,
+            bindings: shortcutBindings,
+            platform: shortcutPlatform,
+            obstructed: modelDropdownOpen,
+          })
+        ) {
+          event.preventDefault();
+          void submitComposer("steer");
           return;
         }
 
@@ -3392,9 +3422,7 @@ const handleNativeComposerKeyDown = useCallback(
           })
         ) {
           event.preventDefault();
-          void submitComposer(
-            steerCtrlEnter && (event.ctrlKey || event.metaKey) ? "steer" : "normal"
-          );
+          void submitComposer("normal");
         }
         return;
       }
@@ -3438,9 +3466,10 @@ const handleNativeComposerKeyDown = useCallback(
       pickAt,
       pickSlashItem,
       selectedIndex,
+      shortcutBindings,
+      shortcutPlatform,
       submitComposer,
       submitCtrlEnter,
-      steerCtrlEnter,
       refreshNativeComposerRefs,
       tryClearModeChipWithBackspace,
       tryCycleBackendWithModAltTab,

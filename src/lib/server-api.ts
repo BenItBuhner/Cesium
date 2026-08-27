@@ -238,6 +238,7 @@ export {
   runVoiceControllerTurn,
   synthesizeVoiceSpeech,
   updateAgentConversationConfig,
+  updateAgentConversationQueueItem,
   updateExtensionSurfaceStateClient,
   updateExtensionSurfaceThemeClient,
   updateQuickActionPresetStates,

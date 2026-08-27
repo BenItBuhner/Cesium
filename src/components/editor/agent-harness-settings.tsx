@@ -71,8 +71,11 @@ import {
   type PiAgentSettingsResponse,
 } from "@/lib/server-api";
 import {
+  STEER_MESSAGE_COMMAND_ID,
   detectShortcutPlatform,
+  getShortcutBindingsForCommand,
   primaryModifierLabel,
+  withToggledPlainShortcutBinding,
 } from "@/lib/keyboard-shortcuts";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
@@ -3806,6 +3809,34 @@ function HarnessListView({
   onOpenHarness: (backendId: AgentBackendId) => void;
 }) {
   const { updateWorkspaceSession } = useWorkspace();
+  const { settings, updateSettings } = useGlobalSettings();
+  const steerBindings = getShortcutBindingsForCommand(
+    settings.keyboardShortcuts.bindings,
+    STEER_MESSAGE_COMMAND_ID
+  );
+  const steerWithTab = steerBindings.includes("Tab");
+  const setSteerWithTab = useCallback(
+    (enabled: boolean) => {
+      updateSettings((current) => ({
+        ...current,
+        keyboardShortcuts: {
+          ...current.keyboardShortcuts,
+          bindings: {
+            ...current.keyboardShortcuts.bindings,
+            [STEER_MESSAGE_COMMAND_ID]: withToggledPlainShortcutBinding(
+              getShortcutBindingsForCommand(
+                current.keyboardShortcuts.bindings,
+                STEER_MESSAGE_COMMAND_ID
+              ),
+              "Tab",
+              enabled
+            ),
+          },
+        },
+      }));
+    },
+    [updateSettings]
+  );
   const sortedRemembered = useMemo(
     () => [...agents.rememberedPermissions].sort((a, b) => b.updatedAt - a.updatedAt),
     [agents.rememberedPermissions]
@@ -3848,6 +3879,7 @@ function HarnessListView({
       </SettingsSection>
       <SettingsSection title="Chat composer">
         <SettingsRow
+          searchId="submit-mod-enter"
           title={`Submit with ${modLabel} + Enter`}
           description={`When enabled, ${modLabel} + Enter submits chat and Enter inserts a newline.`}
           trailing={
@@ -3858,19 +3890,25 @@ function HarnessListView({
               variant="green"
             />
           }
-          border={false}
         />
         <SettingsRow
-          title={`Steer with ${modLabel} + Enter`}
-          description="When enabled, modified Enter queues the message as steering guidance after the current response and tool calls settle."
+          searchId="steer-with-tab"
+          title="Steer with Tab"
+          description="When enabled, Tab sends the draft as steering guidance after the current turn settles instead of inserting a tab character."
           trailing={
             <ToggleSwitch
-              checked={agents.steerCtrlEnter}
-              onChange={(value) => onPatchAgents({ steerCtrlEnter: value })}
+              checked={steerWithTab}
+              onChange={setSteerWithTab}
               size="md"
               variant="green"
             />
           }
+        />
+        <SettingsLinkRow
+          searchId="composer-keyboard-shortcuts"
+          title="Keyboard shortcuts"
+          description="Remap steer, submit-adjacent chat commands, and the rest of the workbench bindings."
+          onClick={() => openNav("keyboardShortcuts")}
           border={false}
         />
       </SettingsSection>

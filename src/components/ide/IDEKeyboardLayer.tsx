@@ -120,6 +120,7 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "chat.action.toggleVoiceInput",
   "chat.action.toggleComposerExpand",
   "chat.action.attachImage",
+  "chat.action.steerMessage",
   "chat.action.newChat",
   "chat.action.agentRailPreviousConversation",
   "chat.action.agentRailNextConversation",
@@ -1073,6 +1074,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.attachImage":
           dispatchChatComposerShortcut("attachImage");
           break;
+        case "chat.action.steerMessage":
+          dispatchChatComposerShortcut("steerMessage");
+          break;
         case "chat.action.newChat":
           if (agentShell) {
             agentShell.startNewConversation();
@@ -1320,6 +1324,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Chat: Attach image",
         keybinding: kb("chat.action.attachImage"),
         run: () => runShortcutCommand("chat.action.attachImage"),
+      },
+      {
+        id: "chat.action.steerMessage",
+        label: "Chat: Steer message",
+        keybinding: kb("chat.action.steerMessage"),
+        run: () => runShortcutCommand("chat.action.steerMessage"),
       },
       {
         id: "chat.action.newChat",

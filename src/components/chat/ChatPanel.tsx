@@ -320,6 +320,7 @@ setConversationModel,
 setConversationConfigOption,
 promptConversation,
 sendQueuedPromptNow,
+setQueuedPromptDelivery,
 retryConversation,
 pendingConfigByConversationId,
 setPendingConfigForConversation,
@@ -1077,6 +1078,21 @@ workspaceSession.chat.model,
       void sendQueuedPromptNow(cid, item.id);
     },
     [activeConversation?.id, sendQueuedPromptNow]
+  );
+
+  const toggleQueuedPromptSteerForActiveChat = useCallback(
+    (item: QueuedChatPrompt) => {
+      const cid = activeConversation?.id;
+      if (!cid) {
+        return;
+      }
+      void setQueuedPromptDelivery(
+        cid,
+        item.id,
+        item.delivery === "steer" ? "normal" : "steer"
+      );
+    },
+    [activeConversation?.id, setQueuedPromptDelivery]
   );
 
   const editQueuedPromptForActiveChat = useCallback(
@@ -2717,6 +2733,7 @@ const cancelPromptForDraft = useCallback(
                   items={activeQueuedPrompts}
                   onDelete={removeQueuedPromptForActiveChat}
                   onSendNow={sendQueuedPromptForActiveChat}
+                  onToggleSteer={toggleQueuedPromptSteerForActiveChat}
                   onEdit={editQueuedPromptForActiveChat}
                   conversationConfig={activeConversation?.config}
                   backendLabels={Object.fromEntries(
@@ -2808,6 +2825,7 @@ const cancelPromptForDraft = useCallback(
                       items={activeQueuedPrompts}
                       onDelete={removeQueuedPromptForActiveChat}
                       onSendNow={sendQueuedPromptForActiveChat}
+                      onToggleSteer={toggleQueuedPromptSteerForActiveChat}
                       onEdit={editQueuedPromptForActiveChat}
                       conversationConfig={activeConversation?.config}
                       backendLabels={Object.fromEntries(
