@@ -26,6 +26,17 @@ const APP_ICON_PATH = app.isPackaged
 let backend = null;
 let mainWindow = null;
 const smokeMode = process.argv.includes("--smoke");
+// Xvfb + Chromium's GPU process SIGTRAPs on GitHub Linux runners. Smoke and
+// explicit CI flags must disable GPU *before* app.whenReady().
+const disableGpu =
+  smokeMode ||
+  process.env.OPENCURSOR_DESKTOP_DISABLE_GPU === "1" ||
+  process.argv.includes("--disable-gpu");
+if (disableGpu) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+}
 let cleanupStarted = false;
 const WORKSPACE_ROUTE = "/agent";
 const nativeBrowserSessions = new Map();

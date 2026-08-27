@@ -25,7 +25,6 @@ import {
   cloneWorkspaceFromGit,
   createWorkspaceGitWorktree,
   createTerminal,
-  createSshWorkspaceSelection,
   createWorkspaceSelection,
   createWorkspaceWindow,
   deleteWorkspaceGitWorktree,
@@ -233,16 +232,6 @@ type WorkspaceContextValue = {
     name?: string;
     parentPath: string;
     directoryName: string;
-    setDefault?: boolean;
-  }) => Promise<void>;
-  createSshWorkspace: (input: {
-    target: string;
-    port?: number;
-    remotePath: string;
-    mirrorName?: string;
-    name?: string;
-    keyPath?: string;
-    password?: string;
     setDefault?: boolean;
   }) => Promise<void>;
   cloneWorkspaceFromGit: (input: {
@@ -1261,30 +1250,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
   );
 
-  const createSshWorkspace = useCallback(
-    async (input: {
-      target: string;
-      port?: number;
-      remotePath: string;
-      mirrorName?: string;
-      name?: string;
-      keyPath?: string;
-      password?: string;
-      setDefault?: boolean;
-    }) => {
-      await flushWorkspaceSessionNow();
-      const result = await createSshWorkspaceSelection(input);
-      applyWorkspaceListingUpdate(
-        result.workspaces,
-        result.defaultWorkspaceId,
-        result.recentWorkspaceIds,
-        result.homeWorkspaceId
-      );
-      await loadWorkspaceState(result.workspace);
-    },
-    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
-  );
-
   const cloneWorkspaceFromGitHandler = useCallback(
     async (input: {
       repoUrl: string;
@@ -1878,7 +1843,6 @@ let lastHeartbeatRunAt = Date.now();
       createWorkspaceWindow: createPersistentWorkspaceWindow,
       updateWorkspaceWindow: updatePersistentWorkspaceWindow,
       createWorkspace,
-      createSshWorkspace,
       cloneWorkspaceFromGit: cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       homeWorkspaceId,
@@ -1924,7 +1888,6 @@ let lastHeartbeatRunAt = Date.now();
       createPersistentWorkspaceWindow,
       updatePersistentWorkspaceWindow,
       createWorkspace,
-      createSshWorkspace,
       cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       setDefaultWorkspace,
