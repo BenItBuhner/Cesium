@@ -205,6 +205,33 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   section(
     "general",
+    "conversation-list",
+    "Conversation list",
+    "rail presets grouping ordering filters"
+  ),
+  row(
+    "general",
+    "rail-preset-default",
+    "Default preset",
+    "Workspace groups, newest first, detail lines only when a row needs you.",
+    ["rail", "preset", "conversation list", "view", "default"]
+  ),
+  row(
+    "general",
+    "rail-preset-inbox",
+    "Inbox preset",
+    "One flat urgency-first list across every workspace.",
+    ["rail", "preset", "conversation list", "view", "inbox", "priority"]
+  ),
+  row(
+    "general",
+    "rail-preset-compact",
+    "Compact preset",
+    "Workspace groups with strict single-line rows for maximum density.",
+    ["rail", "preset", "conversation list", "view", "compact", "dense"]
+  ),
+  section(
+    "general",
     "composer-status-bar",
     "Composer footer",
     "footer repo branch goal context defaults"

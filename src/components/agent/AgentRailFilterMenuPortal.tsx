@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -9,7 +10,19 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import type { AgentRailFilterToggleKey, AgentRailFilterToggleState } from "@/lib/agent-rail";
+import { Check, ChevronRight } from "lucide-react";
+import {
+  AGENT_RAIL_ENVIRONMENT_FILTER_KEYS,
+  AGENT_RAIL_ENVIRONMENT_FILTER_LABELS,
+  AGENT_RAIL_SOURCE_FILTER_KEYS,
+  AGENT_RAIL_SOURCE_FILTER_LABELS,
+  AGENT_RAIL_STATUS_FILTER_KEYS,
+  AGENT_RAIL_STATUS_FILTER_LABELS,
+  type AgentRailEnvironmentFilterKey,
+  type AgentRailFilterState,
+  type AgentRailSourceFilterKey,
+  type AgentRailStatusFilterKey,
+} from "@/lib/agent-rail";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import {
   popoverMenuListClass,
@@ -17,44 +30,27 @@ import {
   popoverMenuSectionLabelClass,
   popoverMenuSeparatorClass,
 } from "@/components/ui/popover-menu-ui";
-import type {
-  AgentRailGroupByMode,
-  AgentRailSectionId,
-  AgentRailViewPreset,
+import {
+  AGENT_RAIL_GROUP_BY_LABELS,
+  AGENT_RAIL_GROUP_BY_MODES,
+  AGENT_RAIL_ORDER_BY_LABELS,
+  AGENT_RAIL_ORDER_BY_MODES,
+  type AgentRailGroupByMode,
+  type AgentRailOrderByMode,
+  type AgentRailSectionId,
 } from "@/lib/global-settings";
 import type { AgentRailRowDetailMode } from "@/lib/agent-rail-status";
 
-const FILTER_TOGGLE_KEYS = ["archived", "unread"] as const satisfies AgentRailFilterToggleKey[];
+type SubmenuId = "grouping" | "ordering" | "show" | "status" | "environment" | "source";
 
-const FILTER_TOGGLE_LABELS: Record<(typeof FILTER_TOGGLE_KEYS)[number], string> = {
-  archived: "Archived",
-  unread: "Unread",
+const GROUP_BY_HINTS: Record<AgentRailGroupByMode, string> = {
+  workspace: "Group conversations by their workspace",
+  repository: "Group by git repository",
+  updated: "Group into Today / This week / Older",
+  status: "Group by raw conversation status",
+  server: "Group by source machine",
+  priority: "One flat list, urgent first",
 };
-
-const GROUP_BY_OPTIONS: Array<{
-  value: AgentRailGroupByMode;
-  label: string;
-  hint: string;
-}> = [
-  { value: "workspace", label: "Workspace", hint: "Grouped by workspace" },
-  { value: "priority", label: "Priority", hint: "One list, urgent first" },
-];
-
-const ROW_DETAIL_OPTIONS: Array<{
-  value: AgentRailRowDetailMode;
-  label: string;
-  hint: string;
-}> = [
-  { value: "compact", label: "Compact", hint: "Titles and status dots only" },
-  { value: "balanced", label: "Balanced", hint: "Detail only when something needs you" },
-  { value: "expanded", label: "Expanded", hint: "Every row shows status or time" },
-];
-
-const PRESET_OPTIONS: Array<{ value: AgentRailViewPreset; label: string }> = [
-  { value: "default", label: "Default" },
-  { value: "inbox", label: "Inbox" },
-  { value: "compact", label: "Compact" },
-];
 
 const SECTION_LABELS: Record<
   Extract<AgentRailSectionId, "attention" | "running" | "pinned">,
@@ -65,13 +61,61 @@ const SECTION_LABELS: Record<
   pinned: "Pinned",
 };
 
-function OptionPill({
+const MENU_ROW_CLASS =
+  "flex h-[26px] w-full cursor-default items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] text-left font-sans text-[12.5px] text-[var(--text-primary)] outline-none transition-colors hover:bg-[var(--accent-bg)] focus-visible:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40";
+
+function CheckSlot({ checked }: { checked: boolean }) {
+  return (
+    <span className="grid size-[14px] shrink-0 place-items-center">
+      {checked ? (
+        <Check className="size-[12px] text-[var(--text-primary)]" strokeWidth={2} aria-hidden />
+      ) : null}
+    </span>
+  );
+}
+
+function CheckRow({
+  checked,
+  disabled,
+  label,
+  onToggle,
+  title,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  onToggle: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      disabled={disabled}
+      title={title}
+      className={MENU_ROW_CLASS}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <CheckSlot checked={checked} />
+    </button>
+  );
+}
+
+function RadioRow({
   active,
+  disabled,
   label,
   onSelect,
   title,
 }: {
   active: boolean;
+  disabled?: boolean;
   label: string;
   onSelect: () => void;
   title?: string;
@@ -79,36 +123,20 @@ function OptionPill({
   return (
     <button
       type="button"
-      onClick={onSelect}
+      role="menuitemradio"
+      aria-checked={active}
+      disabled={disabled}
       title={title}
-      aria-pressed={active}
-      className={`rounded-full border px-[9px] py-[3px] font-sans text-[11.5px] leading-[15px] transition-colors ${
-        active
-          ? "border-transparent bg-[var(--accent)] text-[var(--bg-panel)]"
-          : "border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-      }`}
+      className={MENU_ROW_CLASS}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelect();
+      }}
     >
-      {label}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <CheckSlot checked={active} />
     </button>
-  );
-}
-
-function PillRow({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className="flex flex-wrap gap-[5px] px-[10px] py-[3px]"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      {children}
-    </div>
-  );
-}
-
-function HintLine({ text }: { text: string }) {
-  return (
-    <div className="px-[10px] pb-[4px] pt-[3px] font-sans text-[10.5px] leading-[14px] text-[var(--text-disabled)]">
-      {text}
-    </div>
   );
 }
 
@@ -116,48 +144,74 @@ type AgentRailFilterMenuPortalProps = {
   open: boolean;
   onClose: () => void;
   anchorRef: RefObject<HTMLElement | null>;
-  railFilterToggles: AgentRailFilterToggleState;
-  setRailFilterToggle: (key: AgentRailFilterToggleKey, value: boolean) => void;
-  clearRailFilters: () => void;
-  railFilterActive: boolean;
   groupBy: AgentRailGroupByMode;
   setGroupBy: (mode: AgentRailGroupByMode) => void;
-  showIcons: boolean;
-  setShowIcons: (value: boolean) => void;
-  /** Opt-in Settled mode: reveals per-row settle toggles when enabled. */
-  settledMode: boolean;
-  setSettledMode: (value: boolean) => void;
+  orderBy: AgentRailOrderByMode;
+  setOrderBy: (mode: AgentRailOrderByMode) => void;
   rowDetail: AgentRailRowDetailMode;
   setRowDetail: (mode: AgentRailRowDetailMode) => void;
+  showIcons: boolean;
+  setShowIcons: (value: boolean) => void;
+  showEnvironment: boolean;
+  setShowEnvironment: (value: boolean) => void;
+  showWorkspace: boolean;
+  setShowWorkspace: (value: boolean) => void;
+  showBranch: boolean;
+  setShowBranch: (value: boolean) => void;
+  showMachine: boolean;
+  setShowMachine: (value: boolean) => void;
   hiddenSections: AgentRailSectionId[];
   setSectionHidden: (sectionId: AgentRailSectionId, hidden: boolean) => void;
-  viewPreset: AgentRailViewPreset | null;
-  onSelectPreset: (preset: AgentRailViewPreset) => void;
+  filters: AgentRailFilterState;
+  setFilters: (next: AgentRailFilterState) => void;
+  clearFilters: () => void;
+  filterActive: boolean;
+  /** Connected machines; the Environment submenu lists them when > 1. */
+  machines: Array<{ id: string; label: string }>;
+  hiddenServerIds: string[];
+  setMachineHidden: (serverId: string, hidden: boolean) => void;
+  onCollapseAll: () => void;
+  onMarkAllRead: () => void;
 };
 
 export function AgentRailFilterMenuPortal({
   open,
   onClose,
   anchorRef,
-  railFilterToggles,
-  setRailFilterToggle,
-  clearRailFilters,
-  railFilterActive,
   groupBy,
   setGroupBy,
-  showIcons,
-  setShowIcons,
-  settledMode,
-  setSettledMode,
+  orderBy,
+  setOrderBy,
   rowDetail,
   setRowDetail,
+  showIcons,
+  setShowIcons,
+  showEnvironment,
+  setShowEnvironment,
+  showWorkspace,
+  setShowWorkspace,
+  showBranch,
+  setShowBranch,
+  showMachine,
+  setShowMachine,
   hiddenSections,
   setSectionHidden,
-  viewPreset,
-  onSelectPreset,
+  filters,
+  setFilters,
+  clearFilters,
+  filterActive,
+  machines,
+  hiddenServerIds,
+  setMachineHidden,
+  onCollapseAll,
+  onMarkAllRead,
 }: AgentRailFilterMenuPortalProps) {
   const filterPanelRef = useRef<HTMLDivElement>(null);
+  const submenuPanelRef = useRef<HTMLDivElement>(null);
+  const submenuAnchorRectRef = useRef<DOMRect | null>(null);
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
+  const [openSubmenu, setOpenSubmenu] = useState<SubmenuId | null>(null);
+  const [submenuPos, setSubmenuPos] = useState({ top: 0, left: 0 });
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -206,6 +260,7 @@ export function AgentRailFilterMenuPortal({
 
   useEffect(() => {
     if (!open) {
+      setOpenSubmenu(null);
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -217,147 +272,368 @@ export function AgentRailFilterMenuPortal({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
+  const openSubmenuAt = useCallback((id: SubmenuId, rowEl: HTMLElement) => {
+    submenuAnchorRectRef.current = rowEl.getBoundingClientRect();
+    setOpenSubmenu((current) => (current === id ? current : id));
+  }, []);
+
+  // Flyout placement: right of the parent row, flipped left / clamped when it
+  // would leave the viewport. Runs after render so the panel height is real.
+  useLayoutEffect(() => {
+    if (!openSubmenu) {
+      return;
+    }
+    const rowRect = submenuAnchorRectRef.current;
+    const panel = submenuPanelRef.current;
+    if (!rowRect || !panel) {
+      return;
+    }
+    const MARGIN = 8;
+    const GAP = 2;
+    const rect = panel.getBoundingClientRect();
+    let left = rowRect.right + GAP;
+    if (left + rect.width > window.innerWidth - MARGIN) {
+      left = rowRect.left - rect.width - GAP;
+    }
+    left = Math.max(MARGIN, left);
+    let top = rowRect.top - 4;
+    if (top + rect.height > window.innerHeight - MARGIN) {
+      top = window.innerHeight - rect.height - MARGIN;
+    }
+    top = Math.max(MARGIN, top);
+    setSubmenuPos((current) =>
+      current.top === top && current.left === left ? current : { top, left }
+    );
+  }, [openSubmenu]);
+
+  const toggleHiddenStatus = useCallback(
+    (key: AgentRailStatusFilterKey) => {
+      const hidden = filters.hiddenStatuses.includes(key);
+      setFilters({
+        ...filters,
+        hiddenStatuses: hidden
+          ? filters.hiddenStatuses.filter((k) => k !== key)
+          : [...filters.hiddenStatuses, key],
+      });
+    },
+    [filters, setFilters]
+  );
+
+  const toggleHiddenEnvironment = useCallback(
+    (key: AgentRailEnvironmentFilterKey) => {
+      const hidden = filters.hiddenEnvironments.includes(key);
+      setFilters({
+        ...filters,
+        hiddenEnvironments: hidden
+          ? filters.hiddenEnvironments.filter((k) => k !== key)
+          : [...filters.hiddenEnvironments, key],
+      });
+    },
+    [filters, setFilters]
+  );
+
+  const toggleHiddenSource = useCallback(
+    (key: AgentRailSourceFilterKey) => {
+      const hidden = filters.hiddenSources.includes(key);
+      setFilters({
+        ...filters,
+        hiddenSources: hidden
+          ? filters.hiddenSources.filter((k) => k !== key)
+          : [...filters.hiddenSources, key],
+      });
+    },
+    [filters, setFilters]
+  );
+
   if (!open) {
     return null;
   }
 
-  const groupByHint = GROUP_BY_OPTIONS.find((option) => option.value === groupBy)?.hint;
-  const rowDetailHint = ROW_DETAIL_OPTIONS.find(
-    (option) => option.value === rowDetail
-  )?.hint;
   const priorityMode = groupBy === "priority";
-  const visibleFilterCount = FILTER_TOGGLE_KEYS.filter((key) => railFilterToggles[key]).length;
+  const statusFiltered = filters.hiddenStatuses.length > 0;
+  const environmentFiltered =
+    filters.hiddenEnvironments.length > 0 || hiddenServerIds.length > 0;
+  const sourceFiltered = filters.hiddenSources.length > 0;
+
+  const submenuRow = (id: SubmenuId, label: string, value?: string, dot?: boolean) => (
+    <button
+      type="button"
+      aria-haspopup="menu"
+      aria-expanded={openSubmenu === id}
+      className={`${MENU_ROW_CLASS} ${openSubmenu === id ? "bg-[var(--accent-bg)]" : ""}`}
+      onMouseEnter={(event) => openSubmenuAt(id, event.currentTarget)}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (openSubmenu === id) {
+          setOpenSubmenu(null);
+        } else {
+          openSubmenuAt(id, event.currentTarget);
+        }
+      }}
+    >
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {dot ? (
+        <span
+          className="size-[4px] shrink-0 rounded-full bg-[var(--accent)]"
+          aria-label="Filtered"
+        />
+      ) : null}
+      {value ? (
+        <span className="shrink-0 font-sans text-[11.5px] text-[var(--text-disabled)]">
+          {value}
+        </span>
+      ) : null}
+      <ChevronRight
+        className="size-[12px] shrink-0 text-[var(--text-disabled)]"
+        strokeWidth={2}
+        aria-hidden
+      />
+    </button>
+  );
+
+  const closeSubmenusRowProps = {
+    onMouseEnter: () => setOpenSubmenu(null),
+  };
+
+  const submenuContent: ReactNode =
+    openSubmenu === "grouping" ? (
+      <>
+        {AGENT_RAIL_GROUP_BY_MODES.map((mode) => (
+          <RadioRow
+            key={mode}
+            active={groupBy === mode}
+            label={AGENT_RAIL_GROUP_BY_LABELS[mode]}
+            title={GROUP_BY_HINTS[mode]}
+            onSelect={() => setGroupBy(mode)}
+          />
+        ))}
+      </>
+    ) : openSubmenu === "ordering" ? (
+      <>
+        {AGENT_RAIL_ORDER_BY_MODES.map((mode) => (
+          <RadioRow
+            key={mode}
+            active={priorityMode ? mode === "status" : orderBy === mode}
+            disabled={priorityMode}
+            title={
+              priorityMode
+                ? "Priority grouping always sorts by status"
+                : mode === "status"
+                  ? "Urgent conversations first inside each group"
+                  : "Most recently updated first"
+            }
+            label={AGENT_RAIL_ORDER_BY_LABELS[mode]}
+            onSelect={() => setOrderBy(mode)}
+          />
+        ))}
+      </>
+    ) : openSubmenu === "show" ? (
+      <>
+        <CheckRow
+          checked={rowDetail !== "compact"}
+          label="Details"
+          title="Grow a detail line when a row needs you (approval, question, failure, unread result)"
+          onToggle={() =>
+            setRowDetail(rowDetail === "compact" ? "balanced" : "compact")
+          }
+        />
+        <CheckRow
+          checked={rowDetail === "expanded"}
+          label="Updated"
+          title="Show the last-updated time on every row"
+          onToggle={() =>
+            setRowDetail(rowDetail === "expanded" ? "balanced" : "expanded")
+          }
+        />
+        <div className={popoverMenuSeparatorClass} />
+        <CheckRow
+          checked={showEnvironment}
+          label="Environment"
+          title="Cloud badge on conversations running on a vendor cloud"
+          onToggle={() => setShowEnvironment(!showEnvironment)}
+        />
+        <CheckRow
+          checked={showWorkspace}
+          label="Workspace"
+          title="Workspace name on rows in cross-workspace sections"
+          onToggle={() => setShowWorkspace(!showWorkspace)}
+        />
+        <CheckRow
+          checked={showBranch}
+          label="Branch"
+          title="Git branch badge on conversations inside a repository"
+          onToggle={() => setShowBranch(!showBranch)}
+        />
+        <CheckRow
+          checked={showMachine}
+          label="Machine"
+          title="Source-machine badge on conversations from other engines"
+          onToggle={() => setShowMachine(!showMachine)}
+        />
+        <CheckRow
+          checked={showIcons}
+          label="Workspace icons"
+          onToggle={() => setShowIcons(!showIcons)}
+        />
+        <div className={popoverMenuSeparatorClass} />
+        <div className={popoverMenuSectionLabelClass}>Sections</div>
+        {(["attention", "running", "pinned"] as const).map((sectionId) => {
+          const foldedByPriority =
+            priorityMode && (sectionId === "attention" || sectionId === "running");
+          return (
+            <CheckRow
+              key={sectionId}
+              checked={!hiddenSections.includes(sectionId)}
+              disabled={foldedByPriority}
+              title={
+                foldedByPriority
+                  ? "Folded into the priority list while grouping by priority"
+                  : undefined
+              }
+              label={SECTION_LABELS[sectionId]}
+              onToggle={() =>
+                setSectionHidden(sectionId, !hiddenSections.includes(sectionId))
+              }
+            />
+          );
+        })}
+      </>
+    ) : openSubmenu === "status" ? (
+      <>
+        {AGENT_RAIL_STATUS_FILTER_KEYS.map((key) => (
+          <CheckRow
+            key={key}
+            checked={!filters.hiddenStatuses.includes(key)}
+            label={AGENT_RAIL_STATUS_FILTER_LABELS[key]}
+            onToggle={() => toggleHiddenStatus(key)}
+          />
+        ))}
+      </>
+    ) : openSubmenu === "environment" ? (
+      <>
+        {AGENT_RAIL_ENVIRONMENT_FILTER_KEYS.map((key) => (
+          <CheckRow
+            key={key}
+            checked={!filters.hiddenEnvironments.includes(key)}
+            label={AGENT_RAIL_ENVIRONMENT_FILTER_LABELS[key]}
+            onToggle={() => toggleHiddenEnvironment(key)}
+          />
+        ))}
+        {machines.length > 1 ? (
+          <>
+            <div className={popoverMenuSeparatorClass} />
+            {machines.map((machine) => (
+              <CheckRow
+                key={machine.id}
+                checked={!hiddenServerIds.includes(machine.id)}
+                label={machine.label}
+                onToggle={() =>
+                  setMachineHidden(machine.id, !hiddenServerIds.includes(machine.id))
+                }
+              />
+            ))}
+          </>
+        ) : null}
+      </>
+    ) : openSubmenu === "source" ? (
+      <>
+        {AGENT_RAIL_SOURCE_FILTER_KEYS.map((key) => (
+          <CheckRow
+            key={key}
+            checked={!filters.hiddenSources.includes(key)}
+            label={AGENT_RAIL_SOURCE_FILTER_LABELS[key]}
+            onToggle={() => toggleHiddenSource(key)}
+          />
+        ))}
+      </>
+    ) : null;
 
   return createPortal(
     <div
       ref={filterPanelRef}
-      role="dialog"
+      role="menu"
       aria-label="Rail view and conversation filters"
-      className={`fixed z-[10040] w-[248px] transition-opacity ${popoverMenuPanelClass}`}
+      className={`fixed z-[10040] w-[208px] transition-opacity ${popoverMenuPanelClass}`}
       style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className={popoverMenuListClass}>
-        <div className={popoverMenuSectionLabelClass}>Preset</div>
-        <PillRow>
-          {PRESET_OPTIONS.map((option) => (
-            <OptionPill
-              key={option.value}
-              active={viewPreset === option.value}
-              label={option.label}
-              onSelect={() => onSelectPreset(option.value)}
-            />
-          ))}
-        </PillRow>
+        {submenuRow("grouping", "Grouping", AGENT_RAIL_GROUP_BY_LABELS[groupBy])}
+        {submenuRow(
+          "ordering",
+          "Ordering",
+          AGENT_RAIL_ORDER_BY_LABELS[priorityMode ? "status" : orderBy]
+        )}
+        {submenuRow("show", "Show")}
 
-        <div className={popoverMenuSectionLabelClass}>Group by</div>
-        <PillRow>
-          {GROUP_BY_OPTIONS.map((option) => (
-            <OptionPill
-              key={option.value}
-              active={groupBy === option.value}
-              label={option.label}
-              title={option.hint}
-              onSelect={() => setGroupBy(option.value)}
-            />
-          ))}
-        </PillRow>
-        {groupByHint ? <HintLine text={groupByHint} /> : null}
-
-        <div className={popoverMenuSectionLabelClass}>Row detail</div>
-        <PillRow>
-          {ROW_DETAIL_OPTIONS.map((option) => (
-            <OptionPill
-              key={option.value}
-              active={rowDetail === option.value}
-              label={option.label}
-              title={option.hint}
-              onSelect={() => setRowDetail(option.value)}
-            />
-          ))}
-        </PillRow>
-        {rowDetailHint ? <HintLine text={rowDetailHint} /> : null}
-
-        <div className={popoverMenuSeparatorClass} />
-        <div className={popoverMenuSectionLabelClass}>Sections</div>
-        <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-          {(["attention", "running", "pinned"] as const).map((sectionId) => {
-            const hidden = hiddenSections.includes(sectionId);
-            const foldedByPriority =
-              priorityMode && (sectionId === "attention" || sectionId === "running");
-            return (
-              <label
-                key={sectionId}
-                className={`flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)] ${
-                  foldedByPriority ? "opacity-45" : ""
-                }`}
-                title={
-                  foldedByPriority
-                    ? "Folded into the priority list while grouping by priority"
-                    : undefined
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={!hidden}
-                  disabled={foldedByPriority}
-                  onChange={(ev) => setSectionHidden(sectionId, !ev.target.checked)}
-                  className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-                />
-                <span className="min-w-0 flex-1 truncate">{SECTION_LABELS[sectionId]}</span>
-              </label>
-            );
-          })}
-          <label className="flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]">
-            <input
-              type="checkbox"
-              checked={showIcons}
-              onChange={(ev) => setShowIcons(ev.target.checked)}
-              className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-            />
-            <span className="min-w-0 flex-1">Workspace icons</span>
-          </label>
-          <label
-            className="flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[3.5px] font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
-            title="Adds a settle toggle to conversation rows. Settled chats sink to the bottom until a new message unsettles them."
-          >
-            <input
-              type="checkbox"
-              checked={settledMode}
-              onChange={(ev) => setSettledMode(ev.target.checked)}
-              className="size-[13px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-            />
-            <span className="min-w-0 flex-1">Settled mode</span>
-          </label>
-          {settledMode ? (
-            <HintLine text="Settled chats sink to the bottom; a new message unsettles them." />
-          ) : null}
-        </div>
-
-        <div className={popoverMenuSeparatorClass} />
-        <div className={`${popoverMenuSectionLabelClass} flex items-center justify-between`}>
-          <span>Filters{visibleFilterCount > 0 ? ` · ${visibleFilterCount}` : ""}</span>
+        <div className={popoverMenuSeparatorClass} {...closeSubmenusRowProps} />
+        <div
+          className={`${popoverMenuSectionLabelClass} flex items-center justify-between`}
+          {...closeSubmenusRowProps}
+        >
+          <span>Filters</span>
           <button
             type="button"
-            disabled={!railFilterActive}
-            onClick={() => clearRailFilters()}
+            disabled={!filterActive}
+            onClick={() => clearFilters()}
             className="text-[10px] normal-case tracking-normal text-[var(--accent)] disabled:opacity-35"
           >
-            Clear
+            Reset
           </button>
         </div>
-        <PillRow>
-          {FILTER_TOGGLE_KEYS.map((key) => (
-            <OptionPill
-              key={key}
-              active={railFilterToggles[key]}
-              label={FILTER_TOGGLE_LABELS[key]}
-              onSelect={() => setRailFilterToggle(key, !railFilterToggles[key])}
-            />
-          ))}
-        </PillRow>
-        <div className="pb-[3px]" />
+        {submenuRow("status", "Status", undefined, statusFiltered)}
+        {submenuRow("environment", "Environment", undefined, environmentFiltered)}
+        {submenuRow("source", "Source", undefined, sourceFiltered)}
+        <div {...closeSubmenusRowProps}>
+          <CheckRow
+            checked={filters.archived}
+            label="Archived"
+            title="Browse archived conversations instead of active ones"
+            onToggle={() => setFilters({ ...filters, archived: !filters.archived })}
+          />
+        </div>
+
+        <div className={popoverMenuSeparatorClass} {...closeSubmenusRowProps} />
+        <button
+          type="button"
+          className={MENU_ROW_CLASS}
+          {...closeSubmenusRowProps}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onCollapseAll();
+            onClose();
+          }}
+        >
+          <span className="min-w-0 flex-1 truncate">Collapse All</span>
+        </button>
+        <button
+          type="button"
+          className={MENU_ROW_CLASS}
+          {...closeSubmenusRowProps}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onMarkAllRead();
+            onClose();
+          }}
+        >
+          <span className="min-w-0 flex-1 truncate">Mark All as Read</span>
+        </button>
       </div>
+
+      {openSubmenu && submenuContent ? (
+        <div
+          ref={submenuPanelRef}
+          role="menu"
+          className={`fixed z-[10041] w-[196px] ${popoverMenuPanelClass}`}
+          style={{ top: submenuPos.top, left: submenuPos.left }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className={popoverMenuListClass}>{submenuContent}</div>
+        </div>
+      ) : null}
     </div>,
     document.body
   );
