@@ -19,7 +19,6 @@ import {
   type UsageSeriesPoint,
 } from "@/lib/server-api";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -1134,7 +1133,6 @@ export function UsageSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Usage" />
-      <PageIntro title="Usage" />
       <div
         className="mb-[18px] flex flex-wrap items-center justify-between gap-x-[12px] gap-y-[8px]"
         data-settings-search-id="usage-tabs"

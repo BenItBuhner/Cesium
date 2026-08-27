@@ -4,7 +4,6 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsRow,
   SettingsSection,
@@ -31,7 +30,6 @@ export function BetaSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Beta" />
-      <PageIntro title="Beta" />
       <SettingsSection title="Browser">
         <SettingsRow
           searchId="new-browser"

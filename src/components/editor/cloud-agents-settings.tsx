@@ -14,7 +14,6 @@ import {
 import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
 import { integrationIconLabel } from "@/lib/integration-icons";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsFieldLabel,
   SettingsRow,
@@ -394,7 +393,6 @@ export function CloudAgentsSettingsPanel() {
     return (
       <div>
         <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Cloud Agents" />
-        <PageIntro title="Cloud Agents" />
         <p className="flex items-center gap-[8px] font-sans text-[13px] text-[var(--text-secondary)]">
           <Loader2 className="size-[14px] animate-spin" strokeWidth={1.5} aria-hidden />
           {error ?? "Loading Cloud Agents settings…"}
@@ -406,7 +404,6 @@ export function CloudAgentsSettingsPanel() {
   return (
     <div>
       <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Cloud Agents" />
-      <PageIntro title="Cloud Agents" />
       <p className="-mt-[8px] mb-[16px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
         Offload work from Linear, GitHub, and Slack to agents running in this Cesium server.
         Assignments are routed to the right workspace and start as normal conversations in the
