@@ -445,15 +445,26 @@ function CloudBridge({
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
 }
 
+const CLERK_READY_TIMEOUT_MS = 8_000;
+
 function ClerkCloudBridge({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { isLoaded } = useAuth();
   const { user } = useUser();
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (isLoaded) {
+      setTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setTimedOut(true), CLERK_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [isLoaded]);
   return (
     <CloudBridge
       mode="clerk"
-      authReady={isLoaded && !isLoading}
-      signedIn={isAuthenticated}
+      authReady={(isLoaded && !isLoading) || timedOut}
+      signedIn={isLoaded && isAuthenticated}
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >

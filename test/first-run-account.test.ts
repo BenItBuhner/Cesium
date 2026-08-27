@@ -12,7 +12,13 @@ import {
   shouldPromptFirstRunAccount,
   writeFirstRunAccountState,
 } from "../src/lib/cloud/first-run-account.ts";
-import { getClerkSignInUrl, getClerkSignUpUrl } from "../src/lib/cloud/clerk-urls.ts";
+import {
+  getClerkSignInUrl,
+  getClerkSignUpUrl,
+  getHostedClerkSignInUrl,
+  getHostedClerkSignUpUrl,
+  shouldUseHostedClerkAuth,
+} from "../src/lib/cloud/clerk-urls.ts";
 
 describe("first-run account prompt", () => {
   afterEach(() => {
@@ -97,6 +103,30 @@ describe("first-run account prompt", () => {
     assert.equal(getClerkSignInUrl(), "https://accounts.example/sign-in");
   });
 
+  test("hosted clerk pages are always absolute production URLs", () => {
+    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
+    assert.equal(getHostedClerkSignUpUrl(), "https://cesium.techlitnow.com/sign-up");
+    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/sign-in";
+    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
+    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "https://accounts.example/sign-in";
+    assert.equal(getHostedClerkSignInUrl(), "https://accounts.example/sign-in");
+  });
+
+  test("hosted clerk auth is required on file://, localhost, and while Clerk is loading", () => {
+    const prod = { protocol: "https:", hostname: "cesium.techlitnow.com" };
+    assert.equal(shouldUseHostedClerkAuth(prod, "signed-out"), false);
+    assert.equal(shouldUseHostedClerkAuth(prod, "loading"), true);
+    assert.equal(
+      shouldUseHostedClerkAuth({ protocol: "file:", hostname: "" }, "signed-out"),
+      true
+    );
+    assert.equal(
+      shouldUseHostedClerkAuth({ protocol: "http:", hostname: "localhost" }, "signed-out"),
+      true
+    );
+    assert.equal(shouldUseHostedClerkAuth(null, "signed-out"), true);
+  });
+
   test("workbench providers mount the first-run account gate", () => {
     const providers = readFileSync(
       fileURLToPath(
@@ -114,6 +144,7 @@ describe("first-run account prompt", () => {
     assert.match(providers, /<FirstRunAccountGate>/);
     assert.match(gate, /<SignUpButton mode="modal">/);
     assert.match(gate, /<SignInButton mode="modal">/);
+    assert.match(gate, /getHostedClerkSignUpUrl/);
     assert.match(gate, /Continue as guest/);
   });
 });

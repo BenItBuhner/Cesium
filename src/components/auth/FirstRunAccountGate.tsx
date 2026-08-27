@@ -5,16 +5,22 @@ import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { ArrowRight } from "lucide-react";
 import { useCloudContext } from "@/contexts/CloudContext";
 import {
+  getHostedClerkSignInUrl,
+  getHostedClerkSignUpUrl,
+  shouldUseHostedClerkAuth,
+} from "@/lib/cloud/clerk-urls";
+import {
   dismissFirstRunAccount,
   isFirstRunAccountDismissed,
   shouldPromptFirstRunAccount,
 } from "@/lib/cloud/first-run-account";
+import { openExternalUrl } from "@/lib/mobile-bridge";
 
 const accentButtonClass =
-  "inline-flex w-full items-center justify-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[12px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)] disabled:opacity-60";
+  "inline-flex w-full items-center justify-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[12px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]";
 
 const outlineButtonClass =
-  "inline-flex w-full items-center justify-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[12px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)] disabled:opacity-60";
+  "inline-flex w-full items-center justify-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[12px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]";
 
 /**
  * First-install sign-in / sign-up wall for clerk-mode clients.
@@ -23,6 +29,10 @@ const outlineButtonClass =
  * workbench mounts unsigned, fetches an engine that is not there, and toasts
  * "Workspace error / Failed to fetch". Guest is still available — local-first
  * is not a wall — but it is an explicit choice, not the silent default.
+ *
+ * Clerk widgets only work on allowlisted https origins. Android/iOS/Electron
+ * file:// bundles and localhost open the hosted account pages instead, so a
+ * Clerk origin mismatch can never pin the app on "Starting Cesium…".
  */
 export function FirstRunAccountGate({ children }: { children: ReactNode }) {
   const cloud = useCloudContext();
@@ -46,18 +56,22 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
     cloudStatus: cloud.status,
     dismissed,
   });
+  const waitingOnClerk =
+    cloud.mode === "clerk" && cloud.status === "loading" && !dismissed;
 
   if (!hydrated) {
     return <FirstRunSplash />;
   }
-  if (cloud.mode === "clerk" && cloud.status === "loading" && !dismissed) {
-    return <FirstRunSplash />;
-  }
-  if (!prompt) {
+  if (!prompt && !waitingOnClerk) {
     return children;
   }
 
-  const clerkReady = cloud.status === "signed-out";
+  const hosted = shouldUseHostedClerkAuth(
+    typeof window === "undefined"
+      ? null
+      : { protocol: window.location.protocol, hostname: window.location.hostname },
+    cloud.status
+  );
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-[var(--bg-main)] text-[var(--text-primary)]">
@@ -76,17 +90,39 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
           Your code stays on your machine either way.
         </p>
         <div className="mt-[28px] flex flex-col gap-[10px]">
-          <SignUpButton mode="modal">
-            <button type="button" className={accentButtonClass} disabled={!clerkReady}>
-              Sign up
-              <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-            </button>
-          </SignUpButton>
-          <SignInButton mode="modal">
-            <button type="button" className={outlineButtonClass} disabled={!clerkReady}>
-              Sign in
-            </button>
-          </SignInButton>
+          {hosted ? (
+            <>
+              <button
+                type="button"
+                className={accentButtonClass}
+                onClick={() => openExternalUrl(getHostedClerkSignUpUrl())}
+              >
+                Sign up
+                <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={outlineButtonClass}
+                onClick={() => openExternalUrl(getHostedClerkSignInUrl())}
+              >
+                Sign in
+              </button>
+            </>
+          ) : (
+            <>
+              <SignUpButton mode="modal">
+                <button type="button" className={accentButtonClass}>
+                  Sign up
+                  <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+                </button>
+              </SignUpButton>
+              <SignInButton mode="modal">
+                <button type="button" className={outlineButtonClass}>
+                  Sign in
+                </button>
+              </SignInButton>
+            </>
+          )}
           <button
             type="button"
             onClick={() => {
