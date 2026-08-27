@@ -69,11 +69,13 @@ type NavEntry =
   | { kind: "divider" };
 
 /**
- * Top-level settings hubs. Nested pages (models, storage, MCP, …) stay
- * reachable from these hubs and from search; they are not sidebar items.
+ * Top-level settings hubs. Account and Servers share the first cluster
+ * (identity + engine connections). Nested pages (models, storage, MCP, …)
+ * stay reachable from these hubs and from search; they are not sidebar items.
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "account", label: "Account", icon: CircleUserRound },
+  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "divider" },
   { kind: "item", id: "general", label: "General", icon: Settings },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
@@ -81,7 +83,6 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "plugins", label: "Integrations", icon: Puzzle },
-  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "divider" },
   { kind: "item", id: "advanced", label: "Advanced", icon: SlidersHorizontal },
 ];
