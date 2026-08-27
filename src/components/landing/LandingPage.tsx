@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import {
   ArrowRight,
-  BookOpen,
   Cloud,
   Cpu,
   Database,
@@ -303,12 +302,6 @@ export function LandingPage() {
               Download
             </Link>
             <Link
-              href="/docs"
-              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-            >
-              Docs
-            </Link>
-            <Link
               href="/setup"
               className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
             >
@@ -349,13 +342,6 @@ export function LandingPage() {
                 >
                   <DownloadIcon className="size-[15px]" strokeWidth={1.75} aria-hidden />
                   Download the app
-                </Link>
-                <Link
-                  href="/docs"
-                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
-                >
-                  <BookOpen className="size-[15px]" strokeWidth={1.75} aria-hidden />
-                  Read the docs
                 </Link>
               </div>
               <p className="mt-[18px] font-mono text-[11.5px] text-[var(--text-disabled)]">
@@ -574,9 +560,6 @@ export function LandingPage() {
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">
               Download
-            </Link>
-            <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
-              Docs
             </Link>
             <LandingFooterActions />
             <span className="font-mono">AGPL-3.0</span>
