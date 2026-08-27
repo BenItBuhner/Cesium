@@ -8,7 +8,6 @@ import { useCloudContext } from "@/contexts/CloudContext";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
-  isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
 
 /**
@@ -97,7 +96,7 @@ export function useAccountIdentity(): AccountIdentity {
         kind: "device",
         signedIn: cloud.status === "ready",
         title: "Device sync",
-        subtitle: serverLabel,
+        subtitle: "Synced on this browser",
         modeLabel: "Device",
         imageUrl: null,
         serverLabel,
@@ -108,7 +107,7 @@ export function useAccountIdentity(): AccountIdentity {
         kind: "engine",
         signedIn: true,
         title: auth.session.username,
-        subtitle: serverLabel,
+        subtitle: "Signed in to the engine",
         modeLabel: "Server session",
         imageUrl: null,
         serverLabel,
@@ -118,7 +117,7 @@ export function useAccountIdentity(): AccountIdentity {
       kind: "local",
       signedIn: false,
       title: "Local workspace",
-      subtitle: isLocalDeviceServer(activeServer) ? "This device" : serverLabel,
+      subtitle: "No cloud account",
       modeLabel: "Local",
       imageUrl: null,
       serverLabel,
