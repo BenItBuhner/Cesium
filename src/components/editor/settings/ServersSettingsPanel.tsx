@@ -264,7 +264,9 @@ export function ServerConnectionsSettingsPanel() {
           />
         </SettingsSection>
       ) : null}
-      {hasServer ? <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} /> : null}
+      {availability === "connected" ? (
+        <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
+      ) : null}
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {
