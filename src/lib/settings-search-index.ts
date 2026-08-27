@@ -346,7 +346,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "appearance",
     "aurora-background",
     "Aurora background",
-    "Soft animated aurora-borealis color field behind agent conversations.",
+    "Soft animated aurora-borealis color field behind the workbench and settings.",
     ["aurora", "borealis", "background", "backdrop", "animation", "ambient", "northern lights"]
   ),
   row(

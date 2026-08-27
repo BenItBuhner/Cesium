@@ -1,6 +1,6 @@
 /**
  * Settings schema for the aurora conversation backdrop: a soft, animated
- * aurora-borealis color field layered behind agent conversations. The visual
+ * aurora-borealis color field layered behind the workbench and settings. The visual
  * renderer lives in the web app (`src/lib/aurora`); this module owns the
  * persisted shape, presets, defaults, and normalization.
  */

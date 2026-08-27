@@ -256,7 +256,7 @@ function SettingsNavContent({
   }, [closeMobileDrawer, isMobile, onNavChange]);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-panel)]">
+    <div className="aurora-settings-nav flex h-full flex-col bg-[var(--bg-panel)]">
       <div className="mobile-safe-top-pad flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
         {isMobile ? (
           <button
@@ -877,7 +877,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         drawerClassName="border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
         drawer={navContent}
       >
-        <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
+        <div className="aurora-settings-main flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
           {!navDrawerOpen ? (
             <button
               type="button"
@@ -891,7 +891,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
           <main
             ref={scrollRootRef}
-            className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+            className="aurora-settings-main mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
             onScroll={onMainScroll}
           >
             <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
@@ -916,7 +916,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       groupRef={groupRef}
       key="settings-shell-desktop"
       orientation="horizontal"
-      className="h-full min-w-0 bg-[var(--bg-main)]"
+      className="aurora-settings-shell h-full min-w-0 bg-[var(--bg-main)]"
       defaultLayout={settingsDesktopLayout}
     >
       <Panel
@@ -942,7 +942,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       >
         <main
           ref={scrollRootRef}
-          className="hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+          className="aurora-settings-main hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
