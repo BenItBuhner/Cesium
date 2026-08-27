@@ -69,12 +69,12 @@ type NavEntry =
   | { kind: "divider" };
 
 /**
- * Top-level settings hubs. Account and Servers share the first cluster
+ * Top-level settings hubs. Account is the identity card at the top of the
+ * nav (not a plain row). Servers sits with it in the first cluster
  * (identity + engine connections). Nested pages (models, storage, MCP, …)
  * stay reachable from these hubs and from search; they are not sidebar items.
  */
 const NAV_ENTRIES: NavEntry[] = [
-  { kind: "item", id: "account", label: "Account", icon: CircleUserRound },
   { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "divider" },
   { kind: "item", id: "general", label: "General", icon: Settings },
@@ -115,9 +115,8 @@ const searchResultClass =
   "flex w-full flex-col gap-[2px] rounded-[var(--radius-tab)] px-[10px] py-[7px] text-left transition-colors hover:bg-[var(--accent-bg)]";
 
 /**
- * Compact identity card pinned to the bottom of the settings nav, right above
- * the back button. Shows who is signed in (cloud account, device sync, engine
- * session, or local) and opens the Account panel.
+ * Compact identity card at the top of the settings nav. Shows who is signed
+ * in (cloud account, device sync, engine session, or local) and opens Account.
  */
 function SettingsNavAccountPreview({
   active,
@@ -367,6 +366,12 @@ function SettingsNavContent({
           </div>
         ) : (
           <>
+            <div className="mb-[4px]">
+              <SettingsNavAccountPreview
+                active={settingsSidebarSelection(activeNav) === "account"}
+                onOpen={handleOpenAccount}
+              />
+            </div>
             {NAV_ENTRIES.map((entry, i) => {
               if (entry.kind === "divider") {
                 return (
@@ -404,12 +409,8 @@ function SettingsNavContent({
         )}
       </nav>
 
-      <div className="flex shrink-0 flex-col gap-[6px] px-[11px] pb-[10px] pt-[6px]">
-        <SettingsNavAccountPreview
-          active={activeNav === "account"}
-          onOpen={handleOpenAccount}
-        />
-        {onCloseShell ? (
+      {onCloseShell ? (
+        <div className="flex shrink-0 flex-col px-[11px] pb-[10px] pt-[6px]">
           <button
             type="button"
             onClick={onCloseShell}
@@ -420,8 +421,8 @@ function SettingsNavContent({
             <ArrowLeft className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
             <span className="min-w-0 flex-1 truncate">Back to Agents</span>
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
