@@ -151,14 +151,14 @@ export function TermuxServerSetup({ compact = false }: { compact?: boolean }) {
         2 · Paste this in Termux. It upgrades packages first (fixes broken curl), then
         installs and starts the server.
       </p>
-      <div className="mt-[6px] flex min-w-0 items-stretch gap-[7px]">
-        <code className="min-w-0 flex-1 overflow-x-auto rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[8px] font-mono text-[10.5px] leading-relaxed text-[var(--text-primary)]">
+      <div className="mt-[6px] flex min-w-0 items-center gap-[7px]">
+        <code className="hide-scrollbar-x block min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[7px] font-mono text-[10.5px] leading-none text-[var(--text-primary)]">
           {TERMUX_INSTALL_COMMAND}
         </code>
         <button
           type="button"
           onClick={() => void copyCommand()}
-          className="inline-flex w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+          className="inline-flex h-[30px] w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
           aria-label="Copy Termux install command"
         >
           {copied ? (
