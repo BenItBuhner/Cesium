@@ -50,6 +50,7 @@ import type { SessionOrbStatus } from "@/lib/voice/session-orb-renderer";
 import { TtsPlayer } from "@/lib/voice/tts-player";
 import { createBestVad, type VadEngine } from "@/lib/voice/vad";
 import { isVoiceSessionEvent, VOICE_SESSION_EVENT } from "@/lib/voice-session-events";
+import { captureVoiceOrbRect } from "@/components/voice/voice-orb-transition";
 import type { ImageAttachment } from "@/lib/types";
 
 export type VoiceSessionView = "closed" | "full" | "minimized";
@@ -76,6 +77,8 @@ type VoiceSessionContextValue = {
   stop: () => void;
   minimize: () => void;
   expand: () => void;
+  /** Tear down and rebuild the mic pipeline after a capture failure. */
+  retryMic: () => void;
   /** Send a text utterance through the exact mic turn path (no attachments). */
   sendTextUtterance: (text: string) => void;
   /** Composer submissions: bind-or-prompt with full attachment support. */
@@ -101,6 +104,36 @@ function nextTranscriptId(): string {
   return `vt-${Date.now()}-${transcriptCounter}`;
 }
 
+/**
+ * Human explanation for a getUserMedia / capture failure. The raw
+ * DOMException names are meaningless to users; each maps to what actually
+ * went wrong and what to do about it. Typing always keeps working.
+ */
+function describeMicError(error: unknown): string {
+  const name =
+    error instanceof DOMException || error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : "";
+  switch (name) {
+    case "NotAllowedError":
+    case "PermissionDeniedError":
+      return "Microphone access is blocked. Allow the microphone for this site in your browser or system settings, then retry.";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "No microphone was detected. Connect or enable one and retry - typing below works in the meantime.";
+    case "NotReadableError":
+    case "TrackStartError":
+      return "The microphone could not be started - another app may be using it. Close it and retry.";
+    case "OverconstrainedError":
+      return "No microphone matched the requested audio settings. Try a different input device and retry.";
+    case "SecurityError":
+      return "Microphone capture requires a secure connection (HTTPS or localhost).";
+    default:
+      return message
+        ? `Microphone unavailable: ${message}. You can keep typing below.`
+        : "Microphone unavailable. You can keep typing below.";
+  }
+}
+
 declare global {
   interface Window {
     __cesiumVoiceSession?: {
@@ -113,11 +146,13 @@ declare global {
       injectPcm16k: (samples: Float32Array) => void;
       /** Decodes any audio container (e.g. WAV) and injects it as PCM. */
       injectAudio: (data: ArrayBuffer) => Promise<void>;
+      retryMic: () => void;
       getState: () => {
         view: VoiceSessionView;
         status: SessionOrbStatus;
         conversationId: string | null;
         micState: VoiceSessionMicState;
+        micError: string | null;
         transcript: VoiceTranscriptEntry[];
       };
     };
@@ -149,6 +184,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   conversationIdRef.current = conversationId;
   const micStateRef = useRef<VoiceSessionMicState>("off");
   micStateRef.current = micState;
+  const micErrorRef = useRef<string | null>(null);
+  micErrorRef.current = micError;
   const speakRepliesRef = useRef(true);
   speakRepliesRef.current = speakReplies;
 
@@ -426,13 +463,17 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     } catch (captureError) {
       if (captureRef.current !== capture) return;
       setMicState("error");
-      setMicError(
-        captureError instanceof Error
-          ? `Microphone: ${captureError.message}`
-          : "Microphone unavailable."
-      );
+      setMicError(describeMicError(captureError));
     }
   }, [handleEndpointerEvents]);
+
+  /** Full mic pipeline rebuild - the retry path after a capture failure. */
+  const retryMic = useCallback(() => {
+    if (viewRef.current === "closed") return;
+    teardownCapture();
+    setMicError(null);
+    void setupCapture();
+  }, [setupCapture, teardownCapture]);
 
   // ---- Session lifecycle --------------------------------------------------
 
@@ -467,6 +508,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const minimize = useCallback(() => {
     if (viewRef.current === "full") {
+      // Snapshot the big orb's rect while it is still laid out; the dock
+      // FLIPs its own orb from this rect so the orb visually shrinks down
+      // into the pill instead of teleporting.
+      captureVoiceOrbRect("full");
       setView("minimized");
       const boundId = conversationIdRef.current;
       if (boundId) {
@@ -478,6 +523,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const expand = useCallback(() => {
     if (viewRef.current === "minimized") {
+      // Reverse FLIP: the full view's orb flies up from the dock pill.
+      captureVoiceOrbRect("dock");
       setView("full");
     }
   }, []);
@@ -642,18 +689,20 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         injectLockUntilRef.current =
           Date.now() + (pcm.length / VOICE_SAMPLE_RATE) * 1000 + 2000;
       },
+      retryMic,
       getState: () => ({
         view: viewRef.current,
         status: statusRef.current,
         conversationId: conversationIdRef.current,
         micState: micStateRef.current,
+        micError: micErrorRef.current,
         transcript: transcriptRef.current,
       }),
     };
     return () => {
       delete window.__cesiumVoiceSession;
     };
-  }, [expand, minimize, sendTextUtterance, start, stop]);
+  }, [expand, minimize, retryMic, sendTextUtterance, start, stop]);
 
   useEffect(() => {
     return () => {
@@ -671,6 +720,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     if (agentWorking) return "working";
     if (capturingSpeech) return "capturing";
     if (micState === "on") return "listening";
+    if (micState === "error") return "error";
     return "idle";
   }, [
     agentWorking,
@@ -697,6 +747,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       stop,
       minimize,
       expand,
+      retryMic,
       sendTextUtterance,
       submitComposer,
       interruptSpeech,
@@ -714,6 +765,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       stop,
       minimize,
       expand,
+      retryMic,
       sendTextUtterance,
       submitComposer,
       interruptSpeech,

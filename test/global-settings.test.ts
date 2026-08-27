@@ -34,31 +34,9 @@ describe("global settings", () => {
     assert.equal(settings.general.batchStreamEvents, false);
   });
 
-  test("voice orb is opt-in (hidden by default)", () => {
+  test("removed showVoiceOrb setting no longer exists on defaults", () => {
     const settings = createDefaultGlobalSettings();
-    assert.equal(settings.general.showVoiceOrb, false);
-  });
-
-  test("normalizes missing showVoiceOrb to opt-in default", () => {
-    const base = createDefaultGlobalSettings();
-    const { showVoiceOrb: _ignored, ...generalWithoutOrb } = base.general;
-    const settings = normalizeLoadedGlobalSettings({
-      ...base,
-      general: generalWithoutOrb,
-    });
-    assert.equal(settings.general.showVoiceOrb, false);
-  });
-
-  test("preserves explicit showVoiceOrb true", () => {
-    const base = createDefaultGlobalSettings();
-    const settings = normalizeLoadedGlobalSettings({
-      ...base,
-      general: {
-        ...base.general,
-        showVoiceOrb: true,
-      },
-    });
-    assert.equal(settings.general.showVoiceOrb, true);
+    assert.equal("showVoiceOrb" in settings.general, false);
   });
 
   test("leaves composer status defaults unset for legacy workspace migration", () => {

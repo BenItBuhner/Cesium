@@ -1,17 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   PageIntro,
   SettingsCallout,
   SettingsFieldLabel,
-  SettingsRow,
   SettingsSection,
   rowButtonClass,
   settingsSelectTriggerClass,
 } from "@/components/editor/settings-ui";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   deleteVoiceSpeechSettings,
   fetchVoiceSpeechSettings,
@@ -92,7 +89,6 @@ function VoiceField({
 }
 
 export function VoiceSettingsPanel() {
-  const { settings: globalSettings, updateSettings } = useGlobalSettings();
   const [settings, setSettings] = useState<VoiceSpeechSettingsPayload | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -489,8 +485,8 @@ export function VoiceSettingsPanel() {
               : "Loading…"}
           </p>
           <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Fast model the voice orb uses to answer or hand off to an agent. Inherits the
-            Cesium Agent provider unless you override it.
+            Fast model behind the server voice-controller API. Inherits the Cesium Agent
+            provider unless you override it.
           </p>
         </div>
         <div className="px-[16px] py-[10px] border-b border-[var(--border-subtle)]">
@@ -556,30 +552,6 @@ export function VoiceSettingsPanel() {
             Save controller
           </button>
         </div>
-      </SettingsSection>
-
-      <SettingsSection title="Voice orb">
-        <SettingsRow
-          searchId="show-voice-orb"
-          title="Voice orb"
-          description="Show the floating ambient voice orb. Hiding it also turns the voice plane off. You can also hide it from the orb's long-press menu."
-          trailing={
-            <ToggleSwitch
-              checked={globalSettings.general.showVoiceOrb}
-              onChange={(value) =>
-                updateSettings((current) => ({
-                  ...current,
-                  general: {
-                    ...current.general,
-                    showVoiceOrb: value,
-                  },
-                }))
-              }
-              size="md"
-            />
-          }
-          border={false}
-        />
       </SettingsSection>
 
       <SettingsSection title="Stored overrides">

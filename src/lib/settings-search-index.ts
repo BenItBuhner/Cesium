@@ -276,20 +276,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "OpenAI-compatible /audio/speech base URL, API key, model, and voice.",
     ["tts-1", "alloy", "OPENCURSOR_VOICE_TTS_BASE_URL"]
   ),
-  section("voice", "controller", "Voice controller", "ambient orb"),
+  section("voice", "controller", "Voice controller", "server API"),
   row(
     "voice",
     "voice-controller",
     "Voice controller model",
-    "Fast model the ambient voice orb uses to answer or hand off to an agent.",
-    ["orb", "OPENCURSOR_VOICE_MODEL", "controller"]
-  ),
-  row(
-    "voice",
-    "show-voice-orb",
-    "Voice orb",
-    "Show the floating ambient voice orb. Hiding it also turns the voice plane off.",
-    ["voice", "orb", "ambient", "microphone"]
+    "Fast model behind the server voice-controller API.",
+    ["OPENCURSOR_VOICE_MODEL", "controller"]
   ),
 
   // -- Appearance --

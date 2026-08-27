@@ -154,11 +154,6 @@ export type GeneralSettingsState = {
    * state. Enabled by default to cap stream rendering at roughly 20 Hz.
    */
   batchStreamEvents: boolean;
-  /**
-   * Show the floating ambient voice orb. Off by default: the orb is an opt-in
-   * surface and hiding it also disables the ambient voice plane.
-   */
-  showVoiceOrb: boolean;
   sideColumnsSwapped: boolean;
   workspaceSortMode: WorkspaceSortMode;
   workspaceCustomOrderIds: string[];
@@ -333,7 +328,6 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     general: {
       doNotDisturb: false,
       batchStreamEvents: true,
-      showVoiceOrb: false,
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
@@ -826,10 +820,6 @@ export function normalizeLoadedGlobalSettings(
           ?.batchStreamEvents === "boolean"
           ? ((r.general as Record<string, unknown>).batchStreamEvents as boolean)
           : base.general.batchStreamEvents,
-      showVoiceOrb:
-        typeof (r.general as Record<string, unknown> | undefined)?.showVoiceOrb === "boolean"
-          ? ((r.general as Record<string, unknown>).showVoiceOrb as boolean)
-          : base.general.showVoiceOrb,
       workspaceSortMode: normalizeWorkspaceSortMode(
         (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
       ),

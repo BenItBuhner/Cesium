@@ -314,6 +314,85 @@ html.dark .landing-shot-dark {
   animation: spin 1s linear infinite;
 }
 
+/**
+ * Voice agent session choreography.
+ *
+ * The full-screen session view and the minimized dock never hard-cut: the
+ * backdrop and chrome fade while the orb itself is FLIP-translated between
+ * its two homes (see voice-orb-transition.ts). These classes provide the
+ * fade halves; the orb flight is a Web Animations transform so it can start
+ * from a measured rect.
+ */
+@keyframes voice-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes voice-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes voice-orb-intro {
+  from { opacity: 0; transform: scale(0.88); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes voice-orb-close-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.72); }
+}
+
+@keyframes voice-caption-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Backdrop / pill chrome fading in behind an orb that stays fully visible. */
+.voice-surface-enter {
+  animation: voice-fade-in 240ms ease-out both;
+}
+
+.voice-surface-exit {
+  animation: voice-fade-out 220ms ease-in both;
+}
+
+/* Secondary chrome (status bar, captions, composer, pill text) trails the
+   surface slightly so the orb reads as the anchor of the transition. */
+.voice-chrome-enter {
+  animation: voice-fade-in 200ms ease-out 70ms both;
+}
+
+.voice-chrome-exit {
+  animation: voice-fade-out 150ms ease-in both;
+}
+
+/* Fresh session start: no source rect to fly from, so the orb blooms in. */
+.voice-orb-intro {
+  animation: voice-orb-intro 300ms cubic-bezier(0.24, 0.9, 0.3, 1) both;
+}
+
+/* Ending the session: the orb collapses and fades with the backdrop. */
+.voice-orb-close {
+  animation: voice-orb-close-out 220ms ease-in both;
+}
+
+.voice-caption-enter {
+  animation: voice-caption-in 220ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-surface-enter,
+  .voice-surface-exit,
+  .voice-chrome-enter,
+  .voice-chrome-exit,
+  .voice-orb-intro,
+  .voice-orb-close,
+  .voice-caption-enter {
+    animation: none;
+  }
+}
+
 .tool-loading-text {
   background-image: radial-gradient(
     circle 75px at center,

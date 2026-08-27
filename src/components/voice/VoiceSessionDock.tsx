@@ -5,10 +5,17 @@
  * chat composer and action pills, so the user watches the agent's tasks and
  * verbatim messages in the normal thread while the voice session keeps
  * listening. Expand returns to the full-screen view; X ends the session.
+ *
+ * Entrance is orb-anchored: when the full-screen view minimizes, the pill
+ * chrome fades in while the orb canvas FLIPs from the big orb's captured
+ * rect, so the orb visually shrinks down into the pill (see
+ * voice-orb-transition.ts).
  */
 
+import { useLayoutEffect, useRef } from "react";
 import { Maximize2, X } from "lucide-react";
 import type { SessionOrbStatus } from "@/lib/voice/session-orb-renderer";
+import { consumeVoiceOrbRect, flipOrbFromRect } from "./voice-orb-transition";
 import { useVoiceSession } from "./VoiceSessionProvider";
 import { VoiceSessionOrb } from "./VoiceSessionOrb";
 
@@ -20,6 +27,7 @@ const DOCK_STATUS_LABELS: Record<SessionOrbStatus, string> = {
   sending: "Sending",
   working: "Agent working",
   speaking: "Speaking",
+  error: "Mic unavailable",
 };
 
 export function VoiceSessionDock({
@@ -29,36 +37,70 @@ export function VoiceSessionDock({
   wrapperClassName?: string;
 }) {
   const session = useVoiceSession();
-  if (session.view !== "minimized") {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const minimized = session.view === "minimized";
+
+  // Orb handoff from the full-screen view: fly the pill's orb in from the
+  // big orb's captured rect the moment this dock mounts.
+  useLayoutEffect(() => {
+    if (!minimized) return;
+    const orbEl = rootRef.current?.querySelector<HTMLElement>(
+      '[data-voice-orb="dock"]'
+    );
+    const source = consumeVoiceOrbRect("full");
+    if (orbEl && source) {
+      flipOrbFromRect(orbEl, source);
+    }
+  }, [minimized]);
+
+  if (!minimized) {
     return null;
   }
   const lastEntry = session.transcript[session.transcript.length - 1];
+  const micFailed = session.micState === "error";
+  const secondaryText = micFailed
+    ? session.micError ?? "Microphone unavailable - typing still works."
+    : lastEntry?.text ?? null;
   const dock = (
     <div
+      ref={rootRef}
       data-voice-session-dock
-      className="pointer-events-auto aurora-glass flex max-w-[min(420px,calc(100%-24px))] items-center gap-[10px] rounded-[var(--radius-pill)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] py-[5px] pl-[6px] pr-[8px] shadow-lg"
+      className="pointer-events-auto relative flex max-w-[min(420px,calc(100%-24px))] items-center gap-[10px] py-[5px] pl-[6px] pr-[8px]"
     >
+      {/* Pill chrome on its own fading layer so the orb above stays fully
+          visible during the FLIP handoff. */}
+      <div
+        aria-hidden
+        className="voice-surface-enter aurora-glass absolute inset-0 rounded-[var(--radius-pill)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] shadow-lg"
+      />
       <VoiceSessionOrb
         size={34}
+        variant="dock"
         onClick={
           session.status === "speaking" ? session.interruptSpeech : session.expand
         }
         ariaLabel={
           session.status === "speaking" ? "Stop speaking" : "Expand voice agent"
         }
-        className="shrink-0"
+        className="relative shrink-0"
       />
-      <div className="flex min-w-0 flex-col">
-        <span className="truncate font-sans text-[12px] font-medium leading-[15px] text-[var(--text-primary)]">
+      <div className="voice-chrome-enter relative flex min-w-0 flex-col">
+        <span
+          className={`truncate font-sans text-[12px] font-medium leading-[15px] ${
+            micFailed
+              ? "text-[var(--status-error,#e5484d)]"
+              : "text-[var(--text-primary)]"
+          }`}
+        >
           {DOCK_STATUS_LABELS[session.status]}
         </span>
-        {lastEntry ? (
+        {secondaryText ? (
           <span className="truncate font-sans text-[11px] leading-[14px] text-[var(--text-secondary)]">
-            {lastEntry.text}
+            {secondaryText}
           </span>
         ) : null}
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-[2px]">
+      <div className="voice-chrome-enter relative ml-auto flex shrink-0 items-center gap-[2px]">
         <button
           type="button"
           data-voice-session-dock-expand
