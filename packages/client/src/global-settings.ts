@@ -307,7 +307,7 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   /** Appearance, light/dark theme ids, custom token presets; persisted on the server. */
   themeConfig: ThemeConfig;
   keyboardShortcuts: KeyboardShortcutsSettingsState;
-  /** Animated aurora backdrop behind agent conversations. */
+  /** Animated aurora backdrop behind the workbench and settings. */
   aurora: AuroraSettingsState;
 };
 

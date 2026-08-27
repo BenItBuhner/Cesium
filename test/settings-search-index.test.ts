@@ -159,6 +159,18 @@ describe("settings search index", () => {
     assert.ok(chatgpt.some((hit) => hit.rowId === "cesium-oauth-accounts"));
   });
 
+  test("indexes aurora as a workbench and settings backdrop", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "aurora settings");
+    assert.ok(
+      hits.some(
+        (hit) =>
+          hit.rowId === "aurora-background" &&
+          hit.subtitle.includes("settings")
+      )
+    );
+  });
+
   test("can omit iPad beta rows for desktop shells", () => {
     const index = buildSettingsSearchIndex({}, { includeIpadBeta: false });
     assert.equal(
