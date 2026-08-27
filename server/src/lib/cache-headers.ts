@@ -3,9 +3,9 @@ import type { Context } from "hono";
 /**
  * Browser HTTP caching hints for stable-ish GET endpoints.
  *
- * `private` — never shared by a proxy (authenticated data).
- * `max-age=N` — browser can serve from cache for N seconds with no round-trip.
- * `stale-while-revalidate=M` — for another M seconds, return the stale entry
+ * `private` - never shared by a proxy (authenticated data).
+ * `max-age=N` - browser can serve from cache for N seconds with no round-trip.
+ * `stale-while-revalidate=M` - for another M seconds, return the stale entry
  * instantly and revalidate in the background.
  *
  * Combined with the fact that the client subscribes to change events over

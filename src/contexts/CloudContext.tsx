@@ -63,7 +63,7 @@ import {
 } from "@/lib/cloud/cloud-servers";
 
 /**
- * Cesium Cloud Context — the client side of the cross-device user context.
+ * Cesium Cloud Context - the client side of the cross-device user context.
  *
  * Local-first remains the source of truth for the running session; the cloud
  * (Convex, identity via Clerk or a gated device key) is a mirror that makes a
@@ -236,7 +236,7 @@ function reconcilePersonalization(
 
 /**
  * Merge cloud servers into the local connection list (additive). Tombstoned
- * identities — servers the user removed on this device — are skipped so they
+ * identities - servers the user removed on this device - are skipped so they
  * do not resurrect on every bootstrap.
  */
 function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
@@ -523,7 +523,7 @@ function getConvexClient(): ConvexReactClient | null {
  * build-time configuration (env vars or the committed production defaults in
  * cloud-defaults.ts) unless this device flipped the runtime local-only
  * switch in Settings → Account. With cloud disabled this renders children
- * directly — zero cloud code paths execute.
+ * directly - zero cloud code paths execute.
  *
  * The runtime override is read after mount (and re-read on the toggle
  * event) so the first client render always matches SSR markup on the Next

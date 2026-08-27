@@ -6,7 +6,7 @@
  * shell), while the emptied composer shell peels off to its docked resting
  * spot at the bottom (bottom-aligned with the old shell). Both pieces are the
  * *real* destination elements FLIP-translated from the captured source rect,
- * so nothing is cloned or faked — the cards genuinely travel to where they
+ * so nothing is cloned or faked - the cards genuinely travel to where they
  * live, at any viewport size.
  *
  * Usage: `captureComposerSplitSource()` synchronously in the submit handler
@@ -39,7 +39,7 @@ const SPLIT_DURATION_MS = 360;
  * work (server round-trip, real-view commit) until the animation has actually
  * started / finished, instead of guessing with wall-clock timers. Once the
  * transforms have started they run on the compositor, so later main-thread
- * jank no longer freezes them — but the *start* frame needs a quiet main
+ * jank no longer freezes them - but the *start* frame needs a quiet main
  * thread, hence the started gate.
  */
 let notifyStarted: (() => void) | null = null;

@@ -44,7 +44,7 @@ export type ServerPickerPopoverProps = {
   /**
    * Cloud pseudo-devices from cloud-capable backends (e.g. Cursor Cloud).
    * Rendered as a dedicated section; selecting one does not change the
-   * active server — new chats execute on the vendor's cloud instead.
+   * active server - new chats execute on the vendor's cloud instead.
    */
   cloudDevices?: CloudExecutionDevice[];
   /** Active cloud pseudo-device id; overrides server selection highlighting. */

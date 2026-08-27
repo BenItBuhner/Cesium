@@ -183,7 +183,7 @@ jobs:
           # shows the workbench receiving the run live over its WebSocket.
           if curl -fsS http://127.0.0.1:9100/health > /dev/null 2>&1; then
             # Fresh installs are workspace-less by design (PR #152), so drive
-            # the standalone chat flow — the same "New chat without a
+            # the standalone chat flow - the same "New chat without a
             # workspace" path the composer offers on first launch. It creates
             # its own ephemeral workspace and returns it for polling.
             CREATED=$(curl -fsS -X POST http://127.0.0.1:9100/api/agents/conversations/standalone/create-and-prompt \

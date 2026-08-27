@@ -1,4 +1,4 @@
-// Moved to @cesium/design (packages/design/src/theme-tokens.ts) — the single
+// Moved to @cesium/design (packages/design/src/theme-tokens.ts) - the single
 // token source for web CSS + native tokens. Re-export shim keeps existing
 // imports stable.
 export {

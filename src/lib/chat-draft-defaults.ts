@@ -68,7 +68,7 @@ export function updateChatDraftDefault(
  * to this backend, then the per-backend memory. Matches against the live
  * catalog (`draftModels`) so stale ids cannot leak into the dropdown, but
  * when the catalog has not hydrated yet (placeholder 0/1-entry list built
- * from the hardcoded backend default) the remembered pick is trusted as-is —
+ * from the hardcoded backend default) the remembered pick is trusted as-is -
  * snapping to the placeholder default is exactly the bug this prevents.
  *
  * Returns null when nothing usable was remembered; callers fall back to

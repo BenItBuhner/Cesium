@@ -70,7 +70,7 @@ function SectionLabel({ index, children }: { index: string; children: React.Reac
   );
 }
 
-/** Periodic-table tile for caesium — the brand's namesake. */
+/** Periodic-table tile for caesium - the brand's namesake. */
 function ElementTile() {
   return (
     <div className="relative">
@@ -111,7 +111,7 @@ function WorkbenchShot() {
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-            cesium — /agent · kimi-k3
+            cesium - /agent · kimi-k3
           </span>
         </div>
         <img
@@ -130,7 +130,7 @@ function WorkbenchShot() {
         />
       </div>
       <figcaption className="mt-[14px] text-center font-mono text-[11.5px] text-[var(--text-disabled)]">
-        A live session — an agent tracing WebSocket reconnect logic in this repo.
+        A live session - an agent tracing WebSocket reconnect logic in this repo.
       </figcaption>
     </figure>
   );
@@ -163,7 +163,7 @@ const FEATURES = [
   {
     icon: SquareCode,
     title: "A real IDE, in the browser",
-    body: "Editor, file tree, and tabs on the folders on your disk — not a sandbox.",
+    body: "Editor, file tree, and tabs on the folders on your disk - not a sandbox.",
     accent: "var(--workflow-accent)",
     accentBg: "var(--workflow-accent-bg)",
   },
@@ -191,7 +191,7 @@ const FEATURES = [
   {
     icon: Database,
     title: "Storage that scales with you",
-    body: "Plain files by default — no services to run. Switch to a database when you need to.",
+    body: "Plain files by default - no services to run. Switch to a database when you need to.",
     accent: "var(--debug-accent)",
     accentBg: "var(--debug-accent-bg)",
   },
@@ -238,7 +238,7 @@ function ArchitectureDiagram() {
           </div>
         </div>
         <ul className="space-y-[8px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-          <li>A window onto your machine — nothing sensitive lives here.</li>
+          <li>A window onto your machine - nothing sensitive lives here.</li>
           <li>Installable as an app; one setting points it at your engine.</li>
           <li>Open it from a laptop, a phone, or a tablet.</li>
         </ul>
@@ -318,7 +318,7 @@ export function LandingPage() {
                 One workbench.
               </h1>
               <p className="mt-[22px] max-w-[480px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
-                Chat with any coding agent, edit real files, and run real terminals — on your
+                Chat with any coding agent, edit real files, and run real terminals - on your
                 machine, from anywhere.
               </p>
               <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
@@ -364,7 +364,7 @@ export function LandingPage() {
           </p>
           <p className="mt-[10px] text-[14.5px] leading-relaxed text-[var(--text-secondary)]">
             oscillations of a caesium-133 atom define one second. Named for the element that keeps
-            time honest — every agent event is streamed live, so nothing goes unaccounted for.
+            time honest - every agent event is streamed live, so nothing goes unaccounted for.
           </p>
         </div>
       </section>
@@ -377,7 +377,7 @@ export function LandingPage() {
             A full workbench, not another chat box
           </h2>
           <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-            Everything an agent needs to work — and everything you need to watch it — in one window.
+            Everything an agent needs to work - and everything you need to watch it - in one window.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2 lg:grid-cols-3">
@@ -524,7 +524,7 @@ export function LandingPage() {
         <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-[14px] px-[24px] py-[26px]">
           <div className="flex items-center gap-[8px] text-[var(--text-disabled)]">
             <CesiumMark className="h-[16px] w-auto" />
-            <span className="text-[12px]">Cesium — local-first AI workbench</span>
+            <span className="text-[12px]">Cesium - local-first AI workbench</span>
           </div>
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">

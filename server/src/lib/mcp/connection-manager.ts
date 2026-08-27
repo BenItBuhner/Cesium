@@ -184,7 +184,7 @@ export async function refreshWorkspaceMcpMirror(input: {
       instructions: [
         "Use these tools to control browser tabs for site testing, screenshots, and demo recordings.",
         "Engines: server-chromium is the headless automation engine (works everywhere, supports screenshots + browser_record demo videos); electron-native opens a visible desktop editor tab (desktop app only); proxy is the legacy iframe path.",
-        "Screenshots (browser_screenshot) and demo videos (browser_record start/stop) are saved as workspace files under artifacts/browser/ — report those file paths in summaries so users and parent agents can open them.",
+        "Screenshots (browser_screenshot) and demo videos (browser_record start/stop) are saved as workspace files under artifacts/browser/ - report those file paths in summaries so users and parent agents can open them.",
         "Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
         `External harness CLIs can attach to this server natively over streamable HTTP at ${builtinMcpHttpUrl(input.workspaceId, BROWSER_MCP_SERVER_ID)} (Cesium exports this automatically to harnesses with native MCP support), or invoke a single tool with POST ${localMcpServerBaseUrl()}/api/workspaces/${input.workspaceId}/mcp/call and JSON body {"serverId":"browser","toolName":"browser_tabs","arguments":{...}}.`,
       ].join("\n"),

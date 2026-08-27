@@ -11,7 +11,7 @@ import {
 /**
  * Runtime local-only override: build config (env / committed defaults)
  * decides whether cloud is available, and a persisted per-device switch can
- * flip any cloud-capable client back to pure local-only behavior — the same
+ * flip any cloud-capable client back to pure local-only behavior - the same
  * mechanism on web, Electron, Android, and iOS.
  */
 

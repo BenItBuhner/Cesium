@@ -221,7 +221,7 @@ export function EditorTabs({
     }
     setEditingGroupId(renameTabGroupId);
     setEditGroupTitle(g.title);
-    // Only re-seed when the rename target id changes — not when `tabGroups` identity updates during typing.
+    // Only re-seed when the rename target id changes - not when `tabGroups` identity updates during typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renameTabGroupId]);
 

@@ -19,7 +19,7 @@ import androidx.core.view.WindowInsetsCompat
  *
  * Per the Android edge-to-edge guidance, the app must consume
  * [WindowInsetsCompat.Type.ime] itself. This pads the activity content view by
- * the keyboard height so the React root — and therefore the WebView — shrinks
+ * the keyboard height so the React root - and therefore the WebView - shrinks
  * to the visible area, letting the web layout reflow instead of being cut off.
  * Because every text field in the app lives inside the single WebView, this
  * one hook fixes keyboard occlusion everywhere at once.

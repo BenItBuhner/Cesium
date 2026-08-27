@@ -473,7 +473,7 @@ export class SubagentsV2Runtime {
       };
       this.waiters.add(entry);
       const timer = setTimeout(() => {
-        // Clear the cancellation poll too — leaving it running leaks a live
+        // Clear the cancellation poll too - leaving it running leaks a live
         // interval per timed-out wait and keeps the event loop alive.
         clearInterval(poll);
         this.waiters.delete(entry);

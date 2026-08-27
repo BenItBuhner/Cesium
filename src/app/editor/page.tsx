@@ -27,7 +27,7 @@ function toQueryString(sp: SearchParamsInput): string {
   return qs.toString();
 }
 
-/** Legacy URL; classic IDE shell was removed — agent route is the workbench. */
+/** Legacy URL; classic IDE shell was removed - agent route is the workbench. */
 export default async function LegacyEditorPage({
   searchParams,
 }: {

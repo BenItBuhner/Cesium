@@ -9,7 +9,7 @@
  *   target, so movement is snappy but has weight.
  * - Swipe gestures pin the drawer to the finger 1:1 while dragging; on
  *   release the spring finishes the motion, seeded with the flick velocity.
- *   Touching mid-animation grabs the drawer wherever it currently is —
+ *   Touching mid-animation grabs the drawer wherever it currently is -
  *   everything is interruptible.
  * - Frames are written imperatively (transform / opacity on refs), so no
  *   React re-render happens per frame.
@@ -253,7 +253,7 @@ export function gestureBlockedByTarget(
  * Legacy WebViews (Chromium < 90, e.g. Android 11) do not implement
  * `overflow: clip`, so the class on the shell falls back to `visible` and
  * the parked drawers' overflow propagates to the outer `overflow-hidden`
- * app shell — which IS programmatically scrollable, letting focus/scroll
+ * app shell - which IS programmatically scrollable, letting focus/scroll
  * heuristics drag the whole UI sideways off-screen. Fall back to
  * `overflow: hidden` on the shell and pin any scroll back to the origin.
  */

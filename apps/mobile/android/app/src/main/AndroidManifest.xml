@@ -9,7 +9,7 @@
   <!-- Required alongside RECORD_AUDIO for WebView getUserMedia audio capture:
        without it Chromium fails to open the mic with NotReadableError
        ("Could not start audio source") even when RECORD_AUDIO is granted.
-       Normal (install-time) permission — users cannot grant it from Settings. -->
+       Normal (install-time) permission - users cannot grant it from Settings. -->
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 

@@ -664,7 +664,7 @@ export function AgentNewChatLanding({
                 shellMxClass=""
                 draftAttachments={composerDraftAttachments}
                 onDraftAttachmentsChange={(next) =>
-                  // Do not pass `content` here — submit clears text then
+                  // Do not pass `content` here - submit clears text then
                   // immediately clears attachments; a stale `content`
                   // closure would resurrect the prompt in the composer.
                   upsertComposerDraft(composerDraftId, {

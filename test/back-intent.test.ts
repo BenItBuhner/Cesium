@@ -193,7 +193,7 @@ describe("BackGestureCoordinator", () => {
     coordinator.start(gestureFrame(0));
     assert.equal(coordinator.commit(), true);
     // A stray second commit resolves fresh (the rail handler is still
-    // registered in this synthetic registry, so it pops again) — but the
+    // registered in this synthetic registry, so it pops again) - but the
     // stash must be cleared so nothing double-fires from stale state.
     assert.equal(coordinator.commit(), true);
     assert.deepEqual(popped, ["rail", "rail"]);

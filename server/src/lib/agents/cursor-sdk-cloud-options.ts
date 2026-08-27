@@ -42,7 +42,7 @@ export function normalizeCursorSdkCloudRepoUrl(remoteUrl: string): string | null
   }
   const stripGitSuffix = (input: string): string => input.replace(/\.git$/i, "");
   if (!value.includes("://")) {
-    // scp-like syntax: [user@]host:path — anything else (bare paths) is local.
+    // scp-like syntax: [user@]host:path - anything else (bare paths) is local.
     const scpLike = value.match(/^(?:[^@\s/:]+@)?([^:/\s]+):(.+)$/);
     if (!scpLike) {
       return null;

@@ -3,7 +3,7 @@
  * Integration test for the Cesium Cloud Context Convex functions.
  *
  * Runs against the project's configured Convex deployment via `npx convex
- * run` — locally that is the anonymous local deployment (`npx convex dev`),
+ * run` - locally that is the anonymous local deployment (`npx convex dev`),
  * which auto-starts when needed. The deployment must have
  * CESIUM_ALLOW_DEVICE_KEYS=1 set (`npx convex env set CESIUM_ALLOW_DEVICE_KEYS 1`).
  *

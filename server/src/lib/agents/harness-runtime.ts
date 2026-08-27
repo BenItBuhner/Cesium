@@ -14,7 +14,7 @@ import type { CliRuntimeSpec } from "./cli-adapter.js";
  * Every harness is described once by a `HarnessCliDescriptor` and resolved
  * through a single pipeline:
  *
- *   1. explicit env override (`OPENCURSOR_*_BIN`) — absolute path or PATH name
+ *   1. explicit env override (`OPENCURSOR_*_BIN`) - absolute path or PATH name
  *   2. `PATH` scan (real executable check, not just `existsSync`)
  *   3. harness-specific well-known install dirs (`~/.grok/bin`, `~/.opencode/bin`, ...)
  *   4. common user-level tool dirs (`~/.local/bin`, `~/.bun/bin`, npm/volta/cargo
@@ -22,7 +22,7 @@ import type { CliRuntimeSpec } from "./cli-adapter.js";
  *
  * Detections are cached with a short TTL and fingerprinted against the env
  * vars that influence them, so CLIs installed *after* server boot are picked
- * up automatically — no restart, no module-reload hacks.
+ * up automatically - no restart, no module-reload hacks.
  */
 
 export type HarnessCliId =
@@ -212,7 +212,7 @@ function commonBinDirectories(): string[] {
       dirs.push(trimmed);
     }
   };
-  // Cesium-managed one-click install prefix ({DATA_DIR}/tools) — checked
+  // Cesium-managed one-click install prefix ({DATA_DIR}/tools) - checked
   // first so engine-driven installs win over ambient user installs.
   push(path.join(getCesiumToolsDir(), "node_modules", ".bin"));
   push(getCesiumToolsDir()); // npm --prefix on Windows puts shims in the root

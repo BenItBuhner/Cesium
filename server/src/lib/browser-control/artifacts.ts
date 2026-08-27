@@ -3,8 +3,8 @@ import path from "node:path";
 
 /**
  * Browser walkthrough artifacts (screenshots, demo recordings) are saved inside
- * the workspace so every harness — Cesium Agent, subagents, and external CLI
- * harnesses — can read the same files back with plain filesystem tools.
+ * the workspace so every harness - Cesium Agent, subagents, and external CLI
+ * harnesses - can read the same files back with plain filesystem tools.
  */
 export const BROWSER_ARTIFACTS_RELATIVE_DIR = path.join("artifacts", "browser");
 
@@ -36,7 +36,7 @@ async function ensureBrowserArtifactsGitignore(workspaceRoot: string): Promise<v
     }
     await fs.appendFile(gitignorePath, "\nartifacts/browser/\n", "utf8");
   } catch {
-    // no .gitignore — skip
+    // no .gitignore - skip
   }
 }
 

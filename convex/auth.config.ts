@@ -12,7 +12,7 @@ function readOptionalEnv(name: string): string | undefined {
   // Convex's push-time auth-config evaluator exposes env vars through a
   // proxy with quirky semantics: `get` of an unset var can throw
   // (get-convex/convex-backend#309), and the `in` membership trap is not
-  // implemented on cloud deployments — an `in` guard reads as false even
+  // implemented on cloud deployments - an `in` guard reads as false even
   // when the variable IS set, which silently emptied the provider list and
   // broke Clerk sign-in in production. Direct access inside try/catch is
   // correct under both behaviors: set vars come through, unset vars either

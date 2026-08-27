@@ -1,6 +1,6 @@
 /**
  * Local engines may run without a password (loopback-only `npm run dev`).
- * Anything reachable off this machine must already have engine auth on —
+ * Anything reachable off this machine must already have engine auth on -
  * Cesium will not treat a pasted URL as a usable remote if `/api/auth/status`
  * says the engine is open.
  */

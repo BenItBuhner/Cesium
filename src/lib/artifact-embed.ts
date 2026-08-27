@@ -1,7 +1,7 @@
 /**
  * Inline artifact embeds: assistant replies place `[[artifact:<id>]]` (or an
  * `<artifact id="…"/>` tag) on its own line to render a live artifact card in
- * the conversation. Matching is line-based so it stays streaming-safe — only a
+ * the conversation. Matching is line-based so it stays streaming-safe - only a
  * fully received tag line renders as an embed.
  */
 

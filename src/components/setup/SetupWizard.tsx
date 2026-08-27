@@ -46,7 +46,7 @@ const STEP_DESCRIPTIONS: Record<SetupStepId, string> = {
  * The barebones cross-platform setup flow. Steps come from the platform
  * profile (Electron drops the server step down to a footnote), progress is
  * mirrored to the user's cloud context so setup resumes on any device, and
- * every step is skippable — local-first means nothing here is a wall.
+ * every step is skippable - local-first means nothing here is a wall.
  */
 export function SetupWizard() {
   const cloud = useCloudContext();
@@ -54,7 +54,7 @@ export function SetupWizard() {
   const profile = useMemo(() => getPlatformSetupProfile(), []);
 
   // Device-mode account linking: /setup?link=<deviceKey> adopts an existing
-  // device identity — the keyless analogue of signing in on a new machine.
+  // device identity - the keyless analogue of signing in on a new machine.
   useEffect(() => {
     const link = searchParams?.get("link");
     if (link && adoptDeviceKey(link)) {
@@ -266,7 +266,7 @@ export function SetupWizard() {
               </p>
               <p className="text-[13px] text-[var(--text-secondary)]">
                 {cloud.actions
-                  ? "Everything is synced — sign in anywhere and pick up where you left off."
+                  ? "Everything is synced - sign in anywhere and pick up where you left off."
                   : "Setup saved on this device."}
               </p>
             </div>
@@ -282,7 +282,7 @@ export function SetupWizard() {
 
         {!engineConnected && profile.serverConnection === "step" ? (
           <p className="mb-[18px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-            This is the server onboarding. Attach a live engine first — agents,
+            This is the server onboarding. Attach a live engine first - agents,
             imports, and your first chat stay hidden until the workbench can
             actually talk to one.
           </p>
@@ -354,7 +354,7 @@ export function SetupWizard() {
 
         {profile.serverConnection === "footnote" ? (
           <p className="mt-[20px] font-mono text-[11px] leading-relaxed text-[var(--text-disabled)]">
-            Running on the desktop app — your local engine is already connected.
+            Running on the desktop app - your local engine is already connected.
             Want to attach a remote machine too? Add it any time under{" "}
             <Link
               href={`${WORKSPACE_ROUTE}?view=settings`}

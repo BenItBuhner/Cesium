@@ -303,11 +303,11 @@ export npm_config_audit=false
     --no-save
   "$BUN_BIN" run --cwd packages/core build
   # The server imports @cesium/contracts, whose package exports point at
-  # dist/ — build it or the server fails to resolve the module at runtime.
+  # dist/ - build it or the server fails to resolve the module at runtime.
   "$BUN_BIN" run --cwd packages/contracts build
   rm -f server/node_modules/cesium
   # bun materializes the server's file:../packages/* dependencies as nested
-  # copies taken at install time — before the packages were built — so a
+  # copies taken at install time - before the packages were built - so a
   # dist-less @cesium/core copy under server/node_modules shadows the built
   # workspace package and the server dies with "Cannot find module
   # '@cesium/core/...'". Remove the nested copies; imports then resolve

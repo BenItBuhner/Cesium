@@ -341,7 +341,7 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         id: "google-antigravity-cli",
         label: "Google Antigravity CLI",
         description:
-          "Google Antigravity CLI (`agy`) — successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
+          "Google Antigravity CLI (`agy`) - successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
         experimental: true,
         commandPreview: runtime
           ? `${runtime.commandPreview} interactive`
@@ -366,7 +366,7 @@ const AGENT_BACKEND_MENU_ORDER: readonly AgentBackendId[] = ACTIVE_AGENT_BACKEND
 /**
  * Live backend registry. Property reads compute fresh info from the current
  * CLI detection state, so `AGENT_BACKENDS["grok-build"].available` flips as
- * soon as the CLI is installed/uninstalled — no server restart or module
+ * soon as the CLI is installed/uninstalled - no server restart or module
  * reload required. Spreads, `Object.entries`, and `in` checks all behave like
  * a plain record.
  */

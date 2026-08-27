@@ -1,9 +1,9 @@
 export const AGENT_LEFT_RAIL_EXPANDED_WIDTH = 290;
-/** @deprecated Historic constant; collapsed rail uses 0% width — see `AgentWorkspaceRailCollapsedOverlay`. */
+/** @deprecated Historic constant; collapsed rail uses 0% width - see `AgentWorkspaceRailCollapsedOverlay`. */
 export const AGENT_LEFT_RAIL_COLLAPSED_WIDTH = 0;
 /** Collapsed rail takes no flex space; quick actions use `AgentWorkspaceRailCollapsedOverlay`. */
 export const AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT = 0;
-/** @deprecated Fixed width removed — side pane is resizable; kept for approximate defaults. */
+/** @deprecated Fixed width removed - side pane is resizable; kept for approximate defaults. */
 export const AGENT_RIGHT_PANE_WIDTH = 764;
 export const AGENT_SHELL_RAIL_MIN_PERCENT = 10;
 export const AGENT_SHELL_RAIL_MAX_PERCENT = 42;
@@ -133,7 +133,7 @@ export function collapseAgentShellSideLayout(
 export const AGENT_CENTER_STAGE_CLASS = "w-full";
 /**
  * Centered column when the **agent center pane** is wide enough; below that (split panes, narrow stage,
- * phones) use full width — driven by `@container` on the pane, not the viewport (see MessageList).
+ * phones) use full width - driven by `@container` on the pane, not the viewport (see MessageList).
  */
 export const AGENT_CENTER_CONTENT_CLASS =
   "mx-auto w-full max-w-[min(var(--agent-content-max-width),calc(100%_-_var(--agent-content-edge-gutter)))] @max-[640px]:mx-0 @max-[640px]:max-w-full";

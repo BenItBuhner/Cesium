@@ -16,7 +16,7 @@ import type { AgentStoredEvent } from "../types.js";
  * Codex MultiAgentV2 parity: "All agents in the team … are equally intelligent
  * and capable, and have access to the same set of tools." Subagents share the
  * parent's workspace tool surface (files, terminal, MCP) plus the direct
- * browser tools, and — when the V2 feature is active — the collaboration tools
+ * browser tools, and - when the V2 feature is active - the collaboration tools
  * themselves (spawn depth is enforced at spawn time, like Codex
  * `agents.max_depth`). Parent-conversation control tools (mode switching,
  * plans, goals, workflows, orchestration boards) are excluded because Cesium
@@ -57,7 +57,7 @@ const SUBAGENT_SHARED_GUIDANCE =
   "You have the parent agent's workspace tools (read_file, grep, write_file, edit_file, terminal, call_mcp_tool) and the built-in " +
   "browser tools (browser_tabs, browser_navigate, browser_snapshot, browser_click, browser_type, browser_evaluate, browser_viewport, " +
   "browser_screenshot, browser_record, browser_events). Screenshots and demo recordings are saved under artifacts/browser/ in the " +
-  "workspace — always list those exact file paths in your final summary so the parent agent and the user can open them. " +
+  "workspace - always list those exact file paths in your final summary so the parent agent and the user can open them. " +
   "Close browser tabs you opened when finished. Your final response is delivered back to your parent agent.";
 
 const SUBAGENT_COLLABORATION_GUIDANCE =
@@ -154,7 +154,7 @@ export type SubagentProgressBroadcaster = {
  * terminal state, so an open transcript tab showed a frozen "Working" row for
  * the whole run. This broadcaster lets the tool loop re-emit the running card
  * with the growing transcript, rate-limited so rapid tool bursts do not flood
- * the event store (transcripts are cumulative, so skipped ticks lose nothing —
+ * the event store (transcripts are cumulative, so skipped ticks lose nothing -
  * the next emission carries every row).
  */
 export function createSubagentProgressBroadcaster(input: {

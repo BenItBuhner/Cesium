@@ -42,7 +42,7 @@ function extractMetaContent(html: string, propertyOrName: string): string | null
 }
 
 function extractDocumentTitle(html: string): string | null {
-  // Prefer the document `<title>` — "header title" — over social meta tags.
+  // Prefer the document `<title>` - "header title" - over social meta tags.
   const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   if (titleMatch?.[1]) {
     const cleaned = collapseWhitespace(decodeBasicEntities(titleMatch[1]));

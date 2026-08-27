@@ -5,7 +5,7 @@
  * OpenAI (ChatGPT / Codex) and SpaceXAI / xAI (SuperGrok / X Premium) both
  * publish this path. Other vendors (Anthropic Claude Pro/Max, GitHub Copilot
  * editor tokens, Google Gemini CLI / Antigravity) treat unofficial reuse as
- * ToS abuse and will lock the account — do not offer or consume those.
+ * ToS abuse and will lock the account - do not offer or consume those.
  */
 
 export const SUBSCRIPTION_OAUTH_PROVIDER_IDS = ["openai-codex", "xai"] as const;

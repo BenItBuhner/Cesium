@@ -1,6 +1,6 @@
 /**
  * Workbench shell/layout types. Workspace record/file-tree/git types now live
- * in ./types (moved from src/lib/types.ts) — the richer client shapes are the
+ * in ./types (moved from src/lib/types.ts) - the richer client shapes are the
  * single source of truth.
  */
 export type MobilePanel = "sidebar" | "editor" | "chat";

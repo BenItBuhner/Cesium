@@ -22,7 +22,7 @@ describe("engine URL policy", () => {
     );
   });
 
-  test("remote URLs require engine auth — a pasted host is not enough", () => {
+  test("remote URLs require engine auth - a pasted host is not enough", () => {
     assert.equal(isLoopbackEngineUrl("https://engine.example"), false);
     assert.throws(
       () =>

@@ -171,7 +171,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   // Pending-reply bookkeeping: each accepted submit increments the counter,
   // each processed assistant_message_end decrements it. Turns can overlap
   // (a prompt is ACKed while the previous turn still streams), so a single
-  // marker is not enough — the reconciliation poller below must keep running
+  // marker is not enough - the reconciliation poller below must keep running
   // until every submitted turn has its reply. Mirrored in refs so sibling
   // effects in the same commit see fresh values.
   const [awaitingReplySince, setAwaitingReplySince] = useState<number | null>(
@@ -243,7 +243,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   promptConversationRef.current = promptConversation;
 
   /**
-   * Shared conversation delivery — no captions. Engine turns already caption
+   * Shared conversation delivery - no captions. Engine turns already caption
    * via `onHeard`; the composer path captions in `submitComposer`.
    */
   const submitToConversation = useCallback(
@@ -578,12 +578,12 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   // ---- Reply reconciliation: close the event-delivery hole ---------------
   // The conversation event log is fed by socket event batches and by catch-up
-  // snapshot polls that stop 5s after submit. Both can fail silently — a dead
+  // snapshot polls that stop 5s after submit. Both can fail silently - a dead
   // socket even freezes the conversation's client-side status at "running",
   // so nothing push-based can be trusted. Poll the snapshot directly (deduped
   // inside syncConversationSnapshot) while either (a) a submitted turn has
   // not yet surfaced its assistant_message_end, or (b) the bound
-  // conversation's client-side status still reads busy — the last merged
+  // conversation's client-side status still reads busy - the last merged
   // snapshot may have been fetched mid-turn, and without a working socket
   // nothing else would ever settle the status (and the orb) back to ready.
   // The merge repopulates events (firing the speak effect) and refreshes the

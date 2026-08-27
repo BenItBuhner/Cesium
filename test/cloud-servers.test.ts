@@ -66,7 +66,7 @@ describe("cloud server sync helpers", () => {
     assert.notEqual(merged.state.activeServerId, inherited.id);
   });
 
-  test("merge is idempotent — a second application reports no change", () => {
+  test("merge is idempotent - a second application reports no change", () => {
     const first = mergeCloudServersIntoState(defaultState(), [
       { name: "Home desktop", baseUrl: "https://tunnel-1.lhr.life", rendezvous: LOCATOR },
       { name: "Plain remote", baseUrl: "https://engine.example.com" },

@@ -8,7 +8,7 @@ export type ComposerEditorScrollFade = {
 };
 
 /**
- * Vertical edge fades for a scrollable composer editor — same threshold math as
+ * Vertical edge fades for a scrollable composer editor - same threshold math as
  * `AgentRailConversationListScroll` in `AgentWorkspaceRail.tsx`.
  */
 export function useComposerEditorScrollFade(

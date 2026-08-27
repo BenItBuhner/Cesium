@@ -1,7 +1,7 @@
 /**
  * Performance-adjacent and stress-adjacent checks for agent cache layers, rail
  * payload assembly, and key stability. Iterate on this file as you add new
- * batching, Redis TTLs, or read paths — the intent is to catch regressions on
+ * batching, Redis TTLs, or read paths - the intent is to catch regressions on
  * “cold cache after write” and unbounded I/O, not to assert exact stopwatch ms.
  */
 import assert from "node:assert/strict";

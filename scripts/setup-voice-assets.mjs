@@ -8,7 +8,7 @@
  *
  * Assets are intentionally NOT committed (see .gitignore); run
  * `npm run voice:assets` once per checkout. Without them the voice plane
- * still works — the energy VAD is used instead.
+ * still works - the energy VAD is used instead.
  */
 
 import { createRequire } from "node:module";
@@ -70,7 +70,7 @@ async function copyOrtRuntime() {
     distDir = path.dirname(require.resolve("onnxruntime-web"));
   }
   const entries = await fs.readdir(distDir);
-  // Only the wasm execution-provider files the browser actually loads —
+  // Only the wasm execution-provider files the browser actually loads -
   // keeps the payload small enough to bundle into the Android APK.
   const needed = new Set([
     "ort-wasm-simd-threaded.wasm",

@@ -15,7 +15,7 @@ import type { ProviderUsageReport } from "./types.js";
 /**
  * OpenCode usage: assistant message records persist provider-reported
  * `tokens` ({ input, output, reasoning, cache: { read, write } }) and real
- * `cost` in USD, plus providerID/modelID — the richest local usage data of
+ * `cost` in USD, plus providerID/modelID - the richest local usage data of
  * any harness. Read from opencode.db (v1) or the legacy storage tree (0.x).
  */
 
@@ -46,7 +46,7 @@ async function openReadonlyDb(dbPath: string): Promise<{
     const db = new Database(dbPath, { readonly: true });
     return { query: (sql) => db.query(sql).all(), close: () => db.close() };
   } catch {
-    // Not running under Bun — fall through to node:sqlite.
+    // Not running under Bun - fall through to node:sqlite.
   }
   try {
     const { DatabaseSync } = (await import("node:sqlite")) as unknown as {

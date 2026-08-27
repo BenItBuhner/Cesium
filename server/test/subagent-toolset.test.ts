@@ -60,7 +60,7 @@ test("subagents share the host workspace tool surface plus browser and collabora
   for (const collab of SUBAGENT_COLLABORATION_TOOL_NAMES) {
     assert.ok(names.has(collab), `missing collaboration tool ${collab}`);
   }
-  // Parent-conversation control tools stay excluded — children have no
+  // Parent-conversation control tools stay excluded - children have no
   // conversation of their own for these to act on.
   for (const excluded of ["switch_mode", "create_plan", "goal_set", "orchestration_create_issue", "ask_question"]) {
     assert.equal(names.has(excluded), false, `${excluded} must not leak to subagents`);

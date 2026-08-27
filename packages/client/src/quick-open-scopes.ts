@@ -1,7 +1,7 @@
 /**
  * Quick Open (Mod+P) scope model. The palette defaults to file search but can
- * pivot to other searchable domains — agent conversations, workbench commands,
- * settings, and open editor tabs — via clickable scope chips, Tab cycling, or
+ * pivot to other searchable domains - agent conversations, workbench commands,
+ * settings, and open editor tabs - via clickable scope chips, Tab cycling, or
  * typed prefixes (`>` commands, `@` chats, `#` settings, `tabs:` …).
  */
 

@@ -3,7 +3,7 @@
 /**
  * DOM-side helpers for the Android host bridge. The protocol itself (message
  * types, version, bootstrap builder) is shared with the native shell via
- * `@cesium/core` — see `packages/core/src/mobile-bridge.ts`.
+ * `@cesium/core` - see `packages/core/src/mobile-bridge.ts`.
  */
 
 import {
@@ -98,8 +98,8 @@ export function dispatchMobileBridgeMessage(message: MobileNativeToWebMessage): 
 
 /**
  * Applies dynamic host state from a `nativeConfigChanged` message: refreshes
- * the injected server globals, the safe-area inset, and — when the user
- * follows the system theme — the dark class driven by the native color
+ * the injected server globals, the safe-area inset, and - when the user
+ * follows the system theme - the dark class driven by the native color
  * scheme (the WebView's own `prefers-color-scheme` is not reliable across
  * Android configuration changes).
  */

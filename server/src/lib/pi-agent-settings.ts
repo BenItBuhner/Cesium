@@ -22,8 +22,8 @@ export type PiAgentSettings = {
   providerKeys: PiAgentProviderKey[];
   /**
    * Where Pi loads settings, packages, extensions, skills, auth, and models.
-   * - native: ~/.pi/agent (or PI_CODING_AGENT_DIR) — preserves CLI customization
-   * - isolated: Cesium profile dir — sandbox for shared servers
+   * - native: ~/.pi/agent (or PI_CODING_AGENT_DIR) - preserves CLI customization
+   * - isolated: Cesium profile dir - sandbox for shared servers
    */
   agentHome: PiAgentHomeMode;
 };
@@ -234,7 +234,7 @@ export function getPiAgentAuthPath(): string {
   return path.join(getPiAgentDir(), "auth.json");
 }
 
-/** @deprecated Use getPiAgentAuthPath — kept for older probe scripts. */
+/** @deprecated Use getPiAgentAuthPath - kept for older probe scripts. */
 export function getPiAgentAuthDir(): string {
   return getPiAgentAuthPath();
 }
@@ -391,7 +391,7 @@ export async function applyPiRuntimeApiKeys(
       authStorage.setRuntimeApiKey(XAI_OAUTH_PROVIDER_ID, access);
     }
   } catch {
-    // SuperGrok token missing or refresh failed — API-key path still works.
+    // SuperGrok token missing or refresh failed - API-key path still works.
   }
 }
 

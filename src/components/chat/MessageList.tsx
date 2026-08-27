@@ -318,7 +318,7 @@ export function MessageList({
     requestScrollAnchorRestore,
   ]);
 
-  // Layout effect so the pin lands before paint — a passive effect paints one
+  // Layout effect so the pin lands before paint - a passive effect paints one
   // un-pinned frame first, which reads as a per-chunk bounce while streaming.
   useLayoutEffect(() => {
     const root = scrollRootRef.current;

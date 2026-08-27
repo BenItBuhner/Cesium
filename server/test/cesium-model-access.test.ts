@@ -153,14 +153,14 @@ test("patchCesiumAgentSettings persists model access and clearing descriptions",
     modelAccess: {
       entries: {
         "acme/shared-model": { enabled: false },
-        "techlit/unit-kimi-x9": { description: "fast + multimodal — great subagent default" },
+        "techlit/unit-kimi-x9": { description: "fast + multimodal - great subagent default" },
       },
     },
   });
   assert.deepEqual(patched.modelAccess.entries["acme/shared-model"], { enabled: false });
   assert.equal(
     patched.modelAccess.entries["techlit/unit-kimi-x9"]?.description,
-    "fast + multimodal — great subagent default"
+    "fast + multimodal - great subagent default"
   );
 
   const cleared = await patchCesiumAgentSettings({
@@ -185,7 +185,7 @@ test("roster filters disabled + tool-less models and keeps the active default", 
   const ids = roster.map((entry) => entry.modelId);
   assert.ok(ids.includes("techlit/unit-kimi-x9"));
   assert.ok(ids.includes("openai/gpt-5.1"));
-  // Disabled — but it is the active default, so it stays in the roster.
+  // Disabled - but it is the active default, so it stays in the roster.
   assert.ok(ids.includes("acme/shared-model"));
   assert.equal(roster[0]?.modelId, "acme/shared-model");
   assert.equal(roster[0]?.isDefault, true);
@@ -235,7 +235,7 @@ test("formatCesiumModelRoster renders notes, default marker, and overflow", () =
     { maxEntries: 2 }
   );
   assert.match(text, /inherit the current model by default/);
-  assert.match(text, /techlit\/unit-kimi-x9 \(current default\).*— fast multimodal default/);
+  assert.match(text, /techlit\/unit-kimi-x9 \(current default\).*- fast multimodal default/);
   assert.match(text, /openai\/gpt-5\.1/);
   assert.match(text, /…and 1 more enabled models/);
   assert.ok(!text.includes("acme/tiny"));

@@ -70,7 +70,7 @@ export const bootstrap = query({
             completedAt: onboarding.completedAt ?? null,
           }
         : null,
-      /** Metadata only — transcripts are pulled per-snapshot on demand. */
+      /** Metadata only - transcripts are pulled per-snapshot on demand. */
       snapshots: snapshots
         .sort((a, b) => b.sourceUpdatedAt - a.sourceUpdatedAt)
         .map((snapshot) => ({

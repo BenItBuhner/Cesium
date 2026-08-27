@@ -2354,7 +2354,7 @@ export function EditorPanel({
             activeTabId: state.leftActiveId,
             tabs: state.leftTabs,
             showSplitToolbar: true,
-            emptyMessage: "No file selected — open a tab above or move one here.",
+            emptyMessage: "No file selected - open a tab above or move one here.",
           })}
         </Panel>
         <EditorSplitResizeHandle orientation={splitOrientation} />

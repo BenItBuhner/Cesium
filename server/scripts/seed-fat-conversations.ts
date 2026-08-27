@@ -23,7 +23,7 @@ import { listWorkspaces } from "../src/lib/workspace-registry.js";
 const backend = AGENT_BACKENDS["cursor-sdk"];
 const STRESS_TITLE_PREFIX = "Stress seed";
 
-/** Rich turns per chat — same marathon depth as the legacy megascript, now tool-dense. */
+/** Rich turns per chat - same marathon depth as the legacy megascript, now tool-dense. */
 const DEFAULT_TURNS = 3500;
 const DEFAULT_CONVERSATIONS = 30;
 const FLUSH_EVENT_THRESHOLD = 4000;
@@ -245,7 +245,7 @@ function pushSyntheticToolLifecycle(
     conversationId,
     kind: "tool_call",
     toolCallId,
-    title: `${TOOL_TITLES[tk]} — ${pathLabel}`,
+    title: `${TOOL_TITLES[tk]} - ${pathLabel}`,
     toolKind: tk,
     status: "pending",
     detail: `Queued ${shortDetail}`,
@@ -292,7 +292,7 @@ function pushSyntheticToolLifecycle(
     detail: ok
       ? `Done · ${400 + Math.floor(rand() * 12000)}b · ${pathLabel}`
       : cancelled
-        ? `Cancelled (${tk}) — user stopped tool storm`
+        ? `Cancelled (${tk}) - user stopped tool storm`
         : `Tool ${tk} failed: non-zero exit (mock)`,
   });
 }

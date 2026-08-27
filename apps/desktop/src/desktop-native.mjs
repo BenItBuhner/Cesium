@@ -128,7 +128,7 @@ function runMenuLabel(run) {
   const detail = run.needsInput
     ? "needs input"
     : run.progressLabel || run.detail || "running";
-  return `${title} — ${detail}`.slice(0, 80);
+  return `${title} - ${detail}`.slice(0, 80);
 }
 
 function rebuildTrayMenu(runs) {
@@ -179,8 +179,8 @@ function rebuildTrayMenu(runs) {
       activeCount === 0
         ? "Cesium"
         : needsInput > 0
-          ? `Cesium — ${activeCount} agent${activeCount === 1 ? "" : "s"} running, ${needsInput} need${needsInput === 1 ? "s" : ""} input`
-          : `Cesium — ${activeCount} agent${activeCount === 1 ? "" : "s"} running`
+          ? `Cesium - ${activeCount} agent${activeCount === 1 ? "" : "s"} running, ${needsInput} need${needsInput === 1 ? "s" : ""} input`
+          : `Cesium - ${activeCount} agent${activeCount === 1 ? "" : "s"} running`
     );
   } catch (error) {
     console.warn("[cesium-desktop] failed to update tray", error);

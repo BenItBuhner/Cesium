@@ -7,7 +7,7 @@ import { isCesiumDesktopApp } from "@cesium/client";
  *
  * The same wizard renders on every platform; the profile decides which steps
  * exist and how the "connect a server" concern is presented:
- * - web: the client is just a window — connecting an engine is step one.
+ * - web: the client is just a window - connecting an engine is step one.
  * - desktop (Electron): the engine ships embedded and already points at
  *   localhost, so server connection is exempt from the flow and offered only
  *   as an optional footnote for attaching remote machines.

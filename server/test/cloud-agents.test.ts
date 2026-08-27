@@ -78,7 +78,7 @@ after(async () => {
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true }).catch(() => undefined);
 });
 
-// —— Settings store ——
+// -- Settings store --
 
 test("cloud agent settings default shape", async () => {
   const settings = await getCloudAgentSettings();
@@ -170,7 +170,7 @@ test("disconnect removes the stored connection", async () => {
   assert.equal(await getCloudAgentConnection("slack"), null);
 });
 
-// —— Webhook signature verification ——
+// -- Webhook signature verification --
 
 test("github signature verification", () => {
   const body = JSON.stringify({ hello: "world" });
@@ -206,7 +206,7 @@ test("slack signature verification honors timestamp tolerance", () => {
   assert.equal(verifySlackSignature(body, stale, staleTimestamp, secret, nowMs), false);
 });
 
-// —— Webhook parsing ——
+// -- Webhook parsing --
 
 test("github issues assigned webhook becomes an assignment", () => {
   const payload = {
@@ -372,7 +372,7 @@ test("invalid webhook JSON is rejected", () => {
   assert.equal(result.kind, "rejected");
 });
 
-// —— Routing ——
+// -- Routing --
 
 test("routing rules filter assignments to the right workspace", async () => {
   await patchCloudAgentSettings({
@@ -421,7 +421,7 @@ test("routing rules filter assignments to the right workspace", async () => {
   await patchCloudAgentSettings({ defaults: { workspaceId: null }, routingRules: [] });
 });
 
-// —— Task store ——
+// -- Task store --
 
 test("task store lifecycle: create, update, timeline, find by conversation, delete", async () => {
   const task = await createCloudAgentTask({
@@ -459,7 +459,7 @@ test("task store lifecycle: create, update, timeline, find by conversation, dele
   assert.equal(await getCloudAgentTask(task.id), null);
 });
 
-// —— Dispatcher helpers ——
+// -- Dispatcher helpers --
 
 test("origin labels are short provider-specific provenance strings", () => {
   assert.equal(
@@ -613,7 +613,7 @@ test("dispatch fails cleanly without a target workspace", async () => {
   await deleteCloudAgentTask(task.id);
 });
 
-// —— OAuth ——
+// -- OAuth --
 
 test("authorize URLs are provider-specific", () => {
   const linearUrl = buildCloudAgentAuthorizeUrl({
@@ -661,7 +661,7 @@ test("oauth helper URLs and success page", () => {
   assert.match(cloudAgentOAuthSuccessHtml("Linear"), /opencursor-cloud-agents-oauth/);
 });
 
-// —— Routes ——
+// -- Routes --
 
 test("settings route returns public settings and endpoint URLs", async () => {
   const response = await cloudAgentRoutes.request("/api/cloud-agents/settings", {

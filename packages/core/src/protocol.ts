@@ -143,7 +143,7 @@ export type AgentProviderCapabilities = {
  * Where a conversation's agent actually executes. "local" runs on the engine
  * (device) that owns the conversation; "cloud" runs on the harness vendor's
  * hosted infrastructure (e.g. Cursor Cloud). Chosen at creation and immutable
- * afterwards — a cloud agent lives on the vendor's infra for its lifetime.
+ * afterwards - a cloud agent lives on the vendor's infra for its lifetime.
  */
 export type AgentExecutionTarget = "local" | "cloud";
 
@@ -465,7 +465,7 @@ export type AgentStoredEvent =
 /**
  * Where a conversation was triggered from. Conversations started from external
  * sources (Linear/GitHub/Slack via Cloud Agents) are normal conversations in
- * every way — this only records provenance for rail badges and filtering.
+ * every way - this only records provenance for rail badges and filtering.
  */
 export type AgentConversationOrigin =
   | {
@@ -580,7 +580,7 @@ export type AgentImportSourceInfo = {
   /** Stable key of the harness family providing local storage, when importable. */
   harnessKey: string | null;
   available: boolean;
-  /** Why import is unavailable (or extra context) — shown greyed out in the UI. */
+  /** Why import is unavailable (or extra context) - shown greyed out in the UI. */
   reason?: string;
   storageRoot?: string | null;
   sessionCount: number;
@@ -737,7 +737,7 @@ export type AgentSocketClientMessage =
        * Gap recovery: replay events after `sinceSeq` for a subscribed
        * conversation. Sent when the client detects a sequence gap in the live
        * stream or when a pushed record's `lastEventSeq` runs ahead of the
-       * local log (stream frames are droppable under backpressure by design —
+       * local log (stream frames are droppable under backpressure by design -
        * this is the heal path).
        */
       type: "request_events_since";

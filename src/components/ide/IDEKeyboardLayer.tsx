@@ -105,7 +105,7 @@ type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
 
 /**
  * While focus is inside `[data-ide-input-sink]` (chat composer, dropdowns, etc.),
- * only shortcuts listed here are evaluated — all others are suppressed so keys like
+ * only shortcuts listed here are evaluated - all others are suppressed so keys like
  * Mod+S don't fire save. These must include every `chat.action.*` we dispatch from
  * the keyboard layer, or they never match when the user is typing in the composer.
  */
@@ -354,7 +354,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
                     : extension.displayName;
                 next.push({
                   id: `extension.openView.${extension.extensionId}.${viewId}`,
-                  label: `Extensions: Open ${extension.displayName}${title !== extension.displayName ? ` — ${title}` : ""}`,
+                  label: `Extensions: Open ${extension.displayName}${title !== extension.displayName ? ` - ${title}` : ""}`,
                   run: () => {
                     const bridge = bridgeRef.current;
                     if (!bridge) {
@@ -1025,7 +1025,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           break;
         case "workbench.action.findInFiles":
           workbench.revealExplorer();
-          flash(setToast, "Find in Files — use the sidebar Search view.");
+          flash(setToast, "Find in Files - use the sidebar Search view.");
           break;
         case "workbench.action.terminal.toggleTerminal":
           void (async () => {
@@ -1444,7 +1444,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       },
       {
         id: "workbench.colorTheme.light",
-        label: "Preferences: Color Theme — Light",
+        label: "Preferences: Color Theme - Light",
         run: () => {
           setThemePreference("light");
           flash(setToast, "Color theme: Light");
@@ -1452,7 +1452,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       },
       {
         id: "workbench.colorTheme.dark",
-        label: "Preferences: Color Theme — Dark",
+        label: "Preferences: Color Theme - Dark",
         run: () => {
           setThemePreference("dark");
           flash(setToast, "Color theme: Dark");
@@ -1460,7 +1460,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       },
       {
         id: "workbench.colorTheme.system",
-        label: "Preferences: Color Theme — Use System Setting",
+        label: "Preferences: Color Theme - Use System Setting",
         run: () => {
           setThemePreference("system");
           flash(setToast, "Color theme: Use system setting");
@@ -1528,7 +1528,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.openPullRequest",
         label: "Git: Open Pull Request",
-        detail: "Review the current branch — state, commits, and diffs against the base branch.",
+        detail: "Review the current branch - state, commits, and diffs against the base branch.",
         run: () => {
           const bridge = bridgeRef.current;
           if (!bridge) {

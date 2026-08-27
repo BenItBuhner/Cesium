@@ -196,7 +196,7 @@ export const PHONE_MCP_TOOLS: Tool[] = [
   {
     name: "phone_secondary_display",
     description:
-      "Manage Cesium's private off-screen display. action=create renders Cesium's own surface there; action=launch_app tries to host a real third-party app off-screen (needs a trusted display — system/signature — otherwise it returns launched=false with the exact reason, and the app can still be controlled on any display that already exists via phone_displays + phone_snapshot/phone_tap). action=status returns a live capture; update/close manage it.",
+      "Manage Cesium's private off-screen display. action=create renders Cesium's own surface there; action=launch_app tries to host a real third-party app off-screen (needs a trusted display - system/signature - otherwise it returns launched=false with the exact reason, and the app can still be controlled on any display that already exists via phone_displays + phone_snapshot/phone_tap). action=status returns a live capture; update/close manage it.",
     inputSchema: {
       type: "object",
       properties: {

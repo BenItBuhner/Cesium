@@ -167,7 +167,7 @@ export class LiveUpdateController {
     // windows (the socket only sees a head snapshot), so they routinely
     // disagree on the derived run key for the very same run. Honoring every
     // derived key cancelled + reposted the notification (a new notification
-    // id is hashed from the key) each time the sources alternated — a rapid
+    // id is hashed from the key) each time the sources alternated - a rapid
     // visible close/reopen loop. The first tracked key owns the notification
     // until the run leaves tracking through a terminal update; a genuinely
     // new run then starts fresh with its own key.
@@ -175,7 +175,7 @@ export class LiveUpdateController {
 
     const active = isMobileAgentRunActive(projection.status);
     if (!active && !tracked) {
-      // A run we never watched finished in the past — do not resurrect it as
+      // A run we never watched finished in the past - do not resurrect it as
       // a stale notification.
       return;
     }
@@ -295,7 +295,7 @@ export class LiveUpdateController {
 
   /**
    * One notification summarizing every active run: aggregate todo progression
-   * when all runs expose one (never a time estimate — cross-run ETAs are pure
+   * when all runs expose one (never a time estimate - cross-run ETAs are pure
    * noise), earliest start as the elapsed anchor, and needs-input surfaced
    * with the single blocked run's conversation wired to the actions when
    * unambiguous.
@@ -362,7 +362,7 @@ export class LiveUpdateController {
 
   /**
    * Reconciles the full set of tracked agents (foreground web sync). Runs
-   * missing from the list no longer exist and lose their notifications —
+   * missing from the list no longer exist and lose their notifications -
    * including natively persisted ongoing notifications left behind by a
    * previous app process (restored by the foreground service), which this
    * controller instance never tracked.
@@ -392,7 +392,7 @@ export class LiveUpdateController {
    * Projection updates from the native agent socket. While the web bridge is
    * actively syncing full projection sets, the web layer is the single source
    * of truth: socket projections are derived from a much smaller event window
-   * and would fight the web's over content and identity — the exact ping-pong
+   * and would fight the web's over content and identity - the exact ping-pong
    * that made notifications flicker. The socket takes over automatically once
    * web syncs go quiet (WebView frozen or process gone).
    */

@@ -8,7 +8,7 @@ import type { AgentBackendId } from "../types.js";
  *
  * Installs are deterministic and self-contained: packages land in a
  * Cesium-managed tools directory under the data dir (`npm install --prefix`),
- * never the user's global prefix — a bun/systemd/desktop server process has
+ * never the user's global prefix - a bun/systemd/desktop server process has
  * no reliable global npm prefix, and Cesium should not mutate one anyway.
  * Runtime resolvers check this tools directory in addition to `PATH`.
  *
@@ -101,7 +101,7 @@ export function resolveCesiumToolBin(binName: string): string | null {
         return candidate;
       }
     } catch {
-      // Unreadable path — keep looking.
+      // Unreadable path - keep looking.
     }
   }
   return null;

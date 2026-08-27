@@ -3,8 +3,8 @@
  *
  * A backend that advertises `supportsCloudExecution` (e.g. Cursor via
  * `@cursor/sdk` cloud agents) contributes one pseudo-device to the device
- * system. Selecting it does not switch the active engine — conversation
- * records stay on the active server — it marks new conversations to execute
+ * system. Selecting it does not switch the active engine - conversation
+ * records stay on the active server - it marks new conversations to execute
  * on the vendor's hosted infrastructure (`executionTarget: "cloud"`).
  */
 

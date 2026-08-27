@@ -107,7 +107,7 @@ describe("agent completion error parsing", () => {
 
   test("recognizes taking longer provider retry status detail", () => {
     assert.equal(
-      isTakingLongerStatusDetail("Taking longer — retrying provider request (2/3)…"),
+      isTakingLongerStatusDetail("Taking longer - retrying provider request (2/3)…"),
       true
     );
     assert.equal(isTakingLongerStatusDetail("Cesium is connecting to openai…"), false);

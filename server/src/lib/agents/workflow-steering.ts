@@ -9,7 +9,7 @@ Scripts MUST begin with:
 export const meta = { name, description, phases: [{ title, detail }] }
 Then use agent()/parallel()/pipeline()/phase()/log()/budget/args.
 Prefer pipeline() for multi-stage item work. Use parallel() only when a later stage needs every prior result at once.
-Keep intermediate results in script variables — do not paste every subagent transcript into the parent reply.
+Keep intermediate results in script variables - do not paste every subagent transcript into the parent reply.
 </workflow_context>`;
   }
   return `<workflow_context>

@@ -14,7 +14,7 @@ import {
  *
  * Reliability model: `markCesiumTriggerFired` persists run bookkeeping BEFORE
  * the conversation is prompted, so a crash mid-fire skips (never doubles) a
- * run. Overdue triggers (server was down) fire once and re-arm from now — no
+ * run. Overdue triggers (server was down) fire once and re-arm from now - no
  * catch-up storms.
  */
 
