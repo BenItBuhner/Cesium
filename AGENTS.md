@@ -33,7 +33,7 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   so without a build you get `ERR_MODULE_NOT_FOUND` for `@cesium/core/dist/mcp.js`
   and ~7 server test files fail.
 - **Integrated terminal uses Bun.Terminal under Bun** (POSIX). The old `node-pty`
-  path stays as a Node/desktop fallback only — do **not** switch the server to
+  path stays as a Node/desktop fallback only - do **not** switch the server to
   Node just for terminals. Deno is not used or supported.
 - **Agent backends need external CLIs / API keys** (Cursor, Codex, Claude, Gemini,
  OpenCode) that are not installed. The app still boots and lists them as
@@ -44,12 +44,12 @@ handles the first two, but you must repeat them by hand if you re-run installs):
  committed defaults in `src/lib/cloud/cloud-defaults.ts`; every client has a
  runtime local-only toggle (Settings → Account → Cloud sync). To test cloud
  modes without accounts: `npx convex dev` (anonymous local deployment on
- `127.0.0.1:3210`; it appends to `.env.local` — verify it didn't clobber
+ `127.0.0.1:3210`; it appends to `.env.local` - verify it didn't clobber
  `NEXT_PUBLIC_SERVER_URL`/`WORKSPACE_ROOT`), then
  `npx convex env set CESIUM_ALLOW_DEVICE_KEYS 1` for device mode. The
  standalone renderer (Electron + mobile WebView bundle) takes
  `NEXT_PUBLIC_CONVEX_URL` at vite build time; for the Android APK export it
- for the WHOLE pipeline — `prepare:android` re-runs `build:web-assets` and
+ for the WHOLE pipeline - `prepare:android` re-runs `build:web-assets` and
  silently overwrites assets built earlier with different env.
 
 ### Android emulator (mobile app testing)
@@ -59,7 +59,7 @@ Best route for Cesium mobile (`apps/mobile`, RN + WebView APK): the official
 `system-images;android-30;google_apis;x86_64` image, run **fully software-bound**:
 `-accel off` (TCG CPU emulation) plus `-gpu swiftshader_indirect` (software GPU).
 **Do not trust KVM here:** `/dev/kvm` exists and `emulator -accel-check` claims
-"KVM installed and usable", but that probe never runs a vCPU — with KVM enabled
+"KVM installed and usable", but that probe never runs a vCPU - with KVM enabled
 the emulator parks at ~0% CPU before guest boot and never comes up. `-accel off`
 is mandatory. **Use the API 30 image, not newer:** API 33+ system WebViews
 (recent Chromium `libmonochrome`) hard-crash with SIGTRAP under TCG even with
@@ -104,21 +104,21 @@ adb shell am start -n com.cesium.mobile/.MainActivity
 Interact headlessly: `adb shell input tap/swipe/text`, screenshots with
 `adb exec-out screencap -p > shot.png`, demo videos with
 `adb shell screenrecord` (pull the mp4 afterwards). Give the WebView extra
-time under TCG — first workbench load can take a couple of minutes.
+time under TCG - first workbench load can take a couple of minutes.
 
 TCG survival kit (all learned the hard way):
 
 - **ANR dialogs**: the slow guest trips "Cesium isn't responding" dialogs.
   Detect with `adb shell dumpsys window windows | grep -ci "not responding"`
   and tap **Wait** at `adb shell input tap 336 1313` (Pixel 5, 1080x2340).
-  Do NOT `settings put global hide_error_dialogs 1` — that silently kills the
+  Do NOT `settings put global hide_error_dialogs 1` - that silently kills the
   app instead.
 - **Stale screencaps**: the Android compositor can lag the WebView by minutes
  under SwiftShader. When `screencap` looks frozen, verify the real UI state
  over CDP: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
  (find the socket via `adb shell cat /proc/net/unix | grep webview_devtools`),
  then query/screenshot Chromium directly (`http://localhost:9222/json`).
- `adb shell screenrecord` freezes the same way — prefer CDP
+ `adb shell screenrecord` freezes the same way - prefer CDP
  `Page.captureScreenshot` for evidence. Driving the UI: CDP
  `Runtime.evaluate` + element `.click()` is reliable;
  `Input.dispatchTouchEvent` hangs on the API 30 WebView (Chromium 83), and
@@ -131,7 +131,7 @@ TCG survival kit (all learned the hard way):
 
 The app's WebView reaches a host-side backend at `http://10.0.2.2:9100`
 (default), so start `npm run dev:server` on the VM first. Rebuild
-`build:web-assets` whenever shared `src/` web code changes — the APK ships a
+`build:web-assets` whenever shared `src/` web code changes - the APK ships a
 static copy.
 
 ### Inference / model provider environment variables
@@ -174,16 +174,16 @@ required). When `CESIUM_BASE_URL` (or `OPENAI_BASE_URL`) points at a
 **non-OpenAI** host and an API key is available, Cesium registers an env-sourced
 OpenAI-compatible provider with catalog models:
 
-- `CESIUM_BASE_URL` — falls back to `OPENAI_BASE_URL`
-- `CESIUM_API_KEY` — falls back to `OPENAI_API_KEY`
-- `CESIUM_DEFAULT_MODEL` — e.g. `kimi-k3` or `techlit/kimi-k3`
-- `CESIUM_PROVIDER_ID` — optional; defaults to `techlit` for
+- `CESIUM_BASE_URL` - falls back to `OPENAI_BASE_URL`
+- `CESIUM_API_KEY` - falls back to `OPENAI_API_KEY`
+- `CESIUM_DEFAULT_MODEL` - e.g. `kimi-k3` or `techlit/kimi-k3`
+- `CESIUM_PROVIDER_ID` - optional; defaults to `techlit` for
   `*.techlitnow.com` hosts, otherwise a hostname slug
-- `CESIUM_MODELS` — optional comma list or JSON array (default: `kimi-k3`)
+- `CESIUM_MODELS` - optional comma list or JSON array (default: `kimi-k3`)
 
 Default bootstrap model:
 
-- `kimi-k3` — text / tools / **images** (multimodal); ~1M context, fast,
+- `kimi-k3` - text / tools / **images** (multimodal); ~1M context, fast,
   strong general intelligence. Use this as the single default for cloud-agent
   and inference testing (no separate text-only vs vision model).
 

@@ -66,7 +66,7 @@ export function isAutoModel(model: ModelInfo): boolean {
 /**
  * Some harnesses show models as `Provider/Display Name`. For brand matching we must
  * not let the routed host (ex. Nvidia) steal the earliest keyword index from the
- * actual family (DeepSeek, Qwen). Only the first slash segment is trimmed — repeats
+ * actual family (DeepSeek, Qwen). Only the first slash segment is trimmed - repeats
  * are avoided so IDs like `local/llama/custom` remain valid for matching.
  */
 export function stripLeadingIconProviderSlashPrefix(segment: string): string {

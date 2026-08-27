@@ -277,7 +277,7 @@ function storedTransportId(
 /**
  * Infer the selected transport when Settings has no explicit preference.
  * If the default transport is turned off and another sibling is on, use that
- * sibling — this restores “only Cursor ACP enabled” installs.
+ * sibling - this restores “only Cursor ACP enabled” installs.
  */
 export function resolveHarnessFamilyTransport(
   family: HarnessFamily,

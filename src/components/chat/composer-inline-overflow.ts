@@ -11,7 +11,7 @@ export const COMPOSER_INLINE_MIN_EDITOR_WIDTH_PX = 96;
 
 /**
  * Below this composer-row width, mode/model controls always collapse to
- * icon-only pills — even when the model name (or mode label) is short enough
+ * icon-only pills - even when the model name (or mode label) is short enough
  * that a full-size probe would still fit beside the minimum editor width.
  *
  * Matches the existing narrow-pane convention used elsewhere in the agent
@@ -22,8 +22,8 @@ export const COMPOSER_INLINE_FORCE_COMPACT_MAX_ROW_WIDTH_PX = 640;
 
 /**
  * When the docked single-line composer's controls (mode chip + model pill +
- * action buttons) would squeeze the editor below a usable width — e.g. long
- * model names on phone-width panes — the mode chip and model trigger collapse
+ * action buttons) would squeeze the editor below a usable width - e.g. long
+ * model names on phone-width panes - the mode chip and model trigger collapse
  * to icon-only pills so the capsule stays a single line.
  *
  * On narrow (mobile-width) rows, compaction is unconditional: short model
@@ -67,7 +67,7 @@ export type ComposerInlineControlsOverflowState = {
  * plus a minimum editor width. Also reports the live row width so callers can
  * force-compact on narrow panes regardless of label length.
  *
- * Measuring the probe — never the live controls — keeps the signal stable:
+ * Measuring the probe - never the live controls - keeps the signal stable:
  * compacting the real controls does not change the probe, so the layout
  * cannot oscillate at the boundary.
  */
@@ -81,7 +81,7 @@ export function useComposerInlineControlsOverflow(
     rowWidthPx: null,
   });
 
-  // Layout effect so the first measurement lands before paint — otherwise a
+  // Layout effect so the first measurement lands before paint - otherwise a
   // narrow pane briefly flashes the full-size controls on mount.
   useLayoutEffect(() => {
     if (!enabled) {

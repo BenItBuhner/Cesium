@@ -142,7 +142,7 @@ describe("mobile bridge", () => {
     assert.doesNotMatch(script, /safeAreaTop":44/);
     // Polyfills and first-paint theming live in the bundled workbench now
     // (legacy-webview-polyfills.ts + the asset-copy theme stamp), not in the
-    // injected bootstrap — the bootstrap is a minimal preload analog.
+    // injected bootstrap - the bootstrap is a minimal preload analog.
     assert.doesNotMatch(script, /applyStartupTheme/);
     assert.doesNotMatch(script, /syncLegacyThemeTokens/);
     assert.doesNotMatch(script, /Array\.prototype\.at/);

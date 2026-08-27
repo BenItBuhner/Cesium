@@ -280,11 +280,11 @@ export type CreateArtifactInput = {
   kind: ArtifactKind;
   title: string;
   description?: string;
-  /** Chart.js config (object or JSON string) — required for kind=chart. */
+  /** Chart.js config (object or JSON string) - required for kind=chart. */
   chart?: unknown;
-  /** HTML document or fragment — required for kind=html. */
+  /** HTML document or fragment - required for kind=html. */
   html?: string;
-  /** File map (path → content) — required for kind=project. */
+  /** File map (path → content) - required for kind=project. */
   files?: Record<string, string>;
   /** Entry file for kind=project (default index.html). */
   entry?: string;

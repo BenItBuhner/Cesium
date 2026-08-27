@@ -45,7 +45,7 @@ const DEFAULT_TAB_GROUP_TITLE = "Tab Group";
 /**
  * "Tab Group" by default; when that name is already in use in this pane, append
  * the lowest free integer suffix ("Tab Group 2", "Tab Group 3", …). Any numeric
- * suffix the user happens to already have typed is respected — we only reserve
+ * suffix the user happens to already have typed is respected - we only reserve
  * slots that look like `Tab Group`, `Tab Group 2`, `Tab Group 3`, ….
  */
 function nextDefaultTabGroupTitle(
@@ -1162,7 +1162,7 @@ export function editorPanelReducer(
 
     case "UPDATE_BROWSER_TAB_URL": {
       const nextUrl = normalizeBrowserTargetUrl(action.targetUrl).href;
-      // Keep any attached DevTools session alive across URL changes — the
+      // Keep any attached DevTools session alive across URL changes - the
       // BrowserTab component drives the Chromium page via CDP (`page.goto`)
       // and the DevTools frontend stays attached to the same target, so
       // wiping `devtoolsOpen/debugSessionId/devtoolsPath` here would tear
@@ -1179,7 +1179,7 @@ export function editorPanelReducer(
           //   2. when the URL itself changed, fall back to the host-derived
           //      label (fresh tab / address-bar nav to a new site);
           //   3. when it's a same-URL refresh from a nav message that didn't
-          //      include a title, keep whatever label we already showed —
+          //      include a title, keep whatever label we already showed -
           //      otherwise SPA transitions that briefly null out
           //      document.title would flash the tab back to the hostname.
           const resolvedName = incomingName

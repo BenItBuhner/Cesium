@@ -35,7 +35,7 @@ function setEnv(values: Partial<Record<(typeof VARS)[number], string>>) {
 describe("cloud flags", () => {
   afterEach(() => setEnv({}));
 
-  test("default (no env) is local-only — pre-cloud behavior", () => {
+  test("default (no env) is local-only - pre-cloud behavior", () => {
     setEnv({});
     assert.equal(getCloudMode(), "disabled");
     assert.equal(getConvexUrl(), null);

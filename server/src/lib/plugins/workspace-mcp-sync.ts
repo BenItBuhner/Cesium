@@ -139,7 +139,7 @@ export async function syncWorkspaceAntigravityMcpConfig(input: {
       await fs.appendFile(gitignorePath, "\n.agents/.cesium-plugin-mcp.json\n", "utf8");
     }
   } catch {
-    // no .gitignore — skip
+    // no .gitignore - skip
   }
 
   return {

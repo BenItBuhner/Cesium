@@ -63,7 +63,7 @@ function buildSharedText(payload: MobileSharePayload): string {
  * ACTION_SEND_MULTIPLE payload over the bridge, this sheet lets the user start
  * a new chat or pick a recent conversation. The shared files are uploaded via
  * the normal attachments endpoint and, together with the shared text, staged
- * into that chat's composer draft — the user reviews and sends the message
+ * into that chat's composer draft - the user reviews and sends the message
  * themselves through the existing composer.
  */
 export function MobileShareIntake() {

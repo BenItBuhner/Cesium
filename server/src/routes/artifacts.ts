@@ -64,7 +64,7 @@ async function loadChartRuntime(): Promise<Buffer | null> {
     cachedChartRuntime = await fs.readFile(require_.resolve("chart.js/dist/chart.umd.js"));
     return cachedChartRuntime;
   } catch {
-    // exports-map or hoisting differences — fall back to direct node_modules paths
+    // exports-map or hoisting differences - fall back to direct node_modules paths
   }
   for (const candidate of chartRuntimeCandidates()) {
     try {

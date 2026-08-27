@@ -81,7 +81,7 @@ jobs:
           grep -q "Cesium packaged smoke passed" smoke.log
 
       - name: Launch the packaged app and capture its window
-        # Window self-captures only — no `screencapture` here. The first
+        # Window self-captures only - no `screencapture` here. The first
         # screencapture of the job triggers macOS 15's capture-approval
         # alert, which then lingers on screen; the full-screen install step
         # below must own the job's first (clean) screencapture.

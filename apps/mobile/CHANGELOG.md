@@ -100,7 +100,7 @@ First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to
 
 - Fresh mobile sessions land on the new-chat page with the rail collapsed, instead of opening the full-viewport workspace drawer.
 - New-chat workspace/branch/import picker drops the docked-card chrome so those controls sit on the aurora backdrop.
-- Composer work pill no longer counts the conversation you are already looking at — only background chats, sub-agents, and cloud tasks.
+- Composer work pill no longer counts the conversation you are already looking at - only background chats, sub-agents, and cloud tasks.
 - Scoped agent rail hides the duplicate workspace title when only one group is visible; No workspace is restored in the new-chat dropdown and rail filter.
 - Chat streaming no longer re-projects every row on each flush (stable projection identity + memoized rows), which was janking phones and crashing the WebView on permission answers.
 - Bundled workbench picks up the post-0.6.0 shell: Running/Settled rail, no-workspace pickers, tool-call icon toggle, alpha scroll fades, conversation import on phones, Settings drawer gestures, and the live-notification chip rewrite.
@@ -121,7 +121,7 @@ First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to
 ### Added
 
 - Notification alert settings: completion and needs-input alerts are gated on app foreground state with per-category preferences (default: completions post only while the app is in the background), configurable from mobile Settings. The server also interrupts leftover busy conversations at boot and watchdogs runs whose provider runtime died without settling the turn.
-- Standalone no-workspace chat: fresh installs no longer auto-seed a `default` workspace from `WORKSPACE_ROOT`. The landing composer and Android share-sheet intake submit through the standalone sandbox when no workspace is active, onboarding offers "No workspace — just chat", and deleting the last durable workspace returns to the empty shell instead of a dead workspace id.
+- Standalone no-workspace chat: fresh installs no longer auto-seed a `default` workspace from `WORKSPACE_ROOT`. The landing composer and Android share-sheet intake submit through the standalone sandbox when no workspace is active, onboarding offers "No workspace - just chat", and deleting the last durable workspace returns to the empty shell instead of a dead workspace id.
 
 ### Changed
 
@@ -143,7 +143,7 @@ First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to
 
 ### Added
 
-- Gradual predictive back: the Android back gesture now streams its progress into the app (native `OnBackPressedCallback` with progressive members registered above React Native's plain callback, forwarded over the WebView bridge as `backStarted` / `backProgressed` / `backCancelled`). The mobile workspace rail and workbench pane follow the finger 1:1 through the existing drawer spring engine, and the full-screen settings view runs a Material-style scale/shift/corner preview — committing pops the layer, cancelling springs it back. Older Androids and 3-button navigation keep the previous discrete behavior.
+- Gradual predictive back: the Android back gesture now streams its progress into the app (native `OnBackPressedCallback` with progressive members registered above React Native's plain callback, forwarded over the WebView bridge as `backStarted` / `backProgressed` / `backCancelled`). The mobile workspace rail and workbench pane follow the finger 1:1 through the existing drawer spring engine, and the full-screen settings view runs a Material-style scale/shift/corner preview - committing pops the layer, cancelling springs it back. Older Androids and 3-button navigation keep the previous discrete behavior.
 - Android share-sheet intake: share text, links, and files from other apps into a new or existing chat. The intake sheet is WebView-83-safe (stock Android 11), drains shares that arrive while Cesium is already foreground, and still opens when the only shared item was unreadable or oversized so the skip notice is visible.
 
 ### Changed
@@ -161,7 +161,7 @@ First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to
 
 ### Changed
 
-- Android Live Updates (promoted `ProgressStyle` notifications) are now the primary — and default — run-progress surface, with a standard live notification as the only fallback when promotion is unsupported or denied. The previous "Now Bar" placement option was a misnomer: Samsung exposes no third-party Now Bar API; One UI 8+ simply renders standard Live Updates in the Now Bar. Stored preferences migrate (`nowbar` → `live`, old `live` → `basic`).
+- Android Live Updates (promoted `ProgressStyle` notifications) are now the primary - and default - run-progress surface, with a standard live notification as the only fallback when promotion is unsupported or denied. The previous "Now Bar" placement option was a misnomer: Samsung exposes no third-party Now Bar API; One UI 8+ simply renders standard Live Updates in the Now Bar. Stored preferences migrate (`nowbar` → `live`, old `live` → `basic`).
 - Every active agent now gets its own live notification (stable per-run notification ids, per-run pending intents, per-run dismissal memory) instead of a single shared notification that the most recent update overwrote. The foreground service anchors on one run and re-anchors when that run finishes or is dismissed, so remaining agents keep updating.
 - The workbench projects **all** conversations with active agent runs over the bridge (`agentProjections`), not just the focused one, and the background agent socket subscribes to every active conversation, so multi-agent tracking keeps working while the app is idle.
 - Bundled workbench picks up the post-0.3.1 chat/composer polish: icon-compact model/mode on narrow rows, action pills (dynamic status + custom quick actions), OLED-friendly dark theme defaults, larger touch targets, and Cloud Agents official icons instead of abbreviation badges.
@@ -184,14 +184,14 @@ First unified multi-platform release. Tag `v0.8.0` after this lands on `main` to
 
 ### Fixed
 
-- Termux one-command server install no longer aborts with `EBADPLATFORM: Unsupported platform for onnxruntime-node ... (current: {"os":"android"})`. The voice plane's `kokoro-js` dependency (whose `onnxruntime-node` transitive dependency ships no Android binaries) is now an `optionalDependency`, so the on-device `npm ci --omit=optional` skips it entirely, and the server compiles and runs without the module — the kokoro TTS engine simply reports unavailable.
+- Termux one-command server install no longer aborts with `EBADPLATFORM: Unsupported platform for onnxruntime-node ... (current: {"os":"android"})`. The voice plane's `kokoro-js` dependency (whose `onnxruntime-node` transitive dependency ships no Android binaries) is now an `optionalDependency`, so the on-device `npm ci --omit=optional` skips it entirely, and the server compiles and runs without the module - the kokoro TTS engine simply reports unavailable.
 - Termux installer now installs `espeak` (eSpeak NG), so the voice control plane keeps a working local TTS engine on-device; it becomes the default engine when kokoro is absent.
 
 ## [0.3.0] - 2026-07-30
 
 ### Added
 
-- Live voice control plane in the bundled workbench: ambient draggable voice orb with transient caption bubbles, capture → VAD → endpointing → STT pipeline, TTS playback, and a pipeline self-test — backed by the server's voice controller (session tools + compaction) and TTS engine registry. The Android assistant now drives the same voice controller.
+- Live voice control plane in the bundled workbench: ambient draggable voice orb with transient caption bubbles, capture → VAD → endpointing → STT pipeline, TTS playback, and a pipeline self-test - backed by the server's voice controller (session tools + compaction) and TTS engine registry. The Android assistant now drives the same voice controller.
 - Termux on-device server setup restored for the WebView app: the "Check Cesium server" screen and the server manager show a "Run the server on this phone" card with an F-Droid link, the one-command Termux installer, and a "Check and use this phone" button that connects to the local `127.0.0.1:9100` server.
 - `openExternalUrl` WebView bridge message: workbench links such as the F-Droid page open in the system browser via `Linking.openURL` instead of navigating the bundled `file://` app away.
 

@@ -296,7 +296,7 @@ test("Work profile blocks terminal at the dispatch layer and hides it from schem
   });
   assert.equal(decision.allowed, false);
   assert.match(decision.reason ?? "", /Work/);
-  // Layer 1: schema filtering — the model never sees terminal or git tools.
+  // Layer 1: schema filtering - the model never sees terminal or git tools.
   const harness = resolveCesiumTools({ features: { subagents: { version: 2 } } });
   const advertised = filterCesiumToolsForProfile(harness.tools, CESIUM_WORK_PROFILE);
   const names = new Set(advertised.map((tool) => tool.name));

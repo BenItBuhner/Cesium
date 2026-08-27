@@ -59,8 +59,8 @@ export type ThemeConfig = {
    */
   showFloatingSidebarReveal: boolean;
   /**
-   * `full` — unified diff lines in worked-session cards.
-   * `counts` — single-line added/removed counts only (Cursor-style).
+   * `full` - unified diff lines in worked-session cards.
+   * `counts` - single-line added/removed counts only (Cursor-style).
    */
   editDiffRenderingMode: EditDiffRenderingMode;
   /** Collapse very large pasted text into compact composer reference pills. */

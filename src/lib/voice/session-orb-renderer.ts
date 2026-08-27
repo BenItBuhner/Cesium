@@ -23,7 +23,7 @@ export type SessionOrbStatus =
 
 export type SessionOrbRenderState = {
   status: SessionOrbStatus;
-  /** 0..1 — mic level while listening/capturing, TTS level while speaking. */
+  /** 0..1 - mic level while listening/capturing, TTS level while speaking. */
   level: number;
   timeMs: number;
 };

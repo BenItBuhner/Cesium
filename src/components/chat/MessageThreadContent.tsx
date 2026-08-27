@@ -54,7 +54,7 @@ import type { ChatScrollAnchor } from "@/lib/workspace-session";
  * loading UI.
  *
  * `permission-request` is intentionally omitted: permissions usually follow the same tool burst and
- * are often embedded in the worked card — treating them as chain-breaking flipped `loading` off and
+ * are often embedded in the worked card - treating them as chain-breaking flipped `loading` off and
  * auto-collapsed the tool dropdown, hiding the permission UI that needs a response.
  */
 const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([

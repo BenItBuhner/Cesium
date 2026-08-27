@@ -239,7 +239,7 @@ export const CESIUM_WORK_PROFILE: CesiumAgentProfile = {
   id: "work",
   name: "Work",
   description:
-    "General-work envelope: research, browser, connectors, artifacts, memory, and delegation — no terminal or git by default.",
+    "General-work envelope: research, browser, connectors, artifacts, memory, and delegation - no terminal or git by default.",
   builtIn: true,
   prompt: { base: "work", customInstructions: "" },
   tools: { allowed: WORK_PROFILE_ALLOWED_TOOLS, mcpServers: "all" },

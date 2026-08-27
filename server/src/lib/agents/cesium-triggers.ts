@@ -388,5 +388,5 @@ export function formatCesiumTrigger(trigger: CesiumAgentTrigger): string {
   ]
     .filter(Boolean)
     .join(", ");
-  return `- ${trigger.name} (id: ${trigger.id}) — ${describeTriggerSchedule(trigger.schedule)}, ${state}, next: ${nextRun} (${extras})\n  prompt: ${trigger.prompt.slice(0, 140)}${trigger.prompt.length > 140 ? "…" : ""}`;
+  return `- ${trigger.name} (id: ${trigger.id}) - ${describeTriggerSchedule(trigger.schedule)}, ${state}, next: ${nextRun} (${extras})\n  prompt: ${trigger.prompt.slice(0, 140)}${trigger.prompt.length > 140 ? "…" : ""}`;
 }

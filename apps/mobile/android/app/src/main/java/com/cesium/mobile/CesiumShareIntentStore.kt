@@ -6,7 +6,7 @@ import android.content.Intent
  * Holds the most recent ACTION_SEND / ACTION_SEND_MULTIPLE intent until the
  * JS layer consumes it, mirroring [CesiumNotificationIntentStore]. The share
  * sheet may deliver the intent before React has booted (cold start) or while
- * the app is already running (onNewIntent) — either way the payload waits
+ * the app is already running (onNewIntent) - either way the payload waits
  * here until `consumeSharedPayload` drains it.
  */
 object CesiumShareIntentStore {

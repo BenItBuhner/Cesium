@@ -83,7 +83,7 @@ ${skill.body.trim()}${triggers}
 /**
  * Write an MCP-style discovery mirror under `agent-skills/`.
  * The agent should read `agent-skills/_index.md` then
- * `agent-skills/<skill-id>/SKILL.md` on demand — not guess instructions.
+ * `agent-skills/<skill-id>/SKILL.md` on demand - not guess instructions.
  */
 export async function writeAgentSkillsWorkspaceMirror(input: {
   workspaceRoot: string;
@@ -212,7 +212,7 @@ export async function ensureAgentSkillsGitignore(workspaceRoot: string): Promise
     }
     await fs.appendFile(gitignorePath, `\n${AGENT_SKILLS_MIRROR_DIR}/\n`, "utf8");
   } catch {
-    // no .gitignore — skip
+    // no .gitignore - skip
   }
 }
 
@@ -231,7 +231,7 @@ export function formatAgentSkillsPromptSection(skills: MirroredSkillSummary[]): 
   const bullets = skills
     .map((skill) => {
       const manual = skill.disableModelInvocation
-        ? " (manual only — use when the user explicitly requests this skill)"
+        ? " (manual only - use when the user explicitly requests this skill)"
         : "";
       return `- ${skill.name} (\`${skill.id}\`): ${skill.description}${manual}`;
     })
@@ -244,7 +244,7 @@ export function formatAgentSkillsPromptSection(skills: MirroredSkillSummary[]): 
     "",
     bullets,
     "",
-    "When a skill is relevant — or the user cites/tags one — read `agent-skills/_index.md`, then the relevant `agent-skills/<skill-id>/summary.txt` and `agent-skills/<skill-id>/SKILL.md` before acting.",
+    "When a skill is relevant - or the user cites/tags one - read `agent-skills/_index.md`, then the relevant `agent-skills/<skill-id>/summary.txt` and `agent-skills/<skill-id>/SKILL.md` before acting.",
     "Resolve relative paths from that skill subdirectory. You cannot infer or assume skill instructions from memory.",
     "Skills marked manual-only should only be used when the user explicitly requests them.",
   ].join("\n");

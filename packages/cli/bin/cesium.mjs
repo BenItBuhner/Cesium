@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * cesium — bare-bones CLI for the Cesium engine.
+ * cesium - bare-bones CLI for the Cesium engine.
  *
  * `cesium install` runs the official installer (scripts/install-cesium-server.sh),
  * which sets up the Bun runtime, credentials, tunnel, and autostart under
@@ -35,7 +35,7 @@ const MANAGED_COMMANDS = [
   "supervise",
 ];
 
-const HELP = `cesium ${CLI_VERSION} — local Cesium engine manager
+const HELP = `cesium ${CLI_VERSION} - local Cesium engine manager
 
 Usage:
   cesium install [--web-url <url>] [--local]
@@ -69,7 +69,7 @@ Environment:
   All CESIUM_* installer variables pass through to \`cesium install\`.
 
 Windows is supported through WSL: run this CLI inside a WSL distribution.
-The desktop app needs none of this — it ships with an embedded engine.`;
+The desktop app needs none of this - it ships with an embedded engine.`;
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -88,7 +88,7 @@ function requirePosix(action) {
   if (process.platform === "win32") {
     fail(
       `${action} requires Linux or macOS (the engine runs on Bun/POSIX).\n` +
-        "On Windows, run this command inside WSL — or use the Cesium desktop app, " +
+        "On Windows, run this command inside WSL - or use the Cesium desktop app, " +
         "which bundles the engine natively."
     );
   }

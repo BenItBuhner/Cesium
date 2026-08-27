@@ -1,8 +1,8 @@
 /**
  * Shared main-thread congestion signal: decaying sum of recent long-task
  * milliseconds, fed by one lazy PerformanceObserver. Consumers use it to shed
- * load on slow or CPU-throttled devices — the stream batcher stretches its
- * commit window, and ambient animations (aurora) drop their frame rate — so
+ * load on slow or CPU-throttled devices - the stream batcher stretches its
+ * commit window, and ambient animations (aurora) drop their frame rate - so
  * the frame budget recovers instead of death-spiraling.
  */
 
@@ -31,7 +31,7 @@ function ensureStarted(): void {
       recentLongTaskMs = Math.max(0, recentLongTaskMs * 0.5 - 4);
     }, 1_000);
   } catch {
-    /* observer unsupported — signal stays 0 */
+    /* observer unsupported - signal stays 0 */
   }
 }
 

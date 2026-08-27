@@ -197,7 +197,7 @@ function ExtensionQuickInputOverlay({
       <div className="max-h-[320px] overflow-y-auto">
         {request.prompt || request.title ? (
           <p className="px-[12px] pt-[8px] font-sans text-[11px] text-[var(--text-secondary)]">
-            {[request.title, request.prompt].filter(Boolean).join(" — ")}
+            {[request.title, request.prompt].filter(Boolean).join(" - ")}
           </p>
         ) : null}
         {request.busy ? (

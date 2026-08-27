@@ -8,7 +8,7 @@ import {
 } from "./types.js";
 
 /**
- * Cartesia Sonic — the blueprint's premium streaming pick. This first slice
+ * Cartesia Sonic - the blueprint's premium streaming pick. This first slice
  * uses the stateless `/tts/bytes` endpoint behind the shared PCM adapter;
  * the WebSocket context API (incremental clause appends) is the follow-up
  * once clause-level LLM streaming lands. Enabled by `CARTESIA_API_KEY`.

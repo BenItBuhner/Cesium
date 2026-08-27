@@ -777,7 +777,7 @@ async function createMainWindow(options = {}) {
  * `screencapture`) shortly after load and again after the workbench settles.
  *
  * With OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS also set, keep capturing
- * numbered frames at that interval (capped) — a scripted demo can then be
+ * numbered frames at that interval (capped) - a scripted demo can then be
  * assembled into a video offline.
  */
 function installWindowCaptureForCi(win) {
@@ -856,7 +856,7 @@ function installDesktopLifecycleHandlers() {
 const gotLock = app.isPackaged ? app.requestSingleInstanceLock() : true;
 console.log("[cesium-desktop] single instance lock", gotLock);
 // Launches that only carry a payload (Open With file, cesium:// deep link)
-// hand it to the lock holder via the second-instance event and exit —
+// hand it to the lock holder via the second-instance event and exit -
 // booting a second full app for them would duplicate backends and windows.
 const deferToLockHolder =
   !gotLock &&

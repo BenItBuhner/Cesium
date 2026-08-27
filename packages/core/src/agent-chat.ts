@@ -27,7 +27,7 @@ export function isAgentConversationBusy(status: AgentConversationStatus): boolea
   );
 }
 
-/** Cesium pause drain / paused — turn still open but model loop is halted. */
+/** Cesium pause drain / paused - turn still open but model loop is halted. */
 export function isAgentConversationPaused(status: AgentConversationStatus): boolean {
   return status === "paused";
 }
@@ -661,9 +661,9 @@ type ProjectedTurn = {
   turnEndedWithFailure?: boolean;
   /** Set when the runtime has emitted an idle/failed/cancelled terminal status for this turn. */
   turnSettled?: boolean;
-  /** Provider auto-retry in progress — show "Taking longer" instead of "Working". */
+  /** Provider auto-retry in progress - show "Taking longer" instead of "Working". */
   takingLonger?: boolean;
-  /** Cesium context compression in progress — show "Compressing context". */
+  /** Cesium context compression in progress - show "Compressing context". */
   compressingContext?: boolean;
   /** Wall-clock start for this turn (`user_message.createdAt`). */
   turnStartedAt?: number;
@@ -703,7 +703,7 @@ function appendTimelineMessage(turn: ProjectedTurn, message: ChatMessage): void 
 /**
  * Whether `incoming` is a newer snapshot of the same transcript row. Live
  * subagent progress re-emits the growing transcript, and re-projections keep
- * stable row ids while a worked-session dropdown accumulates tool entries —
+ * stable row ids while a worked-session dropdown accumulates tool entries -
  * so a same-id worked-session row with at least as many entries supersedes
  * the stale one (equal counts still carry entry status updates).
  */
@@ -1417,7 +1417,7 @@ function parseUserMessageSegments(content: string): UserMessageSegment[] | undef
     return out.filter((s) => s.type !== "text" || s.text.length > 0);
   }
 
-  // Compact-reference XML blocks take precedence — split the message on them
+  // Compact-reference XML blocks take precedence - split the message on them
   // first so long/code-like bodies don't confuse the @-chip pass.
   const referenceSplit = splitContentByTextReferenceBlocks(content);
   const designSplit = splitContentByDesignBlocks(content);
@@ -2010,7 +2010,7 @@ function projectTurnTimelineToMessages(
 
   // Merge *before* `fixPermissionPlacedAfterWorkedForTools`. Otherwise a permission for a tool
   // that was flushed into the *second* worked-session (e.g. web search after workspace tools)
-  // gets moved to the end: [w1, w2, perm] — the triplet [w1, perm, w2] never forms and the UI
+  // gets moved to the end: [w1, w2, perm] - the triplet [w1, perm, w2] never forms and the UI
   // shows two "Searched workspace" dropdowns.
   const ordered = fixPermissionPlacedAfterWorkedForTools(
     mergeAdjacentWorkedSessions(
@@ -2021,7 +2021,7 @@ function projectTurnTimelineToMessages(
   );
 
   // An unanswered permission request means the agent is blocked on the user,
-  // not working — the permission card itself communicates the waiting state.
+  // not working - the permission card itself communicates the waiting state.
   const awaitingPermission = ordered.some(
     (message) => message.type === "permission-request" && !message.permissionResolved
   );
@@ -2309,7 +2309,7 @@ function suppressPathOnlyDetail(detail: string | undefined): string | undefined 
   return detail;
 }
 
-/** When stream-json IDs do not line up, completion updates never land — close out on turn end. */
+/** When stream-json IDs do not line up, completion updates never land - close out on turn end. */
 function finalizeOpenToolsInTurn(
   turn: ProjectedTurn,
   finalStatus: "completed" | "failed" | "cancelled"
@@ -3314,7 +3314,7 @@ function formatToolSummary(
           line: typeof loc.line === "number" ? loc.line : undefined,
         }];
       }) ?? existing?.locations;
-  /** `locations: []` is truthy for `??` — treat empty like missing so we still scan raw / scavenger. */
+  /** `locations: []` is truthy for `??` - treat empty like missing so we still scan raw / scavenger. */
   const locationPaths = normalizedLocations?.map((loc) => loc.path) ?? [];
   const editPreview = mergeWorkSessionEditPreview(existing?.editPreview, event.editPreview);
   const path =
@@ -3412,8 +3412,8 @@ function formatToolSummary(
   }
   /**
    * MCP tools must route before every payload heuristic below. MCP tool
-   * arguments are arbitrary — a browser `script` arg used to hijack the
-   * terminal branch ("Ran <script>"), a `path` arg the read/edit branches —
+   * arguments are arbitrary - a browser `script` arg used to hijack the
+   * terminal branch ("Ran <script>"), a `path` arg the read/edit branches -
    * which mislabeled rows and corrupted the "ran N commands" group counts.
    */
   const mcpComposite =
@@ -3503,7 +3503,7 @@ function formatToolSummary(
     toolKind === "todo" ||
     /todo/i.test(acpToolName ?? "") ||
     /todo/i.test(titleFromRaw ?? "") ||
-    // Exact phrases only — "Update todos.md" is a file edit, not a todo tool.
+    // Exact phrases only - "Update todos.md" is a file edit, not a todo tool.
     /^(?:(?:update[ds]?|read|write|manage)\s+)?todos?(?:\s+list)?$/i.test(
       (resolvedTitleLabel ?? "").trim()
     );
@@ -3867,7 +3867,7 @@ function stablePlanEntriesSignature(entries: AgentPlanEntry[]): string {
  *
  * ACP can also re-broadcast `tool_call_update` rows alone (after stripping or skipping the replay
  * `tool_call`). The projector would otherwise synthesize fresh tool rows from those orphan updates
- * in the new turn — same counts as the prior wave. Drop updates for an id until a new `tool_call`
+ * in the new turn - same counts as the prior wave. Drop updates for an id until a new `tool_call`
  * for that id appears after the latest `user_message`, when that id already finished in an earlier
  * user turn.
  *
@@ -3884,7 +3884,7 @@ export function stripSpuriousAcpToolCallReplays(
   const seenToolCallSinceUserMessage = new Set<string>();
   /** Last retained `plan` fingerprint per `planId` (after replay stripping). */
   const lastOutPlanSigById = new Map<string, string>();
-  /** At each `user_message`, copy of {@link lastOutPlanSigById} — identical incoming plans are replays. */
+  /** At each `user_message`, copy of {@link lastOutPlanSigById} - identical incoming plans are replays. */
   let planReplaySuppressById = new Map<string, string>();
   const out: AgentStoredEvent[] = [];
   for (const e of events) {
@@ -4077,7 +4077,7 @@ export function extractLiveSubagentTranscriptFromMessages(
  * every change, so identity is an exact freshness signal. The previous string
  * key sampled first/mid/last events and could return stale projections when a
  * snapshot enriched payloads without touching the sampled fields. WeakMap also
- * frees entries with the arrays — no LRU bookkeeping, no retention cap to tune.
+ * frees entries with the arrays - no LRU bookkeeping, no retention cap to tune.
  */
 const projectionCacheByEvents = new WeakMap<AgentStoredEvent[], Map<string, ChatMessage[]>>();
 
@@ -4134,7 +4134,7 @@ function projectedValueEqual(a: unknown, b: unknown): boolean {
  * Previous projection per conversation+options, used to keep `ChatMessage`
  * object identity stable across streaming flushes. Every flush replaces the
  * events array (an exact freshness signal for {@link projectionCacheByEvents}),
- * which means every flush also produces brand-new message objects — defeating
+ * which means every flush also produces brand-new message objects - defeating
  * any `React.memo` on message rows and forcing full re-renders of the whole
  * transcript. Reconciling against the previous projection restores identity
  * for the (vast majority of) messages that did not change, so only the rows
@@ -4198,7 +4198,7 @@ export function projectAgentEventsToChatMessages(
   }
   const workspaceRoot = options?.workspaceRoot;
   // dedupeAgentStoredEvents sorts internally (and fast-paths already-ordered
-  // logs, the per-flush common case) — no need to copy + pre-sort here.
+  // logs, the per-flush common case) - no need to copy + pre-sort here.
   const ordered = stripSpuriousAcpToolCallReplays(dedupeAgentStoredEvents(events));
   const hiddenHandoffTranscriptMessageIds = new Set<string>();
   for (let index = 0; index < ordered.length - 1; index += 1) {
@@ -4405,7 +4405,7 @@ const toolEntryByIdAcrossTurns = new Map<
           : [];
         if (event.status !== "running") {
           // Transcripts rarely carry a terminal status event, so the projected turn
-          // appends a live "Working" row — meaningless inside a settled card.
+          // appends a live "Working" row - meaningless inside a settled card.
           transcript = transcript.filter(
             (row) => !(row.type === "worked-session" && row.loading)
           );
@@ -5016,7 +5016,7 @@ export function getConversationLatestSeq(
  * double-send.
  *
  * Callers may need to load older history pages (see
- * `loadOlderConversationHistory`) to expand the window — this helper only
+ * `loadOlderConversationHistory`) to expand the window - this helper only
  * projects whatever events are currently loaded.
  */
 export function extractComposerUserMessageHistory(
@@ -5055,7 +5055,7 @@ export function dedupeAgentStoredEvents(
   // Fast path: the hot callers (projection per streaming flush, snapshot
   // merges) almost always pass already-ordered logs where seqs strictly
   // increase. Strict monotonicity (> 0) implies unique seqs, and the merge
-  // layer/store guarantee eventId uniqueness across distinct seqs — return
+  // layer/store guarantee eventId uniqueness across distinct seqs - return
   // the input untouched instead of two sorts and three array allocations.
   let strictlyIncreasing = events[0]!.seq > 0;
   for (let i = 1; strictlyIncreasing && i < events.length; i += 1) {
@@ -5070,7 +5070,7 @@ export function dedupeAgentStoredEvents(
   const bySeq = new Map<number, AgentStoredEvent>();
   const unsequenced: AgentStoredEvent[] = [];
   for (const e of sorted) {
-    // Synthetic events (e.g. subagent transcripts) may all carry seq 0 — those are
+    // Synthetic events (e.g. subagent transcripts) may all carry seq 0 - those are
     // distinct events, so only dedupe by seq once the store has assigned one (> 0).
     if (e.seq <= 0) {
       unsequenced.push(e);
@@ -5226,7 +5226,7 @@ function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | 
 /**
  * Pure (name, modelId) -> label; memoized because catalog-wide formatting
  * reruns per composer-state derivation. Sized to hold a full provider catalog
- * incl. thought-level variants — an undersized cache thrashes (clears mid-
+ * incl. thought-level variants - an undersized cache thrashes (clears mid-
  * pass) and is worse than none.
  */
 const modelVariantLabelCache = new Map<string, string>();

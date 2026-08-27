@@ -82,7 +82,7 @@ function extractState(authUrl: string): string {
   return new URL(authUrl).searchParams.get("state")!;
 }
 
-// —— OAuth end-to-end (token exchange + identity + storage) ——
+// -- OAuth end-to-end (token exchange + identity + storage) --
 
 test("linear OAuth callback exchanges the code and stores the connection", async () => {
   await upsertCloudAgentOAuthApp({
@@ -208,7 +208,7 @@ test("OAuth callback rejects unknown or replayed state", async () => {
   );
 });
 
-// —— Token verification ——
+// -- Token verification --
 
 test("verifyCloudAgentToken covers all providers and the GitHub App fallback", async () => {
   const mock = mockGlobalFetch((url, init) => {
@@ -263,7 +263,7 @@ test("verifyCloudAgentToken surfaces provider rejections", async () => {
   }
 });
 
-// —— Outbound updates ——
+// -- Outbound updates --
 
 test("postCloudAgentUpdate targets the right provider APIs", async () => {
   await upsertCloudAgentConnection({
@@ -344,7 +344,7 @@ test("postCloudAgentUpdate targets the right provider APIs", async () => {
   }
 });
 
-// —— Markdown media extraction ——
+// -- Markdown media extraction --
 
 test("extractMarkdownMediaRefs finds markdown, HTML, and bare attachment URLs", () => {
   const body = [
@@ -377,7 +377,7 @@ test("extractMarkdownMediaRefs dedupes repeated urls", () => {
   assert.equal(extractMarkdownMediaRefs(body).length, 1);
 });
 
-// —— Slack mrkdwn ——
+// -- Slack mrkdwn --
 
 test("normalizeSlackMrkdwn converts links, entities, and emphasis", () => {
   const input =
@@ -390,7 +390,7 @@ test("normalizeSlackMrkdwn converts links, entities, and emphasis", () => {
   assert.match(output, /& ping @U123/);
 });
 
-// —— Attachment auth + download ——
+// -- Attachment auth + download --
 
 test("attachmentAuthHeaders picks provider-appropriate auth", () => {
   assert.deepEqual(
@@ -494,7 +494,7 @@ test("fetchCloudAgentAttachments retries anonymously when auth breaks public CDN
   }
 });
 
-// —— Webhook media plumbing ——
+// -- Webhook media plumbing --
 
 test("github issue webhook carries media refs into the assignment", () => {
   const payload = {

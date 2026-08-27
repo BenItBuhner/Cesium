@@ -1,6 +1,6 @@
 /**
- * PCM-oriented TTS adapter contract. Every engine — local (Kokoro, Piper,
- * espeak-ng) or remote (Cartesia, OpenAI-compatible /audio/speech) — resolves
+ * PCM-oriented TTS adapter contract. Every engine - local (Kokoro, Piper,
+ * espeak-ng) or remote (Cartesia, OpenAI-compatible /audio/speech) - resolves
  * to the same interface and returns a mono PCM16 WAV buffer, so playback,
  * barge-in, and clause streaming on the client are engine-agnostic.
  */

@@ -28,7 +28,7 @@ export const FIRST_SERVER_NOTICE_DISMISS_KEY =
 /**
  * Toast-safe error text. Error messages can carry entire response bodies
  * (worst case: a full HTML document when the configured server is not a
- * Cesium engine) — markup blobs and multi-kilobyte dumps help nobody in a
+ * Cesium engine) - markup blobs and multi-kilobyte dumps help nobody in a
  * notification, so fall back to the friendly message and cap the length.
  */
 export function compactWorkspaceErrorMessage(
@@ -107,7 +107,7 @@ export function describeWorkspaceLoadFailure(
       severity: "info",
       title: "Connect your first server!",
       message:
-        "Cesium needs an engine to open workspaces. Connect one to finish setup — it syncs to your account.",
+        "Cesium needs an engine to open workspaces. Connect one to finish setup - it syncs to your account.",
       compact: false,
       persistent: true,
       autoDismissMs: undefined,
@@ -148,6 +148,6 @@ export function markFirstServerNoticeDismissed(): void {
   try {
     window.sessionStorage.setItem(FIRST_SERVER_NOTICE_DISMISS_KEY, "1");
   } catch {
-    // Private mode / quota — the toast can return next load.
+    // Private mode / quota - the toast can return next load.
   }
 }

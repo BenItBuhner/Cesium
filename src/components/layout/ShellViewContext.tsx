@@ -48,7 +48,7 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
 
   // Error-boundary recovery: after "Reload Cesium" the app must boot into the
   // default agent (new chat) view even when the URL or the persisted session
-  // says `settings` — otherwise a crashing Settings render re-crashes every
+  // says `settings` - otherwise a crashing Settings render re-crashes every
   // launch. The marker is consumed (cleared) immediately so it only affects
   // this boot; the persisted session is rewritten once it is ready.
   const [pendingShellViewReset, setPendingShellViewReset] = useState(() =>

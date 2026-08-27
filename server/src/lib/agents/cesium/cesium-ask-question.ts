@@ -149,7 +149,7 @@ function parseQuestionStep(value: unknown, index: number): CesiumParsedQuestionS
 }
 
 /**
- * Liberal ask_question argument parsing. Models phrase this call in many shapes —
+ * Liberal ask_question argument parsing. Models phrase this call in many shapes -
  * `question` instead of `prompt`, `choices` instead of `options`, plain-string option
  * and question arrays, nested single-question objects, or no options at all (open-ended;
  * the client renders a free-text "Other" answer). All of them should just work.
@@ -198,7 +198,7 @@ export function parseAskQuestionArgs(args: Record<string, unknown>): ParsedAskQu
 
   if (questions.length === 0) {
     throw new Error(
-      'ask_question needs a question to show the user. Provide `prompt` (string) plus optional `options` (array of strings), e.g. {"prompt":"Which approach should I take?","options":["Refactor now","Ship as-is"]}, or multiple steps via {"questions":[{"prompt":"…","options":["…"]}]}. Options may be omitted for open-ended questions — the user always gets a free-text answer field.'
+      'ask_question needs a question to show the user. Provide `prompt` (string) plus optional `options` (array of strings), e.g. {"prompt":"Which approach should I take?","options":["Refactor now","Ship as-is"]}, or multiple steps via {"questions":[{"prompt":"…","options":["…"]}]}. Options may be omitted for open-ended questions - the user always gets a free-text answer field.'
     );
   }
 

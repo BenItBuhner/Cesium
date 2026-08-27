@@ -25,7 +25,7 @@ import {
 } from "@/lib/onboarding/engine-api";
 
 /**
- * Step 1 — connect your first engine. Verifies the URL with `/health`,
+ * Step 1 - connect your first engine. Verifies the URL with `/health`,
  * handles password-protected engines via the session-token flow, persists the
  * connection locally, and mirrors it (token included) to the cloud so any
  * future device reconnects instantly.
@@ -150,7 +150,7 @@ export function ConnectServerStep({
           </p>
           <p className="text-[12.5px] text-[var(--text-secondary)]">
             {cloud.actions
-              ? "Saved to your cloud account — future devices reconnect automatically."
+              ? "Saved to your cloud account - future devices reconnect automatically."
               : "Saved on this device."}
           </p>
         </div>

@@ -8,7 +8,7 @@
  *   node --import tsx scripts/storage-migrate.ts --phase workspaces --phase agent-events
  *
  * Environment: honours DATABASE_URL / OPENCURSOR_DATA_DIR for the respective
- * drivers. REDIS_URL is ignored — migration talks directly to the storage
+ * drivers. REDIS_URL is ignored - migration talks directly to the storage
  * driver, never through cache layers.
  */
 

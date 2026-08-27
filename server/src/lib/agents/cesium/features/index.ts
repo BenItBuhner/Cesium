@@ -104,7 +104,7 @@ export const getCesiumHarnessPluginCatalog = getCesiumFeatureCatalog;
 /**
  * Resolve the active harness feature stack from settings.
  * Feature modules are swapped by version (e.g. subagents v1 vs v2) without
- * rewriting the core turn loop — tools, reminders, and dispatch keys come from modules.
+ * rewriting the core turn loop - tools, reminders, and dispatch keys come from modules.
  */
 export function resolveCesiumHarnessFeatures(
   harnessInput?: CesiumHarnessSettings | unknown,

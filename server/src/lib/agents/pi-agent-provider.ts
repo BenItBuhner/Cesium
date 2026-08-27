@@ -213,7 +213,7 @@ class PiAgentSessionHandle implements AgentSessionHandle {
 
     // Use Pi's service factory so DefaultResourceLoader picks up packages,
     // extensions, skills, prompt templates, themes, and AGENTS.md from agentDir
-    // + project .pi/ — the whole point of Pi's customization model.
+    // + project .pi/ - the whole point of Pi's customization model.
     const {
       createAgentSessionServices,
       createAgentSessionFromServices,
@@ -239,7 +239,7 @@ class PiAgentSessionHandle implements AgentSessionHandle {
     );
     const thinkingLevel = thinkingLevelForConfig(configOptions);
 
-    // Do NOT pass a tools allowlist — that would disable extension/custom tools.
+    // Do NOT pass a tools allowlist - that would disable extension/custom tools.
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager,

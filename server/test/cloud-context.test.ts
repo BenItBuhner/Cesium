@@ -159,7 +159,7 @@ test("snapshot export sanitizes runtime state and strips seq/raw", async () => {
   assert.equal(parsedRecord.providerSessionId, null);
   assert.equal(parsedRecord.status, "idle");
   assert.deepEqual(parsedRecord.queuedPrompts, []);
-  // Config options can embed the engine's whole model catalog — never travel.
+  // Config options can embed the engine's whole model catalog - never travel.
   assert.deepEqual(parsedRecord.configOptions, []);
 
   const parsedEvents = JSON.parse(snapshot.eventsJson) as Array<
@@ -221,7 +221,7 @@ test("snapshot materializes on another engine and is idempotent", async () => {
   );
   assert.equal(events.length, 8);
 
-  // Re-materializing the same snapshot updates in place — no duplicates.
+  // Re-materializing the same snapshot updates in place - no duplicates.
   const second = await materializeCloudSnapshot({
     workspace: target,
     snapshotKey: snapshot.snapshotKey,
@@ -271,7 +271,7 @@ test("install registry only exposes vetted argv installers", () => {
   for (const spec of CLI_INSTALL_SPECS) {
     assert.ok(spec.backendId in AGENT_BACKENDS, `unknown backend ${spec.backendId}`);
     assert.ok(spec.platforms.length > 0);
-    // No shell strings — plain argv with a known package manager, and never
+    // No shell strings - plain argv with a known package manager, and never
     // the ambient global prefix (bun/desktop servers have no reliable one).
     const invocation = buildInstallCommand(spec);
     assert.ok(invocation.command === "npm" || invocation.command === "npm.cmd");
@@ -284,7 +284,7 @@ test("install registry only exposes vetted argv installers", () => {
   }
   assert.equal(getInstallSpecForBackend("codex-app-server")?.binName, "codex");
   assert.equal(getInstallSpecForBackend("cesium-agent"), null);
-  // Claude Code SDK authenticates with an API key — no CLI installer.
+  // Claude Code SDK authenticates with an API key - no CLI installer.
   assert.equal(getInstallSpecForBackend("claude-code-sdk"), null);
   const codexSpec = getInstallSpecForBackend("codex-app-server");
   assert.ok(codexSpec && isInstallSupportedOnThisHost(codexSpec));
@@ -320,7 +320,7 @@ test("live registry flips availability when a CLI env override appears", async (
   const before = AGENT_BACKENDS["codex-app-server"].available;
   process.env.OPENCURSOR_CODEX_BIN = fakeCodex;
   try {
-    // Env changes invalidate the detection fingerprint automatically — the
+    // Env changes invalidate the detection fingerprint automatically - the
     // getter-based registry reflects them on the next property read.
     assert.equal(AGENT_BACKENDS["codex-app-server"].available, true);
     assert.ok(

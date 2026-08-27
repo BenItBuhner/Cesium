@@ -64,7 +64,7 @@ function formatBytes(size: number): string {
 }
 
 function shortCommit(commit: string | null): string {
-  return commit ? commit.slice(0, 10) : "—";
+  return commit ? commit.slice(0, 10) : "-";
 }
 
 function ReleaseRow({
@@ -82,11 +82,11 @@ function ReleaseRow({
     ? new Date(release.publishedAt).toLocaleDateString()
     : null;
   // Releases round-trip through the server's persisted update state, which can
-  // have been written by a build with a different schema — never assume shape.
+  // have been written by a build with a different schema - never assume shape.
   const assets = Array.isArray(release.assets) ? release.assets : [];
   return (
     <SettingsRow
-      title={`${label} — ${release.tag}`}
+      title={`${label} - ${release.tag}`}
       titleExtra={
         <>
           {release.prerelease ? <span className={tagClass}>pre-release</span> : null}
@@ -383,7 +383,7 @@ export function UpdatesSettingsPanel() {
         ) : null}
         {status?.npm ? (
           <SettingsRow
-            title={`npm — ${status.npm.packageName}`}
+            title={`npm - ${status.npm.packageName}`}
             leading={
               <Package
                 className="size-[14px] text-[var(--text-secondary)]"
@@ -487,7 +487,7 @@ export function UpdatesSettingsPanel() {
               >
                 {applyOutcome.ok
                   ? applyOutcome.restartRequired
-                    ? "Update applied — restart the server to run the new build."
+                    ? "Update applied - restart the server to run the new build."
                     : "Already up to date."
                   : `Update failed${applyOutcome.error ? `: ${applyOutcome.error}` : "."}`}
               </p>

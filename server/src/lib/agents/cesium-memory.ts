@@ -4,7 +4,7 @@ import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
 
 /**
  * Curated agent memory: a small, bounded store of user/workspace facts the
- * agent explicitly saves. This is the Hermes-style curated-facts layer — no
+ * agent explicitly saves. This is the Hermes-style curated-facts layer - no
  * embeddings, no index; substring/keyword search over a capped JSON file.
  */
 

@@ -188,7 +188,7 @@ browserDebugRoutes.get("/api/browser-debug/sessions/:sessionId", async (c) => {
       host,
       accessToken
     );
-    // Best-effort current URL — used by the client to sync the IDE URL bar
+    // Best-effort current URL - used by the client to sync the IDE URL bar
     // with the user's last in-DevTools navigation when they close the console.
     let currentUrl: string | null = null;
     try {
@@ -239,7 +239,7 @@ browserDebugRoutes.post(
         return c.json({ error: "Missing op." }, 400);
       }
       // `waitUntil: "commit"` gives us a response as soon as the network request
-      // is issued, instead of waiting for full load — navigations to heavy
+      // is issued, instead of waiting for full load - navigations to heavy
       // sites would otherwise time the endpoint out from the IDE's perspective.
       const navOpts = { waitUntil: "commit" as const, timeout: 15_000 };
       try {
@@ -259,7 +259,7 @@ browserDebugRoutes.post(
         }
       } catch {
         // Playwright rejects on aborts, ERR_ABORTED during redirects, etc.
-        // The navigation often still succeeds — fall through and report the
+        // The navigation often still succeeds - fall through and report the
         // current URL so the IDE can sync regardless.
       }
       let url: string | null = null;
@@ -478,7 +478,7 @@ async function proxyGetToChromium(
     return new Response(rewritten, { status: res.status, headers: outHeaders });
   }
 
-  // Strip any CSP on non-HTML responses too — some Chromium assets send one.
+  // Strip any CSP on non-HTML responses too - some Chromium assets send one.
   outHeaders.delete("content-security-policy");
   return new Response(res.body as BodyInit | null, {
     status: res.status,

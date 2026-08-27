@@ -51,15 +51,15 @@ export type WorkspaceInsights = {
     conflictedFiles: string[];
     /**
      * A merge/rebase/cherry-pick is in progress and every conflicted file has
-     * been resolved (staged) — the "Fixed merge conflicts" pill state.
+     * been resolved (staged) - the "Fixed merge conflicts" pill state.
      */
     conflictsResolved: boolean;
   };
   work: {
     /**
      * Running/paused/awaiting agent conversations in this workspace.
-     * The composer work pill excludes the open conversation — that agent is
-     * already visible in the thread — and only treats *other* chats, spawned
+     * The composer work pill excludes the open conversation - that agent is
+     * already visible in the thread - and only treats *other* chats, spawned
      * sub-agents, and cloud tasks as background work.
      */
     runningConversations: number;

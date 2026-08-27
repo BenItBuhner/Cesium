@@ -63,7 +63,7 @@ function originMergeKey(
   return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 
-/** Stable ordering: recency first, then creation time, then id (never title — renames must not reshuffle ties). */
+/** Stable ordering: recency first, then creation time, then id (never title - renames must not reshuffle ties). */
 function compareRailOrder(
   a: AgentRailConversationSummary,
   b: AgentRailConversationSummary

@@ -194,7 +194,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           searchId="do-not-disturb"
           title="Do Not Disturb"
-          description="Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type."
+          description="Suppress all notifications - connection alerts, warnings, file overrides, and every other notification type."
           trailing={
             <ToggleSwitch
               checked={general.doNotDisturb}

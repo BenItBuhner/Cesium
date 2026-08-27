@@ -6,8 +6,8 @@ import android.graphics.Bitmap
 /**
  * Process-level owner of a single assistant run so its state (status + streamed
  * answer) survives the overlay being minimized to the corner bubble or fully
- * dismissed. The visible surfaces — the expanded session panel and the floating
- * bubble — are thin observers of this controller. When a run finishes, the final
+ * dismissed. The visible surfaces - the expanded session panel and the floating
+ * bubble - are thin observers of this controller. When a run finishes, the final
  * answer is spoken aloud (useful when the user has parked the bubble over another
  * app).
  */

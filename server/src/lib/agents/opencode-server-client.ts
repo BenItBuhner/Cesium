@@ -7,7 +7,7 @@ export type OpenCodeServerClientOptions = {
    * `?directory=` query param (supported by OpenCode servers since v0.6.0).
    * Without it OpenCode resolves the project from the server process cwd,
    * which is wrong whenever the server is shared across workspaces (external
-   * `OPENCURSOR_OPENCODE_SERVER_URL` deployments) — chats then run in the
+   * `OPENCURSOR_OPENCODE_SERVER_URL` deployments) - chats then run in the
    * server's cwd instead of their own per-chat sandbox directory.
    */
   directory?: string;

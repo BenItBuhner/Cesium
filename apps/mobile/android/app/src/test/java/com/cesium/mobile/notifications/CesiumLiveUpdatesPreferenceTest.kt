@@ -105,12 +105,12 @@ class CesiumLiveUpdatesPreferenceTest {
 
   @Test
   fun legacyStoredValuesMigrateWithoutFlippingUserIntent() {
-    // Old "nowbar" requested promotion with fallback — that is now "live".
+    // Old "nowbar" requested promotion with fallback - that is now "live".
     assertEquals(
       LIVE_UPDATE_PREFERENCE_LIVE,
       migrateLegacyLiveUpdatePreference(LEGACY_LIVE_UPDATE_PREFERENCE_NOW_BAR)
     )
-    // Old "live" opted out of promotion — that is now "basic".
+    // Old "live" opted out of promotion - that is now "basic".
     assertEquals(
       LIVE_UPDATE_PREFERENCE_BASIC,
       migrateLegacyLiveUpdatePreference("live")

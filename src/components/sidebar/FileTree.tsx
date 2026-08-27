@@ -91,7 +91,7 @@ export function FileTree({
   );
 }
 
-/** All folder paths that have at least one child — used as initial expanded set. */
+/** All folder paths that have at least one child - used as initial expanded set. */
 export function collectExpandableFolderPaths(
   nodes: FileNode[] | undefined,
   parentPath: string

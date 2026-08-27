@@ -21,7 +21,7 @@ function unwrapNestedAbsoluteUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
 
-  // Direct string search — catches garbage like `foo https://example.com`.
+  // Direct string search - catches garbage like `foo https://example.com`.
   const laterScheme = trimmed.slice(1).match(/https?:\/\//i);
   if (laterScheme && laterScheme.index != null) {
     const idx = laterScheme.index + 1;
@@ -31,7 +31,7 @@ function unwrapNestedAbsoluteUrl(input: string): string {
     }
   }
 
-  // Structured path case — `http://host/https://target/...`
+  // Structured path case - `http://host/https://target/...`
   try {
     const outer = new URL(trimmed);
     const pathish = `${outer.pathname}${outer.search}${outer.hash}`;
@@ -39,7 +39,7 @@ function unwrapNestedAbsoluteUrl(input: string): string {
     if (match?.[1]) {
       return match[1];
     }
-    // Nested proxy path — e.g.
+    // Nested proxy path - e.g.
     //   `https://www.google.com/browser/https/www.google.com/?gws_rd=ssl`
     // (from a previous run where pages like Google read `location.pathname`
     // back into `pushState` and our encoder re-wrapped it). Rescue the real

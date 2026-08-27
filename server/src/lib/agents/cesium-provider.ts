@@ -653,7 +653,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * Tool schemas advertised to the model: the resolved harness filtered to the
    * active profile envelope. Unlike mode policy, excluded tools are hidden
    * from the model entirely. Subagent-spawning tools carry the live Model
-   * access roster in their descriptions (Codex spawn_agent parity) — and
+   * access roster in their descriptions (Codex spawn_agent parity) - and
    * because children receive these same definitions, the roster propagates
    * recursively to every spawn depth.
    */
@@ -1698,8 +1698,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   /**
    * Tool surface for spawned subagents. Codex MultiAgentV2 parity: children
-   * share the parent's workspace tools (files, terminal, MCP, browser) and —
-   * for V2 collaborative children — the collaboration tools themselves, with
+   * share the parent's workspace tools (files, terminal, MCP, browser) and -
+   * for V2 collaborative children - the collaboration tools themselves, with
    * spawn depth enforced by the runtime. Every gated call flows through the
    * same mode policy and permission cascade as the parent agent.
    *
@@ -4672,7 +4672,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           `${skills.length} skill${skills.length === 1 ? "" : "s"} discovered:`,
           ...skills.map(
             (skill) =>
-              `- ${skill.name} (id: ${slugifySkillId(skill.name)}) — ${skill.description} [${
+              `- ${skill.name} (id: ${slugifySkillId(skill.name)}) - ${skill.description} [${
                 skill.authored ? "agent-authored" : `read-only: ${skill.source}`
               }]`
           ),
@@ -4857,7 +4857,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /**
    * Self-relocation across git branches in the current workspace.
    *
-   * NOTE(future): extend agent self-relocation beyond branches — the agent
+   * NOTE(future): extend agent self-relocation beyond branches - the agent
    * could move this conversation to another repository, workspace, or
    * directory via `agentRuntimeManager.relocateConversation` with
    * `initiatedBy: "agent"`, letting it hop to a new project and keep working
@@ -4880,13 +4880,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
       return (
         `Branch ${branch} is already checked out in worktree ${result.checkedOutWorktree.path}` +
         `${result.checkedOutWorktree.workspaceName ? ` (workspace "${result.checkedOutWorktree.workspaceName}")` : ""}. ` +
-        "This checkout was left untouched — run terminal commands against that path, or ask the user to relocate this conversation there."
+        "This checkout was left untouched - run terminal commands against that path, or ask the user to relocate this conversation there."
       );
     }
     return (
       `Switched ${this.callbacks.workspace.root} to branch ${result.status.currentBranch ?? branch}` +
       `${result.created ? " (newly created)" : ""}. ` +
-      "Files may differ on this branch — re-verify paths and re-read key files before editing."
+      "Files may differ on this branch - re-verify paths and re-read key files before editing."
     );
   }
 

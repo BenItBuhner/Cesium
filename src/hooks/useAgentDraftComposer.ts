@@ -136,7 +136,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         : [workspaceSession.chat.model],
     [draftBackend, workspaceSession.chat.model]
   );
-  // Depend on the narrow chat fields the resolution actually reads — the
+  // Depend on the narrow chat fields the resolution actually reads - the
   // whole `chat` object is replaced by unrelated session folds (unread maps,
   // tab titles) several times per second under load, and each spurious
   // recompute used to re-derive the full model catalog.

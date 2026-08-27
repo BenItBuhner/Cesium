@@ -66,7 +66,7 @@ export function isConfiguredDefaultServerBaseUrl(baseUrl: string): boolean {
  * Resolve the URL used for actual HTTP/WS requests to a saved server.
  *
  * The app's primary/default server must collapse to same-origin on HTTPS
- * pages exactly like auth does — reverse-proxy deployments (HTTPS UI in front
+ * pages exactly like auth does - reverse-proxy deployments (HTTPS UI in front
  * of an HTTP API) would otherwise aim requests at the *browser's* loopback
  * and the sidebar/chat list could never load even though login worked.
  * Genuinely different saved servers keep their explicit host so multi-server
@@ -159,7 +159,7 @@ export function resolveClientServerBaseUrlForLocation(
       configured.hostname === "localhost" || configured.hostname === "127.0.0.1";
 
     // The account/signup site is not an engine. Never collapse requests onto
-    // that origin — leftover loopback defaults must stay loopback (and fail
+    // that origin - leftover loopback defaults must stay loopback (and fail)
     // locally) instead of treating the marketing host as a server.
     if (currentHost && isCesiumAccountSiteHostname(currentHost)) {
       return raw;
@@ -173,7 +173,7 @@ export function resolveClientServerBaseUrlForLocation(
       // Use same-origin so TLS covers the request. The reverse proxy is
       // responsible for routing `/api/*` and `/ws/*` to the API. For dev
       // (next-dev on HTTPS with an HTTP API) this still produces a relative
-      // base URL, which matches the intent — avoid mixed content above all.
+      // base URL, which matches the intent - avoid mixed content above all.
       return "";
     }
 

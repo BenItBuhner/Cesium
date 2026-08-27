@@ -8,7 +8,7 @@ export const TAKING_LONGER_STATUS_PREFIX = "Taking longer";
 export const COMPRESSING_CONTEXT_STATUS_PREFIX = "Compressing context";
 
 export function formatTakingLongerStatusDetail(attempt: number, maxAttempts: number): string {
-  return `${TAKING_LONGER_STATUS_PREFIX} — retrying provider request (${attempt}/${maxAttempts})…`;
+  return `${TAKING_LONGER_STATUS_PREFIX} - retrying provider request (${attempt}/${maxAttempts})…`;
 }
 
 export function formatCompressingContextStatusDetail(): string {

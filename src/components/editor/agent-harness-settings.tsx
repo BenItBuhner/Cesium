@@ -137,7 +137,7 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "cesium-agent":
     "First-party Cesium harness with direct inference APIs, tools, subagents, and compression.",
   "cursor-sdk":
-    "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins. Does not support Cursor CLI OAuth — use Cursor ACP for that.",
+    "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins. Does not support Cursor CLI OAuth - use Cursor ACP for that.",
   "cursor-acp":
     "Cursor Agent CLI over ACP (`agent acp`). Sign in with `agent login` for the OAuth flow the TypeScript SDK does not expose.",
   "opencode-server":
@@ -157,7 +157,7 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "pi-agent":
     "Native Pi coding agent. Uses ~/.pi/agent by default so packages, extensions, skills, and settings match the CLI.",
   "google-antigravity-cli":
-    "Google Antigravity CLI (`agy`) — Google's successor to Gemini CLI. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed yet. Native ACP is not available upstream.",
+    "Google Antigravity CLI (`agy`) - Google's successor to Gemini CLI. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed yet. Native ACP is not available upstream.",
 };
 
 /** Custom endpoints support the same four inference APIs as model discovery. */
@@ -170,10 +170,10 @@ const CUSTOM_PROVIDER_API_OPTIONS: Array<{ value: CesiumProviderKind; label: str
 
 const CUSTOM_PROVIDER_API_HINTS: Partial<Record<CesiumProviderKind, string>> = {
   "openai-chat-completions":
-    "POST /v1/chat/completions — OpenAI, Groq, Together, and most third-party hosts.",
+    "POST /v1/chat/completions - OpenAI, Groq, Together, and most third-party hosts.",
   "openai-responses":
-    "POST /v1/responses with SSE streaming — OpenAI Responses API shape.",
-  anthropic: "POST /v1/messages — Anthropic Messages API (x-api-key header).",
+    "POST /v1/responses with SSE streaming - OpenAI Responses API shape.",
+  anthropic: "POST /v1/messages - Anthropic Messages API (x-api-key header).",
   "openai-compatible":
     "Legacy OpenAI-compatible hosts; routed as Chat Completions at runtime.",
 };
@@ -322,7 +322,7 @@ function buildProviderOptionsFromCatalog(catalog: CesiumModelCatalogEntry[]): Ce
   return sorted;
 }
 
-/** Vertical block on harness detail — spacing only, no card borders. */
+/** Vertical block on harness detail - spacing only, no card borders. */
 function HarnessDetailBlock({
   children,
   className = "",
@@ -531,7 +531,7 @@ function CursorSdkCredentialSettings() {
         </div>
         <p className="leading-relaxed">
           The key stays server-side and is used only by the Cursor SDK harness. Cursor
-          account OAuth is not available on the SDK — switch this harness to ACP above
+          account OAuth is not available on the SDK - switch this harness to ACP above
           and sign in there if you need `agent login`.
         </p>
         {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
@@ -1039,9 +1039,9 @@ function CustomProviderModal({
 }
 
 const PROFILE_PROMPT_BASE_OPTIONS: Array<{ value: CesiumProfilePromptBase; label: string }> = [
-  { value: "code", label: "Code — full software-engineering persona" },
-  { value: "work", label: "Work — research, communication, artifacts-first persona" },
-  { value: "minimal", label: "Minimal — identity and tool contract only" },
+  { value: "code", label: "Code - full software-engineering persona" },
+  { value: "work", label: "Work - research, communication, artifacts-first persona" },
+  { value: "minimal", label: "Minimal - identity and tool contract only" },
 ];
 
 const PROFILE_PERMISSION_CATEGORIES: Array<{
@@ -1322,7 +1322,7 @@ function ProfileEditorModal({
                                 ? "text-[var(--text-disabled)]"
                                 : "text-[var(--text-secondary)]"
                             }`}
-                            title={locked ? "Core tool — always available" : undefined}
+                            title={locked ? "Core tool - always available" : undefined}
                           >
                             <input
                               type="checkbox"
@@ -2201,8 +2201,8 @@ function CesiumAgentHarnessSettings() {
           <HarnessDetailBlock>
             <SettingsSubsectionHeading>Conversation titles</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-              Model used to auto-title new conversations. Pick any configured catalog model —
-              including OAuth-connected ones — or keep Automatic to use Settings → Voice
+              Model used to auto-title new conversations. Pick any configured catalog model -
+              including OAuth-connected ones - or keep Automatic to use Settings → Voice
               (or the server&apos;s transcription/title environment pipeline).
             </p>
             <label className="mt-[10px] flex flex-col gap-[5px]">
@@ -2347,9 +2347,9 @@ function CesiumAgentHarnessSettings() {
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
               Capability presets orthogonal to modes: each profile picks a persona, verbatim
               instructions, the advertised tool surface, MCP server access, and permission
-              overrides. Toggle a profile off to hide it from the new-chat switch — the switch
+              overrides. Toggle a profile off to hide it from the new-chat switch - the switch
               itself disappears when only one profile is enabled. Built-in Code and Work presets
-              are read-only — duplicate to customize.
+              are read-only - duplicate to customize.
             </p>
             <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
               {settings.profileCatalog.map((profile) => {
@@ -3016,7 +3016,7 @@ function PiAgentHarnessSettings() {
         notifyAgentBackendsChanged();
         setMessage(
           agentHome === "native"
-            ? "Using native Pi home — packages, extensions, and skills load from ~/.pi/agent."
+            ? "Using native Pi home - packages, extensions, and skills load from ~/.pi/agent."
             : "Using isolated Cesium Pi home."
         );
       } catch (error) {
@@ -3148,9 +3148,9 @@ function PiAgentHarnessSettings() {
         <p className="leading-relaxed">
           Pi is built around user customization. Native mode loads the same{" "}
           <span className="font-mono text-[11px] text-[var(--text-primary)]">~/.pi/agent</span>{" "}
-          tree as the CLI — packages, extensions, skills, prompts, themes,{" "}
+          tree as the CLI - packages, extensions, skills, prompts, themes,{" "}
           <span className="font-mono text-[11px] text-[var(--text-primary)]">settings.json</span>,{" "}
-          and auth — plus project{" "}
+          and auth - plus project{" "}
           <span className="font-mono text-[11px] text-[var(--text-primary)]">.pi/</span> resources.
         </p>
         <div className="flex flex-wrap gap-[8px]">

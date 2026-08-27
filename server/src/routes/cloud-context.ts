@@ -8,7 +8,7 @@ import {
 /**
  * Cloud Context endpoints: portable conversation snapshots.
  *
- * The engine never talks to the cloud itself — the client exports a snapshot
+ * The engine never talks to the cloud itself - the client exports a snapshot
  * here, pushes it to the user's cloud context (Convex), and later pulls it
  * down on any other engine and materializes it via the import chassis.
  */

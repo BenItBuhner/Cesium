@@ -130,7 +130,7 @@ export function TermuxServerSetup({ compact = false }: { compact?: boolean }) {
           </h3>
           <p className="mt-[4px] font-sans text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
             Termux runs the full Cesium backend locally at{" "}
-            <span className="font-mono">127.0.0.1:9100</span> — no computer required.
+            <span className="font-mono">127.0.0.1:9100</span> - no computer required.
           </p>
         </div>
       </div>

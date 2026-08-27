@@ -23,15 +23,15 @@ const IMPORT_SOURCES: HarnessImportSource[] = [
 
 /** Backends whose sessions exist only in the vendor's cloud. */
 export const UNSUPPORTED_IMPORT_BACKENDS: Partial<Record<AgentBackendId, string>> = {
-  "cesium-agent": "Cesium Agent conversations are native to Cesium — nothing to import.",
+  "cesium-agent": "Cesium Agent conversations are native to Cesium - nothing to import.",
   "cursor-sdk":
     "Cursor agent chats are synced to the Cursor account service; the TypeScript SDK keeps no stable on-disk session store to import from.",
   "cursor-acp":
     "Cursor Agent ACP chats are synced to the Cursor account service; the CLI keeps no stable on-disk session store to import from.",
   "devin-acp":
-    "Devin sessions live in Cognition's cloud behind your Devin account — there is no local CLI session storage to import.",
+    "Devin sessions live in Cognition's cloud behind your Devin account - there is no local CLI session storage to import.",
   "grok-build":
-    "Grok Build sessions live in xAI's cloud behind your Grok account — there is no local CLI session storage to import.",
+    "Grok Build sessions live in xAI's cloud behind your Grok account - there is no local CLI session storage to import.",
 };
 
 export function listImportSources(): HarnessImportSource[] {

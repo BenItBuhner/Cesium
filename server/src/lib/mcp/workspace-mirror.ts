@@ -40,7 +40,7 @@ ${schema.slice(0, MAX_TOOL_MD_CHARS)}
 \`\`\`
 `;
   return body.length > MAX_TOOL_MD_CHARS
-    ? `${body.slice(0, MAX_TOOL_MD_CHARS)}\n\n_(truncated — see _catalog.json)_`
+    ? `${body.slice(0, MAX_TOOL_MD_CHARS)}\n\n_(truncated - see _catalog.json)_`
     : body;
 }
 
@@ -127,7 +127,7 @@ export async function writeMcpWorkspaceMirror(input: {
     if (entry.config.auth.kind === "oauth") {
       await fs.writeFile(
         path.join(serverDir, "oauth.md"),
-        `# OAuth\n\nThis server uses OAuth. Tokens are stored on the Cesium server only — not in this folder.\n\nStatus: ${entry.status.connected ? "connected" : entry.status.needsAuth ? "needs authentication" : "disconnected"}\n`,
+        `# OAuth\n\nThis server uses OAuth. Tokens are stored on the Cesium server only - not in this folder.\n\nStatus: ${entry.status.connected ? "connected" : entry.status.needsAuth ? "needs authentication" : "disconnected"}\n`,
         "utf8"
       );
     }
@@ -151,6 +151,6 @@ export async function ensureMcpGitignore(workspaceRoot: string): Promise<void> {
     }
     await fs.appendFile(gitignorePath, "\nmcp-servers/\n", "utf8");
   } catch {
-    // no .gitignore — skip
+    // no .gitignore - skip
   }
 }

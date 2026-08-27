@@ -5,7 +5,7 @@ import type {
   CesiumSubagentsVersion,
 } from "./types.js";
 
-/** Timed `wait` tool hard cap (24 hours) — mirrors Cesium prompt defaults. */
+/** Timed `wait` tool hard cap (24 hours) - mirrors Cesium prompt defaults. */
 export const DEFAULT_WAIT_MAX_SECONDS = 24 * 60 * 60;
 export const DEFAULT_PLUGIN_HOOK_TIMEOUT_MS = 5_000;
 export const HARD_MAX_PLUGIN_HOOK_TIMEOUT_MS = 60_000;

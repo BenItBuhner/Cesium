@@ -184,7 +184,7 @@ describe("completion failure projection", () => {
         createdAt: 2,
         kind: "status",
         status: "running",
-        detail: "Taking longer — retrying provider request (1/3)…",
+        detail: "Taking longer - retrying provider request (1/3)…",
       },
     ];
 

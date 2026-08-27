@@ -86,7 +86,7 @@ export function agentWorkspaceComposerDraftId(workspaceId: string | null | undef
 
 /**
  * Merge a partial composer draft patch. Omitting `content` (or attachments /
- * captures / textReferences / linkReferences) preserves the existing field —
+ * captures / textReferences / linkReferences) preserves the existing field -
  * callers that clear text on submit must not re-pass a stale `content` when
  * updating attachments.
  */

@@ -5,7 +5,7 @@ import { extractServerErrorMessage } from "../packages/client/src/server-api.ts"
 /**
  * Error bodies from a misconfigured "server" (most commonly a hosted web
  * deployment answering with its own Next.js HTML) must never reach the UI
- * verbatim — regression coverage for the raw-HTML "Workspace error" toast.
+ * verbatim - regression coverage for the raw-HTML "Workspace error" toast.
  */
 
 const HTML_DOCUMENT =
