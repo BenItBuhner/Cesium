@@ -18,6 +18,8 @@ import {
   setDefaultServerConnection,
   updateRendezvousServerEndpoint,
   upsertServerConnection,
+  createUnconfiguredServerConnection,
+  isUnconfiguredServerConnection,
   type ServerConnection,
   type ServerConnectionsState,
 } from "../server-connections";
@@ -56,6 +58,8 @@ type ServerConnectionsContextValue = {
   serverStatusById: Record<string, ServerRuntimeStatus>;
   onlineServers: ServerConnection[];
   activeServer: ServerConnection;
+  /** False when the user has no saved engines (fresh account / account site). */
+  hasServer: boolean;
   settingsServer: ServerConnection | null;
   requiresDefaultServer: boolean;
   setActiveServer: (serverId: string) => void;
@@ -530,10 +534,12 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   );
 
   const value = useMemo<ServerConnectionsContextValue>(() => {
-    const activeServer =
+    const selected =
       state.servers.find((server) => server.id === state.activeServerId) ??
       state.servers[0] ??
-      getActiveServerConnection();
+      null;
+    const hasServer = selected !== null && !isUnconfiguredServerConnection(selected);
+    const activeServer = selected ?? createUnconfiguredServerConnection();
     const configuredSettingsServer = getSettingsServerConnection(state);
     const configuredSettingsHealth = configuredSettingsServer
       ? serverStatusById[configuredSettingsServer.id]?.health ?? "unknown"
@@ -541,7 +547,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     const settingsServer =
       configuredSettingsServer && configuredSettingsHealth !== "offline"
         ? configuredSettingsServer
-        : activeServer;
+        : hasServer
+          ? activeServer
+          : null;
     return {
       ready,
       state,
@@ -549,6 +557,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       serverStatusById,
       onlineServers,
       activeServer,
+      hasServer,
       settingsServer,
       requiresDefaultServer: requiresDefaultServerSelection(state),
       setActiveServer,

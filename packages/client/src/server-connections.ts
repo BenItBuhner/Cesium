@@ -1,7 +1,12 @@
 "use client";
 
 import { isLoopbackServerBaseUrl } from "./configured-server-base-url";
-import { clientKeyValueStore, getClientPlatform } from "./platform";
+import {
+  assertEngineServerUrlAllowed,
+  isCesiumAccountSiteHostname,
+  isCesiumAccountSiteUrl,
+} from "./engine-url-policy";
+import { clientKeyValueStore, clientLocation, getClientPlatform } from "./platform";
 import {
   normalizeRendezvousLocator,
   type RendezvousLocator,
@@ -110,6 +115,45 @@ function deriveServerLabel(baseUrl: string): string {
   }
 }
 
+export function shouldSeedConfiguredDefaultServer(
+  configuredDefaultBaseUrl: string
+): boolean {
+  if (isCesiumAccountSiteUrl(configuredDefaultBaseUrl)) {
+    return false;
+  }
+  const hostname = clientLocation()?.hostname;
+  if (hostname && isCesiumAccountSiteHostname(hostname)) {
+    return false;
+  }
+  return true;
+}
+
+export function createEmptyServerConnectionsState(): ServerConnectionsState {
+  return {
+    version: 1,
+    activeServerId: null,
+    defaultServerId: null,
+    servers: [],
+  };
+}
+
+export const UNCONFIGURED_SERVER_ID = "__unconfigured__";
+
+export function createUnconfiguredServerConnection(): ServerConnection {
+  return {
+    id: UNCONFIGURED_SERVER_ID,
+    label: "No server",
+    baseUrl: "http://127.0.0.1:0",
+    createdAt: 0,
+    updatedAt: 0,
+    lastUsedAt: 0,
+  };
+}
+
+export function isUnconfiguredServerConnection(server: ServerConnection | null | undefined): boolean {
+  return !server || server.id === UNCONFIGURED_SERVER_ID;
+}
+
 export function createServerConnection(input: {
   label?: string;
   baseUrl: string;
@@ -119,6 +163,7 @@ export function createServerConnection(input: {
 }): ServerConnection {
   const now = input.now ?? Date.now();
   const baseUrl = normalizeServerBaseUrl(input.baseUrl);
+  assertEngineServerUrlAllowed(baseUrl);
   const label = input.label?.trim() || deriveServerLabel(baseUrl);
   return {
     id: input.id?.trim() || fallbackId(),
@@ -139,6 +184,9 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
   }
   try {
     const baseUrl = normalizeServerBaseUrl(raw.baseUrl);
+    if (isCesiumAccountSiteUrl(baseUrl)) {
+      return null;
+    }
     const updatedAt =
       typeof raw.updatedAt === "number"
         ? raw.updatedAt
@@ -301,6 +349,9 @@ export function applyServerUrlBootstrap(
   options?: { force?: boolean; isElectron?: boolean }
 ): ServerConnectionsState {
   const normalized = normalizeServerBaseUrl(candidateBaseUrl);
+  if (isCesiumAccountSiteUrl(normalized)) {
+    return state;
+  }
   const candidateKey = getServerConnectionKey(normalized);
   if (
     !options?.force &&
@@ -383,13 +434,20 @@ export function updateRendezvousServerEndpoint(
 }
 
 export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: string): ServerConnectionsState {
-  const initial = createServerConnection({ baseUrl: configuredDefaultBaseUrl });
-  return {
-    version: 1,
-    activeServerId: initial.id,
-    defaultServerId: initial.id,
-    servers: [initial],
-  };
+  if (!shouldSeedConfiguredDefaultServer(configuredDefaultBaseUrl)) {
+    return createEmptyServerConnectionsState();
+  }
+  try {
+    const initial = createServerConnection({ baseUrl: configuredDefaultBaseUrl });
+    return {
+      version: 1,
+      activeServerId: initial.id,
+      defaultServerId: initial.id,
+      servers: [initial],
+    };
+  } catch {
+    return createEmptyServerConnectionsState();
+  }
 }
 
 export function mergeServerConnectionBootstrap(
@@ -506,11 +564,19 @@ export function normalizeServerConnectionsState(
     ? parsed.servers
         .map((entry) => sanitizeServerConnection((entry ?? {}) as PartialServerConnection))
         .filter((entry): entry is ServerConnection => Boolean(entry))
+        .filter((entry) => !isCesiumAccountSiteUrl(entry.baseUrl))
     : [];
-  const configuredDefault = createServerConnection({
-    baseUrl: configuredDefaultBaseUrl,
-    now: 0,
-  });
+  let configuredDefault: ServerConnection | null = null;
+  if (shouldSeedConfiguredDefaultServer(configuredDefaultBaseUrl)) {
+    try {
+      configuredDefault = createServerConnection({
+        baseUrl: configuredDefaultBaseUrl,
+        now: 0,
+      });
+    } catch {
+      configuredDefault = null;
+    }
+  }
   const withConfiguredDefault =
     configuredDefault &&
     !serverList.some(
@@ -723,7 +789,9 @@ export function removeServerConnection(
 ): ServerConnectionsState {
   const servers = state.servers.filter((server) => server.id !== serverId);
   if (servers.length === 0) {
-    return createDefaultServerConnectionsState(configuredDefaultBaseUrl);
+    return shouldSeedConfiguredDefaultServer(configuredDefaultBaseUrl)
+      ? createDefaultServerConnectionsState(configuredDefaultBaseUrl)
+      : createEmptyServerConnectionsState();
   }
   const activeServerId =
     state.activeServerId === serverId ? (servers[0]?.id ?? null) : state.activeServerId;

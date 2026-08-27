@@ -35,6 +35,7 @@ export function ServerConnectionsManager({
 }) {
   const {
     activeServer,
+    hasServer,
     settingsServer,
     servers,
     onlineServers,
@@ -169,7 +170,7 @@ export function ServerConnectionsManager({
     () =>
       servers.map((server) => {
         const probe = probeByServerId[server.id] ?? { status: "idle", message: null };
-        const isActiveChat = server.id === activeServer.id;
+        const isActiveChat = hasServer && server.id === activeServer.id;
         const isDefaultSettings = server.id === settingsServer?.id;
         const runtimeStatus = serverStatusById[server.id];
         const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
@@ -177,6 +178,7 @@ export function ServerConnectionsManager({
       }),
     [
       activeServer.id,
+      hasServer,
       onlineServers,
       probeByServerId,
       serverStatusById,

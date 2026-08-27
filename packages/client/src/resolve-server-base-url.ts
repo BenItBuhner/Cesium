@@ -1,4 +1,5 @@
 import { getConfiguredServerBaseUrl, getConfiguredServerPort } from "./configured-server-base-url";
+import { isCesiumAccountSiteHostname } from "./engine-url-policy";
 import { getActiveServerBaseUrl, getServerConnectionKey } from "./server-connections";
 import { clientLocation } from "./platform";
 
@@ -156,6 +157,13 @@ export function resolveClientServerBaseUrlForLocation(
       currentHost === "127.0.0.1" || currentHost === "localhost";
     const configuredIsLoopback =
       configured.hostname === "localhost" || configured.hostname === "127.0.0.1";
+
+    // The account/signup site is not an engine. Never collapse requests onto
+    // that origin — leftover loopback defaults must stay loopback (and fail
+    // locally) instead of treating the marketing host as a server.
+    if (currentHost && isCesiumAccountSiteHostname(currentHost)) {
+      return raw;
+    }
 
     if (
       !options?.explicitTarget &&

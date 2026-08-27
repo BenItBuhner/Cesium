@@ -72,7 +72,9 @@ function AccountIdentityCard() {
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-[8px] font-sans text-[15px] font-semibold text-[var(--text-primary)]">
             <span className="truncate">{identity.title}</span>
-            <span className={tagClass}>{identity.modeLabel}</span>
+            {identity.kind === "clerk" ? null : (
+              <span className={tagClass}>{identity.modeLabel}</span>
+            )}
           </p>
           <p className="mt-[2px] flex items-center gap-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
             <span
@@ -153,10 +155,10 @@ function CloudAccountSection() {
 
   if (configuredMode === "disabled") {
     return (
-      <SettingsSection title="Cloud account">
+      <SettingsSection>
         <SettingsRow
           title="Local mode"
-          description="Cloud sync is not configured for this build. Everything stays on this device and your engine servers — no account is required."
+          description="This build stays on this device and your engine servers — no account is required."
           trailing={<span className={tagClass}>Local-only</span>}
           searchId="account-cloud-mode"
         />
@@ -168,11 +170,11 @@ function CloudAccountSection() {
     // Cloud-capable build, but this device opted out at runtime (or the
     // provider tree is about to remount after a toggle).
     return (
-      <SettingsSection title="Cloud account">
+      <SettingsSection>
         <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
         <SettingsRow
           title="Local-only mode"
-          description="Cloud sync is turned off on this device. Flip the switch to reconnect — your account and synced data are untouched."
+          description="Cloud is turned off on this device. Flip the switch to reconnect — your account and data are untouched."
           trailing={<span className={tagClass}>Local-only</span>}
           searchId="account-cloud-mode"
         />
@@ -198,18 +200,8 @@ function CloudAccountSection() {
       }
     };
     return (
-      <SettingsSection title="Cloud account">
+      <SettingsSection>
         <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
-        <SettingsRow
-          title="Device sync"
-          description="Synced under a per-browser device identity. Configure Clerk for real account sign-in."
-          trailing={
-            <span className={tagClass}>
-              {cloud.status === "ready" ? "Synced" : "Connecting…"}
-            </span>
-          }
-          searchId="account-cloud-mode"
-        />
         {deviceKey ? (
           <SettingsRow
             title="Link another device"
@@ -232,12 +224,11 @@ function CloudAccountSection() {
 
   // clerk mode
   return (
-    <SettingsSection title="Cloud account">
-      <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
+    <SettingsSection>
       {cloud.status === "signed-out" ? (
         <SettingsRow
           title="Not signed in"
-          description="Sign in to sync servers, personalization, and conversation snapshots across devices."
+          description="Sign in to use your account on this device."
           trailing={
             <SignInButton mode="modal">
               <button type="button" className={rowButtonClass}>
@@ -248,34 +239,18 @@ function CloudAccountSection() {
           searchId="account-cloud-mode"
         />
       ) : (
-        <>
-          <SettingsRow
-            title={cloud.userName ?? "Cloud account"}
-            description={cloud.userEmail ?? "Signed in via Clerk."}
-            trailing={<UserButton />}
-            searchId="account-cloud-mode"
-          />
-          <SettingsRow
-            title="Sync status"
-            description="Servers, personalization, agent setup, and snapshots mirror to your account."
-            trailing={
-              <span className={tagClass}>
-                {cloud.status === "ready" ? "Synced" : "Connecting…"}
-              </span>
-            }
-          />
-          <SettingsRow
-            title="Sign out"
-            description="Sign out of your cloud account on this device."
-            trailing={
-              <SignOutButton>
-                <button type="button" className={rowButtonClass}>
-                  Sign out
-                </button>
-              </SignOutButton>
-            }
-          />
-        </>
+        <SettingsRow
+          title="Sign out"
+          description="Sign out of this device."
+          trailing={
+            <SignOutButton>
+              <button type="button" className={rowButtonClass}>
+                Sign out
+              </button>
+            </SignOutButton>
+          }
+          searchId="account-cloud-mode"
+        />
       )}
     </SettingsSection>
   );
@@ -362,7 +337,7 @@ function ServerSessionSection() {
 
 function ActiveServerSection() {
   const chrome = useSettingsShellChrome();
-  const { activeServer, servers, serverStatusById, setActiveServer } =
+  const { activeServer, hasServer, servers, serverStatusById, setActiveServer } =
     useServerConnections();
   const { settings } = useGlobalSettings();
   const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
@@ -373,25 +348,30 @@ function ActiveServerSection() {
   const serverRailAppearances = settings.general.serverRailAppearances;
   const activeServerAppearance = useMemo(
     () =>
-      getServerRailAppearance(
-        serverRailAppearances,
-        activeServer.id,
-        servers.findIndex((server) => server.id === activeServer.id)
-      ),
-    [activeServer.id, serverRailAppearances, servers]
+      hasServer
+        ? getServerRailAppearance(
+            serverRailAppearances,
+            activeServer.id,
+            servers.findIndex((server) => server.id === activeServer.id)
+          )
+        : null,
+    [activeServer, hasServer, serverRailAppearances, servers]
   );
   const activeServerDisplayLabel = useMemo(
-    () => getServerDisplayLabel(activeServer, activeServerAppearance),
-    [activeServer, activeServerAppearance]
+    () =>
+      hasServer && activeServerAppearance
+        ? getServerDisplayLabel(activeServer, activeServerAppearance)
+        : "No server",
+    [activeServer, activeServerAppearance, hasServer]
   );
 
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
-      if (serverId === activeServer.id) {
+      if (hasServer && serverId === activeServer.id) {
         setPickerOpen(false);
         return;
       }
-      if (activeWorkspaceId) {
+      if (activeWorkspaceId && hasServer) {
         rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
       }
       setActiveServer(serverId);
@@ -411,6 +391,7 @@ function ActiveServerSection() {
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      hasServer,
       openWorkspaceById,
       setActiveServer,
     ]
@@ -434,38 +415,42 @@ function ActiveServerSection() {
       <SettingsRow
         title={activeServerDisplayLabel}
         description={
-          isLocalDeviceServer(activeServer)
-            ? "This device — the local engine bundled with this client."
-            : activeServer.baseUrl
+          !hasServer
+            ? "No engine is connected yet. Add one from Servers."
+            : isLocalDeviceServer(activeServer)
+              ? "This device — the local engine bundled with this client."
+              : activeServer.baseUrl
         }
         leading={
-          isLocalDeviceServer(activeServer) ? (
-            <CircleUserRound
-              className="size-[16px] shrink-0 text-[var(--text-secondary)]"
-              strokeWidth={1.5}
-              aria-hidden
-            />
-          ) : (
+          hasServer && activeServerAppearance && !isLocalDeviceServer(activeServer) ? (
             <WorkspaceFolderIcon
               iconName={activeServerAppearance.icon}
               color={activeServerAppearance.color}
               className="size-[16px] shrink-0"
               strokeWidth={1.5}
             />
+          ) : (
+            <CircleUserRound
+              className="size-[16px] shrink-0 text-[var(--text-secondary)]"
+              strokeWidth={1.5}
+              aria-hidden
+            />
           )
         }
         trailing={
-          <button
-            ref={pickerAnchorRef}
-            type="button"
-            className={rowButtonClass}
-            onClick={() => setPickerOpen((open) => !open)}
-            aria-expanded={pickerOpen}
-            aria-haspopup="menu"
-          >
-            Switch
-            <ChevronDown className="size-[13px]" strokeWidth={1.5} aria-hidden />
-          </button>
+          servers.length > 0 ? (
+            <button
+              ref={pickerAnchorRef}
+              type="button"
+              className={rowButtonClass}
+              onClick={() => setPickerOpen((open) => !open)}
+              aria-expanded={pickerOpen}
+              aria-haspopup="menu"
+            >
+              Switch
+              <ChevronDown className="size-[13px]" strokeWidth={1.5} aria-hidden />
+            </button>
+          ) : undefined
         }
         searchId="account-active-server"
       />
@@ -474,7 +459,7 @@ function ActiveServerSection() {
         onClose={() => setPickerOpen(false)}
         anchorRef={pickerAnchorRef}
         label="Switch server"
-        selectedServerId={activeServer.id}
+        selectedServerId={hasServer ? activeServer.id : ""}
         servers={servers}
         serverStatusById={serverStatusById}
         serverRailAppearances={serverRailAppearances}
