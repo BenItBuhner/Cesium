@@ -441,15 +441,15 @@ export function LandingPage() {
             <ul className="mt-[20px] space-y-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
               <li className="flex items-start gap-[10px]">
                 <ShieldCheck className="mt-[2px] size-[15px] shrink-0 text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
-                Per-tool permission prompts, whichever backend is active.
+                You approve each tool call.
               </li>
               <li className="flex items-start gap-[10px]">
                 <ArrowRight className="mt-[2px] size-[15px] shrink-0 text-[var(--orchestration-accent)]" strokeWidth={1.75} aria-hidden />
-                Context handoff carries recent messages to the next agent.
+                Recent messages go with the handoff.
               </li>
               <li className="flex items-start gap-[10px]">
                 <Cpu className="mt-[2px] size-[15px] shrink-0 text-[var(--workflow-accent)]" strokeWidth={1.75} aria-hidden />
-                Bring your own keys and CLIs — Cesium orchestrates, you own the accounts.
+                Bring your own keys. You own the accounts.
               </li>
             </ul>
           </div>
