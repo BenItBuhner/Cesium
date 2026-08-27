@@ -73,8 +73,8 @@ export function useAccountIdentity(): AccountIdentity {
           kind: "clerk-signed-out",
           signedIn: false,
           title: "Not signed in",
-          subtitle: "Sign in to sync your account",
-          modeLabel: "Cloud",
+          subtitle: "Sign in to use your account",
+          modeLabel: "Signed out",
           imageUrl: null,
           serverLabel,
         };

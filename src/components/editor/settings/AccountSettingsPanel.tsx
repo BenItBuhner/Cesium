@@ -72,7 +72,7 @@ function AccountIdentityCard() {
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-[8px] font-sans text-[15px] font-semibold text-[var(--text-primary)]">
             <span className="truncate">{identity.title}</span>
-            {identity.kind === "clerk" ? null : (
+            {identity.kind === "clerk" || identity.kind === "clerk-signed-out" ? null : (
               <span className={tagClass}>{identity.modeLabel}</span>
             )}
           </p>
