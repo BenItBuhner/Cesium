@@ -13,7 +13,6 @@ import {
   type QuickActionVisibility,
 } from "@cesium/core";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -183,7 +182,6 @@ export function ActionsSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="general" parentLabel="General" label="Actions" />
-      <PageIntro title="Actions" />
 
       <SettingsSection title="Composer pills">
         <SettingsRow
