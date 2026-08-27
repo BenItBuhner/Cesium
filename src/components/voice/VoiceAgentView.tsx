@@ -75,41 +75,35 @@ export function VoiceAgentView() {
 
   const open = session.view === "full";
 
-  // Exit choreography: when the view leaves "full", keep rendering just long
-  // enough to fade the surface out. Minimizing hides this orb instantly (the
-  // dock orb FLIPs from its exact rect, taking over mid-flight); closing
-  // collapses the orb along with the backdrop.
-  const [exitMode, setExitMode] = useState<null | "minimize" | "close">(null);
-  const prevViewRef = useRef(session.view);
-  const exitTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    const previous = prevViewRef.current;
-    prevViewRef.current = session.view;
+  // Exit choreography. Minimizing unmounts the overlay in the SAME commit
+  // that mounts the dock: the dock orb FLIPs from the big orb's exact rect,
+  // so the flight itself carries the continuity and any lingering veil would
+  // only hide it. Ending the session has no destination element, so the
+  // overlay instead lingers for a short fade/collapse. The exit state must
+  // be derived during render (not an effect) - an effect lands one commit
+  // late, which briefly unmounted and then re-mounted the overlay, flashing
+  // a fully opaque backdrop after the view had already switched.
+  const [exiting, setExiting] = useState(false);
+  const [lastView, setLastView] = useState(session.view);
+  if (session.view !== lastView) {
+    setLastView(session.view);
     if (session.view === "full") {
-      if (exitTimerRef.current !== null) {
-        window.clearTimeout(exitTimerRef.current);
-        exitTimerRef.current = null;
-      }
-      setExitMode(null);
-      return;
+      setExiting(false);
+    } else if (
+      lastView === "full" &&
+      session.view === "closed" &&
+      !prefersReducedMotion()
+    ) {
+      setExiting(true);
     }
-    if (previous !== "full") return;
-    if (prefersReducedMotion()) return;
-    setExitMode(session.view === "minimized" ? "minimize" : "close");
-    exitTimerRef.current = window.setTimeout(() => {
-      exitTimerRef.current = null;
-      setExitMode(null);
-    }, EXIT_MS);
-  }, [session.view]);
+  }
   useEffect(() => {
-    return () => {
-      if (exitTimerRef.current !== null) {
-        window.clearTimeout(exitTimerRef.current);
-      }
-    };
-  }, []);
+    if (!exiting) return;
+    const timer = window.setTimeout(() => setExiting(false), EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [exiting]);
 
-  const visible = open || exitMode !== null;
+  const visible = open || exiting;
 
   // Entrance: expanding from the dock FLIPs the orb up from the pill's rect;
   // a fresh session start blooms it in instead (CSS class, no source rect).
@@ -156,13 +150,10 @@ export function VoiceAgentView() {
     return null;
   }
 
-  const exiting = exitMode !== null;
   const surfaceClass = exiting ? "voice-surface-exit" : "voice-surface-enter";
   const chromeClass = exiting ? "voice-chrome-exit" : "voice-chrome-enter";
   const orbWrapClass = exiting
-    ? exitMode === "minimize"
-      ? "invisible"
-      : "voice-orb-close"
+    ? "voice-orb-close"
     : orbIntro
       ? "voice-orb-intro"
       : "";
