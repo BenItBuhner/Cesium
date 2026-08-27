@@ -2,11 +2,9 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import {
   ArrowRight,
-  BookOpen,
   Cloud,
   Cpu,
   Database,
-  Download as DownloadIcon,
   FolderOpen,
   Globe,
   MessagesSquare,
@@ -132,8 +130,7 @@ function WorkbenchShot() {
         />
       </div>
       <figcaption className="mt-[14px] text-center font-mono text-[11.5px] text-[var(--text-disabled)]">
-        Not a mockup — a live session. A Cesium agent tracing the WebSocket reconnect logic in
-        this very repository.
+        A live session — an agent tracing WebSocket reconnect logic in this repo.
       </figcaption>
     </figure>
   );
@@ -144,57 +141,57 @@ function WorkbenchShot() {
 /* ------------------------------------------------------------------------ */
 
 const AGENT_MARQUEE = [
-  { name: "Cesium", file: "Cesium-Light.svg", note: "built-in" },
-  { name: "Cursor", file: "Cursor-Light.svg", note: "SDK + ACP" },
-  { name: "Codex", file: "Codex-Light.svg", note: "app server" },
-  { name: "Claude Code", file: "Claude-Code-Light.svg", note: "SDK" },
-  { name: "OpenCode", file: "OpenCode-Light.svg", note: "ACP" },
-  { name: "Devin", file: "Devin-Light.svg", note: "ACP" },
-  { name: "Grok Build", file: "Grok-Light.svg", note: "ACP" },
-  { name: "Pi Agent", file: "Pi-Light.svg", note: "ACP" },
-  { name: "Antigravity", file: "Antigravity-Light.svg", note: "CLI" },
+  { name: "Cesium", file: "Cesium-Light.svg" },
+  { name: "Cursor", file: "Cursor-Light.svg" },
+  { name: "Codex", file: "Codex-Light.svg" },
+  { name: "Claude Code", file: "Claude-Code-Light.svg" },
+  { name: "OpenCode", file: "OpenCode-Light.svg" },
+  { name: "Devin", file: "Devin-Light.svg" },
+  { name: "Grok Build", file: "Grok-Light.svg" },
+  { name: "Pi Agent", file: "Pi-Light.svg" },
+  { name: "Antigravity", file: "Antigravity-Light.svg" },
 ] as const;
 
 const FEATURES = [
   {
     icon: MessagesSquare,
     title: "Agent conversations",
-    body: "Long-lived agent chats with streaming output, tool-call approvals, and history that survives restarts — all live over WebSockets.",
+    body: "Streaming chats with tool approvals and history that survives restarts.",
     accent: "var(--orchestration-accent)",
     accentBg: "var(--orchestration-accent-bg)",
   },
   {
     icon: SquareCode,
     title: "A real IDE, in the browser",
-    body: "Monaco editor, file tree, tabs, and a live file watcher — editing the actual folders on your disk, not a sandboxed copy.",
+    body: "Editor, file tree, and tabs on the folders on your disk — not a sandbox.",
     accent: "var(--workflow-accent)",
     accentBg: "var(--workflow-accent-bg)",
   },
   {
     icon: TerminalSquare,
     title: "Integrated terminals",
-    body: "Real PTY sessions streamed to xterm.js. Watch what your agents run, scroll back through it, and take over whenever you want.",
+    body: "Watch what your agents run, scroll back through it, and take over whenever you want.",
     accent: "var(--goal-accent)",
     accentBg: "var(--goal-accent-bg)",
   },
   {
     icon: FolderOpen,
     title: "Workspaces on your terms",
-    body: "Register real directories and switch between them instantly. Allow-listed roots keep access scoped to folders you chose.",
+    body: "Switch between real directories. Access stays scoped to folders you chose.",
     accent: "var(--plan-accent)",
     accentBg: "var(--plan-accent-bg)",
   },
   {
     icon: Mic,
     title: "Voice input",
-    body: "Dictate prompts through any OpenAI-compatible transcription endpoint. Configure it once and talk to your codebase.",
+    body: "Dictate prompts. Configure transcription once and talk to your codebase.",
     accent: "var(--ask-accent)",
     accentBg: "var(--ask-accent-bg)",
   },
   {
     icon: Database,
     title: "Storage that scales with you",
-    body: "Plain JSON files out of the box — no services to run. Flip one variable for Postgres + Redis, and migrate either direction any time.",
+    body: "Plain files by default — no services to run. Switch to a database when you need to.",
     accent: "var(--debug-accent)",
     accentBg: "var(--debug-accent-bg)",
   },
@@ -204,22 +201,22 @@ const PLATFORMS = [
   {
     icon: Globe,
     title: "Web",
-    body: "Any modern browser, installable as a PWA. This is the client you deploy to Vercel.",
+    body: "Any modern browser, installable as an app.",
   },
   {
     icon: Monitor,
     title: "Desktop",
-    body: "A native Electron app sharing the same renderer, for a windowed local workbench.",
+    body: "A native windowed workbench on the same engine.",
   },
   {
     icon: Smartphone,
     title: "Mobile",
-    body: "A native Android workbench built with React Native — your agents, pocket-sized.",
+    body: "Your agents, pocket-sized.",
   },
   {
     icon: Tablet,
     title: "Tablet",
-    body: "A dedicated iPad mode with touch-tuned layout, window chrome, and resume cache.",
+    body: "Touch-tuned layout for iPad.",
   },
 ] as const;
 
@@ -237,13 +234,13 @@ function ArchitectureDiagram() {
           </span>
           <div>
             <h3 className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">The client</h3>
-            <p className="font-mono text-[11px] text-[var(--text-disabled)]">Next.js 16 · deploy to Vercel</p>
+            <p className="font-mono text-[11px] text-[var(--text-disabled)]">Open from anywhere</p>
           </div>
         </div>
         <ul className="space-y-[8px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-          <li>Static-first React 19 app — nothing sensitive lives here.</li>
-          <li>Installable PWA; one env var points it at your engine.</li>
-          <li>Open it from a laptop, a phone, or a tablet on the go.</li>
+          <li>A window onto your machine — nothing sensitive lives here.</li>
+          <li>Installable as an app; one setting points it at your engine.</li>
+          <li>Open it from a laptop, a phone, or a tablet.</li>
         </ul>
       </div>
 
@@ -266,13 +263,13 @@ function ArchitectureDiagram() {
           </span>
           <div>
             <h3 className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">The engine</h3>
-            <p className="font-mono text-[11px] text-[var(--text-disabled)]">Bun + Hono · runs with your code</p>
+            <p className="font-mono text-[11px] text-[var(--text-disabled)]">Runs with your code</p>
           </div>
         </div>
         <ul className="space-y-[8px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-          <li>Files, terminals, and agent CLIs never leave your machine.</li>
-          <li>Session auth and rate limits when you expose it beyond localhost.</li>
-          <li>JSON storage by default; Postgres + Redis when you scale.</li>
+          <li>Files, terminals, and agents never leave your machine.</li>
+          <li>Auth and rate limits when you open it beyond this computer.</li>
+          <li>Local files by default; a database when you scale.</li>
         </ul>
       </div>
     </div>
@@ -308,12 +305,6 @@ export function LandingPage() {
             >
               Docs
             </Link>
-            <Link
-              href="/setup"
-              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-            >
-              Get started
-            </Link>
             <LandingHeaderActions />
           </nav>
         </div>
@@ -325,10 +316,6 @@ export function LandingPage() {
         <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[64px] pt-[64px] sm:pt-[88px]">
           <div className="grid grid-cols-1 items-center gap-[48px] lg:grid-cols-[minmax(0,1fr)_auto]">
             <div>
-              <p className="mb-[20px] inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-                <span className="size-[6px] rounded-full bg-[var(--ask-accent)]" />
-                Local-first AI workbench
-              </p>
               <h1 className="text-balance text-[42px] font-semibold leading-[1.05] tracking-tight sm:text-[58px]">
                 Every agent.
                 <br />
@@ -336,31 +323,13 @@ export function LandingPage() {
                 <br />
                 One workbench.
               </h1>
-              <p className="mt-[22px] max-w-[520px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
-                Cesium pairs a Next.js client you can put on Vercel with a Bun-powered engine that
-                runs where your code lives. Chat with any coding agent, edit real files, run real
-                terminals — from anywhere.
+              <p className="mt-[22px] max-w-[480px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
+                Chat with any coding agent, edit real files, and run real terminals — on your
+                machine, from anywhere.
               </p>
               <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
                 <LandingHeroActions />
-                <Link
-                  href="/download"
-                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
-                >
-                  <DownloadIcon className="size-[15px]" strokeWidth={1.75} aria-hidden />
-                  Download the app
-                </Link>
-                <Link
-                  href="/docs"
-                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
-                >
-                  <BookOpen className="size-[15px]" strokeWidth={1.75} aria-hidden />
-                  Read the docs
-                </Link>
               </div>
-              <p className="mt-[18px] font-mono text-[11.5px] text-[var(--text-disabled)]">
-                npm run dev · npm run dev:server · open localhost:3000
-              </p>
             </div>
             <div className="hidden justify-center lg:flex lg:rotate-[2.5deg] lg:pr-[10px]">
               <ElementTile />
@@ -376,18 +345,17 @@ export function LandingPage() {
       {/* agent marquee */}
       <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-panel)] py-[28px]">
         <p className="mb-[18px] text-center font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-disabled)]">
-          Speaks fluent agent — SDK, ACP, and CLI adapters included
+          Works with the agents you already use
         </p>
         <div className="landing-marquee overflow-hidden">
           <div className="landing-marquee-track flex w-max items-center">
-            {marqueeItems.map(({ name, file, note }, i) => (
+            {marqueeItems.map(({ name, file }, i) => (
               <span
                 key={`${name}-${i}`}
                 className="mx-[26px] inline-flex items-center gap-[10px] text-[var(--text-secondary)]"
               >
                 <AgentMask file={file} className="size-[20px]" />
                 <span className="whitespace-nowrap text-[14px] font-medium">{name}</span>
-                <span className="whitespace-nowrap font-mono text-[10.5px] text-[var(--text-disabled)]">{note}</span>
               </span>
             ))}
           </div>
@@ -401,9 +369,8 @@ export function LandingPage() {
             9,192,631,770
           </p>
           <p className="mt-[10px] text-[14.5px] leading-relaxed text-[var(--text-secondary)]">
-            oscillations of a caesium-133 atom define one second. We named the workbench after the
-            element that keeps time itself honest — every agent event, tool call, and terminal
-            byte is streamed live and persisted, so nothing your agents do goes unaccounted for.
+            oscillations of a caesium-133 atom define one second. Named for the element that keeps
+            time honest — every agent event is streamed live, so nothing goes unaccounted for.
           </p>
         </div>
       </section>
@@ -416,8 +383,7 @@ export function LandingPage() {
             A full workbench, not another chat box
           </h2>
           <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-            Everything an agent needs to do real work — and everything you need to supervise it —
-            lives in one window.
+            Everything an agent needs to work — and everything you need to watch it — in one window.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2 lg:grid-cols-3">
@@ -443,14 +409,13 @@ export function LandingPage() {
       <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-panel)]">
         <div className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
           <div className="mb-[36px] max-w-[600px]">
-            <SectionLabel index="02">Hybrid architecture</SectionLabel>
+            <SectionLabel index="02">Architecture</SectionLabel>
             <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
               Cloud reach. Local roots.
             </h2>
             <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-              The client is just a window — deploy it once and open it from anywhere. The engine is
-              the workshop, and it stays on hardware you control. Your source never has to leave
-              home to get cloud convenience.
+              The client is a window you can open from anywhere. The engine stays on hardware you
+              control. Your source never has to leave home.
             </p>
           </div>
           <ArchitectureDiagram />
@@ -461,28 +426,26 @@ export function LandingPage() {
       <section className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
         <div className="grid grid-cols-1 items-center gap-[40px] lg:grid-cols-2">
           <div>
-            <SectionLabel index="03">Multi-agent interoperability</SectionLabel>
+            <SectionLabel index="03">Agents</SectionLabel>
             <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
               One conversation, many minds
             </h2>
             <p className="mt-[12px] max-w-[480px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-              Backends are interchangeable mid-thread. Start a task with one harness, hand the
-              conversation off to another with context intact, and pick models across providers
-              from a single composer. Tool permissions are approved by you, per call, whichever
-              agent is driving.
+              Switch agents mid-thread with context intact. Pick models from one composer. You
+              approve every tool call, whichever agent is driving.
             </p>
             <ul className="mt-[20px] space-y-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
               <li className="flex items-start gap-[10px]">
                 <ShieldCheck className="mt-[2px] size-[15px] shrink-0 text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
-                Per-tool permission prompts, whichever backend is active.
+                You approve each tool call.
               </li>
               <li className="flex items-start gap-[10px]">
                 <ArrowRight className="mt-[2px] size-[15px] shrink-0 text-[var(--orchestration-accent)]" strokeWidth={1.75} aria-hidden />
-                Context handoff carries recent messages to the next agent.
+                Recent messages go with the handoff.
               </li>
               <li className="flex items-start gap-[10px]">
                 <Cpu className="mt-[2px] size-[15px] shrink-0 text-[var(--workflow-accent)]" strokeWidth={1.75} aria-hidden />
-                Bring your own keys and CLIs — Cesium orchestrates, you own the accounts.
+                Bring your own keys. You own the accounts.
               </li>
             </ul>
           </div>
@@ -510,7 +473,7 @@ export function LandingPage() {
                     <div className="flex items-center gap-[8px] py-[8px] pl-[20px]">
                       <span className="landing-wire-y h-[16px] w-[2px]" />
                       <span className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-                        handoff · context carried over
+                        handoff
                       </span>
                     </div>
                   ) : null}
@@ -530,8 +493,7 @@ export function LandingPage() {
               One engine, every screen
             </h2>
             <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-              The same backend serves every client in the monorepo. Start a task at your desk and
-              approve the last tool call from the couch.
+              Start a task at your desk. Approve the last tool call from the couch.
             </p>
           </div>
           <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2 lg:grid-cols-4">
@@ -555,9 +517,8 @@ export function LandingPage() {
         <h2 className="text-balance text-[30px] font-semibold leading-tight tracking-tight sm:text-[36px]">
           Your code stays home. Your agents don&apos;t rest.
         </h2>
-        <p className="mx-auto mt-[14px] max-w-[460px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-          Two commands to run it locally, one deploy for the client. Everything else is already
-          wired.
+        <p className="mx-auto mt-[14px] max-w-[420px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
+          Sign up to sync, or keep going locally. Your code stays on your machine either way.
         </p>
         <div className="mt-[28px] flex flex-wrap items-center justify-center gap-[12px]">
           <LandingClosingActions />

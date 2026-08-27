@@ -32,6 +32,13 @@ describe("landing workbench CTAs", () => {
     assert.doesNotMatch(landingPage, /Launch the workbench/);
     assert.doesNotMatch(landingPage, /<WorkbenchLink\b/);
     assert.doesNotMatch(landingPage, /href=\{WORKSPACE_ROUTE\}/);
+    assert.doesNotMatch(landingPage, /Download the app/);
+    assert.doesNotMatch(landingPage, /Read the docs/);
+    assert.doesNotMatch(landingPage, /npm run dev/);
+    assert.doesNotMatch(landingPage, /Get started/);
+    assert.doesNotMatch(landingPage, /Next\.js/);
+    assert.doesNotMatch(landingPage, /Bun-powered/);
+    assert.doesNotMatch(landingPage, /Local-first AI workbench/);
   });
 
   test("signed-out visitors only reach the workbench via Continue as guest", () => {
