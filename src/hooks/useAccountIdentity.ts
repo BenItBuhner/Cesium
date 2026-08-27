@@ -18,7 +18,7 @@ import {
  * - `clerk-signed-out` - production cloud build, but nobody is signed in.
  * - `device` - cloud sync under a per-browser device key (no real account).
  * - `engine` - password session on the active engine server
- *   (`OPENCURSOR_AUTH_*`); the "remote server" production posture.
+ *   (`OPENCURSOR_AUTH_*`); the local-only / self-hosted posture.
  * - `local` - local-first mode; no account of any kind is configured.
  */
 export type AccountIdentityKind =
