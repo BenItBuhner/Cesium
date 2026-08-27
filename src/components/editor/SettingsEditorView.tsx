@@ -105,7 +105,11 @@ function settingsSidebarSelection(activeNav: string): string {
 }
 
 const searchInputClass =
-  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] pr-[54px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+
+/** Solid keycap so the search field does not show through a translucent chip. */
+const searchShortcutHintClass =
+  "pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-main)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]";
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
@@ -289,7 +293,9 @@ function SettingsNavContent({
               onChange={onSearchChange}
               onNativeKeyDown={onSearchKeyDown}
               placeholder="Search settings"
-              className={searchInputClass}
+              className={`${searchInputClass} ${
+                searchQuery.length > 0 || !isMobile ? "pr-[54px]" : "pr-[10px]"
+              }`}
               ariaLabel="Search settings"
               ariaControls="settings-search-results"
               ariaExpanded={isSearching}
@@ -307,11 +313,8 @@ function SettingsNavContent({
               >
                 <X className="size-[13px]" strokeWidth={1.75} aria-hidden />
               </button>
-            ) : (
-              <span
-                className="pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] bg-[var(--accent-bg)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]"
-                aria-hidden
-              >
+            ) : isMobile ? null : (
+              <span className={searchShortcutHintClass} aria-hidden>
                 {searchModLabel}+F
               </span>
             )}
