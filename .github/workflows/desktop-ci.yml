@@ -74,7 +74,7 @@ jobs:
           sips -s format png "$ICNS" --out screenshots/macos_app_icon.png
           sips -g pixelWidth -g pixelHeight screenshots/macos_app_icon.png
 
-      - name: Smoke-test the packaged app (embedded backend + window load)
+      - name: Smoke-test the packaged app (embedded backend, no window)
         run: |
           APP_BIN="apps/desktop/out/mac-arm64/Cesium Desktop.app/Contents/MacOS/Cesium Desktop"
           "$APP_BIN" --smoke 2>&1 | tee smoke.log
@@ -252,7 +252,7 @@ jobs:
           Start-Sleep -Seconds 3
           Get-ChildItem screenshots
 
-      - name: Smoke-test the packaged app (embedded backend + window load)
+      - name: Smoke-test the packaged app (embedded backend, no window)
         run: |
           "apps/desktop/out/win-unpacked/Cesium.exe" --smoke 2>&1 | tee smoke.log
           grep -q "Cesium packaged smoke passed" smoke.log
