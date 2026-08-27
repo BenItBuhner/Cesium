@@ -38,6 +38,7 @@ describe("landing workbench CTAs", () => {
     assert.doesNotMatch(landingPage, /Get started/);
     assert.doesNotMatch(landingPage, /Next\.js/);
     assert.doesNotMatch(landingPage, /Bun-powered/);
+    assert.doesNotMatch(landingPage, /Local-first AI workbench/);
   });
 
   test("signed-out visitors only reach the workbench via Continue as guest", () => {

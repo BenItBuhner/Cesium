@@ -316,10 +316,6 @@ export function LandingPage() {
         <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[64px] pt-[64px] sm:pt-[88px]">
           <div className="grid grid-cols-1 items-center gap-[48px] lg:grid-cols-[minmax(0,1fr)_auto]">
             <div>
-              <p className="mb-[20px] inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-                <span className="size-[6px] rounded-full bg-[var(--ask-accent)]" />
-                Local-first AI workbench
-              </p>
               <h1 className="text-balance text-[42px] font-semibold leading-[1.05] tracking-tight sm:text-[58px]">
                 Every agent.
                 <br />
