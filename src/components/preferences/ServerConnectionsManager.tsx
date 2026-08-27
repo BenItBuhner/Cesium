@@ -12,6 +12,8 @@ import {
 } from "@/lib/auth-client";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
 import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
+import { useCloudContext } from "@/contexts/CloudContext";
+import { accountOwnsServers } from "@/lib/account-server-sync";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -45,6 +47,8 @@ export function ServerConnectionsManager({
     probeServer,
     refreshServerHealth,
   } = useServerConnections();
+  const cloud = useCloudContext();
+  const linked = accountOwnsServers(cloud);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -382,7 +386,7 @@ export function ServerConnectionsManager({
           Refresh all server status
         </button>
 
-        <ServerSetupCommand compact={compact} />
+        <ServerSetupCommand compact={compact} accountLinked={linked} />
 
         <TermuxServerSetup compact={compact} />
 
