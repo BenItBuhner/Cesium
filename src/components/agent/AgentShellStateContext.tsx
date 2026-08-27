@@ -66,6 +66,14 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
+
+// useSyncExternalStore requires a referentially-stable server snapshot; an
+// inline `() => []` returns a new array per call and trips React's
+// "getServerSnapshot should be cached" infinite-loop guard in dev.
+const EMPTY_PINNED_AGENT_CONVERSATION_IDS: string[] = [];
+function getEmptyPinnedAgentConversationIdsServerSnapshot(): string[] {
+  return EMPTY_PINNED_AGENT_CONVERSATION_IDS;
+}
 import {
   resolveAgentRightPaneOpen,
   shouldRestorePersistedRightPaneOpen,
@@ -2266,7 +2274,7 @@ export function AgentShellStateProvider({
   const pinnedAgentConversationIds = useSyncExternalStore(
     subscribeGlobalPinnedAgentConversationIds,
     getGlobalPinnedAgentConversationIdsSnapshot,
-    () => []
+    getEmptyPinnedAgentConversationIdsServerSnapshot
   );
 
   useLayoutEffect(() => {

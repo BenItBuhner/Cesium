@@ -77,27 +77,32 @@ export function VoiceSessionOrb({
     return () => cancelAnimationFrame(frame);
   }, [getOrbLevels, size]);
 
-  const canvas = (
-    <canvas
-      ref={canvasRef}
-      data-voice-orb={variant}
-      style={{ width: size, height: size }}
-      className={onClick ? undefined : className}
-      aria-hidden
-    />
-  );
-
-  if (!onClick) {
-    return canvas;
-  }
+  // The canvas must keep the same DOM node across renders: swapping the
+  // wrapper element type (e.g. plain div while idle, button while speaking)
+  // would remount the canvas without re-running the rAF effect, leaving the
+  // loop painting a detached canvas - a blank orb. A single always-mounted
+  // button that no-ops when not clickable keeps the node stable.
+  const clickable = Boolean(onClick);
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={!clickable}
+      tabIndex={clickable ? 0 : -1}
       aria-label={ariaLabel ?? "Voice agent orb"}
-      className={`rounded-full outline-none transition-transform hover:scale-[1.02] active:scale-[0.98] ${className ?? ""}`}
+      aria-hidden={!clickable || undefined}
+      className={`rounded-full outline-none ${
+        clickable
+          ? "transition-transform hover:scale-[1.02] active:scale-[0.98]"
+          : "cursor-default"
+      } ${className ?? ""}`}
     >
-      {canvas}
+      <canvas
+        ref={canvasRef}
+        data-voice-orb={variant}
+        style={{ width: size, height: size }}
+        aria-hidden
+      />
     </button>
   );
 }
