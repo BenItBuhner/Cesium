@@ -1242,9 +1242,19 @@ export class AgentRuntimeManager {
         next = { ...next, archivedAt: null };
       }
       if (patch.settled === true) {
-        next = { ...next, settledAt: Date.now() };
+        const now = Date.now();
+        const forMs =
+          typeof patch.settledForMs === "number" && Number.isFinite(patch.settledForMs)
+            ? Math.max(0, Math.floor(patch.settledForMs))
+            : null;
+        next = {
+          ...next,
+          settledAt: now,
+          // Timed settle ("ignore for a day"): auto-unsettles once it elapses.
+          settledUntil: forMs ? now + forMs : null,
+        };
       } else if (patch.settled === false) {
-        next = { ...next, settledAt: null };
+        next = { ...next, settledAt: null, settledUntil: null };
       }
       if (typeof patch.lastReadSeq === "number" && Number.isFinite(patch.lastReadSeq)) {
         const v = Math.floor(patch.lastReadSeq);
@@ -1310,12 +1320,13 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    if (record.settledAt != null) {
+    if (record.settledAt != null || record.settledUntil != null) {
       // A new user prompt always unsettles the conversation (covers both the
       // start-turn and queued-while-running paths below).
       record = await updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
         settledAt: null,
+        settledUntil: null,
       }));
     }
     const clientEventId = options?.clientEventId?.trim();
