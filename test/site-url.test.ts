@@ -31,15 +31,16 @@ describe("getSiteUrl", () => {
     assert.equal(getSiteUrl(), "https://cesium.example.com");
   });
 
-  test("uses the Vercel production hostname next", () => {
+  test("uses a non-vercel.app production hostname next", () => {
     delete process.env.NEXT_PUBLIC_SITE_URL;
-    process.env.VERCEL_PROJECT_PRODUCTION_URL = "open-cursor.vercel.app";
-    assert.equal(getSiteUrl(), "https://open-cursor.vercel.app");
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "app.example.com";
+    process.env.NODE_ENV = "production";
+    assert.equal(getSiteUrl(), "https://app.example.com");
   });
 
-  test("falls back to the custom domain in production builds", () => {
+  test("skips *.vercel.app in favor of the custom domain", () => {
     delete process.env.NEXT_PUBLIC_SITE_URL;
-    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "open-cursor.vercel.app";
     process.env.NODE_ENV = "production";
     assert.equal(getSiteUrl(), DEFAULT_PRODUCTION_SITE_URL);
     assert.equal(DEFAULT_PRODUCTION_SITE_URL, "https://cesium.techlitnow.com");

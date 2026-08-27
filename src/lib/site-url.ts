@@ -16,11 +16,15 @@ export function getSiteUrl(): string {
     return explicit.replace(/\/+$/, "");
   }
   const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (vercel) {
+  // Prefer the custom domain over the default *.vercel.app production host.
+  if (vercel && !vercel.endsWith(".vercel.app")) {
     return `https://${vercel}`;
   }
   if (process.env.VERCEL || process.env.NODE_ENV === "production") {
     return DEFAULT_PRODUCTION_SITE_URL;
+  }
+  if (vercel) {
+    return `https://${vercel}`;
   }
   return "http://localhost:3000";
 }
