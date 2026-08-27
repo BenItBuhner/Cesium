@@ -603,6 +603,11 @@ export type AgentConversationRecord = {
    * the rail. Cleared automatically when the user sends a new prompt.
    */
   settledAt?: number | null;
+  /**
+   * Optional expiry for a temporary settle ("ignore for a day"). Once the
+   * timestamp passes the conversation auto-unsettles on the next read.
+   */
+  settledUntil?: number | null;
   lastReadSeq: number;
   /** Set when the conversation was triggered from an external source. */
   origin?: AgentConversationOrigin | null;
@@ -677,6 +682,11 @@ export type AgentConversationMetadataPatch = {
   archived?: boolean;
   /** Toggle the user-facing "settled" state; sending a prompt auto-clears it. */
   settled?: boolean;
+  /**
+   * With `settled: true`, settle only for this duration (e.g. 86_400_000 for
+   * "ignore for a day"). The conversation auto-unsettles once it elapses.
+   */
+  settledForMs?: number;
   lastReadSeq?: number;
 };
 

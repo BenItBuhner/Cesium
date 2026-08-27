@@ -117,6 +117,7 @@ function rowToConversation(row: ConversationRow): AgentConversationRecord {
     experimental: row.experimental,
     archivedAt: row.archivedAt,
     settledAt: row.settledAt ?? null,
+    settledUntil: row.settledUntil ?? null,
     origin:
       ((row as ConversationRow & { origin?: unknown })
         .origin as AgentConversationRecord["origin"]) ?? null,
@@ -803,6 +804,7 @@ export class PgStorageDriver implements StorageDriver {
       experimental: record.experimental ?? false,
       archivedAt: record.archivedAt ?? null,
       settledAt: record.settledAt ?? null,
+      settledUntil: record.settledUntil ?? null,
       queuedPrompts: (record.queuedPrompts ?? []) as unknown as unknown[],
       origin: (record.origin ?? null) as unknown as Record<string, unknown> | null,
       pendingRelocation:
@@ -830,6 +832,7 @@ export class PgStorageDriver implements StorageDriver {
           experimental: values.experimental,
           archivedAt: values.archivedAt,
           settledAt: values.settledAt,
+          settledUntil: values.settledUntil,
           queuedPrompts: values.queuedPrompts,
           origin: values.origin,
           pendingRelocation: values.pendingRelocation,

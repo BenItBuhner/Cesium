@@ -51,13 +51,12 @@ import {
   writeAgentShellSharedSnapshot,
 } from "@/components/agent/agent-shell-layout";
 import {
-  defaultAgentRailFilterToggles,
+  createDefaultAgentRailFilterState,
   isRenderableAgentRailConversation,
-  isAgentRailFilterActive,
-  matchesAgentRailMultiFilter,
-  normalizeAgentRailFilterToggles,
-  type AgentRailFilterToggleKey,
-  type AgentRailFilterToggleState,
+  isAgentRailFilterStateActive,
+  matchesAgentRailFilters,
+  normalizeAgentRailFilterState,
+  type AgentRailFilterState,
 } from "@/lib/agent-rail";
 import { agentRailConversationNeedsAttention } from "@/lib/agent-rail-status";
 import {
@@ -128,7 +127,6 @@ import {
   getRepositoryGroupingKey,
 } from "@/lib/multi-server-workspaces";
 import {
-  clearSettledInGroups,
   collectAttentionConversations,
   collectRunningConversations,
   sinkSettledInGroups,
@@ -289,21 +287,28 @@ type AgentShellStateContextValue = {
   applyOptimisticRailTitle: (conversationId: string, title: string) => void;
   archiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   unarchiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
-  /** Mark a conversation settled (sinks to the bottom until a new prompt unsettles it). */
-  settleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  /**
+   * Mark a conversation settled (sinks to the bottom until a new prompt
+   * unsettles it). Pass `forMs` for a temporary settle ("ignore for a day")
+   * that auto-unsettles once the duration elapses.
+   */
+  settleConversation: (
+    conversation: AgentRailConversationSummary,
+    options?: { forMs?: number }
+  ) => Promise<void>;
   unsettleConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
-  /** Opt-in Settled mode; settle controls render only while enabled. */
-  settledModeEnabled: boolean;
   pinnedRailConversations: AgentRailConversationSummary[];
   attentionRailConversations: AgentRailConversationSummary[];
   /** Actively working agents, elevated into their own cross-workspace section. */
   runningRailConversations: AgentRailConversationSummary[];
   pinConversation: (conversationId: string) => void;
   unpinConversation: (conversationId: string) => void;
-  railFilterToggles: AgentRailFilterToggleState;
+  railFilters: AgentRailFilterState;
   railFilterActive: boolean;
-  setRailFilterToggle: (key: AgentRailFilterToggleKey, value: boolean) => void;
+  setRailFilters: (next: AgentRailFilterState) => void;
   clearRailFilters: () => void;
+  /** Clears every unread-completion flag (the rail's "Mark all as read"). */
+  markAllConversationsRead: () => void;
   /** Conversations whose finished turn the user has not opened yet. */
   unreadCompletionByConversationId: Record<string, true> | undefined;
   /** Failed runs the user has already viewed. */
@@ -1043,19 +1048,36 @@ export function AgentShellStateProvider({
     void refreshConversationGroupsWithState();
   }, [activeServer.id, refreshConversationGroupsWithState]);
 
-  const settledModeEnabled = settings.general.agentRail.settledMode === true;
-
-  // Settled mode is opt-in: with the mode off, persisted settled flags are
-  // stripped up front so no downstream derivation (sinking, elevation,
-  // status kinds, row toggles) ever sees them.
-  const settledAwareGroups = useMemo(
-    () => (settledModeEnabled ? groups : clearSettledInGroups(groups)),
-    [groups, settledModeEnabled]
-  );
+  // Timed settles ("ignore for a day") expire server-side on read; schedule a
+  // refresh right after the earliest expiry so the row resurfaces without any
+  // user interaction.
+  useEffect(() => {
+    const now = Date.now();
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const group of groups) {
+      for (const conversation of group.conversations) {
+        if (
+          conversation.settledAt != null &&
+          conversation.settledUntil != null &&
+          conversation.settledUntil > now
+        ) {
+          earliest = Math.min(earliest, conversation.settledUntil);
+        }
+      }
+    }
+    if (!Number.isFinite(earliest)) {
+      return;
+    }
+    const delay = Math.min(Math.max(earliest - now + 1_000, 1_000), 2_147_000_000);
+    const timer = setTimeout(() => {
+      void refreshConversationGroupsWithState();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [groups, refreshConversationGroupsWithState]);
 
   const visibleMachineGroups = useMemo(
-    () => filterGroupsByMachine(settledAwareGroups, settings.general.agentRail.hiddenServerIds),
-    [settledAwareGroups, settings.general.agentRail.hiddenServerIds]
+    () => filterGroupsByMachine(groups, settings.general.agentRail.hiddenServerIds),
+    [groups, settings.general.agentRail.hiddenServerIds]
   );
 
   const scopedMachineGroups = useMemo(
@@ -1074,10 +1096,12 @@ export function AgentShellStateProvider({
             workspaceSession.chat.unreadChatCompletionByConversationId,
           acknowledgedFailureByConversationId:
             workspaceSession.chat.acknowledgedFailureByConversationId,
+          orderBy: settings.general.agentRail.orderBy,
         }
       ),
     [
       settings.general.agentRail.groupBy,
+      settings.general.agentRail.orderBy,
       scopedMachineGroups,
       workspaceSession.chat.acknowledgedFailureByConversationId,
       workspaceSession.chat.unreadChatCompletionByConversationId,
@@ -2102,18 +2126,28 @@ export function AgentShellStateProvider({
   );
 
   const setConversationSettled = useCallback(
-    async (summary: AgentRailConversationSummary, settled: boolean) => {
+    async (
+      summary: AgentRailConversationSummary,
+      settled: boolean,
+      options?: { forMs?: number }
+    ) => {
       const mutationKey =
         summary.conversationKey ??
         `${summary.serverId ?? activeServer.id}:${summary.workspaceId}:${summary.id}`;
       const sequence = (settleMutationSequenceRef.current.get(mutationKey) ?? 0) + 1;
       settleMutationSequenceRef.current.set(mutationKey, sequence);
       railFetchGenerationRef.current += 1;
+      const forMs =
+        settled && typeof options?.forMs === "number" && Number.isFinite(options.forMs)
+          ? Math.max(0, Math.floor(options.forMs))
+          : null;
+      const now = Date.now();
       // Rank-neutral on purpose: settling must not bump the row's recency,
       // it only re-partitions the row into/out of the settled tail.
       setGroups((current) =>
         patchAgentConversationSummaryInGroups(current, summary, {
-          settledAt: settled ? Date.now() : null,
+          settledAt: settled ? now : null,
+          settledUntil: settled && forMs ? now + forMs : null,
         })
       );
 
@@ -2124,7 +2158,7 @@ export function AgentShellStateProvider({
       try {
         const { conversation } = await patchAgentConversationMetadata(
           summary.id,
-          { settled },
+          { settled, ...(forMs ? { settledForMs: forMs } : {}) },
           {
             server: {
               serverId: targetServer.id,
@@ -2141,6 +2175,7 @@ export function AgentShellStateProvider({
           setGroups((current) =>
             patchAgentConversationSummaryInGroups(current, summary, {
               settledAt: summary.settledAt ?? null,
+              settledUntil: summary.settledUntil ?? null,
             })
           );
           pushNotification({
@@ -2171,8 +2206,8 @@ export function AgentShellStateProvider({
   );
 
   const settleConversation = useCallback(
-    (conversation: AgentRailConversationSummary) =>
-      setConversationSettled(conversation, true),
+    (conversation: AgentRailConversationSummary, options?: { forMs?: number }) =>
+      setConversationSettled(conversation, true, options),
     [setConversationSettled]
   );
 
@@ -2217,37 +2252,35 @@ export function AgentShellStateProvider({
     [updateWorkspaceSession]
   );
 
-  const railFilterToggles = useMemo(
+  const railFilters = useMemo(
     () =>
-      normalizeAgentRailFilterToggles(
+      normalizeAgentRailFilterState(
+        workspaceSession.agentView.railFilters,
         workspaceSession.agentView.railFilterToggles,
         workspaceSession.agentView.filterPreset
       ),
-    [workspaceSession.agentView.filterPreset, workspaceSession.agentView.railFilterToggles]
+    [
+      workspaceSession.agentView.filterPreset,
+      workspaceSession.agentView.railFilters,
+      workspaceSession.agentView.railFilterToggles,
+    ]
   );
 
   const railFilterActive = useMemo(
-    () => isAgentRailFilterActive(railFilterToggles),
-    [railFilterToggles]
+    () => isAgentRailFilterStateActive(railFilters),
+    [railFilters]
   );
 
-  const setRailFilterToggle = useCallback(
-    (key: AgentRailFilterToggleKey, value: boolean) => {
-      updateWorkspaceSession((current) => {
-        const prev = normalizeAgentRailFilterToggles(
-          current.agentView.railFilterToggles,
-          current.agentView.filterPreset
-        );
-        const next = { ...prev, [key]: value };
-        return {
-          ...current,
-          agentView: {
-            ...current.agentView,
-            railFilterToggles: next,
-            filterPreset: "default",
-          },
-        };
-      });
+  const setRailFilters = useCallback(
+    (next: AgentRailFilterState) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        agentView: {
+          ...current.agentView,
+          railFilters: normalizeAgentRailFilterState(next),
+          filterPreset: "default",
+        },
+      }));
     },
     [updateWorkspaceSession]
   );
@@ -2257,10 +2290,26 @@ export function AgentShellStateProvider({
       ...current,
       agentView: {
         ...current.agentView,
-        railFilterToggles: defaultAgentRailFilterToggles(),
+        railFilters: createDefaultAgentRailFilterState(),
         filterPreset: "default",
       },
     }));
+  }, [updateWorkspaceSession]);
+
+  const markAllConversationsRead = useCallback(() => {
+    updateWorkspaceSession((current) => {
+      const unread = current.chat.unreadChatCompletionByConversationId ?? {};
+      if (Object.keys(unread).length === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        chat: {
+          ...current.chat,
+          unreadChatCompletionByConversationId: {},
+        },
+      };
+    });
   }, [updateWorkspaceSession]);
 
   const pinnedAgentConversationIds = useSyncExternalStore(
@@ -2303,10 +2352,10 @@ export function AgentShellStateProvider({
       orderedGroups.map((group) => ({
         ...group,
         conversations: group.conversations.filter((c) =>
-          matchesAgentRailMultiFilter(c, railFilterToggles, railFilterMatchContext)
+          matchesAgentRailFilters(c, railFilters, railFilterMatchContext)
         ),
       })),
-    [orderedGroups, railFilterMatchContext, railFilterToggles]
+    [orderedGroups, railFilterMatchContext, railFilters]
   );
 
   const pinnedRailConversationsUnstripped = useMemo(() => {
@@ -2322,9 +2371,9 @@ export function AgentShellStateProvider({
         if (!c) {
           return false;
         }
-        return matchesAgentRailMultiFilter(c, railFilterToggles, railFilterMatchContext);
+        return matchesAgentRailFilters(c, railFilters, railFilterMatchContext);
       });
-  }, [orderedGroups, pinnedAgentConversationIds, railFilterMatchContext, railFilterToggles]);
+  }, [orderedGroups, pinnedAgentConversationIds, railFilterMatchContext, railFilters]);
 
   const attentionRailConversations = useMemo(() => {
     const hidden = new Set(settings.general.agentRail.hiddenSections ?? []);
@@ -2665,16 +2714,16 @@ export function AgentShellStateProvider({
       unarchiveConversation,
       settleConversation,
       unsettleConversation,
-      settledModeEnabled,
       pinnedRailConversations,
       attentionRailConversations,
       runningRailConversations,
       pinConversation,
       unpinConversation,
-      railFilterToggles,
+      railFilters,
       railFilterActive,
-      setRailFilterToggle,
+      setRailFilters,
       clearRailFilters,
+      markAllConversationsRead,
       unreadCompletionByConversationId:
         workspaceSession.chat.unreadChatCompletionByConversationId,
       acknowledgedFailureByConversationId:
@@ -2709,9 +2758,9 @@ export function AgentShellStateProvider({
       runningRailConversations,
       settleConversation,
       unsettleConversation,
-      settledModeEnabled,
       railFilterActive,
-      railFilterToggles,
+      railFilters,
+      markAllConversationsRead,
       railLoading,
       railRefreshing,
       railLoadError,
@@ -2723,7 +2772,7 @@ export function AgentShellStateProvider({
       stableConversationView,
       setAgentShellDesktopLayout,
       setExpandedComposerDraft,
-      setRailFilterToggle,
+      setRailFilters,
       setLeftRailCollapsed,
       setRightPaneOpen,
       setSelectedConversationId,

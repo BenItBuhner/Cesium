@@ -145,7 +145,7 @@ describe("patchAgentConversationGroups", () => {
   });
 
   test("stale updatedAt patch cannot revert newer archive state", async () => {
-    const { defaultAgentRailFilterToggles, matchesAgentRailMultiFilter } = await import(
+    const { createDefaultAgentRailFilterState, matchesAgentRailFilters } = await import(
       "../src/lib/agent-rail"
     );
     const ws = "ws1";
@@ -194,12 +194,12 @@ describe("patchAgentConversationGroups", () => {
       pinnedConversationIds: new Set<string>(),
       unreadCompletionByConversationId: undefined,
     };
-    const off = defaultAgentRailFilterToggles();
+    const off = createDefaultAgentRailFilterState();
     const on = { ...off, archived: true };
-    assert.equal(matchesAgentRailMultiFilter(restored, off, ctx), true);
-    assert.equal(matchesAgentRailMultiFilter(archived, off, ctx), false);
-    assert.equal(matchesAgentRailMultiFilter(restored, on, ctx), false);
-    assert.equal(matchesAgentRailMultiFilter(archived, on, ctx), true);
+    assert.equal(matchesAgentRailFilters(restored, off, ctx), true);
+    assert.equal(matchesAgentRailFilters(archived, off, ctx), false);
+    assert.equal(matchesAgentRailFilters(restored, on, ctx), false);
+    assert.equal(matchesAgentRailFilters(archived, on, ctx), true);
   });
 
   test("placeholder new-chat records are not inserted into rail groups", () => {
@@ -306,14 +306,14 @@ describe("patchAgentConversationSummaryInGroups", () => {
   });
 });
 
-describe("agent rail external-source filter", () => {
+describe("agent rail source filter", () => {
   const ctx = {
     pinnedConversationIds: new Set<string>(),
     unreadCompletionByConversationId: undefined,
   };
 
-  test("external toggle narrows the rail to cloud-originated conversations", async () => {
-    const { defaultAgentRailFilterToggles, matchesAgentRailMultiFilter } = await import(
+  test("hiding the in-app source narrows the rail to externally-triggered conversations", async () => {
+    const { createDefaultAgentRailFilterState, matchesAgentRailFilters } = await import(
       "../src/lib/agent-rail"
     );
     const { agentRecordToRailSummary } = await import("../src/lib/agent-rail-patch");
@@ -324,16 +324,27 @@ describe("agent rail external-source filter", () => {
     );
     const local = agentRecordToRailSummary(baseRecord("local-1", "ws1"));
 
-    const off = defaultAgentRailFilterToggles();
-    assert.equal(matchesAgentRailMultiFilter(cloud, off, ctx), true);
-    assert.equal(matchesAgentRailMultiFilter(local, off, ctx), true);
+    const off = createDefaultAgentRailFilterState();
+    assert.equal(matchesAgentRailFilters(cloud, off, ctx), true);
+    assert.equal(matchesAgentRailFilters(local, off, ctx), true);
 
-    const on = { ...off, external: true };
-    assert.equal(matchesAgentRailMultiFilter(cloud, on, ctx), true);
-    assert.equal(matchesAgentRailMultiFilter(local, on, ctx), false);
+    const on = { ...off, hiddenSources: ["app" as const] };
+    assert.equal(matchesAgentRailFilters(cloud, on, ctx), true);
+    assert.equal(matchesAgentRailFilters(local, on, ctx), false);
   });
 
-  test("persisted toggles without the external key default to off", async () => {
+  test("legacy external toggle migrates to hiding in-app sources", async () => {
+    const { migrateAgentRailFilterToggles, defaultAgentRailFilterToggles } = await import(
+      "../src/lib/agent-rail"
+    );
+    const migrated = migrateAgentRailFilterToggles({
+      ...defaultAgentRailFilterToggles(),
+      external: true,
+    });
+    assert.deepEqual(migrated.hiddenSources, ["app", "imported", "scheduled"]);
+  });
+
+  test("persisted legacy toggles without the external key default to off", async () => {
     const { normalizeAgentRailFilterToggles } = await import("../src/lib/agent-rail");
     const restored = normalizeAgentRailFilterToggles({ archived: true });
     assert.equal(restored.archived, true);

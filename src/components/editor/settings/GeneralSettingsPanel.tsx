@@ -13,8 +13,15 @@ import {
   SettingsLinkRow,
   SettingsRow,
   SettingsSection,
+  rowButtonClass,
   settingsSelectTriggerClass,
 } from "@/components/editor/settings-ui";
+import {
+  AGENT_RAIL_VIEW_PRESETS,
+  AGENT_RAIL_VIEW_PRESET_INFO,
+  applyAgentRailViewPreset,
+  matchingAgentRailViewPreset,
+} from "@/lib/global-settings";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   normalizeComposerStatusBarVisibility,
@@ -129,6 +136,36 @@ export function GeneralSettingsPanel() {
             border={false}
           />
         ) : null}
+      </SettingsSection>
+      <SettingsSection title="Conversation list">
+        {AGENT_RAIL_VIEW_PRESETS.map((preset, index) => {
+          const info = AGENT_RAIL_VIEW_PRESET_INFO[preset];
+          const active =
+            matchingAgentRailViewPreset(general.agentRail) === preset;
+          return (
+            <SettingsRow
+              key={preset}
+              searchId={`rail-preset-${preset}`}
+              title={`${info.label} preset`}
+              description={info.description}
+              border={index < AGENT_RAIL_VIEW_PRESETS.length - 1}
+              trailing={
+                <button
+                  type="button"
+                  className={`${rowButtonClass} ${active ? "opacity-50" : ""}`}
+                  disabled={active}
+                  onClick={() =>
+                    patchGeneral({
+                      agentRail: applyAgentRailViewPreset(preset, general.agentRail),
+                    })
+                  }
+                >
+                  {active ? "Active" : "Apply"}
+                </button>
+              }
+            />
+          );
+        })}
       </SettingsSection>
       <SettingsSection title="Composer">
         <SettingsRow

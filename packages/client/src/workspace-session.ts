@@ -11,9 +11,11 @@ import {
 } from "./composer-status-bar";
 import type { AgentBackendId } from "@cesium/core";
 import { isActiveAgentBackendId } from "@cesium/core";
-import type { AgentRailFilterToggleState } from "./agent-rail";
+import type { AgentRailFilterState, AgentRailFilterToggleState } from "./agent-rail";
 import {
+  createDefaultAgentRailFilterState,
   defaultAgentRailFilterToggles,
+  normalizeAgentRailFilterState,
   normalizeAgentRailFilterToggles,
 } from "./agent-rail";
 import { normalizeAgentShellDesktopLayout } from "./agent-shell-layout";
@@ -459,8 +461,10 @@ export type AgentViewSessionState = {
   archivedConversationIds: string[];
   /** Cross-workspace agent chats pinned to the top of the agent rail (most recent first). */
   pinnedAgentConversationIds: string[];
-  /** Agent rail filter checkboxes (multi-select, AND). Omitted keys mean false after normalize. */
+  /** Legacy agent rail filter checkboxes; only read to migrate into `railFilters`. */
   railFilterToggles?: AgentRailFilterToggleState;
+  /** Cursor-style rail filters (exclude sets + archived view). */
+  railFilters?: AgentRailFilterState;
   filterPreset: string;
   /** Shared agent shell layout snapshot. The left rail width stays global across chats. */
   agentShellDesktopLayout: Record<string, number> | null;
@@ -561,6 +565,7 @@ export function createDefaultWorkspaceSession(
       archivedConversationIds: [],
       pinnedAgentConversationIds: [],
       railFilterToggles: defaultAgentRailFilterToggles(),
+      railFilters: createDefaultAgentRailFilterState(),
       filterPreset: "default",
       agentShellDesktopLayout: null,
       sidePaneSessionsByConversationId: {},
@@ -1077,6 +1082,13 @@ export function mergeWorkspaceSessionFromImport(
           )
         : current.agentView.pinnedAgentConversationIds ?? [],
       railFilterToggles: normalizeAgentRailFilterToggles(
+        r.agentView?.railFilterToggles ?? current.agentView.railFilterToggles,
+        typeof r.agentView?.filterPreset === "string"
+          ? r.agentView.filterPreset
+          : current.agentView.filterPreset
+      ),
+      railFilters: normalizeAgentRailFilterState(
+        r.agentView?.railFilters ?? current.agentView.railFilters,
         r.agentView?.railFilterToggles ?? current.agentView.railFilterToggles,
         typeof r.agentView?.filterPreset === "string"
           ? r.agentView.filterPreset

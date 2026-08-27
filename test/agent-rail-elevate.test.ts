@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { AgentConversationGroup, AgentRailConversationSummary } from "../src/lib/agent-types.ts";
 import {
-  clearSettledInGroups,
   collectAttentionConversations,
   collectRunningConversations,
   conversationHasAttentionHome,
@@ -164,20 +163,29 @@ describe("agent rail elevate", () => {
     assert.equal(sinkSettledInGroups(untouched)[0], untouched[0]);
   });
 
-  test("clearSettledInGroups neutralizes settled flags when the mode is off", () => {
-    const settled = conversation("s", "ws", { settledAt: 10, status: "failed" });
-    const idle = conversation("i", "ws");
+  test("an expired timed settle (ignore for a day) no longer sinks or suppresses", () => {
+    const now = Date.now();
+    const expired = conversation("s", "ws", {
+      settledAt: now - 90_000_000,
+      settledUntil: now - 3_600_000,
+      status: "failed",
+    });
+    const active = conversation("t", "ws", {
+      settledAt: now - 1_000,
+      settledUntil: now + 86_400_000,
+      status: "failed",
+    });
+    // Expired snooze: the failure surfaces in Needs attention again.
+    assert.equal(conversationHasAttentionHome(expired), true);
+    // Live snooze: stays settled (failure acknowledged by settling).
+    assert.equal(conversationHasAttentionHome(active), false);
     const groups: AgentConversationGroup[] = [
-      { workspace: workspace("ws"), conversations: [settled, idle] },
+      { workspace: workspace("ws"), conversations: [active, expired] },
     ];
-    const cleared = clearSettledInGroups(groups);
-    assert.equal(cleared[0]?.conversations[0]?.settledAt, null);
-    // With the flag stripped, the failure surfaces in Needs attention again.
-    assert.equal(conversationHasAttentionHome(cleared[0]!.conversations[0]!), true);
-    // Nothing settled: pass-through by reference.
-    const untouched: AgentConversationGroup[] = [
-      { workspace: workspace("ws2"), conversations: [idle] },
-    ];
-    assert.equal(clearSettledInGroups(untouched), untouched);
+    const sunk = sinkSettledInGroups(groups);
+    assert.deepEqual(
+      sunk[0]?.conversations.map((item) => item.id),
+      ["s", "t"]
+    );
   });
 });

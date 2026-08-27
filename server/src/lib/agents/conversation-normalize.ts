@@ -13,18 +13,42 @@ const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "gemini-acp": "google-antigravity-cli",
 };
 
+/**
+ * Clear an elapsed timed settle ("ignore for a day") on any settle-carrying
+ * shape. Cached payloads are normalized at cache time, so cache hits re-apply
+ * this cheap pass to avoid serving a snooze that has already expired.
+ */
+export function expireElapsedSettle<
+  T extends { settledAt?: number | null; settledUntil?: number | null },
+>(record: T, now = Date.now()): T {
+  if (record.settledUntil != null && record.settledUntil <= now) {
+    return { ...record, settledAt: null, settledUntil: null };
+  }
+  return record;
+}
+
 export function normalizeConversationRecord(
   record: AgentConversationRecord
 ): AgentConversationRecord {
+  const rawSettledAt =
+    typeof record.settledAt === "number" && Number.isFinite(record.settledAt)
+      ? record.settledAt
+      : null;
+  const rawSettledUntil =
+    typeof record.settledUntil === "number" && Number.isFinite(record.settledUntil)
+      ? record.settledUntil
+      : null;
+  // Timed settles ("ignore for a day") lazily expire on read: every API path
+  // normalizes records, so an elapsed snooze surfaces as unsettled without a
+  // background sweeper. Persistence catches up on the next prompt/patch.
+  const settleExpired = rawSettledUntil != null && rawSettledUntil <= Date.now();
   const normalizedMetadata = {
     archivedAt:
       typeof record.archivedAt === "number" && Number.isFinite(record.archivedAt)
         ? record.archivedAt
         : null,
-    settledAt:
-      typeof record.settledAt === "number" && Number.isFinite(record.settledAt)
-        ? record.settledAt
-        : null,
+    settledAt: settleExpired ? null : rawSettledAt,
+    settledUntil: settleExpired ? null : rawSettledUntil,
     lastReadSeq:
       typeof record.lastReadSeq === "number" && Number.isFinite(record.lastReadSeq)
         ? Math.max(0, Math.min(record.lastEventSeq, Math.floor(record.lastReadSeq)))

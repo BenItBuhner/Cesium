@@ -56,20 +56,54 @@ test("agent rail view settings survive a save/read round-trip", async () => {
   assert.equal(persisted.general.workspaceSortMode, "machine");
   assert.equal(persisted.general.agentRail.groupBy, "priority");
   assert.equal(persisted.general.agentRail.rowDetail, "expanded");
+  // Persisted orders missing the running section surface it in its default
+  // slot, right below Needs attention.
   assert.deepEqual(persisted.general.agentRail.sectionOrder, [
     "pinned",
     "attention",
+    "running",
     "chats",
     "workspaces",
   ]);
   assert.deepEqual(persisted.general.agentRail.hiddenSections, ["chats"]);
 });
 
-test("retired group-by modes migrate to workspace", async () => {
+test("every grouping mode survives the save round-trip", async () => {
+  for (const mode of [
+    "workspace",
+    "repository",
+    "updated",
+    "status",
+    "server",
+    "priority",
+  ] as const) {
+    const settings = await store.getGlobalSettings();
+    settings.general.agentRail = {
+      ...settings.general.agentRail,
+      groupBy: mode,
+    };
+
+    const response = await settingsRoutes.request("/api/settings/global", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings }),
+    });
+    assert.equal(response.status, 200);
+
+    const persisted = await store.getGlobalSettings();
+    assert.equal(persisted.general.agentRail.groupBy, mode);
+  }
+});
+
+test("order-by and show flags survive the save round-trip", async () => {
   const settings = await store.getGlobalSettings();
   settings.general.agentRail = {
     ...settings.general.agentRail,
-    groupBy: "server" as never,
+    orderBy: "status",
+    showEnvironment: false,
+    showBranch: true,
+    showMachine: false,
+    showWorkspace: false,
   };
 
   const response = await settingsRoutes.request("/api/settings/global", {
@@ -80,7 +114,11 @@ test("retired group-by modes migrate to workspace", async () => {
   assert.equal(response.status, 200);
 
   const persisted = await store.getGlobalSettings();
-  assert.equal(persisted.general.agentRail.groupBy, "workspace");
+  assert.equal(persisted.general.agentRail.orderBy, "status");
+  assert.equal(persisted.general.agentRail.showEnvironment, false);
+  assert.equal(persisted.general.agentRail.showBranch, true);
+  assert.equal(persisted.general.agentRail.showMachine, false);
+  assert.equal(persisted.general.agentRail.showWorkspace, false);
 });
 
 test("legacy persisted agent rail settings gain migrated defaults", async () => {
@@ -110,8 +148,13 @@ test("legacy persisted agent rail settings gain migrated defaults", async () => 
   assert.equal(persisted.general.agentRail.rowDetail, "balanced");
   assert.deepEqual(persisted.general.agentRail.sectionOrder, [
     "attention",
+    "running",
     "pinned",
     "chats",
     "workspaces",
   ]);
+  // New knobs gain their defaults on legacy payloads.
+  assert.equal(persisted.general.agentRail.orderBy, "updated");
+  assert.equal(persisted.general.agentRail.showEnvironment, true);
+  assert.equal(persisted.general.agentRail.showBranch, false);
 });

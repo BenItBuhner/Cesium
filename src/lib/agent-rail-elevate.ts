@@ -29,7 +29,7 @@ export function agentRailStatusContextForConversation(
 export function conversationHasAttentionHome(
   conversation: Pick<
     AgentRailConversationSummary,
-    "id" | "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
+    "id" | "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil"
   >,
   ctx: AgentRailElevateContext = {}
 ): boolean {
@@ -47,7 +47,7 @@ export function conversationHasAttentionHome(
 export function conversationHasRunningHome(
   conversation: Pick<
     AgentRailConversationSummary,
-    "id" | "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt"
+    "id" | "status" | "hasPendingPermission" | "hasPendingQuestion" | "settledAt" | "settledUntil"
   >,
   ctx: AgentRailElevateContext = {}
 ): boolean {
@@ -161,29 +161,6 @@ export function stripElevatedFromGroups(
     conversations: group.conversations.filter(
       (conversation) =>
         !elevatedIds.has(conversation.id) && !pinnedIds.has(conversation.id)
-    ),
-  }));
-}
-
-/**
- * Settled mode is opt-in. When it is off, persisted settled flags must have
- * zero effect anywhere (no sinking, no attention suppression, no filled
- * moons), so the shell strips them before any derivation runs.
- */
-export function clearSettledInGroups(
-  groups: AgentConversationGroup[]
-): AgentConversationGroup[] {
-  if (
-    !groups.some((group) =>
-      group.conversations.some((conversation) => conversation.settledAt != null)
-    )
-  ) {
-    return groups;
-  }
-  return groups.map((group) => ({
-    ...group,
-    conversations: group.conversations.map((conversation) =>
-      conversation.settledAt != null ? { ...conversation, settledAt: null } : conversation
     ),
   }));
 }

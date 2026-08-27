@@ -541,6 +541,12 @@ export type AgentConversationRecord = {
    * the rail; a new user prompt automatically clears the flag ("unsettles").
    */
   settledAt?: number | null;
+  /**
+   * Optional expiry for a temporary settle ("ignore for a day"). When the
+   * timestamp passes, the conversation automatically unsettles on the next
+   * read. `null`/absent means the settle has no expiry.
+   */
+  settledUntil?: number | null;
   lastReadSeq: number;
   /** FIFO follow-up prompts while a turn is running; owned by the server. */
   queuedPrompts: QueuedChatPrompt[];
@@ -622,6 +628,11 @@ export type AgentConversationMetadataPatch = {
   archived?: boolean;
   /** Toggle the user-facing "settled" state; sending a prompt auto-clears it. */
   settled?: boolean;
+  /**
+   * With `settled: true`, settle only for this duration (e.g. 86_400_000 for
+   * "ignore for a day"). The conversation auto-unsettles once it elapses.
+   */
+  settledForMs?: number;
   lastReadSeq?: number;
 };
 
@@ -651,6 +662,8 @@ export type AgentRailConversationSummary = Pick<
   hasPendingQuestion?: boolean;
   /** Set when the user marked the conversation as settled; a new prompt clears it. */
   settledAt?: number | null;
+  /** Expiry of a temporary settle ("ignore for a day"); null = no expiry. */
+  settledUntil?: number | null;
   /** Short human title of the pending permission request (e.g. "Run terminal command"). */
   pendingPermissionTitle?: string | null;
   /** First line of the last error, truncated for rail display. */
