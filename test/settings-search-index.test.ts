@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   buildSettingsSearchIndex,
+  pluginsSettingsSubviewForSearchHit,
   searchSettingsIndex,
 } from "../src/lib/settings-search-index.ts";
 
@@ -33,6 +34,63 @@ describe("settings search index", () => {
     const index = buildSettingsSearchIndex({});
     const hits = searchSettingsIndex(index, "integrations");
     assert.ok(hits.some((hit) => hit.kind === "nav" && hit.navId === "plugins"));
+
+    const mcp = searchSettingsIndex(index, "mcp servers");
+    assert.ok(mcp.some((hit) => hit.rowId === "mcp-link"));
+
+    const rules = searchSettingsIndex(index, "rules skills subagents");
+    assert.ok(rules.some((hit) => hit.rowId === "rules-link"));
+
+    const extensions = searchSettingsIndex(index, "vs code extensions");
+    assert.ok(extensions.some((hit) => hit.rowId === "extensions-link"));
+
+    const plugins = searchSettingsIndex(index, "agent plugins");
+    assert.ok(plugins.some((hit) => hit.rowId === "plugins-link"));
+  });
+
+  test("routes Integrations search hits to the matching subpage", () => {
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({
+        navId: "plugins",
+        id: "plugins::mcp-link",
+        rowId: "mcp-link",
+      }),
+      "mcp"
+    );
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({
+        navId: "plugins",
+        id: "plugins::section::mcp-presets",
+      }),
+      "mcp"
+    );
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({
+        navId: "plugins",
+        id: "plugins::plugins-link",
+        rowId: "plugins-link",
+      }),
+      "catalog"
+    );
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({
+        navId: "plugins",
+        id: "plugins::section::discover",
+      }),
+      "catalog"
+    );
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({
+        navId: "plugins",
+        id: "plugins::rules-link",
+        rowId: "rules-link",
+      }),
+      "hub"
+    );
+    assert.equal(
+      pluginsSettingsSubviewForSearchHit({ navId: "mcps", id: "nav::mcps" }),
+      "mcp"
+    );
   });
 
   test("indexes model names from the catalog", () => {

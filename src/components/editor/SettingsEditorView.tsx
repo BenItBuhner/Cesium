@@ -59,6 +59,7 @@ import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import { isDesktopNativeAvailable } from "@/lib/desktop-native-bridge";
 import {
   buildSettingsSearchIndex,
+  pluginsSettingsSubviewForSearchHit,
   searchSettingsIndex,
   settingsSearchHitToFocus,
   type SettingsSearchEntry,
@@ -607,6 +608,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           ...current.settingsView,
           activeNav: "plugins",
           mcpsOpen: true,
+          pluginsCatalogOpen: false,
         },
       }));
       setActiveNav("plugins");
@@ -732,23 +734,25 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           },
         }));
       }
-      if (id === "plugins" && activeNav !== "plugins") {
+      if (id === "plugins") {
         updateWorkspaceSession((current) => ({
           ...current,
           settingsView: {
             ...current.settingsView,
             mcpsOpen: false,
+            pluginsCatalogOpen: false,
           },
         }));
       }
       if (id !== "plugins") {
         updateWorkspaceSession((current) =>
-          current.settingsView.mcpsOpen
+          current.settingsView.mcpsOpen || current.settingsView.pluginsCatalogOpen
             ? {
                 ...current,
                 settingsView: {
                   ...current.settingsView,
                   mcpsOpen: false,
+                  pluginsCatalogOpen: false,
                 },
               }
             : current
@@ -763,13 +767,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       const focus = settingsSearchHitToFocus(hit);
       const legacyMcpNav = hit.navId === "mcps" || hit.navId === "tools";
       const nextNav = legacyMcpNav ? "plugins" : hit.navId;
-      const opensMcpsSubview =
-        legacyMcpNav ||
-        (nextNav === "plugins" &&
-          (hit.rowId === "mcp-link" ||
-            hit.id === "plugins::section::mcp-presets" ||
-            hit.id === "plugins::section::mcp-custom" ||
-            hit.id === "plugins::section::mcp-connected"));
+      const pluginsSubview = pluginsSettingsSubviewForSearchHit(hit);
       setActiveNav(nextNav);
       updateWorkspaceSession((current) => ({
         ...current,
@@ -782,7 +780,8 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
               : hit.navId === "agents" && hit.kind !== "harness"
                 ? null
                 : current.settingsView.agentsHarnessId ?? null,
-          mcpsOpen: opensMcpsSubview,
+          mcpsOpen: pluginsSubview === "mcp",
+          pluginsCatalogOpen: pluginsSubview === "catalog",
           panelSearchFocus: focus
             ? focus.kind === "scroll"
               ? {
