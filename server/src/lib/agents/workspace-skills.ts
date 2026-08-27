@@ -8,6 +8,8 @@ import path from "node:path";
  * The agent should read SKILL.md on demand via read_file when relevant.
  */
 
+export type WorkspaceSkillSource = "agents" | "cursor" | "claude" | "codex" | "opencode";
+
 export type WorkspaceSkillCatalogEntry = {
   name: string;
   description: string;
@@ -15,19 +17,29 @@ export type WorkspaceSkillCatalogEntry = {
   relativePath: string;
   /** Absolute path to the skill directory (parent of SKILL.md) */
   skillDir: string;
-  source: "agents" | "cursor" | "claude" | "codex";
+  source: WorkspaceSkillSource;
   /** When true, skill is user-invoked only (Cursor disable-model-invocation). */
+  disableModelInvocation: boolean;
+};
+
+/** Public catalog row — no absolute paths. */
+export type WorkspaceSkillCatalogItem = {
+  name: string;
+  description: string;
+  relativePath: string;
+  source: WorkspaceSkillSource;
   disableModelInvocation: boolean;
 };
 
 const PROJECT_SKILL_ROOTS: Array<{
   relativeDir: string;
-  source: WorkspaceSkillCatalogEntry["source"];
+  source: WorkspaceSkillSource;
 }> = [
   { relativeDir: path.join(".agents", "skills"), source: "agents" },
   { relativeDir: path.join(".cursor", "skills"), source: "cursor" },
   { relativeDir: path.join(".claude", "skills"), source: "claude" },
   { relativeDir: path.join(".codex", "skills"), source: "codex" },
+  { relativeDir: path.join(".opencode", "skills"), source: "opencode" },
 ];
 
 const SKIP_DIR_NAMES = new Set([
@@ -185,4 +197,23 @@ export async function discoverWorkspaceSkills(
   }
 
   return found;
+}
+
+export function toWorkspaceSkillCatalogItem(
+  entry: WorkspaceSkillCatalogEntry
+): WorkspaceSkillCatalogItem {
+  return {
+    name: entry.name,
+    description: entry.description,
+    relativePath: entry.relativePath,
+    source: entry.source,
+    disableModelInvocation: entry.disableModelInvocation,
+  };
+}
+
+export async function listWorkspaceSkillCatalog(
+  workspaceRoot: string
+): Promise<WorkspaceSkillCatalogItem[]> {
+  const skills = await discoverWorkspaceSkills(workspaceRoot);
+  return skills.map(toWorkspaceSkillCatalogItem);
 }

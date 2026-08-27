@@ -85,6 +85,19 @@ describe("settings search index", () => {
     assert.ok(autoDispatch.some((hit) => hit.rowId === "cloud-agents-auto-dispatch"));
   });
 
+  test("indexes the skills catalog under Rules, skills, and subagents", () => {
+    const index = buildSettingsSearchIndex({});
+    const nav = searchSettingsIndex(index, "rules skills");
+    assert.ok(nav.some((hit) => hit.navId === "rulesSkills"));
+
+    const skills = searchSettingsIndex(index, "SKILL.md opencode");
+    assert.ok(
+      skills.some(
+        (hit) => hit.navId === "rulesSkills" && hit.id === "rulesSkills::section::skills"
+      )
+    );
+  });
+
   test("indexes Voice settings for transcription and TTS", () => {
     const index = buildSettingsSearchIndex({});
     const nav = searchSettingsIndex(index, "voice");

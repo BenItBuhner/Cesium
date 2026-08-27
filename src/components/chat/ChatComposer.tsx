@@ -179,6 +179,7 @@ import {
   transcribeAudio,
   uploadAttachments,
 } from "@/lib/server-api";
+import { useWorkspaceSkillCatalog } from "@/hooks/useWorkspaceSkillCatalog";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   buildDesignCaptureBlock,
@@ -1101,7 +1102,8 @@ export function ChatComposer({
   showStatusBar = true,
   dockedCardVisible = false,
 }: ChatComposerProps) {
-  const { fileTree, gitStatus, workspaceSession } = useWorkspace();
+  const { fileTree, gitStatus, workspaceSession, activeWorkspaceId } = useWorkspace();
+  const { skills: workspaceSkills } = useWorkspaceSkillCatalog(activeWorkspaceId);
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
@@ -1371,6 +1373,7 @@ export function ChatComposer({
           harnessTransports: settings.agents.harnessTransports,
         }),
         sessionConfigOptions,
+        skills: workspaceSkills,
         gitSlashCommands,
         configLocked,
         modeLocked,
@@ -1387,6 +1390,7 @@ export function ChatComposer({
       sessionConfigOptions,
       settings.agents.enabledHarnesses,
       settings.agents.harnessTransports,
+      workspaceSkills,
     ]
   );
 

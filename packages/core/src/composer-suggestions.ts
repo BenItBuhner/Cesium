@@ -1,6 +1,11 @@
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "./protocol";
 import type { AgentModeOption, EditorMode, FileNode, ModelInfo } from "./types";
 import { makeComposerConversationReferenceToken } from "./conversation-reference";
+import {
+  formatWorkspaceSkillSource,
+  workspaceSkillEnabledLabel,
+  type WorkspaceSkillCatalogItem,
+} from "./workspace-skills";
 
 export type AtSuggestion = {
   id: string;
@@ -160,6 +165,7 @@ export function getSlashMenuSections(input: {
   models?: ModelInfo[];
   backends?: AgentBackendInfo[];
   sessionConfigOptions?: AgentConfigOption[];
+  skills?: WorkspaceSkillCatalogItem[];
   gitSlashCommands?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;
@@ -169,6 +175,27 @@ export function getSlashMenuSections(input: {
   const caps = backend?.capabilities;
   const locked = input.configLocked ?? false;
   const modeLocked = input.modeLocked ?? false;
+
+  const skills = input.skills ?? [];
+  if (skills.length > 0) {
+    sections.push({
+      id: "skills",
+      label: "Skills",
+      items: skills.map((skill) => {
+        const source = formatWorkspaceSkillSource(skill.source);
+        const enabled = workspaceSkillEnabledLabel(skill.disableModelInvocation);
+        const searchText = `${skill.name} skill ${skill.description} ${source} ${enabled}`;
+        return {
+          id: `skill:${skill.name}`,
+          label: skill.name,
+          description: skill.description,
+          searchText,
+          searchKey: slashSearchKey(skill.name, searchText),
+          action: { kind: "insert", insert: skill.name },
+        };
+      }),
+    });
+  }
 
   if (
     !locked &&
@@ -444,6 +471,7 @@ export function applyComposerDirectives(
         "backend",
         "set",
         "mode",
+        "skill",
         "worktree",
         "delete-worktree",
       ]);
