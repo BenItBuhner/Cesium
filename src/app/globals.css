@@ -492,16 +492,16 @@ html.dark .landing-shot-dark {
   background: transparent;
 }
 [data-aurora-scene="on"] .aurora-settings-nav {
-  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 48%, transparent);
 }
 [data-aurora-scene="on"] .aurora-settings-main {
-  background: color-mix(in srgb, var(--bg-main) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-main) 36%, transparent);
 }
 .dark [data-aurora-scene="on"] .aurora-settings-nav {
-  background: color-mix(in srgb, var(--bg-panel) 52%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 46%, transparent);
 }
 .dark [data-aurora-scene="on"] .aurora-settings-main {
-  background: color-mix(in srgb, var(--bg-main) 58%, transparent);
+  background: color-mix(in srgb, var(--bg-main) 40%, transparent);
 }
 /* Monaco: let the aurora show through the code editor. The gutter, current
    line, and scrollbar shades keep their theme colors; only the flat page
