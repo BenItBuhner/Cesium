@@ -58,6 +58,10 @@ import { createBestVad, EnergyVad, type VadEngine } from "@/lib/voice/vad";
 
 export type VoiceMode = "off" | "active" | "quiet" | "paused";
 
+function isVoiceCaptureIdle(mode: VoiceMode): boolean {
+  return mode === "off" || mode === "paused";
+}
+
 export type VoiceActivity =
   | "idle"
   | "listening"
@@ -601,8 +605,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       const stale =
         epoch !== captureEpochRef.current ||
         captureRef.current !== capture ||
-        modeRef.current === "off" ||
-        modeRef.current === "paused";
+        isVoiceCaptureIdle(modeRef.current);
       if (!stale) return false;
       await capture.stop().catch(() => {});
       if (captureRef.current === capture) {
@@ -629,7 +632,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const startCapture = useCallback(async () => {
     if (captureRef.current?.isRunning || captureStartingRef.current) return;
     const epoch = captureEpochRef.current;
-    if (modeRef.current === "off" || modeRef.current === "paused") return;
+    if (isVoiceCaptureIdle(modeRef.current)) return;
     captureStartingRef.current = true;
     try {
       if (!vadRef.current) {
@@ -639,7 +642,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setVadEngineId(vad.id);
       }
       if (epoch !== captureEpochRef.current) return;
-      if (modeRef.current === "off" || modeRef.current === "paused") return;
+      // Re-read after the VAD await - the user can pause/stop while it loads.
+      if (isVoiceCaptureIdle(modeRef.current)) return;
       const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
       endpointerRef.current = endpointer;
       const capture = new VoiceCapture({
