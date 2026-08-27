@@ -1,17 +1,21 @@
 "use client";
 
-import { PanelLeftOpen, Plus, Search } from "lucide-react";
+import { PanelLeftOpen, PanelRightOpen, Plus, Search } from "lucide-react";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 
 /**
  * When the left rail Panel is collapsed (0% width), show expand / search / new-chat above the shell.
  * Filter, settings, and account stay in the expanded rail footer only - not duplicated here while minimized.
+ * With "Swap side columns" on, the rail lives on the right, so the overlay pins to the right edge.
  */
 export function AgentWorkspaceRailCollapsedOverlay() {
   const { isMobile, leftRailCollapsed, toggleLeftRailCollapsed, startNewConversation } =
     useAgentShellState();
+  const { settings } = useGlobalSettings();
+  const sideColumnsSwapped = settings.general.sideColumnsSwapped;
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const padForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
 
@@ -29,9 +33,11 @@ export function AgentWorkspaceRailCollapsedOverlay() {
   return (
     <div
       className={`agent-rail-collapsed-overlay-enter mobile-safe-top-offset pointer-events-none absolute top-[11px] z-[50] ${
-        padForWindowChrome
-          ? "left-0 pl-[var(--editor-window-chrome-tab-inset)]"
-          : "left-[11px]"
+        sideColumnsSwapped
+          ? "right-[11px]"
+          : padForWindowChrome
+            ? "left-0 pl-[var(--editor-window-chrome-tab-inset)]"
+            : "left-[11px]"
       }`}
       aria-label="Workspace rail quick actions"
     >
@@ -44,7 +50,11 @@ export function AgentWorkspaceRailCollapsedOverlay() {
           aria-label="Expand workspace rail"
           title="Expand workspace rail"
         >
-          <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
+          {sideColumnsSwapped ? (
+            <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
+          ) : (
+            <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
+          )}
         </button>
         <button
           type="button"

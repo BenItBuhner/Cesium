@@ -58,6 +58,11 @@ import { createBestVad, EnergyVad, type VadEngine } from "@/lib/voice/vad";
 
 export type VoiceMode = "off" | "active" | "quiet" | "paused";
 
+/** Idle = no capture should run. Takes the mode as a parameter so callers get an un-narrowed comparison (refs read after an await stay narrowed and trip TS2367). */
+function isIdleVoiceMode(mode: VoiceMode): boolean {
+  return mode === "off" || mode === "paused";
+}
+
 export type VoiceActivity =
   | "idle"
   | "listening"
@@ -639,7 +644,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setVadEngineId(vad.id);
       }
       if (epoch !== captureEpochRef.current) return;
-      if (modeRef.current === "off" || modeRef.current === "paused") return;
+      // The ref can be mutated during the awaited VAD init, but TS keeps the
+      // narrowing from the guard above and rejects direct comparisons as
+      // impossible (TS2367); the helper's parameter is never narrowed.
+      if (isIdleVoiceMode(modeRef.current)) return;
       const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
       endpointerRef.current = endpointer;
       const capture = new VoiceCapture({

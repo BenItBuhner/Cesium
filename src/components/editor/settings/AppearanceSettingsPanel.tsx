@@ -196,7 +196,7 @@ export function AppearanceSettingsPanel() {
         <SettingsRow
           searchId="swap-columns"
           title="Swap side columns"
-          description="Move the agent/chat pane to the left and the file sidebar to the right while keeping the editor centered."
+          description="Mirror the layout: move the workbench pane to the left and the workspace sidebar to the right while keeping the chat centered. Also moves the settings navigation to the right."
           trailing={
             <ToggleSwitch
               checked={sideColumnsSwapped}
