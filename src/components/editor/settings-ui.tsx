@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, Check, ChevronRight } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -357,11 +357,47 @@ export type SettingsBreadcrumbSegment = {
   onClick?: () => void;
 };
 
+export type SettingsPageHeaderNav = {
+  currentLabel: string;
+  parentLabel: string | null;
+  handleBack: (() => void) | undefined;
+  backLabel: string;
+  backTitle: string;
+};
+
 /**
- * Standardized settings page chrome: a universal back button, a
- * "Settings › …" breadcrumb trail, and the page title. Back goes to the
- * parent segment when one exists (nested views), otherwise it leaves the
- * settings shell entirely (back to Agents).
+ * Resolve settings header navigation: back goes to the parent segment when
+ * one exists (nested views), otherwise it leaves the settings shell (Agents).
+ */
+export function resolveSettingsPageHeaderNav(input: {
+  segments: SettingsBreadcrumbSegment[];
+  onBack?: () => void;
+  closeShell?: () => void;
+}): SettingsPageHeaderNav | null {
+  if (input.segments.length === 0) {
+    return null;
+  }
+  const current = input.segments[input.segments.length - 1];
+  if (!current) {
+    return null;
+  }
+  const parent = input.segments.length > 1 ? input.segments[input.segments.length - 2] : undefined;
+  const handleBack = input.onBack ?? parent?.onClick ?? input.closeShell;
+  return {
+    currentLabel: current.label,
+    parentLabel: parent?.label ?? null,
+    handleBack,
+    backLabel: parent?.label ?? "Agents",
+    backTitle: parent ? `Back to ${parent.label}` : "Back to Agents",
+  };
+}
+
+const crumbItemClass =
+  "inline-flex min-h-[32px] max-w-[14rem] items-center truncate rounded-[var(--radius-tab)] px-[8px] font-sans text-[13px] leading-none pointer-coarse:min-h-[44px]";
+
+/**
+ * Standardized settings page chrome: an iOS/Android-style back row on narrow
+ * viewports, a high-contrast ancestor trail on desktop, and the page title.
  */
 export function SettingsPageHeader({
   segments,
@@ -375,69 +411,85 @@ export function SettingsPageHeader({
   actions?: ReactNode;
 }) {
   const chrome = useSettingsShellChrome();
-  if (segments.length === 0) {
+  const nav = resolveSettingsPageHeaderNav({
+    segments,
+    onBack,
+    closeShell: chrome?.closeShell,
+  });
+  if (!nav) {
     return null;
   }
-  const current = segments[segments.length - 1];
-  const parent = segments.length > 1 ? segments[segments.length - 2] : null;
-  const handleBack = onBack ?? parent?.onClick ?? chrome?.closeShell;
-  const backTitle = parent ? `Back to ${parent.label}` : "Back to Agents";
   return (
     <header className="mb-[18px]">
-      <nav
-        aria-label="Breadcrumb"
-        className="mb-[10px] flex flex-wrap items-center gap-[6px] font-sans text-[12px]"
-      >
-        {handleBack ? (
+      <nav aria-label="Breadcrumb">
+        {nav.handleBack ? (
           <button
             type="button"
-            onClick={handleBack}
-            aria-label={backTitle}
-            title={backTitle}
-            className="mr-[4px] inline-flex h-[24px] items-center gap-[6px] rounded-full bg-[var(--accent-bg)] pl-[8px] pr-[11px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+            onClick={nav.handleBack}
+            aria-label={nav.backTitle}
+            title={nav.backTitle}
+            className="-ml-[10px] mb-[4px] inline-flex min-h-[44px] min-w-[44px] max-w-full touch-manipulation items-center gap-[4px] rounded-[var(--radius-tab)] px-[10px] font-sans text-[15px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] active:bg-[var(--bg-card-hover)] md:hidden"
           >
-            <ArrowLeft className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
-            Back
+            <ChevronLeft className="size-[20px] shrink-0" strokeWidth={2} aria-hidden />
+            <span className="min-w-0 truncate">{nav.backLabel}</span>
           </button>
         ) : null}
-        <span className="select-none text-[var(--text-disabled)]">Settings</span>
-        {segments.map((segment, index) => {
-          const isLast = index === segments.length - 1;
-          return (
-            <span
-              key={`${segment.label}-${index}`}
-              className="inline-flex min-w-0 items-center gap-[6px]"
-            >
-              <span className="select-none text-[var(--text-disabled)]" aria-hidden>
-                ›
-              </span>
-              {segment.onClick && !isLast ? (
-                <button
-                  type="button"
-                  onClick={segment.onClick}
-                  className="truncate text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-                >
-                  {segment.label}
-                </button>
-              ) : (
-                <span
-                  className={`truncate ${
-                    isLast
-                      ? "font-medium text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)]"
-                  }`}
-                  aria-current={isLast ? "page" : undefined}
-                >
-                  {segment.label}
-                </span>
-              )}
-            </span>
-          );
-        })}
+        <ol className="mb-[10px] hidden min-w-0 flex-wrap items-center md:flex">
+          <li className="inline-flex min-w-0 items-center">
+            {chrome?.closeShell ? (
+              <button
+                type="button"
+                onClick={chrome.closeShell}
+                aria-label="Back to Agents"
+                title="Back to Agents"
+                className={`${crumbItemClass} text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]`}
+              >
+                Settings
+              </button>
+            ) : (
+              <span className={`${crumbItemClass} text-[var(--text-secondary)]`}>Settings</span>
+            )}
+          </li>
+          {segments.map((segment, index) => {
+            const isLast = index === segments.length - 1;
+            return (
+              <li
+                key={`${segment.label}-${index}`}
+                className="inline-flex min-w-0 items-center"
+              >
+                <ChevronRight
+                  className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                  strokeWidth={1.75}
+                  aria-hidden
+                />
+                {segment.onClick && !isLast ? (
+                  <button
+                    type="button"
+                    onClick={segment.onClick}
+                    className={`${crumbItemClass} text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]`}
+                  >
+                    {segment.label}
+                  </button>
+                ) : (
+                  <span
+                    className={`${crumbItemClass} ${
+                      isLast
+                        ? "font-medium text-[var(--text-primary)]"
+                        : "text-[var(--text-secondary)]"
+                    }`}
+                    aria-current={isLast ? "page" : undefined}
+                  >
+                    {segment.label}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       </nav>
       <div className="flex flex-wrap items-center justify-between gap-[12px]">
         <h1 className="font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
-          {current.label}
+          {nav.currentLabel}
         </h1>
         {actions}
       </div>
