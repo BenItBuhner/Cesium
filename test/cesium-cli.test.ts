@@ -24,7 +24,7 @@ describe("cesium CLI", () => {
       assert.ok(result.stdout.includes(`cesium ${command}`), `help missing ${command}`);
     }
     assert.ok(result.stdout.includes("--local"));
-    assert.ok(result.stdout.includes("open-cursor.vercel.app"));
+    assert.ok(result.stdout.includes("cesium.techlitnow.com"));
   });
 
   test("no arguments prints help and exits 0", () => {
