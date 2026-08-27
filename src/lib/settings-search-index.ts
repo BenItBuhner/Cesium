@@ -332,6 +332,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("appearance", "chat", "Chat"),
   row(
     "appearance",
+    "composer-layout",
+    "Composer layout",
+    "Concise keeps the chat composer on one row until the text wraps; detailed always stacks controls under the text field.",
+    ["composer", "concise", "detailed", "compact", "stacked", "multiline", "input"]
+  ),
+  row(
+    "appearance",
     "tool-call-dropdown-height",
     "Tool call dropdown height",
     "Maximum height of expanded agent tool-call blocks in chat; content scrolls inside the limit.",

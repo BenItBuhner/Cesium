@@ -13,6 +13,9 @@ describe("settings search index", () => {
 
     const dnd = searchSettingsIndex(index, "do not disturb");
     assert.ok(dnd.some((hit) => hit.rowId === "do-not-disturb"));
+
+    const composerLayout = searchSettingsIndex(index, "composer layout concise");
+    assert.ok(composerLayout.some((hit) => hit.rowId === "composer-layout"));
   });
 
   test("indexes the composer footer under General", () => {
