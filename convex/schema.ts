@@ -58,6 +58,17 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_url", ["userId", "baseUrl"]),
 
+  /**
+   * Encrypted or wrapping-key material for account-scoped credentials.
+   * Payloads are sealed client-side (AES-256-GCM envelopes) before upload.
+   */
+  userSecrets: defineTable({
+    userId: v.id("users"),
+    kind: v.string(),
+    payload: v.string(),
+    updatedAt: v.number(),
+  }).index("by_user_kind", ["userId", "kind"]),
+
   /** Personalization: the client `UserPreferences` payload as portable JSON. */
   preferences: defineTable({
     userId: v.id("users"),

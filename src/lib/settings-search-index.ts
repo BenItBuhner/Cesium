@@ -242,6 +242,27 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("voice", "stt", "Speech to text", "transcription whisper stt microphone"),
   row(
     "voice",
+    "voice-source-default",
+    "Default voice provider",
+    "Use automatic, client/account, or server speech settings.",
+    ["default", "account", "client", "server", "toggle"]
+  ),
+  row(
+    "voice",
+    "voice-scope-client",
+    "Client voice settings",
+    "Account-bound speech-to-text settings that work without an attached server.",
+    ["account", "client", "offline", "no server"]
+  ),
+  row(
+    "voice",
+    "voice-scope-server",
+    "Server voice settings",
+    "Speech settings stored on the attached Cesium engine.",
+    ["engine", "server", "hosted"]
+  ),
+  row(
+    "voice",
     "transcription-model",
     "Transcription model",
     "OpenAI-compatible speech-to-text model, base URL, and API key.",

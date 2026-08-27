@@ -99,6 +99,15 @@ describe("settings search index", () => {
 
     const whisper = searchSettingsIndex(index, "whisper");
     assert.ok(whisper.some((hit) => hit.navId === "voice"));
+
+    const account = searchSettingsIndex(index, "client account");
+    assert.ok(
+      account.some((hit) => hit.navId === "voice" && hit.rowId === "voice-scope-client")
+    );
+    const defaultSource = searchSettingsIndex(index, "default voice provider");
+    assert.ok(
+      defaultSource.some((hit) => hit.navId === "voice" && hit.rowId === "voice-source-default")
+    );
   });
 
   test("indexes VS Code extension settings", () => {

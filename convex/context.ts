@@ -14,7 +14,7 @@ export const bootstrap = query({
     if (!user) {
       return null;
     }
-    const [servers, preferences, agentPrefs, onboarding, snapshots] =
+    const [servers, preferences, agentPrefs, onboarding, snapshots, secrets] =
       await Promise.all([
         ctx.db
           .query("servers")
@@ -36,6 +36,10 @@ export const bootstrap = query({
           .query("conversationSnapshots")
           .withIndex("by_user", (q) => q.eq("userId", user._id))
           .collect(),
+        ctx.db
+          .query("userSecrets")
+          .withIndex("by_user_kind", (q) => q.eq("userId", user._id))
+          .collect(),
       ]);
     return {
       user: {
@@ -56,6 +60,11 @@ export const bootstrap = query({
         lastConnectedAt: server.lastConnectedAt ?? null,
       })),
       preferencesPayload: preferences?.payload ?? null,
+      secrets: secrets.map((secret) => ({
+        kind: secret.kind,
+        payload: secret.payload,
+        updatedAt: secret.updatedAt,
+      })),
       agentPrefs: agentPrefs.map((pref) => ({
         backendId: pref.backendId,
         enabled: pref.enabled,
