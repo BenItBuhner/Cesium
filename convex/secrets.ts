@@ -1,0 +1,99 @@
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { ensureUser, getAuthedUser } from "./lib/identity";
+
+const MAX_PAYLOAD_CHARS = 32_000;
+const ALLOWED_KINDS = new Set(["wrapping-key", "voice.settings"]);
+
+const secretRecord = v.object({
+  kind: v.string(),
+  payload: v.string(),
+  updatedAt: v.number(),
+});
+
+function assertKind(kind: string): string {
+  const trimmed = kind.trim();
+  if (!ALLOWED_KINDS.has(trimmed)) {
+    throw new Error("Unknown secret kind.");
+  }
+  return trimmed;
+}
+
+export const list = query({
+  args: { deviceKey: v.optional(v.string()) },
+  returns: v.array(secretRecord),
+  handler: async (ctx, args) => {
+    const user = await getAuthedUser(ctx, args.deviceKey);
+    if (!user) {
+      return [];
+    }
+    const rows = await ctx.db
+      .query("userSecrets")
+      .withIndex("by_user_kind", (q) => q.eq("userId", user._id))
+      .collect();
+    return rows.map((row) => ({
+      kind: row.kind,
+      payload: row.payload,
+      updatedAt: row.updatedAt,
+    }));
+  },
+});
+
+export const save = mutation({
+  args: {
+    deviceKey: v.optional(v.string()),
+    kind: v.string(),
+    payload: v.string(),
+    updatedAt: v.optional(v.number()),
+  },
+  returns: v.object({ ok: v.literal(true), updatedAt: v.number() }),
+  handler: async (ctx, args) => {
+    const kind = assertKind(args.kind);
+    if (args.payload.length > MAX_PAYLOAD_CHARS) {
+      throw new Error("Secret payload too large.");
+    }
+    if (args.payload.length === 0) {
+      throw new Error("Secret payload is empty.");
+    }
+    const userId = await ensureUser(ctx, args.deviceKey);
+    const updatedAt =
+      typeof args.updatedAt === "number" && Number.isFinite(args.updatedAt)
+        ? args.updatedAt
+        : Date.now();
+    const existing = await ctx.db
+      .query("userSecrets")
+      .withIndex("by_user_kind", (q) => q.eq("userId", userId).eq("kind", kind))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { payload: args.payload, updatedAt });
+    } else {
+      await ctx.db.insert("userSecrets", {
+        userId,
+        kind,
+        payload: args.payload,
+        updatedAt,
+      });
+    }
+    return { ok: true as const, updatedAt };
+  },
+});
+
+export const remove = mutation({
+  args: {
+    deviceKey: v.optional(v.string()),
+    kind: v.string(),
+  },
+  returns: v.object({ ok: v.literal(true) }),
+  handler: async (ctx, args) => {
+    const kind = assertKind(args.kind);
+    const userId = await ensureUser(ctx, args.deviceKey);
+    const existing = await ctx.db
+      .query("userSecrets")
+      .withIndex("by_user_kind", (q) => q.eq("userId", userId).eq("kind", kind))
+      .unique();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+    return { ok: true as const };
+  },
+});

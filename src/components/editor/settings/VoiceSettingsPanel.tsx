@@ -13,6 +13,14 @@ import {
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
+  clearVoiceClientSettings,
+  loadVoiceClientSettings,
+  saveVoiceClientSettings,
+  setVoicePreferredSource,
+  toPublicVoiceClientSettings,
+  type VoiceSettingsSourcePreference,
+} from "@cesium/client";
+import {
   deleteVoiceSpeechSettings,
   fetchVoiceSpeechSettings,
   fetchVoiceStatus,
@@ -28,10 +36,46 @@ const inputClass =
 
 const monoInputClass = `${inputClass} font-mono text-[11px]`;
 
+type VoiceScope = "client" | "server";
+
+type VoiceDraft = {
+  sttBaseUrl: string;
+  sttApiKey: string;
+  sttModel: string;
+  sttLanguage: string;
+  sttPrompt: string;
+  titleModel: string;
+  ttsEngine: string;
+  ttsBaseUrl: string;
+  ttsApiKey: string;
+  ttsModel: string;
+  ttsVoice: string;
+  controllerBaseUrl: string;
+  controllerApiKey: string;
+  controllerModel: string;
+};
+
+const EMPTY_DRAFT: VoiceDraft = {
+  sttBaseUrl: "",
+  sttApiKey: "",
+  sttModel: "",
+  sttLanguage: "",
+  sttPrompt: "",
+  titleModel: "",
+  ttsEngine: "",
+  ttsBaseUrl: "",
+  ttsApiKey: "",
+  ttsModel: "",
+  ttsVoice: "",
+  controllerBaseUrl: "",
+  controllerApiKey: "",
+  controllerModel: "",
+};
+
 function sourceLabel(source: VoiceSpeechFieldSource | undefined): string | null {
   switch (source) {
     case "stored":
-      return "Saved in Settings";
+      return "Saved";
     case "env":
       return "From environment variables";
     case "file":
@@ -54,6 +98,23 @@ function statusLine(input: {
   }
   const origin = sourceLabel(input.source) ?? "Configured";
   return input.lastFour ? `${origin} · key ···${input.lastFour}` : origin;
+}
+
+function draftFromSettings(next: VoiceSpeechSettingsPayload): VoiceDraft {
+  return {
+    ...EMPTY_DRAFT,
+    sttBaseUrl: next.transcription.baseUrl ?? "",
+    sttModel: next.transcription.model ?? "",
+    sttLanguage: next.transcription.language ?? "",
+    sttPrompt: next.transcription.prompt ?? "",
+    titleModel: next.titleGeneration.model ?? "",
+    ttsEngine: next.tts.engine ?? "",
+    ttsBaseUrl: next.tts.openaiCompat.baseUrl ?? "",
+    ttsModel: next.tts.openaiCompat.model ?? "",
+    ttsVoice: next.tts.openaiCompat.voice ?? "",
+    controllerBaseUrl: next.controller.baseUrl ?? "",
+    controllerModel: next.controller.model ?? "",
+  };
 }
 
 function VoiceField({
@@ -91,50 +152,84 @@ function VoiceField({
   );
 }
 
+function ScopeToggle({
+  value,
+  onChange,
+  serverAvailable,
+}: {
+  value: VoiceScope;
+  onChange: (scope: VoiceScope) => void;
+  serverAvailable: boolean;
+}) {
+  return (
+    <div
+      className="mb-[16px] inline-flex rounded-[var(--radius-tab)] bg-[var(--bg-card)] p-[3px]"
+      role="tablist"
+      aria-label="Voice settings scope"
+    >
+      {(
+        [
+          { id: "client", label: "Client / account" },
+          { id: "server", label: serverAvailable ? "Server" : "Server (offline)" },
+        ] as const
+      ).map((option) => {
+        const active = value === option.id;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            data-settings-search-id={
+              option.id === "client" ? "voice-scope-client" : "voice-scope-server"
+            }
+            onClick={() => onChange(option.id)}
+            className={`rounded-[calc(var(--radius-tab)-2px)] px-[12px] py-[5px] font-sans text-[12px] transition-colors ${
+              active
+                ? "bg-[var(--bg-main)] text-[var(--text-primary)]"
+                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function VoiceSettingsPanel() {
   const { settings: globalSettings, updateSettings } = useGlobalSettings();
-  const [settings, setSettings] = useState<VoiceSpeechSettingsPayload | null>(null);
+  const [scope, setScope] = useState<VoiceScope>("client");
+  const [preferredSource, setPreferredSource] =
+    useState<VoiceSettingsSourcePreference>("auto");
+  const [clientSettings, setClientSettings] = useState<VoiceSpeechSettingsPayload | null>(null);
+  const [serverSettings, setServerSettings] = useState<VoiceSpeechSettingsPayload | null>(null);
+  const [clientDraft, setClientDraft] = useState<VoiceDraft>(EMPTY_DRAFT);
+  const [serverDraft, setServerDraft] = useState<VoiceDraft>(EMPTY_DRAFT);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [serverAvailable, setServerAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [showSttHints, setShowSttHints] = useState(false);
   const [showRemoteTts, setShowRemoteTts] = useState(false);
   const [showControllerOverride, setShowControllerOverride] = useState(false);
 
-  const [sttBaseUrl, setSttBaseUrl] = useState("");
-  const [sttApiKey, setSttApiKey] = useState("");
-  const [sttModel, setSttModel] = useState("");
-  const [sttLanguage, setSttLanguage] = useState("");
-  const [sttPrompt, setSttPrompt] = useState("");
+  const settings = scope === "client" ? clientSettings : serverSettings;
+  const draft = scope === "client" ? clientDraft : serverDraft;
+  const setDraft = scope === "client" ? setClientDraft : setServerDraft;
 
-  const [titleModel, setTitleModel] = useState("");
-
-  const [ttsEngine, setTtsEngine] = useState("");
-  const [ttsBaseUrl, setTtsBaseUrl] = useState("");
-  const [ttsApiKey, setTtsApiKey] = useState("");
-  const [ttsModel, setTtsModel] = useState("");
-  const [ttsVoice, setTtsVoice] = useState("");
-
-  const [controllerBaseUrl, setControllerBaseUrl] = useState("");
-  const [controllerApiKey, setControllerApiKey] = useState("");
-  const [controllerModel, setControllerModel] = useState("");
-
-  const applySettings = useCallback((next: VoiceSpeechSettingsPayload) => {
-    setSettings(next);
-    setSttBaseUrl(next.transcription.baseUrl ?? "");
-    setSttModel(next.transcription.model ?? "");
-    setSttLanguage(next.transcription.language ?? "");
-    setSttPrompt(next.transcription.prompt ?? "");
-    setTitleModel(next.titleGeneration.model ?? "");
-    setTtsEngine(next.tts.engine ?? "");
-    setTtsBaseUrl(next.tts.openaiCompat.baseUrl ?? "");
-    setTtsModel(next.tts.openaiCompat.model ?? "");
-    setTtsVoice(next.tts.openaiCompat.voice ?? "");
-    setControllerBaseUrl(next.controller.baseUrl ?? "");
-    setControllerModel(next.controller.model ?? "");
+  const applyClient = useCallback((next: VoiceSpeechSettingsPayload) => {
+    setClientSettings(next);
+    setClientDraft((current) => ({ ...draftFromSettings(next), sttApiKey: current.sttApiKey }));
     if (next.transcription.language || next.transcription.prompt) {
       setShowSttHints(true);
     }
+  }, []);
+
+  const applyServer = useCallback((next: VoiceSpeechSettingsPayload) => {
+    setServerSettings(next);
+    setServerDraft((current) => ({ ...draftFromSettings(next), sttApiKey: current.sttApiKey }));
     if (
       next.tts.openaiCompat.baseUrl ||
       next.tts.openaiCompat.model ||
@@ -149,13 +244,40 @@ export function VoiceSettingsPanel() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const [voice, status] = await Promise.all([
-      fetchVoiceSpeechSettings(),
-      fetchVoiceStatus().catch(() => null),
-    ]);
-    applySettings(voice.settings);
-    setVoiceStatus(status);
-  }, [applySettings]);
+    const client = await loadVoiceClientSettings();
+    setPreferredSource(client.preferredSource);
+    applyClient(toPublicVoiceClientSettings(client));
+
+    try {
+      const [voice, status] = await Promise.all([
+        fetchVoiceSpeechSettings(),
+        fetchVoiceStatus().catch(() => null),
+      ]);
+      applyServer(voice.settings);
+      setVoiceStatus(status);
+      setServerAvailable(true);
+      if (!client.transcription && voice.settings.transcription.configured) {
+        setScope("server");
+      } else if (
+        client.preferredSource === "server" &&
+        voice.settings.transcription.configured
+      ) {
+        setScope("server");
+      } else if (!voice.settings.transcription.configured && client.transcription) {
+        setScope("client");
+      }
+    } catch (error) {
+      setServerAvailable(false);
+      setServerSettings(null);
+      setVoiceStatus(null);
+      setScope("client");
+      setMessage(
+        error instanceof Error
+          ? `Server voice settings unavailable. Editing the client / account copy. ${error.message}`
+          : "Server voice settings unavailable. Editing the client / account copy."
+      );
+    }
+  }, [applyClient, applyServer]);
 
   useEffect(() => {
     void refresh().catch((error) => {
@@ -168,11 +290,31 @@ export function VoiceSettingsPanel() {
       setBusy(true);
       setMessage(null);
       try {
+        if (scope === "client") {
+          const saved = await saveVoiceClientSettings(patch);
+          applyClient(toPublicVoiceClientSettings(saved));
+          setClientDraft((current) => ({
+            ...current,
+            sttApiKey: "",
+            ttsApiKey: "",
+            controllerApiKey: "",
+          }));
+          setMessage(`${success} Saved to this client and your account when signed in.`);
+          return;
+        }
+        if (!serverAvailable) {
+          throw new Error(
+            "No server is attached. Switch to Client / account to save speech settings without an engine."
+          );
+        }
         const result = await saveVoiceSpeechSettings(patch);
-        applySettings(result.settings);
-        setSttApiKey("");
-        setTtsApiKey("");
-        setControllerApiKey("");
+        applyServer(result.settings);
+        setServerDraft((current) => ({
+          ...current,
+          sttApiKey: "",
+          ttsApiKey: "",
+          controllerApiKey: "",
+        }));
         setMessage(success);
         const status = await fetchVoiceStatus().catch(() => null);
         setVoiceStatus(status);
@@ -182,31 +324,59 @@ export function VoiceSettingsPanel() {
         setBusy(false);
       }
     },
-    [applySettings]
+    [applyClient, applyServer, scope, serverAvailable]
   );
 
-  const clearAllStored = useCallback(async () => {
+  const clearActiveStored = useCallback(async () => {
     setBusy(true);
     setMessage(null);
     try {
+      if (scope === "client") {
+        const cleared = await clearVoiceClientSettings();
+        applyClient(toPublicVoiceClientSettings(cleared));
+        setClientDraft(EMPTY_DRAFT);
+        setMessage("Client / account voice settings removed.");
+        return;
+      }
       const result = await deleteVoiceSpeechSettings();
-      applySettings(result.settings);
-      setSttApiKey("");
-      setTtsApiKey("");
-      setControllerApiKey("");
+      applyServer(result.settings);
+      setServerDraft(EMPTY_DRAFT);
       setMessage(
         result.settings.transcription.source === "env" ||
           result.settings.controller.source === "env" ||
           result.settings.tts.openaiCompat.source === "env"
-          ? "Stored voice settings removed. Environment variables are still in effect."
-          : "Stored voice settings removed."
+          ? "Stored server voice settings removed. Environment variables are still in effect."
+          : "Stored server voice settings removed."
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to clear voice settings.");
     } finally {
       setBusy(false);
     }
-  }, [applySettings]);
+  }, [applyClient, applyServer, scope]);
+
+  const changePreferredSource = useCallback(
+    async (next: VoiceSettingsSourcePreference) => {
+      setPreferredSource(next);
+      setBusy(true);
+      try {
+        const saved = await setVoicePreferredSource(next);
+        setPreferredSource(saved.preferredSource);
+        setMessage(
+          next === "auto"
+            ? "Default set to automatic: use the server when it is configured, otherwise the account copy."
+            : next === "client"
+              ? "Default set to the client / account provider."
+              : "Default set to the attached server."
+        );
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to update the default provider.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    []
+  );
 
   const engineOptions = useMemo(() => {
     const engines = voiceStatus?.tts.engines ?? [];
@@ -219,18 +389,59 @@ export function VoiceSettingsPanel() {
     ];
   }, [voiceStatus]);
 
+  const updateDraft = (patch: Partial<VoiceDraft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+  };
+
   return (
     <>
       <PageIntro title="Voice" />
-      <p className="mb-[18px] max-w-[640px] font-sans text-[13px] leading-[1.5] text-[var(--text-secondary)]">
-        Leave host and key blank to reuse your Cesium Agent provider. Fill these in only
-        when speech should use a different model or service.
+      <p className="mb-[12px] max-w-[640px] font-sans text-[13px] leading-[1.5] text-[var(--text-secondary)]">
+        Client / account settings stay on this device and sync with your signed-in
+        account. Server settings live on the attached engine. Leave host and key
+        blank to reuse your Cesium Agent provider. API keys are sealed with
+        AES-256-GCM before they are stored.
       </p>
       {message ? (
         <div className="mb-[16px]">
           <SettingsCallout tone="info">{message}</SettingsCallout>
         </div>
       ) : null}
+
+      <SettingsSection title="Default provider">
+        <SettingsRow
+          searchId="voice-source-default"
+          title="Which settings to use"
+          description="Automatic uses the server when it has speech configured, otherwise your account copy."
+          trailing={
+            <select
+              className={settingsSelectTriggerClass}
+              value={preferredSource}
+              aria-label="Default voice settings source"
+              disabled={busy}
+              onChange={(event) =>
+                void changePreferredSource(
+                  event.currentTarget.value as VoiceSettingsSourcePreference
+                )
+              }
+            >
+              <option value="auto">Automatic</option>
+              <option value="client">Client / account</option>
+              <option value="server">Server</option>
+            </select>
+          }
+          border={false}
+        />
+      </SettingsSection>
+
+      <ScopeToggle value={scope} onChange={setScope} serverAvailable={serverAvailable} />
+      <p className="mb-[14px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+        {scope === "client"
+          ? "Editing the copy bound to this client and your account. This works even when no server is attached."
+          : serverAvailable
+            ? "Editing the attached server. These values apply to every client that uses this engine."
+            : "The engine is offline. You can inspect this tab, but saves go on Client / account until a server is attached."}
+      </p>
 
       <SettingsSection title="Speech to text">
         <div className="px-[16px] py-[12px] border-b border-[var(--border-subtle)]">
@@ -241,7 +452,9 @@ export function VoiceSettingsPanel() {
                   source: settings.transcription.source,
                   lastFour: settings.transcription.apiKeyLastFour,
                 })
-              : "Loading…"}
+              : scope === "server" && !serverAvailable
+                ? "Server unavailable"
+                : "Loading…"}
           </p>
           <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
             Microphone dictation. Uses your agent provider when these fields are empty.
@@ -250,8 +463,8 @@ export function VoiceSettingsPanel() {
         <VoiceField
           label="Base URL"
           type="url"
-          value={sttBaseUrl}
-          onChange={setSttBaseUrl}
+          value={draft.sttBaseUrl}
+          onChange={(value) => updateDraft({ sttBaseUrl: value })}
           placeholder="https://api.groq.com/openai/v1"
           disabled={busy}
           searchId="transcription-model"
@@ -259,8 +472,8 @@ export function VoiceSettingsPanel() {
         <VoiceField
           label="API key"
           type="password"
-          value={sttApiKey}
-          onChange={setSttApiKey}
+          value={draft.sttApiKey}
+          onChange={(value) => updateDraft({ sttApiKey: value })}
           placeholder={
             settings?.transcription.apiKeyLastFour
               ? `Stored key ends with ${settings.transcription.apiKeyLastFour}`
@@ -270,8 +483,8 @@ export function VoiceSettingsPanel() {
         />
         <VoiceField
           label="Model"
-          value={sttModel}
-          onChange={setSttModel}
+          value={draft.sttModel}
+          onChange={(value) => updateDraft({ sttModel: value })}
           placeholder="whisper-large-v3"
           disabled={busy}
           searchId="transcription-model"
@@ -290,16 +503,16 @@ export function VoiceSettingsPanel() {
           <>
             <VoiceField
               label="Language (optional)"
-              value={sttLanguage}
-              onChange={setSttLanguage}
+              value={draft.sttLanguage}
+              onChange={(value) => updateDraft({ sttLanguage: value })}
               placeholder="en"
               disabled={busy}
               searchId="transcription-language"
             />
             <VoiceField
               label="Prompt (optional)"
-              value={sttPrompt}
-              onChange={setSttPrompt}
+              value={draft.sttPrompt}
+              onChange={(value) => updateDraft({ sttPrompt: value })}
               placeholder="Prefer technical terms and code identifiers"
               disabled={busy}
             />
@@ -314,14 +527,16 @@ export function VoiceSettingsPanel() {
               void savePatch(
                 {
                   transcription: {
-                    baseUrl: sttBaseUrl.trim() || null,
-                    ...(sttApiKey.trim() ? { apiKey: sttApiKey.trim() } : {}),
-                    model: sttModel.trim() || null,
-                    language: sttLanguage.trim() || null,
-                    prompt: sttPrompt.trim() || null,
+                    baseUrl: draft.sttBaseUrl.trim() || null,
+                    ...(draft.sttApiKey.trim() ? { apiKey: draft.sttApiKey.trim() } : {}),
+                    model: draft.sttModel.trim() || null,
+                    language: draft.sttLanguage.trim() || null,
+                    prompt: draft.sttPrompt.trim() || null,
                   },
                 },
-                "Speech-to-text settings saved."
+                scope === "client"
+                  ? "Client speech-to-text settings saved."
+                  : "Server speech-to-text settings saved."
               )
             }
           >
@@ -342,8 +557,8 @@ export function VoiceSettingsPanel() {
         </div>
         <VoiceField
           label="Title generation model"
-          value={titleModel}
-          onChange={setTitleModel}
+          value={draft.titleModel}
+          onChange={(value) => updateDraft({ titleModel: value })}
           placeholder="openai/gpt-oss-20b"
           disabled={busy}
           searchId="title-model"
@@ -355,7 +570,7 @@ export function VoiceSettingsPanel() {
             disabled={busy}
             onClick={() =>
               void savePatch(
-                { titleGeneration: { model: titleModel.trim() || null } },
+                { titleGeneration: { model: draft.titleModel.trim() || null } },
                 "Title generation model saved."
               )
             }
@@ -389,10 +604,10 @@ export function VoiceSettingsPanel() {
           <SettingsFieldLabel>Preferred engine</SettingsFieldLabel>
           <select
             className={settingsSelectTriggerClass}
-            value={ttsEngine}
+            value={draft.ttsEngine}
             aria-label="Preferred TTS engine"
             disabled={busy}
-            onChange={(event) => setTtsEngine(event.currentTarget.value)}
+            onChange={(event) => updateDraft({ ttsEngine: event.currentTarget.value })}
           >
             {engineOptions.map((option) => (
               <option key={option.value || "auto"} value={option.value}>
@@ -417,16 +632,16 @@ export function VoiceSettingsPanel() {
             <VoiceField
               label="Remote TTS base URL"
               type="url"
-              value={ttsBaseUrl}
-              onChange={setTtsBaseUrl}
+              value={draft.ttsBaseUrl}
+              onChange={(value) => updateDraft({ ttsBaseUrl: value })}
               placeholder="https://api.openai.com/v1"
               disabled={busy}
             />
             <VoiceField
               label="Remote TTS API key"
               type="password"
-              value={ttsApiKey}
-              onChange={setTtsApiKey}
+              value={draft.ttsApiKey}
+              onChange={(value) => updateDraft({ ttsApiKey: value })}
               placeholder={
                 settings?.tts.openaiCompat.apiKeyLastFour
                   ? `Stored key ends with ${settings.tts.openaiCompat.apiKeyLastFour}`
@@ -436,15 +651,15 @@ export function VoiceSettingsPanel() {
             />
             <VoiceField
               label="Remote TTS model"
-              value={ttsModel}
-              onChange={setTtsModel}
+              value={draft.ttsModel}
+              onChange={(value) => updateDraft({ ttsModel: value })}
               placeholder="tts-1"
               disabled={busy}
             />
             <VoiceField
               label="Remote TTS voice"
-              value={ttsVoice}
-              onChange={setTtsVoice}
+              value={draft.ttsVoice}
+              onChange={(value) => updateDraft({ ttsVoice: value })}
               placeholder="alloy"
               disabled={busy}
             />
@@ -459,12 +674,12 @@ export function VoiceSettingsPanel() {
               void savePatch(
                 {
                   tts: {
-                    engine: ttsEngine.trim() || null,
+                    engine: draft.ttsEngine.trim() || null,
                     openaiCompat: {
-                      baseUrl: ttsBaseUrl.trim() || null,
-                      ...(ttsApiKey.trim() ? { apiKey: ttsApiKey.trim() } : {}),
-                      model: ttsModel.trim() || null,
-                      voice: ttsVoice.trim() || null,
+                      baseUrl: draft.ttsBaseUrl.trim() || null,
+                      ...(draft.ttsApiKey.trim() ? { apiKey: draft.ttsApiKey.trim() } : {}),
+                      model: draft.ttsModel.trim() || null,
+                      voice: draft.ttsVoice.trim() || null,
                     },
                   },
                 },
@@ -509,16 +724,16 @@ export function VoiceSettingsPanel() {
             <VoiceField
               label="Base URL"
               type="url"
-              value={controllerBaseUrl}
-              onChange={setControllerBaseUrl}
+              value={draft.controllerBaseUrl}
+              onChange={(value) => updateDraft({ controllerBaseUrl: value })}
               placeholder="https://infer.example.com/v1"
               disabled={busy}
             />
             <VoiceField
               label="API key"
               type="password"
-              value={controllerApiKey}
-              onChange={setControllerApiKey}
+              value={draft.controllerApiKey}
+              onChange={(value) => updateDraft({ controllerApiKey: value })}
               placeholder={
                 settings?.controller.apiKeyLastFour
                   ? `Stored key ends with ${settings.controller.apiKeyLastFour}`
@@ -528,8 +743,8 @@ export function VoiceSettingsPanel() {
             />
             <VoiceField
               label="Model"
-              value={controllerModel}
-              onChange={setControllerModel}
+              value={draft.controllerModel}
+              onChange={(value) => updateDraft({ controllerModel: value })}
               placeholder="kimi-k3"
               disabled={busy}
             />
@@ -544,9 +759,11 @@ export function VoiceSettingsPanel() {
               void savePatch(
                 {
                   controller: {
-                    baseUrl: controllerBaseUrl.trim() || null,
-                    ...(controllerApiKey.trim() ? { apiKey: controllerApiKey.trim() } : {}),
-                    model: controllerModel.trim() || null,
+                    baseUrl: draft.controllerBaseUrl.trim() || null,
+                    ...(draft.controllerApiKey.trim()
+                      ? { apiKey: draft.controllerApiKey.trim() }
+                      : {}),
+                    model: draft.controllerModel.trim() || null,
                   },
                 },
                 "Voice controller settings saved."
@@ -585,17 +802,20 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Stored overrides">
         <div className="flex flex-col gap-[10px] px-[16px] py-[14px]">
           <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            Clearing stored settings falls back to the Cesium Agent provider and any
-            voice environment variables still set on the server.
+            {scope === "client"
+              ? "Clearing the client copy removes account-bound speech overrides on this device."
+              : "Clearing stored server settings falls back to the Cesium Agent provider and any voice environment variables still set on the engine."}
           </p>
           <div>
             <button
               type="button"
               className={rowButtonClass}
               disabled={busy}
-              onClick={() => void clearAllStored()}
+              onClick={() => void clearActiveStored()}
             >
-              Remove stored voice settings
+              {scope === "client"
+                ? "Remove client voice settings"
+                : "Remove stored server voice settings"}
             </button>
           </div>
         </div>

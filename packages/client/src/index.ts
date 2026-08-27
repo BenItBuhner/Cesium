@@ -32,6 +32,8 @@ export * from "./global-settings";
 export * from "./aurora-settings";
 export * from "./rail-fetch";
 export * from "./server-api";
+export * from "./voice-client-settings";
+export * from "./secret-wrapping-key";
 export * from "./update-status";
 export * from "./preferences";
 export * from "./preferences-dom";

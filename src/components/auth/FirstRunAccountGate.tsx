@@ -125,6 +125,7 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
           )}
           <button
             type="button"
+            aria-label="Continue as guest"
             onClick={() => {
               dismissFirstRunAccount("guest");
               setDismissed(true);

@@ -13,6 +13,7 @@ import type * as context from "../context.js";
 import type * as lib_identity from "../lib/identity.js";
 import type * as onboarding from "../onboarding.js";
 import type * as preferences from "../preferences.js";
+import type * as secrets from "../secrets.js";
 import type * as servers from "../servers.js";
 import type * as snapshots from "../snapshots.js";
 
@@ -28,6 +29,7 @@ declare const fullApi: ApiFromModules<{
   "lib/identity": typeof lib_identity;
   onboarding: typeof onboarding;
   preferences: typeof preferences;
+  secrets: typeof secrets;
   servers: typeof servers;
   snapshots: typeof snapshots;
 }>;

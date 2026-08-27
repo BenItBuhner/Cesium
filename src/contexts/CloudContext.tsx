@@ -20,13 +20,16 @@ import {
 } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import {
+  applyCloudVoiceSecrets,
   clientKeyValueStore,
   getClientPlatform,
   getConfiguredServerBaseUrl,
   getStoredSessionToken,
+  getVoiceSecretsForCloud,
   readStoredServerConnectionsState,
   SERVER_CONNECTIONS_EVENT,
   setStoredSessionToken,
+  VOICE_CLIENT_SETTINGS_EVENT,
   writeStoredServerConnectionsState,
   isCesiumAccountSiteUrl,
   type RendezvousLocator,
@@ -112,6 +115,7 @@ export type CloudBootstrap = {
   };
   servers: CloudServer[];
   preferencesPayload: string | null;
+  secrets: Array<{ kind: string; payload: string; updatedAt: number }>;
   agentPrefs: Array<{
     backendId: string;
     enabled: boolean;
@@ -139,6 +143,7 @@ export type CloudActions = {
   }): Promise<void>;
   removeServer(input: CloudServerRemoval): Promise<void>;
   savePreferences(payload: string): Promise<void>;
+  saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
   saveAgentPref(input: {
     backendId: string;
     enabled: boolean;
@@ -331,6 +336,7 @@ function CloudBridge({
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
   const savePreferencesMutation = useMutation(api.preferences.save);
+  const saveSecretMutation = useMutation(api.secrets.save);
   const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
@@ -357,6 +363,9 @@ function CloudBridge({
       async savePreferences(payload) {
         await savePreferencesMutation({ ...identityArgs, payload });
       },
+      async saveSecret(input) {
+        await saveSecretMutation({ ...identityArgs, ...input });
+      },
       async saveAgentPref(input) {
         await saveAgentPrefMutation({ ...identityArgs, ...input });
       },
@@ -380,6 +389,7 @@ function CloudBridge({
       removeServerMutation,
       saveAgentPrefMutation,
       savePreferencesMutation,
+      saveSecretMutation,
       saveServerMutation,
       updateOnboardingMutation,
     ]
@@ -398,6 +408,7 @@ function CloudBridge({
       void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
     }
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
+    applyCloudVoiceSecrets(bootstrap.secrets ?? []);
     const adopted = adoptOnboardingForAccount(bootstrap.user.key);
     writeOnboardingState(
       mergeOnboardingState(adopted, bootstrap.onboarding),
@@ -459,6 +470,19 @@ function CloudBridge({
     };
     pushLocalServers();
     return getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, pushLocalServers);
+  }, [active, actions]);
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const pushVoiceSecrets = () => {
+      for (const record of getVoiceSecretsForCloud()) {
+        void actions.saveSecret(record).catch(() => undefined);
+      }
+    };
+    pushVoiceSecrets();
+    return getClientPlatform().addEventListener(VOICE_CLIENT_SETTINGS_EVENT, pushVoiceSecrets);
   }, [active, actions]);
 
   const status: CloudStatus = !authReady

@@ -1,7 +1,10 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { readFileSync } from "node:fs";
+import { isSecretEnvelope, secretLastFour } from "@cesium/core";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+import { openSecretSync, sealSecretSync } from "./secret-envelope-node.js";
+import { getSecretWrappingKeySync } from "./secret-wrapping-key.js";
 
 /**
  * User-facing voice / speech settings that used to live only in env vars
@@ -130,6 +133,116 @@ function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+const API_KEY_PURPOSES = {
+  transcription: "voice.transcription.apiKey",
+  tts: "voice.tts.apiKey",
+  controller: "voice.controller.apiKey",
+} as const;
+
+function sealApiKey(value: string | undefined, purpose: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (isSecretEnvelope(trimmed)) {
+    return trimmed;
+  }
+  return sealSecretSync(trimmed, getSecretWrappingKeySync(), purpose);
+}
+
+function openApiKey(value: string | undefined, purpose: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (!isSecretEnvelope(trimmed)) {
+    return trimmed;
+  }
+  return openSecretSync(trimmed, getSecretWrappingKeySync(), purpose) ?? undefined;
+}
+
+function sealStoredSettings(settings: VoiceSpeechSettings): VoiceSpeechSettings {
+  return {
+    ...settings,
+    ...(settings.transcription
+      ? {
+          transcription: {
+            ...settings.transcription,
+            ...(settings.transcription.apiKey
+              ? { apiKey: sealApiKey(settings.transcription.apiKey, API_KEY_PURPOSES.transcription) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(settings.tts?.openaiCompat
+      ? {
+          tts: {
+            ...settings.tts,
+            openaiCompat: {
+              ...settings.tts.openaiCompat,
+              ...(settings.tts.openaiCompat.apiKey
+                ? { apiKey: sealApiKey(settings.tts.openaiCompat.apiKey, API_KEY_PURPOSES.tts) }
+                : {}),
+            },
+          },
+        }
+      : settings.tts
+        ? { tts: settings.tts }
+        : {}),
+    ...(settings.controller
+      ? {
+          controller: {
+            ...settings.controller,
+            ...(settings.controller.apiKey
+              ? { apiKey: sealApiKey(settings.controller.apiKey, API_KEY_PURPOSES.controller) }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function openStoredSettings(settings: VoiceSpeechSettings): VoiceSpeechSettings {
+  return {
+    ...settings,
+    ...(settings.transcription
+      ? {
+          transcription: {
+            ...settings.transcription,
+            ...(settings.transcription.apiKey
+              ? { apiKey: openApiKey(settings.transcription.apiKey, API_KEY_PURPOSES.transcription) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(settings.tts?.openaiCompat
+      ? {
+          tts: {
+            ...settings.tts,
+            openaiCompat: {
+              ...settings.tts.openaiCompat,
+              ...(settings.tts.openaiCompat.apiKey
+                ? { apiKey: openApiKey(settings.tts.openaiCompat.apiKey, API_KEY_PURPOSES.tts) }
+                : {}),
+            },
+          },
+        }
+      : settings.tts
+        ? { tts: settings.tts }
+        : {}),
+    ...(settings.controller
+      ? {
+          controller: {
+            ...settings.controller,
+            ...(settings.controller.apiKey
+              ? { apiKey: openApiKey(settings.controller.apiKey, API_KEY_PURPOSES.controller) }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 function pickOptionalStrings<K extends string>(
   record: Record<string, unknown> | null,
   keys: readonly K[]
@@ -222,12 +335,17 @@ export function invalidateVoiceSpeechSettingsCache(): void {
   syncCache = undefined;
 }
 
+function hydrateStored(raw: unknown): VoiceSpeechSettings | null {
+  const settings = normalizeSettings(raw);
+  return settings ? openStoredSettings(settings) : null;
+}
+
 function readStoredSync(): VoiceSpeechSettings | null {
   if (syncCache !== undefined) {
     return syncCache;
   }
   try {
-    const settings = normalizeSettings(JSON.parse(readFileSync(SETTINGS_FILE, "utf8")));
+    const settings = hydrateStored(JSON.parse(readFileSync(SETTINGS_FILE, "utf8")));
     syncCache = settings;
     return settings;
   } catch {
@@ -241,7 +359,7 @@ export function getStoredVoiceSpeechSettingsSync(): VoiceSpeechSettings | null {
 }
 
 async function readStored(): Promise<VoiceSpeechSettings | null> {
-  const stored = normalizeSettings(await readJsonFile<unknown>(SETTINGS_FILE, null));
+  const stored = hydrateStored(await readJsonFile<unknown>(SETTINGS_FILE, null));
   setSyncCache(stored);
   return stored;
 }
@@ -393,7 +511,7 @@ function credentialPublic(input: {
     source,
     ...(input.baseUrl.value ? { baseUrl: input.baseUrl.value } : {}),
     ...(input.model.value ? { model: input.model.value } : {}),
-    ...(input.apiKey.value ? { apiKeyLastFour: input.apiKey.value.slice(-4) } : {}),
+    ...(input.apiKey.value ? { apiKeyLastFour: secretLastFour(input.apiKey.value) } : {}),
     ...(input.baseUrl.source ? { baseUrlSource: input.baseUrl.source } : {}),
     ...(input.model.source ? { modelSource: input.model.source } : {}),
     ...(input.apiKey.source ? { apiKeySource: input.apiKey.source } : {}),
@@ -490,7 +608,7 @@ export async function saveVoiceSpeechSettings(
     await deleteVoiceSpeechSettings();
     return { schemaVersion: 1, updatedAt: Date.now() };
   }
-  await writeJsonFile(SETTINGS_FILE, next);
+  await writeJsonFile(SETTINGS_FILE, sealStoredSettings(next));
   setSyncCache(next);
   return next;
 }
