@@ -49,6 +49,7 @@ import {
   timeoutSignal,
   type ServerProbeResult,
 } from "../server-connection-health";
+import { assertEngineServerUrlAllowed } from "../engine-url-policy";
 import { clientLocation, getClientPlatform } from "../platform";
 
 type ServerConnectionsContextValue = {
@@ -493,6 +494,8 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   }, []);
 
   const saveServer = useCallback((input: { id?: string; label?: string; baseUrl: string }) => {
+    const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
+    assertEngineServerUrlAllowed(normalizedBaseUrl);
     let savedServer: ServerConnection | null = null;
     setState((current) => {
       const next = upsertServerConnection(current, input);

@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
-import { assertEngineConnectionAllowed } from "@cesium/client";
+import { assertEngineConnectionAllowed, assertEngineServerUrlAllowed } from "@cesium/client";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
   setStoredSessionToken,
@@ -70,6 +70,7 @@ export function ServerConnectionsManager({
     setSavePending(true);
     setFormError(null);
     try {
+      assertEngineServerUrlAllowed(baseUrl);
       const probe = await probeServer(baseUrl);
       if (probe.ok) {
         assertEngineConnectionAllowed({
