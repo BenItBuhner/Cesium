@@ -95,21 +95,31 @@ export function ServerPickerPopover({
     const update = () => {
       const rect = anchorRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const viewportPad = 8;
-      const gap = 6;
-      const width = Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2));
+      const viewportPad = 10;
+      const gap = 8;
+      const visual = window.visualViewport;
+      const viewTop = visual?.offsetTop ?? 0;
+      const viewLeft = visual?.offsetLeft ?? 0;
+      const viewWidth = visual?.width ?? window.innerWidth;
+      const viewHeight = visual?.height ?? window.innerHeight;
+      const viewBottom = viewTop + viewHeight;
+      const layoutBottomInset = Math.max(0, window.innerHeight - viewBottom);
+      const width = Math.min(320, Math.max(0, viewWidth - viewportPad * 2));
       const left = Math.max(
-        viewportPad,
-        Math.min(rect.left, window.innerWidth - width - viewportPad)
+        viewLeft + viewportPad,
+        Math.min(rect.left, viewLeft + viewWidth - width - viewportPad)
       );
       if (placement === "above") {
-        const bottom = Math.max(viewportPad, window.innerHeight - rect.top + gap);
-        const maxHeight = Math.max(160, rect.top - gap - viewportPad);
+        const bottom = Math.max(
+          viewportPad + layoutBottomInset,
+          window.innerHeight - rect.top + gap
+        );
+        const maxHeight = Math.max(160, rect.top - gap - viewTop - viewportPad);
         setPopoverPos({ bottom, left, width, maxHeight });
         return;
       }
-      const top = rect.bottom + gap;
-      const maxHeight = Math.max(160, window.innerHeight - top - viewportPad);
+      const top = Math.max(viewTop + viewportPad, rect.bottom + gap);
+      const maxHeight = Math.max(160, viewBottom - top - viewportPad);
       setPopoverPos({ top, left, width, maxHeight });
     };
     update();
@@ -120,10 +130,14 @@ export function ServerPickerPopover({
     }
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
+    window.visualViewport?.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("scroll", update);
     return () => {
       resizeObserver?.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
+      window.visualViewport?.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("scroll", update);
     };
   }, [anchorRef, connectOpen, open, placement, renamingId, servers.length, variant]);
 
