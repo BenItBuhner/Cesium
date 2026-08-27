@@ -22,16 +22,20 @@ export function compareConversationsByRecency<T extends { updatedAt: number; tit
  * of recency and custom drag orders alike (a new prompt unsettles the row and
  * restores its normal placement).
  */
-export function sinkSettledConversations<T extends { settledAt?: number | null }>(
-  conversations: T[]
-): T[] {
-  if (!conversations.some((conversation) => conversation.settledAt != null)) {
+export function sinkSettledConversations<
+  T extends { settledAt?: number | null; settledUntil?: number | null },
+>(conversations: T[]): T[] {
+  const now = Date.now();
+  const isSettled = (conversation: T) =>
+    conversation.settledAt != null &&
+    (conversation.settledUntil == null || conversation.settledUntil > now);
+  if (!conversations.some(isSettled)) {
     return conversations;
   }
   const unsettled: T[] = [];
   const settled: T[] = [];
   for (const conversation of conversations) {
-    (conversation.settledAt != null ? settled : unsettled).push(conversation);
+    (isSettled(conversation) ? settled : unsettled).push(conversation);
   }
   return [...unsettled, ...settled];
 }

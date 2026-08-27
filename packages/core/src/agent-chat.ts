@@ -5449,6 +5449,26 @@ export function buildConversationModelOptions(
 }
 
 /**
+ * Sentinel shown when no connected server/backend can provide a model catalog
+ * (fresh account, engine offline). Composers must never fall back to a fake
+ * catalog entry: with this sentinel the model picker renders empty and the
+ * user is pushed toward connecting a server instead.
+ */
+export const NO_MODEL_ID = "__cesium-no-model__";
+
+export const NO_MODEL_PLACEHOLDER: ModelInfo = {
+  id: NO_MODEL_ID,
+  name: "No model",
+  provider: "auto",
+};
+
+export function isNoModelPlaceholder(
+  model: ModelInfo | null | undefined
+): boolean {
+  return model?.id === NO_MODEL_ID;
+}
+
+/**
  * Draft helpers are pure functions of the backend object (and visibility map),
  * but callers derive them inside render-path memos whose dependencies churn
  * under load (session folds, record pushes). Formatting a large model catalog

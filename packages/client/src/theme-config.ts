@@ -28,6 +28,17 @@ export type CustomThemeEntry = {
 /** How file-edit tool results render in the agent transcript. */
 export type EditDiffRenderingMode = "full" | "counts";
 
+/**
+ * Docked chat composer density.
+ * `concise` keeps attach/model/send on one row until the text wraps.
+ * `detailed` always stacks those controls under the text field.
+ */
+export type ComposerLayoutDensity = "concise" | "detailed";
+
+export function normalizeComposerLayoutDensity(raw: unknown): ComposerLayoutDensity {
+  return raw === "detailed" ? "detailed" : "concise";
+}
+
 /** Min/max for expanded worked-session tool-call list height in chat (px). */
 export const TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX = 120;
 export const TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX = 800;
@@ -72,6 +83,11 @@ export type ThemeConfig = {
   showToolCallIcons: boolean;
   /** Max height of expanded worked-session tool-call dropdown bodies in chat (px). */
   toolCallDropdownMaxHeightPx: number;
+  /**
+   * Docked composer: concise (default, single-row until wrap) or detailed
+   * (always stacked, controls under the text field).
+   */
+  composerLayout: ComposerLayoutDensity;
 };
 
 export function createDefaultThemeConfig(): ThemeConfig {
@@ -86,6 +102,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     longPasteReferencesEnabled: true,
     showToolCallIcons: false,
     toolCallDropdownMaxHeightPx: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
+    composerLayout: "concise",
   };
 }
 
@@ -157,6 +174,7 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     toolCallDropdownMaxHeightPx: normalizeToolCallDropdownMaxHeightPx(
       r.toolCallDropdownMaxHeightPx
     ),
+    composerLayout: normalizeComposerLayoutDensity(r.composerLayout),
   };
 }
 

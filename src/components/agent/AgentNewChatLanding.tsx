@@ -119,7 +119,8 @@ export function AgentNewChatLanding({
     groups,
     refreshConversationGroups,
     setStandaloneDraftActive,
-    setRailFilterToggle,
+    railFilters,
+    setRailFilters,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
@@ -174,7 +175,13 @@ export function AgentNewChatLanding({
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
       if (activeCloudDevice) {
-        setRailFilterToggle("cloud", false);
+        // Leaving the cloud device view: stop hiding local conversations.
+        setRailFilters({
+          ...railFilters,
+          hiddenEnvironments: railFilters.hiddenEnvironments.filter(
+            (key) => key !== "local"
+          ),
+        });
       }
       setActiveCloudDeviceId(null);
       if (serverId === activeServer.id) {
@@ -203,9 +210,10 @@ export function AgentNewChatLanding({
       activeWorkspaceId,
       directoryByServerId,
       openWorkspaceById,
+      railFilters,
       setActiveCloudDeviceId,
       setActiveServer,
-      setRailFilterToggle,
+      setRailFilters,
     ]
   );
 
@@ -715,7 +723,13 @@ export function AgentNewChatLanding({
         selectedCloudDeviceId={activeCloudDevice?.id ?? null}
         onSelectCloudDevice={(cloudDeviceId) => {
           setActiveCloudDeviceId(cloudDeviceId);
-          setRailFilterToggle("cloud", true);
+          // Cloud device view narrows the rail to cloud executions.
+          setRailFilters({
+            ...railFilters,
+            hiddenEnvironments: railFilters.hiddenEnvironments.includes("local")
+              ? railFilters.hiddenEnvironments
+              : [...railFilters.hiddenEnvironments, "local"],
+          });
           setDevicePickerOpen(false);
         }}
       />

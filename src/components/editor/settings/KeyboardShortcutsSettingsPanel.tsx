@@ -14,7 +14,6 @@ import {
   SHORTCUT_COMMAND_DEFINITIONS,
   type ShortcutCommandSection,
   type ShortcutPlatform,
-  type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import {
   PageIntro,
@@ -23,7 +22,6 @@ import {
   SettingsSection,
   rowButtonClass,
 } from "@/components/editor/settings-ui";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { panelSearchInputClass } from "./shared";
 
 const SECTION_ORDER: ShortcutCommandSection[] = [
@@ -198,7 +196,6 @@ export function KeyboardShortcutsSettingsPanel() {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const platform = useMemo(() => detectShortcutPlatform(), []);
   const bindings = settings.keyboardShortcuts.bindings;
-  const voiceInputMode = settings.keyboardShortcuts.voiceInputMode;
   const [shortcutQuery, setShortcutQuery] = useState("");
 
   useEffect(() => {
@@ -294,19 +291,6 @@ export function KeyboardShortcutsSettingsPanel() {
     });
   }, []);
 
-  const setVoiceInputMode = useCallback(
-    (mode: VoiceInputMode) => {
-      updateSettings((current) => ({
-        ...current,
-        keyboardShortcuts: {
-          ...current.keyboardShortcuts,
-          voiceInputMode: mode,
-        },
-      }));
-    },
-    [updateSettings]
-  );
-
   return (
     <>
       <PageIntro title="Keyboard shortcuts" />
@@ -386,38 +370,11 @@ export function KeyboardShortcutsSettingsPanel() {
                     }
                   />
                   {isVoiceCommand && (
-                    <div className="flex items-center justify-between border-t border-[var(--border-subtle)] px-[16px] py-[10px]">
-                      <span className="font-sans text-[12px] text-[var(--text-secondary)]">
-                        Recording mode
-                      </span>
-                      <div className="flex items-center gap-[8px]">
-                        <span
-                          className={`font-sans text-[12px] ${
-                            voiceInputMode === "toggle"
-                              ? "text-[var(--text-primary)]"
-                              : "text-[var(--text-disabled)]"
-                          }`}
-                        >
-                          Toggle
-                        </span>
-                        <ToggleSwitch
-                          checked={voiceInputMode === "hold"}
-                          onChange={(isHold) =>
-                            setVoiceInputMode(isHold ? "hold" : "toggle")
-                          }
-                          size="sm"
-                          variant="green"
-                        />
-                        <span
-                          className={`font-sans text-[12px] ${
-                            voiceInputMode === "hold"
-                              ? "text-[var(--text-primary)]"
-                              : "text-[var(--text-disabled)]"
-                          }`}
-                        >
-                          Hold
-                        </span>
-                      </div>
+                    <div className="border-t border-[var(--border-subtle)] px-[16px] py-[10px]">
+                      <p className="font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+                        Press once to keep recording until you press again. Hold
+                        the shortcut to record until you let go.
+                      </p>
                     </div>
                   )}
                 </div>

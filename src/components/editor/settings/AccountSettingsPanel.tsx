@@ -22,6 +22,7 @@ import {
 import { useOptionalAuth } from "@/components/auth/AuthProvider";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -258,8 +259,16 @@ function CloudAccountSection() {
 
 function ServerSessionSection() {
   const auth = useOptionalAuth();
+  const cloud = useCloudContext();
 
   if (!auth || !auth.enabled) {
+    // Engine password sessions (OPENCURSOR_AUTH_*) are the local-only account
+    // mechanism. Cloud-backed deployments authenticate through the cloud
+    // account instead (Clerk sign-in, enforced at the network boundary in
+    // production), so never advertise the env vars there.
+    if (cloud.mode !== "disabled") {
+      return null;
+    }
     return (
       <SettingsSection title="Server session">
         <SettingsRow
@@ -477,6 +486,7 @@ function ActiveServerSection() {
  * local-first builds show local mode, production builds show real sign-in.
  */
 export function AccountSettingsPanel() {
+  const { engineConnected } = useSettingsEngineAvailability();
   return (
     <>
       <PageIntro title="Account" />
@@ -484,12 +494,12 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
-      <ServerSessionSection />
+      {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />
       <SettingsCallout className="px-[2px]">
         Account and session state vary by deployment: local-first builds keep
-        everything on this device, while production builds add cloud sign-in and
-        password-protected servers.
+        everything on this device and can protect engines with a password
+        session, while production builds sign in through your cloud account.
       </SettingsCallout>
     </>
   );

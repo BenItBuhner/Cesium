@@ -21,11 +21,8 @@ export type ShortcutCommandDefinition = {
 
 export type KeyboardShortcutBindingsMap = Record<string, string[]>;
 
-export type VoiceInputMode = "hold" | "toggle";
-
 export type KeyboardShortcutsSettingsState = {
   bindings: KeyboardShortcutBindingsMap;
-  voiceInputMode: VoiceInputMode;
 };
 
 export type ParsedShortcutStep = {
@@ -404,7 +401,6 @@ export const DEFAULT_KEYBOARD_SHORTCUT_BINDINGS: KeyboardShortcutBindingsMap =
 export function createDefaultKeyboardShortcutsState(): KeyboardShortcutsSettingsState {
   return {
     bindings: { ...DEFAULT_KEYBOARD_SHORTCUT_BINDINGS },
-    voiceInputMode: "toggle",
   };
 }
 
@@ -612,14 +608,7 @@ export function normalizeKeyboardShortcutsState(
     )
     : normalizeShortcutBindingsMap(raw);
 
-  const rawMode =
-    raw && typeof raw === "object" && "voiceInputMode" in raw
-    ? (raw as { voiceInputMode?: unknown }).voiceInputMode
-    : undefined;
-  const voiceInputMode: VoiceInputMode =
-    rawMode === "hold" ? "hold" : "toggle";
-
-  return { bindings, voiceInputMode };
+  return { bindings };
 }
 
 export function getShortcutBindingsForCommand(
@@ -870,6 +859,26 @@ export function getShortcutDisplayForCommand(
   );
 }
 
+export function eventMatchesVoiceShortcutRelease(
+  event: KeyboardEvent,
+  bindings: KeyboardShortcutBindingsMap | undefined,
+  platform: ShortcutPlatform
+): boolean {
+  const voiceBindings = getShortcutBindingsForCommand(
+    bindings,
+    "chat.action.toggleVoiceInput"
+  );
+  for (const bindingStr of voiceBindings) {
+    const parsed = parseShortcutBinding(bindingStr);
+    if (!parsed || parsed.length !== 1) continue;
+    const step = parsed[0];
+    if (step && matchesShortcutStep(event, step, platform)) {
+      return true;
+    }
+  }
+  return event.key === "Meta" || event.key === "Control";
+}
+
 const CHORD_TIMEOUT_MS = 1200;
 
 export type ShortcutChordState = {
@@ -969,3 +978,15 @@ export function tryDispatchKeyboardShortcut(options: {
 
   return false;
 }
+
+export {
+  VOICE_SHORTCUT_HOLD_MS,
+  applyVoiceShortcutKeyDown,
+  applyVoiceShortcutKeyUp,
+  createVoiceShortcutGestureState,
+} from "./voice-shortcut-gesture";
+export type {
+  VoiceShortcutGestureState,
+  VoiceShortcutKeyDownAction,
+  VoiceShortcutKeyUpAction,
+} from "./voice-shortcut-gesture";

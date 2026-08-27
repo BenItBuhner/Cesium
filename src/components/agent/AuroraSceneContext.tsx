@@ -25,7 +25,7 @@ const DEFAULT_SCENE: AuroraScene = { mood: "idle", placement: "top" };
 /**
  * Bridges the conversation pane (which derives the aurora mood/placement from
  * live conversation state) to a shell-level backdrop that spans the whole
- * window behind the rail, center pane, and editor panels.
+ * window behind the rail, center pane, editor panels, and settings.
  *
  * When no provider is mounted (e.g. surfaces outside the desktop shell), the
  * pane falls back to rendering its own pane-local backdrop.

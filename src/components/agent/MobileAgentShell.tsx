@@ -58,9 +58,6 @@ import {
 
 type SwipeAction = AgentShellSwipeAction;
 
-/** Gaussian smear applied to the chat while the workbench pane covers it. */
-const RIGHT_PANE_BACKDROP_BLUR_PX = 18;
-
 type ActiveGesture = {
   touchId: number;
   startX: number;
@@ -102,10 +99,10 @@ export function MobileAgentShell({
   children: ReactNode;
 }) {
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const sceneRef = useRef<HTMLDivElement | null>(null);
   const leftDrawerRef = useRef<HTMLDivElement | null>(null);
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const rightPaneRef = useRef<HTMLDivElement | null>(null);
+  const rightScrimRef = useRef<HTMLDivElement | null>(null);
 
   // The rail is heavy, so it mounts only while visible (parity with the old
   // shell); the right pane stays permanently mounted exactly as before.
@@ -155,17 +152,13 @@ export function MobileAgentShell({
       pane.style.visibility = progress <= 0.001 ? "hidden" : "visible";
       pane.style.pointerEvents = progress >= 0.999 ? "auto" : "none";
     }
-    // Backdrop-filter on a transformed overlay is unreliable (WebKit +
-    // overflow-clip ancestors + compositor promotion). Blurring the chat
-    // itself is what actually frosts the pixels the pane covers.
-    const scene = sceneRef.current;
-    if (scene) {
-      if (progress <= 0.001) {
-        scene.style.filter = "none";
-      } else {
-        const blurPx = (progress * RIGHT_PANE_BACKDROP_BLUR_PX).toFixed(1);
-        scene.style.filter = `blur(${blurPx}px)`;
-      }
+    // Same backdrop treatment as the left rail: a dimming scrim fades in
+    // behind the pane, and the pane's own backdrop-filter frost (shared
+    // `.mobile-*-drawer-surface` material) samples that dimmed chat.
+    const scrim = rightScrimRef.current;
+    if (scrim) {
+      scrim.style.opacity = String(progress);
+      scrim.style.pointerEvents = progress > 0.05 ? "auto" : "none";
     }
   }, []);
 
@@ -473,15 +466,7 @@ export function MobileAgentShell({
     // would otherwise create horizontal scrollable overflow that focus/scroll
     // heuristics can drag the whole shell sideways into.
     <div ref={shellRef} className="absolute inset-0 overflow-clip">
-      <div
-        ref={sceneRef}
-        className="absolute inset-0"
-        style={{
-          filter: rightOpen ? `blur(${RIGHT_PANE_BACKDROP_BLUR_PX}px)` : "none",
-        }}
-      >
-        {children}
-      </div>
+      <div className="absolute inset-0">{children}</div>
 
       {leftMounted ? (
         <>
@@ -506,6 +491,15 @@ export function MobileAgentShell({
         </>
       ) : null}
 
+      <div
+        ref={rightScrimRef}
+        className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
+        style={{
+          opacity: rightOpen ? 1 : 0,
+          pointerEvents: rightOpen ? "auto" : "none",
+        }}
+        onClick={() => setRightOpen(false)}
+      />
       <div
         ref={rightPaneRef}
         data-mobile-drawer="right"

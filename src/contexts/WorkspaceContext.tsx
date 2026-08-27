@@ -83,7 +83,7 @@ import {
   SETUP_ROUTE,
   wasFirstServerNoticeDismissed,
 } from "@/lib/onboarding/workspace-errors";
-import { currentModel } from "@/lib/mock-data";
+import { NO_MODEL_PLACEHOLDER } from "@/lib/agent-chat";
 
 /** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s - a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
 const HEARTBEAT_INTERVAL_MS = 10_000;
@@ -250,7 +250,9 @@ type WorkspaceContextValue = {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function createSessionDefaults(): WorkspaceSessionState {
-  return createDefaultWorkspaceSession([], currentModel);
+  // No fake default model: a fresh session shows an empty model picker until
+  // a connected server's backend catalog resolves a real one.
+  return createDefaultWorkspaceSession([], NO_MODEL_PLACEHOLDER);
 }
 
 function readWindowLocationContext(): {

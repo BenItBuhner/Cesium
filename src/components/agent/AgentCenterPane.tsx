@@ -40,6 +40,7 @@ import {
   buildDraftModelOptionsForBackend,
   extractComposerUserMessageHistory,
   latestGoalProgressStatus,
+  NO_MODEL_PLACEHOLDER,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
@@ -380,14 +381,15 @@ export function AgentCenterPane() {
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
     [backends, workspaceSession.chat.backendId]
   );
+  // No backend = no model catalog. The persisted session model must not leak
+  // into the picker as a fake selectable entry.
   const draftModels = useMemo(
-    () =>
-      draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : [workspaceSession.chat.model],
-    [draftBackend, workspaceSession.chat.model]
+    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : []),
+    [draftBackend]
   );
   const draftModel = useMemo(() => {
     if (!draftBackend) {
-      return workspaceSession.chat.model;
+      return NO_MODEL_PLACEHOLDER;
     }
     return (
       resolveLastUsedDraftModel(workspaceSession.chat, draftBackend, draftModels) ??

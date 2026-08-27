@@ -51,51 +51,57 @@ export function usePluginsMcpNavigation() {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
 
   const mcpsOpen = workspaceSession.settingsView.mcpsOpen === true;
+  const pluginsCatalogOpen = workspaceSession.settingsView.pluginsCatalogOpen === true;
+
+  const setPluginsSubview = useCallback(
+    (subview: "hub" | "mcp" | "catalog", activeNav = "plugins") => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav,
+          mcpsOpen: subview === "mcp",
+          pluginsCatalogOpen: subview === "catalog",
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
 
   const openMcpServers = useCallback(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: {
-        ...current.settingsView,
-        activeNav: "plugins",
-        mcpsOpen: true,
-      },
-    }));
-  }, [updateWorkspaceSession]);
+    setPluginsSubview("mcp");
+  }, [setPluginsSubview]);
 
   const closeMcpServers = useCallback(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: {
-        ...current.settingsView,
-        mcpsOpen: false,
-      },
-    }));
-  }, [updateWorkspaceSession]);
+    setPluginsSubview("hub");
+  }, [setPluginsSubview]);
+
+  const openPluginsCatalog = useCallback(() => {
+    setPluginsSubview("catalog");
+  }, [setPluginsSubview]);
+
+  const closePluginsCatalog = useCallback(() => {
+    setPluginsSubview("hub");
+  }, [setPluginsSubview]);
 
   const openRulesSkills = useCallback(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: {
-        ...current.settingsView,
-        activeNav: "rulesSkills",
-        mcpsOpen: false,
-      },
-    }));
-  }, [updateWorkspaceSession]);
+    setPluginsSubview("hub", "rulesSkills");
+  }, [setPluginsSubview]);
 
   const openExtensions = useCallback(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: {
-        ...current.settingsView,
-        activeNav: "extensions",
-        mcpsOpen: false,
-      },
-    }));
-  }, [updateWorkspaceSession]);
+    setPluginsSubview("hub", "extensions");
+  }, [setPluginsSubview]);
 
-  return { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills, openExtensions };
+  return {
+    mcpsOpen,
+    pluginsCatalogOpen,
+    openMcpServers,
+    closeMcpServers,
+    openPluginsCatalog,
+    closePluginsCatalog,
+    openRulesSkills,
+    openExtensions,
+  };
 }
 
 function PluginIcon({
@@ -348,8 +354,73 @@ function VerificationReportBlock({
 }
 
 export function PluginsSettingsPanel() {
-  const { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills, openExtensions } =
-    usePluginsMcpNavigation();
+  const {
+    mcpsOpen,
+    pluginsCatalogOpen,
+    openMcpServers,
+    closeMcpServers,
+    openPluginsCatalog,
+    closePluginsCatalog,
+    openRulesSkills,
+    openExtensions,
+  } = usePluginsMcpNavigation();
+
+  if (mcpsOpen) {
+    return (
+      <>
+        <SettingsBreadcrumbs
+          segments={[
+            { label: "Integrations", onClick: closeMcpServers },
+            { label: "MCP servers" },
+          ]}
+        />
+        <McpServersSettingsPanel />
+      </>
+    );
+  }
+
+  if (pluginsCatalogOpen) {
+    return <AgentPluginsCatalogPanel onBack={closePluginsCatalog} />;
+  }
+
+  return (
+    <>
+      <SettingsBreadcrumbs segments={[{ label: "Integrations" }]} />
+      <SettingsSection title="Workspace">
+        <SettingsLinkRow
+          searchId="mcp-link"
+          title="MCP servers"
+          description="Preset, custom, and connected MCP servers for this workspace."
+          onClick={openMcpServers}
+        />
+        <SettingsLinkRow
+          searchId="rules-link"
+          title="Rules, skills, and subagents"
+          description="Instruction files, skills, and subagent presets."
+          onClick={openRulesSkills}
+        />
+        <SettingsLinkRow
+          searchId="extensions-link"
+          title="VS Code extensions"
+          description="Desktop extension marketplace and host runtime."
+          onClick={openExtensions}
+          border={false}
+        />
+      </SettingsSection>
+      <SettingsSection title="Plugins">
+        <SettingsLinkRow
+          searchId="plugins-link"
+          title="Agent plugins"
+          description="Optional bundles of MCP servers, skills, and branding. Useful if you want to package a custom install."
+          onClick={openPluginsCatalog}
+          border={false}
+        />
+      </SettingsSection>
+    </>
+  );
+}
+
+function AgentPluginsCatalogPanel({ onBack }: { onBack: () => void }) {
   const { workspaceInfo } = useWorkspace();
   const [plugins, setPlugins] = useState<AgentPluginPublic[]>([]);
   const [capabilities, setCapabilities] = useState<AgentPluginHarnessCapability[]>([]);
@@ -571,25 +642,16 @@ export function PluginsSettingsPanel() {
     [discovery, plugins]
   );
 
-  if (mcpsOpen) {
-    return (
-      <>
-        <SettingsBreadcrumbs
-          segments={[
-            { label: "Integrations", onClick: closeMcpServers },
-            { label: "MCP servers" },
-          ]}
-        />
-        <McpServersSettingsPanel />
-      </>
-    );
-  }
-
   return (
     <>
-      <SettingsBreadcrumbs segments={[{ label: "Integrations" }]} />
+      <SettingsBreadcrumbs
+        segments={[
+          { label: "Integrations", onClick: onBack },
+          { label: "Agent plugins" },
+        ]}
+      />
       <SettingsSection
-        title="Agent Plugins"
+        title="Installed"
         action={
           <div className="flex items-center gap-[8px]">
             <button
@@ -872,28 +934,6 @@ export function PluginsSettingsPanel() {
             </button>
           </div>
         </SettingsBlock>
-      </SettingsSection>
-
-      <SettingsSection title="Related">
-        <SettingsLinkRow
-          searchId="mcp-link"
-          title="MCP servers"
-          description="Preset, custom, and connected MCP servers for this workspace."
-          onClick={openMcpServers}
-        />
-        <SettingsLinkRow
-          searchId="rules-link"
-          title="Rules, skills, and subagents"
-          description="Instruction files, skills, and subagent presets."
-          onClick={openRulesSkills}
-        />
-        <SettingsLinkRow
-          searchId="marketplace"
-          title="VS Code extensions"
-          description="Desktop extension marketplace and host runtime."
-          onClick={openExtensions}
-          border={false}
-        />
       </SettingsSection>
     </>
   );

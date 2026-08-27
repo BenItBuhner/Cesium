@@ -10,8 +10,9 @@ import {
   isAgentRailRowDetailMode,
 } from "../src/lib/agent-rail-status";
 import {
-  defaultAgentRailFilterToggles,
-  matchesAgentRailMultiFilter,
+  createDefaultAgentRailFilterState,
+  getAgentRailStatusFilterClass,
+  matchesAgentRailFilters,
 } from "../src/lib/agent-rail";
 import type { AgentRailConversationSummary } from "../src/lib/agent-types";
 
@@ -143,21 +144,52 @@ describe("agent rail status", () => {
     assert.equal(agentRailConversationNeedsAttention(summary()), false);
   });
 
-  test("needs_attention rail filter now matches questions and failures", () => {
-    const toggles = { ...defaultAgentRailFilterToggles(), needs_attention: true };
+  test("attention status filter matches questions and failures", () => {
+    // Hiding everything except the attention class keeps only blocked rows.
+    const filters = {
+      ...createDefaultAgentRailFilterState(),
+      hiddenStatuses: ["working" as const, "unread" as const, "done" as const],
+    };
     const ctx = {
       pinnedConversationIds: new Set<string>(),
       unreadCompletionByConversationId: undefined,
     };
     assert.equal(
-      matchesAgentRailMultiFilter(summary({ status: "awaiting_question" }), toggles, ctx),
+      matchesAgentRailFilters(summary({ status: "awaiting_question" }), filters, ctx),
       true
     );
     assert.equal(
-      matchesAgentRailMultiFilter(summary({ status: "failed" }), toggles, ctx),
+      matchesAgentRailFilters(summary({ status: "failed" }), filters, ctx),
       true
     );
-    assert.equal(matchesAgentRailMultiFilter(summary(), toggles, ctx), false);
+    assert.equal(matchesAgentRailFilters(summary(), filters, ctx), false);
+    // Class mapping: blocked → attention, live → working, everything else → done.
+    assert.equal(getAgentRailStatusFilterClass(summary({ status: "failed" })), "attention");
+    assert.equal(getAgentRailStatusFilterClass(summary({ status: "running" })), "working");
+    assert.equal(
+      getAgentRailStatusFilterClass(summary(), { unreadCompletion: true }),
+      "unread"
+    );
+    assert.equal(getAgentRailStatusFilterClass(summary()), "done");
+  });
+
+  test("a timed settle expires on read", () => {
+    const now = Date.now();
+    const snoozed = summary({
+      status: "failed",
+      settledAt: now - 1_000,
+      settledUntil: now + 60_000,
+    });
+    const expired = summary({
+      status: "failed",
+      settledAt: now - 90_000_000,
+      settledUntil: now - 1_000,
+    });
+    assert.equal(getAgentRailStatusKind(snoozed), "settled");
+    assert.equal(agentRailConversationNeedsAttention(snoozed), false);
+    // Once the snooze elapses the failure resurfaces.
+    assert.equal(getAgentRailStatusKind(expired), "failed");
+    assert.equal(agentRailConversationNeedsAttention(expired), true);
   });
 
   test("relative time formatting is compact", () => {

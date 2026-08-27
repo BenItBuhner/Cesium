@@ -26,6 +26,11 @@ export {
   primaryModifierLabel,
   tryDispatchKeyboardShortcut,
   withToggledPlainShortcutBinding,
+  eventMatchesVoiceShortcutRelease,
+  VOICE_SHORTCUT_HOLD_MS,
+  applyVoiceShortcutKeyDown,
+  applyVoiceShortcutKeyUp,
+  createVoiceShortcutGestureState,
 } from "@cesium/client";
 export type {
   KeyboardShortcutBindingsMap,
@@ -35,5 +40,7 @@ export type {
   ShortcutCommandDefinition,
   ShortcutCommandSection,
   ShortcutPlatform,
-  VoiceInputMode,
+  VoiceShortcutGestureState,
+  VoiceShortcutKeyDownAction,
+  VoiceShortcutKeyUpAction,
 } from "@cesium/client";

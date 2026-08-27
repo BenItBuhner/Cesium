@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
+import { FirstRunAccountGate } from "@/components/auth/FirstRunAccountGate";
 import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
@@ -31,7 +32,9 @@ export function WorkbenchRouteProviders({ children }: { children: ReactNode }) {
     <ServerConnectionsProvider>
       <AuthProvider>
         <ThemedAuthBoundary>
-          <WorkbenchProviders>{children}</WorkbenchProviders>
+          <FirstRunAccountGate>
+            <WorkbenchProviders>{children}</WorkbenchProviders>
+          </FirstRunAccountGate>
         </ThemedAuthBoundary>
       </AuthProvider>
     </ServerConnectionsProvider>

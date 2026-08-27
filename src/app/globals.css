@@ -51,31 +51,6 @@
  * never reveals these on phones. The max-width override also covers Chrome
  * device emulation, where the host mouse still reports any-pointer: fine.
  */
-/*
- * Rail settle (moon) toggles follow the same pattern as tab close controls:
- * always visible + tappable on touch / no-hover devices, hover-revealed on
- * fine-pointer desktops. A settled row's toggle is rendered without this
- * class, so it stays visible everywhere as the state indicator.
- */
-.rail-settle-hit {
-  pointer-events: auto;
-  opacity: 0.6;
-}
-
-@media (any-hover: hover) and (any-pointer: fine) {
-  .rail-settle-hit {
-    pointer-events: none;
-    opacity: 0;
-  }
-
-  .group:hover .rail-settle-hit,
-  .group:focus-within .rail-settle-hit,
-  .rail-settle-hit:focus-visible {
-    pointer-events: auto;
-    opacity: 1;
-  }
-}
-
 .tab-close-hit {
   pointer-events: auto;
   opacity: 1;
@@ -473,11 +448,35 @@ html.dark .landing-shot-dark {
 [data-aurora-scene="on"] .aurora-center-pane {
   background: transparent;
 }
+[data-aurora-scene="on"] .aurora-agent-shell {
+  background: transparent;
+}
 [data-aurora-scene="on"] .aurora-shell-panel {
   background: color-mix(in srgb, var(--agent-panel-bg) 55%, transparent);
 }
 [data-aurora-scene="on"] .aurora-editor-surface {
   background: transparent;
+}
+/*
+ * Settings over the same shell-wide aurora. The page chrome (nav + main
+ * gutter) is a dim tint so the field reads through without washing the
+ * settings cards. Cards stay fully opaque. No backdrop-filter - same
+ * software-raster reason as the agent columns.
+ */
+[data-aurora-scene="on"] .aurora-settings-shell {
+  background: transparent;
+}
+[data-aurora-scene="on"] .aurora-settings-nav {
+  background: color-mix(in srgb, var(--bg-panel) 48%, transparent);
+}
+[data-aurora-scene="on"] .aurora-settings-main {
+  background: color-mix(in srgb, var(--bg-main) 36%, transparent);
+}
+.dark [data-aurora-scene="on"] .aurora-settings-nav {
+  background: color-mix(in srgb, var(--bg-panel) 46%, transparent);
+}
+.dark [data-aurora-scene="on"] .aurora-settings-main {
+  background: color-mix(in srgb, var(--bg-main) 40%, transparent);
 }
 /* Monaco: let the aurora show through the code editor. The gutter, current
    line, and scrollbar shades keep their theme colors; only the flat page

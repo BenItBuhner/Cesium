@@ -61,6 +61,30 @@ describe("theme config", () => {
     const config = createDefaultThemeConfig();
     assert.equal(config.toolCallDropdownMaxHeightPx, TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX);
     assert.equal(config.editDiffRenderingMode, "full");
+    assert.equal(config.composerLayout, "concise");
+  });
+
+  test("normalizes composer layout density", () => {
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        composerLayout: "detailed",
+      }).composerLayout,
+      "detailed"
+    );
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        composerLayout: "invalid",
+      }).composerLayout,
+      "concise"
+    );
+    assert.equal(
+      normalizeThemeConfig({ schemaVersion: 1, appearance: "system" }).composerLayout,
+      "concise"
+    );
   });
 
   test("defaults dark appearance to the OLED black theme", () => {

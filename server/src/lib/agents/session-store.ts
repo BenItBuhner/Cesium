@@ -5,7 +5,10 @@ import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } fro
 import { publish, subscribeSync } from "../../cache/pubsub.js";
 import { measureServerPerf } from "../perf.js";
 import { getStorage } from "../../storage/runtime.js";
-import { normalizeConversationRecord } from "./conversation-normalize.js";
+import {
+  expireElapsedSettle,
+  normalizeConversationRecord,
+} from "./conversation-normalize.js";
 import { isAgentConversationRankNeutralDelta } from "./conversation-rank.js";
 import { asRecord } from "./json-coerce.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
@@ -348,7 +351,8 @@ export async function listWorkspaceConversationRecords(
       const cacheKey = conversationListCacheKey(workspaceId);
       const cached = await cacheGetJSON<AgentConversationRecord[]>(cacheKey);
       if (cached) {
-        return cached;
+        // Timed settles may have elapsed while the list sat in cache.
+        return cached.map((record) => expireElapsedSettle(record));
       }
 
       const all: AgentConversationRecord[] = [];
@@ -739,7 +743,11 @@ export async function readConversationSnapshotHead(
       snapshotHeadCacheKey(workspaceId, conversationId)
     );
     if (cached) {
-      return cached;
+      // Timed settles may have elapsed while the snapshot sat in cache.
+      return {
+        ...cached,
+        conversation: expireElapsedSettle(cached.conversation),
+      };
     }
   }
 

@@ -7,12 +7,14 @@ export {
   TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX,
   createDefaultThemeConfig,
   loadThemeConfigFromStorage,
+  normalizeComposerLayoutDensity,
   normalizeThemeConfig,
   normalizeToolCallDropdownMaxHeightPx,
   persistThemeConfigToStorage,
   serializeThemeConfig,
 } from "@cesium/client";
 export type {
+  ComposerLayoutDensity,
   CustomThemeEntry,
   EditDiffRenderingMode,
   ThemeConfig,

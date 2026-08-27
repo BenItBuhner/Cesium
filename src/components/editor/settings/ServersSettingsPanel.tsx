@@ -8,12 +8,14 @@ import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultSer
 import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   serverHealthColorClass,
   serverHealthIndicator,
 } from "@/lib/server-health-display";
 import {
   PageIntro,
+  SettingsCallout,
   SettingsRow,
   SettingsSection,
 } from "@/components/editor/settings-ui";
@@ -193,71 +195,78 @@ export function ServerConnectionsSettingsPanel() {
     setActiveServer,
     setDefaultServer,
   } = useServerConnections();
+  const { availability } = useSettingsEngineAvailability();
 
   return (
     <>
       <PageIntro title="Servers" />
+      {availability !== "connected" ? (
+        <SettingsCallout className="mb-[16px] px-[2px]">
+          {availability === "checking"
+            ? "Checking saved engines. Agent, usage, voice, and integration settings stay hidden until a server responds."
+            : "No engine is connected. Client settings (appearance, shortcuts, account) stay available. Agents, usage, voice, and integrations appear after a server comes online."}
+        </SettingsCallout>
+      ) : null}
       <DefaultServerSettingsBanner className="mx-[16px] mb-[12px] mt-[4px]" />
-      <SettingsSection title="Default settings server">
-        <SettingsRow
-          searchId="home-server"
-          title="Home server for shared preferences"
-          description={
-            settingsServer
-              ? `${settingsServer.baseUrl} · ${serverStatusById[settingsServer.id]?.health ?? "checking"}`
-              : requiresDefaultServer
-                ? "Pick which server stores theme, keyboard shortcuts, and model toggles."
-                : "Unavailable"
-          }
-          trailing={
-            <SettingsServerPicker
-              label="Default settings server"
-              title="Theme, shortcuts, and models are stored on this server for all chats"
-              selectedServerId={settingsServer?.id ?? null}
-              servers={servers}
-              serverStatusById={serverStatusById}
-              onSelect={setDefaultServer}
-              disabled={servers.length === 0}
-            />
-          }
-        />
-        <SettingsRow
-          searchId="active-chat"
-          title="Active chat server"
-          description={
-            hasServer
-              ? `${activeServer.baseUrl} · ${serverStatusById[activeServer.id]?.health ?? "checking"}`
-              : "No engine is connected yet."
-          }
-          trailing={
-            <SettingsServerPicker
-              label="Active chat server"
-              title="New chats and workspace actions use this server until you switch workspaces"
-              selectedServerId={hasServer ? activeServer.id : null}
-              servers={servers}
-              serverStatusById={serverStatusById}
-              onSelect={setActiveServer}
-              disabled={servers.length === 0}
-            />
-          }
-        />
-        <SettingsRow
-          searchId="connected-runtimes"
-          title="Connected runtimes"
-          description={
-            onlineServers.length > 0
-              ? onlineServers.map((server) => server.label).join(", ")
-              : "No reachable saved servers yet."
-          }
-          trailing={
-            <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
-              {onlineServers.length}
-            </span>
-          }
-          border={false}
-        />
-      </SettingsSection>
-      {hasServer ? <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} /> : null}
+      {servers.length > 0 ? (
+        <SettingsSection title="Default settings server">
+          <SettingsRow
+            searchId="home-server"
+            title="Home server for shared preferences"
+            description={
+              settingsServer
+                ? `${settingsServer.baseUrl} · ${serverStatusById[settingsServer.id]?.health ?? "checking"}`
+                : requiresDefaultServer
+                  ? "Pick which server stores theme, keyboard shortcuts, and model toggles."
+                  : "Unavailable"
+            }
+            trailing={
+              <SettingsServerPicker
+                label="Default settings server"
+                title="Client theme and shortcuts stay uniform on this home server; engine settings follow the connected server"
+                selectedServerId={settingsServer?.id ?? null}
+                servers={servers}
+                serverStatusById={serverStatusById}
+                onSelect={setDefaultServer}
+                disabled={servers.length === 0}
+              />
+            }
+          />
+          <SettingsRow
+            searchId="active-chat"
+            title="Active chat server"
+            description={`${activeServer.baseUrl} · ${serverStatusById[activeServer.id]?.health ?? "checking"}`}
+            trailing={
+              <SettingsServerPicker
+                label="Active chat server"
+                title="New chats and workspace actions use this server until you switch workspaces"
+                selectedServerId={activeServer.id}
+                servers={servers}
+                serverStatusById={serverStatusById}
+                onSelect={setActiveServer}
+              />
+            }
+          />
+          <SettingsRow
+            searchId="connected-runtimes"
+            title="Connected runtimes"
+            description={
+              onlineServers.length > 0
+                ? onlineServers.map((server) => server.label).join(", ")
+                : "No reachable saved servers yet."
+            }
+            trailing={
+              <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+                {onlineServers.length}
+              </span>
+            }
+            border={false}
+          />
+        </SettingsSection>
+      ) : null}
+      {availability === "connected" ? (
+        <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
+      ) : null}
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {

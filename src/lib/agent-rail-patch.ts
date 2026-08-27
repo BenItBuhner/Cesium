@@ -34,6 +34,7 @@ export function agentRecordToRailSummary(
     status: c.status,
     archivedAt: c.archivedAt ?? null,
     settledAt: c.settledAt ?? null,
+    settledUntil: c.settledUntil ?? null,
     backendId: c.config.backendId,
     mode: c.config.mode,
     experimental: c.experimental,
@@ -94,6 +95,7 @@ function mergeRailSummaryByRecency(
         ...incoming,
         archivedAt: existing.archivedAt,
         settledAt: existing.settledAt,
+        settledUntil: existing.settledUntil,
         updatedAt: existing.updatedAt,
       };
     }
@@ -102,6 +104,7 @@ function mergeRailSummaryByRecency(
       existing.title !== incoming.title ||
       existing.archivedAt !== incoming.archivedAt ||
       (existing.settledAt ?? null) !== (incoming.settledAt ?? null) ||
+      (existing.settledUntil ?? null) !== (incoming.settledUntil ?? null) ||
       existing.backendId !== incoming.backendId ||
       existing.mode !== incoming.mode ||
       existing.experimental !== incoming.experimental ||
@@ -116,6 +119,7 @@ function mergeRailSummaryByRecency(
         ...incoming,
         archivedAt: existing.archivedAt,
         settledAt: existing.settledAt,
+        settledUntil: existing.settledUntil,
         updatedAt: existing.updatedAt,
       };
     }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Loader2, Server } from "lucide-react";
+import { CheckCircle2, ChevronDown, Loader2, Server } from "lucide-react";
+import { accountOwnsServers } from "@/lib/account-server-sync";
 import {
   assertEngineConnectionAllowed,
   CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE,
@@ -48,8 +49,11 @@ export function ConnectServerStep({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [connectedUrl, setConnectedUrl] = useState<string | null>(null);
+  const [fallbackOpen, setFallbackOpen] = useState(false);
 
   const cloudServers = cloud.bootstrap?.servers ?? [];
+  const linked = accountOwnsServers(cloud);
+  const showManual = !linked || fallbackOpen;
 
   const finalizeConnection = (baseUrl: string, sessionToken: string | null) => {
     const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
@@ -193,9 +197,31 @@ export function ConnectServerStep({
         </p>
       ) : null}
 
-      <ServerSetupCommand />
+      <ServerSetupCommand accountLinked={linked} />
 
+      {linked ? (
+        <button
+          type="button"
+          aria-expanded={fallbackOpen}
+          onClick={() => setFallbackOpen((open) => !open)}
+          className="inline-flex items-center gap-[4px] font-sans text-[12.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        >
+          <ChevronDown
+            className={`size-[14px] transition-transform ${fallbackOpen ? "rotate-180" : ""}`}
+            strokeWidth={1.7}
+            aria-hidden
+          />
+          Local fallback
+        </button>
+      ) : null}
+
+      {showManual ? (
       <div className="space-y-[10px]">
+        {linked ? (
+          <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+            Paste a connect URL only for a local engine that is not attached to this account.
+          </p>
+        ) : null}
         <label className="block">
           <span className="mb-[6px] block text-[12.5px] font-medium text-[var(--text-secondary)]">
             Engine URL
@@ -268,6 +294,7 @@ export function ConnectServerStep({
           <p className="text-[12.5px] text-[var(--goal-accent)]">{error}</p>
         ) : null}
       </div>
+      ) : null}
     </div>
   );
 }
