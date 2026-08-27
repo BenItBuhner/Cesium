@@ -58,7 +58,6 @@
     "ioredis": "^5.10.1",
     "playwright": "^1.56.0",
     "postgres": "^3.4.9",
-    "ssh2": "^1.17.0",
     "undici": "^7.24.6",
     "ws": "^8.18.3"
   },
@@ -68,7 +67,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
-    "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.30.6",

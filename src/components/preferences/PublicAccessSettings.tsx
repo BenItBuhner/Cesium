@@ -11,6 +11,7 @@ import {
   type AuthSession,
 } from "@/lib/auth-client";
 import {
+  attachSessionTokenToConnectUrl,
   parseRendezvousBootstrapHash,
   type RendezvousBootstrap,
 } from "@cesium/client";
@@ -302,6 +303,16 @@ export function PublicAccessSettings({
   }, []);
 
   const enabled = status?.enabled === true;
+  const signedInConnectUrl = (() => {
+    if (!status?.connectUrl) return null;
+    const sessionToken = getStoredSessionToken(serverBaseUrl);
+    if (!sessionToken) return null;
+    try {
+      return attachSessionTokenToConnectUrl(status.connectUrl, sessionToken);
+    } catch {
+      return null;
+    }
+  })();
   const statusText = enabled
     ? status?.tunnel.running && status.connectUrl
       ? `Online through ${status.tunnel.provider ?? "secure tunnel"}`
@@ -389,7 +400,9 @@ export function PublicAccessSettings({
               <button
                 type="button"
                 className={rowButtonClass}
-                onClick={() => void copy("link", status.connectUrl)}
+                onClick={() =>
+                  void copy("link", signedInConnectUrl ?? status.connectUrl)
+                }
               >
                 {copied === "link" ? (
                   <Check className="size-[13px]" aria-hidden />
@@ -399,7 +412,7 @@ export function PublicAccessSettings({
                 {copied === "link" ? "Copied" : "Copy"}
               </button>
               <a
-                href={status.connectUrl}
+                href={signedInConnectUrl ?? status.connectUrl}
                 target="_blank"
                 rel="noreferrer"
                 className={rowButtonClass}
@@ -415,7 +428,9 @@ export function PublicAccessSettings({
         <div className="border-b border-[var(--border-subtle)] px-[16px] pb-[10px] font-sans text-[10.5px] text-[var(--text-disabled)]">
           {cloud.status === "ready"
             ? "Synced to your account — every device signed in as you inherits this server automatically."
-            : "Open this link once on a device where you're signed in; every device on your account then inherits this server automatically."}
+            : signedInConnectUrl
+              ? "Copy attaches your current session token so the other client signs in automatically. Rotate credentials if this link is shared."
+              : "Open this link once on a device where you're signed in; every device on your account then inherits this server automatically."}
         </div>
       ) : null}
       <SettingsRow

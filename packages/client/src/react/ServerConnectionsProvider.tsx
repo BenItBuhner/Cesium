@@ -22,12 +22,13 @@ import {
   type ServerConnectionsState,
 } from "../server-connections";
 import {
+  parseConnectSessionHash,
   parseRendezvousBootstrapHash,
   resolveRendezvousEndpoint,
   stripRendezvousBootstrapFromLocation,
   type RendezvousBootstrap,
 } from "../rendezvous";
-import { migrateStoredAuthServerBaseUrl } from "../auth-client";
+import { migrateStoredAuthServerBaseUrl, setStoredSessionToken } from "../auth-client";
 import {
   SERVER_CONNECTIONS_EVENT,
   getActiveServerConnectionFromDefaults as getActiveServerConnection,
@@ -202,6 +203,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           }
         }
         if (bootstrap) {
+          const sessionToken = location?.href
+            ? parseConnectSessionHash(new URL(location.href).hash)
+            : null;
           let resolvedBaseUrl = bootstrap.initialBaseUrl ?? null;
           let resolvedLabel = bootstrap.label;
           try {
@@ -228,6 +232,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
               label: resolvedLabel,
             });
             writeStoredServerConnectionsState(next);
+            if (sessionToken) {
+              setStoredSessionToken(sessionToken, null, resolvedBaseUrl);
+            }
           }
           stripRendezvousBootstrapFromLocation();
         }

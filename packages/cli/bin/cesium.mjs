@@ -48,7 +48,7 @@ Usage:
   cesium status                      Show engine / tunnel / rendezvous status
   cesium health                      Check the local health endpoint
   cesium logs [server|tunnel|...]    Tail engine logs
-  cesium connect                     Print the URL + credentials to connect a client
+  cesium connect                     Print a client connect URL (signed in when possible)
   cesium credentials                 Show or rotate access credentials
   cesium update                      Update the engine to the latest release
   cesium help                        Show this help

@@ -536,6 +536,44 @@ stable_connect_url() {
   printf '%s/agent#cesiumConnect=%s' "${CESIUM_WEB_URL%/}" "$fragment"
 }
 
+issue_connect_session_token() {
+  [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" && -n "${OPENCURSOR_AUTH_PASSWORD:-}" ]] || return 1
+  [[ -n "$BUN_BIN" ]] || return 1
+  CESIUM_LOGIN_URL="$LOCAL_URL/api/auth/login" "$BUN_BIN" -e '
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(process.env.CESIUM_LOGIN_URL ?? "", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: process.env.OPENCURSOR_AUTH_USERNAME,
+          password: process.env.OPENCURSOR_AUTH_PASSWORD,
+          remember: true,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) process.exit(1);
+      const payload = await response.json();
+      if (typeof payload.token !== "string" || !payload.token.trim()) process.exit(1);
+      process.stdout.write(payload.token.trim());
+    } finally {
+      clearTimeout(timer);
+    }
+  ' 2>/dev/null
+}
+
+attach_session_to_connect_url() {
+  local connect_url="$1"
+  local token="$2"
+  [[ -n "$connect_url" && -n "$token" ]] || return 1
+  if [[ "$connect_url" == *"#"* ]]; then
+    printf '%s&cesiumSession=%s' "$connect_url" "$token"
+  else
+    printf '%s#cesiumSession=%s' "$connect_url" "$token"
+  fi
+}
+
 encoded_public_url() {
   local value="$1"
   value="${value//%/%25}"
@@ -558,7 +596,13 @@ print_connection_details() {
       local stable_url
       stable_url="$(stable_connect_url || true)"
       if [[ -n "$stable_url" ]]; then
-        printf 'Connect: %s\n' "$stable_url"
+        local session_token signed_url
+        session_token="$(issue_connect_session_token || true)"
+        signed_url="$stable_url"
+        if [[ -n "$session_token" ]]; then
+          signed_url="$(attach_session_to_connect_url "$stable_url" "$session_token")"
+        fi
+        printf 'Connect: %s\n' "$signed_url"
       else
         local separator="?"
         [[ "$CESIUM_WEB_URL" == *"?"* ]] && separator="&"

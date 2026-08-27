@@ -636,7 +636,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "servers",
     "stable-link",
     "Permanent connection link",
-    "Copy the stable Cesium link that follows tunnel changes."
+    "Copy the stable Cesium link that follows tunnel changes and can sign the client in."
   ),
   row(
     "servers",
