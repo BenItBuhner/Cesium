@@ -30,6 +30,7 @@ describe("cloud runtime local-only toggle", () => {
   test("defaults to cloud-on (no opt-out persisted)", () => {
     assert.equal(isCloudLocallyDisabled(), false);
     process.env.NEXT_PUBLIC_CONVEX_URL = "http://127.0.0.1:3210";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "0";
     assert.equal(getEffectiveCloudMode(), "device");
   });
 
@@ -58,6 +59,7 @@ describe("cloud runtime local-only toggle", () => {
   });
 
   test("opt-out has no effect on builds without cloud config", () => {
+    process.env.NEXT_PUBLIC_CESIUM_CLOUD = "0";
     setCloudLocallyDisabled(true);
     assert.equal(getEffectiveCloudMode(), "disabled");
     setCloudLocallyDisabled(false);

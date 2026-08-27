@@ -41,6 +41,7 @@ import {
   isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
+import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -512,8 +513,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
     return (
       <ClerkProvider
         publishableKey={getClerkPublishableKey() ?? undefined}
-        signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
-        signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
+        signInUrl={getClerkSignInUrl()}
+        signUpUrl={getClerkSignUpUrl()}
         signInFallbackRedirectUrl="/agent"
         signUpFallbackRedirectUrl="/agent"
       >

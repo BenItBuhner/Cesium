@@ -1,0 +1,119 @@
+import assert from "node:assert/strict";
+import { afterEach, describe, test } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { clientKeyValueStore } from "../packages/client/src/index.ts";
+import { CESIUM_CLOUD_DEFAULTS } from "../src/lib/cloud/cloud-defaults.ts";
+import {
+  dismissFirstRunAccount,
+  FIRST_RUN_ACCOUNT_STORAGE_KEY,
+  isFirstRunAccountDismissed,
+  readFirstRunAccountState,
+  shouldPromptFirstRunAccount,
+  writeFirstRunAccountState,
+} from "../src/lib/cloud/first-run-account.ts";
+import { getClerkSignInUrl, getClerkSignUpUrl } from "../src/lib/cloud/clerk-urls.ts";
+
+describe("first-run account prompt", () => {
+  afterEach(() => {
+    clientKeyValueStore().removeItem(FIRST_RUN_ACCOUNT_STORAGE_KEY);
+    delete process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
+    delete process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL;
+  });
+
+  test("fresh install has no dismissal", () => {
+    assert.deepEqual(readFirstRunAccountState(), {
+      dismissedAt: null,
+      choice: null,
+    });
+    assert.equal(isFirstRunAccountDismissed(), false);
+  });
+
+  test("guest dismissal is persisted", () => {
+    dismissFirstRunAccount("guest");
+    const state = readFirstRunAccountState();
+    assert.equal(state.choice, "guest");
+    assert.equal(typeof state.dismissedAt, "number");
+    assert.equal(isFirstRunAccountDismissed(), true);
+  });
+
+  test("corrupt storage falls back to empty", () => {
+    clientKeyValueStore().setItem(FIRST_RUN_ACCOUNT_STORAGE_KEY, "{not-json");
+    assert.deepEqual(readFirstRunAccountState(), {
+      dismissedAt: null,
+      choice: null,
+    });
+  });
+
+  test("write rejects unknown choice values on read", () => {
+    writeFirstRunAccountState({
+      dismissedAt: 1,
+      choice: "nope" as never,
+    });
+    assert.deepEqual(readFirstRunAccountState(), {
+      dismissedAt: 1,
+      choice: null,
+    });
+  });
+
+  test("prompts only for signed-out clerk mode on first run", () => {
+    const base = {
+      cloudMode: "clerk" as const,
+      cloudStatus: "signed-out" as const,
+      dismissed: false,
+    };
+    assert.equal(shouldPromptFirstRunAccount(base), true);
+    assert.equal(
+      shouldPromptFirstRunAccount({ ...base, cloudStatus: "loading" }),
+      false
+    );
+    assert.equal(
+      shouldPromptFirstRunAccount({ ...base, cloudStatus: "ready" }),
+      false
+    );
+    assert.equal(
+      shouldPromptFirstRunAccount({ ...base, dismissed: true }),
+      false
+    );
+    assert.equal(
+      shouldPromptFirstRunAccount({ ...base, cloudMode: "device" }),
+      false
+    );
+    assert.equal(
+      shouldPromptFirstRunAccount({ ...base, cloudMode: "disabled" }),
+      false
+    );
+  });
+
+  test("committed defaults are the production Clerk + Convex pair", () => {
+    assert.match(CESIUM_CLOUD_DEFAULTS.convexUrl, /^https:\/\/.+\.convex\.cloud$/);
+    assert.match(CESIUM_CLOUD_DEFAULTS.clerkPublishableKey, /^pk_live_/);
+  });
+
+  test("clerk auth page URLs stay path-relative on http(s)", () => {
+    assert.equal(getClerkSignInUrl(), "/sign-in");
+    assert.equal(getClerkSignUpUrl(), "/sign-up");
+    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "https://accounts.example/sign-in";
+    assert.equal(getClerkSignInUrl(), "https://accounts.example/sign-in");
+  });
+
+  test("workbench providers mount the first-run account gate", () => {
+    const providers = readFileSync(
+      fileURLToPath(
+        new URL("../src/components/layout/WorkbenchRouteProviders.tsx", import.meta.url)
+      ),
+      "utf8"
+    );
+    const gate = readFileSync(
+      fileURLToPath(
+        new URL("../src/components/auth/FirstRunAccountGate.tsx", import.meta.url)
+      ),
+      "utf8"
+    );
+    assert.match(providers, /FirstRunAccountGate/);
+    assert.match(providers, /<FirstRunAccountGate>/);
+    assert.match(gate, /<SignUpButton mode="modal">/);
+    assert.match(gate, /<SignInButton mode="modal">/);
+    assert.match(gate, /Continue as guest/);
+  });
+});

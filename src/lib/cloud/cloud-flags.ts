@@ -4,15 +4,17 @@
  *
  * Deployment postures, from one knob:
  *
- * - Local-only (the default, and the pre-cloud behavior): set nothing, or
- *   force it with `NEXT_PUBLIC_CESIUM_CLOUD=0` even when Convex/Clerk vars
- *   are present. No cloud code paths execute; the optional engine password
- *   login (`OPENCURSOR_AUTH_*`) remains the only "account".
- * - Device sync: `NEXT_PUBLIC_CONVEX_URL` only. Keyless per-browser identity
- *   against a deployment that opted in with `CESIUM_ALLOW_DEVICE_KEYS=1`.
- * - Production cloud: Convex + Clerk keys. Add
- *   `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` to gate the whole client behind
- *   Clerk sign-in for public deployments.
+ * - Production cloud (the default): committed Convex + Clerk values in
+ *   `cloud-defaults.ts`, unless build env overrides them. First install
+ *   prompts for sign-in / sign-up; guest remains available.
+ * - Local-only: force it with `NEXT_PUBLIC_CESIUM_CLOUD=0` even when Convex
+ *   / Clerk vars are present. No cloud code paths execute; the optional
+ *   engine password login (`OPENCURSOR_AUTH_*`) remains the only "account".
+ * - Device sync: `NEXT_PUBLIC_CONVEX_URL` only (and no Clerk key). Keyless
+ *   per-browser identity against a deployment that opted in with
+ *   `CESIUM_ALLOW_DEVICE_KEYS=1`.
+ * - Gated public deployments: add `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` to
+ *   require Clerk for every non-public route.
  *
  * Every env var is referenced literally so Next.js can inline it into
  * client bundles at build time.
@@ -49,9 +51,15 @@ export function getClerkPublishableKey(): string | null {
   if (isCloudExplicitlyDisabled()) {
     return null;
   }
-  const key =
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim() ||
-    CESIUM_CLOUD_DEFAULTS.clerkPublishableKey.trim();
+  const raw = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  if (raw !== undefined && raw !== "") {
+    const trimmed = raw.trim();
+    if (OFF_VALUES.has(trimmed.toLowerCase())) {
+      return null;
+    }
+    return trimmed;
+  }
+  const key = CESIUM_CLOUD_DEFAULTS.clerkPublishableKey.trim();
   return key ? key : null;
 }
 
