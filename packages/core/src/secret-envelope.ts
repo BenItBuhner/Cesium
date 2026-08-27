@@ -50,6 +50,10 @@ function requireSubtle(): SubtleCrypto {
   return subtle;
 }
 
+function asBufferSource(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 export function isSecretEnvelope(value: string | null | undefined): boolean {
   if (!value || typeof value !== "string") {
     return false;
@@ -109,7 +113,7 @@ export async function sealSecret(
 ): Promise<string> {
   const subtle = requireSubtle();
   const keyBytes = await digestWrappingSecret(wrappingSecret);
-  const key = await subtle.importKey("raw", keyBytes, { name: AES_GCM }, false, ["encrypt"]);
+  const key = await subtle.importKey("raw", asBufferSource(keyBytes), { name: AES_GCM }, false, ["encrypt"]);
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const additionalData = new TextEncoder().encode(purpose);
   const encrypted = new Uint8Array(
@@ -136,15 +140,15 @@ export async function openSecret(
   try {
     const subtle = requireSubtle();
     const keyBytes = await digestWrappingSecret(wrappingSecret);
-    const key = await subtle.importKey("raw", keyBytes, { name: AES_GCM }, false, ["decrypt"]);
+    const key = await subtle.importKey("raw", asBufferSource(keyBytes), { name: AES_GCM }, false, ["decrypt"]);
     const combined = new Uint8Array(parts.ciphertext.length + parts.tag.length);
     combined.set(parts.ciphertext, 0);
     combined.set(parts.tag, parts.ciphertext.length);
     const additionalData = new TextEncoder().encode(purpose);
     const decrypted = await subtle.decrypt(
-      { name: AES_GCM, iv: parts.iv, additionalData, tagLength: TAG_BYTES * 8 },
+      { name: AES_GCM, iv: asBufferSource(parts.iv), additionalData, tagLength: TAG_BYTES * 8 },
       key,
-      combined
+      asBufferSource(combined)
     );
     return new TextDecoder().decode(decrypted);
   } catch {
