@@ -214,7 +214,7 @@ export function VoiceSettingsPanel() {
       { value: "", label: "Automatic (first available)" },
       ...engines.map((engine) => ({
         value: engine.id,
-        label: `${engine.label}${engine.available ? "" : " — unavailable"}`,
+        label: `${engine.label}${engine.available ? "" : " - unavailable"}`,
       })),
     ];
   }, [voiceStatus]);

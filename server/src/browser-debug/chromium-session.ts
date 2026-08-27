@@ -23,7 +23,7 @@ export type DebugSessionRecord = {
   cdp: CDPSession;
   userDataDir: string;
   debugPort: number;
-  /** Target id of the page we navigated — used to build the DevTools frontend URL. */
+  /** Target id of the page we navigated - used to build the DevTools frontend URL. */
   targetId: string;
   /** Raw `devtoolsFrontendUrl` from Chromium's `/json/list` (unrewritten). */
   rawDevtoolsFrontendUrl: string;
@@ -99,7 +99,7 @@ export type RenderedElementScreenshotInput = {
  * Chromium writes it to `DevToolsActivePort` inside the user data dir. We keep
  * the HTTP endpoint alongside Playwright's pipe transport so the DevTools
  * frontend (`/devtools/inspector.html`, `ws://host/devtools/page/<id>`) stays
- * proxyable — and the pipe transport is what keeps Playwright working under
+ * proxyable - and the pipe transport is what keeps Playwright working under
  * Bun, where its `connectOverCDP` websocket client hangs.
  */
 async function readDevToolsActivePort(userDataDir: string): Promise<number> {
@@ -833,7 +833,7 @@ export function listDebugSessions(): DebugSessionRecord[] {
   return [...sessions.values()];
 }
 
-/** Best-effort cleanup on process shutdown — close every Chromium we launched. */
+/** Best-effort cleanup on process shutdown - close every Chromium we launched. */
 function cleanupAllSessions(): void {
   for (const rec of sessions.values()) {
     try {

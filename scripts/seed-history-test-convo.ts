@@ -23,7 +23,7 @@ await fs.mkdir(conversationDir, { recursive: true });
 
 const now = Date.now();
 const userMessages = [
-  "first test message — this is the oldest one",
+  "first test message - this is the oldest one",
   "second test message about refactoring",
   "third test message: explain the build error",
   "fourth and newest test message",

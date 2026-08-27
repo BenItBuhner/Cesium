@@ -15,7 +15,7 @@ import {
  * A user's engines live in the cloud `servers` table so every signed-in
  * client inherits them. Tunnel-backed engines (shared via public access)
  * carry a rendezvous locator: their base URL rotates with the tunnel, so the
- * locator — not the URL — is their cross-device identity, and inheriting
+ * locator - not the URL - is their cross-device identity, and inheriting
  * clients re-resolve the live endpoint from the rendezvous registry.
  */
 
@@ -186,7 +186,7 @@ export function buildCloudServerPushPayloads(
   return payloads;
 }
 
-/** Servers present before but gone now — i.e. removed locally this session. */
+/** Servers present before but gone now - i.e. removed locally this session. */
 export function diffRemovedCloudServers(
   previous: ServerConnection[],
   next: ServerConnection[]

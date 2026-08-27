@@ -1,5 +1,5 @@
 /**
- * Shared popover / context menu chrome — matches workspace & server pickers
+ * Shared popover / context menu chrome - matches workspace & server pickers
  * (`rounded-[var(--radius-card)]`, `bg-panel`, accent hover rows).
  */
 

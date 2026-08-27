@@ -4,7 +4,7 @@
  * Conversations are queryable context: the composer lets the user tag a chat
  * (which expands into a `<conversation-reference>` block), and these helpers
  * back the `list_conversations` / `read_conversation` / `search_conversations`
- * tools so the agent can triage transcripts from any workspace — not only the
+ * tools so the agent can triage transcripts from any workspace - not only the
  * ones the user explicitly tagged.
  */
 import { getStorage } from "../../../storage/runtime.js";
@@ -123,8 +123,8 @@ export async function readConversationTranscriptForAgent(input: {
   const workspaces = await workspacesById();
   const workspace = workspaces.get(record.workspaceId);
   const header =
-    `Conversation ${record.id} — "${record.title}" — ` +
-    `${workspace ? `${workspace.name} (${workspace.root})` : `workspace ${record.workspaceId}`} — ` +
+    `Conversation ${record.id} - "${record.title}" - ` +
+    `${workspace ? `${workspace.name} (${workspace.root})` : `workspace ${record.workspaceId}`} - ` +
     `updated ${new Date(record.updatedAt).toISOString()}`;
   if (!transcript) {
     return `${header}\n(Transcript is empty.)`;

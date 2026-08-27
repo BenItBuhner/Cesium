@@ -722,7 +722,7 @@ test("followup_task queued during a running turn is drained after the turn ends"
   // Access via spawn would call the model; instead exercise drain via list/wait after
   // constructing through spawn with a failing auth path is hard. Use interrupt/list only.
   // Direct unit: enqueue via followup after forcing a completed agent then start another.
-  // Prefer: spawn fails without key — skip live model by stubbing through interrupt path.
+  // Prefer: spawn fails without key - skip live model by stubbing through interrupt path.
   runtime.dispose();
 
   // Dedicated lightweight drain check using wait timeout + pending followup semantics:
@@ -741,7 +741,7 @@ test("followup_task queued during a running turn is drained after the turn ends"
     },
   });
 
-  // Without a valid provider this will error the child turn — still drains follow-ups.
+  // Without a valid provider this will error the child turn - still drains follow-ups.
   const spawnResult = JSON.parse(
     await runtime2.spawnAgent({
       task_name: "drain_test",

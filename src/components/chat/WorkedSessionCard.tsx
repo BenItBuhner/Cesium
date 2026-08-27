@@ -219,7 +219,7 @@ interface WorkedSessionCardProps {
   onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
   /** When false, tool list uses flat layout without left rail indent (settled turn). */
   contentRail?: boolean;
-  /** Turn finished — card should collapse when this becomes true. */
+  /** Turn finished - card should collapse when this becomes true. */
   settled?: boolean;
 }
 
@@ -730,7 +730,7 @@ export function WorkedSessionCard({
       : null;
   /**
    * An unresolved permission embedded in a collapsed card would be invisible while the agent
-   * blocks on it forever — force the dropdown open until the user answers.
+   * blocks on it forever - force the dropdown open until the user answers.
    */
   const collapsibleOpen =
     isWorkingPlaceholder || embeddedPermissionCard != null ? true : open;
@@ -811,7 +811,7 @@ export function WorkedSessionCard({
 	[openExplorerFile]
   );
 
-  // Collapse only when the *message-level* working placeholder (`loading`) clears — not when an
+  // Collapse only when the *message-level* working placeholder (`loading`) clears - not when an
   // individual tool flips running→completed (that falsely fired for file-edit and other fast tools).
   useEffect(() => {
     if (prevMessageLoadingRef.current && !loading) {

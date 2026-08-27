@@ -72,7 +72,7 @@ function updateConfigOption(options: AgentConfigOption[], id: string, value: str
 /**
  * The conversation's configured model/mode must win over catalog defaults.
  * Fresh conversations start from the backend option catalog, whose model
- * `currentValue` is just "first model the server listed" — without this merge
+ * `currentValue` is just "first model the server listed" - without this merge
  * it silently overrides the model the user picked when creating the chat.
  */
 function withConversationConfig(

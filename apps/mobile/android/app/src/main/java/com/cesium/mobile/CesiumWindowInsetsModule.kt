@@ -16,9 +16,9 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
  * Two delivery paths, both in dp:
  *
  * - Pull: [getInsets] snapshots the current root window insets. When they are
- *   unreadable — no current activity, or the decor view has no dispatched
+ *   unreadable - no current activity, or the decor view has no dispatched
  *   insets yet, both of which happen transiently while the app is being
- *   refocused — the promise *rejects* instead of resolving zeros. Resolving
+ *   refocused - the promise *rejects* instead of resolving zeros. Resolving
  *   zeros used to overwrite the workbench's known-good safe area and shove the
  *   entire top chrome under the status bar until the process was killed.
  * - Push: [CesiumWindowInsetsHub] emits `cesiumWindowInsetsChanged` device

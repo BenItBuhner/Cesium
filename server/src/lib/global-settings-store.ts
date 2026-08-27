@@ -178,7 +178,7 @@ export type ServerRailAppearance = {
  * MUST stay in sync with `AgentRailSettingsState` in
  * `packages/client/src/global-settings.ts`. Fields missing here are silently
  * stripped on every save round-trip and the client's choices evaporate on the
- * next refetch — the exact "my setting silently reverted" bug class.
+ * next refetch - the exact "my setting silently reverted" bug class.
  */
 export type AgentRailSettingsState = {
   groupBy: AgentRailGroupByMode;

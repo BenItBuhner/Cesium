@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Transient caption bubbles anchored to the voice orb — the non-textual
+ * Transient caption bubbles anchored to the voice orb - the non-textual
  * replacement for a chat log. Bubbles fade in, live for a few seconds,
  * and stack toward the viewport center from wherever the orb sits.
  */

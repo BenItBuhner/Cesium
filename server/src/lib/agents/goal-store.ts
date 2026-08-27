@@ -505,22 +505,22 @@ export function formatGoalForModel(goal: GoalRecord): string {
     "",
     "## Milestones",
     goal.milestones.length
-      ? goal.milestones.map((item) => `- [${item.status}] ${item.id}: ${item.title}${item.evidence ? ` — evidence: ${item.evidence}` : ""}`).join("\n")
+      ? goal.milestones.map((item) => `- [${item.status}] ${item.id}: ${item.title}${item.evidence ? ` - evidence: ${item.evidence}` : ""}`).join("\n")
       : "- No milestones recorded yet.",
     "",
     "## Todos",
     goal.todos.length
-      ? goal.todos.map((item) => `- [${item.status}] ${item.id}: ${item.content}${item.evidence ? ` — evidence: ${item.evidence}` : ""}`).join("\n")
+      ? goal.todos.map((item) => `- [${item.status}] ${item.id}: ${item.content}${item.evidence ? ` - evidence: ${item.evidence}` : ""}`).join("\n")
       : "- No todos recorded yet.",
     "",
     "## Blocker History",
     goal.blockerHistory.length
-      ? goal.blockerHistory.map((item) => `- ${item.reason} (seen ${item.occurrenceCount}x; last ${new Date(item.lastSeenAt).toISOString()})${item.evidence ? ` — evidence: ${item.evidence}` : ""}`).join("\n")
+      ? goal.blockerHistory.map((item) => `- ${item.reason} (seen ${item.occurrenceCount}x; last ${new Date(item.lastSeenAt).toISOString()})${item.evidence ? ` - evidence: ${item.evidence}` : ""}`).join("\n")
       : "- No blockers recorded yet.",
     "",
     "## Verification Evidence",
     goal.verificationEvidence.length
-      ? goal.verificationEvidence.map((item) => `- [${item.status}] ${item.requirement}${item.evidence ? ` — evidence: ${item.evidence}` : ""}`).join("\n")
+      ? goal.verificationEvidence.map((item) => `- [${item.status}] ${item.requirement}${item.evidence ? ` - evidence: ${item.evidence}` : ""}`).join("\n")
       : "- No verification evidence recorded yet.",
   ].filter((line) => line != null).join("\n");
 }

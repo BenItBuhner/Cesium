@@ -27,7 +27,7 @@ class CesiumAssistantClient(private val context: Context) {
     .build()
 
   /**
-   * Voice control plane turn — the same principle as the web orb: one fast
+   * Voice control plane turn - the same principle as the web orb: one fast
    * controller call that either answers directly (spoken via TTS) or
    * delegates into a full Cesium session (session_start / session_message),
    * with harness-style compaction keeping the running history bounded so
@@ -52,7 +52,7 @@ class CesiumAssistantClient(private val context: Context) {
         "\n\n[Context: you are the live voice assistant on the user's Android phone. " +
           "If you delegate work with session_start, tell the delegated agent it can " +
           "control this phone through the built-in \"phone\" MCP server via " +
-          "call_mcp_tool — phone_screenshot, phone_snapshot, phone_apps, phone_tap, " +
+          "call_mcp_tool - phone_screenshot, phone_snapshot, phone_apps, phone_tap, " +
           "phone_type, phone_swipe, phone_global_action, phone_settings.]"
       )
       if (screenContext.isNotBlank()) {
@@ -221,7 +221,7 @@ class CesiumAssistantClient(private val context: Context) {
       append(requestText.trim())
       append(
         "\n\n[You are Cesium acting through an Android phone. You can control this " +
-          "phone with the built-in \"phone\" MCP server via call_mcp_tool — e.g. " +
+          "phone with the built-in \"phone\" MCP server via call_mcp_tool - e.g. " +
           "phone_screenshot, phone_snapshot, phone_apps (open apps), phone_tap, " +
           "phone_type, phone_swipe, phone_global_action, phone_settings, and " +
           "phone_secondary_display for background/off-screen apps. Prefer these tools " +

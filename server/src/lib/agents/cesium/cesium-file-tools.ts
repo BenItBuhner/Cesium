@@ -63,7 +63,7 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-/** True when the needle appears once whitespace runs are normalized — a common near-miss. */
+/** True when the needle appears once whitespace runs are normalized - a common near-miss. */
 function hasWhitespaceInsensitiveMatch(haystack: string, needle: string): boolean {
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
   const normalizedNeedle = normalize(needle);
@@ -95,7 +95,7 @@ export function describeWriteFileOutcome(input: {
 /**
  * Pure edit_file semantics against an in-memory snapshot (`before === null` means the
  * file does not exist yet). Throws actionable errors that tell the model exactly how
- * to recover — missing files point at write_file, ambiguous matches report the count
+ * to recover - missing files point at write_file, ambiguous matches report the count
  * and suggest replaceAll, and near-miss matches call out whitespace drift.
  */
 export function applyCesiumFileEdit(input: {
@@ -139,7 +139,7 @@ export function applyCesiumFileEdit(input: {
   const occurrences = countOccurrences(before, oldString);
   if (occurrences === 0) {
     const whitespaceHint = hasWhitespaceInsensitiveMatch(before, oldString)
-      ? " A close match exists with different whitespace/indentation — re-read the file and copy the exact text, including tabs, spaces, and line breaks."
+      ? " A close match exists with different whitespace/indentation - re-read the file and copy the exact text, including tabs, spaces, and line breaks."
       : " Re-read the file to copy the exact current text; it may have changed since it was last read.";
     throw new Error(`edit_file: oldString was not found in ${path}.${whitespaceHint}`);
   }

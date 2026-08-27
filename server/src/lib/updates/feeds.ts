@@ -148,7 +148,7 @@ export async function fetchGithubReleases(options: {
         response.status === 404
           ? "repository not found or token lacks access"
           : response.status === 403 || response.status === 429
-            ? "rate limited by GitHub — set CESIUM_GITHUB_TOKEN"
+            ? "rate limited by GitHub - set CESIUM_GITHUB_TOKEN"
             : `HTTP ${response.status}`;
       return { channels: {}, error: `GitHub releases request failed: ${detail}` };
     }
@@ -249,7 +249,7 @@ function runGit(
 
 /**
  * For git-backed installs (source checkouts and installer-provisioned
- * servers) the release feed alone cannot say whether the tree is current —
+ * servers) the release feed alone cannot say whether the tree is current -
  * they track a branch, not tagged artifacts. Fetch the remote branch head and
  * count how many commits we are behind.
  */

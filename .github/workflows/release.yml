@@ -360,21 +360,21 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "**Android** — sideload the phone APK on Android 8+ (the Wear OS companion APK is for paired watch installs):"
+            echo "**Android** - sideload the phone APK on Android 8+ (the Wear OS companion APK is for paired watch installs):"
             echo
             echo '```bash'
             echo "adb install -r cesium-mobile-${V}.apk"
             echo '```'
             echo
-            echo "**macOS** — open the DMG and drag Cesium Desktop into Applications. Builds are unsigned, so on first launch right-click the app and choose Open, or clear the quarantine flag:"
+            echo "**macOS** - open the DMG and drag Cesium Desktop into Applications. Builds are unsigned, so on first launch right-click the app and choose Open, or clear the quarantine flag:"
             echo
             echo '```bash'
             echo 'xattr -dr com.apple.quarantine "/Applications/Cesium Desktop.app"'
             echo '```'
             echo
-            echo "**Windows** — double-click the setup executable for a per-user one-click install (no admin, no directory wizard). Builds are unsigned, so if SmartScreen appears choose \"More info\" then \"Run anyway\"."
+            echo "**Windows** - double-click the setup executable for a per-user one-click install (no admin, no directory wizard). Builds are unsigned, so if SmartScreen appears choose \"More info\" then \"Run anyway\"."
             echo
-            echo "**Linux** — make the AppImage executable and run it, or install the deb:"
+            echo "**Linux** - make the AppImage executable and run it, or install the deb:"
             echo
             echo '```bash'
             echo "chmod +x cesium-desktop-${V}-linux-x64.AppImage && ./cesium-desktop-${V}-linux-x64.AppImage"

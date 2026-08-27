@@ -26,7 +26,7 @@ export type AgentBackendId =
  * Attachment payload sent with a user prompt.
  *
  * Image attachments ship inline base64 `data` for vision models; generic file
- * attachments ship metadata only — their bytes are persisted on disk in the
+ * attachments ship metadata only - their bytes are persisted on disk in the
  * workspace uploads directory (`.cesium/file-uploads/`) at `savedPath` so
  * agents can read them with normal file tools.
  */
@@ -155,7 +155,7 @@ export type AgentProviderCapabilities = {
  * Where a conversation's agent actually executes. "local" runs on the engine
  * (device) that owns the conversation; "cloud" runs on the harness vendor's
  * hosted infrastructure (e.g. Cursor Cloud). Chosen at creation and immutable
- * afterwards — a cloud agent lives on the vendor's infra for its lifetime.
+ * afterwards - a cloud agent lives on the vendor's infra for its lifetime.
  */
 export type AgentExecutionTarget = "local" | "cloud";
 
@@ -506,7 +506,7 @@ export type AgentQueuedChatPrompt = {
 /**
  * Where a conversation was triggered from. Conversations started from external
  * sources (Linear/GitHub/Slack via Cloud Agents) are normal conversations in
- * every way — this only records provenance for rail badges and filtering.
+ * every way - this only records provenance for rail badges and filtering.
  * `kind: "import"` marks conversations migrated in from another harness's
  * local CLI storage with their native session identity preserved.
  */

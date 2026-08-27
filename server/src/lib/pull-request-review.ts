@@ -263,7 +263,7 @@ function splitPatchByFile(patchText: string): Map<string, string> {
     if (line.startsWith("diff --git ")) {
       flush();
       currentLines = [line];
-      // `diff --git a/old b/new` — take the b/ path. Quoted paths keep their quotes trimmed.
+      // `diff --git a/old b/new` - take the b/ path. Quoted paths keep their quotes trimmed.
       const match = line.match(/ b\/(.+)$/) ?? line.match(/ "b\/(.+)"$/);
       currentPath = match?.[1]?.replace(/"$/, "") ?? null;
       continue;

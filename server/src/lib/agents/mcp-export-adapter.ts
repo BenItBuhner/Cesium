@@ -100,7 +100,7 @@ export async function mcpServerConfigToSdkServer(input: {
 /**
  * Built-in MCP servers exported as local streamable HTTP endpoints so external
  * harnesses (Claude Code, Cursor, Codex, OpenCode, …) get the same browser
- * control surface as the Cesium harness. Only the browser server is exported —
+ * control surface as the Cesium harness. Only the browser server is exported -
  * phone control stays in-app because it depends on a paired device session.
  */
 export async function exportBuiltInMcpServersForSdk(

@@ -60,7 +60,7 @@ export function instructionFilesSectionTitle(): string {
   return "Project Instruction Files";
 }
 
-/** Exported for tests / docs — discovery order for instruction files. */
+/** Exported for tests / docs - discovery order for instruction files. */
 export function listInstructionFileCandidates(): ReadonlyArray<{
   label: string;
   relativePath: string;

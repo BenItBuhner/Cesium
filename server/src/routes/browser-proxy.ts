@@ -7,7 +7,7 @@ const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 60_000;
 
 /**
- * Direct TCP/TLS to upstream — avoids Node's global `fetch` routing through
+ * Direct TCP/TLS to upstream - avoids Node's global `fetch` routing through
  * `HTTP(S)_PROXY` / `EnvHttpProxyAgent`, which often yields a useless `fetch failed` on Windows.
  */
 const upstreamAgent = new Agent({
@@ -52,7 +52,7 @@ const HOP_BY_HOP = new Set([
 
 /**
  * Parse host:port from the URL segment. When no port is given, use `defaultPort`
- * (80 for http, 443 for https) — never assume 80 for all schemes or you get
+ * (80 for http, 443 for https) - never assume 80 for all schemes or you get
  * `https://host:80/` and TLS fails with "packet length too long".
  */
 function parseHostPort(
@@ -121,7 +121,7 @@ function rewriteLocation(
   const rewritten = new URL(path, requestOrigin);
   // Preserve the IDE's iframe-auth token across upstream redirects. Without
   // this, a 301 from google.com -> www.google.com lands on our proxy with no
-  // credentials and the auth middleware 401s — which is exactly the "idle
+  // credentials and the auth middleware 401s - which is exactly the "idle
   // iframe" symptom we saw from cesium.techlitnow.com.
   if (iframeAuthToken && !rewritten.searchParams.has("__ocs_access")) {
     rewritten.searchParams.set("__ocs_access", iframeAuthToken);
@@ -132,7 +132,7 @@ function rewriteLocation(
 function stripFrameBlockingHeaders(headers: Headers): void {
   // Strip every header that would prevent the proxied page from rendering
   // inside our iframe, or that would block our injected guest script from
-  // running. We're a developer tool, not a hardened security sandbox — the
+  // running. We're a developer tool, not a hardened security sandbox - the
   // user already trusts the proxy or they wouldn't be using it.
   //
   // Specifically we MUST drop Content-Security-Policy in full (not just
@@ -172,7 +172,7 @@ function forwardableHeaders(incoming: Headers): Headers {
 
 function rewriteHtmlBody(
   html: string,
-  /** Full upstream document URL — relative refs must resolve against its path. */
+  /** Full upstream document URL - relative refs must resolve against its path. */
   upstreamHref: string,
   requestOrigin: string
 ): string {
@@ -233,7 +233,7 @@ function rewriteHtmlBody(
     return `srcset=${quote}${parts.join(", ")}${quote}`;
   });
 
-  // CSS url(...) in inline styles and <style> — best-effort
+  // CSS url(...) in inline styles and <style> - best-effort
   out = out.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, url) => {
     const t = url.trim();
     if (t.startsWith("data:") || t.startsWith("#")) return m;
@@ -269,14 +269,14 @@ browserProxyRoutes.all("/*", async (c) => {
     pathname = `/browser${pathname.startsWith("/") ? "" : "/"}${pathname.replace(/^\//, "")}`;
   }
   // Iframe navigation auth rides `?__ocs_access=…` on the proxy URL. Strip it
-  // here so it never reaches the upstream site (google.com, etc.) — both to
+  // here so it never reaches the upstream site (google.com, etc.) - both to
   // avoid leaking the session token in upstream access logs and to keep the
   // forwarded query identical to what the user actually typed. We use a
   // distinct name instead of `access_token` so we don't trample a legitimate
   // `?access_token=` in the target URL (OAuth callbacks etc.).
   const outerParams = new URLSearchParams(url.search);
   // Snapshot the iframe-auth token before stripping it from the upstream
-  // query — we re-attach it to rewritten Location headers further down so
+  // query - we re-attach it to rewritten Location headers further down so
   // the browser stays authenticated across upstream redirects.
   const iframeAuthToken = outerParams.get("__ocs_access");
   outerParams.delete("__ocs_access");
@@ -340,7 +340,7 @@ browserProxyRoutes.all("/*", async (c) => {
   // scheme/host visible to Node is the LOCAL one (e.g. `http://127.0.0.1:9100`),
   // not what the browser sees. Prefer `X-Forwarded-Proto` / `X-Forwarded-Host`
   // so rewritten Location headers + HTML href/src rewrites point at the same
-  // public origin the iframe is loaded from — otherwise we emit
+  // public origin the iframe is loaded from - otherwise we emit
   // `http://cesium.techlitnow.com/...` from an `https://` page and the
   // browser either blocks it as mixed content or hops through HSTS (stripping
   // the auth query).
@@ -414,7 +414,7 @@ browserProxyRoutes.all("/*", async (c) => {
     return new Response(null, {
       status: res.status,
       // Explicit Content-Length: 0 so Node doesn't fall back to
-      // Transfer-Encoding: chunked for the empty redirect body — undici
+      // Transfer-Encoding: chunked for the empty redirect body - undici
       // (and spec-strict clients) reject responses that combine both or
       // use chunked framing for zero-length bodies.
       headers: new Headers({
@@ -448,7 +448,7 @@ browserProxyRoutes.all("/*", async (c) => {
   outHeaders.delete("content-encoding");
   // When we're going to modify + re-serialize the body we must set our OWN
   // Content-Length, and we MUST remove Transfer-Encoding because a response
-  // with both headers violates RFC 7230 — Node's undici errors out with
+  // with both headers violates RFC 7230 - Node's undici errors out with
   // HPE_UNEXPECTED_CONTENT_LENGTH / "Content-Length can't be present with
   // Transfer-Encoding" before the smoke test / real browser ever sees the
   // body. Clear both consistently; we repopulate below where appropriate.

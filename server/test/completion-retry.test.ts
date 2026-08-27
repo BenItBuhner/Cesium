@@ -34,7 +34,7 @@ describe("completion retry helpers", () => {
   test("formats taking longer status detail", () => {
     assert.equal(
       formatTakingLongerStatusDetail(1, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS),
-      "Taking longer — retrying provider request (1/3)…"
+      "Taking longer - retrying provider request (1/3)…"
     );
   });
 

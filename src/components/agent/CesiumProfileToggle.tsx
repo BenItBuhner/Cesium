@@ -33,7 +33,7 @@ interface CesiumProfileToggleProps {
  * Profiles are a layer above the harness (modes, models, tools live inside
  * it), so the switch renders above the transcript/composer and only for the
  * first-party Cesium agent harness. Hidden when fewer than two profiles are
- * enabled — first install is Code-only, so this stays out of the way.
+ * enabled - first install is Code-only, so this stays out of the way.
  */
 export function CesiumProfileToggle({
   options,
@@ -64,7 +64,7 @@ export function CesiumProfileToggle({
               aria-selected={isActive}
               aria-label={`Agent profile: ${option.name}`}
               disabled={disabled}
-              title={option.description ? `${option.name} — ${option.description}` : option.name}
+              title={option.description ? `${option.name} - ${option.description}` : option.name}
               onClick={() => {
                 if (!disabled && !isActive) {
                   onChange(option.value);

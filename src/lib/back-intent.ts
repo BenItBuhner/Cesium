@@ -13,7 +13,7 @@
  * renumbering everything.
  */
 export const BACK_INTENT_PRIORITY = {
-  /** Modals, palettes, dialogs, dropdowns — anything rendered on top of everything. */
+  /** Modals, palettes, dialogs, dropdowns - anything rendered on top of everything. */
   overlay: 100,
   /** Mobile settings-nav drawer (rides on top of the full-screen settings view). */
   settingsNav: 45,
@@ -85,8 +85,8 @@ export function selectTopBackHandler(
  * The gesture target is resolved once at `start` and stashed for the rest of
  * the gesture, so progress/cancel/commit always reach the same layer even if
  * the registry changes mid-gesture (e.g. another overlay opens or the target
- * unregisters). A `commit` without a preceding `start` — 3-button navigation,
- * pre-Android-14 devices — falls back to resolving the top handler at commit
+ * unregisters). A `commit` without a preceding `start` - 3-button navigation,
+ * pre-Android-14 devices - falls back to resolving the top handler at commit
  * time, which is exactly the old discrete behavior.
  */
 export class BackGestureCoordinator {

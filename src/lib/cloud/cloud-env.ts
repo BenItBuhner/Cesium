@@ -33,7 +33,7 @@ export const CLOUD_LOCAL_ONLY_EVENT = "cesium:cloud-local-only-changed";
 /**
  * Per-device runtime opt-out. Build config (env or committed defaults)
  * decides whether cloud is *available*; this persisted switch lets any user
- * flip a cloud-capable client — web, Electron, Android, iOS — back to pure
+ * flip a cloud-capable client - web, Electron, Android, iOS - back to pure
  * local-only behavior from Settings, without rebuilding anything.
  *
  * Note this is a client preference, not a security boundary: hosted

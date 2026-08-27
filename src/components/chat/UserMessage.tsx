@@ -32,7 +32,7 @@ export function UserMessage({
   const bodyRef = useRef<HTMLDivElement>(null);
   // Measurement target: the text content element (<p> or segments <div>), NOT
   // bodyRef. bodyRef's classes change with `singleLineOrLess` (flex/min-h-[24px]),
-  // so measuring bodyRef feeds the state back into its own input — when the
+  // so measuring bodyRef feeds the state back into its own input - when the
   // one-line threshold lands between the natural text height and 24px (e.g.
   // WebView font scaling), the boolean turns bistable and flips every
   // ResizeObserver tick, shaking the whole thread. The text element's geometry

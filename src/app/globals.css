@@ -2,7 +2,7 @@
 @import "@xterm/xterm/css/xterm.css";
 /*
  * Canonical theme tokens (`:root`, `html.dark`, `@theme inline`) are generated
- * from packages/design/src/theme-tokens.ts — the single token source shared
+ * from packages/design/src/theme-tokens.ts - the single token source shared
  * with Electron and the React Native apps. Do not redeclare token variables
  * here; edit the design package and rebuild (`npm run build --workspace
  * @cesium/design`).
@@ -168,8 +168,8 @@
  * The workbench is an app shell: the root document never scrolls (body is
  * overflow hidden below) and real scrolling lives in inner panes that already
  * declare overscroll-contain. Without this, mobile browsers and WebViews still
- * play the root overscroll effect — Android 12+ rubber-band stretch, the older
- * glow, and pull-to-refresh — on fling gestures over non-scrollable chrome
+ * play the root overscroll effect - Android 12+ rubber-band stretch, the older
+ * glow, and pull-to-refresh - on fling gestures over non-scrollable chrome
  * such as the new-chat screen. Applies to the root scroller only; inner
  * scrollable content is unaffected.
  */
@@ -186,7 +186,7 @@ body {
   overscroll-behavior: none;
 }
 
-/* Monospace: Geist Mono (next/font) — same stack as Tailwind `font-mono` */
+/* Monospace: Geist Mono (next/font) - same stack as Tailwind `font-mono` */
 code,
 kbd,
 samp,
@@ -205,7 +205,7 @@ pre {
 }
 
 /* ---------------------------------------------------------------------------
- * Landing page (`/`) — decorative-only styles, all prefixed `landing-`.
+ * Landing page (`/`) - decorative-only styles, all prefixed `landing-`.
  * ------------------------------------------------------------------------- */
 
 @keyframes landing-marquee {
@@ -230,7 +230,7 @@ pre {
 
 /*
  * Theme-aware product screenshots. Tailwind's `dark:` variant follows the OS
- * media query here, while the app theme toggles `html.dark` — so swap the
+ * media query here, while the app theme toggles `html.dark` - so swap the
  * hero screenshot off the class, exactly like the theme tokens do.
  */
 .landing-shot-dark {
@@ -403,7 +403,7 @@ html.dark .landing-shot-dark {
 }
 
 /**
- * Aurora surface adjustments — active only while the aurora backdrop is
+ * Aurora surface adjustments - active only while the aurora backdrop is
  * enabled (`data-aurora-surface="on"` on the conversation pane root).
  *
  * 1. `.aurora-glass` gives docks and quick actions the exact same translucent
@@ -414,7 +414,7 @@ html.dark .landing-shot-dark {
  */
 /*
  * Floating chrome over the aurora (composer shell, docks, quick actions):
- * mostly-opaque fills — darker than the default tokens in dark mode — so
+ * mostly-opaque fills - darker than the default tokens in dark mode - so
  * controls and text read as solid cards contrasting against the bright color
  * field behind them. Light backdrop blur remains for the small translucent
  * remainder. Everything reverts to stock theming when aurora is off.
@@ -465,7 +465,7 @@ html.dark .landing-shot-dark {
  * Shell-wide aurora scene (`data-aurora-scene="on"` on the agent shell root):
  * one canvas spans the window behind every column, so the panels themselves
  * become windows onto it. Only the OUTERMOST surface of each column carries a
- * translucent tint — nested surfaces go fully transparent, because stacked
+ * translucent tint - nested surfaces go fully transparent, because stacked
  * translucent fills multiply back into an opaque wall. No backdrop-filter on
  * these large panels: software rasterization of full-height filters is what
  * previously collapsed frame production on GPU-less machines.
@@ -586,7 +586,7 @@ html.dark .landing-shot-dark {
 
 /*
  * Touch devices (phones, tablets, Android WebView): backdrop-filter re-blurs
- * the pixels underneath on EVERY frame the content behind changes — i.e. on
+ * the pixels underneath on EVERY frame the content behind changes - i.e. on
  * every scroll frame under the composer dock. On mobile GPUs (and worse,
  * software-composited WebViews) that alone can halve frame rate. Swap the
  * frosted glass on those small, always-on chrome pieces for near-opaque
@@ -642,7 +642,7 @@ html.dark .landing-shot-dark {
 
 .opencursor-mobile-native .mobile-safe-top-offset {
   /* Floating 18px pane toggles sit at top-[11px], centered against the 40px
-     tab strip. Add the safe area to that offset instead of replacing it —
+     tab strip. Add the safe area to that offset instead of replacing it -
      replacing pulled the buttons 11px above their pane-header neighbors. */
   top: calc(var(--opencursor-mobile-safe-area-top) + 11px) !important;
 }

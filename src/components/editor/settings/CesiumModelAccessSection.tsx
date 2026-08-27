@@ -31,7 +31,7 @@ export function selectAccessControlledModels(
   return catalog.filter((entry) => entry.supportsTools);
 }
 
-/** Terse rollup used for the collapsed section summary (pure — unit tested). */
+/** Terse rollup used for the collapsed section summary (pure - unit tested). */
 export function summarizeCesiumModelAccess(
   catalog: CesiumModelCatalogEntry[],
   entries: CesiumModelAccessEntries
@@ -95,7 +95,7 @@ function ModelDescriptionField({
         value={value}
         maxLength={CESIUM_MODEL_DESCRIPTION_MAX_LENGTH}
         disabled={disabled}
-        placeholder="Optional note shown to the agent and its subagents (e.g. “fast + cheap — use for exploration”)"
+        placeholder="Optional note shown to the agent and its subagents (e.g. “fast + cheap - use for exploration”)"
         aria-label={`Description for ${modelId}`}
         onChange={(event) => setValue(event.currentTarget.value)}
         onBlur={() => {
@@ -170,7 +170,7 @@ export function CesiumModelAccessSection({
     <div>
       <SettingsSubsectionHeading>Model access</SettingsSubsectionHeading>
       <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-        Filter which catalog models the Cesium agent — and any subagents it spawns — may use.
+        Filter which catalog models the Cesium agent - and any subagents it spawns - may use.
         Disabled models leave the composer picker and are rejected as{" "}
         <code className="font-mono text-[11px]">spawn_agent</code> overrides. Add a short note (max{" "}
         {CESIUM_MODEL_DESCRIPTION_MAX_LENGTH} characters) to an enabled model and it is presented to

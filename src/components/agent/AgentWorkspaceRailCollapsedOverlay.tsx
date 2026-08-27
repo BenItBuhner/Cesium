@@ -7,7 +7,7 @@ import { useUserPreferences } from "@/components/preferences/UserPreferencesProv
 
 /**
  * When the left rail Panel is collapsed (0% width), show expand / search / new-chat above the shell.
- * Filter, settings, and account stay in the expanded rail footer only — not duplicated here while minimized.
+ * Filter, settings, and account stay in the expanded rail footer only - not duplicated here while minimized.
  */
 export function AgentWorkspaceRailCollapsedOverlay() {
   const { isMobile, leftRailCollapsed, toggleLeftRailCollapsed, startNewConversation } =

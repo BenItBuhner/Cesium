@@ -6,7 +6,7 @@
  *   SNR, so the endpointer thresholds behave consistently across mics.
  * - `SileroVad`: progressive enhancement. Loads the Silero VAD v5 ONNX model
  *   through onnxruntime-web when `/voice/silero_vad_v5.onnx` (plus the ort
- *   wasm files under `/voice/ort/`) are present — see
+ *   wasm files under `/voice/ort/`) are present - see
  *   `scripts/setup-voice-assets.mjs`. Any load failure falls back to
  *   `EnergyVad`; the endpointing state machine is identical either way.
  */

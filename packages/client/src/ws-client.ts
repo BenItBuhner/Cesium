@@ -4,7 +4,7 @@ import { clientLocation } from "./platform";
 
 /**
  * Convert an HTTP(S) origin to a WebSocket origin. Empty / relative `url`
- * means "same-origin" — fall back to the page's own origin so a WebSocket
+ * means "same-origin" - fall back to the page's own origin so a WebSocket
  * can piggyback on the reverse proxy that already handles `/api/*`.
  */
 export function toWebSocketUrl(url: string): string {
@@ -173,7 +173,7 @@ abstract class BaseReconnectSocket<TMessage> {
       }
       if (this.mobilePaused) {
         // Expected while backgrounded (frozen process, server idle-reap).
-        // Stay quiet — no disconnect notifications, no reconnect churn — and
+        // Stay quiet - no disconnect notifications, no reconnect churn - and
         // let the resume path reconnect when the app is visible again.
         this.setState("closed");
         return;

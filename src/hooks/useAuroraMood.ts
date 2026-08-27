@@ -32,8 +32,8 @@ export function useAuroraMood(input: {
   /**
    * Latest turn ended in a completion failure (from
    * `conversationHasCompletionFailure`). Some failures never pass through the
-   * `failed` status — synchronous rejections and failure events on an `idle`
-   * conversation — so status transitions alone would miss them.
+   * `failed` status - synchronous rejections and failure events on an `idle`
+   * conversation - so status transitions alone would miss them.
    */
   hasCompletionFailure: boolean;
   /**
@@ -54,7 +54,7 @@ export function useAuroraMood(input: {
   isTyping: boolean;
   /** Optimistic first turn in flight before the server ack. */
   workingOverride: boolean;
-  /** From settings — when false the backdrop stays in the ambient state. */
+  /** From settings - when false the backdrop stays in the ambient state. */
   reactToActivity: boolean;
 }): AuroraMood {
   const {

@@ -3,7 +3,7 @@
 /**
  * Compact icon menu for the orb (long-press / right-click): voice mode
  * switching, stop-speech, the pipeline self-test, and a one-line pipeline
- * status. Icons over text — the voice plane is not a chat surface.
+ * status. Icons over text - the voice plane is not a chat surface.
  */
 
 import { useEffect, useRef } from "react";
@@ -106,7 +106,7 @@ export function VoiceOrbMenu({
             <button
               key={entry.id}
               type="button"
-              title={`${entry.label} — ${entry.hint}`}
+              title={`${entry.label} - ${entry.hint}`}
               onClick={() => setMode(entry.id)}
               className={`flex flex-1 flex-col items-center gap-0.5 rounded-[8px] px-1 py-1.5 transition-colors ${
                 selected
@@ -162,7 +162,7 @@ export function VoiceOrbMenu({
       <div className="mt-1.5 border-t border-[var(--border-subtle)] pt-1.5 font-mono text-[9px] leading-4 text-[var(--text-disabled)]">
         <div>
           {serverStatus?.controller.model ?? "?"} · {ttsEngine} ·{" "}
-          {serverStatus?.stt.model ?? "?"} · vad {vadEngineId ?? "—"}
+          {serverStatus?.stt.model ?? "?"} · vad {vadEngineId ?? "-"}
         </div>
         <div>
           {latencyP50Ms !== null ? `p50 ${latencyP50Ms}ms · ` : ""}

@@ -3,7 +3,7 @@
  *
  * Each collector reads the on-disk session artifacts a coding-agent CLI leaves
  * behind (rollouts, transcripts, sqlite stores…) and reduces them into one
- * normalized `ProviderUsageReport`. Collectors never talk to remote APIs —
+ * normalized `ProviderUsageReport`. Collectors never talk to remote APIs -
  * everything is local-first and read-only.
  */
 

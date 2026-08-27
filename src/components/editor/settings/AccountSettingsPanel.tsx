@@ -108,7 +108,7 @@ function AccountIdentityCard() {
 /**
  * Runtime cloud switch: shown whenever the build is cloud-capable (env vars
  * or committed defaults). Cloud is on by default; turning it off keeps this
- * device fully local-first without rebuilding — on every platform (web,
+ * device fully local-first without rebuilding - on every platform (web,
  * Electron, Android, iOS). CloudProviders listens for the change and
  * remounts the provider tree live.
  */
@@ -124,8 +124,8 @@ function CloudSyncToggleRow({
       title="Cloud sync"
       description={
         localOnly
-          ? "Off — this device runs local-only. Nothing leaves this device or your engine servers."
-          : "On — servers, personalization, and snapshots can sync through Cesium Cloud."
+          ? "Off - this device runs local-only. Nothing leaves this device or your engine servers."
+          : "On - servers, personalization, and snapshots can sync through Cesium Cloud."
       }
       trailing={
         <ToggleSwitch
@@ -156,7 +156,7 @@ function CloudAccountSection() {
       <SettingsSection title="Cloud account">
         <SettingsRow
           title="Local mode"
-          description="Cloud sync is not configured for this build. Everything stays on this device and your engine servers — no account is required."
+          description="Cloud sync is not configured for this build. Everything stays on this device and your engine servers - no account is required."
           trailing={<span className={tagClass}>Local-only</span>}
           searchId="account-cloud-mode"
         />
@@ -172,7 +172,7 @@ function CloudAccountSection() {
         <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
         <SettingsRow
           title="Local-only mode"
-          description="Cloud sync is turned off on this device. Flip the switch to reconnect — your account and synced data are untouched."
+          description="Cloud sync is turned off on this device. Flip the switch to reconnect - your account and synced data are untouched."
           trailing={<span className={tagClass}>Local-only</span>}
           searchId="account-cloud-mode"
         />
@@ -194,7 +194,7 @@ function CloudAccountSection() {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       } catch {
-        // Clipboard unavailable (permissions/insecure context) — ignore.
+        // Clipboard unavailable (permissions/insecure context) - ignore.
       }
     };
     return (
@@ -435,7 +435,7 @@ function ActiveServerSection() {
         title={activeServerDisplayLabel}
         description={
           isLocalDeviceServer(activeServer)
-            ? "This device — the local engine bundled with this client."
+            ? "This device - the local engine bundled with this client."
             : activeServer.baseUrl
         }
         leading={
@@ -488,7 +488,7 @@ function ActiveServerSection() {
 /**
  * Account & session overview: who you are (cloud account, device sync, or
  * local), the engine password session on the active server, and which server
- * this client is connected to. Content adapts to the deployment posture —
+ * this client is connected to. Content adapts to the deployment posture -
  * local-first builds show local mode, production builds show real sign-in.
  */
 export function AccountSettingsPanel() {

@@ -6,13 +6,13 @@
  *
  * Platform difference that shapes everything here: Android has silent,
  * in-place "ongoing" notifications, so every progress tick re-renders the
- * same chip. Desktop notifications are one-shot banners — posting progress
+ * same chip. Desktop notifications are one-shot banners - posting progress
  * ticks would spam the OS. So on desktop:
  *
  * - Continuous run state renders in the tray menu / tooltip and the dock
  *   badge (synced through `syncAgentRuns`), never as notifications.
  * - OS notifications fire only on alert transitions: an agent starts
- *   needing input, or a watched run reaches a terminal state — gated by
+ *   needing input, or a watched run reaches a terminal state - gated by
  *   the same completion / intervention alert preferences as Android.
  */
 
@@ -133,7 +133,7 @@ export function getDesktopRunKey(projection: MobileAgentProjection): string {
 
 /**
  * An update should alert exactly when the agent starts needing the user
- * (permission or question) or a watched run reaches a terminal state —
+ * (permission or question) or a watched run reaches a terminal state -
  * identical semantics to the Android controller.
  */
 export function computeDesktopAlert(
@@ -327,7 +327,7 @@ type TrackedRun = {
 /**
  * Tracks every active agent run and projects it onto the desktop's native
  * surfaces. Reconciliation follows the Android controller: the projection
- * set from the web layer is authoritative — runs missing from it silently
+ * set from the web layer is authoritative - runs missing from it silently
  * stop being tracked, and terminal transitions post at most one final
  * notification under the run's sticky key.
  */
@@ -388,7 +388,7 @@ export class DesktopAgentNotificationController {
 
     if (!active) {
       if (!tracked) {
-        // Finished before we ever watched it — never resurrect stale alerts.
+        // Finished before we ever watched it - never resurrect stale alerts.
         return;
       }
       this.runs.delete(conversationId);

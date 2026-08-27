@@ -21,7 +21,7 @@ const sections = [
   {
     icon: Terminal,
     title: "Terminal & tools",
-    body: "Optional section for shell integration, MCP, or task running — template only for now.",
+    body: "Optional section for shell integration, MCP, or task running - template only for now.",
   },
 ] as const;
 
@@ -72,7 +72,7 @@ export function DocsPageView() {
                 <kbd className="rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[3px] font-mono text-[12px] text-[var(--text-primary)]">
                   P
                 </kbd>
-                <span className="ml-[8px]">placeholder — set your real shortcut</span>
+                <span className="ml-[8px]">placeholder - set your real shortcut</span>
               </dd>
             </div>
             <div className="flex flex-col gap-[4px] sm:flex-row sm:items-baseline sm:gap-[16px]">
@@ -117,7 +117,7 @@ export function DocsPageView() {
 
         <footer className="mt-[48px] border-t border-[var(--border-subtle)] pt-[24px]">
           <p className="font-sans text-[12px] leading-relaxed text-[var(--text-disabled)]">
-            Template page — add MDX, search, or sidebar navigation when you outgrow this single column.
+            Template page - add MDX, search, or sidebar navigation when you outgrow this single column.
           </p>
         </footer>
       </div>

@@ -103,7 +103,7 @@ function collectElevatedConversations(
 
 /**
  * Cross-workspace inbox: permission, question, or unread failure.
- * Attention wins over pinned — each conversation has one home.
+ * Attention wins over pinned - each conversation has one home.
  */
 export function collectAttentionConversations(
   groups: AgentConversationGroup[],

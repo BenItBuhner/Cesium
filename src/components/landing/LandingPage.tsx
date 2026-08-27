@@ -72,7 +72,7 @@ function SectionLabel({ index, children }: { index: string; children: React.Reac
   );
 }
 
-/** Periodic-table tile for caesium — the brand's namesake. */
+/** Periodic-table tile for caesium - the brand's namesake. */
 function ElementTile() {
   return (
     <div className="relative">
@@ -113,7 +113,7 @@ function WorkbenchShot() {
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-            cesium — /agent · kimi-k3
+            cesium - /agent · kimi-k3
           </span>
         </div>
         <img
@@ -132,7 +132,7 @@ function WorkbenchShot() {
         />
       </div>
       <figcaption className="mt-[14px] text-center font-mono text-[11.5px] text-[var(--text-disabled)]">
-        Not a mockup — a live session. A Cesium agent tracing the WebSocket reconnect logic in
+        Not a mockup - a live session. A Cesium agent tracing the WebSocket reconnect logic in
         this very repository.
       </figcaption>
     </figure>
@@ -159,14 +159,14 @@ const FEATURES = [
   {
     icon: MessagesSquare,
     title: "Agent conversations",
-    body: "Long-lived agent chats with streaming output, tool-call approvals, and history that survives restarts — all live over WebSockets.",
+    body: "Long-lived agent chats with streaming output, tool-call approvals, and history that survives restarts - all live over WebSockets.",
     accent: "var(--orchestration-accent)",
     accentBg: "var(--orchestration-accent-bg)",
   },
   {
     icon: SquareCode,
     title: "A real IDE, in the browser",
-    body: "Monaco editor, file tree, tabs, and a live file watcher — editing the actual folders on your disk, not a sandboxed copy.",
+    body: "Monaco editor, file tree, tabs, and a live file watcher - editing the actual folders on your disk, not a sandboxed copy.",
     accent: "var(--workflow-accent)",
     accentBg: "var(--workflow-accent-bg)",
   },
@@ -194,7 +194,7 @@ const FEATURES = [
   {
     icon: Database,
     title: "Storage that scales with you",
-    body: "Plain JSON files out of the box — no services to run. Flip one variable for Postgres + Redis, and migrate either direction any time.",
+    body: "Plain JSON files out of the box - no services to run. Flip one variable for Postgres + Redis, and migrate either direction any time.",
     accent: "var(--debug-accent)",
     accentBg: "var(--debug-accent-bg)",
   },
@@ -214,7 +214,7 @@ const PLATFORMS = [
   {
     icon: Smartphone,
     title: "Mobile",
-    body: "A native Android workbench built with React Native — your agents, pocket-sized.",
+    body: "A native Android workbench built with React Native - your agents, pocket-sized.",
   },
   {
     icon: Tablet,
@@ -241,7 +241,7 @@ function ArchitectureDiagram() {
           </div>
         </div>
         <ul className="space-y-[8px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-          <li>Static-first React 19 app — nothing sensitive lives here.</li>
+          <li>Static-first React 19 app - nothing sensitive lives here.</li>
           <li>Installable PWA; one env var points it at your engine.</li>
           <li>Open it from a laptop, a phone, or a tablet on the go.</li>
         </ul>
@@ -339,7 +339,7 @@ export function LandingPage() {
               <p className="mt-[22px] max-w-[520px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
                 Cesium pairs a Next.js client you can put on Vercel with a Bun-powered engine that
                 runs where your code lives. Chat with any coding agent, edit real files, run real
-                terminals — from anywhere.
+                terminals - from anywhere.
               </p>
               <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
                 <LandingHeroActions />
@@ -376,7 +376,7 @@ export function LandingPage() {
       {/* agent marquee */}
       <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-panel)] py-[28px]">
         <p className="mb-[18px] text-center font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-disabled)]">
-          Speaks fluent agent — SDK, ACP, and CLI adapters included
+          Speaks fluent agent - SDK, ACP, and CLI adapters included
         </p>
         <div className="landing-marquee overflow-hidden">
           <div className="landing-marquee-track flex w-max items-center">
@@ -402,7 +402,7 @@ export function LandingPage() {
           </p>
           <p className="mt-[10px] text-[14.5px] leading-relaxed text-[var(--text-secondary)]">
             oscillations of a caesium-133 atom define one second. We named the workbench after the
-            element that keeps time itself honest — every agent event, tool call, and terminal
+            element that keeps time itself honest - every agent event, tool call, and terminal
             byte is streamed live and persisted, so nothing your agents do goes unaccounted for.
           </p>
         </div>
@@ -416,7 +416,7 @@ export function LandingPage() {
             A full workbench, not another chat box
           </h2>
           <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-            Everything an agent needs to do real work — and everything you need to supervise it —
+            Everything an agent needs to do real work - and everything you need to supervise it -
             lives in one window.
           </p>
         </div>
@@ -448,7 +448,7 @@ export function LandingPage() {
               Cloud reach. Local roots.
             </h2>
             <p className="mt-[12px] text-[15px] leading-relaxed text-[var(--text-secondary)]">
-              The client is just a window — deploy it once and open it from anywhere. The engine is
+              The client is just a window - deploy it once and open it from anywhere. The engine is
               the workshop, and it stays on hardware you control. Your source never has to leave
               home to get cloud convenience.
             </p>
@@ -482,7 +482,7 @@ export function LandingPage() {
               </li>
               <li className="flex items-start gap-[10px]">
                 <Cpu className="mt-[2px] size-[15px] shrink-0 text-[var(--workflow-accent)]" strokeWidth={1.75} aria-hidden />
-                Bring your own keys and CLIs — Cesium orchestrates, you own the accounts.
+                Bring your own keys and CLIs - Cesium orchestrates, you own the accounts.
               </li>
             </ul>
           </div>
@@ -569,7 +569,7 @@ export function LandingPage() {
         <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-[14px] px-[24px] py-[26px]">
           <div className="flex items-center gap-[8px] text-[var(--text-disabled)]">
             <CesiumMark className="h-[16px] w-auto" />
-            <span className="text-[12px]">Cesium — local-first AI workbench</span>
+            <span className="text-[12px]">Cesium - local-first AI workbench</span>
           </div>
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">

@@ -21,7 +21,7 @@ export type HarnessImportAvailability = {
 };
 
 export type HarnessSessionSummary = {
-  /** Harness-native session id (verbatim — used for import + resume). */
+  /** Harness-native session id (verbatim - used for import + resume). */
   id: string;
   title: string;
   /** Working directory the session was created in, when recorded. */
@@ -38,7 +38,7 @@ export type HarnessSessionSummary = {
   preview?: string;
   /**
    * Harness-native model identifier in the backend's own `config.modelId`
-   * format, when the session records one — continuation then uses the exact
+   * format, when the session records one - continuation then uses the exact
    * model the source session was running, not the backend default.
    */
   modelId?: string;

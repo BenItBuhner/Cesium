@@ -69,7 +69,7 @@ export const AURORA_PRESET_CATALOG: Record<
   },
   "polar-dawn": {
     label: "Polar Dawn",
-    description: "Soft rose, amber, and lavender — first light over the ice.",
+    description: "Soft rose, amber, and lavender - first light over the ice.",
     colors: ["#fb7185", "#fbbf24", "#a78bfa", "#7dd3fc"],
   },
   "emerald-veil": {
@@ -84,7 +84,7 @@ export const AURORA_PRESET_CATALOG: Record<
   },
   "ember-drift": {
     label: "Ember Drift",
-    description: "The rare red aurora — embers, rose, and gold.",
+    description: "The rare red aurora - embers, rose, and gold.",
     colors: ["#fb923c", "#f43f5e", "#fbbf24", "#e879f9"],
   },
   moonlight: {
@@ -104,9 +104,9 @@ export type AuroraSettingsState = {
   enabled: boolean;
   preset: AuroraPresetId;
   placement: AuroraPlacementId;
-  /** 0..100 — overall visibility. The effect stays subtle even at 100. */
+  /** 0..100 - overall visibility. The effect stays subtle even at 100. */
   intensity: number;
-  /** 0..100 — animation pace; 50 is the designed speed. */
+  /** 0..100 - animation pace; 50 is the designed speed. */
   speed: number;
   /**
    * Shift color, brightness, and motion with the conversation lifecycle

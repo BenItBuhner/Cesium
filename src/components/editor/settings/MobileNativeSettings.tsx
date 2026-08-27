@@ -165,7 +165,7 @@ export function MobileNativeSettings() {
         <SettingsRow
           searchId="mobile-eta-mode"
           title="Time estimates"
-          description="Todo plans show their step progression — their extrapolated time estimates swing wildly with each task's complexity. Goals run long enough for a time-remaining estimate to be meaningful."
+          description="Todo plans show their step progression - their extrapolated time estimates swing wildly with each task's complexity. Goals run long enough for a time-remaining estimate to be meaningful."
           trailing={
             <SettingsThemeSelect
               className="w-full max-w-[min(100%,340px)]"
@@ -204,7 +204,7 @@ export function MobileNativeSettings() {
         <SettingsRow
           searchId="mobile-completion-alerts"
           title="Agent finished notifications"
-          description="When an agent run completes, fails, or is cancelled. By default nothing is posted while you are inside the app — you are already watching it finish."
+          description="When an agent run completes, fails, or is cancelled. By default nothing is posted while you are inside the app - you are already watching it finish."
           trailing={
             <SettingsThemeSelect
               className="w-full max-w-[min(100%,340px)]"

@@ -79,7 +79,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Coerce one persisted release into the current schema, or drop it. The state
  * file survives self-updates in both directions (this install kind exists so
  * servers can update themselves), so `update-state.json` may have been written
- * by a build whose release schema differs — most dangerously a release without
+ * by a build whose release schema differs - most dangerously a release without
  * `assets`, which crashes clients that render `release.assets.length`.
  */
 export function sanitizePersistedRelease(
@@ -202,7 +202,7 @@ export function resolveSelfUpdateSupport(kind: CesiumInstallKind): {
         supported: false,
         method: null,
         reason:
-          "The desktop app updates by installing a new build — download it from the release below.",
+          "The desktop app updates by installing a new build - download it from the release below.",
       };
     default:
       return {

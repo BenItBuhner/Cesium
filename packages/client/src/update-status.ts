@@ -15,8 +15,8 @@ import type {
  *
  * The update status flows through a JSON state file on the server
  * (`profile/update-state.json`), so a server build with a different release
- * schema — common on self-updating installs such as the Termux on-device
- * server — can hand the client releases missing `assets` or other fields.
+ * schema - common on self-updating installs such as the Termux on-device
+ * server - can hand the client releases missing `assets` or other fields.
  * Rendering then dies with errors like "Cannot read properties of undefined
  * (reading 'length')". Every field the Updates UI dereferences is coerced to
  * its expected shape here; unusable releases are dropped instead of crashing.

@@ -86,7 +86,7 @@ export function VoiceAgentView() {
           <span aria-live="polite">{STATUS_LABELS[session.status]}</span>
           {session.micState === "error" ? (
             <span className="rounded-[var(--radius-pill)] bg-[var(--bg-card)] px-[8px] py-[3px] text-[11px] text-[var(--status-error,#e5484d)]">
-              Mic unavailable — type below
+              Mic unavailable - type below
             </span>
           ) : null}
         </div>
@@ -111,7 +111,7 @@ export function VoiceAgentView() {
             data-voice-agent-minimize
             onClick={session.minimize}
             aria-label="Minimize voice agent"
-            title="Minimize — the orb docks above the composer"
+            title="Minimize - the orb docks above the composer"
             className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
           >
             <Minimize2 className="size-[15px]" strokeWidth={1.6} />

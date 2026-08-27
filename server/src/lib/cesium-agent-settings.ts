@@ -274,7 +274,7 @@ type ApiKeyProviderHint = {
   test: (apiKey: string) => boolean;
 };
 
-/** Unambiguous key prefixes only. `csk-` is shared by Cerebras and Cursor — never infer from it. */
+/** Unambiguous key prefixes only. `csk-` is shared by Cerebras and Cursor - never infer from it. */
 const API_KEY_PROVIDER_HINTS: ApiKeyProviderHint[] = [
   {
     providerId: "nvidia",
@@ -355,7 +355,7 @@ function assertApiKeyMatchesProvider(apiKey: string, providerId: string): void {
   if (inferred === "openai" && !NATIVE_API_KEY_PROVIDERS.has(expected)) {
     return;
   }
-  // nvidia/anthropic/google prefixes are unambiguous — always enforce.
+  // nvidia/anthropic/google prefixes are unambiguous - always enforce.
   throw new Error(formatApiKeyMismatchError(apiKey, expected));
 }
 
@@ -1011,7 +1011,7 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
     return builtin;
   }
   // Prefer the env-bootstrapped OpenAI-compatible host over a bare OPENAI_API_KEY
-  // when both resolve to the same key material for listing — keep both entries so
+  // when both resolve to the same key material for listing - keep both entries so
   // true OpenAI models remain selectable, but expose the custom host explicitly.
   const already = builtin.some(
     (key) => normalizeProviderId(key.providerId) === bootstrap.providerId
@@ -1935,7 +1935,7 @@ export function formatCesiumModelRoster(
     ]
       .filter(Boolean)
       .join(", ");
-    const suffix = entry.description ? ` — ${entry.description}` : "";
+    const suffix = entry.description ? ` - ${entry.description}` : "";
     return `- ${entry.modelId}${entry.isDefault ? " (current default)" : ""} [${capabilities}]${suffix}`;
   });
   const overflow =

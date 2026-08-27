@@ -77,7 +77,7 @@ export function SettingsSection({
 /**
  * Collapsible settings layer: a card with a clickable header (title + terse
  * summary) that reveals its content on demand. Keeps dense panels tidy when
- * first opened — detail only appears when the user clicks into a section.
+ * first opened - detail only appears when the user clicks into a section.
  */
 export function SettingsDisclosure({
   title,
@@ -140,7 +140,7 @@ export type SettingsRadioOption<T extends string = string> = {
   label: string;
 };
 
-/** Flat vertical radio list — bullet + label rows, no card wrapper. */
+/** Flat vertical radio list - bullet + label rows, no card wrapper. */
 export function SettingsRadioList<T extends string>({
   value,
   onChange,
@@ -445,7 +445,7 @@ export function SettingsPageHeader({
   );
 }
 
-/** Simple page title — renders the standardized header with a single segment. */
+/** Simple page title - renders the standardized header with a single segment. */
 export function PageIntro({ title }: { title: string }) {
   return <SettingsPageHeader segments={[{ label: title }]} />;
 }

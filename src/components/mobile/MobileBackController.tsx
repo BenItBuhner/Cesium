@@ -20,12 +20,12 @@ import { useBackIntent, type BackGestureEvent } from "@/components/mobile/BackIn
  *   native side emits at input frequency.
  * - Handles `backRequest` (the gesture commit, also the only message sent by
  *   3-button navigation and older Androids) by popping the gesture's target
- *   layer — or the top-most registered layer when no gesture preceded it —
+ *   layer - or the top-most registered layer when no gesture preceded it -
  *   replying with `backFallback` when there is (unexpectedly) nothing to pop
  *   so native can run its default.
  *
  * On the desktop app and plain web the bridge is absent, so
- * `postMobileBridgeMessage` no-ops and none of these messages arrive — this
+ * `postMobileBridgeMessage` no-ops and none of these messages arrive - this
  * component is inert there.
  */
 export function MobileBackController() {

@@ -95,7 +95,7 @@ export function migrateGlobalPinnedAgentConversationIdsIfNeeded(
     return;
   }
   // Seed only when the global key has never been written. An existing empty
-  // list is a deliberate state (user unpinned everything) — re-seeding from
+  // list is a deliberate state (user unpinned everything) - re-seeding from
   // legacy session backups would resurrect just-unpinned conversations.
   if (window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY) !== null) {
     return;

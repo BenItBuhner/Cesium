@@ -59,7 +59,7 @@ export function useWorkspaceInsights(input: {
         setInsights(response.insights);
       }
     } catch {
-      /* transient — keep last snapshot */
+      /* transient - keep last snapshot */
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false);

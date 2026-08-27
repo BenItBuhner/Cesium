@@ -323,7 +323,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           break;
         case "quiet_mode":
           setModeFnRef.current("quiet");
-          pushBubble({ kind: "system", text: "Going quiet — still listening and acting.", meta: "local" });
+          pushBubble({ kind: "system", text: "Going quiet - still listening and acting.", meta: "local" });
           break;
         case "active_mode":
           setModeFnRef.current("active");
@@ -331,7 +331,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           break;
         case "pause_listening":
           setModeFnRef.current("paused");
-          pushBubble({ kind: "system", text: "Paused — microphone off.", meta: "local" });
+          pushBubble({ kind: "system", text: "Paused - microphone off.", meta: "local" });
           break;
         case "resume_listening":
           setModeFnRef.current("active");

@@ -188,7 +188,7 @@ async function main() {
     prompt: [
       {
         type: "text",
-        text: 'Read exactly these files and reply with one word "done": package.json, README.md, src/lib/agent-chat.ts — use the project read tool only.',
+        text: 'Read exactly these files and reply with one word "done": package.json, README.md, src/lib/agent-chat.ts - use the project read tool only.',
       },
     ],
   });

@@ -1,5 +1,5 @@
 /**
- * Cesium Cloud master switches — pure env parsing, safe to import anywhere
+ * Cesium Cloud master switches - pure env parsing, safe to import anywhere
  * (client bundles, the Next proxy boundary, and node test runners alike).
  *
  * Deployment postures, from one knob:

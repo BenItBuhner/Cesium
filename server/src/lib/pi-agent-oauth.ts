@@ -132,7 +132,7 @@ async function ensureAuthStorageUnlocked(): Promise<void> {
       await fs.unlink(lockPath).catch(() => undefined);
     }
   } catch {
-    // No lock file — expected.
+    // No lock file - expected.
   }
 }
 

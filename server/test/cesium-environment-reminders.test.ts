@@ -60,7 +60,7 @@ test("cesiumEnvironmentChangeNotice emits time-gap notices only after a full day
   assert.match(notice!, /full day or more has passed/i);
   assert.match(notice!, /UTC/);
 
-  // Same-day / multi-hour gaps stay quiet — these notices are intentionally rare.
+  // Same-day / multi-hour gaps stay quiet - these notices are intentionally rare.
   assert.equal(
     cesiumEnvironmentChangeNotice({
       previous: {

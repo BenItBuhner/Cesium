@@ -17,7 +17,7 @@ LOG_DIR="$PREFIX/var/log/sv/cesium"
 
 # Termux is rolling-release. Partial upgrades break curl/openssl linkage
 # (CANNOT LINK EXECUTABLE "curl" / SSL_set_quic_tls_transport_params).
-# pkg itself depends on curl, so repair with apt — which does not.
+# pkg itself depends on curl, so repair with apt - which does not.
 ensure_termux_packages_ready() {
   if ! command -v apt >/dev/null 2>&1; then
     printf 'Termux apt is missing. Reinstall Termux from F-Droid and retry.\n' >&2
@@ -104,7 +104,7 @@ export npm_config_audit=false
 
 # Lean on-device install: only @cesium/core + cesium-server.
 # Do NOT run root `npm ci` (pulls the full monorepo) or a second
-# `npm ci --prefix server` against a stale nested lockfile — npm 11 on Termux
+# `npm ci --prefix server` against a stale nested lockfile - npm 11 on Termux
 # rejects that out-of-sync lock with EUSAGE.
 printf 'Installing @cesium/core...\n'
 (

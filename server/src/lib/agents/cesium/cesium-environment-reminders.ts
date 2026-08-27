@@ -29,7 +29,7 @@ export function formatCesiumDateLabel(
     try {
       return value.toLocaleString("en-US", { ...options, timeZone: timeZone.trim() });
     } catch {
-      // Invalid IANA zone — fall through to host-local formatting.
+      // Invalid IANA zone - fall through to host-local formatting.
     }
   }
   return value.toLocaleString("en-US", options);

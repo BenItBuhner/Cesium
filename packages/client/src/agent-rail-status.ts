@@ -249,7 +249,7 @@ export const AGENT_RAIL_ROW_DETAIL_MODES = ["compact", "balanced", "expanded"] a
 
 /**
  * How much per-row detail the rail shows.
- * - `compact`: strict single-line rows — title plus a status dot (spinner while
+ * - `compact`: strict single-line rows - title plus a status dot (spinner while
  *   running); no icons, no description text anywhere.
  * - `balanced`: single-line, but rows that need something (approval, answer,
  *   failure, active work, unread result) grow a small description line.

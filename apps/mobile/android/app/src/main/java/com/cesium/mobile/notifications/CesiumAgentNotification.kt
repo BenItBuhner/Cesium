@@ -169,7 +169,7 @@ object CesiumAgentNotification {
    * Whether the given notification structurally qualifies for Android 16
    * promotion (ongoing + title + eligible style + promotion requested, no
    * group summary / custom views / colorization). Ignores the user's
-   * per-app Live Updates permission — pair with [canPostPromoted].
+   * per-app Live Updates permission - pair with [canPostPromoted].
    */
   fun hasPromotableCharacteristics(notification: Notification): Boolean {
     if (Build.VERSION.SDK_INT < 36) return false
@@ -182,7 +182,7 @@ object CesiumAgentNotification {
 
   /**
    * True when any currently posted Cesium notification was actually promoted
-   * by the system (FLAG_PROMOTED_ONGOING) — the ground truth for "is a live
+   * by the system (FLAG_PROMOTED_ONGOING) - the ground truth for "is a live
    * update rendering right now".
    */
   fun isPromotedOngoingPosted(context: Context): Boolean {

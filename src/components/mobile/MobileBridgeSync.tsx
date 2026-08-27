@@ -108,7 +108,7 @@ export function MobileBridgeSync() {
   // Track the same conversation the agent view shows (URL param → agentView
   // selection), then fall back to the IDE chat tab. Live notifications and the
   // native agent-status subscription previously keyed off `chat.tabs` only,
-  // which stays on "new" in agent view — so nothing was ever projected.
+  // which stays on "new" in agent view - so nothing was ever projected.
   const focusedConversationId =
     normalizeConversationId(requestedConversationIdFromLocation) ??
     normalizeConversationId(workspaceSession.agentView.selectedConversationId) ??
@@ -158,7 +158,7 @@ export function MobileBridgeSync() {
         if (isMobileAgentRunActive(nextProjection.status)) {
           tracked.set(conversation.id, { previous: nextProjection, terminalSince: null });
         } else if (entry == null) {
-          // Finished before we ever tracked it — nothing to notify about.
+          // Finished before we ever tracked it - nothing to notify about.
           continue;
         } else {
           const terminalSince = entry.terminalSince ?? now;
@@ -424,7 +424,7 @@ export function MobileBridgeSync() {
               ...current.chat,
               tabs: nextTabs,
             },
-            // Also select it in the agent view — tapping a notification should
+            // Also select it in the agent view - tapping a notification should
             // land on that conversation, not just activate a hidden chat tab.
             agentView: {
               ...current.agentView,

@@ -24,7 +24,7 @@ import {
 const NO_WORKSPACE_VALUE = "__none__";
 
 /**
- * Step 4 — start your first conversation: pick a workspace folder, choose an
+ * Step 4 - start your first conversation: pick a workspace folder, choose an
  * available backend, send the first prompt. Afterwards the conversation can
  * be synced to the cloud in one click so any other device can pick it up.
  */
@@ -227,10 +227,10 @@ export function FirstChatStep({
             }}
             className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px] py-[9px] text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           >
-            <option value={NO_WORKSPACE_VALUE}>No workspace — just chat</option>
+            <option value={NO_WORKSPACE_VALUE}>No workspace - just chat</option>
             {(workspaces ?? []).map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
-                {workspace.name} — {workspace.root}
+                {workspace.name} - {workspace.root}
               </option>
             ))}
             <option value="__custom__">Other folder…</option>
@@ -288,7 +288,7 @@ export function FirstChatStep({
 
       {backends.length === 0 ? (
         <p className="text-[12.5px] text-[var(--text-secondary)]">
-          No agent backend is ready yet — finish the previous step first.
+          No agent backend is ready yet - finish the previous step first.
         </p>
       ) : null}
       {error ? <p className="text-[12.5px] text-[var(--goal-accent)]">{error}</p> : null}
