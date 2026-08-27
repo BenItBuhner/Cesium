@@ -69,7 +69,12 @@ export function ServerPickerPopover({
   onSelectCloudDevice,
 }: ServerPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0, width: 280 });
+  const [popoverPos, setPopoverPos] = useState({
+    top: 0,
+    left: 0,
+    width: 280,
+    maxHeight: 420,
+  });
   const [connectOpen, setConnectOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -85,22 +90,31 @@ export function ServerPickerPopover({
       const rect = anchorRef.current?.getBoundingClientRect();
       if (!rect) return;
       const viewportPad = 8;
+      const maxHeight = Math.max(160, window.innerHeight - viewportPad * 2);
       const width = Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2));
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      const left = Math.max(viewportPad, Math.min(rect.left, window.innerWidth - width - viewportPad));
       const gap = 6;
-      const estimatedHeight = popoverRef.current?.offsetHeight ?? (variant === "device" ? 360 : 280);
+      const naturalHeight =
+        popoverRef.current?.offsetHeight ?? (variant === "device" ? 360 : 280);
+      const height = Math.min(naturalHeight, maxHeight);
       const desiredTop =
         placement === "above"
-          ? rect.top - estimatedHeight - gap
+          ? rect.top - height - gap
           : rect.bottom + gap;
-      const maxTop = Math.max(viewportPad, window.innerHeight - estimatedHeight - viewportPad);
+      const maxTop = Math.max(viewportPad, window.innerHeight - height - viewportPad);
       const top = Math.max(viewportPad, Math.min(desiredTop, maxTop));
-      setPopoverPos({ top, left, width });
+      setPopoverPos({ top, left, width, maxHeight });
     };
     update();
+    const resizeObserver =
+      popoverRef.current == null ? null : new ResizeObserver(() => update());
+    if (popoverRef.current && resizeObserver) {
+      resizeObserver.observe(popoverRef.current);
+    }
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
@@ -159,18 +173,24 @@ export function ServerPickerPopover({
       ref={popoverRef}
       role="menu"
       aria-label={label}
-      className="fixed z-[10050] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
+      className="fixed z-[10050] flex flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
       style={{
         top: popoverPos.top,
         left: popoverPos.left,
         width: popoverPos.width,
+        maxHeight: popoverPos.maxHeight,
       }}
       data-ide-input-sink
       onPointerDown={(event) => event.stopPropagation()}
     >
       <VerticalFadedScroll
+        wrapperClassName={connectOpen ? "shrink-0" : undefined}
         measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${cloudDevices.length}\0${selectedCloudDeviceId ?? ""}`}
-        scrollClassName="hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+        scrollClassName={
+          connectOpen
+            ? "hide-scrollbar-y max-h-[min(140px,28dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+            : "hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+        }
       >
         {servers.map((server, index) => {
           const selected = server.id === selectedServerId && !selectedCloudDeviceId;
@@ -335,28 +355,35 @@ export function ServerPickerPopover({
         ) : null}
       </VerticalFadedScroll>
       {variant === "device" ? (
-        <div className="border-t border-[var(--border-card)] p-[4px]">
+        <div
+          className={`flex min-h-0 flex-col border-t border-[var(--border-card)] p-[4px] ${
+            connectOpen ? "flex-1 overflow-hidden" : ""
+          }`}
+        >
           <button
             type="button"
+            aria-expanded={connectOpen}
             onClick={() => setConnectOpen((openConnect) => !openConnect)}
-            className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+            className="flex w-full shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
           >
             <Plus className="size-[13px] shrink-0" strokeWidth={1.5} />
             Connect a device
           </button>
           {connectOpen ? (
-            <DeviceConnectPanel
-              onConnected={(serverId) => {
-                onSelect(serverId);
-                setConnectOpen(false);
-                onClose();
-              }}
-            />
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <DeviceConnectPanel
+                onConnected={(serverId) => {
+                  onSelect(serverId);
+                  setConnectOpen(false);
+                  onClose();
+                }}
+              />
+            </div>
           ) : null}
           <button
             type="button"
             onClick={openAdvancedServers}
-            className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            className="flex w-full shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
           >
             <Settings className="size-[13px] shrink-0" strokeWidth={1.5} />
             Advanced…
