@@ -13,7 +13,9 @@ import { useCloudContext } from "@/contexts/CloudContext";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
   getPlatformSetupProfile,
+  isSetupStepLocked,
   SETUP_STEP_LABELS,
+  visibleSetupSteps,
   type SetupStepId,
 } from "@/lib/onboarding/platform";
 import {
@@ -33,7 +35,7 @@ import { FirstChatStep } from "./FirstChatStep";
 
 const STEP_DESCRIPTIONS: Record<SetupStepId, string> = {
   "connect-server":
-    "Install or attach an engine. Production uses Clerk; a pasted URL cannot expose an open server.",
+    "Install or attach a Cesium engine. Agents, imports, and chat wait until this is live.",
   agents:
     "Pick the coding agents you want. Missing CLIs install with one click.",
   import: "Bring conversations from other tools or from your cloud account.",
@@ -76,7 +78,17 @@ export function SetupWizard() {
       : getActiveServerConnection(getConfiguredServerBaseUrl()).baseUrl
   );
   const [engineName, setEngineName] = useState<string | null>(null);
+  const [engineConnected, setEngineConnected] = useState(
+    () => profile.serverConnection === "footnote"
+  );
   const [agentsReady, setAgentsReady] = useState(false);
+  const shownSteps = visibleSetupSteps(profile, engineConnected);
+
+  useEffect(() => {
+    if (profile.serverConnection === "step" && !engineConnected) {
+      setActiveStep("connect-server");
+    }
+  }, [engineConnected, profile.serverConnection]);
 
   // Bind guest progress to the signed-in account, then merge cloud steps
   // so setup resumes on any device.
@@ -90,13 +102,17 @@ export function SetupWizard() {
     const merged = mergeOnboardingState(local, cloud.bootstrap?.onboarding ?? null);
     writeOnboardingState(merged, accountKey);
     setState(merged);
-    setActiveStep((current) =>
-      merged.completedSteps.includes(current)
-        ? (profile.steps.find((step) => !merged.completedSteps.includes(step)) ??
+    setActiveStep((current) => {
+      const available = visibleSetupSteps(profile, engineConnected);
+      if (!available.includes(current)) {
+        return available[0] ?? current;
+      }
+      return merged.completedSteps.includes(current)
+        ? (available.find((step) => !merged.completedSteps.includes(step)) ??
           current)
-        : current
-    );
-  }, [accountKey, cloud.bootstrap, cloud.status, profile.steps]);
+        : current;
+    });
+  }, [accountKey, cloud.bootstrap, cloud.status, engineConnected, profile]);
 
   const complete = useCallback(
     (step: SetupStepId, options?: { advance?: boolean }) => {
@@ -116,17 +132,22 @@ export function SetupWizard() {
         return next;
       });
       if (options?.advance !== false) {
-        const index = profile.steps.indexOf(step);
-        const nextStep = profile.steps[index + 1];
+        const available = visibleSetupSteps(
+          profile,
+          step === "connect-server" ? true : engineConnected
+        );
+        const index = available.indexOf(step);
+        const nextStep = available[index + 1];
         if (nextStep) {
           setActiveStep(nextStep);
         }
       }
     },
-    [accountKey, cloud.actions, profile]
+    [accountKey, cloud.actions, engineConnected, profile]
   );
 
-  const allDone = isOnboardingFinished(state, profile.steps);
+  const allDone =
+    engineConnected && isOnboardingFinished(state, shownSteps);
 
   useEffect(() => {
     if (!allDone || state.completedAt) {
@@ -143,11 +164,16 @@ export function SetupWizard() {
   }, [accountKey, allDone, state, cloud.actions, profile.platform]);
 
   useEffect(() => {
-    if (!resumeAfterAuth || cloud.status === "loading" || !allDone) {
+    if (
+      !resumeAfterAuth ||
+      cloud.status === "loading" ||
+      !engineConnected ||
+      !allDone
+    ) {
       return;
     }
     window.location.replace(WORKSPACE_ROUTE);
-  }, [allDone, cloud.status, resumeAfterAuth]);
+  }, [allDone, cloud.status, engineConnected, resumeAfterAuth]);
 
   const renderStep = (step: SetupStepId) => {
     switch (step) {
@@ -159,6 +185,7 @@ export function SetupWizard() {
               setEngineName(
                 getActiveServerConnection(getConfiguredServerBaseUrl()).label
               );
+              setEngineConnected(true);
               complete("connect-server");
             }}
           />
@@ -253,10 +280,25 @@ export function SetupWizard() {
           </div>
         ) : null}
 
+        {!engineConnected && profile.serverConnection === "step" ? (
+          <p className="mb-[18px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
+            This is the server onboarding. Attach a live engine first — agents,
+            imports, and your first chat stay hidden until the workbench can
+            actually talk to one.
+          </p>
+        ) : null}
+
         <ol className="space-y-[14px]">
-          {profile.steps.map((step, index) => {
-            const done = state.completedSteps.includes(step);
+          {shownSteps.map((step, index) => {
+            const done =
+              step === "connect-server"
+                ? engineConnected
+                : state.completedSteps.includes(step);
             const active = activeStep === step;
+            const locked = isSetupStepLocked(step, {
+              profile,
+              engineConnected,
+            });
             return (
               <li
                 key={step}
@@ -268,8 +310,13 @@ export function SetupWizard() {
               >
                 <button
                   type="button"
-                  onClick={() => setActiveStep(step)}
-                  className="flex w-full items-center gap-[12px] px-[18px] py-[14px] text-left"
+                  disabled={locked}
+                  onClick={() => {
+                    if (!locked) {
+                      setActiveStep(step);
+                    }
+                  }}
+                  className="flex w-full items-center gap-[12px] px-[18px] py-[14px] text-left disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span
                     className={`flex size-[26px] shrink-0 items-center justify-center rounded-full border font-mono text-[12px] ${
