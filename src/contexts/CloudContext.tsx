@@ -42,6 +42,7 @@ import {
   isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
+import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -484,15 +485,26 @@ function CloudBridge({
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
 }
 
+const CLERK_READY_TIMEOUT_MS = 8_000;
+
 function ClerkCloudBridge({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { isLoaded } = useAuth();
   const { user } = useUser();
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (isLoaded) {
+      setTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setTimedOut(true), CLERK_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [isLoaded]);
   return (
     <CloudBridge
       mode="clerk"
-      authReady={isLoaded && !isLoading}
-      signedIn={isAuthenticated}
+      authReady={(isLoaded && !isLoading) || timedOut}
+      signedIn={isLoaded && isAuthenticated}
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >
@@ -552,8 +564,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
     return (
       <ClerkProvider
         publishableKey={getClerkPublishableKey() ?? undefined}
-        signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
-        signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
+        signInUrl={getClerkSignInUrl()}
+        signUpUrl={getClerkSignUpUrl()}
         signInFallbackRedirectUrl="/setup?resume=1"
         signUpFallbackRedirectUrl="/setup?resume=1"
       >

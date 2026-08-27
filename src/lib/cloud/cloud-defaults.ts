@@ -16,12 +16,8 @@
  *
  * Users can still flip any client to local-only at runtime from
  * Settings → Account → Cloud sync (see cloud-env.ts).
- *
- * Populate these once the production Convex deployment and Clerk application
- * exist (e.g. "https://<deployment>.convex.cloud" and "pk_live_..."). Empty
- * strings mean "no default" - clients without build env stay local-first.
  */
 export const CESIUM_CLOUD_DEFAULTS = {
-  convexUrl: "",
-  clerkPublishableKey: "",
+  convexUrl: "https://insightful-wolverine-140.convex.cloud",
+  clerkPublishableKey: "pk_live_Y2xlcmsuY2VzaXVtLnRlY2hsaXRub3cuY29tJA",
 } as const;
