@@ -69,7 +69,13 @@ export function ServerPickerPopover({
   onSelectCloudDevice,
 }: ServerPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const [popoverPos, setPopoverPos] = useState({
+  const [popoverPos, setPopoverPos] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  }>({
     top: 0,
     left: 0,
     width: 280,
@@ -90,19 +96,20 @@ export function ServerPickerPopover({
       const rect = anchorRef.current?.getBoundingClientRect();
       if (!rect) return;
       const viewportPad = 8;
-      const maxHeight = Math.max(160, window.innerHeight - viewportPad * 2);
-      const width = Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2));
-      const left = Math.max(viewportPad, Math.min(rect.left, window.innerWidth - width - viewportPad));
       const gap = 6;
-      const naturalHeight =
-        popoverRef.current?.offsetHeight ?? (variant === "device" ? 360 : 280);
-      const height = Math.min(naturalHeight, maxHeight);
-      const desiredTop =
-        placement === "above"
-          ? rect.top - height - gap
-          : rect.bottom + gap;
-      const maxTop = Math.max(viewportPad, window.innerHeight - height - viewportPad);
-      const top = Math.max(viewportPad, Math.min(desiredTop, maxTop));
+      const width = Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2));
+      const left = Math.max(
+        viewportPad,
+        Math.min(rect.left, window.innerWidth - width - viewportPad)
+      );
+      if (placement === "above") {
+        const bottom = Math.max(viewportPad, window.innerHeight - rect.top + gap);
+        const maxHeight = Math.max(160, rect.top - gap - viewportPad);
+        setPopoverPos({ bottom, left, width, maxHeight });
+        return;
+      }
+      const top = rect.bottom + gap;
+      const maxHeight = Math.max(160, window.innerHeight - top - viewportPad);
       setPopoverPos({ top, left, width, maxHeight });
     };
     update();
@@ -173,9 +180,10 @@ export function ServerPickerPopover({
       ref={popoverRef}
       role="menu"
       aria-label={label}
-      className="fixed z-[10050] flex flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
+      className="fixed z-[10050] flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
       style={{
         top: popoverPos.top,
+        bottom: popoverPos.bottom,
         left: popoverPos.left,
         width: popoverPos.width,
         maxHeight: popoverPos.maxHeight,
