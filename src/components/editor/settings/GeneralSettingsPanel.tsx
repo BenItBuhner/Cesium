@@ -6,8 +6,8 @@ import {
   useNewChatWidgetVisibilityToggle,
 } from "@/components/agent/NewChatWidgets";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
-import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   PageIntro,
   SettingsLinkRow,
@@ -37,7 +37,7 @@ function composerFooterEnabled(visibility: ComposerStatusBarVisibility): boolean
 
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
-  const { hasServer } = useServerConnections();
+  const { enginePagesVisible } = useSettingsEngineAvailability();
   const { updateWorkspaceSession, workspaceSession } = useWorkspace();
   const general = settings.general;
   const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
@@ -120,7 +120,7 @@ export function GeneralSettingsPanel() {
             />
           );
         })}
-        {hasServer ? (
+        {enginePagesVisible ? (
           <SettingsLinkRow
             searchId="new-chat-widget-actions-link"
             title="Configure quick actions"

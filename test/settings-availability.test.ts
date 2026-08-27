@@ -4,6 +4,8 @@ import {
   filterSettingsNavEntries,
   filterSettingsSearchEntries,
   isSettingsNavAvailable,
+  resolveSettingsEngineAvailability,
+  settingsEnginePagesVisible,
   settingsNavRequiresServer,
 } from "../src/lib/settings-availability.ts";
 import {
@@ -84,5 +86,46 @@ describe("settings availability", () => {
         (hit) => hit.navId === "appearance"
       )
     );
+  });
+
+  test("treats a saved but unreachable engine as disconnected", () => {
+    assert.equal(
+      resolveSettingsEngineAvailability({
+        hasServer: false,
+        servers: [],
+        onlineCount: 0,
+        statusById: {},
+      }),
+      "none"
+    );
+    assert.equal(
+      resolveSettingsEngineAvailability({
+        hasServer: true,
+        servers: [{ id: "local" }],
+        onlineCount: 0,
+        statusById: {},
+      }),
+      "checking"
+    );
+    assert.equal(
+      resolveSettingsEngineAvailability({
+        hasServer: true,
+        servers: [{ id: "local" }],
+        onlineCount: 0,
+        statusById: { local: { health: "offline" } },
+      }),
+      "none"
+    );
+    assert.equal(
+      resolveSettingsEngineAvailability({
+        hasServer: true,
+        servers: [{ id: "local" }],
+        onlineCount: 1,
+        statusById: { local: { health: "online" } },
+      }),
+      "connected"
+    );
+    assert.equal(settingsEnginePagesVisible("checking"), true);
+    assert.equal(settingsEnginePagesVisible("none"), false);
   });
 });

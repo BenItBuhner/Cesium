@@ -28,8 +28,41 @@ export function settingsNavRequiresServer(navId: string): boolean {
   return SERVER_BOUND_NAV_SET.has(navId);
 }
 
-export function isSettingsNavAvailable(navId: string, hasServer: boolean): boolean {
-  return hasServer || !settingsNavRequiresServer(navId);
+export function isSettingsNavAvailable(navId: string, engineAvailable: boolean): boolean {
+  return engineAvailable || !settingsNavRequiresServer(navId);
+}
+
+export type SettingsEngineAvailability = "none" | "checking" | "connected";
+
+export type SettingsEngineHealth = "unknown" | "online" | "offline" | "auth_required" | "degraded";
+
+/**
+ * Engine settings follow a reachable host, not merely a saved URL.
+ * A bootstrapped localhost entry still counts as `hasServer`, but Usage and
+ * similar pages must not fetch while that host is down.
+ */
+export function resolveSettingsEngineAvailability(input: {
+  hasServer: boolean;
+  servers: ReadonlyArray<{ id: string }>;
+  onlineCount: number;
+  statusById: Record<string, { health?: SettingsEngineHealth } | undefined>;
+}): SettingsEngineAvailability {
+  if (!input.hasServer || input.servers.length === 0) {
+    return "none";
+  }
+  if (input.onlineCount > 0) {
+    return "connected";
+  }
+  const everySavedServerOffline = input.servers.every((server) => {
+    return input.statusById[server.id]?.health === "offline";
+  });
+  return everySavedServerOffline ? "none" : "checking";
+}
+
+export function settingsEnginePagesVisible(
+  availability: SettingsEngineAvailability
+): boolean {
+  return availability !== "none";
 }
 
 export type SettingsNavVisibilityEntry =

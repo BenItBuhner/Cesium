@@ -8,6 +8,7 @@ import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultSer
 import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   serverHealthColorClass,
   serverHealthIndicator,
@@ -194,14 +195,16 @@ export function ServerConnectionsSettingsPanel() {
     setActiveServer,
     setDefaultServer,
   } = useServerConnections();
+  const { availability } = useSettingsEngineAvailability();
 
   return (
     <>
       <PageIntro title="Servers" />
-      {!hasServer ? (
+      {availability !== "connected" ? (
         <SettingsCallout className="mb-[16px] px-[2px]">
-          No engine is connected. Client settings (appearance, shortcuts, account) stay available.
-          Agents, usage, voice, and integrations appear here after you add a server.
+          {availability === "checking"
+            ? "Checking saved engines. Agent, usage, voice, and integration settings stay hidden until a server responds."
+            : "No engine is connected. Client settings (appearance, shortcuts, account) stay available. Agents, usage, voice, and integrations appear after a server comes online."}
         </SettingsCallout>
       ) : null}
       <DefaultServerSettingsBanner className="mx-[16px] mb-[12px] mt-[4px]" />

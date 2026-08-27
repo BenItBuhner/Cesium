@@ -1,7 +1,7 @@
 "use client";
 
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   PageIntro,
   SettingsLinkRow,
@@ -9,7 +9,7 @@ import {
 } from "@/components/editor/settings-ui";
 
 export function AdvancedSettingsPanel() {
-  const { hasServer } = useServerConnections();
+  const { enginePagesVisible } = useSettingsEngineAvailability();
   const { updateWorkspaceSession } = useWorkspace();
 
   const openNav = (activeNav: string) => {
@@ -31,9 +31,9 @@ export function AdvancedSettingsPanel() {
           title="Import & export"
           description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
           onClick={() => openNav("exportImport")}
-          border={hasServer}
+          border={enginePagesVisible}
         />
-        {hasServer ? (
+        {enginePagesVisible ? (
           <>
             <SettingsLinkRow
               searchId="storage-link"

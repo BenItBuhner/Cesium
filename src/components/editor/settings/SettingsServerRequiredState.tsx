@@ -54,12 +54,19 @@ const SERVER_BOUND_PAGE_COPY: Record<string, { title: string; body: string }> = 
   },
 };
 
-export function SettingsServerRequiredState({ navId }: { navId: string }) {
+export function SettingsServerRequiredState({
+  navId,
+  phase = "none",
+}: {
+  navId: string;
+  phase?: "none" | "checking";
+}) {
   const chrome = useSettingsShellChrome();
   const copy = SERVER_BOUND_PAGE_COPY[navId] ?? {
     title: "Server required",
     body: "This page reads configuration from a connected engine.",
   };
+  const checking = phase === "checking";
 
   return (
     <>
@@ -70,14 +77,15 @@ export function SettingsServerRequiredState({ navId }: { navId: string }) {
         </span>
         <div className="max-w-[520px]">
           <p className="font-sans text-[14px] font-medium text-[var(--text-primary)]">
-            Connect a server to use this page
+            {checking ? "Checking for a connected server" : "Connect a server to use this page"}
           </p>
           <p className="mt-[6px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            {copy.body} Appearance, shortcuts, and other client preferences stay available without
-            an engine.
+            {checking
+              ? `${copy.body} This page stays closed until an engine responds.`
+              : `${copy.body} Appearance, shortcuts, and other client preferences stay available without an engine.`}
           </p>
         </div>
-        {chrome?.navigate ? (
+        {!checking && chrome?.navigate ? (
           <button
             type="button"
             className={rowButtonClass}
