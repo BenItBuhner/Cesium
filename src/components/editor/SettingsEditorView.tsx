@@ -46,17 +46,25 @@ import { BACK_INTENT_PRIORITY } from "@/components/mobile/BackIntentContext";
 import { MobileNavDrawerShell } from "@/components/mobile/MobileNavDrawerShell";
 import { SETTINGS_PANELS } from "@/components/editor/settings";
 import { SettingsPanelErrorBoundary } from "@/components/editor/settings/SettingsPanelErrorBoundary";
+import { SettingsServerRequiredState } from "@/components/editor/settings/SettingsServerRequiredState";
 import { SettingsShellChromeContext } from "@/components/editor/settings-ui";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import { isDesktopNativeAvailable } from "@/lib/desktop-native-bridge";
+import {
+  filterSettingsNavEntries,
+  filterSettingsSearchEntries,
+  isSettingsNavAvailable,
+  settingsNavRequiresServer,
+} from "@/lib/settings-availability";
 import {
   buildSettingsSearchIndex,
   pluginsSettingsSubviewForSearchHit,
@@ -219,6 +227,7 @@ export type SettingsEditorViewProps = {
 
 function SettingsNavContent({
   activeNav,
+  navEntries,
   searchQuery,
   searchModLabel,
   searchResults,
@@ -235,6 +244,7 @@ function SettingsNavContent({
   padSettingsSearchForWindowChrome,
 }: {
   activeNav: string;
+  navEntries: NavEntry[];
   searchQuery: string;
   searchModLabel: string;
   searchResults: SettingsSearchEntry[];
@@ -376,7 +386,7 @@ function SettingsNavContent({
                 onOpen={handleOpenAccount}
               />
             </div>
-            {NAV_ENTRIES.map((entry, i) => {
+            {navEntries.map((entry, i) => {
               if (entry.kind === "divider") {
                 return (
                   <div
@@ -434,6 +444,7 @@ function SettingsNavContent({
 export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {}) {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const { availability, enginePagesVisible, engineConnected } = useSettingsEngineAvailability();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { ipadBetaSettings } = useCesiumRendererFeatureFlags();
   const { isMobile } = useViewport();
@@ -461,7 +472,15 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
   const resolvedNav = activeNav;
-  const SettingsPanel = SETTINGS_PANELS[resolvedNav] ?? SETTINGS_PANELS.general;
+  const serverBoundPageBlocked =
+    settingsNavRequiresServer(resolvedNav) && !engineConnected;
+  const SettingsPanel = serverBoundPageBlocked
+    ? null
+    : SETTINGS_PANELS[resolvedNav] ?? SETTINGS_PANELS.general;
+  const visibleNavEntries = useMemo(
+    () => filterSettingsNavEntries(NAV_ENTRIES, enginePagesVisible),
+    [enginePagesVisible]
+  );
   const searchModLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
     []
@@ -481,8 +500,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   );
 
   const searchResults = useMemo(
-    () => searchSettingsIndex(settingsSearchIndex, debouncedSearchQuery),
-    [settingsSearchIndex, debouncedSearchQuery]
+    () =>
+      filterSettingsSearchEntries(
+        searchSettingsIndex(settingsSearchIndex, debouncedSearchQuery),
+        enginePagesVisible
+      ),
+    [enginePagesVisible, settingsSearchIndex, debouncedSearchQuery]
   );
 
   const isSearching = debouncedSearchQuery.trim().length > 0;
@@ -769,9 +792,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
   const applySearchHit = useCallback(
     (hit: SettingsSearchEntry) => {
-      const focus = settingsSearchHitToFocus(hit);
       const legacyMcpNav = hit.navId === "mcps" || hit.navId === "tools";
       const nextNav = legacyMcpNav ? "plugins" : hit.navId;
+      if (!isSettingsNavAvailable(nextNav, enginePagesVisible)) {
+        return;
+      }
+      const focus = settingsSearchHitToFocus(hit);
       const pluginsSubview = pluginsSettingsSubviewForSearchHit(hit);
       setActiveNav(nextNav);
       updateWorkspaceSession((current) => ({
@@ -801,7 +827,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         setNavDrawerOpen(false);
       }
     },
-    [isMobile, updateWorkspaceSession]
+    [enginePagesVisible, isMobile, updateWorkspaceSession]
   );
 
   const onSearchKeyDown = useCallback(
@@ -850,6 +876,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const navContent = (
     <SettingsNavContent
       activeNav={activeNav}
+      navEntries={visibleNavEntries}
       searchQuery={searchQuery}
       searchModLabel={searchModLabel}
       searchResults={searchResults}
@@ -900,7 +927,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           >
             <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
               <DefaultServerSettingsBanner className="mb-[16px]" />
-              {SettingsPanel ? (
+              {serverBoundPageBlocked ? (
+                <SettingsServerRequiredState
+                  navId={resolvedNav}
+                  phase={availability === "checking" ? "checking" : "none"}
+                />
+              ) : SettingsPanel ? (
                 <SettingsPanelErrorBoundary panelId={resolvedNav}>
                   <SettingsPanel />
                 </SettingsPanelErrorBoundary>
@@ -951,7 +983,12 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
             <DefaultServerSettingsBanner className="mb-[16px]" />
-            {SettingsPanel ? (
+            {serverBoundPageBlocked ? (
+              <SettingsServerRequiredState
+                navId={resolvedNav}
+                phase={availability === "checking" ? "checking" : "none"}
+              />
+            ) : SettingsPanel ? (
               <SettingsPanelErrorBoundary panelId={resolvedNav}>
                 <SettingsPanel />
               </SettingsPanelErrorBoundary>

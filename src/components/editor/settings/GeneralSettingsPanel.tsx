@@ -7,6 +7,7 @@ import {
 } from "@/components/agent/NewChatWidgets";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   PageIntro,
   SettingsLinkRow,
@@ -36,6 +37,7 @@ function composerFooterEnabled(visibility: ComposerStatusBarVisibility): boolean
 
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
+  const { enginePagesVisible } = useSettingsEngineAvailability();
   const { updateWorkspaceSession, workspaceSession } = useWorkspace();
   const general = settings.general;
   const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
@@ -118,13 +120,15 @@ export function GeneralSettingsPanel() {
             />
           );
         })}
-        <SettingsLinkRow
-          searchId="new-chat-widget-actions-link"
-          title="Configure quick actions"
-          description="Add, edit, or remove the actions shown on the new chat landing."
-          onClick={() => openNav("actions")}
-          border={false}
-        />
+        {enginePagesVisible ? (
+          <SettingsLinkRow
+            searchId="new-chat-widget-actions-link"
+            title="Configure quick actions"
+            description="Add, edit, or remove the actions shown on the new chat landing."
+            onClick={() => openNav("actions")}
+            border={false}
+          />
+        ) : null}
       </SettingsSection>
       <SettingsSection title="Composer">
         <SettingsRow
