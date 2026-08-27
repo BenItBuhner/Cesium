@@ -157,9 +157,10 @@ function usePrefersReducedMotion(): boolean {
 
 /**
  * Shell-level aurora host: one canvas spanning the whole window behind the
- * rail, center pane, and editor panels. Renders inside a negative-z wrapper
- * (the shell root uses `isolate`) so every in-flow panel paints above it.
- * The conversation pane publishes mood/placement through the scene context.
+ * rail, center pane, editor panels, and settings. Renders inside a
+ * negative-z wrapper (the workbench host uses `isolate`) so every in-flow
+ * panel paints above it. The conversation pane publishes mood/placement
+ * through the scene context; settings keeps the last published scene.
  */
 export function AuroraShellBackdrop() {
   const sceneContext = useAuroraScene();

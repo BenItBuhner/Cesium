@@ -346,7 +346,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "appearance",
     "aurora-background",
     "Aurora background",
-    "Soft animated aurora-borealis color field behind agent conversations.",
+    "Soft animated aurora-borealis color field behind the workbench and settings.",
     ["aurora", "borealis", "background", "backdrop", "animation", "ambient", "northern lights"]
   ),
   row(
@@ -593,6 +593,18 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "rules-link",
     "Rules, skills, and subagents",
     "Instruction files, skills, and subagent presets."
+  ),
+  row(
+    "plugins",
+    "extensions-link",
+    "VS Code extensions",
+    "Desktop extension marketplace and host runtime."
+  ),
+  row(
+    "plugins",
+    "plugins-link",
+    "Agent plugins",
+    "Optional bundles of MCP servers, skills, and branding."
   ),
 
   // -- MCP servers (Plugins subpage) --
@@ -1013,6 +1025,47 @@ export function searchSettingsIndex(
   });
 
   return scored.slice(0, limit).map((row) => row.item);
+}
+
+const MCP_PLUGIN_SEARCH_IDS = new Set([
+  "plugins::section::mcp-presets",
+  "plugins::section::mcp-custom",
+  "plugins::section::mcp-connected",
+]);
+
+const CATALOG_PLUGIN_SEARCH_IDS = new Set([
+  "plugins::section::catalog",
+  "plugins::section::discover",
+  "plugins::section::sources",
+  "plugins::section::verify",
+  "plugins::section::custom",
+]);
+
+export type PluginsSettingsSubview = "hub" | "mcp" | "catalog";
+
+/** Which Integrations subpage a settings-search hit should open. */
+export function pluginsSettingsSubviewForSearchHit(hit: {
+  navId: string;
+  id: string;
+  rowId?: string;
+}): PluginsSettingsSubview {
+  if (hit.navId === "mcps" || hit.navId === "tools") {
+    return "mcp";
+  }
+  if (hit.navId !== "plugins") {
+    return "hub";
+  }
+  if (hit.rowId === "mcp-link" || MCP_PLUGIN_SEARCH_IDS.has(hit.id)) {
+    return "mcp";
+  }
+  if (
+    hit.rowId === "plugins-link" ||
+    hit.rowId === "harness-overrides" ||
+    CATALOG_PLUGIN_SEARCH_IDS.has(hit.id)
+  ) {
+    return "catalog";
+  }
+  return "hub";
 }
 
 export function settingsSearchHitToFocus(

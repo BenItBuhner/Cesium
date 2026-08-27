@@ -28,7 +28,7 @@ export function SettingsShellView() {
       <WorkbenchProvider value={workbench}>
         <HardwareInputProvider>
           <IDEKeyboardLayer>
-            <div className="h-screen w-screen overflow-hidden bg-[var(--bg-main)]">
+            <div className="aurora-settings-shell h-full w-full overflow-hidden">
               <SettingsEditorView onCloseShell={closeSettingsView} />
             </div>
           </IDEKeyboardLayer>

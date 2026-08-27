@@ -47,7 +47,7 @@ export function AuroraSettingsSection() {
       <SettingsRow
         searchId="aurora-background"
         title="Aurora background"
-        description="Soft aurora-borealis color field behind agent conversations."
+        description="Soft aurora-borealis color field behind the workbench and settings."
         trailing={
           <ToggleSwitch
             checked={aurora.enabled}

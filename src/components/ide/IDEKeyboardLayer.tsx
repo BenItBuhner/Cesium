@@ -64,6 +64,7 @@ import {
 } from "@/lib/quick-open-scopes";
 import {
   buildSettingsSearchIndex,
+  pluginsSettingsSubviewForSearchHit,
   searchSettingsIndex,
   settingsSearchHitToFocus,
   type SettingsSearchEntry,
@@ -1971,12 +1972,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const onQuickPickSetting = useCallback(
     (hit: SettingsSearchEntry) => {
       const focus = settingsSearchHitToFocus(hit);
-      const opensMcpsSubview =
-        hit.navId === "plugins" &&
-        (hit.rowId === "mcp-link" ||
-          hit.id === "plugins::section::mcp-presets" ||
-          hit.id === "plugins::section::mcp-custom" ||
-          hit.id === "plugins::section::mcp-connected");
+      const pluginsSubview = pluginsSettingsSubviewForSearchHit(hit);
       updateWorkspaceSession((current) => ({
         ...current,
         settingsView: {
@@ -1988,7 +1984,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
               : hit.navId === "agents" && hit.kind !== "harness"
                 ? null
                 : current.settingsView.agentsHarnessId ?? null,
-          mcpsOpen: opensMcpsSubview,
+          mcpsOpen: pluginsSubview === "mcp",
+          pluginsCatalogOpen: pluginsSubview === "catalog",
           panelSearchFocus: focus,
         },
       }));

@@ -67,6 +67,7 @@ import {
 } from "@/lib/settings-availability";
 import {
   buildSettingsSearchIndex,
+  pluginsSettingsSubviewForSearchHit,
   searchSettingsIndex,
   settingsSearchHitToFocus,
   type SettingsSearchEntry,
@@ -113,7 +114,11 @@ function settingsSidebarSelection(activeNav: string): string {
 }
 
 const searchInputClass =
-  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] pr-[54px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+  "box-border h-[32px] w-full rounded-[var(--radius-tab)] bg-[var(--bg-card)] pl-[30px] font-sans text-[12px] leading-none text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] [&::-webkit-search-cancel-button]:hidden";
+
+/** Solid keycap so the search field does not show through a translucent chip. */
+const searchShortcutHintClass =
+  "pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-main)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]";
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
@@ -266,7 +271,7 @@ function SettingsNavContent({
   }, [closeMobileDrawer, isMobile, onNavChange]);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-panel)]">
+    <div className="aurora-settings-nav flex h-full flex-col bg-[var(--bg-panel)]">
       <div className="mobile-safe-top-pad flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
         {isMobile ? (
           <button
@@ -299,7 +304,9 @@ function SettingsNavContent({
               onChange={onSearchChange}
               onNativeKeyDown={onSearchKeyDown}
               placeholder="Search settings"
-              className={searchInputClass}
+              className={`${searchInputClass} ${
+                searchQuery.length > 0 || !isMobile ? "pr-[54px]" : "pr-[10px]"
+              }`}
               ariaLabel="Search settings"
               ariaControls="settings-search-results"
               ariaExpanded={isSearching}
@@ -317,11 +324,8 @@ function SettingsNavContent({
               >
                 <X className="size-[13px]" strokeWidth={1.75} aria-hidden />
               </button>
-            ) : (
-              <span
-                className="pointer-events-none absolute right-[8px] top-1/2 z-10 -translate-y-1/2 rounded-[4px] bg-[var(--accent-bg)] px-[5px] py-[2px] font-sans text-[10px] leading-none text-[var(--text-disabled)]"
-                aria-hidden
-              >
+            ) : isMobile ? null : (
+              <span className={searchShortcutHintClass} aria-hidden>
                 {searchModLabel}+F
               </span>
             )}
@@ -630,6 +634,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           ...current.settingsView,
           activeNav: "plugins",
           mcpsOpen: true,
+          pluginsCatalogOpen: false,
         },
       }));
       setActiveNav("plugins");
@@ -755,23 +760,25 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           },
         }));
       }
-      if (id === "plugins" && activeNav !== "plugins") {
+      if (id === "plugins") {
         updateWorkspaceSession((current) => ({
           ...current,
           settingsView: {
             ...current.settingsView,
             mcpsOpen: false,
+            pluginsCatalogOpen: false,
           },
         }));
       }
       if (id !== "plugins") {
         updateWorkspaceSession((current) =>
-          current.settingsView.mcpsOpen
+          current.settingsView.mcpsOpen || current.settingsView.pluginsCatalogOpen
             ? {
                 ...current,
                 settingsView: {
                   ...current.settingsView,
                   mcpsOpen: false,
+                  pluginsCatalogOpen: false,
                 },
               }
             : current
@@ -789,13 +796,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         return;
       }
       const focus = settingsSearchHitToFocus(hit);
-      const opensMcpsSubview =
-        legacyMcpNav ||
-        (nextNav === "plugins" &&
-          (hit.rowId === "mcp-link" ||
-            hit.id === "plugins::section::mcp-presets" ||
-            hit.id === "plugins::section::mcp-custom" ||
-            hit.id === "plugins::section::mcp-connected"));
+      const pluginsSubview = pluginsSettingsSubviewForSearchHit(hit);
       setActiveNav(nextNav);
       updateWorkspaceSession((current) => ({
         ...current,
@@ -808,7 +809,8 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
               : hit.navId === "agents" && hit.kind !== "harness"
                 ? null
                 : current.settingsView.agentsHarnessId ?? null,
-          mcpsOpen: opensMcpsSubview,
+          mcpsOpen: pluginsSubview === "mcp",
+          pluginsCatalogOpen: pluginsSubview === "catalog",
           panelSearchFocus: focus
             ? focus.kind === "scroll"
               ? {
@@ -904,7 +906,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
         drawerClassName="border-r border-[var(--border-subtle)] shadow-[var(--palette-shadow)]"
         drawer={navContent}
       >
-        <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
+        <div className="aurora-settings-main flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
           {!navDrawerOpen ? (
             <button
               type="button"
@@ -918,7 +920,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
           <main
             ref={scrollRootRef}
-            className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+            className="aurora-settings-main mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
             onScroll={onMainScroll}
           >
             <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
@@ -948,7 +950,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       groupRef={groupRef}
       key="settings-shell-desktop"
       orientation="horizontal"
-      className="h-full min-w-0 bg-[var(--bg-main)]"
+      className="aurora-settings-shell h-full min-w-0 bg-[var(--bg-main)]"
       defaultLayout={settingsDesktopLayout}
     >
       <Panel
@@ -974,7 +976,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       >
         <main
           ref={scrollRootRef}
-          className="hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+          className="aurora-settings-main hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>

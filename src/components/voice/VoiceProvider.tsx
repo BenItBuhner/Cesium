@@ -146,6 +146,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   /** Bumped when the voice plane turns off/paused; stale turns bail out. */
   const turnEpochRef = useRef(0);
   const captureRef = useRef<VoiceCapture | null>(null);
+  /** Invalidates in-flight VAD load / getUserMedia when the plane turns off. */
+  const captureEpochRef = useRef(0);
+  const captureStartingRef = useRef(false);
   const vadRef = useRef<VadEngine | null>(null);
   const endpointerRef = useRef<Endpointer | null>(null);
   const playerRef = useRef<TtsPlayer | null>(null);
@@ -593,7 +596,26 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     [enqueueTurn, setActivityBoth]
   );
 
+  const discardCaptureIfStale = useCallback(
+    async (capture: VoiceCapture, epoch: number) => {
+      const stale =
+        epoch !== captureEpochRef.current ||
+        captureRef.current !== capture ||
+        modeRef.current === "off" ||
+        modeRef.current === "paused";
+      if (!stale) return false;
+      await capture.stop().catch(() => {});
+      if (captureRef.current === capture) {
+        captureRef.current = null;
+      }
+      return true;
+    },
+    []
+  );
+
   const stopCapture = useCallback(async () => {
+    captureEpochRef.current += 1;
+    captureStartingRef.current = false;
     const capture = captureRef.current;
     captureRef.current = null;
     endpointerRef.current = null;
@@ -605,52 +627,76 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startCapture = useCallback(async () => {
-    if (captureRef.current?.isRunning) return;
-    if (!vadRef.current) {
-      const vad = await createBestVad();
-      vadRef.current = vad;
-      setVadEngineId(vad.id);
-    }
-    const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
-    endpointerRef.current = endpointer;
-    const capture = new VoiceCapture({
-      onFrame: (frame) => {
-        const vad = vadRef.current ?? new EnergyVad();
-        const result = vad.process(frame);
-        if (typeof result === "number") {
-          handleEndpointerEvents(endpointer.processFrame(result));
-        } else {
-          void result.then((prob) => {
-            handleEndpointerEvents(endpointer.processFrame(prob));
-          });
-        }
-      },
-      onLevel: (rms) => {
-        micLevelRef.current = Math.min(1, rms * 8);
-      },
-      onSettings: setCaptureSettings,
-      onError: (captureError) => setError(`Capture: ${captureError.message}`),
-    });
-    captureRef.current = capture;
+    if (captureRef.current?.isRunning || captureStartingRef.current) return;
+    const epoch = captureEpochRef.current;
+    if (modeRef.current === "off" || modeRef.current === "paused") return;
+    captureStartingRef.current = true;
     try {
-      await capture.start();
-      setActivityBoth("listening");
-    } catch (captureError) {
-      captureRef.current = null;
-      setError(
-        captureError instanceof Error
-          ? `Microphone: ${captureError.message}`
-          : "Microphone unavailable."
-      );
-      setActivityBoth("idle");
-      throw captureError;
+      if (!vadRef.current) {
+        const vad = await createBestVad();
+        if (epoch !== captureEpochRef.current) return;
+        vadRef.current = vad;
+        setVadEngineId(vad.id);
+      }
+      if (epoch !== captureEpochRef.current) return;
+      if (modeRef.current === "off" || modeRef.current === "paused") return;
+      const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
+      endpointerRef.current = endpointer;
+      const capture = new VoiceCapture({
+        onFrame: (frame) => {
+          const vad = vadRef.current ?? new EnergyVad();
+          const result = vad.process(frame);
+          if (typeof result === "number") {
+            handleEndpointerEvents(endpointer.processFrame(result));
+          } else {
+            void result.then((prob) => {
+              handleEndpointerEvents(endpointer.processFrame(prob));
+            });
+          }
+        },
+        onLevel: (rms) => {
+          micLevelRef.current = Math.min(1, rms * 8);
+        },
+        onSettings: setCaptureSettings,
+        onError: (captureError) => setError(`Capture: ${captureError.message}`),
+      });
+      captureRef.current = capture;
+      try {
+        await capture.start();
+        if (await discardCaptureIfStale(capture, epoch)) return;
+        setActivityBoth("listening");
+      } catch (captureError) {
+        if (epoch !== captureEpochRef.current) return;
+        captureRef.current = null;
+        setError(
+          captureError instanceof Error
+            ? `Microphone: ${captureError.message}`
+            : "Microphone unavailable."
+        );
+        setActivityBoth("idle");
+        throw captureError;
+      }
+    } finally {
+      if (epoch === captureEpochRef.current) {
+        captureStartingRef.current = false;
+      }
     }
-  }, [handleEndpointerEvents, setActivityBoth]);
+  }, [discardCaptureIfStale, handleEndpointerEvents, setActivityBoth]);
 
   const setMode = useCallback(
     (nextMode: VoiceMode) => {
       const previous = modeRef.current;
-      if (previous === nextMode) return;
+      if (previous === nextMode) {
+        // Hiding the orb calls off even when already off so an in-flight
+        // start (VAD load / getUserMedia) cannot come up after the toggle.
+        if (nextMode === "off" || nextMode === "paused") {
+          turnEpochRef.current += 1;
+          void stopCapture();
+          playerRef.current?.cancel();
+          setActivityBoth("idle");
+        }
+        return;
+      }
       modeRef.current = nextMode;
       setModeState(nextMode);
       setError(null);
