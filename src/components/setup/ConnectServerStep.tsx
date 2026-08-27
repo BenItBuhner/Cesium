@@ -4,6 +4,8 @@ import { useState } from "react";
 import { CheckCircle2, Loader2, Server } from "lucide-react";
 import {
   assertEngineConnectionAllowed,
+  CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE,
+  isCesiumAccountSiteUrl,
   REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
   getConfiguredServerBaseUrl,
   getStoredSessionToken,
@@ -34,7 +36,10 @@ export function ConnectServerStep({
   onConnected: (baseUrl: string) => void;
 }) {
   const cloud = useCloudContext();
-  const [baseUrlInput, setBaseUrlInput] = useState(getConfiguredServerBaseUrl());
+  const [baseUrlInput, setBaseUrlInput] = useState(() => {
+    const configured = getConfiguredServerBaseUrl();
+    return isCesiumAccountSiteUrl(configured) ? "" : configured;
+  });
   const [name, setName] = useState("");
   const [phase, setPhase] = useState<"idle" | "checking" | "needs-auth" | "connected">(
     "idle"
@@ -78,6 +83,11 @@ export function ConnectServerStep({
     let baseUrl: string;
     try {
       baseUrl = normalizeServerBaseUrl(rawUrl);
+      if (isCesiumAccountSiteUrl(baseUrl)) {
+        setError(CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE);
+        setPhase("idle");
+        return;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("idle");
