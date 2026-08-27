@@ -135,8 +135,20 @@ export type GlobalSettings = {
 };
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
-export type AgentRailGroupByMode = "workspace" | "priority";
-export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
+export type AgentRailGroupByMode =
+  | "workspace"
+  | "repository"
+  | "updated"
+  | "status"
+  | "server"
+  | "priority";
+export type AgentRailOrderByMode = "updated" | "status";
+export type AgentRailSectionId =
+  | "attention"
+  | "running"
+  | "pinned"
+  | "chats"
+  | "workspaces";
 export type AgentRailRowDetailMode = "compact" | "balanced" | "expanded";
 export type AgentRailScope =
   | { type: "all" }
@@ -145,11 +157,19 @@ export type AgentRailScope =
 
 const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
   "attention",
+  "running",
   "pinned",
   "chats",
   "workspaces",
 ];
-const LEGACY_AGENT_RAIL_GROUP_BY = new Set(["repository", "server", "updated", "status"]);
+const AGENT_RAIL_GROUP_BY_MODES: AgentRailGroupByMode[] = [
+  "workspace",
+  "repository",
+  "updated",
+  "status",
+  "server",
+  "priority",
+];
 
 export type ChatFolderState = {
   id: string;
@@ -182,11 +202,21 @@ export type ServerRailAppearance = {
  */
 export type AgentRailSettingsState = {
   groupBy: AgentRailGroupByMode;
+  /** Sort inside each group: most recent first, or urgency first. */
+  orderBy: AgentRailOrderByMode;
   visibleStatusFilters: string[];
   /** Legacy allow-list kept only so old persisted settings can be read. New filtering uses hiddenServerIds. */
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /** Show the cloud badge on conversations executing on a vendor cloud. */
+  showEnvironment: boolean;
+  /** Show the workspace name on rows in cross-workspace sections. */
+  showWorkspace: boolean;
+  /** Show the git branch badge on rows that carry repository info. */
+  showBranch: boolean;
+  /** Show the source-machine badge on rows from other connected engines. */
+  showMachine: boolean;
   /** Per-row detail density: compact, balanced, or expanded. */
   rowDetail: AgentRailRowDetailMode;
   sectionOrder: AgentRailSectionId[];
@@ -209,12 +239,17 @@ function createDefaultSettings(): GlobalSettings {
       chatRootOrderByScope: {},
       agentRail: {
         groupBy: "workspace",
+        orderBy: "updated",
         visibleStatusFilters: [],
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
+        showEnvironment: true,
+        showWorkspace: true,
+        showBranch: false,
+        showMachine: true,
         rowDetail: "balanced",
-        sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+        sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
         hiddenSections: [],
         scope: { type: "all" },
       },
@@ -613,6 +648,7 @@ function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
   for (const value of raw) {
     if (
       value !== "attention" &&
+      value !== "running" &&
       value !== "pinned" &&
       value !== "chats" &&
       value !== "workspaces"
@@ -647,11 +683,11 @@ function normalizeAgentRailScope(raw: unknown): AgentRailScope {
 }
 
 function normalizeAgentRailGroupBy(raw: unknown, fallback: AgentRailGroupByMode): AgentRailGroupByMode {
-  if (raw === "workspace" || raw === "priority") {
-    return raw;
-  }
-  if (typeof raw === "string" && LEGACY_AGENT_RAIL_GROUP_BY.has(raw)) {
-    return "workspace";
+  if (
+    typeof raw === "string" &&
+    AGENT_RAIL_GROUP_BY_MODES.includes(raw as AgentRailGroupByMode)
+  ) {
+    return raw as AgentRailGroupByMode;
   }
   return fallback;
 }
@@ -662,8 +698,16 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!raw || typeof raw !== "object") {
     return defaults;
   }
-  const record = raw as Partial<AgentRailSettingsState> & { groupBy?: unknown; scope?: unknown };
+  const record = raw as Partial<AgentRailSettingsState> & {
+    groupBy?: unknown;
+    orderBy?: unknown;
+    scope?: unknown;
+  };
   const groupBy = normalizeAgentRailGroupBy(record.groupBy, defaults.groupBy);
+  const orderBy: AgentRailOrderByMode =
+    record.orderBy === "updated" || record.orderBy === "status"
+      ? record.orderBy
+      : defaults.orderBy;
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
@@ -671,6 +715,9 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const ordered = normalizeAgentRailSectionIds(record.sectionOrder);
   if (!ordered.includes("attention")) {
     ordered.unshift("attention");
+  }
+  if (!ordered.includes("running")) {
+    ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
   }
   const sectionOrder: AgentRailSectionId[] = [
     ...ordered,
@@ -681,6 +728,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   );
   return {
     groupBy,
+    orderBy,
     visibleStatusFilters: [],
     // Do not preserve legacy allow-lists. They hide newly added servers forever,
     // which is catastrophic for a dynamic multi-server rail.
@@ -688,6 +736,20 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    showEnvironment:
+      typeof record.showEnvironment === "boolean"
+        ? record.showEnvironment
+        : defaults.showEnvironment,
+    showWorkspace:
+      typeof record.showWorkspace === "boolean"
+        ? record.showWorkspace
+        : defaults.showWorkspace,
+    showBranch:
+      typeof record.showBranch === "boolean" ? record.showBranch : defaults.showBranch,
+    showMachine:
+      typeof record.showMachine === "boolean"
+        ? record.showMachine
+        : defaults.showMachine,
     rowDetail:
       record.rowDetail === "compact" ||
       record.rowDetail === "balanced" ||
