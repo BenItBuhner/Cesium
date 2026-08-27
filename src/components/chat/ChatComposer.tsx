@@ -163,6 +163,7 @@ import type { AgentBackendId, AgentBackendInfo, AgentConfigOption, AgentConversa
 import {
   isAgentCesiumTurnActive,
   isAgentCesiumPauseDraining,
+  isNoModelPlaceholder,
   type GoalProgressStatus,
 } from "@/lib/agent-chat";
 import {
@@ -1111,6 +1112,12 @@ export function ChatComposer({
   // center pane (CesiumProfileToggle); the composer only hides the raw
   // "profile" config option so it does not render as a generic dropdown.
   const isCesiumBackend = backendId === "cesium-agent";
+  /**
+   * No connected server / backend means no model catalog. Render no model
+   * pill at all in that state instead of a fake placeholder entry - the
+   * submit path prompts the user to connect a server.
+   */
+  const hasModelCatalog = models.length > 0 && !isNoModelPlaceholder(model);
   const { pushNotification, dismiss: dismissNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
@@ -2235,7 +2242,7 @@ export function ChatComposer({
       const run = (action: ChatComposerShortcutAction) => {
         switch (action) {
  case "openModelDropdown":
- if (!configLocked) setModelDropdownOpen(true);
+ if (!configLocked && hasModelCatalog) setModelDropdownOpen(true);
  break;
  case "openModeDropdown":
  if (!configLocked && !modeLocked) setModeMenuOpenKey((k) => k + 1);
@@ -2280,6 +2287,7 @@ export function ChatComposer({
   }, [
     busy,
     configLocked,
+    hasModelCatalog,
     isExpanded,
     modeLocked,
     onCollapseComposer,
@@ -3855,7 +3863,7 @@ const handleNativeComposerKeyDown = useCallback(
       </div>
     );
 
-    const modelPill = (
+    const modelPill = hasModelCatalog ? (
       <ModelDropdown
         model={model}
         models={models}
@@ -3869,7 +3877,7 @@ const handleNativeComposerKeyDown = useCallback(
         backends={backends}
         onBackendChange={onBackendChange}
       />
-    );
+    ) : null;
 
     /**
      * Invisible measurement row mirroring the single-line layout at full size:
@@ -3904,7 +3912,7 @@ const handleNativeComposerKeyDown = useCallback(
           <span className="inline-flex shrink-0 items-center gap-[4px]">
             <span className="block size-[14px] shrink-0" />
             <span className="font-sans text-[13px] font-normal">
-              {model.name}
+              {hasModelCatalog ? model.name : ""}
             </span>
             <span className="block w-[8px] shrink-0" />
           </span>
@@ -4425,17 +4433,19 @@ const handleNativeComposerKeyDown = useCallback(
                 menuOpenTriggerKey={modeMenuOpenKey}
               />
             </div>
-            <div className="min-w-0 shrink-0">
-              <ModelDropdown
-                model={model}
-                models={models}
-            onModelChange={onModelChange}
- popoverPlacement={modeModelPopoverPlacement}
- disabled={configLocked}
- isOpen={modelDropdownOpen}
-                onOpenChange={setModelDropdownOpen}
-              />
-            </div>
+            {hasModelCatalog ? (
+              <div className="min-w-0 shrink-0">
+                <ModelDropdown
+                  model={model}
+                  models={models}
+                  onModelChange={onModelChange}
+                  popoverPlacement={modeModelPopoverPlacement}
+                  disabled={configLocked}
+                  isOpen={modelDropdownOpen}
+                  onOpenChange={setModelDropdownOpen}
+                />
+              </div>
+            ) : null}
           </div>
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-[8px]">
