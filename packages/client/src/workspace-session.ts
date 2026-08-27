@@ -393,6 +393,8 @@ export type SettingsViewSessionState = {
   agentsHarnessId?: string | null;
   /** When true with activeNav "plugins", shows MCP servers subpage (hidden from main nav). */
   mcpsOpen?: boolean | null;
+  /** When true with activeNav "plugins", shows the agent-plugins catalog subpage. */
+  pluginsCatalogOpen?: boolean | null;
   /** One-shot navigation target from global settings search (consumed by the destination panel). */
   panelSearchFocus?: SettingsPanelSearchFocus | null;
 };
@@ -415,6 +417,14 @@ export function normalizeSettingsViewSession(
         ? false
         : fallback.mcpsOpen === true;
   const mcpsOpen = activeNav === "plugins" && mcpsOpenRaw ? true : false;
+  const pluginsCatalogOpenRaw =
+    raw?.pluginsCatalogOpen === true
+      ? true
+      : raw?.pluginsCatalogOpen === false
+        ? false
+        : fallback.pluginsCatalogOpen === true;
+  const pluginsCatalogOpen =
+    activeNav === "plugins" && !mcpsOpen && pluginsCatalogOpenRaw ? true : false;
   return {
     activeNav,
     searchQuery:
@@ -432,6 +442,7 @@ export function normalizeSettingsViewSession(
             : fallback.agentsHarnessId ?? null
         : null,
     mcpsOpen,
+    pluginsCatalogOpen,
     panelSearchFocus:
       raw?.panelSearchFocus === null
         ? null
