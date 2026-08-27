@@ -14,7 +14,7 @@ import {
 } from "@/lib/onboarding/engine-api";
 
 /**
- * Step 3 — import your previous work. Two sources:
+ * Step 3 - import your previous work. Two sources:
  * - harness CLIs on the engine host (Codex/Claude/OpenCode/… local sessions)
  * - your cloud conversation snapshots, pushed from any other Cesium engine
  * Both materialize as first-class Cesium conversations.
@@ -150,7 +150,7 @@ export function ImportStep({
         </p>
         {cloud.mode === "disabled" ? (
           <p className="text-[12.5px] text-[var(--text-secondary)]">
-            Cloud sync is not configured for this build — nothing to pull.
+            Cloud sync is not configured for this build - nothing to pull.
           </p>
         ) : snapshots.length === 0 ? (
           <p className="text-[12.5px] text-[var(--text-secondary)]">
@@ -261,7 +261,7 @@ export function ImportStep({
         </p>
       ) : (
         <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-          Imports need a workspace to land in — none exists yet. Create or open
+          Imports need a workspace to land in - none exists yet. Create or open
           one in the workbench first (chatting works without one).
         </p>
       )}

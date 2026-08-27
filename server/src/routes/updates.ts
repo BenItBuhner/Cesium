@@ -13,7 +13,7 @@ import {
 
 export const updateRoutes = new Hono();
 
-/** Cached status only — never touches the network. */
+/** Cached status only - never touches the network. */
 updateRoutes.get("/api/updates/status", async (c) => {
   const status = await getUpdateStatus();
   c.header("cache-control", "no-store");

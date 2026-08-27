@@ -165,7 +165,7 @@ const AUTO_SYNC_MIN_INTERVAL_MS = 5_000;
  * Keep an imported conversation transparently up to date with its harness's
  * native storage. Called when a conversation is opened: if the user continued
  * the session directly in the source CLI since the last sync, the new turns
- * are pulled in automatically — no manual "re-sync" step exists or is needed.
+ * are pulled in automatically - no manual "re-sync" step exists or is needed.
  *
  * Never runs while the conversation is active in Cesium, after a handoff to a
  * different backend, or when the source has nothing newer than what Cesium
@@ -208,7 +208,7 @@ export async function maybeAutoSyncImportedConversation(
       return false;
     }
     if (sourceUpdatedAt <= record.updatedAt) {
-      // The newest source content is something Cesium itself streamed live —
+      // The newest source content is something Cesium itself streamed live -
       // the conversation already reflects it.
       return false;
     }
@@ -230,7 +230,7 @@ export async function maybeAutoSyncImportedConversation(
 /**
  * Import (or re-sync) a harness-native session into a Cesium conversation.
  *
- * Identity: the harness session id is preserved verbatim — it becomes both the
+ * Identity: the harness session id is preserved verbatim - it becomes both the
  * conversation's `origin.externalSessionId` and its `providerSessionId`, so
  * the next prompt natively resumes the exact same session in the original
  * harness (loadSession path), never a quote/transcript replay.
@@ -250,7 +250,7 @@ export async function importHarnessSession(input: {
   }
   const transcript = await source.readSession(input.externalSessionId);
   if (transcript.summary.id !== input.externalSessionId) {
-    // Reader resolved an alias/short id — normalize to the canonical native id.
+    // Reader resolved an alias/short id - normalize to the canonical native id.
     input = { ...input, externalSessionId: transcript.summary.id };
   }
 
@@ -290,7 +290,7 @@ export async function importHarnessSession(input: {
       ...current,
       title: transcript.summary.title,
       // Adopt the source model only while the conversation still runs on the
-      // backend default — a model the user picked in Cesium is never clobbered.
+      // backend default - a model the user picked in Cesium is never clobbered.
       config:
         transcript.summary.modelId &&
         (!current.config.modelId || current.config.modelId === "auto")

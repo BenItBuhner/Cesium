@@ -67,7 +67,7 @@ export async function cloneGitRepository(options: {
     throw new Error(`Folder already exists: ${target}`);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      // expected — target must not exist
+      // expected - target must not exist
     } else {
       throw error;
     }

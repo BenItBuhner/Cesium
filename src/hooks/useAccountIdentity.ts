@@ -14,12 +14,12 @@ import {
 /**
  * The identity source currently backing this client, in priority order:
  *
- * - `clerk` — production cloud account (Clerk sign-in), signed in.
- * - `clerk-signed-out` — production cloud build, but nobody is signed in.
- * - `device` — cloud sync under a per-browser device key (no real account).
- * - `engine` — password session on the active engine server
+ * - `clerk` - production cloud account (Clerk sign-in), signed in.
+ * - `clerk-signed-out` - production cloud build, but nobody is signed in.
+ * - `device` - cloud sync under a per-browser device key (no real account).
+ * - `engine` - password session on the active engine server
  *   (`OPENCURSOR_AUTH_*`); the "remote server" production posture.
- * - `local` — local-first mode; no account of any kind is configured.
+ * - `local` - local-first mode; no account of any kind is configured.
  */
 export type AccountIdentityKind =
   | "clerk"

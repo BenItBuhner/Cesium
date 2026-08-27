@@ -82,7 +82,7 @@ export function ArtifactCard({ artifactId }: { artifactId: string }) {
         if (cancelled) return;
         attempts += 1;
         // The tag can land a beat before the artifact metadata is readable
-        // (e.g. replaying a streamed message) — retry briefly before failing.
+        // (e.g. replaying a streamed message) - retry briefly before failing.
         if (attempts <= MAX_NOT_FOUND_RETRIES) {
           timer = setTimeout(() => void load(), NOT_FOUND_RETRY_MS);
           return;

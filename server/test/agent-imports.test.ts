@@ -123,12 +123,12 @@ test("claude reader lists and reads real Claude Code sessions", async () => {
   assert.equal(kinds.filter((kind) => kind === "user_message").length, 1);
   assert.ok(kinds.includes("tool_call"));
   const toolCalls = transcript.events.filter((event) => event.kind === "tool_call");
-  // Tool cards run through the shared normalizer — same titles as live turns.
+  // Tool cards run through the shared normalizer - same titles as live turns.
   assert.equal(toolCalls[0]!.kind === "tool_call" && toolCalls[0]!.title, "Update haiku.txt");
   assert.equal(toolCalls[0]!.kind === "tool_call" && toolCalls[0]!.toolKind, "edit");
   const updates = transcript.events.filter((event) => event.kind === "tool_call_update");
   // The update's detail is the readable result (the written file content),
-  // and the card carries the file location — no raw JSON dumps.
+  // and the card carries the file location - no raw JSON dumps.
   assert.ok(
     updates.some(
       (event) =>
@@ -364,7 +364,7 @@ test("auto-sync pulls CLI-side continuations without any manual re-sync", async 
     externalSessionId: CLAUDE_SESSION_ID,
   });
 
-  // Nothing changed on the harness side — opening the conversation is a no-op.
+  // Nothing changed on the harness side - opening the conversation is a no-op.
   const before = await sessionStore.readConversationRecord(workspace.id, imported.conversationId);
   assert.equal(
     await maybeAutoSyncImportedConversation(workspace, before!, { ignoreThrottle: true }),

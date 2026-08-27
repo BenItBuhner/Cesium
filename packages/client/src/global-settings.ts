@@ -166,7 +166,7 @@ export type GeneralSettingsState = {
   serverRailAppearances: Record<string, ServerRailAppearance>;
   /** Per-server MRU of agent conversation ids for Ctrl+Tab switcher. */
   agentConversationMruByServer: Record<string, string[]>;
-  /** Scope Quick Open (Mod+P) starts in — files, chats, commands, settings, or tabs. */
+  /** Scope Quick Open (Mod+P) starts in - files, chats, commands, settings, or tabs. */
   quickOpenDefaultScope: QuickOpenScopeId;
   /** What the hold-to-cycle (Mod+Tab) switcher steps through. */
   quickSwitcherScope: QuickSwitcherScopeId;

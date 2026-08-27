@@ -29,7 +29,7 @@ import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.j
  * "info" | "error" | "warning", content, displayContent, toolCalls?,
  * thoughts?, model? }) plus { $set } metadata patches and { $rewindTo }
  * truncation markers. Older builds wrote the whole conversation as a single
- * .json document — both are supported.
+ * .json document - both are supported.
  */
 
 function geminiHome(): string {

@@ -28,7 +28,7 @@ type ImportConversationDialogProps = {
   open: boolean;
   onClose: () => void;
   onImported: (result: AgentImportResult) => void;
-  /** Open a session that is already imported — it stays in sync automatically. */
+  /** Open a session that is already imported - it stays in sync automatically. */
   onOpenExisting: (conversationId: string, title: string) => void;
 };
 
@@ -392,7 +392,7 @@ export function ImportConversationDialog({
                           onOpenExisting(session.importedConversationId!, session.title);
                           onClose();
                         }}
-                        title="Already imported — stays in sync with the harness automatically"
+                        title="Already imported - stays in sync with the harness automatically"
                         className="flex min-h-[40px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--accent-bg)_60%,transparent)] px-[11px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Check className="size-[12px]" strokeWidth={2} />

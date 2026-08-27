@@ -73,7 +73,7 @@ function DeviceModeChip({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard unavailable (permissions/insecure context) — ignore.
+      // Clipboard unavailable (permissions/insecure context) - ignore.
     }
   };
 

@@ -269,7 +269,7 @@ export async function stopBrowserRecording(input: {
     await recording.writeQueue.catch(() => undefined);
     if (recording.frameTimestamps.length === 0) {
       throw new Error(
-        "The recording captured zero frames. The page likely never painted while recording — navigate or interact with the tab between start and stop."
+        "The recording captured zero frames. The page likely never painted while recording - navigate or interact with the tab between start and stop."
       );
     }
     const ffmpegPath = await resolveFfmpegPath();

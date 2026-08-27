@@ -209,7 +209,7 @@ async function main() {
 
   // 6. OS file share -> Share to Cesium sheet -> New chat (or dismiss when
   // file staging is unavailable: uploads need an active workspace, which a
-  // fresh CI profile does not have — the sheet itself appearing already
+  // fresh CI profile does not have - the sheet itself appearing already
   // proves the OS open-file -> intake plumbing).
   if (shareCmd) {
     runShellCommand("share command", shareCmd);

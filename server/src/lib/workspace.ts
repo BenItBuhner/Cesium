@@ -2,7 +2,7 @@ import path from "node:path";
 
 /**
  * Folders rendered dim in the explorer AND never recursed into by `fs/tree`.
- * Keep this list aggressive — walking home-dir caches (`.npm`, `.cargo`,
+ * Keep this list aggressive - walking home-dir caches (`.npm`, `.cargo`,
  * `snap/*`) balloons the initial tree to tens of megabytes and turns the app
  * into a "Loading workspace..." spinner for 30-90s when a Home workspace is
  * rooted at `$HOME`.

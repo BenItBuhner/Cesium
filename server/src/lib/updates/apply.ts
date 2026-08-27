@@ -103,7 +103,7 @@ async function applyGitPullUpdate(repoRoot: string, emit: ApplyEmitter): Promise
       ok: false,
       restartRequired: false,
       error:
-        "Fast-forward failed — the checkout has local commits or uncommitted changes. Resolve manually with git.",
+        "Fast-forward failed - the checkout has local commits or uncommitted changes. Resolve manually with git.",
     });
     return;
   }
@@ -135,7 +135,7 @@ async function applyGitPullUpdate(repoRoot: string, emit: ApplyEmitter): Promise
         type: "done",
         ok: false,
         restartRequired: true,
-        error: "npm install failed after pulling — run it manually.",
+        error: "npm install failed after pulling - run it manually.",
       });
       return;
     }
@@ -146,7 +146,7 @@ async function applyGitPullUpdate(repoRoot: string, emit: ApplyEmitter): Promise
       const stats = fs.lstatSync(selfSymlink);
       if (stats.isSymbolicLink()) fs.rmSync(selfSymlink);
     } catch {
-      // absent — nothing to clean
+      // absent - nothing to clean
     }
   }
 
@@ -162,7 +162,7 @@ async function applyGitPullUpdate(repoRoot: string, emit: ApplyEmitter): Promise
         type: "done",
         ok: false,
         restartRequired: true,
-        error: "Shared package build failed after pulling — run npm run build:packages manually.",
+        error: "Shared package build failed after pulling - run npm run build:packages manually.",
       });
       return;
     }
@@ -229,7 +229,7 @@ async function applyManagerCliUpdate(emit: ApplyEmitter): Promise<void> {
   emit({
     type: "restarting",
     message:
-      "Installer handoff started — this server will stop, update, and restart itself. Reconnect in a minute.",
+      "Installer handoff started - this server will stop, update, and restart itself. Reconnect in a minute.",
   });
   emit({ type: "done", ok: true, restartRequired: true });
 }

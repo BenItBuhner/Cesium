@@ -10,7 +10,7 @@ import {
 
 /**
  * espeak-ng: the always-there formant synthesizer. Robotic, but zero model
- * downloads and zero network — the guaranteed local fallback of the stack.
+ * downloads and zero network - the guaranteed local fallback of the stack.
  */
 
 const CANDIDATE_BINARIES = ["espeak-ng", "espeak"];

@@ -14,9 +14,9 @@ Use **AskQuestion** when the user did not say which surfaces to touch. Typical q
 
 - **Prompt:** Which targets should be rebuilt/redeployed?
 - **Options (multi-select allowed):**
-  - **Next + API (default production stack)** — root Next on `:3000` and `cesium-server` on `:9100` (what README calls the two long-running processes)
-  - **Second Next (`@cesium/web`)** — workspace app on `:4000` (only when the user or prior session explicitly used both Next apps)
-  - **Electron desktop** — `@cesium/desktop` packaged install
+  - **Next + API (default production stack)** - root Next on `:3000` and `cesium-server` on `:9100` (what README calls the two long-running processes)
+  - **Second Next (`@cesium/web`)** - workspace app on `:4000` (only when the user or prior session explicitly used both Next apps)
+  - **Electron desktop** - `@cesium/desktop` packaged install
 
 **Infer without asking when:**
 
@@ -28,7 +28,7 @@ Use **AskQuestion** when the user did not say which surfaces to touch. Typical q
 | "Electron", "desktop", "Cesium.exe", "reinstall app" | Electron pipeline (Windows) |
 | "everything", "all", "parallel" | Next+API **and** Electron; see §5 for parallel subagents |
 
-**Primary UI** is the **root** Next app (`npm run build` / `npm run start`, port **3000**). `@cesium/web` is a separate workspace copy—do not start it unless requested.
+**Primary UI** is the **root** Next app (`npm run build` / `npm run start`, port **3000**). `@cesium/web` is a separate workspace copy - do not start it unless requested.
 
 ## 1. Rebuild
 
@@ -74,7 +74,7 @@ Build is included in install. Desktop `build` compiles core, desktop-renderer, s
 npm run build --workspace @cesium/desktop
 ```
 
-**Windows reinstall (preferred — bundles package + copy to `%LOCALAPPDATA%`):**
+**Windows reinstall (preferred - bundles package + copy to `%LOCALAPPDATA%`):**
 
 ```powershell
 Get-Process -Name Cesium -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -83,7 +83,7 @@ npm run install:unpacked --workspace @cesium/desktop
 
 `install:unpacked` runs `package` then `scripts/install-desktop-unpacked.cjs`. Install path: `%LOCALAPPDATA%\Programs\Cesium\Cesium.exe`.
 
-On non-Windows, `install:unpacked` fails by design—use `npm run package --workspace @cesium/desktop` only.
+On non-Windows, `install:unpacked` fails by design - use `npm run package --workspace @cesium/desktop` only.
 
 ## 2. Redeploy servers (Next + API)
 
@@ -207,9 +207,9 @@ Summarize:
 
 1. **Scope** chosen (and whether AskQuestion was used)
 2. **Commands** run and exit status
-3. **Listeners** — ports 3000 / 4000 / 9100 / Electron child port
-4. **Opened** — exact URL or exe path
-5. **Blockers** — EPERM (quit Cesium), build errors, missing Bun, port still in use
+3. **Listeners** - ports 3000 / 4000 / 9100 / Electron child port
+4. **Opened** - exact URL or exe path
+5. **Blockers** - EPERM (quit Cesium), build errors, missing Bun, port still in use
 
 Do **not** commit unless the user asks. Do **not** run destructive git commands.
 

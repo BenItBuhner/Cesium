@@ -238,7 +238,7 @@ test("an active run keeps its notification identity when the derived key drifts"
 
   // The web bridge and the native agent socket derive different startedAt
   // values for the same run (different event windows). The tracked key must
-  // stay sticky — cancelling + reposting under a new hashed id is the
+  // stay sticky - cancelling + reposting under a new hashed id is the
   // close/reopen flicker this guards against.
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(

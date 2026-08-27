@@ -1,6 +1,6 @@
 import { clientLocation } from "./platform";
 
-/** Parse a URL without throwing — useful for Electron `file://` history edge cases. */
+/** Parse a URL without throwing - useful for Electron `file://` history edge cases. */
 export function tryParseUrl(input: string, base?: string): URL | null {
   try {
     return base === undefined ? new URL(input) : new URL(input, base);

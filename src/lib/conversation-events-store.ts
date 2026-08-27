@@ -10,7 +10,7 @@ export const EMPTY_CONVERSATION_EVENTS: AgentStoredEvent[] = [];
  * The event log is by far the hottest data in the app: every streaming flush
  * for any conversation rewrites its array. Holding all logs in one React
  * context value meant one token from one agent re-rendered every consumer of
- * that context — rail, composers, tab strips, editor panels — which collapses
+ * that context - rail, composers, tab strips, editor panels - which collapses
  * once more than a handful of agents run in parallel. This store instead
  * notifies only subscribers of the conversation that actually changed;
  * components read a single conversation through `useSyncExternalStore` and

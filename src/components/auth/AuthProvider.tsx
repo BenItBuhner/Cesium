@@ -86,8 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [hasServerStatus, setHasServerStatus] = useState(false);
   /**
    * Server id whose auth status has been resolved (successfully or not) at
-   * least once. Re-checks for the same server — including rendezvous base-URL
-   * re-resolves — must not reset `ready`.
+   * least once. Re-checks for the same server - including rendezvous base-URL
+   * re-resolves - must not reset `ready`.
    */
   const resolvedServerIdRef = useRef<string | null>(null);
   /** Server id for which a real auth-status response has been received. */

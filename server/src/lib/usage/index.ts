@@ -11,7 +11,7 @@ export type { ProviderUsageReport, UsageOverview } from "./types.js";
 
 const CACHE_TTL_MS = 60_000;
 
-/** Harnesses whose usage lives server-side only — surfaced so the page can say why. */
+/** Harnesses whose usage lives server-side only - surfaced so the page can say why. */
 const CLOUD_ONLY_PROVIDERS: Array<{
   id: string;
   label: string;

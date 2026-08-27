@@ -3,7 +3,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 type SettingsPanelErrorBoundaryProps = {
-  /** Active settings nav id — remounting on change clears a previous error. */
+  /** Active settings nav id - remounting on change clears a previous error. */
   panelId: string;
   children: ReactNode;
 };
@@ -16,7 +16,7 @@ type SettingsPanelErrorBoundaryState = {
  * Contains render crashes to the active settings panel. Panels render data
  * straight off the wire from whichever server the app is connected to, and a
  * malformed payload (older/newer server builds, self-updating installs) used
- * to take down the whole workbench via the root error boundary — leaving only
+ * to take down the whole workbench via the root error boundary - leaving only
  * a full reload to recover. With this boundary the settings shell, its nav,
  * and the rest of the app stay usable; the user can retry or switch panels.
  */
@@ -61,7 +61,7 @@ export class SettingsPanelErrorBoundary extends Component<
           {this.state.error.message || "Unknown error"}
         </p>
         <p className="font-sans text-[12px] text-[var(--text-secondary)]">
-          The rest of Cesium is unaffected — you can switch to another section.
+          The rest of Cesium is unaffected - you can switch to another section.
           If this keeps happening, the connected server may be returning data
           this app version does not understand.
         </p>

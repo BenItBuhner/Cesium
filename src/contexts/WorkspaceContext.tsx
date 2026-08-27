@@ -76,11 +76,11 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { currentModel } from "@/lib/mock-data";
 
-/** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s — a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
+/** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s - a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
 const HEARTBEAT_INTERVAL_MS = 10_000;
 /** Allow slow pongs, quiet workspaces, and main-thread stalls (heavy chat renders) without killing the FS socket. */
 const PONG_STALE_MS = 90_000;
-/** If the heartbeat timer fires this late, the event loop was probably stalled — do not infer a dead socket from skewed time. */
+/** If the heartbeat timer fires this late, the event loop was probably stalled - do not infer a dead socket from skewed time. */
 const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 4;
 /** Number of consecutive stale heartbeat ticks required before declaring the connection dead. Tolerates dropped pongs on quiet workspaces; overall detection window (~PONG_STALE_MS + 3 ticks) matches the old 3s-interval tuning. */
 const STALE_TICK_THRESHOLD = 3;
@@ -97,7 +97,7 @@ const WORKSPACE_ERROR_MESSAGE_MAX_LENGTH = 240;
 /**
  * Toast-safe error text. Error messages can carry entire response bodies
  * (worst case: a full HTML document when the configured server is not a
- * Cesium engine) — markup blobs and multi-kilobyte dumps help nobody in a
+ * Cesium engine) - markup blobs and multi-kilobyte dumps help nobody in a
  * notification, so fall back to the friendly message and cap the length.
  */
 function compactWorkspaceErrorMessage(error: unknown, fallback: string): string {
@@ -628,7 +628,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     ) => {
       // The optimistic workspace transition falls back to hard session
       // defaults when no local backup exists, then immediately re-writes that
-      // backup — which would beat any server-side session seed during
+      // backup - which would beat any server-side session seed during
       // hydration. Writing the backup first keeps the chat draft selection.
       const defaults = createSessionDefaults();
       writeWorkspaceSessionBackup(getSessionScopeId(workspaceId), {
@@ -1668,7 +1668,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }),
       socket.onMessage((event) => {
         lastServerContactAt = Date.now();
-        // Any inbound message proves liveness — settle a pending disconnect
+        // Any inbound message proves liveness - settle a pending disconnect
         // (and announce recovery if one was shown) without waiting for the
         // next heartbeat pong.
         tryReconnectToast();
@@ -1705,7 +1705,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         // FS events arrive one WS frame per touched path. Agent runs (builds,
         // installs, parallel edits) produce hundreds per second, and each
-        // used to commit its own state update — re-rendering every
+        // used to commit its own state update - re-rendering every
         // useWorkspace() consumer per file. Coalesce a window's worth into
         // ONE change notice and ONE tree pass.
         if (

@@ -28,21 +28,21 @@ export const MOBILE_SAFE_AREA_TOP_VAR = "--opencursor-mobile-safe-area-top";
 export type MobileLifecycleState = "active" | "background" | "inactive";
 
 /**
- * "live"  — Android Live Updates (promoted ongoing notifications). The system
+ * "live"  - Android Live Updates (promoted ongoing notifications). The system
  *           renders these in the status bar chip / lock screen, and Samsung's
  *           Now Bar picks them up automatically on One UI 8+. Falls back to a
  *           standard notification whenever promotion is unsupported/denied.
- * "basic" — standard live notification only, never request promotion.
- * "off"   — no run notifications.
+ * "basic" - standard live notification only, never request promotion.
+ * "off"   - no run notifications.
  */
 export type MobileLiveUpdatePreference = "live" | "basic" | "off";
 
 /**
  * When a live-notification alert may make noise / appear at all:
- * "always"     — regardless of app state.
- * "background" — only while the app is not in the foreground; agents
+ * "always"     - regardless of app state.
+ * "background" - only while the app is not in the foreground; agents
  *                completing while the user is looking at the app stay quiet.
- * "off"        — never.
+ * "off"        - never.
  */
 export type MobileNotificationAlertMode = "always" | "background" | "off";
 
@@ -66,19 +66,19 @@ export const DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES: MobileNotificationAl
 
 /**
  * Which runs may show a time estimate (ETA countdown / "~Nm left"):
- * "goal"   — goal runs only (default). Goals are long-horizon, so an ETA
+ * "goal"   - goal runs only (default). Goals are long-horizon, so an ETA
  *            carries signal; todo-plan estimates extrapolate across tasks of
- *            wildly uneven complexity and are noise — those runs show the
+ *            wildly uneven complexity and are noise - those runs show the
  *            todo progression instead.
- * "always" — every run with an estimate.
- * "off"    — never; progression and elapsed time only.
+ * "always" - every run with an estimate.
+ * "off"    - never; progression and elapsed time only.
  */
 export type MobileNotificationEtaMode = "goal" | "always" | "off";
 
 /**
  * How concurrent agent runs present on the phone:
- * "separate" — one live notification per run.
- * "combined" — a single aggregated live notification while two or more runs
+ * "separate" - one live notification per run.
+ * "combined" - a single aggregated live notification while two or more runs
  *              are active (a lone run keeps its full detail).
  */
 export type MobileNotificationMultiAgentMode = "separate" | "combined";
@@ -306,7 +306,7 @@ export function normalizeMobileServerConfig(server: MobileServerConfig): MobileS
  * The one-time script the native shell injects before the workbench loads
  * (`injectedJavaScriptBeforeContentLoaded`), analogous to Electron's preload:
  * host identity + initial config + the message relay + a crash reporter.
- * Everything dynamic afterwards arrives via `nativeConfigChanged` messages —
+ * Everything dynamic afterwards arrives via `nativeConfigChanged` messages -
  * the script is never re-injected into a live page.
  *
  * Polyfills and first-paint theming intentionally live in the bundled
@@ -495,7 +495,7 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
 /**
  * Inline first-paint script stamped into the bundled workbench's index.html
  * by the Android asset copy step. Applies the stored theme before the first
- * paint so a dark-theme user never sees a light flash — the same job
+ * paint so a dark-theme user never sees a light flash - the same job
  * Electron solves with the BrowserWindow background color.
  */
 export function buildMobileFirstPaintThemeScript(): string {

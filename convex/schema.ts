@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * Cesium Cloud Context — user-scoped, cross-device state.
+ * Cesium Cloud Context - user-scoped, cross-device state.
  *
  * Everything a signed-in user needs to sit down at any Cesium client and be
  * productive immediately: their engines (servers), personalization payload,
@@ -38,8 +38,8 @@ export default defineSchema({
     sessionToken: v.optional(v.string()),
     /**
      * Rendezvous locator for tunnel-backed engines shared via public access.
-     * `baseUrl` is only the last known endpoint for these — tunnel URLs
-     * rotate — so every signed-in device uses this locator to re-resolve the
+     * `baseUrl` is only the last known endpoint for these - tunnel URLs
+     * rotate - so every signed-in device uses this locator to re-resolve the
      * engine's current public URL from the encrypted rendezvous registry.
      */
     rendezvous: v.optional(
@@ -65,7 +65,7 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 
-  /** Per-backend agent setup the user completed (not secrets — presence/prefs). */
+  /** Per-backend agent setup the user completed (not secrets - presence/prefs). */
   agentPrefs: defineTable({
     userId: v.id("users"),
     backendId: v.string(),

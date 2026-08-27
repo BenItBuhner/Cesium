@@ -12,13 +12,13 @@
  *     per-process counter is sufficient to detect concurrent writers from a
  *     different browser tab / keepalive PUT and reject with 412.
  *
- * The registry resets on process restart — clients simply re-fetch and pick up
+ * The registry resets on process restart - clients simply re-fetch and pick up
  * the fresh ETag. When the driver's read side eventually exposes row
  * revisions, we swap the backing store for driver-sourced reads without
  * touching the routes.
  *
  * The returned ETag shape is a weak tag (`W/"<rev>"`) since we only compare
- * revision numbers — not byte-exact payloads.
+ * revision numbers - not byte-exact payloads.
  */
 
 const revisions = new Map<string, number>();
@@ -50,7 +50,7 @@ export function peekRevision(key: string): number | null {
 
 /**
  * Bumps the revision for a key and returns the new value. Accepts an optional
- * `to` override — used when the driver returned an authoritative revision
+ * `to` override - used when the driver returned an authoritative revision
  * (e.g. pg driver returning row `revision + 1`) so the registry stays in sync
  * with any externally-sourced values.
  */
@@ -64,12 +64,12 @@ export function bumpRevision(key: string, to?: number): number {
   return next;
 }
 
-/** Sets the revision for a key to a specific value — test helper. */
+/** Sets the revision for a key to a specific value - test helper. */
 export function setRevisionForTesting(key: string, value: number): void {
   revisions.set(key, Math.max(0, Math.floor(value)));
 }
 
-/** Clears all tracked revisions — test helper. */
+/** Clears all tracked revisions - test helper. */
 export function resetRevisionsForTesting(): void {
   revisions.clear();
 }

@@ -86,7 +86,7 @@ function AgentLayoutShell() {
   const isDesktopApp = useIsCesiumDesktopApp();
 
   // Android back gestures for the mobile rail drawer and right pane are
-  // registered inside MobileAgentShell, where the drawer motion engine lives —
+  // registered inside MobileAgentShell, where the drawer motion engine lives -
   // that lets the predictive back gesture drive the drawers frame by frame.
   const electronTrailingChromeForToggle =
     isDesktopApp && !isMobile && !rightPaneOpen;
@@ -112,7 +112,7 @@ function AgentLayoutShell() {
         return withSide;
       }
       // Fold the rail's share into the center so `setLayout` always receives
-      // the exact final layout — the slide tween needs analytic targets
+      // the exact final layout - the slide tween needs analytic targets
       // instead of whatever the library redistributes after `collapse()`.
       const rail = withSide[AGENT_SHELL_PANEL_IDS.rail] ?? 0;
       return {
@@ -157,7 +157,7 @@ function AgentLayoutShell() {
     // grow value is timing-dependent (it intermittently snapped), and WebKit
     // does not interpolate flex-grow at all. Instead a rAF tween writes the
     // three panels' flex-grow every frame from the pre-toggle values to the
-    // analytic target layout — deterministic and engine-independent. While a
+    // analytic target layout - deterministic and engine-independent. While a
     // panel slides, its content is pinned to the edge it travels from and
     // locked to its resting width so it genuinely slides instead of
     // squishing. Drag-resizes never enter this path.
@@ -264,7 +264,7 @@ function AgentLayoutShell() {
       const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
       // Epoch anchors to the FIRST callback's own timestamp: rAF hands frames
       // the vsync-aligned start time, which can precede a `performance.now()`
-      // captured mid-effect during a long commit — a naive epoch makes the
+      // captured mid-effect during a long commit - a naive epoch makes the
       // first t negative and the eased value overshoot wildly.
       let startedAt: number | null = null;
       const finish = () => {

@@ -405,7 +405,7 @@ export function ComposerStatusBar({
                 className="shrink-0 tabular-nums text-[var(--text-disabled)]"
                 title="Context usage not available for this agent"
               >
-                —
+                {"\u2014"}
               </span>
             )
           ) : null}

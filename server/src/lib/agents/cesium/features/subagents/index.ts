@@ -38,13 +38,13 @@ export const SUBAGENTS_FEATURE_DEFINITION: CesiumFeatureDefinition = {
   versions: [
     {
       version: 1,
-      label: "V1 — ephemeral task delegation",
+      label: "V1 - ephemeral task delegation",
       description: "Launch one isolated subagent and read its transcript.",
       resolve: () => createSubagentsV1Module(),
     },
     {
       version: 2,
-      label: "V2 — collaborative agent tree",
+      label: "V2 - collaborative agent tree",
       description: "Spawn, wait, message, follow up, and interrupt persistent child agents.",
       resolve: (limits) => createSubagentsV2Module(limits),
     },

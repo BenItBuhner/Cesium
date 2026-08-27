@@ -191,7 +191,7 @@ export function setCaretOffset(container: HTMLElement, offset: number): void {
         return;
       }
       if (remaining < len) {
-        // Caret falls inside the pill — snap to the nearest edge.
+        // Caret falls inside the pill - snap to the nearest edge.
         place(el.parentNode!, el);
         placed = true;
         return;
@@ -282,7 +282,7 @@ export interface ComposerPillDescriptor {
  * True if the container's DOM already matches `value` *and* has a pill span
  * in each token slot whose visible label/favicon match `pills`. We use this as
  * a cheap guard so the reconciler doesn't churn the DOM (and blow away the
- * user's caret) on every keystroke — but still re-renders when async metadata
+ * user's caret) on every keystroke - but still re-renders when async metadata
  * (link title / favicon) resolves for an unchanged token.
  */
 export function composerEditorDomInSync(
@@ -501,7 +501,7 @@ export interface ComposerDomReport {
  * Record a composer text that was reported upward (via `onValueChange`) while
  * the contenteditable DOM already held it. When that exact string later comes
  * back down as the controlled `value` prop, it is an *echo* of our own report
- * — not an external change — and must never trigger a DOM rebuild that would
+ * - not an external change - and must never trigger a DOM rebuild that would
  * clobber keystrokes typed in the meantime. The same report can echo several
  * times (immediate parent state plus slower persistence round-trips), so
  * entries are kept until they age out or fall off the ring, never consumed.
@@ -530,8 +530,8 @@ export function recordComposerDomReport(
  * Two situations make an immediate rebuild destructive:
  *
  * 1. **Stale echo.** Input events mutate the DOM *before* they dispatch, and
- *    React flushes the reconcile effect lazily. On slow devices — Android
- *    WebViews above all — keystroke N+1 arrives before the effect carrying
+ *    React flushes the reconcile effect lazily. On slow devices - Android
+ *    WebViews above all - keystroke N+1 arrives before the effect carrying
  *    keystroke N's value has run, so the effect sees a `value` older than the
  *    live DOM. Rebuilding from it would delete the newer keystrokes and
  *    teleport the caret. If `value` matches a recent report from the DOM

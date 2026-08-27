@@ -138,7 +138,7 @@ function resolvePendingHandoffContext(
     return null;
   }
   if (handoffEvent.resumeNativeSession) {
-    // Native resume handoffs reload the harness's own session — injecting a
+    // Native resume handoffs reload the harness's own session - injecting a
     // transcript would duplicate context the harness already has.
     return null;
   }
@@ -488,7 +488,7 @@ export class AgentRuntimeManager {
 
   /**
    * The Cesium Agent's effective default model lives in settings (env
-   * bootstrap / user choice), not the static registry entry — mirror the
+   * bootstrap / user choice), not the static registry entry - mirror the
    * `/api/agents/backends` listing so conversations created without an
    * explicit model run against the same provider the UI advertises.
    */
@@ -801,7 +801,7 @@ export class AgentRuntimeManager {
         conversationId: sourceRecord.id,
         kind: "system",
         level: "info",
-        text: `Resuming the original ${targetBackend?.label ?? targetBackendId} session natively (${nativeSessionId}). The next message continues the exact same harness session — no transcript transfer needed.`,
+        text: `Resuming the original ${targetBackend?.label ?? targetBackendId} session natively (${nativeSessionId}). The next message continues the exact same harness session - no transcript transfer needed.`,
         createdAt: now,
       },
       {
@@ -954,7 +954,7 @@ export class AgentRuntimeManager {
     }
     if (options?.hydrateRuntime) {
       void this.ensureRuntime(workspace, record).catch((error) => {
-        // Hydration is opportunistic — missing keys/CLIs must not mark idle chats failed.
+        // Hydration is opportunistic - missing keys/CLIs must not mark idle chats failed.
         console.warn(
           `[agent-runtime] hydrate failed for ${conversationId}:`,
           error instanceof Error ? error.message : error
@@ -1030,7 +1030,7 @@ export class AgentRuntimeManager {
       setConfigOption,
       setConfigOptions,
       title: titlePatch,
-      // Execution target is chosen at creation and immutable afterwards — a
+      // Execution target is chosen at creation and immutable afterwards - a
       // cloud agent lives on the vendor's infrastructure for its lifetime.
       executionTarget: _ignoredExecutionTarget,
       ...configPatch
@@ -1123,7 +1123,7 @@ export class AgentRuntimeManager {
    * Move a conversation to another workspace and/or git branch. Cesium harness
    * only: other harnesses pin native sessions to their original working
    * directory. Sets `pendingRelocation` so the next Cesium turn injects a
-   * "you were moved — re-learn the environment" system reminder.
+   * "you were moved - re-learn the environment" system reminder.
    */
   async relocateConversation(
     workspace: WorkspaceRecord,
@@ -1169,7 +1169,7 @@ export class AgentRuntimeManager {
         branch: requestedBranch,
       });
       if (switched.checkedOutWorktree) {
-        // The branch already lives in another worktree — relocate the
+        // The branch already lives in another worktree - relocate the
         // conversation there instead of stealing that checkout.
         target = switched.checkedOutWorktree.workspaceId
           ? workspaces.find(
@@ -2526,7 +2526,7 @@ export class AgentRuntimeManager {
       return;
     }
     // Providers often record failure (system + status + lastError) then rethrow.
-    // Skip when a failure was already persisted — even if the wording differs
+    // Skip when a failure was already persisted - even if the wording differs
     // (e.g. provider-prefixed detail vs raw exception message).
     if (current.status === "failed" && current.lastError?.trim()) {
       return;

@@ -24,7 +24,7 @@ function isCesiumDesktopRenderer(): boolean {
 /**
  * True inside the Electron shell on macOS, where the window uses
  * `titleBarStyle: "hiddenInset"` and the native traffic lights overlay the
- * top-left of the renderer — the same geometry the iPadOS windowed-mode
+ * top-left of the renderer - the same geometry the iPadOS windowed-mode
  * leading inset was built for.
  */
 export function isMacElectronRenderer(): boolean {

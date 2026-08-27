@@ -326,7 +326,7 @@ function resolveModelDisplayNameUncached(
     return polishModelDisplayName(trimmedName);
   }
 
-  // Catalog labels often arrive as Provider/raw-or-human — normalize each side.
+  // Catalog labels often arrive as Provider/raw-or-human - normalize each side.
   if (trimmedName.includes("/")) {
     const { provider, model } = splitProviderModel(trimmedName);
     const providerLabel = formatProviderDisplayName(provider ?? "");

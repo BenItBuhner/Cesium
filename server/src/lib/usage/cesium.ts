@@ -7,7 +7,7 @@ import type { ProviderUsageReport } from "./types.js";
  * Cesium Agent (built-in harness) usage: the runtime does not persist
  * provider-reported token counts yet, so we estimate (chars/4, same
  * heuristic as the context-usage ring) from stored conversation events.
- * Only `cesium-agent` conversations are counted — external harnesses write
+ * Only `cesium-agent` conversations are counted - external harnesses write
  * their own native session files which their dedicated collectors read,
  * so counting them here would double-report.
  */

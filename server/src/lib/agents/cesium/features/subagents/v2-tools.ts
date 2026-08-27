@@ -43,14 +43,14 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
             type: "string",
             description:
               "Optional model override for the child (provider/model, e.g. openai/gpt-5.1). " +
-              "Spawned agents inherit your current model by default — omit unless a different model genuinely fits the task " +
+              "Spawned agents inherit your current model by default - omit unless a different model genuinely fits the task " +
               "(or the user asked for one). Only models enabled under Settings → Agents → Cesium Agent → Model access are accepted; " +
               "the available roster (with per-model notes) is listed in this tool's description and your harness reminder.",
           },
           fork_turns: {
             type: "string",
       description:
-        'Context inheritance: "all" (full-history fork, default — Codex MultiAgentV2 parity), "none" (fresh child), or a positive integer string for a partial fork of the most recent turns.',
+        'Context inheritance: "all" (full-history fork, default - Codex MultiAgentV2 parity), "none" (fresh child), or a positive integer string for a partial fork of the most recent turns.',
           },
         },
         required: ["task_name", "message"],
@@ -94,7 +94,7 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
     {
       name: "wait_agent",
       description:
-        `Wait for a mailbox update from any live subagent (queued messages or final-status notifications). Does not return full content — returns a short summary and whether the wait timed out. Prefer short polls (30–60s) when you can keep working; use longer waits only when blocked. Default ${defaultSeconds}s; max ${maxMinutes} minutes (configurable in Cesium Agent settings).`,
+        `Wait for a mailbox update from any live subagent (queued messages or final-status notifications). Does not return full content - returns a short summary and whether the wait timed out. Prefer short polls (30–60s) when you can keep working; use longer waits only when blocked. Default ${defaultSeconds}s; max ${maxMinutes} minutes (configurable in Cesium Agent settings).`,
       parameters: {
         type: "object",
         properties: {
@@ -173,7 +173,7 @@ export function createSubagentsV2Module(limits: CesiumHarnessLimits): CesiumFeat
       "Spawned agents inherit your current model by default; pass spawn_agent.modelId only when a different enabled model " +
       "genuinely fits the task (see the available-models roster for per-model notes). " +
       "Spawn returns immediately; poll with wait_agent using short timeouts when you can keep working. " +
-      "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2. " +
+      "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool - it is not registered in V2. " +
       "Children are equally capable agents: they share your workspace tool surface (files, terminal, MCP, browser) and all agents share the same filesystem and working directory, so edits by one agent are immediately visible to the others. " +
       "Children can test sites, take screenshots, and record demo videos (saved under artifacts/browser/); have them report artifact file paths in their summaries, then verify with read_file (images attach for vision models). " +
       "When parallel workstreams must touch files, give each its own worktree branch (`create_worktree`), point the work at that path, then merge verified branches back and clean up.",

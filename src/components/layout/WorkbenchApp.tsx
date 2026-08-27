@@ -58,7 +58,7 @@ function WorkbenchShell() {
 
   // Material-style predictive-back preview for the full-screen settings view:
   // as the Android back gesture progresses the surface scales down toward 90%,
-  // nudges in the swipe direction and rounds its corners — committing closes
+  // nudges in the swipe direction and rounds its corners - committing closes
   // it, cancelling animates it back to rest. Styles are written imperatively
   // (no per-frame React re-render), mirroring the drawer motion engine.
   const applySettingsBackPreview = useCallback(

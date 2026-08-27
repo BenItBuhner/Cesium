@@ -1,4 +1,4 @@
-/** 1×1 transparent GIF — cheap drag preview so the browser does not snapshot the whole tab. */
+/** 1×1 transparent GIF - cheap drag preview so the browser does not snapshot the whole tab. */
 const TRANSPARENT_PIXEL_GIF =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
@@ -13,6 +13,6 @@ export function setMinimalTabDragImage(dataTransfer: DataTransfer) {
   try {
     dataTransfer.setDragImage(cached, 0, 0);
   } catch {
-    /* ignore — some environments restrict setDragImage */
+    /* ignore - some environments restrict setDragImage */
   }
 }

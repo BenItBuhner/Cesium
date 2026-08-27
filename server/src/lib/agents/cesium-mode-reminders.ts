@@ -73,7 +73,7 @@ function modeFlow(mode: string): string {
       "",
       "Workflow mode is a strong workflow-first profile. For any task with meaningful parallel research, repeated item processing, or staged verification, you SHOULD use workflow_run instead of manually reproducing the same fan-out with a long parent-turn tool chain. If the task is genuinely linear or too small to benefit, use direct tools or switch modes rather than inventing a pointless script.",
       "",
-      "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables — do not dump every subagent transcript into the parent reply.",
+      "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables - do not dump every subagent transcript into the parent reply.",
       "",
       "Date.now(), Math.random(), and argless new Date() are unavailable inside scripts because resume journals agent(prompt, opts) calls deterministically. Pass timestamps through args and vary prompts/labels by index.",
     ].join("\n");
@@ -126,7 +126,7 @@ export function applyCesiumProfileExclusionsToModePolicy(
       ...policy.blocked.filter((entry) => !excluded.has(entry)),
       `${[...excluded].join(", ")} (excluded by the active${
         profileName?.trim() ? ` "${profileName.trim()}"` : ""
-      } agent profile — not available in any mode)`,
+      } agent profile - not available in any mode)`,
     ],
   };
 }
@@ -188,7 +188,7 @@ The active mode is authoritative whether the user selected it directly or approv
 - Model: ${input.modelName?.trim() || "configured model"}${
     input.profileName?.trim()
       ? `\n- Agent profile: ${input.profileName.trim()}${
-          input.profileSummary?.trim() ? ` — ${input.profileSummary.trim()}` : ""
+          input.profileSummary?.trim() ? ` - ${input.profileSummary.trim()}` : ""
         }`
       : ""
   }
@@ -235,6 +235,6 @@ ${agentsMarkdown}
 
 ${skillsList}
 
-When using skills, read \`agent-skills/_index.md\` and the relevant \`agent-skills/<skill-id>/SKILL.md\` before following them — the same discover-then-read pattern as \`mcp-servers/\`.
+When using skills, read \`agent-skills/_index.md\` and the relevant \`agent-skills/<skill-id>/SKILL.md\` before following them - the same discover-then-read pattern as \`mcp-servers/\`.
 </system-reminder>`;
 }

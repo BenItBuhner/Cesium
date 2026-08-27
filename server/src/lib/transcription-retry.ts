@@ -5,11 +5,11 @@ import { sleepMs } from "./agents/completion-retry.js";
  * (network errors, 408/429/5xx) are retried with exponential backoff before
  * the error surfaces to the client. Every knob is env-tunable:
  *
- * - `OPENCURSOR_TRANSCRIPTION_MAX_RETRIES` — automatic retries after the
+ * - `OPENCURSOR_TRANSCRIPTION_MAX_RETRIES` - automatic retries after the
  *   initial attempt (default 5, `0` disables retries).
- * - `OPENCURSOR_TRANSCRIPTION_RETRY_BASE_DELAY_MS` — first backoff delay,
+ * - `OPENCURSOR_TRANSCRIPTION_RETRY_BASE_DELAY_MS` - first backoff delay,
  *   doubled on every subsequent retry (default 500).
- * - `OPENCURSOR_TRANSCRIPTION_RETRY_MAX_DELAY_MS` — cap for a single backoff
+ * - `OPENCURSOR_TRANSCRIPTION_RETRY_MAX_DELAY_MS` - cap for a single backoff
  *   delay (default 8000).
  */
 export type TranscriptionRetryConfig = {

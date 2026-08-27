@@ -3,7 +3,7 @@ import { mutation } from "./_generated/server";
 import { ensureUser } from "./lib/identity";
 
 /**
- * Merge onboarding progress. Steps are additive across devices — a step
+ * Merge onboarding progress. Steps are additive across devices - a step
  * completed anywhere is completed everywhere.
  */
 export const update = mutation({

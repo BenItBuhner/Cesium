@@ -26,7 +26,7 @@ export const CesiumWindowInsets = {
   /**
    * Snapshot of the current top window insets in dp. Rejects while the insets
    * are unreadable (activity detached or decor view without dispatched insets,
-   * both transient around backgrounding/refocus) — callers must keep their
+   * both transient around backgrounding/refocus) - callers must keep their
    * last known value instead of treating a failure as "no inset".
    */
   async getInsets(): Promise<WindowInsetsSnapshot> {

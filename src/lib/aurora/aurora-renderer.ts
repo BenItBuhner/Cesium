@@ -1,13 +1,13 @@
 /**
  * Canvas renderer for the aurora conversation backdrop: wavy curtain bands of
  * soft color drifting across the pane, whose pace, brightness, and tint react
- * to the conversation lifecycle — calm ambient drift when idle, a lifted glow
+ * to the conversation lifecycle - calm ambient drift when idle, a lifted glow
  * near the composer while typing, energetic flow with a traveling shimmer
  * while the agent works, a slow amber breath while waiting on the user, a
  * bright mint bloom on completion, and a brief crimson wash on failure.
  *
  * Draws at a very low internal resolution (the element upscales + blurs via
- * CSS), so a frame is ~a hundred tiny sprite blits — cheap even at 30fps.
+ * CSS), so a frame is ~a hundred tiny sprite blits - cheap even at 30fps.
  */
 
 export type AuroraMood =

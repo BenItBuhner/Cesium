@@ -226,7 +226,7 @@ export function groupAgentRailGroups(
 
 /**
  * Workspace titles in the rail are section dividers. Hide them when the
- * picker already names the only workspace on screen — a scoped selection, or
+ * picker already names the only workspace on screen - a scoped selection, or
  * a single remaining group with no sibling workspace/standalone sections.
  * Priority/status/date buckets keep their labels even when only one exists.
  */
@@ -245,7 +245,7 @@ export function shouldShowAgentRailWorkspaceGroupHeaders(input: {
 }
 
 /**
- * Hide the standalone "Chat" title when the picker already names that scope —
+ * Hide the standalone "Chat" title when the picker already names that scope -
  * a selected standalone workspace, or the explicit "No workspace" option.
  */
 export function shouldShowAgentRailStandaloneSectionHeader(input: {

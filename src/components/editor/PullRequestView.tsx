@@ -249,7 +249,7 @@ function FileDiffCard({
             ))}
             {file.patchTruncated ? (
               <div className="px-[10px] py-[6px] font-sans text-[11px] italic text-[var(--text-disabled)]">
-                Diff truncated — open the file to see the full change.
+                Diff truncated - open the file to see the full change.
               </div>
             ) : null}
           </div>
@@ -381,9 +381,9 @@ export function PullRequestView({ initialBaseRef }: { initialBaseRef?: string })
     (github.available && github.title) ||
     review.headBranch ||
     (review.detached ? "Detached HEAD" : "Pull Request");
-  const baseLabel = (github.available && github.baseRefName) || review.baseBranch || "—";
+  const baseLabel = (github.available && github.baseRefName) || review.baseBranch || "\u2014";
   const headLabel =
-    (github.available && github.headRefName) || review.headBranch || review.headSha?.slice(0, 7) || "—";
+    (github.available && github.headRefName) || review.headBranch || review.headSha?.slice(0, 7) || "\u2014";
   const comments = github.comments ?? [];
 
   const sections: Array<{ id: SectionId; label: string; count?: number }> = [
@@ -538,7 +538,7 @@ export function PullRequestView({ initialBaseRef }: { initialBaseRef?: string })
                 <p className="font-sans text-[12px] italic text-[var(--text-disabled)]">
                   {github.available
                     ? "This pull request has no description."
-                    : "No GitHub pull request found for this branch — showing the local branch review."}
+                    : "No GitHub pull request found for this branch - showing the local branch review."}
                 </p>
               )}
             </div>

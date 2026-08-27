@@ -424,7 +424,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "ask_question",
     description:
-      'Ask the user a question. Pass prompt (the question text) plus optional options (array of strings or {id,label}); omit options for an open-ended question — the user always gets a free-text answer field. Multi-step: questions: [{prompt, options}]. Example: {"prompt":"Which approach?","options":["Refactor now","Ship as-is"]}.',
+      'Ask the user a question. Pass prompt (the question text) plus optional options (array of strings or {id,label}); omit options for an open-ended question - the user always gets a free-text answer field. Multi-step: questions: [{prompt, options}]. Example: {"prompt":"Which approach?","options":["Refactor now","Ship as-is"]}.',
     parameters: {
       type: "object",
       properties: {
@@ -506,7 +506,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "switch_branch",
     description:
-      "Switch this workspace's checked-out git branch (set create=true to branch off the current HEAD). Refuses when the tree is dirty; use create_worktree instead for parallel work. The next reminder reflects the new location — re-verify paths after switching.",
+      "Switch this workspace's checked-out git branch (set create=true to branch off the current HEAD). Refuses when the tree is dirty; use create_worktree instead for parallel work. The next reminder reflects the new location - re-verify paths after switching.",
     parameters: {
       type: "object",
       properties: {
@@ -600,7 +600,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         action: { type: "string", enum: ["create", "update", "list", "read", "delete"] },
         id: {
           type: "string",
-          description: "Skill id/slug (required for update, read, delete; optional for create — defaults to a slug of name).",
+          description: "Skill id/slug (required for update, read, delete; optional for create - defaults to a slug of name).",
         },
         name: { type: "string", description: "Human skill name (required for create)." },
         description: {
@@ -951,7 +951,7 @@ export function resolveCesiumTools(
   return resolveCesiumHarness(CESIUM_BASE_TOOLS, harness ?? defaultHarnessSettings());
 }
 
-/** @deprecated Prefer resolveCesiumTools(harness).tools — kept for tests expecting a flat default list. */
+/** @deprecated Prefer resolveCesiumTools(harness).tools - kept for tests expecting a flat default list. */
 function defaultCesiumTools(): CesiumToolDefinition[] {
   return resolveCesiumTools().tools;
 }

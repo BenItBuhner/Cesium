@@ -18,8 +18,8 @@ import com.facebook.react.bridge.ReadableMap
 
 /**
  * Android Live Updates (promoted ongoing notifications) are the primary
- * delivery surface. Samsung's Now Bar has no third-party API of its own —
- * One UI 8+ renders these same standard Live Updates in the Now Bar — so the
+ * delivery surface. Samsung's Now Bar has no third-party API of its own -
+ * One UI 8+ renders these same standard Live Updates in the Now Bar - so the
  * only real fallback is a plain ongoing notification, which the system
  * applies automatically whenever promotion is unsupported or denied.
  */
@@ -81,7 +81,7 @@ internal fun normalizeAlertMode(value: String?, default: String): String =
 
 /**
  * Which runs may surface a time estimate. "goal" (default) restricts the ETA
- * countdown to goal runs — todo plans are short and their per-task complexity
+ * countdown to goal runs - todo plans are short and their per-task complexity
  * varies too much for extrapolated estimates to mean anything, so those runs
  * show the todo progression instead.
  */
@@ -114,7 +114,7 @@ internal fun normalizeMultiAgentMode(value: String?): String =
  * system UI: canPostPromotedNotifications() reports false and no status-bar
  * chip exists, so notifications silently fall back to the standard shade.
  * Rendering arrived in Android 16 QPR1 (a minor SDK release above the 36
- * base) — and, independently, Samsung One UI 8 renders promoted
+ * base) - and, independently, Samsung One UI 8 renders promoted
  * notifications in the Now Bar on base 36.
  */
 internal fun isPromotionRenderCapable(
@@ -147,7 +147,7 @@ class CesiumLiveUpdatesModule(
     val runKey = extras.getString("runKey")
     val alert = extras.getBoolean("alert", false)
     // A dismissed run stays quiet for progress updates, but interventions and
-    // completions still surface — those need the user, not the other way
+    // completions still surface - those need the user, not the other way
     // around.
     if (!alert && CesiumLiveUpdateStateStore.wasDismissed(reactContext, runKey)) {
       promise.resolve(statusMap(suppressedByDismissal = true))
@@ -165,7 +165,7 @@ class CesiumLiveUpdatesModule(
         reactContext.startForegroundService(intent)
       } catch (_: IllegalStateException) {
         // Foreground-service start restrictions (app in background) must not
-        // drop the update — the notification itself needs no service.
+        // drop the update - the notification itself needs no service.
         notifyDirectly(extras)
       }
     } else {

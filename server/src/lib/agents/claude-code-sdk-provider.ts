@@ -471,7 +471,7 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       : this.sessionId;
     // Proxy mode historically ran every turn statelessly (no resume, no
     // persistence). When the native session file actually exists for this
-    // workspace — e.g. a conversation migrated in from the Claude Code CLI —
+    // workspace - e.g. a conversation migrated in from the Claude Code CLI -
     // resume it natively and keep persisting, so the harness continues the
     // exact same session.
     const canResumeNatively = resumeSessionId

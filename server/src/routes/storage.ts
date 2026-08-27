@@ -16,7 +16,7 @@ export const storageRoutes = new Hono();
 
 /**
  * Only one migration may run at a time. This is process-local; deployments
- * with multiple servers should instead gate on a Redis lock — that can be
+ * with multiple servers should instead gate on a Redis lock - that can be
  * layered on when needed. For now the UI disables the button during a run
  * and the CLI is single-process.
  */

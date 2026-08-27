@@ -414,7 +414,7 @@ export function PublicAccessSettings({
       {status?.connectUrl ? (
         <div className="border-b border-[var(--border-subtle)] px-[16px] pb-[10px] font-sans text-[10.5px] text-[var(--text-disabled)]">
           {cloud.status === "ready"
-            ? "Synced to your account — every device signed in as you inherits this server automatically."
+            ? "Synced to your account - every device signed in as you inherits this server automatically."
             : "Open this link once on a device where you're signed in; every device on your account then inherits this server automatically."}
         </div>
       ) : null}

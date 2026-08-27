@@ -96,7 +96,7 @@ class CesiumAndroidRuntimeModule(
     // A share can arrive while the activity is already resumed and top-most
     // (e.g. sharing from a split-screen or freeform-window app). AppState never
     // flips in that case, so JS would not poll `consumeSharedPayload` on its
-    // own — nudge it. MainActivity stages the payload in CesiumShareIntentStore
+    // own - nudge it. MainActivity stages the payload in CesiumShareIntentStore
     // before super.onNewIntent() reaches this listener.
     val action = intent.action
     if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {

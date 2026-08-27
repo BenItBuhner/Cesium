@@ -127,7 +127,7 @@ export function DesktopNativeSettings() {
             {testState === "sent"
               ? "Sent"
               : testState === "failed"
-                ? "Failed — retry"
+                ? "Failed - retry"
                 : "Send test notification"}
           </button>
         }
@@ -135,7 +135,7 @@ export function DesktopNativeSettings() {
       <SettingsRow
         searchId="desktop-completion-alerts"
         title="Agent finished notifications"
-        description="When an agent run completes, fails, or is cancelled. By default nothing is posted while Cesium is focused — you are already watching it finish."
+        description="When an agent run completes, fails, or is cancelled. By default nothing is posted while Cesium is focused - you are already watching it finish."
         trailing={
           <SettingsThemeSelect
             className="w-full max-w-[min(100%,340px)]"
@@ -171,7 +171,7 @@ export function DesktopNativeSettings() {
       <SettingsRow
         searchId="desktop-eta-mode"
         title="Time estimates"
-        description="Show a time-remaining hint in tray entries. Todo plans show their step progression — their extrapolated estimates swing wildly with task complexity; goals run long enough for an estimate to be meaningful."
+        description="Show a time-remaining hint in tray entries. Todo plans show their step progression - their extrapolated estimates swing wildly with task complexity; goals run long enough for an estimate to be meaningful."
         trailing={
           <SettingsThemeSelect
             className="w-full max-w-[min(100%,340px)]"

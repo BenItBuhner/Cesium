@@ -32,7 +32,7 @@ export type KeyedEventBatcherOptions<T> = {
   resolveWindowMs?: (pendingKeys: string[]) => number;
   /**
    * Gates `flushNow` enqueues (tool completions etc.). Returning false
-   * coalesces them like ordinary stream chunks — e.g. while the tab is
+   * coalesces them like ordinary stream chunks - e.g. while the tab is
    * hidden, where an immediate commit buys nothing.
    */
   allowImmediateFlush?: () => boolean;

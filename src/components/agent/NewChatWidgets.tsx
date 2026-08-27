@@ -65,7 +65,7 @@ const MAX_RECENT_WORKSPACES = 4;
 /**
  * Two design tiers, one landing:
  *
- * 1. Shortcuts and quick actions are pill buttons — the same design the
+ * 1. Shortcuts and quick actions are pill buttons - the same design the
  *    landing quick actions have always had (`aurora-glass` pill material).
  * 2. Recent chats and recent activity are full-sized widget cards sharing
  *    the chat composer's material: `.chat-composer-surface` translucent
@@ -495,7 +495,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     const isConfirm = runState?.phase === "confirm";
     const isError = runState?.phase === "error";
     const isDone = runState?.phase === "done";
-    const runsIn = workspaceInfo?.root ? ` — runs in ${workspaceInfo.root}` : "";
+    const runsIn = workspaceInfo?.root ? ` - runs in ${workspaceInfo.root}` : "";
     return (
       <div key={`action-${action.id}`} className="relative min-w-0">
         <button
@@ -567,7 +567,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
               onClick={() => void openConversationSummary(summary).catch(() => undefined)}
               className={WIDGET_CARD_ROW_CLASSNAME}
               title={
-                otherWorkspace ? `${summary.title} — ${otherWorkspace}` : summary.title
+                otherWorkspace ? `${summary.title} - ${otherWorkspace}` : summary.title
               }
             >
               <MessageSquare
@@ -654,7 +654,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     .filter((node) => node != null);
 
   // Full width, aligned with the chat composer above. Customization lives in
-  // Settings → General → New chat widgets — no inline edit chrome.
+  // Settings → General → New chat widgets - no inline edit chrome.
   return <div className="mt-[10px] flex w-full min-w-0 flex-col gap-[10px]">{widgetNodes}</div>;
 }
 

@@ -358,7 +358,7 @@ function ModeChip({
         className={`${compactClass} touch-manipulation transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50`}
         style={{ background: colors.bg }}
         aria-label={`Remove ${label} mode`}
-        title={`${label} mode — tap to remove`}
+        title={`${label} mode - tap to remove`}
       >
         {renderModeChipIcon(tone, colors.text)}
       </button>
@@ -400,7 +400,7 @@ function normalizeDirectiveToken(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** Clipboard image files only (items first — avoids duplicate uploads when both items and `files` list them). */
+/** Clipboard image files only (items first - avoids duplicate uploads when both items and `files` list them). */
 function collectClipboardImageFiles(data: DataTransfer | null): File[] {
   if (!data) {
     return [];
@@ -1255,9 +1255,9 @@ export function ChatComposer({
   const reconcilingRef = useRef(false);
   /** Recent texts reported upward while the DOM held them; incoming `value`
    * renders matching an entry are echoes, not external changes. Entries age
-   * out instead of being consumed — the same report can echo several times. */
+   * out instead of being consumed - the same report can echo several times. */
   const domReportsRef = useRef<ComposerDomReport[]>([]);
-  /** True between compositionstart/compositionend — the DOM must not be
+  /** True between compositionstart/compositionend - the DOM must not be
    * rebuilt while an IME is composing. */
   const composingRef = useRef(false);
   /** Bumped on compositionend so the reconcile effect re-runs any pass it
@@ -1284,7 +1284,7 @@ export function ChatComposer({
   );
   const effectiveLinkReferences = draftLinkReferences ?? localLinkReferences;
   const effectiveLinkReferencesRef = useRef(effectiveLinkReferences);
-  // Sync from props/local state after React commits — never overwrite mid-patch
+  // Sync from props/local state after React commits - never overwrite mid-patch
   // updates that `updateLinkReferences` already wrote synchronously.
   useEffect(() => {
     effectiveLinkReferencesRef.current = effectiveLinkReferences;
@@ -1546,8 +1546,8 @@ export function ChatComposer({
     setInputLevel(0);
   }, []);
 
-  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB — images ship inline base64 to vision models
-  const MAX_ANY_FILE_SIZE = 50 * 1024 * 1024; // 50MB — generic files only travel to disk via multipart
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB - images ship inline base64 to vision models
+  const MAX_ANY_FILE_SIZE = 50 * 1024 * 1024; // 50MB - generic files only travel to disk via multipart
   const MAX_ATTACHMENT_COUNT = 10;
   const SLOW_UPLOAD_THRESHOLD_MS = 2500;
 
@@ -1645,7 +1645,7 @@ export function ChatComposer({
             };
 
             if (!isImage) {
-              // Generic files never travel inline — upload straight to disk.
+              // Generic files never travel inline - upload straight to disk.
               setAttachedImages((prev) =>
                 prev.map((img) =>
                   img.localId === localId ? { ...img, uploadState: "uploading" as const } : img
@@ -1839,7 +1839,7 @@ export function ChatComposer({
       // effect (which runs right after `onDraftAttachmentsChange` updates the
       // draft) can't race us back to re-importing it.
       consumedDraftAttachmentKeysRef.current.add(removedKey);
-      // Always pass the concrete list (possibly empty) — `undefined` is
+      // Always pass the concrete list (possibly empty) - `undefined` is
       // interpreted as "no change" by the draft upsert reducer, which would
       // leave the deleted image in the persisted draft and resurrect it on
       // reload.
@@ -1985,7 +1985,7 @@ export function ChatComposer({
           kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
           severity: "error",
           title: "Voice input",
-          message: `${message} Recording kept — press the retry button to try again (attempt ${failures}).`,
+          message: `${message} Recording kept - press the retry button to try again (attempt ${failures}).`,
           autoDismissMs: 8000,
           compact: true,
         });
@@ -2552,7 +2552,7 @@ export function ChatComposer({
    * Expand compact reference tokens into their full XML / markdown forms so the
    * LLM can see the hidden content. Link pills expand to `[title](url)`.
    * Unknown references (metadata lost to pruning / reload) keep the raw token
-   * as a signal — better than silently sending nothing.
+   * as a signal - better than silently sending nothing.
    */
   const expandComposerReferenceTokens = useCallback(
     (text: string): string => {
@@ -2612,7 +2612,7 @@ export function ChatComposer({
     const promptText = expandComposerReferenceTokens(directed);
     // Images need their inline base64 (`data`); a "pending" entry's data stays
     // "" until its FileReader completes and would submit a zero-byte image.
-    // Generic files carry no inline data — they only count once their upload
+    // Generic files carry no inline data - they only count once their upload
     // landed on disk (`savedPath`), which is what the agent gets pointed at.
     const imagesToSubmit: ImageAttachment[] = attachedImages
       .filter((att) => (att.kind === "file" ? Boolean(att.savedPath) : att.data.length > 0))
@@ -2651,7 +2651,7 @@ export function ChatComposer({
           reconcilingRef.current = false;
         });
       }
-      // The DOM now holds "" — treat it as the newest report so late echoes of
+      // The DOM now holds "" - treat it as the newest report so late echoes of
       // the submitted prompt are skipped instead of resurrecting it.
       recordComposerDomReport(domReportsRef.current, "");
     }
@@ -2788,7 +2788,7 @@ export function ChatComposer({
     // On slow devices (Android WebViews especially) input events outrun
     // React's passive-effect flush, so this effect can run with a `value`
     // older than the live DOM. Rebuilding from it would destroy the newer
-    // keystrokes and shift the caret — skip stale echoes of text the DOM
+    // keystrokes and shift the caret - skip stale echoes of text the DOM
     // itself reported, and never rewrite mid-IME-composition.
     const defer = shouldDeferComposerReconcile({
       value,
@@ -3068,7 +3068,7 @@ export function ChatComposer({
   /**
    * True when Up should pull in a past user message instead of moving the
    * caret up a line. We only grab the key when the selection is collapsed at
-   * offset 0 (start of content) AND there is history to walk into — otherwise
+   * offset 0 (start of content) AND there is history to walk into - otherwise
    * normal caret movement wins. Returns `"consumed"` if the event was
    * handled, `"request-older"` to signal the host that a paginated older page
    * should be fetched, or `"pass"` to let the default handler run.
@@ -3083,7 +3083,7 @@ export function ChatComposer({
     const nextIndex = currentIndex + 1;
     if (nextIndex >= history.length) {
       // No more loaded history. If the host can page in older messages, ask
-      // for them — the user can press Up again once the render settles.
+      // for them - the user can press Up again once the render settles.
       if (hasMoreOlderUserMessageHistoryRef.current && onRequestOlderUserMessageHistoryRef.current) {
         onRequestOlderUserMessageHistoryRef.current();
         return "request-older";
@@ -3124,7 +3124,7 @@ export function ChatComposer({
       return "consumed";
     }
     if (currentIndex === 0) {
-      // About to fall off the newest entry — restore the original draft.
+      // About to fall off the newest entry - restore the original draft.
       const snapshot = userHistoryDraftSnapshotRef.current ?? "";
       setUserHistoryIndex(-1);
       setUserHistoryDraftSnapshot(null);
@@ -3697,8 +3697,8 @@ const handleNativeComposerKeyDown = useCallback(
    * Inline-controls overflow: on narrow (mobile-width) panes, mode/model
    * labels crowd the single-line capsule until the editor is unusably thin.
    * A hidden probe row mirrors the full-size controls plus a minimum editor
-   * width; when the probe outgrows the composer row — or the row itself is
-   * at mobile width — the mode/model triggers compact to icon-only pills
+   * width; when the probe outgrows the composer row - or the row itself is
+   * at mobile width - the mode/model triggers compact to icon-only pills
    * (short model names included; length must not opt out of compaction).
    * Once content wraps to the stacked layout the controls get their full
    * labels back.
@@ -3875,7 +3875,7 @@ const handleNativeComposerKeyDown = useCallback(
      * Invisible measurement row mirroring the single-line layout at full size:
      * plus button, full mode chip, a minimum editor width, untruncated model
      * label, and the action buttons (with their real gaps). Overflow handling
-     * keys off this probe — not the live controls — so compacting/stacking the
+     * keys off this probe - not the live controls - so compacting/stacking the
      * real row never feeds back into the measurement.
      */
     const inlineOverflowProbe = (

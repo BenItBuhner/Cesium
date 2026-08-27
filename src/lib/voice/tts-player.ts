@@ -42,7 +42,7 @@ export class TtsPlayer {
   }
 
   /**
-   * Instantaneous output level (0..1) from the analyser tap — drives the
+   * Instantaneous output level (0..1) from the analyser tap - drives the
    * orb's speaking animation with the actual speech amplitude.
    */
   getOutputLevel(): number {

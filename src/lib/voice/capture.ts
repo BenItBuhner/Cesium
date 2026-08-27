@@ -1,5 +1,5 @@
 /**
- * Persistent AudioWorklet microphone capture for the ambient voice path —
+ * Persistent AudioWorklet microphone capture for the ambient voice path -
  * NOT MediaRecorder. The worklet forwards raw mono PCM at the context rate;
  * the main thread resamples to 16 kHz, maintains the bounded ring buffer,
  * and yields 512-sample VAD frames. Echo cancellation, noise suppression,

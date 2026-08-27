@@ -6,9 +6,9 @@
  * from the shell / CI is not clobbered by `.env.local` (unlike `env-bootstrap.js`).
  *
  * Scenarios:
- *   basic   — ping prompt, no tools (default)
- *   tools   — safe-readonly profile; forces read + grep in temp workspace
- *   harness — multi-tool matrix; writes normalized JSONL and fails if tool kinds missing
+ *   basic   - ping prompt, no tools (default)
+ *   tools   - safe-readonly profile; forces read + grep in temp workspace
+ *   harness - multi-tool matrix; writes normalized JSONL and fails if tool kinds missing
  */
 import { config } from "dotenv";
 import { randomUUID } from "node:crypto";
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
           authRetryCount += 1;
           if (authRetryCount >= 2) {
             console.error(
-              "claude-code-sdk-proxy-probe: proxy auth failed repeatedly (401). Aborting early — fix ANTHROPIC_BASE_URL / key on the Model-Proxy side."
+              "claude-code-sdk-proxy-probe: proxy auth failed repeatedly (401). Aborting early - fix ANTHROPIC_BASE_URL / key on the Model-Proxy side."
             );
             abortController.abort();
             process.exit(3);

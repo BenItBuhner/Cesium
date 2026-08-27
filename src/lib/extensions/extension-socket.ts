@@ -12,7 +12,7 @@
  *    reconnect instead of waiting on TCP timeouts,
  *  - webview -> extension messages get client msgIds, are acked by the
  *    server, and fall back to idempotent HTTP delivery when the socket is
- *    down — retries never double-deliver,
+ *    down - retries never double-deliver,
  *  - while the socket is down, an adaptive HTTP polling loop (with jitter)
  *    keeps events flowing so the UI degrades to "slower" instead of "dead".
  */

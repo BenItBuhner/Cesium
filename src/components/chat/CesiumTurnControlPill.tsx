@@ -127,7 +127,7 @@ export function CesiumTurnControlPill({
         lastWidthRef.current = to;
       },
       () => {
-        /* cancelled — cleanup records the in-flight width */
+        /* cancelled - cleanup records the in-flight width */
       }
     );
     return () => {

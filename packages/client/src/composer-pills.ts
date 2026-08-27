@@ -104,7 +104,7 @@ export type ComposerBackgroundWorkItem = {
 };
 
 export type ComposerBackgroundWorkOptions = {
-  /** Conversation open in this composer — never counted as background work. */
+  /** Conversation open in this composer - never counted as background work. */
   currentConversationId?: string | null;
   /**
    * True while the open conversation itself is mid-turn. Used as a fallback
@@ -116,7 +116,7 @@ export type ComposerBackgroundWorkOptions = {
 };
 
 /**
- * Latest `subagent` event per id wins. Only `running` children count — the
+ * Latest `subagent` event per id wins. Only `running` children count - the
  * parent/main agent is the thread itself and must not inflate the work pill.
  */
 export function listRunningSubagentWorkItems(

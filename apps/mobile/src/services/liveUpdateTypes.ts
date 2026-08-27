@@ -40,7 +40,7 @@ export type LiveUpdateDeliveryPreference = "live" | "basic" | "off";
  * When an alerting update may surface: always, only while the app is in the
  * background, or never. `completion` gates the terminal notification itself
  * (a user looking at the app already watched the agent finish); `intervention`
- * only gates the alert sound/heads-up — the ongoing notification still updates.
+ * only gates the alert sound/heads-up - the ongoing notification still updates.
  */
 export type LiveUpdateAlertMode = "always" | "background" | "off";
 
@@ -55,21 +55,21 @@ export const DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES: LiveUpdateAlertPreferences =
 };
 
 /**
- * Which runs may surface a time estimate (a "~Nm left" body hint — the
+ * Which runs may surface a time estimate (a "~Nm left" body hint - the
  * status chip never counts down):
- * "goal"   — goal runs only. Goals are long-horizon, so an estimate carries
+ * "goal"   - goal runs only. Goals are long-horizon, so an estimate carries
  *            real signal; todo plans are short and per-task complexity makes
  *            their extrapolated estimates useless noise. Todo runs show the
  *            todo progression instead.
- * "always" — every run with an estimate, todo plans included.
- * "off"    — never; all runs show progression and elapsed time only.
+ * "always" - every run with an estimate, todo plans included.
+ * "off"    - never; all runs show progression and elapsed time only.
  */
 export type LiveUpdateEtaMode = "goal" | "always" | "off";
 
 /**
  * How concurrent agent runs present:
- * "separate" — one live notification per run.
- * "combined" — a single aggregated live notification whenever two or more
+ * "separate" - one live notification per run.
+ * "combined" - a single aggregated live notification whenever two or more
  *              runs are active (a lone run keeps its full detail view).
  */
 export type LiveUpdateMultiAgentMode = "separate" | "combined";

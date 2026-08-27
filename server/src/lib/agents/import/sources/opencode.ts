@@ -49,7 +49,7 @@ async function openReadonlyDb(dbPath: string): Promise<ReadonlyDb | null> {
       close: () => db.close(),
     };
   } catch {
-    // Not running under Bun — fall through to node:sqlite.
+    // Not running under Bun - fall through to node:sqlite.
   }
   try {
     const { DatabaseSync } = (await import("node:sqlite")) as unknown as {
@@ -429,7 +429,7 @@ function summarizeOpenCodeSession(
     messageCount,
     sourcePath: session.sourcePath,
     ...(preview ? { preview } : {}),
-    // OpenCode addresses models as "providerID/modelID" — continuation keeps
+    // OpenCode addresses models as "providerID/modelID" - continuation keeps
     // the exact model of the last assistant turn.
     ...(model?.modelID
       ? {
@@ -670,6 +670,6 @@ export function createOpenCodeImportSource(): HarnessImportSource {
     },
 
     // OpenCode resolves sessions by id from its global store (`GET /session/:id`),
-    // independent of the server's project — no re-homing required.
+    // independent of the server's project - no re-homing required.
   };
 }

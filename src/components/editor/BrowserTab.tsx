@@ -1175,7 +1175,7 @@ export function BrowserTab({
 
   /**
    * When the console is open the real page is rendered by Chromium inside the
-   * DevTools iframe — the outer proxy iframe is hidden to avoid duplicate
+   * DevTools iframe - the outer proxy iframe is hidden to avoid duplicate
    * content. Navigation events (URL bar, back/forward/reload) still flow
    * through the IDE chrome, so dispatch them to Chromium over CDP as well.
    */
@@ -1189,7 +1189,7 @@ export function BrowserTab({
       try {
         await navigateBrowserDebugSession(sid, input);
       } catch {
-        /* ignore — best-effort sync */
+        /* ignore - best-effort sync */
       }
     },
     []
@@ -1242,7 +1242,7 @@ export function BrowserTab({
       const normalized = normalizeBrowserTargetUrl(urlBar).href;
       pushUrl(normalized);
     } catch {
-      /* invalid URL — ignore */
+      /* invalid URL - ignore */
     }
   }, [pushUrl, urlBar]);
 
@@ -1329,7 +1329,7 @@ export function BrowserTab({
   const tearDownDebugSession = useCallback(async () => {
     const sid = debugSessionIdRef.current ?? tab.browser?.debugSessionId;
     debugSessionIdRef.current = null;
-    // Before killing Chromium, read where the user actually ended up — they
+    // Before killing Chromium, read where the user actually ended up - they
     // might have clicked a link in DevTools and navigated off the IDE's
     // recorded targetUrl. Syncing keeps the IDE URL bar + the freshly-shown
     // proxy iframe aligned on what the user just saw.
@@ -1479,7 +1479,7 @@ export function BrowserTab({
    * When the tab mounts (or the React state rehydrates after a nav/layout
    * change) with an old `debugSessionId`, verify the server still has it. If
    * the server restarted, the in-memory Chromium was killed and the iframe
-   * would just render a blank 404 — reset local state so the user can reopen
+   * would just render a blank 404 - reset local state so the user can reopen
    * cleanly with a fresh click.
    */
   useEffect(() => {
@@ -1503,7 +1503,7 @@ export function BrowserTab({
         });
         return;
       }
-      // Session is alive — make sure the devtools path in state is current.
+      // Session is alive - make sure the devtools path in state is current.
       if (
         debugSessionIdRef.current === expectedSid &&
         live.devtoolsPath !== tab.browser?.devtoolsPath
@@ -1689,7 +1689,7 @@ export function BrowserTab({
         ) : null}
         {/*
           When the console is open, the real page is rendered by the Chromium
-          attached to DevTools — showing the outer proxy iframe on top of it
+          attached to DevTools - showing the outer proxy iframe on top of it
           would just duplicate the same page content. Hide (but keep mounted
           so design-mode guest state survives) via `hidden` + 0-basis flex so
           the DevTools iframe gets the full viewport.

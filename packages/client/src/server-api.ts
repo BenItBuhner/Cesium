@@ -165,7 +165,7 @@ const ERROR_MESSAGE_MAX_LENGTH = 300;
  * Guards against the "wrong server" failure mode: when the configured base
  * URL points at something that is not a Cesium engine (most commonly a
  * hosted web deployment answering its own origin with a Next.js HTML page),
- * the body is an entire HTML document — throwing it verbatim floods error
+ * the body is an entire HTML document - throwing it verbatim floods error
  * toasts with markup. Exported for tests.
  */
 export function extractServerErrorMessage(
@@ -393,7 +393,7 @@ async function mutateWithEtag(
   }
 
   if (response.status === 412) {
-    // Stale revision — drop the cached tag so the next write succeeds (or a
+    // Stale revision - drop the cached tag so the next write succeeds (or a
     // fresh GET primes the registry). Consumers may choose to re-fetch and
     // retry; the default behaviour here is to surface the conflict.
     etagRegistry.delete(scopedRevisionKey);
@@ -415,7 +415,7 @@ async function mutateWithEtag(
   return { revision, etag };
 }
 
-/** Clears the cached ETag for a revision key — useful on logout or workspace switch. */
+/** Clears the cached ETag for a revision key - useful on logout or workspace switch. */
 export function clearCachedRevision(revisionKey: string): void {
   etagRegistry.delete(revisionKey);
 }
@@ -3295,7 +3295,7 @@ export type UpdateApplyCallbacks = {
   signal?: AbortSignal;
 };
 
-/** Cached update status — no network on the server side. */
+/** Cached update status - no network on the server side. */
 export async function fetchUpdateStatus(): Promise<CesiumUpdateStatusPayload> {
   return normalizeUpdateStatusPayload(
     await request(`/api/updates/status`, undefined, { skipWorkspaceHeader: true })
@@ -3328,7 +3328,7 @@ export async function saveUpdateSettings(
 /**
  * Kick off a self-update and stream NDJSON progress events. For installer
  * (`cesium-server-cli`) updates the server restarts itself mid-stream, so the
- * stream can end abruptly after a `restarting` event — callers should then
+ * stream can end abruptly after a `restarting` event - callers should then
  * poll `/health` until the new build is up.
  */
 export async function applyServerUpdate(
@@ -3369,7 +3369,7 @@ export async function applyServerUpdate(
           try {
             callbacks.onEvent?.(JSON.parse(line) as CesiumUpdateApplyEvent);
           } catch {
-            // Malformed line — skip rather than aborting the stream.
+            // Malformed line - skip rather than aborting the stream.
           }
         }
         newlineIdx = buffer.indexOf("\n");
@@ -5163,7 +5163,7 @@ export async function disableAllExtensionsClient(
   );
 }
 
-// —— Cloud Agents (Linear / GitHub / Slack task offloading) ——
+// -- Cloud Agents (Linear / GitHub / Slack task offloading) --
 
 export async function fetchCloudAgentSettings(): Promise<{
   settings: CloudAgentSettingsPublic;

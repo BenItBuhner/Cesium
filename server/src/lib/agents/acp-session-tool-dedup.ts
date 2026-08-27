@@ -30,7 +30,7 @@ function stableJsonForDedup(value: unknown, depth = 0): string {
 /**
  * ACP sometimes re-issues the *same* `session/update` payload for a tool CallId after a later
  * user turn; we must not `append` those as new DB rows (and new WebSocket events).
- * Key is per {@link AcpSessionHandle} stdio connection — genuine new invocations have different
+ * Key is per {@link AcpSessionHandle} stdio connection - genuine new invocations have different
  * params and/or a different toolCallId.
  */
 export function acpSessionInitialToolCallKey(

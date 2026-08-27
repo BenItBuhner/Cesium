@@ -11,7 +11,7 @@ interface ActivityLabelProps {
   defaultOpen?: boolean;
   /** When false, body uses flat layout without left rail indent. */
   contentRail?: boolean;
-  /** Turn finished — collapse when this becomes true. */
+  /** Turn finished - collapse when this becomes true. */
   settled?: boolean;
 }
 

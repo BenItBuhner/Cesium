@@ -89,7 +89,7 @@ export function hasClaudeCodeSdkAuthConfig(): boolean {
  * Detects ambient Claude Code CLI credentials on the host: a native `claude
  * login` credentials file, or an installed `claude` binary (whose login the
  * bundled Agent SDK runtime reuses). Explicit auth config always wins over
- * this — see `hasClaudeCodeSdkAuthConfig`.
+ * this - see `hasClaudeCodeSdkAuthConfig`.
  */
 export function hasClaudeCodeAmbientCliAuth(): boolean {
   for (const home of harnessHomeDirCandidates()) {

@@ -900,7 +900,7 @@ export class PublicAccessManager {
     const expectedInstanceId = getEngineInstanceId();
     if (payload.instanceId !== expectedInstanceId) {
       throw new PublicAccessError(
-        "Public URL did not prove it reaches this Cesium engine. A pasted URL is not enough — the endpoint must reverse-proxy this process.",
+        "Public URL did not prove it reaches this Cesium engine. A pasted URL is not enough - the endpoint must reverse-proxy this process.",
         502
       );
     }

@@ -45,7 +45,7 @@ test("manifest declares the WebView microphone capture prerequisites", () => {
   );
   assert.ok(
     permissions.includes("android.permission.MODIFY_AUDIO_SETTINGS"),
-    "android.permission.MODIFY_AUDIO_SETTINGS must be declared — WebView " +
+    "android.permission.MODIFY_AUDIO_SETTINGS must be declared - WebView " +
       "audio capture fails with NotReadableError (Could not start audio " +
       "source) without it, even when RECORD_AUDIO is granted"
   );

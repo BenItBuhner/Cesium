@@ -1027,11 +1027,11 @@ export function WorkspaceStudioModal({
                   </div>
                   <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-main)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
                     Mirrors a remote folder into a local sandbox workspace and keeps edits synced
-                    with push/pull commands. Activities below affect the SSH host—not this machine&apos;s local folder browser.
+                    with push/pull commands. Activities below affect the SSH host - not this machine&apos;s local folder browser.
                   </div>
                   <div className="break-all rounded-[var(--radius-tab)] border border-dashed border-[var(--palette-border)] px-2 py-1.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
                     Current folder:{" "}
-                    <span className="text-[var(--text-primary)]">{sshRemotePath || "—"}</span>
+                    <span className="text-[var(--text-primary)]">{sshRemotePath || "\u2014"}</span>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     <button
@@ -1103,7 +1103,7 @@ export function WorkspaceStudioModal({
                         </div>
                       ) : (
                         <div className="px-3 py-3 text-[11px] text-[var(--text-secondary)]">
-                          No folders listed yet—tap refresh.
+                          No folders listed yet - tap refresh.
                         </div>
                       )}
                     </div>

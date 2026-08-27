@@ -27,7 +27,7 @@ import com.cesium.mobile.MainActivity
  * field with a mic (speech-to-text) button and a Send button, plus Minimize
  * (park it as a floating bubble over other apps) and Open. The agent's reply is
  * rendered as Markdown and read aloud. There is no "screen context ready" chrome
- * and no auto-pasting suggestion chips — the live screen is available to the
+ * and no auto-pasting suggestion chips - the live screen is available to the
  * agent as phone tools (phone_snapshot / phone_screenshot / phone_tap …), and a
  * screenshot is attached automatically only when the user actually refers to the
  * screen in their prompt.

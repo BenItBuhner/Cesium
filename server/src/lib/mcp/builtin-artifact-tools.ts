@@ -14,15 +14,15 @@ import { openBrowserControlTab } from "../browser-control/service.js";
 export const ARTIFACTS_MCP_SERVER_ID = "artifacts";
 
 export const ARTIFACTS_MCP_SUMMARY =
-  "Built-in artifact tools for creating persistent visual artifacts — charts, HTML pages with JS/CSS, and multi-file mini web projects — stored under .cesium/artifacts/. Artifacts render inline in chat when you place their [[artifact:<id>]] tag on its own line, and can open as dedicated editor tabs.";
+  "Built-in artifact tools for creating persistent visual artifacts - charts, HTML pages with JS/CSS, and multi-file mini web projects - stored under .cesium/artifacts/. Artifacts render inline in chat when you place their [[artifact:<id>]] tag on its own line, and can open as dedicated editor tabs.";
 
 export const ARTIFACTS_MCP_INSTRUCTIONS = `Use artifact tools to create rich, persistent visuals for the user: charts, dashboards, simulations, interactive HTML pages, and small self-contained web projects. Artifacts are stored under .cesium/artifacts/ in the workspace (gitignored, persisted across sessions).
 
 Embedding: after artifact_create or artifact_update, place the returned embed tag (for example [[artifact:sales-chart-a1b2c3]]) on its own line in your reply. The tag renders as a live interactive preview inline in the conversation, and the user can expand it or open it as a dedicated editor tab.
 
 Kinds:
-- chart: pass a Chart.js v4 config (type, data, options). It renders responsively and fills whatever viewport it is shown in — do not hardcode pixel sizes.
-- html: pass a complete HTML document (or a fragment; fragments are wrapped). Inline <script> and <style> are allowed. Always include responsive styles — the artifact renders inside an inline card (~360px tall), an editor tab, or a full window.
+- chart: pass a Chart.js v4 config (type, data, options). It renders responsively and fills whatever viewport it is shown in - do not hardcode pixel sizes.
+- html: pass a complete HTML document (or a fragment; fragments are wrapped). Inline <script> and <style> are allowed. Always include responsive styles - the artifact renders inside an inline card (~360px tall), an editor tab, or a full window.
 - project: pass a files map (path → content) with an entry file (default index.html). Use relative URLs between project files.
 
 Prefer one focused artifact per idea. Use artifact_update to iterate on an existing artifact instead of creating duplicates.`;
@@ -42,7 +42,7 @@ export const ARTIFACTS_MCP_TOOLS: Tool[] = [
   {
     name: "artifact_create",
     description:
-      "Create a persistent visual artifact (chart | html | project) under .cesium/artifacts/. Returns the artifact id plus an embed tag like [[artifact:<id>]]; place that tag on its own line in your reply to render the artifact inline in the conversation. Content must be responsive — it renders in an inline chat card, an editor tab, or a full window.",
+      "Create a persistent visual artifact (chart | html | project) under .cesium/artifacts/. Returns the artifact id plus an embed tag like [[artifact:<id>]]; place that tag on its own line in your reply to render the artifact inline in the conversation. Content must be responsive - it renders in an inline chat card, an editor tab, or a full window.",
     inputSchema: {
       type: "object",
       properties: {
@@ -169,7 +169,7 @@ export function artifactEmbedTag(artifactId: string): string {
   return `[[artifact:${artifactId}]]`;
 }
 
-/** Server-local base URL — browser proxy / editor tabs fetch it from the server host. */
+/** Server-local base URL - browser proxy / editor tabs fetch it from the server host. */
 function artifactAbsoluteUrl(serverPath: string): string {
   const port = Number.parseInt(process.env.PORT ?? "9100", 10);
   const host = process.env.PUBLIC_HOST?.trim() || "localhost";

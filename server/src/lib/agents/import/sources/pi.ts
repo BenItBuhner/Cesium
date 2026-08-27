@@ -25,7 +25,7 @@ import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.j
  * Pi (pi-mono coding agent) stores one JSONL file per session:
  *   <agentDir>/sessions/--<cwd-slug>--/<isoTs>_<sessionId>.jsonl
  * Line 1 is the header { type: "session", version, id, timestamp, cwd };
- * following lines form a parent-linked tree of entries — message (user /
+ * following lines form a parent-linked tree of entries - message (user /
  * assistant / toolResult), model_change, thinking_level_change, etc.
  * Assistant content blocks: text | thinking | toolCall; tool results are
  * standalone { role: "toolResult", toolCallId, toolName, content, isError }
@@ -97,7 +97,7 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
           await handle.close();
         }
       } catch {
-        // unreadable file — skip
+        // unreadable file - skip
       }
     }
   }
@@ -189,7 +189,7 @@ function summarizePiSession(
     messageCount,
     sourcePath,
     ...(preview ? { preview } : {}),
-    // Pi models are addressed as "provider/modelId" — continuation keeps the
+    // Pi models are addressed as "provider/modelId" - continuation keeps the
     // exact model the source session was running.
     ...(provider && modelId ? { modelId: `${provider}/${modelId}`, modelName: modelId } : {}),
   };

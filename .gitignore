@@ -20,7 +20,7 @@ coverage/
 .next/
 out/
 
-# PWA — generated on production build (@ducanh2912/next-pwa)
+# PWA - generated on production build (@ducanh2912/next-pwa)
 /public/sw.js
 /public/sw.js.map
 /public/workbox-*.js

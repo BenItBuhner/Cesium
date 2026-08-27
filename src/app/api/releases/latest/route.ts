@@ -11,7 +11,7 @@ export const runtime = "nodejs";
  * Latest-release catalog for the /download page.
  *
  * Proxying GitHub through our own origin keeps the client free of GitHub API
- * rate limits (60/hr per IP unauthenticated) — the fetch below is cached by
+ * rate limits (60/hr per IP unauthenticated) - the fetch below is cached by
  * Next for 10 minutes and shared across all visitors. Set GITHUB_TOKEN (or
  * GITHUB_RELEASES_TOKEN) in the deployment for a higher upstream rate limit;
  * a public repo works fine without one.
