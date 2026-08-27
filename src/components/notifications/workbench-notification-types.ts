@@ -2,6 +2,8 @@ export const WORKBENCH_NOTIFICATION_KIND = {
   connectionDisconnected: "connection.disconnected",
   connectionReconnected: "connection.reconnected",
   workspaceLoadError: "workspace.loadError",
+  /** First-run prompt when no Cesium engine is connected yet. */
+  connectFirstServer: "onboarding.connectFirstServer",
   /** Ephemeral editor messages (save, open, terminal, etc.). */
   editorNotice: "editor.notice",
   /** Save / don't save / cancel when closing dirty editors. */

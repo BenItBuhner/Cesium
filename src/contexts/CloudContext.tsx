@@ -46,6 +46,11 @@ import {
   collectPersonalizationPayload,
 } from "@/lib/cloud/personalization";
 import {
+  adoptOnboardingForAccount,
+  mergeOnboardingState,
+  writeOnboardingState,
+} from "@/lib/onboarding/state";
+import {
   buildCloudServerPushPayloads,
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
   cloudServerIdentity,
@@ -362,6 +367,11 @@ function CloudBridge({
     lastAppliedBootstrapRef.current = bootstrap;
     mergeCloudServersIntoLocal(bootstrap.servers);
     reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
+    const adopted = adoptOnboardingForAccount(bootstrap.user.key);
+    writeOnboardingState(
+      mergeOnboardingState(adopted, bootstrap.onboarding),
+      bootstrap.user.key
+    );
   }, [bootstrap, actions]);
 
   // Local server-list changes push up (additive, idempotent upserts). The
@@ -514,8 +524,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         publishableKey={getClerkPublishableKey() ?? undefined}
         signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in"}
         signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL?.trim() || "/sign-up"}
-        signInFallbackRedirectUrl="/agent"
-        signUpFallbackRedirectUrl="/agent"
+        signInFallbackRedirectUrl="/setup?resume=1"
+        signUpFallbackRedirectUrl="/setup?resume=1"
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

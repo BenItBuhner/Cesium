@@ -38,7 +38,7 @@ function isMobileShell(): boolean {
 }
 
 export const SETUP_STEP_LABELS: Record<SetupStepId, string> = {
-  "connect-server": "Connect your server",
+  "connect-server": "Connect your first server",
   agents: "Set up your agents",
   import: "Import previous work",
   "first-chat": "Start your first chat",

@@ -17,6 +17,8 @@ import {
   type SetupStepId,
 } from "@/lib/onboarding/platform";
 import {
+  adoptOnboardingForAccount,
+  isOnboardingFinished,
   markStepComplete,
   mergeOnboardingState,
   readOnboardingState,
@@ -57,11 +59,15 @@ export function SetupWizard() {
       window.location.replace("/setup");
     }
   }, [searchParams]);
-  const [state, setState] = useState<OnboardingState>(() => readOnboardingState());
+  const accountKey = cloud.userKey;
+  const resumeAfterAuth = searchParams?.get("resume") === "1";
+  const [state, setState] = useState<OnboardingState>(() =>
+    readOnboardingState(accountKey)
+  );
   const [activeStep, setActiveStep] = useState<SetupStepId>(
     () =>
       profile.steps.find(
-        (step) => !readOnboardingState().completedSteps.includes(step)
+        (step) => !readOnboardingState(accountKey).completedSteps.includes(step)
       ) ?? profile.steps[0]
   );
   const [engineBaseUrl, setEngineBaseUrl] = useState<string>(() =>
@@ -72,27 +78,32 @@ export function SetupWizard() {
   const [engineName, setEngineName] = useState<string | null>(null);
   const [agentsReady, setAgentsReady] = useState(false);
 
-  // Cloud onboarding progress merges in additively (resume on any device).
+  // Bind guest progress to the signed-in account, then merge cloud steps
+  // so setup resumes on any device.
   useEffect(() => {
-    if (!cloud.bootstrap?.onboarding) {
+    if (cloud.status === "loading") {
       return;
     }
-    setState((current) => {
-      const merged = mergeOnboardingState(current, cloud.bootstrap!.onboarding);
-      if (merged.completedSteps.length !== current.completedSteps.length) {
-        writeOnboardingState(merged);
-        return merged;
-      }
-      return current;
-    });
-  }, [cloud.bootstrap]);
+    const local = accountKey
+      ? adoptOnboardingForAccount(accountKey)
+      : readOnboardingState(null);
+    const merged = mergeOnboardingState(local, cloud.bootstrap?.onboarding ?? null);
+    writeOnboardingState(merged, accountKey);
+    setState(merged);
+    setActiveStep((current) =>
+      merged.completedSteps.includes(current)
+        ? (profile.steps.find((step) => !merged.completedSteps.includes(step)) ??
+          current)
+        : current
+    );
+  }, [accountKey, cloud.bootstrap, cloud.status, profile.steps]);
 
   const complete = useCallback(
     (step: SetupStepId, options?: { advance?: boolean }) => {
       setState((current) => {
         const next = markStepComplete(current, step);
         if (next !== current) {
-          writeOnboardingState(next);
+          writeOnboardingState(next, accountKey);
           if (cloud.actions) {
             void cloud.actions
               .updateOnboarding({
@@ -112,26 +123,31 @@ export function SetupWizard() {
         }
       }
     },
-    [cloud.actions, profile]
+    [accountKey, cloud.actions, profile]
   );
 
-  const allDone = profile.steps.every((step) =>
-    state.completedSteps.includes(step)
-  );
+  const allDone = isOnboardingFinished(state, profile.steps);
 
   useEffect(() => {
     if (!allDone || state.completedAt) {
       return;
     }
     const next = { ...state, completedAt: Date.now() };
-    writeOnboardingState(next);
+    writeOnboardingState(next, accountKey);
     setState(next);
     if (cloud.actions) {
       void cloud.actions
         .updateOnboarding({ platform: profile.platform, markComplete: true })
         .catch(() => undefined);
     }
-  }, [allDone, state, cloud.actions, profile.platform]);
+  }, [accountKey, allDone, state, cloud.actions, profile.platform]);
+
+  useEffect(() => {
+    if (!resumeAfterAuth || cloud.status === "loading" || !allDone) {
+      return;
+    }
+    window.location.replace(WORKSPACE_ROUTE);
+  }, [allDone, cloud.status, resumeAfterAuth]);
 
   const renderStep = (step: SetupStepId) => {
     switch (step) {
@@ -202,7 +218,15 @@ export function SetupWizard() {
               {profile.platform}
             </span>
           </div>
-          <CloudAccountChip />
+          <div className="flex items-center gap-[10px]">
+            <Link
+              href={WORKSPACE_ROUTE}
+              className="rounded-[var(--radius-tab)] px-[10px] py-[6px] text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            >
+              Skip for now
+            </Link>
+            <CloudAccountChip />
+          </div>
         </div>
       </header>
 
