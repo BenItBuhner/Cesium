@@ -25,7 +25,6 @@ import {
   cloneWorkspaceFromGit,
   createWorkspaceGitWorktree,
   createTerminal,
-  createSshWorkspaceSelection,
   createWorkspaceSelection,
   createWorkspaceWindow,
   deleteWorkspaceGitWorktree,
@@ -73,14 +72,24 @@ import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 import { safeReadLocationSearchParam, safeWindowLocationUrl } from "@/lib/safe-url";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import type { WorkbenchNotificationInput } from "@/components/notifications/workbench-notification-types";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { useCloudContext } from "@/contexts/CloudContext";
+import { getPlatformSetupProfile } from "@/lib/onboarding/platform";
+import { readOnboardingState } from "@/lib/onboarding/state";
+import {
+  describeWorkspaceLoadFailure,
+  markFirstServerNoticeDismissed,
+  SETUP_ROUTE,
+  wasFirstServerNoticeDismissed,
+} from "@/lib/onboarding/workspace-errors";
 import { currentModel } from "@/lib/mock-data";
 
-/** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s — a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
+/** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s - a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
 const HEARTBEAT_INTERVAL_MS = 10_000;
 /** Allow slow pongs, quiet workspaces, and main-thread stalls (heavy chat renders) without killing the FS socket. */
 const PONG_STALE_MS = 90_000;
-/** If the heartbeat timer fires this late, the event loop was probably stalled — do not infer a dead socket from skewed time. */
+/** If the heartbeat timer fires this late, the event loop was probably stalled - do not infer a dead socket from skewed time. */
 const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 4;
 /** Number of consecutive stale heartbeat ticks required before declaring the connection dead. Tolerates dropped pongs on quiet workspaces; overall detection window (~PONG_STALE_MS + 3 ticks) matches the old 3s-interval tuning. */
 const STALE_TICK_THRESHOLD = 3;
@@ -92,24 +101,6 @@ const RECONNECT_TOAST_MS = 2_000;
 const DISCONNECT_TOAST_MS = 3_000;
 const SESSION_SAVE_DEBOUNCE_MS = 350;
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
-const WORKSPACE_ERROR_MESSAGE_MAX_LENGTH = 240;
-
-/**
- * Toast-safe error text. Error messages can carry entire response bodies
- * (worst case: a full HTML document when the configured server is not a
- * Cesium engine) — markup blobs and multi-kilobyte dumps help nobody in a
- * notification, so fall back to the friendly message and cap the length.
- */
-function compactWorkspaceErrorMessage(error: unknown, fallback: string): string {
-  const raw = error instanceof Error ? error.message.trim() : "";
-  if (!raw || raw.startsWith("<")) {
-    return fallback;
-  }
-  return raw.length > WORKSPACE_ERROR_MESSAGE_MAX_LENGTH
-    ? `${raw.slice(0, WORKSPACE_ERROR_MESSAGE_MAX_LENGTH)}…`
-    : raw;
-}
-
 type WorkspaceSessionBackup = {
   savedAt: number;
   session: WorkspaceSessionState;
@@ -131,6 +122,48 @@ type PendingFsEvent = {
   path: string;
   isDir: boolean;
 };
+
+function notifyWorkspaceLoadFailure(
+  push: (input: WorkbenchNotificationInput) => void,
+  error: unknown,
+  accountKey: string | null
+): void {
+  const notice = describeWorkspaceLoadFailure(error, {
+    state: readOnboardingState(accountKey),
+    profile: getPlatformSetupProfile(),
+  });
+  if (
+    notice.kind === WORKBENCH_NOTIFICATION_KIND.connectFirstServer &&
+    wasFirstServerNoticeDismissed()
+  ) {
+    return;
+  }
+  push({
+    kind: notice.kind,
+    severity: notice.severity,
+    title: notice.title,
+    message: notice.message,
+    compact: notice.compact,
+    persistent: notice.persistent,
+    autoDismissMs: notice.autoDismissMs,
+    onDismiss:
+      notice.kind === WORKBENCH_NOTIFICATION_KIND.connectFirstServer
+        ? markFirstServerNoticeDismissed
+        : undefined,
+    actions: notice.setupActionLabel
+      ? [
+          {
+            id: "open-setup",
+            label: notice.setupActionLabel,
+            primary: true,
+            onClick: () => {
+              window.location.assign(SETUP_ROUTE);
+            },
+          },
+        ]
+      : undefined,
+  });
+}
 
 type WorkspaceContextValue = {
   workspaceInfo: WorkspaceInfo | null;
@@ -199,16 +232,6 @@ type WorkspaceContextValue = {
     name?: string;
     parentPath: string;
     directoryName: string;
-    setDefault?: boolean;
-  }) => Promise<void>;
-  createSshWorkspace: (input: {
-    target: string;
-    port?: number;
-    remotePath: string;
-    mirrorName?: string;
-    name?: string;
-    keyPath?: string;
-    password?: string;
     setDefault?: boolean;
   }) => Promise<void>;
   cloneWorkspaceFromGit: (input: {
@@ -499,6 +522,9 @@ function replaceFolderChildren(
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const { experimentalIpadResumeCache } = useUserPreferences();
+  const cloud = useCloudContext();
+  const cloudUserKeyRef = useRef<string | null>(null);
+  cloudUserKeyRef.current = cloud.userKey;
   const [{ requestedWorkspaceId, windowId }] = useState(readWindowLocationContext);
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
@@ -628,7 +654,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     ) => {
       // The optimistic workspace transition falls back to hard session
       // defaults when no local backup exists, then immediately re-writes that
-      // backup — which would beat any server-side session seed during
+      // backup - which would beat any server-side session seed during
       // hydration. Writing the backup first keeps the chat draft selection.
       const defaults = createSessionDefaults();
       writeWorkspaceSessionBackup(getSessionScopeId(workspaceId), {
@@ -974,19 +1000,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             if (!isCurrentLoad()) {
               return;
             }
-            const msg = compactWorkspaceErrorMessage(
+            notifyWorkspaceLoadFailure(
+              pushNotificationRef.current,
               error,
-              "Failed to finish loading workspace."
+              cloudUserKeyRef.current
             );
-            pushNotificationRef.current({
-              kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-              severity: "error",
-              title: "Workspace error",
-              message: msg,
-              persistent: false,
-              autoDismissMs: 10_000,
-              compact: true,
-            });
           })
           .finally(() => {
             if (isCurrentLoad()) {
@@ -1232,30 +1250,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
   );
 
-  const createSshWorkspace = useCallback(
-    async (input: {
-      target: string;
-      port?: number;
-      remotePath: string;
-      mirrorName?: string;
-      name?: string;
-      keyPath?: string;
-      password?: string;
-      setDefault?: boolean;
-    }) => {
-      await flushWorkspaceSessionNow();
-      const result = await createSshWorkspaceSelection(input);
-      applyWorkspaceListingUpdate(
-        result.workspaces,
-        result.defaultWorkspaceId,
-        result.recentWorkspaceIds,
-        result.homeWorkspaceId
-      );
-      await loadWorkspaceState(result.workspace);
-    },
-    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
-  );
-
   const cloneWorkspaceFromGitHandler = useCallback(
     async (input: {
       repoUrl: string;
@@ -1372,16 +1366,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await loadWorkspaceStateRef.current(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
-        const msg = compactWorkspaceErrorMessage(nextError, "Failed to load workspace");
-    pushNotificationRef.current({
-      kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-      severity: "error",
-      title: "Workspace error",
-      message: msg,
-      persistent: false,
-      autoDismissMs: 10_000,
-      compact: true,
-    });
+        notifyWorkspaceLoadFailure(
+          pushNotificationRef.current,
+          nextError,
+          cloudUserKeyRef.current
+        );
         setLoading(false);
       }
     }
@@ -1668,7 +1657,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }),
       socket.onMessage((event) => {
         lastServerContactAt = Date.now();
-        // Any inbound message proves liveness — settle a pending disconnect
+        // Any inbound message proves liveness - settle a pending disconnect
         // (and announce recovery if one was shown) without waiting for the
         // next heartbeat pong.
         tryReconnectToast();
@@ -1705,7 +1694,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         // FS events arrive one WS frame per touched path. Agent runs (builds,
         // installs, parallel edits) produce hundreds per second, and each
-        // used to commit its own state update — re-rendering every
+        // used to commit its own state update - re-rendering every
         // useWorkspace() consumer per file. Coalesce a window's worth into
         // ONE change notice and ONE tree pass.
         if (
@@ -1854,7 +1843,6 @@ let lastHeartbeatRunAt = Date.now();
       createWorkspaceWindow: createPersistentWorkspaceWindow,
       updateWorkspaceWindow: updatePersistentWorkspaceWindow,
       createWorkspace,
-      createSshWorkspace,
       cloneWorkspaceFromGit: cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       homeWorkspaceId,
@@ -1900,7 +1888,6 @@ let lastHeartbeatRunAt = Date.now();
       createPersistentWorkspaceWindow,
       updatePersistentWorkspaceWindow,
       createWorkspace,
-      createSshWorkspace,
       cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       setDefaultWorkspace,

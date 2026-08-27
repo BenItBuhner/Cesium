@@ -6,7 +6,7 @@ type RailServerStatus = {
   health: RailServerHealth;
 };
 
-/** Per-server rail request budget — hung TCP must not block the sidebar forever. */
+/** Per-server rail request budget - hung TCP must not block the sidebar forever. */
 export const RAIL_FETCH_TIMEOUT_MS = 12_000;
 
 /** Hard stop for the initial rail spinner even if every fetch misbehaves. */

@@ -17,7 +17,7 @@ export type LiveUpdatePayloadOptions = {
   /**
    * Which progress kinds may carry a time estimate. Defaults to "goal":
    * goal runs are long enough for an ETA to mean something, while todo
-   * estimates extrapolate wildly across tasks of uneven complexity — those
+   * estimates extrapolate wildly across tasks of uneven complexity - those
    * runs show their todo progression instead. The estimate surfaces as a
    * "~Nm left" body hint only; the status chip never counts down.
    */
@@ -107,7 +107,7 @@ export function toLiveUpdatePayload(
   const todo = projection.todoProgress;
   if (todo) {
     const progressLabel = `${todo.completed}/${todo.total}`;
-    // Todo estimates extrapolate across tasks of wildly uneven complexity —
+    // Todo estimates extrapolate across tasks of wildly uneven complexity -
     // by default the notification shows the todo progression, not an ETA.
     // The chip shows the completed/total fraction and the chronometer
     // counts up; opting in to etaMode "always" adds a "~Nm left" body hint.

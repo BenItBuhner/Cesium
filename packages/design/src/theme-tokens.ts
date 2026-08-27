@@ -1,5 +1,5 @@
 /**
- * Canonical semantic UI tokens — the single source of truth for theming.
+ * Canonical semantic UI tokens - the single source of truth for theming.
  * `scripts/generate-theme-css.mjs` emits `generated/web-theme.css` (the
  * `:root` / `html.dark` / `@theme` blocks imported by the web apps) from these
  * maps, and the structured tokens in [tokens.ts](./tokens.ts) are derived from

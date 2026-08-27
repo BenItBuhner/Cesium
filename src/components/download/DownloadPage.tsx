@@ -256,12 +256,6 @@ export function DownloadPage() {
           </Link>
           <nav className="flex items-center gap-[6px]">
             <Link
-              href="/docs"
-              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-            >
-              Docs
-            </Link>
-            <Link
               href="/sign-in"
               className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
             >
@@ -307,14 +301,14 @@ export function DownloadPage() {
                     ? ` · ${formatAssetSize(recommendation.asset.sizeBytes)}`
                     : ""}
                   {detected && !detected.archConfident && detected.os !== "android"
-                    ? " · detected from your browser — pick another build below if this looks wrong"
+                    ? " · detected from your browser - pick another build below if this looks wrong"
                     : " · detected from your browser"}
                 </p>
               </>
             ) : catalogState.status === "ready" && detected?.os === "ios" ? (
               <div className="max-w-[440px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[16px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
                 <Globe className="mx-auto mb-[8px] size-[18px] text-[var(--text-primary)]" strokeWidth={1.5} aria-hidden />
-                There is no signed iOS build yet — on iPhone and iPad, install Cesium as a PWA:
+                There is no signed iOS build yet - on iPhone and iPad, install Cesium as a PWA:
                 open the workbench in Safari, then Share → Add to Home Screen.
               </div>
             ) : (
@@ -392,7 +386,7 @@ export function DownloadPage() {
                   <h3 className="text-[15px] font-semibold tracking-tight">iOS &amp; web</h3>
                 </div>
                 <p className="mb-[14px] font-mono text-[10.5px] text-[var(--text-disabled)]">
-                  Installable PWA — no store required
+                  Installable PWA - no store required
                 </p>
                 <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
                   Open the workbench in any modern browser and install it from the address bar
@@ -414,7 +408,7 @@ export function DownloadPage() {
             </h2>
             <p className="mt-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
               The desktop app ships with an embedded engine. To use the web or mobile clients
-              against your own hardware — a workstation, homelab box, or VPS — install the engine
+              against your own hardware - a workstation, homelab box, or VPS - install the engine
               with one command. It sets up the runtime, credentials, a secure tunnel, and
               registers with this deployment so your devices can find it.
             </p>
@@ -446,14 +440,11 @@ export function DownloadPage() {
         <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-[14px] px-[24px] py-[26px]">
           <div className="flex items-center gap-[8px] text-[var(--text-disabled)]">
             <CesiumMark className="h-[16px] w-auto" />
-            <span className="text-[12px]">Cesium — local-first AI workbench</span>
+            <span className="text-[12px]">Cesium - local-first AI workbench</span>
           </div>
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/" className="transition-colors hover:text-[var(--text-primary)]">
               Home
-            </Link>
-            <Link href="/docs" className="transition-colors hover:text-[var(--text-primary)]">
-              Docs
             </Link>
             <WorkbenchLink className="transition-colors hover:text-[var(--text-primary)]">
               Workbench

@@ -114,7 +114,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     })
   ),
 
-  // —— Account ——
+  // -- Account --
   section("account", "identity", "Account & session", "profile sign in sign out login"),
   row(
     "account",
@@ -126,9 +126,9 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row(
     "account",
     "account-cloud-mode",
-    "Cloud account",
-    "Sign in, sync status, and sign out for the cloud account layer.",
-    ["sign in", "sign out", "sync", "clerk", "device", "local-only"]
+    "Sign in",
+    "Sign in or sign out of your account on this device.",
+    ["sign in", "sign out", "clerk", "device", "local-only", "account"]
   ),
   row(
     "account",
@@ -145,7 +145,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["server", "switch", "connection"]
   ),
 
-  // —— General ——
+  // -- General --
   section("general", "preferences", "Preferences"),
   row(
     "general",
@@ -236,7 +236,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "general",
     "do-not-disturb",
     "Do Not Disturb",
-    "Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type.",
+    "Suppress all notifications - connection alerts, warnings, file overrides, and every other notification type.",
     ["dnd", "notifications", "quiet"]
   ),
   section("voice", "stt", "Speech to text", "transcription whisper stt microphone"),
@@ -292,7 +292,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["voice", "orb", "ambient", "microphone"]
   ),
 
-  // —— Appearance ——
+  // -- Appearance --
   section("appearance", "mode", "Appearance mode", "system light dark"),
   section("appearance", "layout", "Layout"),
   row(
@@ -364,7 +364,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["aurora", "intensity", "opacity", "brightness"]
   ),
 
-  // —— Agents ——
+  // -- Agents --
   section("agents", "catalog", "Catalog", "models cloud usage"),
   row(
     "agents",
@@ -482,7 +482,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["opencode", "opencode2", "terminal", "subagent", "permission", "form", "pty"]
   ),
 
-  // —— Cloud Agents ——
+  // -- Cloud Agents --
   section("cloudAgents", "connections", "Connections", "linear github slack oauth token webhook"),
   section("cloudAgents", "defaults", "Defaults", "cloud agents harness model workspace"),
   section("cloudAgents", "routing", "Workspace routing", "cloud agents rules filter"),
@@ -528,10 +528,10 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["cloud", "routing"]
   ),
 
-  // —— Models (panel chrome; model rows are dynamic) ——
+  // -- Models (panel chrome; model rows are dynamic) --
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
 
-  // —— Usage ——
+  // -- Usage --
   section(
     "usage",
     "overview",
@@ -574,7 +574,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ["claude", "anthropic", "session block", "weekly", "projection"]
   ),
 
-  // —— Plugins ——
+  // -- Plugins --
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
   section("plugins", "discover", "Discover", "plugin marketplace registry github search context7 official mcp"),
   section("plugins", "sources", "Sources", "official mcp registry github url marketplace source"),
@@ -595,12 +595,12 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Instruction files, skills, and subagent presets."
   ),
 
-  // —— MCP servers (Plugins subpage) ——
+  // -- MCP servers (Plugins subpage) --
   section("plugins", "mcp-presets", "Presets", "mcp"),
   section("plugins", "mcp-custom", "Custom server", "mcp oauth url"),
   section("plugins", "mcp-connected", "Connected servers", "mcp"),
 
-  // —— Extensions ——
+  // -- Extensions --
   section("extensions", "runtime", "Beta Runtime", "vscode extensions marketplace host"),
   row(
     "extensions",
@@ -610,10 +610,10 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   section("extensions", "installed", "Installed", "extensions installed workspace"),
 
-  // —— Rules ——
+  // -- Rules --
   section("rulesSkills", "workspace-files", "Workspace files", "rules skills subagents"),
 
-  // —— Servers ——
+  // -- Servers --
   section("servers", "default", "Default settings server"),
   row(
     "servers",
@@ -636,7 +636,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "servers",
     "stable-link",
     "Permanent connection link",
-    "Copy the stable Cesium link that follows tunnel changes."
+    "Copy the stable Cesium link that follows tunnel changes and can sign the client in."
   ),
   row(
     "servers",
@@ -646,7 +646,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   section("servers", "saved", "Saved servers"),
 
-  // —— Beta ——
+  // -- Beta --
   section("beta", "browser", "Browser", "new browser beta experimental chromium"),
   row("beta", "new-browser", "New browser", "Experimental Chromium-backed browser engine."),
   section("beta", "extensions", "Extensions", "vscode extension marketplace beta"),
@@ -801,7 +801,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
     ["experimental", "browser", "ipad"]
   ),
 
-  // —— Actions ——
+  // -- Actions --
   section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
   row(
     "actions",
@@ -836,7 +836,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
 
   section("keyboardShortcuts", "voice", "Voice input", "hold toggle"),
 
-  // —— Import & export ——
+  // -- Import & export --
   section("exportImport", "export", "Export", "json backup"),
   section("exportImport", "import", "Import", "json restore"),
   row("exportImport", "theme-export", "Theming", "Appearance mode and custom presets."),
@@ -845,11 +845,11 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   row("exportImport", "app-export", "App settings", "General, agents, and models."),
   row("exportImport", "session-export", "Workspace layout session", "Open tabs and chat layout."),
 
-  // —— Storage ——
+  // -- Storage --
   section("storage", "status", "Storage status", "driver postgres sqlite"),
   section("storage", "migrate", "Migrate between drivers", "migration"),
 
-  // —— Updates ——
+  // -- Updates --
   section("updates", "installation", "This installation", "version release github npm"),
   section("updates", "available", "Available updates", "release github npm git"),
   row(

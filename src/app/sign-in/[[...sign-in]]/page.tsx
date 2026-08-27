@@ -4,7 +4,7 @@ import { SignIn } from "@clerk/nextjs";
 import { getCloudMode } from "@/lib/cloud/cloud-flags";
 
 export const metadata: Metadata = {
-  title: "Sign in — Cesium",
+  title: "Sign in - Cesium",
 };
 
 /**
@@ -22,7 +22,7 @@ export default function SignInPage() {
         </h1>
         <p className="max-w-[420px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
           This deployment runs in local-first mode without a Clerk account system. Head back to
-          the workbench — no account is needed.
+          the workbench - no account is needed.
         </p>
         <Link
           href="/"
@@ -35,7 +35,7 @@ export default function SignInPage() {
   }
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignIn />
+      <SignIn forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
     </main>
   );
 }

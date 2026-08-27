@@ -5,21 +5,21 @@ import { useOptionalAuth } from "@/components/auth/AuthProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useCloudContext } from "@/contexts/CloudContext";
+import { isUnconfiguredServerConnection } from "@cesium/client";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
-  isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
 
 /**
  * The identity source currently backing this client, in priority order:
  *
- * - `clerk` — production cloud account (Clerk sign-in), signed in.
- * - `clerk-signed-out` — production cloud build, but nobody is signed in.
- * - `device` — cloud sync under a per-browser device key (no real account).
- * - `engine` — password session on the active engine server
+ * - `clerk` - production cloud account (Clerk sign-in), signed in.
+ * - `clerk-signed-out` - production cloud build, but nobody is signed in.
+ * - `device` - cloud sync under a per-browser device key (no real account).
+ * - `engine` - password session on the active engine server
  *   (`OPENCURSOR_AUTH_*`); the "remote server" production posture.
- * - `local` — local-first mode; no account of any kind is configured.
+ * - `local` - local-first mode; no account of any kind is configured.
  */
 export type AccountIdentityKind =
   | "clerk"
@@ -54,6 +54,9 @@ export function useAccountIdentity(): AccountIdentity {
   const { settings } = useGlobalSettings();
 
   const serverLabel = useMemo(() => {
+    if (isUnconfiguredServerConnection(activeServer)) {
+      return "No server";
+    }
     const appearance = getServerRailAppearance(
       settings.general.serverRailAppearances,
       activeServer.id,
@@ -69,8 +72,8 @@ export function useAccountIdentity(): AccountIdentity {
           kind: "clerk-signed-out",
           signedIn: false,
           title: "Not signed in",
-          subtitle: "Sign in to sync your account",
-          modeLabel: "Cloud",
+          subtitle: "Sign in to use your account",
+          modeLabel: "Signed out",
           imageUrl: null,
           serverLabel,
         };
@@ -78,7 +81,7 @@ export function useAccountIdentity(): AccountIdentity {
       const title =
         cloud.userName ??
         cloud.userEmail ??
-        (cloud.status === "loading" ? "Connecting…" : "Cloud account");
+        (cloud.status === "loading" ? "Connecting…" : "Signed in");
       return {
         kind: "clerk",
         signedIn: cloud.status === "ready",
@@ -86,8 +89,8 @@ export function useAccountIdentity(): AccountIdentity {
         subtitle:
           cloud.userEmail && cloud.userEmail !== title
             ? cloud.userEmail
-            : "Cloud account",
-        modeLabel: "Cloud account",
+            : "Signed in",
+        modeLabel: "Signed in",
         imageUrl: cloud.bootstrap?.user.imageUrl ?? null,
         serverLabel,
       };
@@ -97,7 +100,7 @@ export function useAccountIdentity(): AccountIdentity {
         kind: "device",
         signedIn: cloud.status === "ready",
         title: "Device sync",
-        subtitle: serverLabel,
+        subtitle: "Synced on this browser",
         modeLabel: "Device",
         imageUrl: null,
         serverLabel,
@@ -108,7 +111,7 @@ export function useAccountIdentity(): AccountIdentity {
         kind: "engine",
         signedIn: true,
         title: auth.session.username,
-        subtitle: serverLabel,
+        subtitle: "Signed in to the engine",
         modeLabel: "Server session",
         imageUrl: null,
         serverLabel,
@@ -118,7 +121,7 @@ export function useAccountIdentity(): AccountIdentity {
       kind: "local",
       signedIn: false,
       title: "Local workspace",
-      subtitle: isLocalDeviceServer(activeServer) ? "This device" : serverLabel,
+      subtitle: "No cloud account",
       modeLabel: "Local",
       imageUrl: null,
       serverLabel,

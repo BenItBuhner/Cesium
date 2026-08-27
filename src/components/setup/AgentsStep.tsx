@@ -11,7 +11,7 @@ import {
 } from "@/lib/onboarding/engine-api";
 
 /**
- * Step 2 — set up your agents. Lists the engine's backends with live
+ * Step 2 - set up your agents. Lists the engine's backends with live
  * availability, offers one-click CLI installs for missing harnesses (streamed
  * install logs) and API-key auth for the built-in Cesium Agent. Configured
  * backends are remembered in the user's cloud context.

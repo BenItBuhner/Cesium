@@ -2,7 +2,7 @@
 
 /**
  * MAX / model UI: `variant="blue"` (default). Agent-style settings in Cursor
- * use green when on — pass `variant="green"` for those rows.
+ * use green when on - pass `variant="green"` for those rows.
  */
 export function ToggleSwitch({
   checked,

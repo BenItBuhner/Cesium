@@ -81,7 +81,7 @@ jobs:
           grep -q "Cesium packaged smoke passed" smoke.log
 
       - name: Launch the packaged app and capture its window
-        # Window self-captures only — no `screencapture` here. The first
+        # Window self-captures only - no `screencapture` here. The first
         # screencapture of the job triggers macOS 15's capture-approval
         # alert, which then lingers on screen; the full-screen install step
         # below must own the job's first (clean) screencapture.
@@ -351,6 +351,9 @@ jobs:
           echo "AppImage Icon=$(grep -E '^Icon=' squashfs-root/*.desktop)"
 
       - name: Smoke-test the AppImage under Xvfb (embedded backend + window load)
+        env:
+          OPENCURSOR_DESKTOP_DISABLE_GPU: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           # Extract and run OUTSIDE the repo checkout: from inside it, Node's
           # upward module resolution can accidentally satisfy missing packaged
@@ -360,15 +363,18 @@ jobs:
           mkdir -p "$SMOKE_DIR"
           (cd "$SMOKE_DIR" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract > /dev/null)
           (cd "$SMOKE_DIR" && APPDIR="$SMOKE_DIR/squashfs-root" \
-            xvfb-run --auto-servernum ./squashfs-root/AppRun --no-sandbox --smoke 2>&1 | tee "$GITHUB_WORKSPACE/smoke.log")
+            xvfb-run --auto-servernum ./squashfs-root/AppRun --no-sandbox --disable-gpu --smoke 2>&1 | tee "$GITHUB_WORKSPACE/smoke.log")
           grep -q "Cesium packaged smoke passed" smoke.log
 
       - name: Launch the packaged app under Xvfb and capture its window
+        env:
+          OPENCURSOR_DESKTOP_DISABLE_GPU: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p screenshots
           OPENCURSOR_DESKTOP_CAPTURE_PATH="$PWD/screenshots/linux_app_window.png" \
             xvfb-run --auto-servernum apps/desktop/out/linux-unpacked/cesium-desktop \
-            --no-sandbox > app.log 2>&1 &
+            --no-sandbox --disable-gpu > app.log 2>&1 &
           RUNNER_PID=$!
           echo "Launched Cesium Desktop under Xvfb with PID $RUNNER_PID"
           sleep 45

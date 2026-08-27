@@ -17,7 +17,7 @@ export function getHostedClerkSignUpUrl(): string {
 /**
  * In-app Clerk widgets only work on origins Clerk has allowlisted for the
  * publishable key (production web). Packaged file:// clients and localhost
- * must open the hosted account pages instead — otherwise sign-in never
+ * must open the hosted account pages instead - otherwise sign-in never
  * appears and the first-run wall hangs on "Starting Cesium…".
  */
 export function shouldUseHostedClerkAuth(
@@ -51,7 +51,7 @@ function resolveHostedClerkPageUrl(
  * Clerk hosted-page URLs for this client.
  *
  * Path-relative `/sign-in` works on the Next app. Packaged file:// renderers
- * (Electron, Android, iOS) have no such route — pointing Clerk at the
+ * (Electron, Android, iOS) have no such route - pointing Clerk at the
  * production site keeps OAuth / fallback redirects on a real origin instead
  * of `file:///sign-in`.
  */

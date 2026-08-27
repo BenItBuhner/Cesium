@@ -13,7 +13,7 @@ import {
   type AuroraRenderer,
 } from "@/lib/aurora/aurora-renderer";
 
-/** Background effect — 30fps is plenty and halves the paint work. */
+/** Background effect - 30fps is plenty and halves the paint work. */
 const FRAME_INTERVAL_MS = 1000 / 30;
 /**
  * Touch devices and low-core machines composite the full-window canvas layer
@@ -22,7 +22,7 @@ const FRAME_INTERVAL_MS = 1000 / 30;
  */
 const LOW_POWER_FRAME_INTERVAL_MS = 1000 / 20;
 /**
- * Calm moods (idle / paused) drift slowly under a heavy blur — half the frame
+ * Calm moods (idle / paused) drift slowly under a heavy blur - half the frame
  * rate is visually indistinguishable there and halves the standing GPU
  * composite cost of the full-window layer, which is most of what this
  * component costs when the app is just sitting open.
@@ -35,7 +35,7 @@ const UNFOCUSED_FRAME_INTERVAL_MS = 1000 / 8;
  * Every aurora frame damages the whole window, so composite cost scales with
  * DISPLAY pixels (device pixels, not CSS pixels) even though the canvas
  * paints at a tiny internal resolution. Above QHD the drift drops to 20fps
- * and above 4K to 12fps — imperceptible under the heavy blur, but it keeps
+ * and above 4K to 12fps - imperceptible under the heavy blur, but it keeps
  * the standing GPU cost flat instead of quadrupling at 4K and 16x-ing at 8K.
  */
 const QHD_DEVICE_PIXELS = 2_560 * 1_440;
@@ -70,7 +70,7 @@ function isLowPowerDisplay(): boolean {
  * GPU-less compositing (SwiftShader / llvmpipe / headless fallbacks) pays for
  * every full-window damage in CPU; the aurora's whole-window canvas is the
  * dominant standing cost there (~38% of a core at 4K/15fps measured under
- * SwiftShader). Such machines get survival frame rates — the drift stays
+ * SwiftShader). Such machines get survival frame rates - the drift stays
  * alive, the tax collapses.
  */
 let softwareRendererCache: boolean | null = null;
@@ -123,7 +123,7 @@ const SOFT_SATURATE = 1.3;
  * runs inside the canvas at the tiny internal resolution (microseconds per
  * frame). A CSS `filter: blur()` on the element instead re-rasterizes the
  * whole full-size layer on every canvas tick, which on machines without GPU
- * compositing collapses global frame production to a few fps — fast
+ * compositing collapses global frame production to a few fps - fast
  * transitions elsewhere in the pane (e.g. the composer split FLIP) then
  * complete between two presented frames and look like an instant snap.
  */

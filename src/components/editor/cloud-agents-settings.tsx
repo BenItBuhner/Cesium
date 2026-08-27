@@ -14,7 +14,6 @@ import {
 import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
 import { integrationIconLabel } from "@/lib/integration-icons";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsFieldLabel,
   SettingsRow,
@@ -394,7 +393,6 @@ export function CloudAgentsSettingsPanel() {
     return (
       <div>
         <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Cloud Agents" />
-        <PageIntro title="Cloud Agents" />
         <p className="flex items-center gap-[8px] font-sans text-[13px] text-[var(--text-secondary)]">
           <Loader2 className="size-[14px] animate-spin" strokeWidth={1.5} aria-hidden />
           {error ?? "Loading Cloud Agents settings…"}
@@ -406,11 +404,10 @@ export function CloudAgentsSettingsPanel() {
   return (
     <div>
       <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Cloud Agents" />
-      <PageIntro title="Cloud Agents" />
       <p className="-mt-[8px] mb-[16px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
         Offload work from Linear, GitHub, and Slack to agents running in this Cesium server.
         Assignments are routed to the right workspace and start as normal conversations in the
-        agent rail — same harnesses, same models, same chat — tagged with their source and
+        agent rail - same harnesses, same models, same chat - tagged with their source and
         filterable via the rail&apos;s “External sources” filter. Follow-up comments and thread
         replies steer the running conversation.
       </p>
@@ -495,7 +492,7 @@ export function CloudAgentsSettingsPanel() {
       <SettingsSection title="Defaults">
         <SettingsRow
           title="Default agent harness"
-          description="Harness used when a routing rule doesn't pick one — the same harnesses available in the composer."
+          description="Harness used when a routing rule doesn't pick one - the same harnesses available in the composer."
           searchId="cloud-agents-default-harness"
           trailing={
             <select
@@ -674,7 +671,7 @@ export function CloudAgentsSettingsPanel() {
             </ul>
           ) : (
             <p className="mb-[10px] font-sans text-[12px] text-[var(--text-disabled)]">
-              No routing rules yet — assignments go to the fallback workspace.
+              No routing rules yet - assignments go to the fallback workspace.
             </p>
           )}
           <div className="flex flex-wrap items-end gap-[8px]">
@@ -766,13 +763,13 @@ export function CloudAgentsSettingsPanel() {
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px]">
           <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
             Dispatched assignments run as normal conversations in the agent rail (filter:
-            External sources). Only assignments that could not start — unrouted or failed —
+            External sources). Only assignments that could not start - unrouted or failed -
             wait here. Use the test dispatch to verify routing end to end.
           </p>
         </div>
         {pendingTasks.length === 0 ? (
           <p className="px-[16px] py-[12px] font-sans text-[12px] text-[var(--text-disabled)]">
-            Nothing pending — new assignments dispatch straight into the rail.
+            Nothing pending - new assignments dispatch straight into the rail.
           </p>
         ) : (
           pendingTasks.map((task) => (
@@ -813,7 +810,7 @@ export function CloudAgentsSettingsPanel() {
                     void runAction(async () => {
                       await dispatchCloudAgentTask(task.id);
                       await refresh();
-                    }, "Dispatched — the agent is now in the rail.")
+                    }, "Dispatched - the agent is now in the rail.")
                   }
                 >
                   <Send className="size-[13px]" strokeWidth={1.5} aria-hidden />
@@ -891,7 +888,7 @@ export function CloudAgentsSettingsPanel() {
                   setTestTitle("");
                   setTestPrompt("");
                   await refresh();
-                }, "Dispatched — check the agent rail.")
+                }, "Dispatched - check the agent rail.")
               }
             >
               <Send className="size-[13px]" strokeWidth={1.5} aria-hidden />

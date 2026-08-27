@@ -18,7 +18,7 @@ function getServerSnapshot() {
   return false;
 }
 
-/** True when `<html>` has `dark` — same signal as app CSS variables. */
+/** True when `<html>` has `dark` - same signal as app CSS variables. */
 export function useHtmlDarkClass(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

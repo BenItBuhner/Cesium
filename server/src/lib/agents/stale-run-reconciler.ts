@@ -12,7 +12,7 @@ import type { AgentConversationStatus } from "./types.js";
 
 /**
  * Agent runs only exist as in-memory provider runtimes; none survive a server
- * restart. Conversation records, however, are persisted — so a crash or
+ * restart. Conversation records, however, are persisted - so a crash or
  * restart mid-turn used to leave records stuck on "running" forever. Clients
  * (workbench rail, mobile live notifications) then showed an eternal
  * "Working" state with an ever-growing elapsed timer.
@@ -27,7 +27,7 @@ import type { AgentConversationStatus } from "./types.js";
 
 /**
  * Statuses that imply a live provider runtime must exist somewhere. After a
- * restart none can, so all of them are safe to interrupt at boot — including
+ * restart none can, so all of them are safe to interrupt at boot - including
  * the awaiting_* states, whose pending permission/question belonged to a
  * runtime that no longer exists and can never be answered.
  */
@@ -75,7 +75,7 @@ function defaultHasLiveRuntime(conversationId: string): boolean {
  * Flips one stale conversation to "interrupted": clears the pending
  * permission/question that can no longer be answered and appends a status
  * event so connected clients (and live notifications) see a terminal
- * transition. The flip is guarded inside the per-conversation write queue —
+ * transition. The flip is guarded inside the per-conversation write queue -
  * if a fresh prompt raced in and the status is no longer stale-eligible,
  * nothing changes.
  *

@@ -707,8 +707,8 @@ function channelToHexPair(channel: number): string {
 }
 
 /**
- * Parses the computed serializations browsers emit for resolved colors —
- * `rgb(…)`, `rgba(…)`, and `color(srgb …)` (Chromium's `color-mix` output) —
+ * Parses the computed serializations browsers emit for resolved colors -
+ * `rgb(…)`, `rgba(…)`, and `color(srgb …)` (Chromium's `color-mix` output) -
  * into the `#rrggbb`/`#rrggbbaa` form Monaco themes require.
  */
 function computedColorToHex(computed: string): string | null {

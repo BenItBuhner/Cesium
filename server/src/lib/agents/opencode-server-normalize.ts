@@ -304,7 +304,7 @@ export function openCodeServerErrorDetail(properties: RecordValue): string | und
 /**
  * Modern OpenCode servers (>= 1.x) expect `{ response: "once" | "always" | "reject" }`
  * on `POST /session/:id/permissions/:permissionId`. Sending the legacy
- * `allow`/`deny` shape returns HTTP 400 — which used to be silently swallowed,
+ * `allow`/`deny` shape returns HTTP 400 - which used to be silently swallowed,
  * leaving OpenCode blocked on the permission forever.
  */
 export function openCodeServerPermissionResponse(optionId: string | undefined, cancelled?: boolean): RecordValue {

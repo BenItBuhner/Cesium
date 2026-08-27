@@ -1,8 +1,8 @@
 /**
  * Debounced write coalescer (OSP-75 performance phase).
  *
- * High-frequency PUTs to the same key — session resizes, global-settings
- * toggles spammed from a slider, etc. — get collapsed into a single actual
+ * High-frequency PUTs to the same key - session resizes, global-settings
+ * toggles spammed from a slider, etc. - get collapsed into a single actual
  * write after a short idle window. The HTTP handler can return `ok: true`
  * immediately; the coalescer owns the actual persistence.
  *

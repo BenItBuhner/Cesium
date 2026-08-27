@@ -27,8 +27,8 @@ const outlineButtonClass =
  *
  * Packaged apps never see the marketing landing page, so without this the
  * workbench mounts unsigned, fetches an engine that is not there, and toasts
- * "Workspace error / Failed to fetch". Guest is still available — local-first
- * is not a wall — but it is an explicit choice, not the silent default.
+ * "Workspace error / Failed to fetch". Guest is still available - local-first
+ * is not a wall - but it is an explicit choice, not the silent default.
  *
  * Clerk widgets only work on allowlisted https origins. Android/iOS/Electron
  * file:// bundles and localhost open the hosted account pages instead, so a

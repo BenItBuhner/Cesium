@@ -91,6 +91,55 @@ describe("server connections", () => {
     assert.equal(state.defaultServerId, state.servers[0]?.id ?? null);
   });
 
+  test("the Cesium account site is never seeded as a default server", () => {
+    const state = createDefaultServerConnectionsState("https://cesium.techlitnow.com");
+    assert.deepEqual(state.servers, []);
+    assert.equal(state.activeServerId, null);
+    assert.equal(state.defaultServerId, null);
+  });
+
+  test("account-site pages do not seed a leftover localhost default", () => {
+    const mockWindow = installMockWindow();
+    mockWindow.location.hostname = "cesium.techlitnow.com";
+    mockWindow.location.host = "cesium.techlitnow.com";
+    mockWindow.location.origin = "https://cesium.techlitnow.com";
+    mockWindow.location.protocol = "https:";
+    const state = createDefaultServerConnectionsState("http://localhost:9100");
+    assert.deepEqual(state.servers, []);
+  });
+
+  test("normalization drops the Cesium account site and does not re-inject it", () => {
+    const state = normalizeServerConnectionsState(
+      {
+        version: 1,
+        activeServerId: "site",
+        servers: [
+          {
+            id: "site",
+            label: "Cesium",
+            baseUrl: "https://cesium.techlitnow.com",
+            updatedAt: 1,
+          },
+        ],
+      },
+      "https://cesium.techlitnow.com"
+    );
+    assert.deepEqual(state.servers, []);
+    assert.equal(state.activeServerId, null);
+  });
+
+  test("applyServerUrlBootstrap ignores the Cesium account site", () => {
+    const base = createDefaultServerConnectionsState("http://localhost:9100");
+    const next = applyServerUrlBootstrap(base, "https://cesium.techlitnow.com", {
+      force: true,
+    });
+    assert.equal(next, base);
+    assert.equal(
+      next.servers.some((server) => server.baseUrl.includes("cesium.techlitnow.com")),
+      false
+    );
+  });
+
   test("normalization drops invalid entries and dedupes by base URL", () => {
     const state = normalizeServerConnectionsState(
       {
@@ -504,6 +553,19 @@ describe("stable rendezvous server identity", () => {
 });
 
 describe("base URL resolution", () => {
+  test("does not collapse requests onto the Cesium account site", () => {
+    assert.equal(
+      resolveClientServerBaseUrlForLocation("http://localhost:9100", {
+        location: {
+          protocol: "https:",
+          hostname: "cesium.techlitnow.com",
+          host: "cesium.techlitnow.com",
+        },
+      }),
+      "http://localhost:9100"
+    );
+  });
+
   test("uses same-origin on https pages when configured server is http", () => {
     assert.equal(
       resolveClientServerBaseUrlForLocation("http://192.168.1.22:9100", {

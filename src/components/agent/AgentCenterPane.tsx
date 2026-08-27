@@ -547,7 +547,7 @@ export function AgentCenterPane() {
   /**
    * Instant new-chat spawning: the conversation view renders optimistically
    * the moment the first prompt is submitted (no server round-trip in the
-   * critical path), while the composer visually splits — the typed prompt
+   * critical path), while the composer visually splits - the typed prompt
    * FLIPs into the user-message card at the top of the thread and the emptied
    * shell slides down to its docked spot at the bottom.
    */
@@ -1204,7 +1204,7 @@ export function AgentCenterPane() {
   // While the optimistic turn is live, the real view must not take over until
   // its projected messages exist: `threadMessages` derives from
   // `useDeferredValue(rawThreadEvents)`, which can lag a few frames behind the
-  // snapshot merge on slower devices — swapping onto an empty projection would
+  // snapshot merge on slower devices - swapping onto an empty projection would
   // blank the just-sent message before popping it back in.
   const realConversationViewReady =
     !!selectedConversationId &&
@@ -1213,7 +1213,7 @@ export function AgentCenterPane() {
     (!optimisticTurn || scrollMessages.length > 0);
   // The stable snapshot may only bridge a transition *into the same
   // conversation it was captured from*. Falling back to it for a different id
-  // resurrected whichever conversation was viewed last — the "old chat
+  // resurrected whichever conversation was viewed last - the "old chat
   // flashes before the new one" bug when spawning a chat from the landing or
   // switching via the rail.
   const stableSelectedConversationView =
@@ -1574,7 +1574,7 @@ export function AgentCenterPane() {
                     }
                     draftAttachments={composerDraftAttachments}
                     onDraftAttachmentsChange={(next) =>
-                      // Do not pass `content` here — submit clears text then
+                      // Do not pass `content` here - submit clears text then
                       // immediately clears attachments; a stale `content`
                       // closure would resurrect the prompt in the composer.
                       upsertComposerDraft(composerDraftId, {

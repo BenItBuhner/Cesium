@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleUserRound,
-  Cloud,
   FolderPlus,
   GitBranchPlus,
   ListFilter,
@@ -45,7 +44,6 @@ import {
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
-import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
   AGENT_RAIL_FILTER_TOGGLE_KEYS,
@@ -63,7 +61,8 @@ import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
-import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { AccountPopover } from "@/components/preferences/AccountPopover";
+import { useAccountIdentity } from "@/hooks/useAccountIdentity";
 import { scrollEdgeMaskStyle } from "@/components/chat/scroll-edge-mask";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
@@ -82,12 +81,8 @@ import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
-  isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
+import { rememberLastWorkspaceForServer } from "@/lib/per-server-workspace-memory";
 import {
   createWorkspaceGitWorktree,
   forkAgentConversation,
@@ -471,7 +466,6 @@ export function AgentWorkspaceRail() {
   const { pushNotification } = useWorkbenchNotifications();
   const { openAgentConversation } = useOpenInEditor();
   const {
-    backends,
     groups,
     leftRailCollapsed,
     railLoading,
@@ -514,10 +508,9 @@ export function AgentWorkspaceRail() {
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
-  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
-  const { cloudDevices, activeCloudDevice, setActiveCloudDeviceId } =
-    useCloudExecutionDevice(backends);
-  const { byServerId: directoryByServerId, workspaces: directoryWorkspaces } = useWorkspaceDirectory();
+  const { activeServer, servers, setActiveServer } = useServerConnections();
+  const accountIdentity = useAccountIdentity();
+  const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const agentRailSettings = settings.general.agentRail;
@@ -546,13 +539,13 @@ export function AgentWorkspaceRail() {
   /**
    * Window-chrome inset is only for the collapse/search/new-chat row (and bulk
    * bar) sitting under iPadOS traffic lights. The workspace picker is on the
-   * next row and must keep the normal rail gutter — tab inset is not a sidebar
+   * next row and must keep the normal rail gutter - tab inset is not a sidebar
    * indent.
    */
   /* mobile-safe-top-pad is unconditional: the CSS only fires under
      .opencursor-mobile-native (the phone/tablet WebView), and a landscape
      phone renders this desktop rail while the translucent status bar still
-     overlays the top — gating on isMobile stripped the inset there. */
+     overlays the top - gating on isMobile stripped the inset there. */
   const railTopBarPadClass = `${padRailForWindowChrome
     ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
     : "px-[11px]"} mobile-safe-top-pad`;
@@ -560,7 +553,7 @@ export function AgentWorkspaceRail() {
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const accountAnchorRef = useRef<HTMLButtonElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [serverPickerOpen, setServerPickerOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const workspacePickerAnchorRef = useRef<HTMLButtonElement>(null);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
@@ -570,24 +563,8 @@ export function AgentWorkspaceRail() {
   const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingWorkspaceKey, setEditingWorkspaceKey] = useState<string | null>(null);
-  const [editingServerId, setEditingServerId] = useState<string | null>(null);
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
   const serverRailAppearances = settings.general.serverRailAppearances;
-  const activeServerAppearance = useMemo(
-    () =>
-      getServerRailAppearance(
-        serverRailAppearances,
-        activeServer.id,
-        servers.findIndex((server) => server.id === activeServer.id)
-      ),
-    [activeServer.id, serverRailAppearances, servers]
-  );
-  const activeServerDisplayLabel = useMemo(
-    () => getServerDisplayLabel(activeServer, activeServerAppearance),
-    [activeServer, activeServerAppearance]
-  );
-  /** Footer label: the cloud pseudo-device masks the underlying host server. */
-  const activeDeviceDisplayLabel = activeCloudDevice?.label ?? activeServerDisplayLabel;
   const machineOptions = useMemo(
     () =>
       servers.map((server, index) => ({
@@ -853,56 +830,6 @@ export function AgentWorkspaceRail() {
   const handleNewStandaloneChat = useCallback(() => {
     startStandaloneChat();
   }, [startStandaloneChat]);
-
-  const handleActiveServerChange = useCallback(
-    (serverId: string) => {
-      // Picking a real device always leaves cloud execution mode.
-      if (activeCloudDevice) {
-        setRailFilterToggle("cloud", false);
-      }
-      setActiveCloudDeviceId(null);
-      if (serverId === activeServer.id) {
-        setServerPickerOpen(false);
-        return;
-      }
-      if (activeWorkspaceId) {
-        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
-      }
-      setActiveServer(serverId);
-      setServerPickerOpen(false);
-      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
-      const directoryWorkspaces = directoryByServerId.get(serverId) ?? [];
-      const targetWorkspaceId =
-        restoredWorkspaceId &&
-        directoryWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
-          ? restoredWorkspaceId
-          : directoryWorkspaces[0]?.id;
-      if (targetWorkspaceId) {
-        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
-      }
-    },
-    [
-      activeCloudDevice,
-      activeServer.id,
-      activeWorkspaceId,
-      directoryByServerId,
-      openWorkspaceById,
-      setActiveCloudDeviceId,
-      setActiveServer,
-      setRailFilterToggle,
-    ]
-  );
-
-  const handleCloudDeviceSelect = useCallback(
-    (cloudDeviceId: string) => {
-      setActiveCloudDeviceId(cloudDeviceId);
-      // Focus the rail on cloud conversations while the cloud device is
-      // active; the toggle stays user-controllable from the filter menu.
-      setRailFilterToggle("cloud", true);
-      setServerPickerOpen(false);
-    },
-    [setActiveCloudDeviceId, setRailFilterToggle]
-  );
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -3650,7 +3577,7 @@ export function AgentWorkspaceRail() {
                 type="button"
                 onClick={() => {
                   setFilterMenuOpen(false);
-                  setServerPickerOpen(false);
+                  setAccountMenuOpen(false);
                   setWorkspacePickerOpen((open) => !open);
                 }}
                 className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[6px] py-[5px] text-left hover:bg-[var(--agent-card-bg)]"
@@ -3754,79 +3681,36 @@ export function AgentWorkspaceRail() {
             <>{orderedRailSections}</>
           )}
               </AgentRailConversationListScroll>
-              {editingServerId === activeServer.id && !isLocalDeviceServer(activeServer) ? (
-                <div className="shrink-0 px-[11px] pb-[4px]">
-                  <RailIconCustomizePanel
-                    title={activeServer.label}
-                    icon={activeServerAppearance.icon}
-                    color={activeServerAppearance.color}
-                    showNameField
-                    name={activeServerAppearance.nickname ?? ""}
-                    nameFieldLabel="Server nickname"
-                    allowEmptyName
-                    onClose={() => setEditingServerId(null)}
-                    onUpdate={(patch) =>
-                      updateServerAppearance(
-                        activeServer.id,
-                        {
-                          icon: patch.icon,
-                          color: patch.color,
-                          nickname: patch.name,
-                        },
-                        servers.findIndex((server) => server.id === activeServer.id)
-                      )
-                    }
-                  />
-                </div>
-              ) : null}
               <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
                 <button
                   ref={accountAnchorRef}
                   type="button"
                   onClick={() => {
                     setFilterMenuOpen(false);
-                    setServerPickerOpen((open) => !open);
-                  }}
-                  onContextMenu={(event) => {
-                    if (isLocalDeviceServer(activeServer)) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setFilterMenuOpen(false);
-                    setServerPickerOpen(false);
-                    setEditingServerId((current) =>
-                      current === activeServer.id ? null : activeServer.id
-                    );
+                    setAccountMenuOpen((open) => !open);
                   }}
                   className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
-                  aria-label={`Switch server (${activeDeviceDisplayLabel})`}
-                  aria-expanded={serverPickerOpen}
+                  aria-label={`Account (${accountIdentity.title})`}
+                  aria-expanded={accountMenuOpen}
                   aria-haspopup="menu"
-                  title={activeDeviceDisplayLabel}
+                  title={accountIdentity.title}
                 >
-                  {activeCloudDevice ? (
-                    <Cloud
-                      className="size-[var(--d2-rail-control-size)] shrink-0 text-[var(--text-secondary)]"
-                      strokeWidth={1.5}
-                      aria-hidden
+                  {accountIdentity.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={accountIdentity.imageUrl}
+                      alt=""
+                      className="size-[var(--d2-rail-control-size)] shrink-0 rounded-full object-cover"
                     />
-                  ) : isLocalDeviceServer(activeServer) ? (
+                  ) : (
                     <CircleUserRound
                       className="size-[var(--d2-rail-control-size)] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
                       aria-hidden
                     />
-                  ) : (
-                    <WorkspaceFolderIcon
-                      iconName={activeServerAppearance.icon}
-                      color={activeServerAppearance.color}
-                      className="size-[var(--d2-rail-control-size)] shrink-0"
-                      strokeWidth={1.5}
-                    />
                   )}
                   <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-                    {activeDeviceDisplayLabel}
+                    {accountIdentity.title}
                   </span>
                   <ChevronDown
                     className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -3839,6 +3723,7 @@ export function AgentWorkspaceRail() {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setAccountMenuOpen(false);
                     setFilterMenuOpen((open) => !open);
                   }}
                   className={`flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
@@ -3865,21 +3750,10 @@ export function AgentWorkspaceRail() {
         </div>
       ) : null}
 
-      <ServerPickerPopover
-        open={serverPickerOpen}
-        onClose={() => setServerPickerOpen(false)}
+      <AccountPopover
+        open={accountMenuOpen}
+        onClose={() => setAccountMenuOpen(false)}
         anchorRef={accountAnchorRef}
-        label="This device"
-        selectedServerId={activeServer.id}
-        servers={servers}
-        serverStatusById={serverStatusById}
-        serverRailAppearances={serverRailAppearances}
-        onSelect={handleActiveServerChange}
-        placement="above"
-        variant="device"
-        cloudDevices={cloudDevices}
-        selectedCloudDeviceId={activeCloudDevice?.id ?? null}
-        onSelectCloudDevice={handleCloudDeviceSelect}
       />
 
       <WorkspacePickerMenu

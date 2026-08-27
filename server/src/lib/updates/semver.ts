@@ -1,6 +1,6 @@
 /**
  * Minimal semver parsing and comparison (with prerelease precedence per the
- * semver 2.0.0 spec). Deliberately dependency-free — the update checker only
+ * semver 2.0.0 spec). Deliberately dependency-free - the update checker only
  * needs ordering and tag normalization, not ranges.
  */
 

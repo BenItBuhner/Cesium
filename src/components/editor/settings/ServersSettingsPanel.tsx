@@ -184,6 +184,7 @@ function SettingsServerPicker({
 export function ServerConnectionsSettingsPanel() {
   const {
     activeServer,
+    hasServer,
     settingsServer,
     servers,
     onlineServers,
@@ -223,12 +224,16 @@ export function ServerConnectionsSettingsPanel() {
         <SettingsRow
           searchId="active-chat"
           title="Active chat server"
-          description={`${activeServer.baseUrl} · ${serverStatusById[activeServer.id]?.health ?? "checking"}`}
+          description={
+            hasServer
+              ? `${activeServer.baseUrl} · ${serverStatusById[activeServer.id]?.health ?? "checking"}`
+              : "No engine is connected yet."
+          }
           trailing={
             <SettingsServerPicker
               label="Active chat server"
               title="New chats and workspace actions use this server until you switch workspaces"
-              selectedServerId={activeServer.id}
+              selectedServerId={hasServer ? activeServer.id : null}
               servers={servers}
               serverStatusById={serverStatusById}
               onSelect={setActiveServer}
@@ -252,7 +257,7 @@ export function ServerConnectionsSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
+      {hasServer ? <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} /> : null}
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {

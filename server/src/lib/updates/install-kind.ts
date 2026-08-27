@@ -23,12 +23,12 @@ function isTermuxEnvironment(env: InstallKindEnv): boolean {
  * Detect how this server instance was installed. The kind decides which
  * self-update strategy `/api/updates/apply` is allowed to run:
  *
- * - `desktop-electron` — sidecar spawned by the Cesium desktop app
+ * - `desktop-electron` - sidecar spawned by the Cesium desktop app
  *   (`OPENCURSOR_DESKTOP_BACKEND=1`). Updates ship as new installers.
- * - `isolated-server` / `termux-server` — provisioned by
+ * - `isolated-server` / `termux-server` - provisioned by
  *   `scripts/install-cesium-server.sh` (marked by `CESIUM_HOME` from
  *   `server.env`); self-update re-runs the installer via the manager CLI.
- * - `source` — running from a git checkout; self-update fast-forwards the
+ * - `source` - running from a git checkout; self-update fast-forwards the
  *   working tree.
  */
 export function detectInstallKind(

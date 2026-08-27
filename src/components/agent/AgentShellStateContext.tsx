@@ -769,7 +769,7 @@ export function AgentShellStateProvider({
   // decoupled from the loader effect below: that effect re-runs whenever its
   // dependencies churn during startup (health probes flipping onlineServers,
   // the workspace directory arriving, active-server changes), and an
-  // effect-scoped timer would be cleared on every re-run — leaving the
+  // effect-scoped timer would be cleared on every re-run - leaving the
   // spinner up forever if the in-flight run never settles. This timer only
   // restarts when `connectionsReady` flips (at most once), so it also covers
   // the case where server-connections bootstrap itself never completes.
@@ -921,7 +921,7 @@ export function AgentShellStateProvider({
     };
     const handleOnline = () => {
       if (document.visibilityState === "hidden") return;
-      // Coming back online is a real gap in push coverage — always refetch.
+      // Coming back online is a real gap in push coverage - always refetch.
       void refreshConversationGroupsWithState();
     };
     window.addEventListener("focus", handleFocus);
@@ -1327,7 +1327,7 @@ export function AgentShellStateProvider({
   }, [draftRightPaneOpenScope, isDraftConversationSelected]);
 
   // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
-  // after that — session layout changes when switching workspaces and must not clobber user prefs.
+  // after that - session layout changes when switching workspaces and must not clobber user prefs.
   // Mobile ignores a stored "rail open" flag: the drawer covers the viewport, so a fresh
   // session (sign-in, new server, new WebView) should land on the new-chat page.
   useLayoutEffect(() => {
@@ -1445,7 +1445,7 @@ export function AgentShellStateProvider({
     if (workspaceSession.agentView.selectedConversationId === persistedConversationId) {
       return;
     }
-    // Never clobber a real persisted id with null while the rail is still loading — same race
+    // Never clobber a real persisted id with null while the rail is still loading - same race
     // as `selectedConversationId` (empty valid set during fetch).
     if (
       railLoading &&
@@ -1964,7 +1964,7 @@ export function AgentShellStateProvider({
       // Must run before any `await`. `loadWorkspaceState` rewrites `workspaceId` in the URL but
       // keeps the old `conversationId` until loading finishes. While the async fetch runs, the
       // effect below sees (active workspace B + URL conversation owned by A) and calls
-      // `openWorkspaceById(A)` to "honor" the deep link — undoing the rail + click. Drafting the
+      // `openWorkspaceById(A)` to "honor" the deep link - undoing the rail + click. Drafting the
       // URL up front keeps `isDraftConversationSelected` true so that effect bails.
       setStandaloneDraftActive(false);
       replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);

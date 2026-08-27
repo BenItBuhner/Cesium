@@ -17,8 +17,8 @@
  *   node scripts/browser-proxy-smoke.mjs --filter github,wikipedia
  *
  * Environment:
- *   OCS_USERNAME, OCS_PASSWORD — defaults: admin / cesium2026 (server/.env)
- *   OCS_BASE_URL             — proxy base (default http://localhost:9100)
+ *   OCS_USERNAME, OCS_PASSWORD - defaults: admin / cesium2026 (server/.env)
+ *   OCS_BASE_URL             - proxy base (default http://localhost:9100)
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
@@ -132,7 +132,7 @@ async function login() {
   });
   if (!res.ok) {
     throw new Error(
-      `Login failed: ${res.status} ${res.statusText} — check OCS_USERNAME / OCS_PASSWORD`
+      `Login failed: ${res.status} ${res.statusText} - check OCS_USERNAME / OCS_PASSWORD`
     );
   }
   const token = res.headers.get("x-opencursor-session-token");

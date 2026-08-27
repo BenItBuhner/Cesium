@@ -26,7 +26,7 @@ function getServerSnapshot(): boolean {
 /**
  * Whether a hover-capable fine pointer is available (live: updates when e.g.
  * a mouse is plugged into a tablet). Use to gate JS hover-open/hover-close
- * interactions that must not run on touch taps — see lib/hover-capability.
+ * interactions that must not run on touch taps - see lib/hover-capability.
  */
 export function useHoverCapable(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);

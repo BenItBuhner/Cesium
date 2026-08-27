@@ -56,8 +56,8 @@ async function findByRendezvousServerId(
 
 /**
  * Upsert one of the user's engines. Tunnel-backed engines (public access) are
- * keyed by their rendezvous server id — their base URL rotates with the
- * tunnel — while plain engines stay keyed by base URL.
+ * keyed by their rendezvous server id - their base URL rotates with the
+ * tunnel - while plain engines stay keyed by base URL.
  */
 export const save = mutation({
   args: {
@@ -75,6 +75,20 @@ export const save = mutation({
     const baseUrl = normalizeBaseUrl(args.baseUrl);
     if (!/^https?:\/\//.test(baseUrl)) {
       throw new Error("Server base URL must be http(s).");
+    }
+    let hostname = "";
+    try {
+      hostname = new URL(baseUrl).hostname.toLowerCase();
+    } catch {
+      throw new Error("Server base URL must be http(s).");
+    }
+    if (
+      hostname === "cesium.techlitnow.com" ||
+      hostname === "www.cesium.techlitnow.com"
+    ) {
+      throw new Error(
+        "cesium.techlitnow.com is the Cesium account site, not an engine."
+      );
     }
     const rendezvous = args.rendezvous ? validateRendezvous(args.rendezvous) : undefined;
     const now = Date.now();

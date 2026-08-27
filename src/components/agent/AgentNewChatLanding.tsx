@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import {
   Check,
   ChevronDown,
+  CircleUserRound,
   Cloud,
   Folder,
   FolderGit2,
@@ -43,14 +44,25 @@ import type {
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
   CHAT_UI_SHORTCUT_EVENT,
   isChatUiShortcutEvent,
 } from "@/lib/chat-ui-shortcut-events";
-import { resolveGroupWorkspaceAppearanceKey } from "@/lib/workspace-rail-appearance";
+import { resolveGroupWorkspaceAppearanceKey, WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
+import {
+  getServerDisplayLabel,
+  getServerRailAppearance,
+  isLocalDeviceServer,
+} from "@/lib/server-rail-appearance";
+import {
+  getLastWorkspaceForServer,
+  rememberLastWorkspaceForServer,
+} from "@/lib/per-server-workspace-memory";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
   NO_WORKSPACE_PICKER_LABEL,
@@ -99,6 +111,7 @@ export function AgentNewChatLanding({
     switchBranch,
     createWorktree,
     homeWorkspaceId,
+    activeWorkspaceId,
   } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -106,10 +119,12 @@ export function AgentNewChatLanding({
     groups,
     refreshConversationGroups,
     setStandaloneDraftActive,
+    setRailFilterToggle,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
-  const { activeServer, servers, setActiveServer } = useServerConnections();
-  const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
+  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { workspaces: directoryWorkspaces, byServerId: directoryByServerId } =
+    useWorkspaceDirectory();
 
   const {
     backends,
@@ -135,20 +150,75 @@ export function AgentNewChatLanding({
     handleSubmit,
     activeCloudDevice,
   } = useAgentDraftComposer({ onInstantSubmit });
+  const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
 
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
   );
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
+  const serverRailAppearances = settings.general.serverRailAppearances;
+  const activeServerAppearance = useMemo(
+    () =>
+      getServerRailAppearance(
+        serverRailAppearances,
+        activeServer.id,
+        servers.findIndex((server) => server.id === activeServer.id)
+      ),
+    [activeServer.id, serverRailAppearances, servers]
+  );
+  const activeDeviceLabel = activeCloudDevice?.label ?? getServerDisplayLabel(
+    activeServer,
+    activeServerAppearance
+  );
+
+  const handleActiveServerChange = useCallback(
+    (serverId: string) => {
+      if (activeCloudDevice) {
+        setRailFilterToggle("cloud", false);
+      }
+      setActiveCloudDeviceId(null);
+      if (serverId === activeServer.id) {
+        setDevicePickerOpen(false);
+        return;
+      }
+      if (activeWorkspaceId) {
+        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
+      }
+      setActiveServer(serverId);
+      setDevicePickerOpen(false);
+      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
+      const serverWorkspaces = directoryByServerId.get(serverId) ?? [];
+      const targetWorkspaceId =
+        restoredWorkspaceId &&
+        serverWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
+          ? restoredWorkspaceId
+          : serverWorkspaces[0]?.id;
+      if (targetWorkspaceId) {
+        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
+      }
+    },
+    [
+      activeCloudDevice,
+      activeServer.id,
+      activeWorkspaceId,
+      directoryByServerId,
+      openWorkspaceById,
+      setActiveCloudDeviceId,
+      setActiveServer,
+      setRailFilterToggle,
+    ]
+  );
 
   useRegisterDesignCaptureComposer(composerDraftId, 9);
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
   const branchPickerRef = useRef<HTMLButtonElement>(null);
   const workspacePickerRef = useRef<HTMLButtonElement>(null);
+  const devicePickerRef = useRef<HTMLButtonElement>(null);
   const branchPopoverRef = useRef<HTMLDivElement>(null);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [devicePickerOpen, setDevicePickerOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
@@ -426,6 +496,7 @@ export function AgentNewChatLanding({
       if (e.detail.target !== "workspacePicker") return;
       if (!workspacePickerRef.current) return;
       setBranchPickerOpen(false);
+      setDevicePickerOpen(false);
       setWorkspacePickerOpen(true);
     };
     window.addEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
@@ -447,6 +518,7 @@ export function AgentNewChatLanding({
                 data-perf="agent-codebase-picker-button"
                 onClick={() => {
                   setBranchPickerOpen(false);
+                  setDevicePickerOpen(false);
                   setWorkspacePickerOpen((open) => !open);
                 }}
                 className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
@@ -474,6 +546,35 @@ export function AgentNewChatLanding({
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              <button
+                ref={devicePickerRef}
+                type="button"
+                aria-label={`Switch device (${activeDeviceLabel})`}
+                aria-expanded={devicePickerOpen}
+                aria-haspopup="menu"
+                data-perf="agent-device-picker-button"
+                onClick={() => {
+                  setWorkspacePickerOpen(false);
+                  setBranchPickerOpen(false);
+                  setDevicePickerOpen((open) => !open);
+                }}
+                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                {activeCloudDevice ? (
+                  <Cloud className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
+                ) : isLocalDeviceServer(activeServer) ? (
+                  <CircleUserRound className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
+                ) : (
+                  <WorkspaceFolderIcon
+                    iconName={activeServerAppearance.icon}
+                    color={activeServerAppearance.color}
+                    className="size-[13px] shrink-0"
+                    strokeWidth={1.5}
+                  />
+                )}
+                <span className="max-w-[260px] min-w-0 shrink truncate">{activeDeviceLabel}</span>
+                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
+              </button>
               {!noWorkspaceDraft && !isHomeWorkspace ? (
               <button
                 ref={branchPickerRef}
@@ -482,6 +583,7 @@ export function AgentNewChatLanding({
                 data-perf="agent-branch-picker-button"
                 onClick={() => {
                   setWorkspacePickerOpen(false);
+                  setDevicePickerOpen(false);
                   setBranchPickerOpen((open) => !open);
                   void refreshGitStatus().catch(() => undefined);
                 }}
@@ -501,6 +603,7 @@ export function AgentNewChatLanding({
                   onClick={() => {
                     setWorkspacePickerOpen(false);
                     setBranchPickerOpen(false);
+                    setDevicePickerOpen(false);
                     setImportDialogOpen(true);
                   }}
                   className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
@@ -561,7 +664,7 @@ export function AgentNewChatLanding({
                 shellMxClass=""
                 draftAttachments={composerDraftAttachments}
                 onDraftAttachmentsChange={(next) =>
-                  // Do not pass `content` here — submit clears text then
+                  // Do not pass `content` here - submit clears text then
                   // immediately clears attachments; a stale `content`
                   // closure would resurrect the prompt in the composer.
                   upsertComposerDraft(composerDraftId, {
@@ -596,6 +699,26 @@ export function AgentNewChatLanding({
           ) : null}
         </div>
       </div>
+      <ServerPickerPopover
+        open={devicePickerOpen}
+        onClose={() => setDevicePickerOpen(false)}
+        anchorRef={devicePickerRef}
+        label="Switch device"
+        selectedServerId={activeServer.id}
+        servers={servers}
+        serverStatusById={serverStatusById}
+        serverRailAppearances={serverRailAppearances}
+        onSelect={handleActiveServerChange}
+        placement="below"
+        variant="device"
+        cloudDevices={cloudDevices}
+        selectedCloudDeviceId={activeCloudDevice?.id ?? null}
+        onSelectCloudDevice={(cloudDeviceId) => {
+          setActiveCloudDeviceId(cloudDeviceId);
+          setRailFilterToggle("cloud", true);
+          setDevicePickerOpen(false);
+        }}
+      />
       <WorkspacePickerMenu
         open={workspacePickerOpen}
         onClose={() => setWorkspacePickerOpen(false)}

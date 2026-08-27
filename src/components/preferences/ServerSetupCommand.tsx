@@ -75,9 +75,9 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
             Install a server
           </h3>
           <p className="mt-[4px] font-sans text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
-            Run this in the folder Cesium should access. It installs into{" "}
+            Run this on the machine Cesium should access. It installs into{" "}
             <span className="font-mono">~/.cesium</span>, starts immediately, and prints a secure
-            permanent Connect URL plus sign-in credentials.
+            permanent Connect URL plus sign-in credentials. Use this instead of SSH.
           </p>
         </div>
       </div>

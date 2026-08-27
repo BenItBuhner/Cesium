@@ -66,7 +66,7 @@ describe("cloud server sync helpers", () => {
     assert.notEqual(merged.state.activeServerId, inherited.id);
   });
 
-  test("merge is idempotent — a second application reports no change", () => {
+  test("merge is idempotent - a second application reports no change", () => {
     const first = mergeCloudServersIntoState(defaultState(), [
       { name: "Home desktop", baseUrl: "https://tunnel-1.lhr.life", rendezvous: LOCATOR },
       { name: "Plain remote", baseUrl: "https://engine.example.com" },
@@ -129,6 +129,40 @@ describe("cloud server sync helpers", () => {
     assert.equal(
       merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
       true
+    );
+  });
+
+  test("merge never inherits the Cesium account site as a server", () => {
+    const merged = mergeCloudServersIntoState(defaultState(), [
+      { name: "Account site", baseUrl: "https://cesium.techlitnow.com" },
+      { name: "Real engine", baseUrl: "https://engine.example.com" },
+    ]);
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl.includes("cesium.techlitnow.com")),
+      false
+    );
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
+      true
+    );
+  });
+
+  test("push payloads omit the Cesium account site", () => {
+    const payloads = buildCloudServerPushPayloads(
+      [
+        createServerConnection({
+          label: "Account site",
+          baseUrl: "https://engine.example.com",
+        }),
+      ],
+      () => null
+    );
+    assert.equal(payloads.length, 1);
+    assert.throws(() =>
+      createServerConnection({
+        label: "Banned",
+        baseUrl: "https://cesium.techlitnow.com",
+      })
     );
   });
 

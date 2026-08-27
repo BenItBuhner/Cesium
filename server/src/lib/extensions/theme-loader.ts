@@ -2,7 +2,7 @@
  * Loads color themes contributed by installed VS Code extensions and maps them
  * onto the three styling layers Cesium exposes:
  *
- *  1. webview CSS variables (`--vscode-*`) — the full workbench color table is
+ *  1. webview CSS variables (`--vscode-*`) - the full workbench color table is
  *     forwarded so extension webviews render exactly like they would in VS Code,
  *  2. Cesium UI tokens (`--bg-main`, `--text-primary`, ...) so the workbench
  *     itself re-skins, and

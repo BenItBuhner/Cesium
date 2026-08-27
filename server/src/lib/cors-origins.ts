@@ -2,7 +2,7 @@
  * RFC1918 / loopback browser origins for homelab deployments. When the API is
  * reached at a private LAN address but the Next.js UI is opened from another
  * workstation (different 192.168.x.x host), `ALLOWED_ORIGINS` is easy to get
- * wrong — the browser then blocks credentialed fetches with a generic
+ * wrong - the browser then blocks credentialed fetches with a generic
  * "Failed to fetch" and workspace bootstrap never completes.
  */
 

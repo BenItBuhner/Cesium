@@ -186,7 +186,7 @@ function DiffPopoverContent({ insights }: { insights: WorkspaceInsights }) {
       ))}
       {insights.diff.truncated ? (
         <li className="pt-[4px] font-sans text-[10.5px] text-[var(--text-disabled)]">
-          List truncated — showing the largest {insights.diff.files.length} files.
+          List truncated - showing the largest {insights.diff.files.length} files.
         </li>
       ) : null}
     </ul>
@@ -274,7 +274,7 @@ function RunResultPopoverContent({ state }: { state: ActionRunState }) {
       {result?.kind === "prompt" ? (
         <div className="font-sans text-[11.5px] text-[var(--text-secondary)]">
           {result.queued
-            ? "Prompt queued — it will run when the current turn finishes."
+            ? "Prompt queued - it will run when the current turn finishes."
             : "Prompt sent to the conversation."}
         </div>
       ) : null}
@@ -541,7 +541,7 @@ export function ComposerActionPills({
               }`}
               title={
                 builtin.conflictsResolved
-                  ? "All merge conflicts resolved — ready to continue"
+                  ? "All merge conflicts resolved - ready to continue"
                   : `${conflictCount} conflicted file${conflictCount === 1 ? "" : "s"}`
               }
             >
@@ -588,7 +588,7 @@ export function ComposerActionPills({
                 setOpenPopover((open) => (open?.kind === "diff" ? null : { kind: "diff" }))
               }
               className={`${pillBaseClass} ${pillInteractiveClass}`}
-              title="Uncommitted changes — click for the per-file breakdown"
+              title="Uncommitted changes - click for the per-file breakdown"
             >
               <span className="font-mono tabular-nums text-[var(--status-success,#4ade80)]">
                 +{insights.diff.totalAdded}

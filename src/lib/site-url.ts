@@ -2,9 +2,9 @@
  * Canonical site origin for SEO metadata (robots, sitemap, metadataBase).
  *
  * Resolution order:
- * 1. `NEXT_PUBLIC_SITE_URL` — set this to the custom domain in production
+ * 1. `NEXT_PUBLIC_SITE_URL` - set this to the custom domain in production
  *    (e.g. https://cesium.techlitnow.com).
- * 2. `VERCEL_PROJECT_PRODUCTION_URL` — provided automatically by Vercel.
+ * 2. `VERCEL_PROJECT_PRODUCTION_URL` - provided automatically by Vercel.
  * 3. The committed production origin when building for production.
  * 4. localhost fallback for local development.
  */

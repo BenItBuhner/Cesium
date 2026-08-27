@@ -5,10 +5,8 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { DocsPageView } from "@/components/docs/DocsPageView";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -25,25 +23,6 @@ import {
 } from "@/components/mobile/BackIntentContext";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
-import { isDocsRoute } from "@/lib/open-documentation";
-
-function subscribeToDocsRoute(onStoreChange: () => void) {
-  const sync = () => onStoreChange();
-  window.addEventListener("popstate", sync);
-  window.addEventListener("cesium:desktop-navigation", sync);
-  return () => {
-    window.removeEventListener("popstate", sync);
-    window.removeEventListener("cesium:desktop-navigation", sync);
-  };
-}
-
-function readDocsRouteActive() {
-  return isDocsRoute();
-}
-
-function useDocsRouteActive() {
-  return useSyncExternalStore(subscribeToDocsRoute, readDocsRouteActive, () => false);
-}
 
 /** Peak inset of the Material predictive-back preview (scale at progress 1). */
 const SETTINGS_BACK_MIN_SCALE = 0.9;
@@ -58,7 +37,7 @@ function WorkbenchShell() {
 
   // Material-style predictive-back preview for the full-screen settings view:
   // as the Android back gesture progresses the surface scales down toward 90%,
-  // nudges in the swipe direction and rounds its corners — committing closes
+  // nudges in the swipe direction and rounds its corners - committing closes
   // it, cancelling animates it back to rest. Styles are written imperatively
   // (no per-frame React re-render), mirroring the drawer motion engine.
   const applySettingsBackPreview = useCallback(
@@ -178,11 +157,6 @@ export function WorkbenchApp({
   /** Optional; defaults to the same copy as WorkspaceProvider shell. */
   suspenseFallback?: ReactNode;
 }) {
-  const docsRouteActive = useDocsRouteActive();
-  if (docsRouteActive) {
-    return <DocsPageView />;
-  }
-
   return (
     <Suspense fallback={suspenseFallback ?? <LoadingFallback />}>
       <BackIntentProvider>

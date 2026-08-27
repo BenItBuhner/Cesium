@@ -101,7 +101,7 @@ export default function App() {
     new AgentStatusService({
       onProjection: (projection) => {
         // Socket projections are deferred to the web bridge while it is
-        // actively syncing — two sources deriving the same run differently
+        // actively syncing - two sources deriving the same run differently
         // must not fight over one notification.
         void liveUpdatesRef.current.updateFromSocket(projection);
         if (shouldForwardProjectionCatchUp(appStateRef.current)) {
@@ -130,7 +130,7 @@ export default function App() {
   // Keep the native predictive-back intercept armed exactly while the app has
   // something to pop in-app (an in-WebView layer or WebView history). The
   // Android dispatcher decides at gesture START who owns the gesture, so this
-  // must be pushed proactively on every capability/history change — it cannot
+  // must be pushed proactively on every capability/history change - it cannot
   // be resolved lazily at commit time.
   const syncBackIntercept = useCallback(() => {
     CesiumPredictiveBack.setBackInterceptEnabled(
@@ -178,7 +178,7 @@ export default function App() {
         authToken: nextAuthToken,
       });
       // Phone control does not care about the focused conversation, and a null
-      // workspace (web still booting) must not clobber the stored one — each
+      // workspace (web still booting) must not clobber the stored one - each
       // configure() restarts the native service, aborting in-flight
       // registrations and flapping the "Reconnecting…" notification.
       if (!nextFocused.workspaceId) {
@@ -337,7 +337,7 @@ export default function App() {
     refreshSafeAreaWithRetries();
     const dimensions = Dimensions.addEventListener("change", refreshSafeArea);
     // Push path: native re-emits from the window's own inset dispatch, which
-    // always follows a resume/re-attach — the authoritative recovery signal
+    // always follows a resume/re-attach - the authoritative recovery signal
     // when every polled read raced the window state.
     const insetsSubscription = CesiumWindowInsets.addChangeListener((snapshot) =>
       setSafeAreaTop(snapshot.safeAreaTop)
@@ -584,7 +584,7 @@ export default function App() {
       }
       if (message.type === "openExternalUrl") {
         // Open outside the WebView so the workbench (a file:// bundle) is not
-        // navigated away — OAuth / Sign In / Authenticate, F-Droid, docs, etc.
+        // navigated away - OAuth / Sign In / Authenticate, F-Droid, etc.
         openSystemBrowser(message.url);
         return;
       }
@@ -615,7 +615,7 @@ export default function App() {
         return;
       }
       // Legacy single-projection message from older web bundles. Ignored once
-      // the web sends full sets — mixing both would track the same run twice.
+      // the web sends full sets - mixing both would track the same run twice.
       if (message.type === "agentProjection") {
         if (!webSendsProjectionSetsRef.current) {
           void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
@@ -685,7 +685,7 @@ export default function App() {
           injectedJavaScriptBeforeContentLoaded={bootstrapScript}
           // onLoad only fires for successful loads. onLoadEnd fires after
           // failures too, which used to clear the error right after onError
-          // set it — leaving the stock WebView error page with no Retry UI.
+          // set it - leaving the stock WebView error page with no Retry UI.
           onLoad={() => {
             setLoadError(null);
           }}
@@ -743,7 +743,7 @@ export default function App() {
             );
           }}
           // Android defaults to OVER_SCROLL_ALWAYS, which plays the edge
-          // effect (stretch on 12+, glow before) on every fling — even on
+          // effect (stretch on 12+, glow before) on every fling - even on
           // screens with nothing to scroll, like the new-chat landing. The
           // workbench root never scrolls; real scrolling lives in inner web
           // panes, which Android never decorates with the edge effect.

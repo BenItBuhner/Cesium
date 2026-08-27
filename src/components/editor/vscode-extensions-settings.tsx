@@ -44,7 +44,6 @@ import {
   type ExtensionThemeDescriptor,
 } from "@/lib/server-api";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -410,9 +409,8 @@ export function VscodeExtensionsSettingsPanel() {
       <SettingsNestedBreadcrumbs
         parentNav="plugins"
         parentLabel="Integrations"
-        label="Extensions"
+        label="VS Code Extensions"
       />
-      <PageIntro title="VS Code Extensions" />
       {error ? (
         <SettingsCallout tone="danger" className="mb-[12px] px-[2px]">
           {error}

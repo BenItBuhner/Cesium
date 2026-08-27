@@ -1,7 +1,7 @@
 import type { ChatMessage } from "@/lib/types";
 
 /**
- * @deprecated Use {@link buildMessageThreadSegments} — flat rows break `position: sticky` for
+ * @deprecated Use {@link buildMessageThreadSegments} - flat rows break `position: sticky` for
  * user headers because the assistant lives in a sibling block; turns group user + tail together.
  */
 export type MessageThreadRow =

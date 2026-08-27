@@ -343,7 +343,7 @@ function renderHeading(level: 1 | 2 | 3 | 4 | 5 | 6, text: string) {
 /**
  * Value equality for parsed blocks. Parsing recreates every block object on
  * each streaming flush, so the memoized block component compares contents
- * instead of identity — only the block whose text actually changed (almost
+ * instead of identity - only the block whose text actually changed (almost
  * always the trailing one mid-stream) re-renders its inline nodes and DOM.
  */
 function markdownBlocksEqual(a: MarkdownBlock, b: MarkdownBlock): boolean {

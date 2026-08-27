@@ -1,6 +1,7 @@
 "use client";
 
 export const RENDEZVOUS_FRAGMENT_KEY = "cesiumConnect";
+export const CONNECT_SESSION_FRAGMENT_KEY = "cesiumSession";
 
 export type RendezvousLocator = {
   version: 1;
@@ -146,16 +147,38 @@ export function parseRendezvousBootstrapHash(hash: string): RendezvousBootstrap 
   }
 }
 
+export function parseConnectSessionHash(hash: string): string | null {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const token = new URLSearchParams(raw).get(CONNECT_SESSION_FRAGMENT_KEY)?.trim();
+  return token || null;
+}
+
+export function attachSessionTokenToConnectUrl(
+  connectUrl: string,
+  sessionToken: string
+): string {
+  const token = sessionToken.trim();
+  if (!token) {
+    throw new Error("Session token is required.");
+  }
+  const url = new URL(connectUrl);
+  const params = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  params.set(CONNECT_SESSION_FRAGMENT_KEY, token);
+  url.hash = params.toString();
+  return url.toString();
+}
+
 export function stripRendezvousBootstrapFromLocation(): void {
   if (typeof window === "undefined") {
     return;
   }
   const url = new URL(window.location.href);
   const params = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
-  if (!params.has(RENDEZVOUS_FRAGMENT_KEY)) {
+  if (!params.has(RENDEZVOUS_FRAGMENT_KEY) && !params.has(CONNECT_SESSION_FRAGMENT_KEY)) {
     return;
   }
   params.delete(RENDEZVOUS_FRAGMENT_KEY);
+  params.delete(CONNECT_SESSION_FRAGMENT_KEY);
   url.hash = params.toString();
   window.history.replaceState(
     window.history.state,

@@ -2,6 +2,7 @@
 
 import {
   getServerConnectionKey,
+  isCesiumAccountSiteUrl,
   normalizeRendezvousLocator,
   upsertServerConnection,
   type RendezvousLocator,
@@ -15,7 +16,7 @@ import {
  * A user's engines live in the cloud `servers` table so every signed-in
  * client inherits them. Tunnel-backed engines (shared via public access)
  * carry a rendezvous locator: their base URL rotates with the tunnel, so the
- * locator — not the URL — is their cross-device identity, and inheriting
+ * locator - not the URL - is their cross-device identity, and inheriting
  * clients re-resolve the live endpoint from the rendezvous registry.
  */
 
@@ -102,6 +103,9 @@ export function mergeCloudServersIntoState(
   const beforeSignature = serverConnectionsSignature(state);
   let next = state;
   for (const cloudServer of cloudServers) {
+    if (isCesiumAccountSiteUrl(cloudServer.baseUrl)) {
+      continue;
+    }
     let locator: RendezvousLocator | null = null;
     if (cloudServer.rendezvous) {
       try {
@@ -165,6 +169,9 @@ export function buildCloudServerPushPayloads(
 ): CloudServerPushPayload[] {
   const payloads: CloudServerPushPayload[] = [];
   for (const server of servers) {
+    if (isCesiumAccountSiteUrl(server.baseUrl)) {
+      continue;
+    }
     const sessionToken = getSessionToken(server.baseUrl);
     payloads.push({
       name: server.label,
@@ -186,7 +193,7 @@ export function buildCloudServerPushPayloads(
   return payloads;
 }
 
-/** Servers present before but gone now — i.e. removed locally this session. */
+/** Servers present before but gone now - i.e. removed locally this session. */
 export function diffRemovedCloudServers(
   previous: ServerConnection[],
   next: ServerConnection[]

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { CheckCircle2, Loader2, Server } from "lucide-react";
 import {
   assertEngineConnectionAllowed,
+  CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE,
+  isCesiumAccountSiteUrl,
   REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
   getConfiguredServerBaseUrl,
   getStoredSessionToken,
@@ -23,7 +25,7 @@ import {
 } from "@/lib/onboarding/engine-api";
 
 /**
- * Step 1 — connect your first engine. Verifies the URL with `/health`,
+ * Step 1 - connect your first engine. Verifies the URL with `/health`,
  * handles password-protected engines via the session-token flow, persists the
  * connection locally, and mirrors it (token included) to the cloud so any
  * future device reconnects instantly.
@@ -34,7 +36,10 @@ export function ConnectServerStep({
   onConnected: (baseUrl: string) => void;
 }) {
   const cloud = useCloudContext();
-  const [baseUrlInput, setBaseUrlInput] = useState(getConfiguredServerBaseUrl());
+  const [baseUrlInput, setBaseUrlInput] = useState(() => {
+    const configured = getConfiguredServerBaseUrl();
+    return isCesiumAccountSiteUrl(configured) ? "" : configured;
+  });
   const [name, setName] = useState("");
   const [phase, setPhase] = useState<"idle" | "checking" | "needs-auth" | "connected">(
     "idle"
@@ -78,6 +83,11 @@ export function ConnectServerStep({
     let baseUrl: string;
     try {
       baseUrl = normalizeServerBaseUrl(rawUrl);
+      if (isCesiumAccountSiteUrl(baseUrl)) {
+        setError(CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE);
+        setPhase("idle");
+        return;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("idle");
@@ -140,7 +150,7 @@ export function ConnectServerStep({
           </p>
           <p className="text-[12.5px] text-[var(--text-secondary)]">
             {cloud.actions
-              ? "Saved to your cloud account — future devices reconnect automatically."
+              ? "Saved to your cloud account - future devices reconnect automatically."
               : "Saved on this device."}
           </p>
         </div>

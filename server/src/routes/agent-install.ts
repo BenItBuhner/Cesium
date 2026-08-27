@@ -16,7 +16,7 @@ export const agentInstallRoutes = new Hono();
 
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 
-/** Serialize installs — a second concurrent global npm install would race. */
+/** Serialize installs - a second concurrent global npm install would race. */
 let installInFlight: Promise<unknown> | null = null;
 
 /**

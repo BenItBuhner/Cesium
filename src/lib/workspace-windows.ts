@@ -44,7 +44,7 @@ function defaultWorkspaceRoute(): WorkspaceScopedRoute {
   if (isFileProtocolRenderer()) {
     const path = window.location.pathname || "/";
     // Before the desktop shim navigates, pathname can still be the packaged
-    // `index.html` path — using that as a URL base breaks `new URL(route, base)`.
+    // `index.html` path - using that as a URL base breaks `new URL(route, base)`.
     // Only Electron remaps `/agent` back to the bundle; other file renderers
     // (Android WebView) must keep the on-disk path or reloads 404.
     if (

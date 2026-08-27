@@ -5,8 +5,8 @@
  *   npm run mcp:probe --prefix server
  *
  * Optional env:
- *   NVAPI_KEY / NVIDIA_API_KEY — stored for probe if not already in DATA_DIR
- *   MCP_PROBE_SKIP_LLM=1 — MCP-only (faster)
+ *   NVAPI_KEY / NVIDIA_API_KEY - stored for probe if not already in DATA_DIR
+ *   MCP_PROBE_SKIP_LLM=1 - MCP-only (faster)
  *   MCP_PROBE_MODEL=nvidia/minimaxai/minimax-m2.7
  */
 import "../src/env-bootstrap.js";

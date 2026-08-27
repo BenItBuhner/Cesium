@@ -19,7 +19,6 @@ import {
   type UsageSeriesPoint,
 } from "@/lib/server-api";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -109,7 +108,7 @@ function formatDateShort(ts: number): string {
 
 function formatRelativeTime(iso: string, nowMs: number): string {
   const deltaMs = nowMs - Date.parse(iso);
-  if (!Number.isFinite(deltaMs)) return "—";
+  if (!Number.isFinite(deltaMs)) return "-";
   const minutes = Math.round(deltaMs / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
@@ -183,7 +182,7 @@ function aggregateSeries(
       bucketIndex += 1;
     }
     // Points are sorted; a point older than the current bucket means we
-    // advanced past it while scanning an earlier point — rewind linearly.
+    // advanced past it while scanning an earlier point - rewind linearly.
     while (bucketIndex > 0 && point.ts < starts[bucketIndex]!) {
       bucketIndex -= 1;
     }
@@ -690,7 +689,7 @@ function LimitWindowPanel({
     if (isPercent) {
       const hitAt = projection.hitAt(100);
       if (hitAt !== null && resetsAtMs !== null && hitAt < resetsAtMs) {
-        return `At the current pace this window hits 100% around ${formatClock(hitAt)} — before it resets.`;
+        return `At the current pace this window hits 100% around ${formatClock(hitAt)} - before it resets.`;
       }
       if (resetsAtMs !== null) {
         return `On pace for ≈${formatPercent(Math.min(100, projection.projected))} by reset (${formatClock(resetsAtMs)}).`;
@@ -699,13 +698,13 @@ function LimitWindowPanel({
     }
     const pace = `Burning ≈${formatTokens(projection.slopePerHour)} tokens/h`;
     if (resetsAtMs !== null) {
-      return `${pace} — on pace for ≈${formatTokens(projection.projected)} tokens by reset (${formatClock(resetsAtMs)}).`;
+      return `${pace} - on pace for ≈${formatTokens(projection.projected)} tokens by reset (${formatClock(resetsAtMs)}).`;
     }
     return `${pace} over the current window.`;
   }, [isPercent, projection, resetsAtMs]);
 
   // The chart *is* the meter: one prominent pressure-colored readout in the
-  // header, one chart below — never both a bar and a graph of the same value.
+  // header, one chart below - never both a bar and a graph of the same value.
   const windowTokens = !isPercent ? (chartData[chartData.length - 1]?.value ?? 0) : 0;
   const chartColor = isPercent
     ? meterColor(limitWindow.usedPercent ?? 0)
@@ -1134,7 +1133,6 @@ export function UsageSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Usage" />
-      <PageIntro title="Usage" />
       <div
         className="mb-[18px] flex flex-wrap items-center justify-between gap-x-[12px] gap-y-[8px]"
         data-settings-search-id="usage-tabs"
@@ -1233,7 +1231,7 @@ export function UsageSettingsPanel() {
             <SummaryStat label="Requests" value={summary.requests.toLocaleString()} hint="30d" />
             <SummaryStat
               label="Known spend"
-              value={summary.cost !== null ? formatCost(summary.cost) : "—"}
+              value={summary.cost !== null ? formatCost(summary.cost) : "-"}
               hint="30d"
             />
             <SummaryStat

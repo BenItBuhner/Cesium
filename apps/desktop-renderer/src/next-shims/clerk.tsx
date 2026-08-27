@@ -5,7 +5,7 @@
  * (`next/headers`, RedirectType redirects) that cannot bundle into the
  * Vite-built Electron/Android/iOS workbench. Everything the shared client
  * code actually uses is the React surface, which `@clerk/react` provides
- * without any Next.js dependency — so this adapter re-exports the real
+ * without any Next.js dependency - so this adapter re-exports the real
  * components and hooks instead of inert stubs. Cloud mode (Convex + Clerk)
  * therefore works identically in the packaged apps and the hosted web app,
  * resolved from build env or the committed defaults in

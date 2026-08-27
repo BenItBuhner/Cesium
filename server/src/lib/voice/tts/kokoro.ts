@@ -9,7 +9,7 @@ import {
 } from "./types.js";
 
 /**
- * Kokoro-82M ONNX (Apache-2.0) through kokoro-js — the blueprint's
+ * Kokoro-82M ONNX (Apache-2.0) through kokoro-js - the blueprint's
  * "best zero-cost/local default". Runs on CPU under Bun; the ~90 MB q8 model
  * is fetched from Hugging Face on first use and cached, so the engine is
  * `available` as soon as the module resolves but only `ready` after the

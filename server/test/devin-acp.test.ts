@@ -33,7 +33,7 @@ test("devin acp resolves OPENCURSOR_DEVIN_CLI_BIN and marks backend available", 
   delete process.env.OPENCURSOR_DEVIN_CLI_ARGS;
 
   try {
-    // providers.ts resolves CLI paths at module load — isolate via a fresh import
+    // providers.ts resolves CLI paths at module load - isolate via a fresh import
     // by busting the cache with a query (Bun/Node ESM cache key is the URL).
     const cacheBust = `?devin-bin=${Date.now()}`;
     const { AGENT_BACKENDS, createAgentProvider } = await import(

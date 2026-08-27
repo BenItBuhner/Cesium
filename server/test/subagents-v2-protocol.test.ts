@@ -110,7 +110,7 @@ test("wait_agent updates are scoped to the direct spawner", async () => {
   assert.equal(rootWait.timed_out, false);
   assert.ok(rootWait.agents_with_updates?.includes("/root/worker"));
 
-  // A different caller (the child itself) has no children — its wait times out
+  // A different caller (the child itself) has no children - its wait times out
   // instead of stealing updates addressed to /root.
   await runtime.spawnAgent({ task_name: "worker_two", message: "work" });
   const childWait = JSON.parse(

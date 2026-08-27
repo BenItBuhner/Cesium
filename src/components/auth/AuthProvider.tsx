@@ -77,7 +77,7 @@ async function fetchAuth(
  * disconnect/reconnect UX with toasts.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { activeServer } = useServerConnections();
+  const { activeServer, hasServer } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
@@ -86,14 +86,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [hasServerStatus, setHasServerStatus] = useState(false);
   /**
    * Server id whose auth status has been resolved (successfully or not) at
-   * least once. Re-checks for the same server — including rendezvous base-URL
-   * re-resolves — must not reset `ready`.
+   * least once. Re-checks for the same server - including rendezvous base-URL
+   * re-resolves - must not reset `ready`.
    */
   const resolvedServerIdRef = useRef<string | null>(null);
   /** Server id for which a real auth-status response has been received. */
   const serverStatusServerIdRef = useRef<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
+    if (!hasServer) {
+      setEnabled(false);
+      setAuthenticated(false);
+      setSession(null);
+      setConnectionError(null);
+      setHasServerStatus(false);
+      return;
+    }
     const resolvedBaseUrl = resolveClientServerBaseUrl();
     const response = await fetchAuth(activeServer.baseUrl, resolvedBaseUrl, "/api/auth/status");
     syncAuthTokenFromResponse(response, activeServer.baseUrl);
@@ -121,10 +129,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearStoredAuth(activeServer.baseUrl);
     }
     setConnectionError(null);
-  }, [activeServer.baseUrl, activeServer.id]);
+  }, [activeServer, hasServer]);
 
   useEffect(() => {
     let cancelled = false;
+
+    if (!hasServer) {
+      resolvedServerIdRef.current = null;
+      serverStatusServerIdRef.current = null;
+      setHasServerStatus(false);
+      setEnabled(false);
+      setAuthenticated(false);
+      setSession(null);
+      setConnectionError(null);
+      setReady(true);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     // Switching to a *different server* is a real context change: forget what
     // we knew about the previous server. A base-URL update for the same server
@@ -196,9 +218,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [activeServer.baseUrl, activeServer.id, refreshAuthStatus]);
+  }, [activeServer, hasServer, refreshAuthStatus]);
 
   const logout = useCallback(async () => {
+    if (!hasServer) {
+      setAuthenticated(false);
+      setSession(null);
+      setConnectionError(null);
+      return;
+    }
     try {
       const response = await fetchAuth(activeServer.baseUrl, resolveClientServerBaseUrl(), "/api/auth/logout", {
         method: "POST",
@@ -214,7 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null);
       setConnectionError(null);
     }
-  }, [activeServer.baseUrl]);
+  }, [activeServer, hasServer]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

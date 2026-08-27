@@ -204,7 +204,7 @@ class CesiumAccessibilityService : AccessibilityService() {
       }
       val onDefaultDisplay = displayId < 0 || displayId == Display.DEFAULT_DISPLAY
       // 1) On the active display, dispatch a real coordinate gesture at the node
-      //    center — this most reliably triggers navigation. But only when the
+      //    center - this most reliably triggers navigation. But only when the
       //    node (or an ancestor) reports sane, on-screen bounds: some widgets
       //    (Settings' collapsing-toolbar rows) report a negative/off-screen rect
       //    mid-relayout, and tapping that would miss. Climb parents to find a

@@ -10,7 +10,7 @@
  *   damped spring toward the target, so movement is snappy but has weight.
  * - Swipe gestures pin the drawer to the finger 1:1 while dragging; on
  *   release the spring finishes the motion, seeded with the flick velocity.
- *   Touching mid-animation grabs the drawer wherever it currently is —
+ *   Touching mid-animation grabs the drawer wherever it currently is -
  *   everything is interruptible.
  * - Frames are written imperatively (transform / opacity on refs), so no
  *   React re-render happens per frame. Transforms use percentages of the
@@ -18,7 +18,7 @@
  *
  * Gesture rules (deliberately conservative so content interactions never
  * fight the shell):
- * - Right pane open with tabs: no swipe gestures — it hosts web pages, files
+ * - Right pane open with tabs: no swipe gestures - it hosts web pages, files
  *   and terminals the user is actively touching.
  * - Right pane open with zero tabs: swipe right closes it, same physics as
  *   the other overlays.

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { createCipheriv, createHash } from "node:crypto";
 import { afterEach, describe, test } from "node:test";
 import {
+  attachSessionTokenToConnectUrl,
   decodeRendezvousBootstrap,
   decryptRendezvousCiphertext,
   encodeRendezvousBootstrap,
+  parseConnectSessionHash,
   parseRendezvousBootstrapHash,
   resolveRendezvousEndpoint,
   type RendezvousLocator,
@@ -57,6 +59,24 @@ describe("rendezvous client protocol", () => {
       parseRendezvousBootstrapHash(`#cesiumConnect=${encoded}`),
       decoded
     );
+  });
+
+  test("attaches a session token to a connect URL without exposing it in the query", () => {
+    const encoded = encodeRendezvousBootstrap({
+      ...locator,
+      initialBaseUrl: "https://first-tunnel.example/",
+      label: "Home server",
+    });
+    const connectUrl = `https://cesium.example/agent#cesiumConnect=${encoded}`;
+    const signedIn = attachSessionTokenToConnectUrl(connectUrl, "sess_abc123");
+    const parsed = new URL(signedIn);
+    assert.equal(parsed.search, "");
+    assert.equal(parseConnectSessionHash(parsed.hash), "sess_abc123");
+    assert.deepEqual(parseRendezvousBootstrapHash(parsed.hash), {
+      ...locator,
+      initialBaseUrl: "https://first-tunnel.example",
+      label: "Home server",
+    });
   });
 
   test("decrypts an authenticated endpoint bound to the server identity", async () => {

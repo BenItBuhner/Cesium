@@ -23,8 +23,8 @@ import type {
 
 /**
  * Codex CLI usage: rollout files under ~/.codex/sessions carry `token_count`
- * event_msg records with cumulative + per-request token usage and — on
- * ChatGPT-plan accounts — point-in-time `rate_limits` snapshots (primary =
+ * event_msg records with cumulative + per-request token usage and - on
+ * ChatGPT-plan accounts - point-in-time `rate_limits` snapshots (primary =
  * 5h window, secondary = weekly window). This is exactly what Codex Meter
  * reads; we fold it into the shared report shape.
  */

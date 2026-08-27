@@ -1,5 +1,5 @@
 /**
- * /ws/extensions — realtime push channel for the VS Code extension runtime.
+ * /ws/extensions - realtime push channel for the VS Code extension runtime.
  *
  * One socket per (client, workspace). Replaces the old 1s HTTP polling loop:
  * surface events (webview messages/html/theme/tree) and workspace events

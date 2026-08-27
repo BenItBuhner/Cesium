@@ -79,7 +79,7 @@ function isSafeUploadsPath(savedPath: string): boolean {
  * attachments were persisted inside the workspace. Returns `null` when no
  * attachment carries a saved uploads path.
  *
- * Only paths inside `.cesium/file-uploads/` are surfaced — `savedPath` is
+ * Only paths inside `.cesium/file-uploads/` are surfaced - `savedPath` is
  * client-provided, so anything outside the uploads directory is ignored.
  */
 export function buildAttachmentsReminderText(

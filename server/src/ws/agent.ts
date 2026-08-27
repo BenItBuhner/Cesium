@@ -375,7 +375,7 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
               conversationId,
               sinceSeq
             );
-            // Recovery deltas are never dropped for backpressure — the client
+            // Recovery deltas are never dropped for backpressure - the client
             // asked precisely because earlier droppable frames were lost.
             for (let i = 0; i < replay.length; i += MAX_EVENT_BATCH_EVENTS) {
               send(ws, {

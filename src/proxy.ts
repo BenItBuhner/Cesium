@@ -10,11 +10,11 @@ import {
  *
  * - Local-only / device-mode builds (including the Electron desktop app, or
  *   any build with the `NEXT_PUBLIC_CESIUM_CLOUD=0` kill switch): every
- *   request passes straight through — identical to pre-cloud behavior.
+ *   request passes straight through - identical to pre-cloud behavior.
  * - Clerk mode: Clerk's handler runs. With
  *   `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1`, workbench routes require a
  *   signed-in user (public production posture) while the marketing surface
- *   (landing, download, docs), the auth pages themselves, and
+ *   (landing, download), the auth pages themselves, and
  *   machine-to-machine APIs (engine rendezvous) stay public; otherwise
  *   sign-in stays optional and only powers sync.
  */
@@ -23,16 +23,15 @@ const requireSignIn = isSignInRequired();
 
 /**
  * Routes that must stay reachable signed-out even in the gated posture:
- * - `/`, `/download`, `/docs` — the public marketing/documentation surface.
- * - `/sign-in`, `/sign-up` — the Clerk pages (gating these would loop).
- * - `/api/rendezvous` — engines (curl, no browser session) publish here.
- * - `/api/releases` — powers the download page for signed-out visitors.
- * - `/~offline`, `/manifest.json` — PWA plumbing fetched without credentials.
+ * - `/`, `/download` - the public marketing surface.
+ * - `/sign-in`, `/sign-up` - the Clerk pages (gating these would loop).
+ * - `/api/rendezvous` - engines (curl, no browser session) publish here.
+ * - `/api/releases` - powers the download page for signed-out visitors.
+ * - `/~offline`, `/manifest.json` - PWA plumbing fetched without credentials.
  */
 const isPublicRoute = createRouteMatcher([
   "/",
   "/download(.*)",
-  "/docs(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/rendezvous(.*)",

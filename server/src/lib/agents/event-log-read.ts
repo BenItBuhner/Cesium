@@ -21,7 +21,7 @@ export const TAIL_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 /** Beyond this, full read is avoided; tail uses expanding chunks and history uses streaming + trim. */
 export const EVENT_LOG_FULL_READ_MAX_BYTES = 4 * 1024 * 1024;
 
-/** CLI / provider transcript context — bounded so multimillion-event logs cannot OOM the heap. */
+/** CLI / provider transcript context - bounded so multimillion-event logs cannot OOM the heap. */
 export const PROMPT_CONTEXT_LIMIT_TURNS = 250;
 export const PROMPT_CONTEXT_LIMIT_EVENTS = 20_000;
 
@@ -431,7 +431,7 @@ export async function readConversationEventHistoryPage(
 }
 
 /**
- * Events with seq > since — optimized tail read when `since` is near the end of the log.
+ * Events with seq > since - optimized tail read when `since` is near the end of the log.
  */
 export async function readConversationEventsSinceEfficient(
   filePath: string,

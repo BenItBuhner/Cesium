@@ -250,7 +250,7 @@ async function appendOpenCodeTodoPlanIfNeeded(
 
 /**
  * Declares what the Cesium Node client can delegate when the agent asks.
- * Defaults are conservative. For headless / CI, Cursor may require overrides —
+ * Defaults are conservative. For headless / CI, Cursor may require overrides -
  * set `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` (partial JSON merged on top).
  */
 function buildAcpClientCapabilities(): Record<string, unknown> {
@@ -453,7 +453,7 @@ async function runAcpTransportBootstrap(
           messages.push(`OpenCode ACP authentication: ${note}`);
         }
       } catch {
-        // Auth failed (e.g. not logged in) — silent; the ACP transport itself will
+        // Auth failed (e.g. not logged in) - silent; the ACP transport itself will
         // surface any action the user needs to take through its normal protocol flow.
       }
     } else if (id === "devin-browser") {
@@ -767,7 +767,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
       // - `cwd` and `mcpServers` are required
       // - `mcpServers` must be an array (empty is fine)
       //
-      // Do NOT "compat" by dropping keys — that produces unrelated -32603 schema errors
+      // Do NOT "compat" by dropping keys - that produces unrelated -32603 schema errors
       // and makes retries look like random failures.
       const workspaceRoot = input.callbacks.workspace.root;
       let workspaceRootReal = workspaceRoot;
@@ -1826,7 +1826,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
         toolKey: permissionSignature.toolKey,
         toolLabel: permissionSignature.toolLabel,
       });
-      const statusDetail = detail ? `${title} — ${detail}` : title;
+      const statusDetail = detail ? `${title} - ${detail}` : title;
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),

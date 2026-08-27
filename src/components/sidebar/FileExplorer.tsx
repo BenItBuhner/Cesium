@@ -1213,7 +1213,7 @@ export function FileExplorer() {
               </p>
             </div>
             <p className="mt-[12px] font-sans text-[12px] leading-relaxed text-[var(--text-disabled)]">
-              Commit, branch, and diff views would appear here—same layout as VS Code’s SCM sidebar.
+              Commit, branch, and diff views would appear here-same layout as VS Code’s SCM sidebar.
             </p>
           </div>
         )}

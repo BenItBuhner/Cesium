@@ -127,7 +127,7 @@ function buildGuestScriptSource(): string {
   }
 
   function reflowHighlight() {
-    // Called on scroll/resize — reposition without animating so the box tracks
+    // Called on scroll/resize - reposition without animating so the box tracks
     // the user's scroll instead of lagging behind.
     if (!hoverTarget || !highlightBox) return;
     var prev = highlightBox.style.transition;
@@ -246,20 +246,20 @@ function buildGuestScriptSource(): string {
   }
 
   function encodeProxyHref(targetHref) {
-    // PASS 1 — treat the input as proxy-origin-relative first.
+    // PASS 1 - treat the input as proxy-origin-relative first.
     //
     // Pages frequently read \`window.location.pathname\` / \`.search\` and
     // feed the result back into \`pushState\` / \`replaceState\` / link-building
     // (e.g. Google calls \`history.replaceState({}, '', location.pathname)\`
     // to strip the \`?gws_rd=ssl\` param). From inside the iframe,
-    // \`location.pathname\` is our proxy path — \`/browser/https/www.google.com/\` —
+    // \`location.pathname\` is our proxy path - \`/browser/https/www.google.com/\` -
     // not \`/\`. If we resolve that against the upstream URL as base and
     // re-wrap it, we get a NESTED proxy URL like
     // \`/browser/https/www.google.com/browser/https/www.google.com/\`, and
     // downstream the real upstream returns its own 404 for that literal path.
     //
-    // So always first check: does this URL — resolved against our proxy
-    // origin — already ENCODE a proxy path? If yes, just return the normalised
+    // So always first check: does this URL - resolved against our proxy
+    // origin - already ENCODE a proxy path? If yes, just return the normalised
     // proxy URL. Covers:
     //   * '/browser/https/www.google.com/?gws_rd=ssl' (relative proxy path)
     //   * 'http://localhost:9100/browser/https/www.google.com/foo' (absolute
@@ -278,7 +278,7 @@ function buildGuestScriptSource(): string {
       /* fall through to upstream-relative resolution */
     }
 
-    // PASS 2 — resolve as an upstream URL relative to the upstream context.
+    // PASS 2 - resolve as an upstream URL relative to the upstream context.
     var target;
     try {
       target = new URL(targetHref, decodeProxyTargetHref(location.href));
@@ -288,7 +288,7 @@ function buildGuestScriptSource(): string {
     var scheme = target.protocol.replace(':', '');
     var host = encodeURIComponent(target.host);
     var path = target.pathname === '' ? '/' : target.pathname;
-    // Drop the iframe-auth query param — it rides on the proxy URL, not the
+    // Drop the iframe-auth query param - it rides on the proxy URL, not the
     // upstream one; we don't want it encoded into the /browser/... path.
     var tp = new URLSearchParams(target.search || '');
     tp.delete('__ocs_access');
@@ -364,7 +364,7 @@ function buildGuestScriptSource(): string {
     // Server-side HTML rewrite handles static form[action] in the initial
     // document. This catches dynamic apps that mutate the action later, set
     // it via JS with a same-origin relative URL, or omit it entirely (which
-    // means "submit to the current URL" — the proxy URL from inside the
+    // means "submit to the current URL" - the proxy URL from inside the
     // iframe, which lands on a Hono route that doesn't exist → 404).
     document.addEventListener('submit', function(ev) {
       if (enabled) return;
@@ -384,7 +384,7 @@ function buildGuestScriptSource(): string {
         // Build the full GET URL manually (action + form data) so the
         // iframe navigates to the proxy version with the query encoded. The
         // browser's own GET submission would use the raw action against the
-        // iframe's proxy origin — producing /results?q=foo → Hono 404.
+        // iframe's proxy origin - producing /results?q=foo → Hono 404.
         ev.preventDefault();
         ev.stopPropagation();
         var params = new URLSearchParams();
@@ -405,7 +405,7 @@ function buildGuestScriptSource(): string {
         } catch (e) {}
         return;
       }
-      // POST / PUT / etc — rewrite action so the browser posts to the proxy.
+      // POST / PUT / etc - rewrite action so the browser posts to the proxy.
       try {
         form.setAttribute('action', encodeProxyHref(upstreamAction));
       } catch (e) {}
@@ -414,7 +414,7 @@ function buildGuestScriptSource(): string {
 
   function patchAnchorClicks() {
     // YouTube (and most React/Vue SPAs) build result cards, nav items, etc.
-    // at runtime with plain <a href="/foo"> — the initial HTML rewrite pass
+    // at runtime with plain <a href="/foo"> - the initial HTML rewrite pass
     // on the server misses these. Intercept clicks in the capture phase and
     // rewrite href to the proxy URL before the browser dispatches the nav.
     document.addEventListener('click', function(ev) {
@@ -437,7 +437,7 @@ function buildGuestScriptSource(): string {
       }
       try {
         var rewritten = encodeProxyHref(abs);
-        // Only touch the href if we'd actually change it — avoids fighting
+        // Only touch the href if we'd actually change it - avoids fighting
         // frameworks that already produced a proxy URL through some other
         // path.
         if (rewritten && rewritten !== el.href) {
@@ -513,7 +513,7 @@ function buildGuestScriptSource(): string {
       var origOpen = XMLHttpRequest.prototype.open;
       if (typeof origOpen !== 'function') return;
       XMLHttpRequest.prototype.open = function() {
-        // XHR.open(method, url, async?, user?, password?) — walk the args
+        // XHR.open(method, url, async?, user?, password?) - walk the args
         // array directly instead of relying on named params / arguments
         // aliasing, which doesn't work under 'use strict'.
         var args = Array.prototype.slice.call(arguments);
@@ -647,7 +647,7 @@ function buildGuestScriptSource(): string {
         var cur = (document.title || '').trim();
         // Only push on non-empty transitions. An empty title is almost
         // always a transient SPA state, not a user-meaningful value, and
-        // postNavState() drops the field anyway — but we avoid even queuing
+        // postNavState() drops the field anyway - but we avoid even queuing
         // a redundant send.
         if (cur && cur !== lastTitle) {
           lastTitle = cur;
@@ -664,7 +664,7 @@ function buildGuestScriptSource(): string {
   var VOID_TAGS = ['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'];
 
   function htmlToXhtml(s) {
-    // SVG foreignObject parses its content as XHTML — void tags MUST be
+    // SVG foreignObject parses its content as XHTML - void tags MUST be
     // self-closed or the SVG parser bails and the <img onload> never fires.
     for (var i = 0; i < VOID_TAGS.length; i++) {
       var t = VOID_TAGS[i];
@@ -722,7 +722,7 @@ function buildGuestScriptSource(): string {
   /**
    * Fetch url and resolve to a data: URL. Used to inline every
    * sub-resource (images, fonts, videos, etc.) into the serialized SVG so the
-   * foreignObject render is fully self-contained — no blob: base-URL
+   * foreignObject render is fully self-contained - no blob: base-URL
    * resolution pitfalls, no CORS tainting, no relative-path 404s.
    */
   function fetchAsDataUrl(url) {
@@ -788,13 +788,13 @@ function buildGuestScriptSource(): string {
         schedule(nodes[j], attr);
       }
     }
-    // Root-level <img>/<source>/<video> fixup — querySelectorAll skips the root itself.
+    // Root-level <img>/<source>/<video> fixup - querySelectorAll skips the root itself.
     if (root.tagName === 'IMG' && root.hasAttribute('src')) schedule(root, 'src');
     if (root.tagName === 'SOURCE' && root.hasAttribute('src')) schedule(root, 'src');
     if (root.tagName === 'VIDEO' && root.hasAttribute('poster')) schedule(root, 'poster');
     if (root.tagName === 'VIDEO' && root.hasAttribute('src')) schedule(root, 'src');
 
-    // srcset everywhere — each URL in the comma-list gets inlined.
+    // srcset everywhere - each URL in the comma-list gets inlined.
     var srcsetNodes;
     try { srcsetNodes = root.querySelectorAll('[srcset]'); } catch (e) { srcsetNodes = []; }
     var all = Array.prototype.slice.call(srcsetNodes);
@@ -848,7 +848,7 @@ function buildGuestScriptSource(): string {
   /**
    * Rewrite any url("http://…") references inside a clones computed inline
    * styles to url("data:…"). Catches backgrounds, list-style-images, masks,
-   * borders, etc. — anything a stylesheet would normally pull over the network.
+   * borders, etc. - anything a stylesheet would normally pull over the network.
    */
   function inlineInlineStyleUrls(root) {
     var tasks = [];
@@ -987,7 +987,7 @@ function buildGuestScriptSource(): string {
         }
       };
 
-      // Fire the two inlining passes in parallel — they touch disjoint
+      // Fire the two inlining passes in parallel - they touch disjoint
       // attribute sets so they can't step on each other.
       Promise.all([
         inlineResourceAttributes(clone),
@@ -1025,7 +1025,7 @@ function buildGuestScriptSource(): string {
     overlayBlocker.style.cssText =
       'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:transparent;';
     // Pointer events drive stroke detection (down/move/up). The click event
-    // is the canonical select-capture trigger — pointerdown/up can be skipped
+    // is the canonical select-capture trigger - pointerdown/up can be skipped
     // by synthetic event generators (test harnesses, some automation APIs)
     // but click is always delivered, so we key the capture off it.
     overlayBlocker.addEventListener('pointermove', onPointerMove, true);
@@ -1093,7 +1093,7 @@ function buildGuestScriptSource(): string {
       c.height = rect.height;
       var ctx = c.getContext('2d');
       if (!ctx) return null;
-      // Transparent background — parent composites this over the rendered
+      // Transparent background - parent composites this over the rendered
       // screenshot of the same rect.
       ctx.clearRect(0, 0, rect.width, rect.height);
       ctx.drawImage(
@@ -1189,14 +1189,14 @@ function buildGuestScriptSource(): string {
     var dy = ev.clientY - startY;
     var dist = Math.sqrt(dx * dx + dy * dy);
     if (dist >= dragThreshold) {
-      // User drew a stroke — finalize it. Suppress the subsequent click so it
+      // User drew a stroke - finalize it. Suppress the subsequent click so it
       // doesn't also trigger a select capture on top of the stroke capture.
       suppressNextClick = true;
       finalizeStroke();
       hideHighlight();
       return;
     }
-    // Short tap — the click listener will handle the select.
+    // Short tap - the click listener will handle the select.
     strokePoints = [];
     if (strokeCanvas) { strokeCanvas.remove(); strokeCanvas = null; strokeCtx = null; }
   }

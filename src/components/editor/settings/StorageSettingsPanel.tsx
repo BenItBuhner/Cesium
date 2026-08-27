@@ -14,7 +14,6 @@ import {
   type StorageStatusResponse,
 } from "@/lib/server-api";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -48,7 +47,7 @@ const STORAGE_PHASE_LABELS: Record<StorageMigrationPhase, string> = {
 
 function formatStorageStats(stats: StorageStatusResponse["drivers"]["pg"]): string {
   if (!stats.available || !stats.stats) {
-    return stats.error ? `unavailable — ${stats.error}` : "unavailable";
+    return stats.error ? `unavailable - ${stats.error}` : "unavailable";
   }
   const { workspaces, agentConversations, authSessions, providerCacheEntries } =
     stats.stats;
@@ -235,7 +234,6 @@ export function StorageSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Storage" />
-      <PageIntro title="Storage" />
       <SettingsSection
         title="Storage drivers"
         action={
@@ -385,7 +383,7 @@ export function StorageSettingsPanel() {
             <p className="font-sans text-[12px] text-[var(--text-secondary)]">
               {STORAGE_PHASE_LABELS[currentProgress.phase] ?? currentProgress.phase}
               {currentProgress.currentKey ? ` · ${currentProgress.currentKey}` : ""}
-              {" — "}
+              {" - "}
               {currentProgress.completed}
               {currentProgress.total === null ? "" : ` / ${currentProgress.total}`}
             </p>

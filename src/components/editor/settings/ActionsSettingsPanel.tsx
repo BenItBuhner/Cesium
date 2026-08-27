@@ -13,7 +13,6 @@ import {
   type QuickActionVisibility,
 } from "@cesium/core";
 import {
-  PageIntro,
   SettingsNestedBreadcrumbs,
   SettingsBlock,
   SettingsCallout,
@@ -183,7 +182,6 @@ export function ActionsSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="general" parentLabel="General" label="Actions" />
-      <PageIntro title="Actions" />
 
       <SettingsSection title="Composer pills">
         <SettingsRow
@@ -308,7 +306,7 @@ export function ActionsSettingsPanel() {
         {loaded && config.customActions.length === 0 && editor == null ? (
           <SettingsEmptyState>
             No custom actions yet. Create shortcuts that run shell commands, send agent
-            prompts, or drive the UI — from the pill row above the composer, a keybinding,
+            prompts, or drive the UI - from the pill row above the composer, a keybinding,
             or the SDK (`client.workspace(id).actions.run(actionId)`).
           </SettingsEmptyState>
         ) : null}

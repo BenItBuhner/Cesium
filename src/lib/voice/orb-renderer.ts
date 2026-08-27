@@ -1,6 +1,6 @@
 /**
  * Canvas renderer for the ambient voice orb: a soft, cloudy sphere whose
- * internal weather reacts to the voice lifecycle — slow drift when idle,
+ * internal weather reacts to the voice lifecycle - slow drift when idle,
  * level-reactive swell while hearing the user, a faster churn while
  * thinking, and amplitude-synced pulsing while speaking.
  */
@@ -17,7 +17,7 @@ export type OrbRenderState = {
   activity: OrbActivity;
   /** off | paused dim the orb; quiet slightly cools it. */
   mode: "off" | "active" | "quiet" | "paused";
-  /** 0..1 — mic level while listening/capturing, TTS output while speaking. */
+  /** 0..1 - mic level while listening/capturing, TTS output while speaking. */
   level: number;
   timeMs: number;
 };

@@ -41,7 +41,7 @@ export function claudeProjectSlugForCwd(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
-/** True when Claude's own session file exists for the given cwd — resume will work natively. */
+/** True when Claude's own session file exists for the given cwd - resume will work natively. */
 export async function claudeSessionFileExistsForCwd(
   sessionId: string,
   cwd: string
@@ -121,7 +121,7 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
   } catch {
     return null;
   }
-  // A session can exist in several project dirs after re-homing — the
+  // A session can exist in several project dirs after re-homing - the
   // furthest-along copy is authoritative (mtime first; append-only growth
   // via size as the tie-break for equal/reset timestamps).
   let best: { file: string; mtimeMs: number; size: number } | null = null;

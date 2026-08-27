@@ -458,7 +458,7 @@ export function ModelDropdown({
     setHighlightedIndex(0);
   }, [deferredQuery]);
 
-  /** Pre-index catalog when models change — not recomputed on each open/filter keystroke. */
+  /** Pre-index catalog when models change - not recomputed on each open/filter keystroke. */
   const baseGroups = useMemo(
     () => measureDev("chat.model_dropdown.build_base_groups", () => buildCapabilityGroups(models)),
     [models]

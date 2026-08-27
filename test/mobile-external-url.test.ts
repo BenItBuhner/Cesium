@@ -21,7 +21,7 @@ test("file:// workbench treats every http(s) URL as foreign", () => {
   );
   assert.equal(isMobileExternalHttpUrl(FILE_WORKBENCH, FILE_WORKBENCH), false);
   assert.equal(
-    isMobileExternalHttpUrl(`${FILE_WORKBENCH}?cesiumRoute=docs`, FILE_WORKBENCH),
+    isMobileExternalHttpUrl(`${FILE_WORKBENCH}?window=2`, FILE_WORKBENCH),
     false
   );
 });

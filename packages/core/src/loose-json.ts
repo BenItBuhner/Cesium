@@ -6,7 +6,7 @@
  * (often large) payload strings dozens of times per second dominated CPU
  * profiles of long transcripts. The event strings are immutable and reused
  * across flushes, so caching by string identity turns repeat parses into map
- * hits. Failed parses are cached too — the exception path is the expensive
+ * hits. Failed parses are cached too - the exception path is the expensive
  * one. Callers must treat returned objects as immutable (projection already
  * relies on structural sharing).
  */

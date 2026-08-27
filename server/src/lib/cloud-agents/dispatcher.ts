@@ -226,7 +226,7 @@ export async function ingestCloudAgentAssignment(
   ignoredReason?: string;
 }> {
   // Follow-up comments/replies on an already-tracked issue or thread steer the
-  // existing conversation — the "communicative" loop — instead of duplicating.
+  // existing conversation - the "communicative" loop - instead of duplicating.
   const steerable = await findSteerableCloudAgentTaskBySource(assignment.source);
   if (steerable) {
     try {

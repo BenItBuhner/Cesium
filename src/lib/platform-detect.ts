@@ -4,7 +4,7 @@
  * Chromium exposes structured `navigator.userAgentData` (including CPU
  * architecture via a high-entropy hint); Safari and Firefox fall back to
  * user-agent sniffing plus sensible per-platform defaults. Detection only
- * picks the *preselected* download — every platform stays one click away.
+ * picks the *preselected* download - every platform stays one click away.
  */
 
 export type DetectedOs = "mac" | "win" | "linux" | "android" | "ios" | "unknown";

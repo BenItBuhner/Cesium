@@ -7,8 +7,8 @@ type CloudStatus = "disabled" | "signed-out" | "loading" | "ready";
 
 /**
  * First-install cloud account prompt. Packaged clients (Android, iOS,
- * Electron) boot straight into the workbench — they never see the marketing
- * landing page — so a signed-out clerk-mode session must ask for sign-in /
+ * Electron) boot straight into the workbench - they never see the marketing
+ * landing page - so a signed-out clerk-mode session must ask for sign-in /
  * sign-up before the empty local shell. "Continue as guest" is remembered
  * so returning users are not nagged.
  */

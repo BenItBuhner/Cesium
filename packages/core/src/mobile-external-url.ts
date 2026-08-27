@@ -1,7 +1,7 @@
 /**
  * Decide when a WebView URL must leave the bundled workbench and open in the
  * phone's default browser. OAuth / device-auth / Sign In flows call
- * `window.open(https://…)` — Android WebView with `setSupportMultipleWindows={false}`
+ * `window.open(https://…)` - Android WebView with `setSupportMultipleWindows={false}`
  * swallows that, and a same-document navigation would unload the `file://`
  * workbench. Both look like the app "just dying".
  */
@@ -37,7 +37,7 @@ export function mobileExternalHttpUrl(url: string, baseUrl?: string): string | n
 
 /**
  * True when `requestUrl` is an http(s) document that is not the workbench
- * itself — a packaged `file://` shell treats every http(s) URL as foreign;
+ * itself - a packaged `file://` shell treats every http(s) URL as foreign;
  * a hosted (dev) shell only treats a different origin as foreign.
  */
 export function isMobileExternalHttpUrl(requestUrl: string, documentUrl: string): boolean {

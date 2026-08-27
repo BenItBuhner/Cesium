@@ -436,7 +436,7 @@ const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
  * event stream (`status` events); this only paces rail/tab metadata churn.
  */
 const CONVERSATION_UPSERT_COALESCE_MS = 250;
-/** Stream commit window while the tab is hidden — nobody sees the frames. */
+/** Stream commit window while the tab is hidden - nobody sees the frames. */
 const HIDDEN_STREAM_BATCH_WINDOW_MS = 1_000;
 /** At most one gap-recovery delta request per conversation per window. */
 const EVENT_DELTA_REQUEST_COOLDOWN_MS = 2_000;
@@ -552,7 +552,7 @@ export function mergeAgentConversationEventBatch(
   if (incoming.length === 0) {
     return existing;
   }
-  // Fast path — pure tail append (the overwhelmingly common streaming case):
+  // Fast path - pure tail append (the overwhelmingly common streaming case):
   // every incoming seq is strictly beyond the existing tail and strictly
   // increasing. Skipping the two full-log Set rebuilds turns the per-flush
   // merge from O(existing + incoming) into O(incoming), which is what keeps
@@ -745,7 +745,7 @@ export function AgentConversationsProvider({
         enabled: globalSettings.general.batchStreamEvents,
         onFlush: (batches) => commitEventBatchesRef.current(batches),
         // Slow or artificially throttled devices can't hold the frame budget
-        // at the default commit cadence — instead of dropping frames, commits
+        // at the default commit cadence - instead of dropping frames, commits
         // get rarer: the window stretches with main-thread congestion and
         // relaxes as it drains.
         resolveWindowMs: (pendingKeys) => {
@@ -768,7 +768,7 @@ export function AgentConversationsProvider({
         },
         // Tool completions force an immediate commit for visible feedback;
         // with the tab hidden there is nothing to see, so let them coalesce.
-        // Under main-thread congestion they coalesce too — an immediate
+        // Under main-thread congestion they coalesce too - an immediate
         // commit would only widen the frame gap it is trying to explain.
         allowImmediateFlush: () =>
           (typeof document === "undefined" || !document.hidden) &&
@@ -1419,7 +1419,7 @@ updateWorkspaceSession((current) => {
       });
       // Record pushes double as a consistency signal: for subscribed
       // conversations, a lastEventSeq ahead of the local log means live
-      // frames were dropped — heal with a delta after a short grace.
+      // frames were dropped - heal with a delta after a short grace.
       const openIds = new Set(openConversationIdsRef.current);
       for (const { merged } of applied) {
         if (!openIds.has(merged.id)) {
@@ -2927,7 +2927,7 @@ export function useAgentConversations(): AgentConversationsContextValue {
 /**
  * Subscribe to a single conversation's event log. Re-renders only when THAT
  * conversation's events change; streams from other agents leave the component
- * untouched. Pass a falsy id (or render outside the provider) to opt out —
+ * untouched. Pass a falsy id (or render outside the provider) to opt out -
  * both return a stable empty array.
  */
 export function useConversationEvents(

@@ -50,6 +50,25 @@ describe("landing workbench CTAs", () => {
     assert.doesNotMatch(landingAuth, /Launch the workbench/);
   });
 
+  test("sign-in and sign-up land on account setup instead of the workbench", () => {
+    const cloudContext = readFileSync(
+      fileURLToPath(new URL("../src/contexts/CloudContext.tsx", import.meta.url)),
+      "utf8"
+    );
+    const signIn = readFileSync(
+      fileURLToPath(new URL("../src/app/sign-in/[[...sign-in]]/page.tsx", import.meta.url)),
+      "utf8"
+    );
+    const signUp = readFileSync(
+      fileURLToPath(new URL("../src/app/sign-up/[[...sign-up]]/page.tsx", import.meta.url)),
+      "utf8"
+    );
+    assert.match(cloudContext, /signInFallbackRedirectUrl="\/setup\?resume=1"/);
+    assert.match(cloudContext, /signUpFallbackRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signIn, /forceRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signUp, /forceRedirectUrl="\/setup\?resume=1"/);
+  });
+
   test("download header also signs in instead of launching the workbench", () => {
     assert.match(downloadPage, /href="\/sign-in"/);
     assert.doesNotMatch(downloadPage, /Launch workbench/);

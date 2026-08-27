@@ -281,7 +281,7 @@ export const AgentConversationRow = memo(function AgentConversationRow({
   const isOrchestrationMode =
     String(conversation.mode).trim().toLowerCase() === "orchestration";
   const origin = conversation.origin;
-  // Imported conversations render exactly like native ones — no badge.
+  // Imported conversations render exactly like native ones - no badge.
   // Provenance stays discoverable via the hover title only.
   const originProviderId = origin?.kind === "cloud" ? origin.providerId : null;
   const originTitle = origin
@@ -378,7 +378,7 @@ export const AgentConversationRow = memo(function AgentConversationRow({
 
   return (
     // `content-visibility: auto` lets the browser skip layout/paint for rows
-    // scrolled out of view — the rail has no virtualization, so with very
+    // scrolled out of view - the rail has no virtualization, so with very
     // large conversation sets this is what keeps scrolling and re-renders
     // cheap. The intrinsic-size hint keeps the scrollbar stable.
     <div

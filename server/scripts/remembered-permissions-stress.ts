@@ -1,9 +1,9 @@
 /**
  * Remembered-permission reliability stress harness.
  *
- * Exercises the exact persistence pipeline every harness shares — the shared
+ * Exercises the exact persistence pipeline every harness shares - the shared
  * remember/resolve helpers, the global-settings store mutation chain, the
- * settings routes, and the on-disk legacy-json driver — under hostile
+ * settings routes, and the on-disk legacy-json driver - under hostile
  * conditions:
  *
  *   - storage latency jitter (lossy/slow disk or pg connection)
@@ -364,7 +364,7 @@ async function stressHarness(spec: HarnessSpec): Promise<HarnessReport> {
     }
   }
 
-  // Phase 2: concurrency bursts — BURST_SIZE parallel saves of distinct rules
+  // Phase 2: concurrency bursts - BURST_SIZE parallel saves of distinct rules
   // must all land (lost-update detection).
   for (let burst = 0; burst < BURSTS_PER_HARNESS; burst += 1) {
     await clearAllRulesReliably();
@@ -386,7 +386,7 @@ async function stressHarness(spec: HarnessSpec): Promise<HarnessReport> {
     const rules = await readRulesWithRetry();
     for (let i = 0; i < keys.length; i += 1) {
       if (!results[i]) {
-        // Persist reported failure (triple fault) — excluded from retention math.
+        // Persist reported failure (triple fault) - excluded from retention math.
         report.burstRulesExpected -= 1;
         continue;
       }
@@ -402,7 +402,7 @@ async function stressHarness(spec: HarnessSpec): Promise<HarnessReport> {
     }
   }
 
-  // Phase 3: upsert hammering — 60 alternating saves on ONE key must end as a
+  // Phase 3: upsert hammering - 60 alternating saves on ONE key must end as a
   // single rule with the final decision.
   await clearAllRulesReliably();
   const hammerKey = spec.toolKey(999999);
@@ -622,4 +622,4 @@ if (failed) {
   console.error("[stress] RESULT: FAILED");
   process.exit(1);
 }
-console.log("[stress] RESULT: PASSED — no rule loss, no upsert corruption, no route failures");
+console.log("[stress] RESULT: PASSED - no rule loss, no upsert corruption, no route failures");

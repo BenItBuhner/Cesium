@@ -131,30 +131,30 @@ The Next.js client is designed to run on Vercel while every user brings their
 own engine (desktop app, or `cesium install` on their hardware). To stand up a
 public production deployment:
 
-1. **Vercel project** — import the repo (root directory is the Next app;
+1. **Vercel project** - import the repo (root directory is the Next app;
    `vercel.json` already pins the framework). Add the custom domain and set
    `NEXT_PUBLIC_SITE_URL=https://your.domain` so robots/sitemap/OG metadata
    use the canonical origin.
-2. **Convex (database)** — `npx convex deploy` from the repo root (schema and
+2. **Convex (database)** - `npx convex deploy` from the repo root (schema and
    functions live in `convex/`). Set `NEXT_PUBLIC_CONVEX_URL` on Vercel to the
    deployment URL. Also commit the deployment URL and Clerk publishable key
    (both public-safe) to `src/lib/cloud/cloud-defaults.ts` so the packaged
-   desktop and mobile apps default to production cloud behavior too — every
+   desktop and mobile apps default to production cloud behavior too - every
    client keeps a runtime local-only switch in Settings → Account.
-3. **Clerk (authentication)** — create a Clerk app, add a JWT template named
+3. **Clerk (authentication)** - create a Clerk app, add a JWT template named
    `convex`, and set `CLERK_JWT_ISSUER_DOMAIN` on the Convex deployment
    (`npx convex env set CLERK_JWT_ISSUER_DOMAIN https://...`). On Vercel set
    `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`. Hosted sign-in
    and sign-up pages ship at `/sign-in` and `/sign-up`.
-4. **Gate the workbench (optional)** — set
+4. **Gate the workbench (optional)** - set
    `NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN=1` to require a Clerk account for the
-   workbench routes. The landing page, `/download`, `/docs`, the auth pages,
+   workbench routes. The landing page, `/download`, the auth pages,
    and the engine rendezvous API stay public.
-5. **Engine rendezvous** — add an Upstash Redis (or Vercel KV) integration so
+5. **Engine rendezvous** - add an Upstash Redis (or Vercel KV) integration so
    `/api/rendezvous` can pair installed engines with signed-in browsers
    (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or
    `KV_REST_API_URL`/`KV_REST_API_TOKEN`).
-6. **Downloads** — `/download` auto-detects the visitor's platform and serves
+6. **Downloads** - `/download` auto-detects the visitor's platform and serves
    the latest GitHub release assets via `/api/releases/latest` (cached; set
    `GITHUB_RELEASES_TOKEN` for a higher upstream rate limit if needed).
 
@@ -231,7 +231,7 @@ configured) for pub/sub and cache.
 
 Driver resolution (first match wins):
 
-1. `OPENCURSOR_STORAGE_DRIVER` — explicit override. Use `legacy-json` or `pg`.
+1. `OPENCURSOR_STORAGE_DRIVER` - explicit override. Use `legacy-json` or `pg`.
 2. `DATABASE_URL` set → `pg` driver is selected automatically.
 3. Otherwise → `legacy-json` driver (same on-disk behavior as earlier releases).
 
@@ -278,7 +278,7 @@ The server accepts **`baseUrl`**, **`apiKey`**, and **`model`** from env, option
 | `OPENCURSOR_TRANSCRIPTION_PROMPT` | Default prompt hint (optional). |
 | `OPENCURSOR_TRANSCRIPTION_CONFIG_FILE` | Path to a JSON file `{ "baseUrl", "apiKey", "model" }`. |
 | `OPENCURSOR_TRANSCRIPTION_CONFIG_JSON` | Same object as a single-line JSON string (useful for secrets in PaaS). |
-| `OPENCURSOR_TRANSCRIPTION_MAX_RETRIES` | Automatic retries (exponential backoff) for transient upstream failures — network errors, 408/429/5xx (default `5`, `0` disables). |
+| `OPENCURSOR_TRANSCRIPTION_MAX_RETRIES` | Automatic retries (exponential backoff) for transient upstream failures - network errors, 408/429/5xx (default `5`, `0` disables). |
 | `OPENCURSOR_TRANSCRIPTION_RETRY_BASE_DELAY_MS` | First backoff delay in ms, doubled per retry (default `500`). |
 | `OPENCURSOR_TRANSCRIPTION_RETRY_MAX_DELAY_MS` | Cap for a single backoff delay in ms (default `8000`). |
 
@@ -304,10 +304,10 @@ By default, allowed workspace roots include your **home directory**, **`WORKSPAC
 Cesium ships with two interchangeable storage drivers and a tool to move
 data between them at any time.
 
-- **Legacy JSON/JSONL** (`legacy-json`) — workspaces, sessions, auth, and agent
+- **Legacy JSON/JSONL** (`legacy-json`) - workspaces, sessions, auth, and agent
   events are stored as files under `OPENCURSOR_DATA_DIR`. No external services
   required. This is the default on a fresh clone.
-- **Postgres** (`pg`) — workspaces, sessions, auth, and agent events are stored
+- **Postgres** (`pg`) - workspaces, sessions, auth, and agent events are stored
   in Postgres via Drizzle ORM with optimistic concurrency (`revision` column).
   Selected automatically when `DATABASE_URL` is set (see
   [Storage (Postgres + Redis)](#storage-postgres--redis)).
@@ -345,10 +345,10 @@ The same flow is also available in the UI under **Settings → Storage**, which
 streams live progress and supports per-driver `Export` / `Import` of NDJSON
 archives. REST endpoints (for scripts and CI):
 
-- `GET /api/storage/status` — current driver + per-driver counts.
-- `POST /api/storage/migrate` — streams NDJSON progress events.
-- `GET /api/storage/export?driver=pg` — streams NDJSON archive.
-- `POST /api/storage/import?driver=pg&overwrite=1` — applies an archive.
+- `GET /api/storage/status` - current driver + per-driver counts.
+- `POST /api/storage/migrate` - streams NDJSON progress events.
+- `GET /api/storage/export?driver=pg` - streams NDJSON archive.
+- `POST /api/storage/import?driver=pg&overwrite=1` - applies an archive.
 
 ## Tests (server)
 

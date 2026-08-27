@@ -30,7 +30,7 @@ export interface DesignCapture {
   caption?: string;
 }
 
-/** Composer-side compact token. Never contains user-visible content — the
+/** Composer-side compact token. Never contains user-visible content - the
  *  composer renders it as a pill via `renderComposerText`. */
 const OPEN = "\u27E6";
 const CLOSE = "\u27E7";
@@ -119,7 +119,7 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** Stripped snippet body for tooltip display — drops the surrounding fence. */
+/** Stripped snippet body for tooltip display - drops the surrounding fence. */
 export function extractSnippetFromBlockBody(body: string): string | undefined {
   const fence = body.match(/```html\n([\s\S]*?)\n```/);
   return fence ? fence[1] : undefined;

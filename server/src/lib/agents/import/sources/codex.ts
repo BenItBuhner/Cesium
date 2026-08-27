@@ -324,7 +324,7 @@ export function mapCodexRecordsToEvents(
               result = parsed as Record<string, unknown>;
             }
           } catch {
-            // plain-text output — keep as-is
+            // plain-text output - keep as-is
           }
         }
         events.push(
@@ -405,6 +405,6 @@ export function createCodexImportSource(): HarnessImportSource {
     },
 
     // Codex rollout storage is global (~/.codex/sessions) and `thread/resume`
-    // resolves by thread id regardless of cwd — no re-homing required.
+    // resolves by thread id regardless of cwd - no re-homing required.
   };
 }

@@ -255,7 +255,7 @@ export const chatMessages: ChatMessage[] = [
     workedEntries: [
       {
         kind: "verbatim",
-        text: "Re-read findLatestUserStickyTail() — confirms only the trailing user message can be active.",
+        text: "Re-read findLatestUserStickyTail() - confirms only the trailing user message can be active.",
       },
       {
         kind: "tool",
@@ -274,13 +274,13 @@ export const chatMessages: ChatMessage[] = [
     id: "msg-as-sticky-4",
     type: "assistant",
     content:
-      "Extra paragraph one — lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
+      "Extra paragraph one - lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
   },
   {
     id: "msg-as-sticky-5",
     type: "assistant",
     content:
-      "Extra paragraph two — duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+      "Extra paragraph two - duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
   },
   {
     id: "msg-as3",

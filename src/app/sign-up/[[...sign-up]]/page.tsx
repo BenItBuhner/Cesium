@@ -4,7 +4,7 @@ import { SignUp } from "@clerk/nextjs";
 import { getCloudMode } from "@/lib/cloud/cloud-flags";
 
 export const metadata: Metadata = {
-  title: "Sign up — Cesium",
+  title: "Sign up - Cesium",
 };
 
 /** Dedicated Clerk sign-up route; see sign-in/page.tsx for the mode notes. */
@@ -17,7 +17,7 @@ export default function SignUpPage() {
         </h1>
         <p className="max-w-[420px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
           This deployment runs in local-first mode without a Clerk account system. Head back to
-          the workbench — no account is needed.
+          the workbench - no account is needed.
         </p>
         <Link
           href="/"
@@ -30,7 +30,7 @@ export default function SignUpPage() {
   }
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignUp />
+      <SignUp forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
     </main>
   );
 }

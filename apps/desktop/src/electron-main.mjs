@@ -26,12 +26,19 @@ const APP_ICON_PATH = app.isPackaged
 let backend = null;
 let mainWindow = null;
 const smokeMode = process.argv.includes("--smoke");
+// Xvfb + Chromium's GPU process SIGTRAPs on GitHub Linux runners. Smoke and
+// explicit CI flags must disable GPU *before* app.whenReady().
+const disableGpu =
+  smokeMode ||
+  process.env.OPENCURSOR_DESKTOP_DISABLE_GPU === "1" ||
+  process.argv.includes("--disable-gpu");
+if (disableGpu) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+}
 let cleanupStarted = false;
 const WORKSPACE_ROUTE = "/agent";
-const DOCS_PATH = "/docs";
-const DOCS_ROUTE_QUERY_PARAM = "cesiumRoute";
-const DOCS_ROUTE_QUERY_VALUE = "docs";
-let docsWindow = null;
 const nativeBrowserSessions = new Map();
 const MAIN_RENDERER_UNRESPONSIVE_RECOVERY_MS = 18_000;
 const MAIN_RENDERER_PROBE_TIMEOUT_MS = 8_000;
@@ -657,83 +664,6 @@ function resolvePackagedRendererIndexPath() {
   return resolve(process.resourcesPath, "desktop-renderer/index.html");
 }
 
-function buildDocsRendererUrl(sourceWebContents) {
-  const configuredRendererUrl = process.env.OPENCURSOR_DESKTOP_RENDERER_URL;
-  if (configuredRendererUrl) {
-    const url = new URL(configuredRendererUrl);
-    url.pathname = DOCS_PATH;
-    url.hash = "";
-    if (backend?.baseUrl) {
-      url.searchParams.set("serverUrl", backend.baseUrl);
-    } else {
-      url.search = "";
-    }
-    return url.toString();
-  }
-
-  try {
-    const url = new URL(sourceWebContents.getURL());
-    if (url.protocol === "http:" || url.protocol === "https:") {
-      url.pathname = DOCS_PATH;
-      url.search = "";
-      url.hash = "";
-      return url.toString();
-    }
-  } catch {
-    // Fall through to packaged file renderer.
-  }
-
-  return null;
-}
-
-function docsUrlLooksLoaded(rawUrl) {
-  if (!rawUrl) {
-    return false;
-  }
-  return (
-    rawUrl.includes(DOCS_PATH) ||
-    rawUrl.includes(`${DOCS_ROUTE_QUERY_PARAM}=${DOCS_ROUTE_QUERY_VALUE}`)
-  );
-}
-
-async function loadDocsInWindow(targetWindow, sourceWebContents) {
-  const docsUrl = buildDocsRendererUrl(sourceWebContents);
-  if (docsUrl) {
-    await targetWindow.loadURL(docsUrl);
-    return;
-  }
-
-  const rendererIndex = resolvePackagedRendererIndexPath();
-  await targetWindow.loadFile(rendererIndex, {
-    query: { [DOCS_ROUTE_QUERY_PARAM]: DOCS_ROUTE_QUERY_VALUE },
-  });
-}
-
-async function openDocsWindow(sourceWebContents) {
-  if (docsWindow && !docsWindow.isDestroyed()) {
-    docsWindow.focus();
-    const currentUrl = docsWindow.webContents.getURL();
-    if (!docsUrlLooksLoaded(currentUrl)) {
-      await loadDocsInWindow(docsWindow, sourceWebContents);
-    }
-    return;
-  }
-
-  docsWindow = createRendererBrowserWindow({
-    title: "Cesium Docs",
-    width: 1080,
-    height: 820,
-    minWidth: 720,
-    minHeight: 520,
-  });
-  applyPlatformApplicationMenu();
-  attachRendererNavigationGuards(docsWindow.webContents);
-  docsWindow.on("closed", () => {
-    docsWindow = null;
-  });
-  await loadDocsInWindow(docsWindow, sourceWebContents);
-}
-
 function isExpectedRendererNavigation(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -858,7 +788,7 @@ async function createMainWindow(options = {}) {
  * `screencapture`) shortly after load and again after the workbench settles.
  *
  * With OPENCURSOR_DESKTOP_CAPTURE_INTERVAL_MS also set, keep capturing
- * numbered frames at that interval (capped) — a scripted demo can then be
+ * numbered frames at that interval (capped) - a scripted demo can then be
  * assembled into a video offline.
  */
 function installWindowCaptureForCi(win) {
@@ -937,7 +867,7 @@ function installDesktopLifecycleHandlers() {
 const gotLock = app.isPackaged ? app.requestSingleInstanceLock() : true;
 console.log("[cesium-desktop] single instance lock", gotLock);
 // Launches that only carry a payload (Open With file, cesium:// deep link)
-// hand it to the lock holder via the second-instance event and exit —
+// hand it to the lock holder via the second-instance event and exit -
 // booting a second full app for them would duplicate backends and windows.
 const deferToLockHolder =
   !gotLock &&
@@ -1076,16 +1006,6 @@ ipcMain.handle("cesium:open-external", async (_event, url) => {
   }
   await shell.openExternal(url);
   return true;
-});
-
-ipcMain.handle("cesium:open-docs-window", async (event) => {
-  try {
-    await openDocsWindow(event.sender);
-    return true;
-  } catch (error) {
-    console.error("[cesium-desktop] failed to open docs window", error);
-    return false;
-  }
 });
 
 ipcMain.handle("cesium:browser-available", () => nativeBrowserCapabilitiesAvailable());

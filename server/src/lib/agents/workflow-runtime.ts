@@ -84,7 +84,7 @@ function assertPureMetaLiteral(metaSource: string): void {
     /\.\.\./.test(metaSource)
   ) {
     throw new Error(
-      "meta must be a PURE LITERAL — no variables, function calls, spreads, or template interpolation."
+      "meta must be a PURE LITERAL - no variables, function calls, spreads, or template interpolation."
     );
   }
 }
@@ -333,7 +333,7 @@ export async function executeWorkflowRun(input: {
     const begin = await withRunLock(async () => {
       if (run.agentsUsed >= maxAgents) {
         throw new Error(
-          `Workflow agent() call cap reached (${maxAgents}). This usually means a loop using budget.remaining() never terminates because no token budget was set — remaining() returns Infinity when budget.total is null. Add a hard iteration cap to the loop, or pass a token budget.`
+          `Workflow agent() call cap reached (${maxAgents}). This usually means a loop using budget.remaining() never terminates because no token budget was set - remaining() returns Infinity when budget.total is null. Add a hard iteration cap to the loop, or pass a token budget.`
         );
       }
       if (run.tokenBudget != null && run.tokensUsed >= run.tokenBudget) {
