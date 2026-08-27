@@ -2,7 +2,11 @@ import type {
   AgentConversationGroup,
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
-import type { AgentRailGroupByMode, AgentRailScope } from "@/lib/global-settings";
+import type {
+  AgentRailGroupByMode,
+  AgentRailOrderByMode,
+  AgentRailScope,
+} from "@/lib/global-settings";
 import {
   AGENT_RAIL_PRIORITY_BUCKETS,
   AGENT_RAIL_PRIORITY_BUCKET_LABELS,
@@ -10,19 +14,16 @@ import {
   getAgentRailPriorityBucket,
 } from "@/lib/agent-rail-status";
 
-/** Includes retired modes so persisted values and tests still regroup until migrated. */
-export type AgentRailGroupByInput =
-  | AgentRailGroupByMode
-  | "repository"
-  | "server"
-  | "updated"
-  | "status";
+/** All grouping modes are first-class again; alias kept for older tests. */
+export type AgentRailGroupByInput = AgentRailGroupByMode;
 
 export type AgentRailGroupContext = {
   /** Conversations whose finished turn the user has not opened yet. */
   unreadCompletionByConversationId?: Record<string, true>;
   /** Failed runs the user has already viewed. */
   acknowledgedFailureByConversationId?: Record<string, true>;
+  /** Sort inside each group; priority grouping always sorts by status. */
+  orderBy?: AgentRailOrderByMode;
 };
 
 export function groupAgentRailGroups(
@@ -31,6 +32,13 @@ export function groupAgentRailGroups(
   now = Date.now(),
   ctx: AgentRailGroupContext = {}
 ): AgentConversationGroup[] {
+  const sortWithinGroup = (
+    conversations: AgentRailConversationSummary[]
+  ): AgentRailConversationSummary[] =>
+    ctx.orderBy === "status"
+      ? [...conversations].sort((a, b) => compareAgentRailByStatusPriority(a, b, ctx))
+      : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+
   if (mode === "workspace") {
     // Compound workspaceKey (serverId:workspaceId) prevents same-id workspaces
     // from different servers from merging, but the input array may legitimately
@@ -48,6 +56,12 @@ export function groupAgentRailGroups(
       if (existing.conversations.length === 0 && group.conversations.length > 0) {
         byKey.set(key, group);
       }
+    }
+    if (ctx.orderBy === "status") {
+      return [...byKey.values()].map((group) => ({
+        ...group,
+        conversations: sortWithinGroup(group.conversations),
+      }));
     }
     return [...byKey.values()];
   }
@@ -220,7 +234,7 @@ export function groupAgentRailGroups(
 
   return [...map.values()].map((group) => ({
     ...group,
-    conversations: [...group.conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    conversations: sortWithinGroup(group.conversations),
   }));
 }
 

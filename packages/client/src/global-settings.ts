@@ -36,10 +36,36 @@ import {
 } from "./composer-status-bar";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
-export type AgentRailGroupByMode = "workspace" | "priority";
 
-/** Retired group-by modes; persisted values migrate to `workspace`. */
-const LEGACY_AGENT_RAIL_GROUP_BY = new Set(["repository", "server", "updated", "status"]);
+export const AGENT_RAIL_GROUP_BY_MODES = [
+  "workspace",
+  "repository",
+  "updated",
+  "status",
+  "server",
+  "priority",
+] as const;
+
+export type AgentRailGroupByMode = (typeof AGENT_RAIL_GROUP_BY_MODES)[number];
+
+export const AGENT_RAIL_GROUP_BY_LABELS: Record<AgentRailGroupByMode, string> = {
+  workspace: "Workspace",
+  repository: "Repository",
+  updated: "Updated",
+  status: "Status",
+  server: "Machine",
+  priority: "Priority",
+};
+
+/** How conversations sort inside each rail group. */
+export const AGENT_RAIL_ORDER_BY_MODES = ["updated", "status"] as const;
+
+export type AgentRailOrderByMode = (typeof AGENT_RAIL_ORDER_BY_MODES)[number];
+
+export const AGENT_RAIL_ORDER_BY_LABELS: Record<AgentRailOrderByMode, string> = {
+  updated: "Updated",
+  status: "Status",
+};
 
 export type AgentRailSectionId =
   | "attention"
@@ -189,18 +215,21 @@ export type GeneralSettingsState = {
 
 export type AgentRailSettingsState = {
   groupBy: AgentRailGroupByMode;
+  /** Sort inside each group: most recent first, or urgency first. */
+  orderBy: AgentRailOrderByMode;
   visibleStatusFilters: string[];
   /** Legacy allow-list kept only so old persisted settings can be read. New filtering uses hiddenServerIds. */
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
-  /**
-   * Opt-in "Settled" mode. When enabled, rows grow a small settle toggle and
-   * settled conversations sink to the bottom until a new prompt unsettles
-   * them. When disabled, no settle controls render and any persisted settled
-   * flags are ignored.
-   */
-  settledMode: boolean;
+  /** Show the cloud badge on conversations executing on a vendor cloud. */
+  showEnvironment: boolean;
+  /** Show the workspace name on rows in cross-workspace sections. */
+  showWorkspace: boolean;
+  /** Show the git branch badge on rows that carry repository info. */
+  showBranch: boolean;
+  /** Show the source-machine badge on rows from other connected engines. */
+  showMachine: boolean;
   /** Per-row detail density: compact, auto (smart), or expanded. */
   rowDetail: AgentRailRowDetailMode;
   /**
@@ -307,7 +336,7 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   /** Appearance, light/dark theme ids, custom token presets; persisted on the server. */
   themeConfig: ThemeConfig;
   keyboardShortcuts: KeyboardShortcutsSettingsState;
-  /** Animated aurora backdrop behind agent conversations. */
+  /** Animated aurora backdrop behind the workbench and settings. */
   aurora: AuroraSettingsState;
 };
 
@@ -346,11 +375,15 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       chatRootOrderByScope: {},
       agentRail: {
         groupBy: "workspace",
+        orderBy: "updated",
         visibleStatusFilters: [],
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
-        settledMode: false,
+        showEnvironment: true,
+        showWorkspace: true,
+        showBranch: false,
+        showMachine: true,
         rowDetail: "balanced",
         sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
         hiddenSections: [],
@@ -611,14 +644,50 @@ function normalizeAgentRailScope(raw: unknown): AgentRailScope {
 }
 
 function normalizeAgentRailGroupBy(raw: unknown, fallback: AgentRailGroupByMode): AgentRailGroupByMode {
-  if (raw === "workspace" || raw === "priority") {
-    return raw;
-  }
-  if (typeof raw === "string" && LEGACY_AGENT_RAIL_GROUP_BY.has(raw)) {
-    return "workspace";
+  if (
+    typeof raw === "string" &&
+    AGENT_RAIL_GROUP_BY_MODES.includes(raw as AgentRailGroupByMode)
+  ) {
+    return raw as AgentRailGroupByMode;
   }
   return fallback;
 }
+
+function normalizeAgentRailOrderBy(raw: unknown, fallback: AgentRailOrderByMode): AgentRailOrderByMode {
+  if (
+    typeof raw === "string" &&
+    AGENT_RAIL_ORDER_BY_MODES.includes(raw as AgentRailOrderByMode)
+  ) {
+    return raw as AgentRailOrderByMode;
+  }
+  return fallback;
+}
+
+/**
+ * Starting points for the rail view. Presets now live in Settings (not the
+ * rail menu): they set the load-bearing knobs and leave everything else
+ * (filters, badges, sections) exactly as the user configured it.
+ */
+export const AGENT_RAIL_VIEW_PRESET_INFO: Record<
+  AgentRailViewPreset,
+  { label: string; description: string }
+> = {
+  default: {
+    label: "Default",
+    description:
+      "Conversations grouped by workspace, newest first. Rows grow a detail line only when something needs you - approvals, questions, failures, or unread results.",
+  },
+  inbox: {
+    label: "Inbox",
+    description:
+      "One flat, urgency-first list across every workspace: blocked-on-you first, then working agents, then results to review, then everything else.",
+  },
+  compact: {
+    label: "Compact",
+    description:
+      "Grouped by workspace with strict single-line rows - titles and status dots only. Maximum density for large conversation sets.",
+  },
+};
 
 export function applyAgentRailViewPreset(
   preset: AgentRailViewPreset,
@@ -632,12 +701,14 @@ export function applyAgentRailViewPreset(
       return {
         ...current,
         groupBy: "priority",
+        orderBy: "status",
         rowDetail: current.rowDetail === "compact" ? "balanced" : current.rowDetail,
       };
     case "compact":
       return {
         ...current,
         groupBy: "workspace",
+        orderBy: "updated",
         rowDetail: "compact",
         scope: { type: "all" },
         hiddenSections: homeSections,
@@ -646,6 +717,7 @@ export function applyAgentRailViewPreset(
       return {
         ...current,
         groupBy: "workspace",
+        orderBy: "updated",
         rowDetail: "balanced",
         scope: { type: "all" },
         hiddenSections: homeSections,
@@ -673,8 +745,13 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!raw || typeof raw !== "object") {
     return defaults;
   }
-  const record = raw as Partial<AgentRailSettingsState> & { groupBy?: unknown; scope?: unknown };
+  const record = raw as Partial<AgentRailSettingsState> & {
+    groupBy?: unknown;
+    orderBy?: unknown;
+    scope?: unknown;
+  };
   const groupBy = normalizeAgentRailGroupBy(record.groupBy, defaults.groupBy);
+  const orderBy = normalizeAgentRailOrderBy(record.orderBy, defaults.orderBy);
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
@@ -698,6 +775,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   );
   return {
     groupBy,
+    orderBy,
     visibleStatusFilters: [],
     // Do not preserve legacy allow-lists. They hide newly added servers forever,
     // which is catastrophic for a dynamic multi-server rail.
@@ -705,8 +783,20 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
-    settledMode:
-      typeof record.settledMode === "boolean" ? record.settledMode : defaults.settledMode,
+    showEnvironment:
+      typeof record.showEnvironment === "boolean"
+        ? record.showEnvironment
+        : defaults.showEnvironment,
+    showWorkspace:
+      typeof record.showWorkspace === "boolean"
+        ? record.showWorkspace
+        : defaults.showWorkspace,
+    showBranch:
+      typeof record.showBranch === "boolean" ? record.showBranch : defaults.showBranch,
+    showMachine:
+      typeof record.showMachine === "boolean"
+        ? record.showMachine
+        : defaults.showMachine,
     rowDetail: isAgentRailRowDetailMode(record.rowDetail)
       ? record.rowDetail
       : // Pre-release name for the balanced mode; migrate quietly.

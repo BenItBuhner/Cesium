@@ -113,11 +113,15 @@ describe("global settings", () => {
     const settings = createDefaultGlobalSettings();
     assert.deepEqual(settings.general.agentRail, {
       groupBy: "workspace",
+      orderBy: "updated",
       visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: [],
       showIcons: true,
-      settledMode: false,
+      showEnvironment: true,
+      showWorkspace: true,
+      showBranch: false,
+      showMachine: true,
       rowDetail: "balanced",
       sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],
@@ -140,7 +144,42 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.groupBy, "priority");
   });
 
-  test("migrates retired group-by modes to workspace", () => {
+  test("keeps every grouping mode and falls back on unknown values", () => {
+    const base = createDefaultGlobalSettings();
+    for (const mode of [
+      "workspace",
+      "repository",
+      "updated",
+      "status",
+      "server",
+      "priority",
+    ] as const) {
+      const settings = normalizeLoadedGlobalSettings({
+        ...base,
+        general: {
+          ...base.general,
+          agentRail: {
+            ...base.general.agentRail,
+            groupBy: mode,
+          },
+        },
+      });
+      assert.equal(settings.general.agentRail.groupBy, mode);
+    }
+    const fallback = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          groupBy: "nonsense",
+        },
+      },
+    });
+    assert.equal(fallback.general.agentRail.groupBy, "workspace");
+  });
+
+  test("normalizes order-by and show flags", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -148,11 +187,32 @@ describe("global settings", () => {
         ...base.general,
         agentRail: {
           ...base.general.agentRail,
-          groupBy: "server",
+          orderBy: "status",
+          showEnvironment: false,
+          showBranch: true,
+          showMachine: false,
+          showWorkspace: false,
         },
       },
     });
-    assert.equal(settings.general.agentRail.groupBy, "workspace");
+    assert.equal(settings.general.agentRail.orderBy, "status");
+    assert.equal(settings.general.agentRail.showEnvironment, false);
+    assert.equal(settings.general.agentRail.showBranch, true);
+    assert.equal(settings.general.agentRail.showMachine, false);
+    assert.equal(settings.general.agentRail.showWorkspace, false);
+    const fallback = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          orderBy: "nonsense",
+          showBranch: "bad",
+        },
+      },
+    });
+    assert.equal(fallback.general.agentRail.orderBy, "updated");
+    assert.equal(fallback.general.agentRail.showBranch, false);
   });
 
   test("normalizes harness enable toggles and defaults missing keys to on", () => {
@@ -230,12 +290,16 @@ describe("global settings", () => {
     });
 
     assert.deepEqual(settings.general.agentRail, {
-      groupBy: "workspace",
+      groupBy: "repository",
+      orderBy: "updated",
       visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
-      settledMode: false,
+      showEnvironment: true,
+      showWorkspace: true,
+      showBranch: false,
+      showMachine: true,
       rowDetail: "balanced",
       sectionOrder: ["attention", "running", "pinned", "chats", "workspaces"],
       hiddenSections: [],

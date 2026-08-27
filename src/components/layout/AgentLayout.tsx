@@ -26,12 +26,10 @@ import {
   normalizeAgentShellDesktopLayout,
 } from "@/components/agent/agent-shell-layout";
 import { AgentSidePane } from "@/components/agent/AgentSidePane";
-import { AuroraSceneProvider } from "@/components/agent/AuroraSceneContext";
-import { AuroraShellBackdrop } from "@/components/agent/AuroraBackdrop";
-import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { MobileShareIntake } from "@/components/mobile/MobileShareIntake";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
 import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
@@ -68,7 +66,6 @@ function AgentCenterStage({
 function AgentLayoutShell() {
   const { activeWorkspaceId, fileTree, loading, sessionReady, workspaceInfo } = useWorkspace();
   const { settings: globalSettings } = useGlobalSettings();
-  const auroraSceneEnabled = globalSettings.aurora.enabled;
   const sideColumnsSwapped = globalSettings.general.sideColumnsSwapped;
   const {
     isMobile,
@@ -324,16 +321,10 @@ function AgentLayoutShell() {
           {/* Portal overlay; mounted inside the keyboard/hardware-input tree so
               its ChatComposer gets every context the landing composer has. */}
           <VoiceAgentView />
-          <AuroraSceneProvider>
-          {/* `isolate` creates the stacking context that lets the negative-z
-              aurora canvas paint above this root's background but beneath all
-              in-flow shell content (rail, center pane, editor panels). */}
-          <div
-            className="relative isolate h-screen w-screen overflow-hidden bg-[var(--bg-main)]"
-            data-aurora-scene={auroraSceneEnabled ? "on" : undefined}
-            data-aurora-surface={auroraSceneEnabled ? "on" : undefined}
-          >
-            <AuroraShellBackdrop />
+          {/* Aurora canvas lives on WorkbenchAuroraHost so settings can sit
+              over the same scene. This root stays transparent under
+              `data-aurora-scene` via `.aurora-agent-shell`. */}
+          <div className="aurora-agent-shell relative h-full w-full overflow-hidden">
             {isMobile ? (
               <MobileAgentShell
                 railOpen={!leftRailCollapsed}
@@ -510,7 +501,6 @@ function AgentLayoutShell() {
               </div>
             )}
           </div>
-          </AuroraSceneProvider>
         </IDEKeyboardLayer>
       </HardwareInputProvider>
     </WorkbenchProvider>

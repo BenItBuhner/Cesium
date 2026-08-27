@@ -48,6 +48,12 @@ export type VoiceCaptureCallbacks = {
 
 const RING_BUFFER_SECONDS = 30;
 
+function stopMediaStreamTracks(stream: MediaStream): void {
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
+}
+
 export class VoiceCapture {
   private stream: MediaStream | null = null;
   private context: AudioContext | null = null;
@@ -56,6 +62,13 @@ export class VoiceCapture {
   private resampler: LinearResampler | null = null;
   private pending = new Float32Array(0);
   private running = false;
+  /**
+   * Bumped by `stop()` (and by a superseding `start()`). In-flight
+   * `getUserMedia` / worklet setup must drop the stream if this no longer
+   * matches the session they began with - otherwise a quick off/hide leaves
+   * the tab's microphone indicator on until reload.
+   */
+  private sessionId = 0;
 
   readonly ringBuffer = new PcmRingBuffer(
     VOICE_SAMPLE_RATE * RING_BUFFER_SECONDS
@@ -76,14 +89,25 @@ export class VoiceCapture {
 
   async start(): Promise<void> {
     if (this.running) return;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    const sessionId = ++this.sessionId;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (error) {
+      if (sessionId !== this.sessionId) return;
+      throw error;
+    }
+    if (sessionId !== this.sessionId) {
+      stopMediaStreamTracks(stream);
+      return;
+    }
     this.stream = stream;
     const track = stream.getAudioTracks()[0];
     if (track && this.callbacks.onSettings) {
@@ -104,8 +128,19 @@ export class VoiceCapture {
     );
     try {
       await context.audioWorklet.addModule(workletUrl);
-    } finally {
+    } catch (error) {
       URL.revokeObjectURL(workletUrl);
+      if (sessionId !== this.sessionId) {
+        await this.releaseGraph();
+        return;
+      }
+      await this.releaseGraph();
+      throw error;
+    }
+    URL.revokeObjectURL(workletUrl);
+    if (sessionId !== this.sessionId) {
+      await this.releaseGraph();
+      return;
     }
     this.resampler = new LinearResampler(context.sampleRate, VOICE_SAMPLE_RATE);
     this.sourceNode = context.createMediaStreamSource(stream);
@@ -125,6 +160,10 @@ export class VoiceCapture {
     this.sourceNode.connect(this.workletNode);
     if (context.state === "suspended") {
       await context.resume();
+    }
+    if (sessionId !== this.sessionId) {
+      await this.releaseGraph();
+      return;
     }
     this.running = true;
   }
@@ -164,23 +203,26 @@ export class VoiceCapture {
   }
 
   async stop(): Promise<void> {
+    this.sessionId += 1;
     this.running = false;
+    await this.releaseGraph();
+    this.pending = new Float32Array(0);
+    this.resampler = null;
+  }
+
+  private async releaseGraph(): Promise<void> {
     this.workletNode?.port.close();
     this.workletNode?.disconnect();
     this.sourceNode?.disconnect();
     this.workletNode = null;
     this.sourceNode = null;
     if (this.stream) {
-      for (const track of this.stream.getTracks()) {
-        track.stop();
-      }
+      stopMediaStreamTracks(this.stream);
       this.stream = null;
     }
     if (this.context) {
       await this.context.close().catch(() => {});
       this.context = null;
     }
-    this.pending = new Float32Array(0);
-    this.resampler = null;
   }
 }

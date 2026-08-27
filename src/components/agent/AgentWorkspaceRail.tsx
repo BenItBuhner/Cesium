@@ -47,12 +47,13 @@ import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbenc
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
-  AGENT_RAIL_FILTER_TOGGLE_KEYS,
-  type AgentRailFilterToggleKey,
+  AGENT_RAIL_ENVIRONMENT_FILTER_LABELS,
+  AGENT_RAIL_SOURCE_FILTER_LABELS,
+  AGENT_RAIL_STATUS_FILTER_LABELS,
 } from "@/lib/agent-rail";
 import {
+  agentRailConversationIsSettled,
   agentRailConversationNeedsAttention,
-  compareAgentRailByStatusPriority,
 } from "@/lib/agent-rail-status";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { AgentRailFilterMenuPortal } from "@/components/agent/AgentRailFilterMenuPortal";
@@ -71,13 +72,11 @@ import type { DirectoryWorkspaceRecord } from "@/contexts/WorkspaceDirectoryCont
 import type {
   AgentRailGroupByMode,
   AgentRailSectionId,
-  AgentRailViewPreset,
   ChatFolderState,
   ServerRailAppearance,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@/lib/global-settings";
-import { applyAgentRailViewPreset, matchingAgentRailViewPreset } from "@/lib/global-settings";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
   getServerDisplayLabel,
@@ -135,6 +134,9 @@ const AGENT_RAIL_FOLDER_DRAG_TYPE = "application/x-opencursor-agent-chat-folder"
 
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
 const COLLAPSED_FOLDERS_STORAGE_KEY = "opencursor.agent-rail-collapsed-folders";
+
+/** "Ignore for a Day" settles the conversation for this long. */
+const DAY_MS = 86_400_000;
 
 function WorkspaceRailHeaderIcon({
   appearance,
@@ -236,17 +238,6 @@ function writeCollapsedFolderIdsToStorage(ids: Set<string>) {
     /* quota or private mode */
   }
 }
-
-const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
-  archived: "Archived",
-  running: "Running",
-  needs_attention: "Needs attention",
-  pinned: "Pinned",
-  unread: "Unread",
-  read: "Read",
-  external: "External sources",
-  cloud: "Cloud agents",
-};
 
 const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
   recent: "Recently opened",
@@ -484,16 +475,16 @@ export function AgentWorkspaceRail() {
     unarchiveConversation,
     settleConversation,
     unsettleConversation,
-    settledModeEnabled,
     pinnedRailConversations,
     attentionRailConversations,
     runningRailConversations,
     pinConversation,
     unpinConversation,
-    railFilterToggles,
+    railFilters,
     railFilterActive,
-    setRailFilterToggle,
+    setRailFilters,
     clearRailFilters,
+    markAllConversationsRead,
     unreadCompletionByConversationId,
     acknowledgedFailureByConversationId,
     railWorkspaceNameById,
@@ -673,15 +664,40 @@ export function AgentWorkspaceRail() {
     if (!railFilterActive) {
       return "Non-archived chats";
     }
-    return AGENT_RAIL_FILTER_TOGGLE_KEYS.filter((k) => railFilterToggles[k])
-      .map((k) => FILTER_TOGGLE_LABELS[k])
-      .join(", ");
-  }, [railFilterActive, railFilterToggles]);
+    const parts: string[] = [];
+    if (railFilters.archived) {
+      parts.push("Archived");
+    }
+    if (railFilters.hiddenStatuses.length > 0) {
+      parts.push(
+        `Hiding ${railFilters.hiddenStatuses
+          .map((key) => AGENT_RAIL_STATUS_FILTER_LABELS[key])
+          .join(", ")}`
+      );
+    }
+    if (railFilters.hiddenEnvironments.length > 0) {
+      parts.push(
+        `Hiding ${railFilters.hiddenEnvironments
+          .map((key) => AGENT_RAIL_ENVIRONMENT_FILTER_LABELS[key])
+          .join(", ")}`
+      );
+    }
+    if (railFilters.hiddenSources.length > 0) {
+      parts.push(
+        `Hiding ${railFilters.hiddenSources
+          .map((key) => AGENT_RAIL_SOURCE_FILTER_LABELS[key])
+          .join(", ")}`
+      );
+    }
+    return parts.join(" · ") || "Non-archived chats";
+  }, [railFilterActive, railFilters]);
 
   const sortSummary = WORKSPACE_SORT_LABELS[workspaceSortMode];
   const railControlActive =
     railFilterActive ||
     agentRailSettings.groupBy !== "workspace" ||
+    (agentRailSettings.orderBy ?? "updated") !== "updated" ||
+    (agentRailSettings.hiddenServerIds ?? []).length > 0 ||
     railRowDetail !== "balanced" ||
     agentRailSettings.scope?.type === "workspace" ||
     isNoWorkspaceRailScope(agentRailSettings.scope);
@@ -898,11 +914,28 @@ export function AgentWorkspaceRail() {
     [updateSettings]
   );
 
-  const applyRailViewPreset = useCallback(
-    (preset: AgentRailViewPreset) => {
-      patchAgentRailSettings(applyAgentRailViewPreset(preset, agentRailSettings));
+  const setMachineHidden = useCallback(
+    (serverId: string, hidden: boolean) => {
+      updateSettings((current) => {
+        const hiddenIds = new Set(current.general.agentRail.hiddenServerIds ?? []);
+        if (hidden) {
+          hiddenIds.add(serverId);
+        } else {
+          hiddenIds.delete(serverId);
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            agentRail: {
+              ...current.general.agentRail,
+              hiddenServerIds: Array.from(hiddenIds),
+            },
+          },
+        };
+      });
     },
-    [agentRailSettings, patchAgentRailSettings]
+    [updateSettings]
   );
 
   const handleRailAllWorkspaces = useCallback(() => {
@@ -1154,6 +1187,30 @@ export function AgentWorkspaceRail() {
       return next;
     });
   }, []);
+
+  /** Collapse every section, workspace group, and folder in one shot. */
+  const collapseAllRailGroups = useCallback(() => {
+    setCollapsedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      next.add(ATTENTION_SECTION_WORKSPACE_ID);
+      next.add(RUNNING_SECTION_WORKSPACE_ID);
+      next.add(PINNED_SECTION_WORKSPACE_ID);
+      next.add(CHATS_SECTION_WORKSPACE_ID);
+      for (const group of visibleGroups) {
+        next.add(resolveGroupWorkspaceAppearanceKey(group, activeServer.id));
+      }
+      writeCollapsedWorkspaceIdsToStorage(next);
+      return next;
+    });
+    setCollapsedFolderIds((prev) => {
+      const next = new Set(prev);
+      for (const folder of settings.general.chatFolders) {
+        next.add(folder.id);
+      }
+      writeCollapsedFolderIdsToStorage(next);
+      return next;
+    });
+  }, [activeServer.id, settings.general.chatFolders, visibleGroups]);
 
   const createFolderForWorkspace = useCallback(
     (scopeId: string, options?: { conversationId?: string }) => {
@@ -1728,19 +1785,6 @@ export function AgentWorkspaceRail() {
     [isMobile, openConversationSummary, toggleLeftRailCollapsed]
   );
 
-  const handleToggleSettled = useCallback(
-    (conversation: AgentRailConversationSummary) => {
-      void (conversation.settledAt != null
-        ? unsettleConversation(conversation)
-        : settleConversation(conversation));
-    },
-    [settleConversation, unsettleConversation]
-  );
-
-  // Settle controls only exist while the opt-in Settled mode is enabled;
-  // rows receive no handler (and render no toggle) otherwise.
-  const railSettleHandler = settledModeEnabled ? handleToggleSettled : undefined;
-
   const exitBulkSelect = useCallback(() => {
     setBulkSelectMode(false);
     setBulkSectionId(null);
@@ -2212,20 +2256,35 @@ export function AgentWorkspaceRail() {
               orderedConversations,
             }),
         },
-        ...(settledModeEnabled
+        ...(agentRailConversationIsSettled(conversation)
           ? [
               {
                 type: "item" as const,
-                id: conversation.settledAt != null ? "unsettle" : "settle",
-                label: conversation.settledAt != null ? "Unsettle" : "Settle",
+                id: "unsettle",
+                label: "Unsettle",
                 onSelect: () => {
-                  void (conversation.settledAt != null
-                    ? unsettleConversation(conversation)
-                    : settleConversation(conversation));
+                  void unsettleConversation(conversation);
                 },
               },
             ]
-          : []),
+          : [
+              {
+                type: "item" as const,
+                id: "settle",
+                label: "Settle",
+                onSelect: () => {
+                  void settleConversation(conversation);
+                },
+              },
+              {
+                type: "item" as const,
+                id: "settle-day",
+                label: "Ignore for a Day",
+                onSelect: () => {
+                  void settleConversation(conversation, { forMs: DAY_MS });
+                },
+              },
+            ]),
         {
           type: "item",
           id: conversation.archivedAt != null ? "unarchive" : "archive",
@@ -2295,7 +2354,6 @@ export function AgentWorkspaceRail() {
       servers,
       settings.general.chatFolders,
       settleConversation,
-      settledModeEnabled,
       unarchiveConversation,
       unpinConversation,
       unsettleConversation,
@@ -2418,10 +2476,14 @@ export function AgentWorkspaceRail() {
                 key={`attention:${conversation.conversationKey ?? conversation.id}`}
                 conversation={conversation}
                 detail={railRowDetail === "compact" ? "compact" : "expanded"}
-                detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
+                detailContext={
+                  agentRailSettings.showWorkspace
+                    ? railWorkspaceNameById.get(conversation.workspaceId)
+                    : undefined
+                }
                 unreadCompletion={isConversationUnread(conversation)}
                 acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                showMachineBadge={showMachine}
+                showMachineBadge={showMachine && agentRailSettings.showMachine}
                 rowIndex={index}
                 selected={isConversationChatSelected(conversation)}
                 bulkSelectMode={bulkSelectMode}
@@ -2439,7 +2501,8 @@ export function AgentWorkspaceRail() {
                   }
                   handleConversationSelect(conversation);
                 }}
-                onToggleSettled={railSettleHandler}
+                showEnvironmentBadge={agentRailSettings.showEnvironment}
+                showBranchBadge={agentRailSettings.showBranch}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2473,7 +2536,10 @@ export function AgentWorkspaceRail() {
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
-    railSettleHandler,
+    agentRailSettings.showEnvironment,
+    agentRailSettings.showBranch,
+    agentRailSettings.showWorkspace,
+    agentRailSettings.showMachine,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2538,10 +2604,14 @@ export function AgentWorkspaceRail() {
                 key={`running:${conversation.conversationKey ?? conversation.id}`}
                 conversation={conversation}
                 detail={railRowDetail === "compact" ? "compact" : "expanded"}
-                detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
+                detailContext={
+                  agentRailSettings.showWorkspace
+                    ? railWorkspaceNameById.get(conversation.workspaceId)
+                    : undefined
+                }
                 unreadCompletion={isConversationUnread(conversation)}
                 acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                showMachineBadge={showMachine}
+                showMachineBadge={showMachine && agentRailSettings.showMachine}
                 rowIndex={index}
                 selected={isConversationChatSelected(conversation)}
                 bulkSelectMode={bulkSelectMode}
@@ -2559,7 +2629,8 @@ export function AgentWorkspaceRail() {
                   }
                   handleConversationSelect(conversation);
                 }}
-                onToggleSettled={railSettleHandler}
+                showEnvironmentBadge={agentRailSettings.showEnvironment}
+                showBranchBadge={agentRailSettings.showBranch}
                 onContextMenu={(e, currentConversation) =>
                   handleConversationContextMenu(e, currentConversation, {
                     inPinnedSection: false,
@@ -2592,7 +2663,10 @@ export function AgentWorkspaceRail() {
     handleConversationContextMenu,
     handleConversationOverflowMenu,
     handleConversationSelect,
-    railSettleHandler,
+    agentRailSettings.showEnvironment,
+    agentRailSettings.showBranch,
+    agentRailSettings.showWorkspace,
+    agentRailSettings.showMachine,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2667,7 +2741,8 @@ export function AgentWorkspaceRail() {
                     }
                     handleConversationSelect(conversation);
                   }}
-                  onToggleSettled={railSettleHandler}
+                  showEnvironmentBadge={agentRailSettings.showEnvironment}
+                  showBranchBadge={agentRailSettings.showBranch}
                   onContextMenu={(e, currentConversation) =>
                     handleConversationContextMenu(e, currentConversation, {
                       inPinnedSection: true,
@@ -2700,7 +2775,8 @@ export function AgentWorkspaceRail() {
     handleBulkRowClick,
     handleConversationSelect,
     handleConversationContextMenu,
-    railSettleHandler,
+    agentRailSettings.showEnvironment,
+    agentRailSettings.showBranch,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -2760,7 +2836,8 @@ export function AgentWorkspaceRail() {
             }
             handleConversationSelect(conversation);
           }}
-          onToggleSettled={railSettleHandler}
+          showEnvironmentBadge={agentRailSettings.showEnvironment}
+          showBranchBadge={agentRailSettings.showBranch}
           onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
           onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
           onDragOver={
@@ -3017,7 +3094,8 @@ export function AgentWorkspaceRail() {
     handleFolderDropTargetDragOver,
     handleFolderReorderDrop,
     handleNewStandaloneChat,
-    railSettleHandler,
+    agentRailSettings.showEnvironment,
+    agentRailSettings.showBranch,
     isConversationAcknowledgedFailed,
     isConversationChatSelected,
     isConversationUnread,
@@ -3311,7 +3389,7 @@ export function AgentWorkspaceRail() {
                                         detail={railRowDetail}
                                         unreadCompletion={isConversationUnread(conversation)}
                                         acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                                        showMachineBadge={showConversationMachine}
+                                        showMachineBadge={showConversationMachine && agentRailSettings.showMachine}
                                         rowIndex={index}
                                         selected={isConversationChatSelected(conversation)}
                                         bulkSelectMode={bulkSelectMode}
@@ -3329,7 +3407,8 @@ export function AgentWorkspaceRail() {
                                           }
                                           handleConversationSelect(conversation);
                                         }}
-                                        onToggleSettled={railSettleHandler}
+                                        showEnvironmentBadge={agentRailSettings.showEnvironment}
+                                        showBranchBadge={agentRailSettings.showBranch}
                                         onDragStart={
                                           bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
@@ -3394,7 +3473,7 @@ export function AgentWorkspaceRail() {
                               detail={railRowDetail}
                               unreadCompletion={isConversationUnread(conversation)}
                               acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                              showMachineBadge={showConversationMachine}
+                              showMachineBadge={showConversationMachine && agentRailSettings.showMachine}
                               rowIndex={index}
                               selected={isConversationChatSelected(conversation)}
                               bulkSelectMode={bulkSelectMode}
@@ -3412,7 +3491,8 @@ export function AgentWorkspaceRail() {
                                 }
                                 handleConversationSelect(conversation);
                               }}
-                              onToggleSettled={railSettleHandler}
+                              showEnvironmentBadge={agentRailSettings.showEnvironment}
+                              showBranchBadge={agentRailSettings.showBranch}
                               onDragStart={
                                 bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
@@ -3805,25 +3885,33 @@ export function AgentWorkspaceRail() {
         open={filterMenuOpen}
         onClose={() => setFilterMenuOpen(false)}
         anchorRef={filterAnchorRef}
-        railFilterToggles={railFilterToggles}
-        setRailFilterToggle={setRailFilterToggle}
-        clearRailFilters={clearRailFilters}
-        railFilterActive={railFilterActive}
         groupBy={agentRailSettings.groupBy}
         setGroupBy={setAgentRailGroupBy}
-        showIcons={agentRailSettings.showIcons}
-        setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
-        settledMode={agentRailSettings.settledMode === true}
-        setSettledMode={(value) => patchAgentRailSettings({ settledMode: value })}
+        orderBy={agentRailSettings.orderBy ?? "updated"}
+        setOrderBy={(mode) => patchAgentRailSettings({ orderBy: mode })}
         rowDetail={railRowDetail}
         setRowDetail={(mode) => patchAgentRailSettings({ rowDetail: mode })}
+        showIcons={agentRailSettings.showIcons}
+        setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
+        showEnvironment={agentRailSettings.showEnvironment !== false}
+        setShowEnvironment={(value) => patchAgentRailSettings({ showEnvironment: value })}
+        showWorkspace={agentRailSettings.showWorkspace !== false}
+        setShowWorkspace={(value) => patchAgentRailSettings({ showWorkspace: value })}
+        showBranch={agentRailSettings.showBranch === true}
+        setShowBranch={(value) => patchAgentRailSettings({ showBranch: value })}
+        showMachine={agentRailSettings.showMachine !== false}
+        setShowMachine={(value) => patchAgentRailSettings({ showMachine: value })}
         hiddenSections={agentRailSettings.hiddenSections ?? []}
         setSectionHidden={setRailSectionHidden}
-        viewPreset={matchingAgentRailViewPreset({
-          groupBy: agentRailSettings.groupBy,
-          rowDetail: railRowDetail,
-        })}
-        onSelectPreset={applyRailViewPreset}
+        filters={railFilters}
+        setFilters={setRailFilters}
+        clearFilters={clearRailFilters}
+        filterActive={railFilterActive}
+        machines={machineOptions}
+        hiddenServerIds={agentRailSettings.hiddenServerIds ?? []}
+        setMachineHidden={setMachineHidden}
+        onCollapseAll={collapseAllRailGroups}
+        onMarkAllRead={markAllConversationsRead}
       />
     </>
   );

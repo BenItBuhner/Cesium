@@ -6,6 +6,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
+  type ComposerLayoutDensity,
   type CustomThemeEntry,
 } from "@/lib/theme-config";
 import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
@@ -53,6 +54,14 @@ const TOOL_CALL_HEIGHT_OPTIONS: Array<{ value: ToolCallHeightPreset; label: stri
   { value: "small", label: "Small" },
   { value: "medium", label: "Medium" },
   { value: "large", label: "Large" },
+];
+
+const COMPOSER_LAYOUT_OPTIONS: Array<{
+  value: ComposerLayoutDensity;
+  label: string;
+}> = [
+  { value: "concise", label: "Concise" },
+  { value: "detailed", label: "Detailed" },
 ];
 
 /** Shared height for Custom theme row (name input, duplicate select, Create). */
@@ -275,6 +284,26 @@ export function AppearanceSettingsPanel() {
         />
       </SettingsSection>
       <SettingsSection title="Chat">
+        <SettingsBlock searchId="composer-layout">
+          <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            Composer layout
+          </p>
+          <p className="mt-[4px] mb-[10px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+            Concise keeps attach, model, and send on one row until the text wraps.
+            Detailed always stacks those controls under the text field.
+          </p>
+          <SettingsRadioList
+            aria-label="Composer layout"
+            value={themeConfig.composerLayout}
+            onChange={(value) =>
+              setThemeConfig({
+                ...themeConfig,
+                composerLayout: value,
+              })
+            }
+            options={COMPOSER_LAYOUT_OPTIONS}
+          />
+        </SettingsBlock>
         <SettingsBlock searchId="tool-call-dropdown-height">
           <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
             Tool call dropdown height

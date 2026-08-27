@@ -18,6 +18,7 @@ export {
   SignInButton,
   SignOutButton,
   SignUp,
+  SignUpButton,
   UserButton,
   useAuth,
   useUser,

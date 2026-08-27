@@ -205,6 +205,33 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   section(
     "general",
+    "conversation-list",
+    "Conversation list",
+    "rail presets grouping ordering filters"
+  ),
+  row(
+    "general",
+    "rail-preset-default",
+    "Default preset",
+    "Workspace groups, newest first, detail lines only when a row needs you.",
+    ["rail", "preset", "conversation list", "view", "default"]
+  ),
+  row(
+    "general",
+    "rail-preset-inbox",
+    "Inbox preset",
+    "One flat urgency-first list across every workspace.",
+    ["rail", "preset", "conversation list", "view", "inbox", "priority"]
+  ),
+  row(
+    "general",
+    "rail-preset-compact",
+    "Compact preset",
+    "Workspace groups with strict single-line rows for maximum density.",
+    ["rail", "preset", "conversation list", "view", "compact", "dense"]
+  ),
+  section(
+    "general",
     "composer-status-bar",
     "Composer footer",
     "footer repo branch goal context defaults"
@@ -333,6 +360,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("appearance", "chat", "Chat"),
   row(
     "appearance",
+    "composer-layout",
+    "Composer layout",
+    "Concise keeps the chat composer on one row until the text wraps; detailed always stacks controls under the text field.",
+    ["composer", "concise", "detailed", "compact", "stacked", "multiline", "input"]
+  ),
+  row(
+    "appearance",
     "tool-call-dropdown-height",
     "Tool call dropdown height",
     "Maximum height of expanded agent tool-call blocks in chat; content scrolls inside the limit.",
@@ -347,7 +381,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "appearance",
     "aurora-background",
     "Aurora background",
-    "Soft animated aurora-borealis color field behind agent conversations.",
+    "Soft animated aurora-borealis color field behind the workbench and settings.",
     ["aurora", "borealis", "background", "backdrop", "animation", "ambient", "northern lights"]
   ),
   row(
@@ -595,6 +629,18 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Rules, skills, and subagents",
     "Instruction files, skills, and subagent presets."
   ),
+  row(
+    "plugins",
+    "extensions-link",
+    "VS Code extensions",
+    "Desktop extension marketplace and host runtime."
+  ),
+  row(
+    "plugins",
+    "plugins-link",
+    "Agent plugins",
+    "Optional bundles of MCP servers, skills, and branding."
+  ),
 
   // -- MCP servers (Plugins subpage) --
   section("plugins", "mcp-presets", "Presets", "mcp"),
@@ -835,7 +881,12 @@ const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   section("actions", "presets", "Preset actions", "quick actions presets"),
   section("actions", "custom", "Custom actions", "custom quick action command prompt keybinding"),
 
-  section("keyboardShortcuts", "voice", "Voice input", "hold toggle"),
+  section(
+    "keyboardShortcuts",
+    "voice",
+    "Voice input",
+    "press hold release tap record transcription"
+  ),
 
   // -- Import & export --
   section("exportImport", "export", "Export", "json backup"),
@@ -892,7 +943,16 @@ const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITI
       subtitle: `${def.section} · Keyboard shortcuts`,
       navId: "keyboardShortcuts",
       panelQuery: def.label,
-      keywords: [def.id, def.section, "shortcut", "keybinding", "hotkey"],
+      keywords: [
+        def.id,
+        def.section,
+        "shortcut",
+        "keybinding",
+        "hotkey",
+        ...(def.id === "chat.action.toggleVoiceInput"
+          ? ["press", "hold", "release", "tap", "record", "transcription"]
+          : []),
+      ],
     })
 );
 
@@ -1014,6 +1074,47 @@ export function searchSettingsIndex(
   });
 
   return scored.slice(0, limit).map((row) => row.item);
+}
+
+const MCP_PLUGIN_SEARCH_IDS = new Set([
+  "plugins::section::mcp-presets",
+  "plugins::section::mcp-custom",
+  "plugins::section::mcp-connected",
+]);
+
+const CATALOG_PLUGIN_SEARCH_IDS = new Set([
+  "plugins::section::catalog",
+  "plugins::section::discover",
+  "plugins::section::sources",
+  "plugins::section::verify",
+  "plugins::section::custom",
+]);
+
+export type PluginsSettingsSubview = "hub" | "mcp" | "catalog";
+
+/** Which Integrations subpage a settings-search hit should open. */
+export function pluginsSettingsSubviewForSearchHit(hit: {
+  navId: string;
+  id: string;
+  rowId?: string;
+}): PluginsSettingsSubview {
+  if (hit.navId === "mcps" || hit.navId === "tools") {
+    return "mcp";
+  }
+  if (hit.navId !== "plugins") {
+    return "hub";
+  }
+  if (hit.rowId === "mcp-link" || MCP_PLUGIN_SEARCH_IDS.has(hit.id)) {
+    return "mcp";
+  }
+  if (
+    hit.rowId === "plugins-link" ||
+    hit.rowId === "harness-overrides" ||
+    CATALOG_PLUGIN_SEARCH_IDS.has(hit.id)
+  ) {
+    return "catalog";
+  }
+  return "hub";
 }
 
 export function settingsSearchHitToFocus(
