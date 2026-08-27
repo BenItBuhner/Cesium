@@ -15,7 +15,11 @@ async function readErrorMessage(response: Response): Promise<string> {
     if (typeof payload.error === "string" && payload.error.trim()) {
       return payload.error;
     }
-    if (payload.error && typeof payload.error.message === "string") {
+    if (
+      payload.error &&
+      typeof payload.error === "object" &&
+      typeof payload.error.message === "string"
+    ) {
       return payload.error.message;
     }
   } catch {
