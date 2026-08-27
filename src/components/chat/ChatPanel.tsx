@@ -31,6 +31,7 @@ import {
   buildConversationModelOptions,
   extractComposerUserMessageHistory,
   latestGoalProgressStatus,
+  NO_MODEL_PLACEHOLDER,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
   resolveConversationModel,
@@ -867,13 +868,15 @@ workspaceSession.chat.mode,
     );
   }, [backends, workspaceSession.chat.backendId]);
   const modelVisibility = globalSettings.models.byBackend;
+  // No backend = no model catalog; never surface the persisted session model
+  // as a fake selectable entry.
   const draftModels = useMemo(
-    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend, modelVisibility) : [workspaceSession.chat.model]),
-    [draftBackend, workspaceSession.chat.model, modelVisibility]
+    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend, modelVisibility) : []),
+    [draftBackend, modelVisibility]
   );
   const draftModel = useMemo(() => {
     if (!draftBackend) {
-      return workspaceSession.chat.model;
+      return NO_MODEL_PLACEHOLDER;
     }
     const currentModelValue = workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
     return (
@@ -927,7 +930,7 @@ pendingTarget != null && backend
 ? buildConversationModelOptions(conversation, backends, modelVisibility)
 : backend
 ? buildDraftModelOptionsForBackend(backend, modelVisibility)
-: [workspaceSession.chat.model];
+: [];
 const model = conversation
 ? pendingTarget != null && backend
 ? resolveDraftModelForBackend(backend)
@@ -943,7 +946,7 @@ models.find(
 ) ?? resolveDraftModelForBackend(backend)
 );
 })()
-: workspaceSession.chat.model;
+: NO_MODEL_PLACEHOLDER;
 const modeOptions =
 pendingTarget != null && backend
 ? buildDraftModeOptionsForBackend(backend)

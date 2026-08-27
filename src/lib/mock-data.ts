@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatTab, ModelInfo } from "./types";
+import type { ChatMessage, ChatTab } from "./types";
 
 export const chatTabs: ChatTab[] = [
   { id: "planning", title: "Editor split + overflow", active: true },
@@ -358,15 +358,3 @@ export const chatMessages: ChatMessage[] = [
     ],
   },
 ];
-
-export const availableModels: ModelInfo[] = [
-  { id: "composer-2-fast", name: "Composer 2 Fast", provider: "auto", selected: true },
-  { id: "gpt-5.4-fast", name: "GPT-5.4 Fast", provider: "openai" },
-  { id: "gpt-5.4-extra-high-fast", name: "GPT-5.4 Extra High Fast", provider: "openai" },
-  { id: "opus-4.6-max", name: "Opus 4.6 Max", provider: "anthropic" },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
-  { id: "gpt-5.4-mini-extra-high", name: "GPT-5.4 Mini Extra High", provider: "openai" },
-  { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", provider: "openai" },
-];
-
-export const currentModel: ModelInfo = availableModels[0];
