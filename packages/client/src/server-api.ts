@@ -40,6 +40,7 @@ import type {
   WorkspaceRecord,
   WorkspaceWindowRecord,
 } from "@cesium/core";
+import type { VoiceSpeechSettingsPayload, VoiceSpeechSettingsPatch } from "./voice-speech-types";
 import { toWebSocketUrl } from "./ws-client";
 import { recordPerfSample } from "./dev-perf";
 import {
@@ -1546,7 +1547,7 @@ export async function addOrchestrationIssueComment(
   );
 }
 
-export async function transcribeAudio(
+export async function transcribeAudioOnServer(
   file: File,
   options?: { language?: string; prompt?: string; signal?: AbortSignal }
 ): Promise<AudioTranscriptionResult> {
@@ -1576,6 +1577,14 @@ export async function transcribeAudio(
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as AudioTranscriptionResult;
+}
+
+export async function transcribeAudio(
+  file: File,
+  options?: { language?: string; prompt?: string; signal?: AbortSignal }
+): Promise<AudioTranscriptionResult> {
+  const { transcribeAudioResolved } = await import("./voice-transcribe");
+  return transcribeAudioResolved(file, options);
 }
 
 export type SavedVoiceRecording = {
@@ -1935,67 +1944,12 @@ export async function deleteClaudeCodeSdkSettings(): Promise<{
   );
 }
 
-export type VoiceSpeechFieldSource = "stored" | "env" | "file" | "default" | null;
-
-export type VoiceSpeechCredentialPayload = {
-  configured: boolean;
-  source: VoiceSpeechFieldSource;
-  baseUrl?: string;
-  model?: string;
-  apiKeyLastFour?: string;
-  baseUrlSource?: VoiceSpeechFieldSource;
-  modelSource?: VoiceSpeechFieldSource;
-  apiKeySource?: VoiceSpeechFieldSource;
-};
-
-export type VoiceSpeechSettingsPayload = {
-  transcription: VoiceSpeechCredentialPayload & {
-    language?: string;
-    prompt?: string;
-    languageSource?: VoiceSpeechFieldSource;
-    promptSource?: VoiceSpeechFieldSource;
-  };
-  titleGeneration: {
-    model: string;
-    modelSource: VoiceSpeechFieldSource;
-  };
-  tts: {
-    engine?: string;
-    engineSource?: VoiceSpeechFieldSource;
-    openaiCompat: VoiceSpeechCredentialPayload & {
-      voice?: string;
-      voiceSource?: VoiceSpeechFieldSource;
-    };
-  };
-  controller: VoiceSpeechCredentialPayload;
-};
-
-export type VoiceSpeechSettingsPatch = {
-  transcription?: {
-    baseUrl?: string | null;
-    apiKey?: string | null;
-    model?: string | null;
-    language?: string | null;
-    prompt?: string | null;
-  };
-  titleGeneration?: {
-    model?: string | null;
-  };
-  tts?: {
-    engine?: string | null;
-    openaiCompat?: {
-      baseUrl?: string | null;
-      apiKey?: string | null;
-      model?: string | null;
-      voice?: string | null;
-    } | null;
-  };
-  controller?: {
-    baseUrl?: string | null;
-    apiKey?: string | null;
-    model?: string | null;
-  };
-};
+export type {
+  VoiceSpeechCredentialPayload,
+  VoiceSpeechFieldSource,
+  VoiceSpeechSettingsPayload,
+  VoiceSpeechSettingsPatch,
+} from "./voice-speech-types";
 
 export async function fetchVoiceSpeechSettings(): Promise<{
   settings: VoiceSpeechSettingsPayload;

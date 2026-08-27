@@ -165,6 +165,21 @@ async function main() {
   await connect(page);
   await send("Runtime.enable");
 
+  // Fresh packaged profiles hit FirstRunAccountGate before the workbench.
+  // Dismiss it as guest so the composer can mount; already-dismissed
+  // profiles skip this and wait for the composer only.
+  await waitFor(
+    "workbench composer or first-run guest action",
+    `!!document.querySelector('textarea, [contenteditable="true"], button[aria-label="Continue as guest"]')`,
+    90_000
+  );
+  const dismissedFirstRun = await evaluate(
+    clickByTextExpr("button", "Continue as guest")
+  );
+  if (dismissedFirstRun) {
+    log("dismissed first-run account gate as guest");
+  }
+
   // 1. Workbench ready (composer input mounted).
   await waitFor(
     "workbench composer",

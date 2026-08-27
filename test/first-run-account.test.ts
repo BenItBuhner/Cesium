@@ -146,5 +146,17 @@ describe("first-run account prompt", () => {
     assert.match(gate, /<SignInButton mode="modal">/);
     assert.match(gate, /getHostedClerkSignUpUrl/);
     assert.match(gate, /Continue as guest/);
+    assert.match(gate, /aria-label="Continue as guest"/);
+  });
+
+  test("desktop demo driver dismisses the first-run gate as guest", () => {
+    const driver = readFileSync(
+      fileURLToPath(
+        new URL("../scripts/desktop-demo-driver.mjs", import.meta.url)
+      ),
+      "utf8"
+    );
+    assert.match(driver, /Continue as guest/);
+    assert.match(driver, /first-run account gate/);
   });
 });

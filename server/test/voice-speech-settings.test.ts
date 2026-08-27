@@ -190,6 +190,30 @@ test("public voice settings redact API keys and expose sources", async () => {
   }
 });
 
+test("stored voice API keys are sealed on disk", async () => {
+  await patchVoiceSpeechSettings({
+    transcription: {
+      baseUrl: "https://sealed.example/v1",
+      apiKey: "super-secret-key",
+      model: "whisper-large-v3",
+    },
+  });
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const raw = await fs.readFile(
+      path.join(TEST_DATA_DIR, "profile", "voice-speech-settings.json"),
+      "utf8"
+    );
+    assert.equal(raw.includes("super-secret-key"), false);
+    assert.equal(raw.includes("cesium-secret.v1."), true);
+    const resolved = transcriptionProcessEnv();
+    assert.equal(resolved.apiKey, "super-secret-key");
+  } finally {
+    await deleteVoiceSpeechSettings();
+  }
+});
+
 test("voice settings HTTP routes persist and clear stored values", async () => {
   const put = await settingsRoutes.request("/api/settings/voice", {
     method: "PUT",
