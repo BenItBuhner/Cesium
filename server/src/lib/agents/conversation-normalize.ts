@@ -13,6 +13,20 @@ const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "gemini-acp": "google-antigravity-cli",
 };
 
+/**
+ * Clear an elapsed timed settle ("ignore for a day") on any settle-carrying
+ * shape. Cached payloads are normalized at cache time, so cache hits re-apply
+ * this cheap pass to avoid serving a snooze that has already expired.
+ */
+export function expireElapsedSettle<
+  T extends { settledAt?: number | null; settledUntil?: number | null },
+>(record: T, now = Date.now()): T {
+  if (record.settledUntil != null && record.settledUntil <= now) {
+    return { ...record, settledAt: null, settledUntil: null };
+  }
+  return record;
+}
+
 export function normalizeConversationRecord(
   record: AgentConversationRecord
 ): AgentConversationRecord {

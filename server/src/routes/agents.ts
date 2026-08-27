@@ -24,6 +24,7 @@ import type {
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
+import { expireElapsedSettle } from "../lib/agents/conversation-normalize.js";
 import { maybeAutoSyncImportedConversation } from "../lib/agents/import/importer.js";
 import { readConversationRecord } from "../lib/agents/session-store.js";
 import {
@@ -132,7 +133,16 @@ agentRoutes.get("/api/agents/conversations/all", async (c) => {
     const cached = await getJSON<AgentConversationsAllPayload>(RAIL_ALL_FIRST_PAGE_CACHE_KEY);
     if (cached) {
       c.header("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
-      return c.json(cached);
+      // Timed settles may have elapsed while the page sat in cache.
+      return c.json({
+        ...cached,
+        groups: cached.groups.map((group) => ({
+          ...group,
+          conversations: group.conversations.map((conversation) =>
+            expireElapsedSettle(conversation)
+          ),
+        })),
+      });
     }
   }
   const offset = Math.max(0, cursorRaw ? Number.parseInt(cursorRaw, 10) || 0 : 0);
