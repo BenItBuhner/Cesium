@@ -69,6 +69,10 @@ test("composer @ suggestions include conversations and stay searchable", () => {
     ]
   );
   const conversationEntries = suggestions.filter((s) => s.category === "conversation");
+  assert.equal(
+    suggestions.some((s) => s.id === "docs" || s.insert === "@Docs"),
+    false
+  );
   assert.equal(conversationEntries.length, 2);
   // Newest first, pill-token insert.
   assert.equal(conversationEntries[0]!.label, "Fresh rollout plan");

@@ -584,7 +584,7 @@ export default function App() {
       }
       if (message.type === "openExternalUrl") {
         // Open outside the WebView so the workbench (a file:// bundle) is not
-        // navigated away — OAuth / Sign In / Authenticate, F-Droid, docs, etc.
+        // navigated away — OAuth / Sign In / Authenticate, F-Droid, etc.
         openSystemBrowser(message.url);
         return;
       }

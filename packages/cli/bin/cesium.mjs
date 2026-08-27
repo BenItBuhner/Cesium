@@ -19,7 +19,7 @@ import process from "node:process";
 const CLI_VERSION = createRequire(import.meta.url)("../package.json").version;
 const INSTALLER_URL =
   "https://raw.githubusercontent.com/BenItBuhner/Cesium/main/scripts/install-cesium-server.sh";
-const DEFAULT_PRODUCTION_WEB_URL = "https://open-cursor.vercel.app";
+const DEFAULT_PRODUCTION_WEB_URL = "https://cesium.techlitnow.com";
 
 const MANAGED_COMMANDS = [
   "start",

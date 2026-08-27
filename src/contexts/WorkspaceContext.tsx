@@ -72,7 +72,17 @@ import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 import { safeReadLocationSearchParam, safeWindowLocationUrl } from "@/lib/safe-url";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import type { WorkbenchNotificationInput } from "@/components/notifications/workbench-notification-types";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { useCloudContext } from "@/contexts/CloudContext";
+import { getPlatformSetupProfile } from "@/lib/onboarding/platform";
+import { readOnboardingState } from "@/lib/onboarding/state";
+import {
+  describeWorkspaceLoadFailure,
+  markFirstServerNoticeDismissed,
+  SETUP_ROUTE,
+  wasFirstServerNoticeDismissed,
+} from "@/lib/onboarding/workspace-errors";
 import { currentModel } from "@/lib/mock-data";
 
 /** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s — a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
@@ -91,24 +101,6 @@ const RECONNECT_TOAST_MS = 2_000;
 const DISCONNECT_TOAST_MS = 3_000;
 const SESSION_SAVE_DEBOUNCE_MS = 350;
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
-const WORKSPACE_ERROR_MESSAGE_MAX_LENGTH = 240;
-
-/**
- * Toast-safe error text. Error messages can carry entire response bodies
- * (worst case: a full HTML document when the configured server is not a
- * Cesium engine) — markup blobs and multi-kilobyte dumps help nobody in a
- * notification, so fall back to the friendly message and cap the length.
- */
-function compactWorkspaceErrorMessage(error: unknown, fallback: string): string {
-  const raw = error instanceof Error ? error.message.trim() : "";
-  if (!raw || raw.startsWith("<")) {
-    return fallback;
-  }
-  return raw.length > WORKSPACE_ERROR_MESSAGE_MAX_LENGTH
-    ? `${raw.slice(0, WORKSPACE_ERROR_MESSAGE_MAX_LENGTH)}…`
-    : raw;
-}
-
 type WorkspaceSessionBackup = {
   savedAt: number;
   session: WorkspaceSessionState;
@@ -130,6 +122,48 @@ type PendingFsEvent = {
   path: string;
   isDir: boolean;
 };
+
+function notifyWorkspaceLoadFailure(
+  push: (input: WorkbenchNotificationInput) => void,
+  error: unknown,
+  accountKey: string | null
+): void {
+  const notice = describeWorkspaceLoadFailure(error, {
+    state: readOnboardingState(accountKey),
+    profile: getPlatformSetupProfile(),
+  });
+  if (
+    notice.kind === WORKBENCH_NOTIFICATION_KIND.connectFirstServer &&
+    wasFirstServerNoticeDismissed()
+  ) {
+    return;
+  }
+  push({
+    kind: notice.kind,
+    severity: notice.severity,
+    title: notice.title,
+    message: notice.message,
+    compact: notice.compact,
+    persistent: notice.persistent,
+    autoDismissMs: notice.autoDismissMs,
+    onDismiss:
+      notice.kind === WORKBENCH_NOTIFICATION_KIND.connectFirstServer
+        ? markFirstServerNoticeDismissed
+        : undefined,
+    actions: notice.setupActionLabel
+      ? [
+          {
+            id: "open-setup",
+            label: notice.setupActionLabel,
+            primary: true,
+            onClick: () => {
+              window.location.assign(SETUP_ROUTE);
+            },
+          },
+        ]
+      : undefined,
+  });
+}
 
 type WorkspaceContextValue = {
   workspaceInfo: WorkspaceInfo | null;
@@ -488,6 +522,9 @@ function replaceFolderChildren(
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const { experimentalIpadResumeCache } = useUserPreferences();
+  const cloud = useCloudContext();
+  const cloudUserKeyRef = useRef<string | null>(null);
+  cloudUserKeyRef.current = cloud.userKey;
   const [{ requestedWorkspaceId, windowId }] = useState(readWindowLocationContext);
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
@@ -963,19 +1000,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             if (!isCurrentLoad()) {
               return;
             }
-            const msg = compactWorkspaceErrorMessage(
+            notifyWorkspaceLoadFailure(
+              pushNotificationRef.current,
               error,
-              "Failed to finish loading workspace."
+              cloudUserKeyRef.current
             );
-            pushNotificationRef.current({
-              kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-              severity: "error",
-              title: "Workspace error",
-              message: msg,
-              persistent: false,
-              autoDismissMs: 10_000,
-              compact: true,
-            });
           })
           .finally(() => {
             if (isCurrentLoad()) {
@@ -1337,16 +1366,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await loadWorkspaceStateRef.current(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
-        const msg = compactWorkspaceErrorMessage(nextError, "Failed to load workspace");
-    pushNotificationRef.current({
-      kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-      severity: "error",
-      title: "Workspace error",
-      message: msg,
-      persistent: false,
-      autoDismissMs: 10_000,
-      compact: true,
-    });
+        notifyWorkspaceLoadFailure(
+          pushNotificationRef.current,
+          nextError,
+          cloudUserKeyRef.current
+        );
         setLoading(false);
       }
     }

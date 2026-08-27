@@ -126,9 +126,9 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row(
     "account",
     "account-cloud-mode",
-    "Cloud account",
-    "Sign in, sync status, and sign out for the cloud account layer.",
-    ["sign in", "sign out", "sync", "clerk", "device", "local-only"]
+    "Sign in",
+    "Sign in or sign out of your account on this device.",
+    ["sign in", "sign out", "clerk", "device", "local-only", "account"]
   ),
   row(
     "account",

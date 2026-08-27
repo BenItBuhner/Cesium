@@ -2,6 +2,7 @@
 
 import {
   getServerConnectionKey,
+  isCesiumAccountSiteUrl,
   normalizeRendezvousLocator,
   upsertServerConnection,
   type RendezvousLocator,
@@ -102,6 +103,9 @@ export function mergeCloudServersIntoState(
   const beforeSignature = serverConnectionsSignature(state);
   let next = state;
   for (const cloudServer of cloudServers) {
+    if (isCesiumAccountSiteUrl(cloudServer.baseUrl)) {
+      continue;
+    }
     let locator: RendezvousLocator | null = null;
     if (cloudServer.rendezvous) {
       try {
@@ -165,6 +169,9 @@ export function buildCloudServerPushPayloads(
 ): CloudServerPushPayload[] {
   const payloads: CloudServerPushPayload[] = [];
   for (const server of servers) {
+    if (isCesiumAccountSiteUrl(server.baseUrl)) {
+      continue;
+    }
     const sessionToken = getSessionToken(server.baseUrl);
     payloads.push({
       name: server.label,
