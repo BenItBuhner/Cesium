@@ -76,13 +76,29 @@ import {
  * conversation snapshots are all restored automatically.
  */
 
+/** Durable GitHub Codespace pairing metadata mirrored on a server row. */
+export type CloudCodespaceMeta = {
+  repoFullName: string;
+  repositoryId: number;
+  codespaceName: string;
+  displayName?: string;
+  machine?: string;
+  devcontainerPath: string;
+  lastKnownState?: string;
+  lastSyncedAt?: number;
+  engineUsername?: string;
+  enginePassword?: string;
+};
+
 export type CloudServer = {
   name: string;
   baseUrl: string;
-  kind: "remote" | "local";
+  kind: "remote" | "local" | "codespace";
   sessionToken: string | null;
   /** Present for tunnel-backed engines shared through public access. */
   rendezvous: RendezvousLocator | null;
+  /** Present for engines living inside a paired GitHub Codespace. */
+  codespace?: CloudCodespaceMeta | null;
   notes: string | null;
   lastConnectedAt: number | null;
 };
@@ -135,9 +151,10 @@ export type CloudActions = {
   saveServer(input: {
     name: string;
     baseUrl: string;
-    kind: "remote" | "local";
+    kind: "remote" | "local" | "codespace";
     sessionToken?: string;
     rendezvous?: RendezvousLocator;
+    codespace?: CloudCodespaceMeta;
     notes?: string;
     markConnected?: boolean;
   }): Promise<void>;
@@ -173,6 +190,78 @@ export type CloudActions = {
 
 export type CloudStatus = "disabled" | "signed-out" | "loading" | "ready";
 
+/**
+ * GitHub proxy actions (Codespaces device integration). Server-side only:
+ * the Convex deployment resolves the user's GitHub OAuth token through
+ * Clerk's connected-accounts API, so tokens never reach this client.
+ * Present only for Clerk-mode accounts that are signed in.
+ */
+export type CloudGithubActions = {
+  connectionStatus(): Promise<{
+    connected: boolean;
+    login: string | null;
+    error: string | null;
+  }>;
+  listRepos(): Promise<
+    Array<{
+      id: number;
+      fullName: string;
+      private: boolean;
+      defaultBranch: string;
+      pushedAt: string | null;
+      description: string | null;
+    }>
+  >;
+  listMachines(repoFullName: string): Promise<
+    Array<{
+      name: string;
+      displayName: string;
+      cpus: number;
+      memoryInBytes: number;
+      storageInBytes: number;
+      prebuildAvailability: string | null;
+    }>
+  >;
+  ensureDevcontainer(input: {
+    repoFullName: string;
+    mode: "commit" | "pr";
+  }): Promise<{
+    status: "ready" | "committed" | "pr-open";
+    prUrl: string | null;
+    devcontainerPath: string;
+    templateVersion: number;
+  }>;
+  setupCodespaceSecrets(input: {
+    repositoryId: number;
+    engineUsername: string;
+    enginePassword: string;
+    extraSecrets?: Array<{ name: string; value: string }>;
+  }): Promise<{ secretNames: string[] }>;
+  createCodespace(input: {
+    repoFullName: string;
+    machine?: string;
+    ref?: string;
+    idleTimeoutMinutes?: number;
+  }): Promise<{ codespace: CloudGithubCodespace; engineBaseUrl: string }>;
+  getCodespace(codespaceName: string): Promise<CloudGithubCodespace | null>;
+  startCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
+  stopCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
+  deleteCodespace(codespaceName: string): Promise<void>;
+};
+
+export type CloudGithubCodespace = {
+  name: string;
+  displayName: string | null;
+  state: string;
+  repositoryFullName: string | null;
+  machine: string | null;
+  gitRef: string | null;
+  lastUsedAt: string | null;
+  webUrl: string | null;
+  idleTimeoutMinutes: number | null;
+  retentionExpiresAt: string | null;
+};
+
 export type CloudContextValue = {
   mode: CloudMode;
   status: CloudStatus;
@@ -182,6 +271,7 @@ export type CloudContextValue = {
   userEmail: string | null;
   bootstrap: CloudBootstrap | null;
   actions: CloudActions | null;
+  github: CloudGithubActions | null;
 };
 
 const DISABLED_VALUE: CloudContextValue = {
@@ -192,6 +282,7 @@ const DISABLED_VALUE: CloudContextValue = {
   userEmail: null,
   bootstrap: null,
   actions: null,
+  github: null,
 };
 
 const CloudContext = createContext<CloudContextValue>(DISABLED_VALUE);
@@ -395,6 +486,42 @@ function CloudBridge({
     ]
   );
 
+  const githubActions = useMemo<CloudGithubActions>(
+    () => ({
+      async connectionStatus() {
+        return await convex.action(api.github.connectionStatus, {});
+      },
+      async listRepos() {
+        return await convex.action(api.github.reposList, {});
+      },
+      async listMachines(repoFullName) {
+        return await convex.action(api.github.machinesList, { repoFullName });
+      },
+      async ensureDevcontainer(input) {
+        return await convex.action(api.github.ensureDevcontainer, input);
+      },
+      async setupCodespaceSecrets(input) {
+        return await convex.action(api.github.setupCodespaceSecrets, input);
+      },
+      async createCodespace(input) {
+        return await convex.action(api.github.codespaceCreate, input);
+      },
+      async getCodespace(codespaceName) {
+        return await convex.action(api.github.codespaceGet, { codespaceName });
+      },
+      async startCodespace(codespaceName) {
+        return await convex.action(api.github.codespaceStart, { codespaceName });
+      },
+      async stopCodespace(codespaceName) {
+        return await convex.action(api.github.codespaceStop, { codespaceName });
+      },
+      async deleteCodespace(codespaceName) {
+        await convex.action(api.github.codespaceDelete, { codespaceName });
+      },
+    }),
+    [convex]
+  );
+
   // Autonomous restore: when the cloud context arrives, fold servers and
   // personalization into local state without any user action.
   const lastAppliedBootstrapRef = useRef<CloudBootstrap | null>(null);
@@ -502,8 +629,11 @@ function CloudBridge({
       userEmail: bootstrap?.user.email ?? clerkEmail,
       bootstrap: bootstrap ?? null,
       actions: active ? actions : null,
+      // GitHub actions require a Clerk-backed identity; device-key accounts
+      // have no connected-accounts store to fetch a GitHub token from.
+      github: active && mode === "clerk" ? githubActions : null,
     }),
-    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions]
+    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions, githubActions]
   );
 
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;

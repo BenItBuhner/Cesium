@@ -1,9 +1,20 @@
 "use client";
 
-import { Check, CircleUserRound, Cloud, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import {
+  Check,
+  CircleUserRound,
+  Cloud,
+  Github,
+  Loader2,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type RefObject,
@@ -28,6 +39,26 @@ import {
 } from "@/lib/server-health-display";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import type { CloudExecutionDevice } from "@/lib/cloud-execution-devices";
+import {
+  codespaceBaseUrlKeys,
+  codespaceStateLabel,
+  type CodespaceDevice,
+  type CodespaceWakePhase,
+} from "@/lib/github-codespaces";
+import type {
+  CodespaceWakeFailure,
+  CodespaceWakeStatus,
+} from "@/hooks/useGithubCodespaces";
+import { getServerConnectionKey } from "@cesium/client";
+
+const WAKE_PHASE_LABELS: Record<CodespaceWakePhase, string> = {
+  "checking-engine": "Checking…",
+  "checking-codespace": "Checking codespace…",
+  "starting-codespace": "Starting codespace…",
+  "waiting-engine": "Waiting for the engine…",
+  "signing-in": "Signing in…",
+  ready: "Connected",
+};
 
 export type ServerPickerPopoverProps = {
   open: boolean;
@@ -52,6 +83,18 @@ export type ServerPickerPopoverProps = {
   /** Active cloud pseudo-device id; overrides server selection highlighting. */
   selectedCloudDeviceId?: string | null;
   onSelectCloudDevice?: (cloudDeviceId: string) => void;
+  /**
+   * Paired GitHub Codespace devices. These are real engines (their merged
+   * local connections are filtered out of the plain list above) rendered in
+   * a dedicated section with codespace state and auto-wake on select.
+   */
+  codespaceDevices?: CodespaceDevice[];
+  codespaceWakeStatus?: CodespaceWakeStatus | null;
+  codespaceWakeFailure?: CodespaceWakeFailure | null;
+  onSelectCodespaceDevice?: (device: CodespaceDevice) => void;
+  onRecreateCodespaceDevice?: (device: CodespaceDevice) => void;
+  /** Opens the Codespace setup wizard (device variant footer entry). */
+  onSetupCodespace?: () => void;
 };
 
 export function ServerPickerPopover({
@@ -69,6 +112,12 @@ export function ServerPickerPopover({
   cloudDevices = [],
   selectedCloudDeviceId = null,
   onSelectCloudDevice,
+  codespaceDevices = [],
+  codespaceWakeStatus = null,
+  codespaceWakeFailure = null,
+  onSelectCodespaceDevice,
+  onRecreateCodespaceDevice,
+  onSetupCodespace,
 }: ServerPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{
@@ -171,6 +220,28 @@ export function ServerPickerPopover({
     };
   }, [anchorRef, onClose, open]);
 
+  const showCodespaceSection =
+    Boolean(onSelectCodespaceDevice) &&
+    (codespaceDevices.length > 0 || (variant === "device" && Boolean(onSetupCodespace)));
+  const codespaceKeys = useMemo(
+    () => codespaceBaseUrlKeys(codespaceDevices),
+    [codespaceDevices]
+  );
+  // Codespace engines also live in the plain connection list (cloud merge);
+  // hide them there so each device renders exactly once, in its section.
+  const visibleServers = useMemo(() => {
+    if (codespaceDevices.length === 0 || !showCodespaceSection) {
+      return servers;
+    }
+    return servers.filter((server) => {
+      try {
+        return !codespaceKeys.has(getServerConnectionKey(server.baseUrl));
+      } catch {
+        return true;
+      }
+    });
+  }, [codespaceDevices.length, codespaceKeys, servers, showCodespaceSection]);
+
   if (!open) {
     return null;
   }
@@ -210,14 +281,14 @@ export function ServerPickerPopover({
     >
       <VerticalFadedScroll
         wrapperClassName={connectOpen ? "shrink-0" : undefined}
-        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${cloudDevices.length}\0${selectedCloudDeviceId ?? ""}`}
+        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${cloudDevices.length}\0${selectedCloudDeviceId ?? ""}\0${codespaceDevices.length}\0${codespaceWakeStatus?.phase ?? ""}\0${codespaceWakeFailure?.deviceKey ?? ""}`}
         scrollClassName={
           connectOpen
             ? "hide-scrollbar-y max-h-[min(140px,28dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
             : "hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
         }
       >
-        {servers.map((server, index) => {
+        {visibleServers.map((server, index) => {
           const selected = server.id === selectedServerId && !selectedCloudDeviceId;
           const health = serverStatusById[server.id]?.health ?? "unknown";
           const appearance = getServerRailAppearance(serverRailAppearances, server.id, index);
@@ -340,6 +411,103 @@ export function ServerPickerPopover({
             </div>
           );
         })}
+        {showCodespaceSection ? (
+          <div className="mt-[4px] border-t border-[var(--border-card)] pt-[4px]">
+            <div className="px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+              GitHub Codespaces
+            </div>
+            {codespaceDevices.map((device) => {
+              const selected =
+                device.localServerId !== null &&
+                device.localServerId === selectedServerId &&
+                !selectedCloudDeviceId;
+              const waking = codespaceWakeStatus?.deviceKey === device.key;
+              const failure =
+                codespaceWakeFailure?.deviceKey === device.key
+                  ? codespaceWakeFailure
+                  : null;
+              const health = device.localServerId
+                ? serverStatusById[device.localServerId]?.health ?? "unknown"
+                : "unknown";
+              return (
+                <div key={device.key} className="flex w-full min-w-0 flex-col">
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    disabled={waking}
+                    onClick={() => onSelectCodespaceDevice?.(device)}
+                    className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[8px] text-left hover:bg-[var(--accent-bg)] disabled:opacity-70 sm:py-[7px]"
+                  >
+                    {waking ? (
+                      <Loader2
+                        className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
+                        strokeWidth={1.7}
+                        aria-hidden
+                      />
+                    ) : (
+                      <Github
+                        className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                        strokeWidth={1.5}
+                        aria-hidden
+                      />
+                    )}
+                    <span
+                      className={`shrink-0 text-[10px] ${serverHealthColorClass(health)}`}
+                      aria-hidden
+                    >
+                      {serverHealthIndicator(health)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
+                        {device.label}
+                      </span>
+                      <span className="mt-[2px] block truncate font-sans text-[10.5px] text-[var(--text-secondary)]">
+                        {waking && codespaceWakeStatus
+                          ? WAKE_PHASE_LABELS[codespaceWakeStatus.phase]
+                          : health === "healthy"
+                            ? "Running"
+                            : codespaceStateLabel(device.lastKnownState)}
+                      </span>
+                    </span>
+                    {selected ? (
+                      <Check
+                        className="size-[13px] shrink-0 text-[var(--text-primary)]"
+                        strokeWidth={2}
+                      />
+                    ) : null}
+                  </button>
+                  {failure ? (
+                    <div className="mx-[8px] mb-[6px] flex flex-col gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent-bg)] px-[8px] py-[6px]">
+                      <p className="font-sans text-[10.5px] leading-snug text-[var(--goal-accent)]">
+                        {failure.message}
+                      </p>
+                      {failure.reason === "deleted" && onRecreateCodespaceDevice ? (
+                        <button
+                          type="button"
+                          onClick={() => onRecreateCodespaceDevice(device)}
+                          className="self-start rounded-[var(--radius-tab)] bg-[var(--accent)] px-[8px] py-[3px] font-sans text-[10.5px] text-[var(--bg-panel)]"
+                        >
+                          Recreate codespace
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {variant === "device" && onSetupCodespace ? (
+              <button
+                type="button"
+                onClick={onSetupCodespace}
+                className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[7px] text-left font-sans text-[12px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                <Plus className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
+                Set up a Codespace…
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {cloudDevices.length > 0 && onSelectCloudDevice ? (
           <div className="mt-[4px] border-t border-[var(--border-card)] pt-[4px]">
             <div className="px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]">

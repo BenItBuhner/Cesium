@@ -1,8 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignInButton, SignOutButton, UserButton } from "@clerk/nextjs";
-import { Check, ChevronDown, CircleUserRound, Link2 } from "lucide-react";
+import { SignInButton, SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import {
+  Check,
+  ChevronDown,
+  CircleUserRound,
+  Github,
+  Link2,
+  Loader2,
+} from "lucide-react";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   getCloudMode,
@@ -257,6 +264,164 @@ function CloudAccountSection() {
   );
 }
 
+/**
+ * GitHub connection for the Codespaces device integration. Rendered only in
+ * Clerk cloud mode (the connection lives on the Clerk account; device-key
+ * and local-only clients have no connected-accounts store).
+ */
+function GithubAccountSection() {
+  const cloud = useCloudContext();
+  if (cloud.mode !== "clerk") {
+    return null;
+  }
+  return <GithubAccountSectionInner />;
+}
+
+function GithubAccountSectionInner() {
+  const cloud = useCloudContext();
+  const { user } = useUser();
+  const [status, setStatus] = useState<{
+    connected: boolean;
+    login: string | null;
+    error: string | null;
+  } | null>(null);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!cloud.github) {
+      setStatus(null);
+      return;
+    }
+    try {
+      setStatus(await cloud.github.connectionStatus());
+    } catch (error) {
+      setStatus({
+        connected: false,
+        login: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [cloud.github]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const connect = useCallback(async () => {
+    if (!user) return;
+    setPending(true);
+    setActionError(null);
+    try {
+      const external = await user.createExternalAccount({
+        strategy: "oauth_github",
+        redirectUrl: window.location.href,
+      });
+      const redirect = external.verification?.externalVerificationRedirectURL;
+      if (!redirect) {
+        throw new Error("Clerk did not return a GitHub authorization URL.");
+      }
+      window.location.href = redirect.toString();
+    } catch (error) {
+      setPending(false);
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [user]);
+
+  const disconnect = useCallback(async () => {
+    if (!user) return;
+    const account = user.externalAccounts.find(
+      (entry) => entry.provider === "github"
+    );
+    if (!account) {
+      setActionError("No linked GitHub account was found on this Clerk user.");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Disconnect GitHub? Paired Codespace devices stay registered but cannot be woken or recreated until you reconnect."
+      )
+    ) {
+      return;
+    }
+    setPending(true);
+    setActionError(null);
+    try {
+      await account.destroy();
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(false);
+    }
+  }, [refresh, user]);
+
+  if (cloud.status !== "ready" || !cloud.github) {
+    return null;
+  }
+
+  return (
+    <SettingsSection title="GitHub">
+      <SettingsRow
+        title={
+          status?.connected
+            ? `Connected as ${status.login}`
+            : "GitHub not connected"
+        }
+        description={
+          status?.connected
+            ? "Powers GitHub Codespaces devices: repository access, codespace lifecycle, and engine credentials."
+            : "Connect GitHub to pair repositories with Codespace devices - a full Cesium engine in the cloud with just this client and a GitHub account."
+        }
+        leading={
+          <Github
+            className="size-[16px] shrink-0 text-[var(--text-secondary)]"
+            strokeWidth={1.5}
+            aria-hidden
+          />
+        }
+        trailing={
+          status === null ? (
+            <Loader2
+              className="size-[14px] animate-spin text-[var(--text-secondary)]"
+              strokeWidth={2}
+              aria-hidden
+            />
+          ) : status.connected ? (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={pending}
+              onClick={() => void disconnect()}
+            >
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={pending}
+              onClick={() => void connect()}
+            >
+              {pending ? (
+                <Loader2 className="size-[13px] animate-spin" strokeWidth={2} aria-hidden />
+              ) : null}
+              Connect GitHub
+            </button>
+          )
+        }
+        searchId="account-github-connection"
+      />
+      {status?.error || actionError ? (
+        <SettingsCallout className="px-[2px]">
+          {actionError ?? status?.error}
+        </SettingsCallout>
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 function ServerSessionSection() {
   const auth = useOptionalAuth();
   const cloud = useCloudContext();
@@ -494,6 +659,7 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
+      <GithubAccountSection />
       {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />
       <SettingsCallout className="px-[2px]">
