@@ -95,18 +95,74 @@ export function CodespaceSetupWizard(props: CodespaceSetupWizardProps) {
   if (!props.open) {
     return null;
   }
-  if (cloud.mode !== "clerk") {
+  if (!cloud.github) {
     return (
       <WizardShell onClose={props.onClose} title="GitHub Codespaces">
         <p className="font-sans text-[12.5px] leading-snug text-[var(--text-secondary)]">
-          GitHub Codespaces need a Cesium cloud account: the GitHub connection is
-          managed through your account (Clerk) so any signed-in device can use it.
-          Enable cloud sync and sign in first.
+          {cloud.mode === "clerk"
+            ? "Sign in to your Cesium account first - the GitHub connection is managed through it so any signed-in device can use your codespaces."
+            : "GitHub Codespaces need a Cesium cloud identity (a signed-in account, or a device-sync deployment). Enable cloud sync first."}
         </p>
       </WizardShell>
     );
   }
   return <CodespaceSetupWizardInner {...props} />;
+}
+
+/**
+ * Clerk-only connect CTA. Mounted only in Clerk cloud mode (useUser needs a
+ * ClerkProvider); device-key deployments configure CESIUM_GITHUB_TOKEN
+ * instead and never render this.
+ */
+function ClerkGithubConnectCta({
+  onError,
+}: {
+  onError: (message: string) => void;
+}) {
+  const { user } = useUser();
+  const [linkPending, setLinkPending] = useState(false);
+
+  const connectGithub = useCallback(async () => {
+    if (!user) return;
+    setLinkPending(true);
+    try {
+      const external = await user.createExternalAccount({
+        strategy: "oauth_github",
+        redirectUrl: window.location.href,
+      });
+      const redirect = external.verification?.externalVerificationRedirectURL;
+      if (redirect) {
+        window.location.href = redirect.toString();
+        return;
+      }
+      throw new Error("Clerk did not return a GitHub authorization URL.");
+    } catch (err) {
+      setLinkPending(false);
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }, [onError, user]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void connectGithub()}
+        disabled={linkPending || !user}
+        className={primaryButtonClass}
+      >
+        {linkPending ? (
+          <Loader2 className="size-[13px] animate-spin" strokeWidth={2} aria-hidden />
+        ) : (
+          <Github className="size-[13px]" strokeWidth={1.7} aria-hidden />
+        )}
+        Connect GitHub
+      </button>
+      <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
+        You will be sent to GitHub to authorize Cesium (repo and codespace
+        access), then return here - reopen this wizard to continue.
+      </p>
+    </>
+  );
 }
 
 function WizardShell({
@@ -159,7 +215,6 @@ function CodespaceSetupWizardInner({
 }: CodespaceSetupWizardProps) {
   const cloud = useCloudContext();
   const github = cloud.github;
-  const { user } = useUser();
   const { saveServer, removeServer } = useServerConnections();
 
   const [step, setStep] = useState<WizardStep>("github");
@@ -168,7 +223,6 @@ function CodespaceSetupWizardInner({
     login: string | null;
     error: string | null;
   } | null>(null);
-  const [linkPending, setLinkPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [repos, setRepos] = useState<GithubRepoInfo[] | null>(null);
@@ -266,27 +320,6 @@ function CodespaceSetupWizardInner({
       disposed = true;
     };
   }, [github, loadMachines, recreateDevice]);
-
-  const connectGithub = useCallback(async () => {
-    if (!user) return;
-    setLinkPending(true);
-    setError(null);
-    try {
-      const external = await user.createExternalAccount({
-        strategy: "oauth_github",
-        redirectUrl: window.location.href,
-      });
-      const redirect = external.verification?.externalVerificationRedirectURL;
-      if (redirect) {
-        window.location.href = redirect.toString();
-        return;
-      }
-      throw new Error("Clerk did not return a GitHub authorization URL.");
-    } catch (err) {
-      setLinkPending(false);
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [user]);
 
   const finishProvision = useCallback(
     async (codespace: CloudGithubCodespace, engineBaseUrl: string) => {
@@ -480,24 +513,18 @@ function CodespaceSetupWizardInner({
                     {connection.error}
                   </p>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => void connectGithub()}
-                  disabled={linkPending || !user}
-                  className={primaryButtonClass}
-                >
-                  {linkPending ? (
-                    <Loader2 className="size-[13px] animate-spin" strokeWidth={2} aria-hidden />
-                  ) : (
-                    <Github className="size-[13px]" strokeWidth={1.7} aria-hidden />
-                  )}
-                  Connect GitHub
-                </button>
-                <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
-                  You will be sent to GitHub to authorize Cesium (repo and
-                  codespace access), then return here - reopen this wizard to
-                  continue.
-                </p>
+                {cloud.mode === "clerk" ? (
+                  <ClerkGithubConnectCta onError={setError} />
+                ) : (
+                  <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
+                    This deployment uses device sync: set a{" "}
+                    <code className="font-mono text-[10.5px]">CESIUM_GITHUB_TOKEN</code>{" "}
+                    env var on the Convex deployment (a GitHub token with{" "}
+                    <code className="font-mono text-[10.5px]">repo</code> and{" "}
+                    <code className="font-mono text-[10.5px]">codespace</code>{" "}
+                    scopes), then reopen this wizard.
+                  </p>
+                )}
               </>
             )}
           </>

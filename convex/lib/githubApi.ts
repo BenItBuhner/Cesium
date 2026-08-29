@@ -6,7 +6,7 @@
  * `fetch` is injectable so the whole surface is unit-testable offline.
  */
 
-const GITHUB_API_BASE = "https://api.github.com";
+export const DEFAULT_GITHUB_API_BASE = "https://api.github.com";
 const API_VERSION = "2022-11-28";
 
 export type FetchLike = (
@@ -43,15 +43,18 @@ export type GithubClient = {
 
 export function createGithubClient(
   token: string,
-  fetchImpl: FetchLike = fetch as unknown as FetchLike
+  fetchImpl: FetchLike = fetch as unknown as FetchLike,
+  /** Override for GitHub Enterprise hosts and integration harnesses. */
+  apiBaseUrl: string = DEFAULT_GITHUB_API_BASE
 ): GithubClient {
+  const base = apiBaseUrl.replace(/\/+$/, "");
   async function request<T>(
     method: string,
     path: string,
     body?: unknown,
     options?: { allow404?: boolean }
   ): Promise<T | null> {
-    const response = await fetchImpl(`${GITHUB_API_BASE}${path}`, {
+    const response = await fetchImpl(`${base}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,

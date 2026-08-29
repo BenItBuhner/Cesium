@@ -198,3 +198,31 @@ export function codespaceEngineBaseUrl(
   }
   return `https://${name}-${CODESPACE_ENGINE_PORT}.${portForwardingDomain}`;
 }
+
+/**
+ * Resolve the engine URL for a codespace, honoring deployment overrides:
+ *
+ * - `urlTemplate` (env `CESIUM_CODESPACES_ENGINE_URL_TEMPLATE`): full URL
+ *   with optional `{name}` / `{port}` placeholders. Escape hatch for hosts
+ *   whose forwarded-port URLs are not `<name>-<port>.<domain>` shaped, and
+ *   for integration harnesses that stand in for GitHub.
+ * - `portForwardingDomain` (env `CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN`):
+ *   GitHub Enterprise forwarding domains (github.com uses app.github.dev).
+ */
+export function resolveCodespaceEngineBaseUrl(
+  codespaceName: string,
+  overrides?: { urlTemplate?: string | null; portForwardingDomain?: string | null }
+): string {
+  const template = overrides?.urlTemplate?.trim();
+  if (template) {
+    const resolved = template
+      .replaceAll("{name}", codespaceName.trim().toLowerCase())
+      .replaceAll("{port}", String(CODESPACE_ENGINE_PORT));
+    if (!/^https?:\/\//.test(resolved)) {
+      throw new Error("Codespace engine URL template must resolve to http(s).");
+    }
+    return resolved.replace(/\/+$/, "");
+  }
+  const domain = overrides?.portForwardingDomain?.trim();
+  return codespaceEngineBaseUrl(codespaceName, domain || undefined);
+}

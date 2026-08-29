@@ -5,6 +5,7 @@ import {
   buildCodespaceTemplateFiles,
   buildDevcontainerJson,
   codespaceEngineBaseUrl,
+  resolveCodespaceEngineBaseUrl,
   CODESPACE_BOOTSTRAP_PATH,
   CODESPACE_DEVCONTAINER_PATH,
   CODESPACE_ENGINE_PORT,
@@ -94,6 +95,35 @@ describe("codespace bootstrap template", () => {
       `https://octocat-fuzzy-space-1a2b3c-${CODESPACE_ENGINE_PORT}.app.github.dev`
     );
     assert.throws(() => codespaceEngineBaseUrl("not a name!"));
+  });
+
+  test("engine base URL overrides: GHE domain and full template", () => {
+    assert.equal(
+      resolveCodespaceEngineBaseUrl("octo-abc", {
+        portForwardingDomain: "app.ghe.example.com",
+      }),
+      `https://octo-abc-${CODESPACE_ENGINE_PORT}.app.ghe.example.com`
+    );
+    assert.equal(
+      resolveCodespaceEngineBaseUrl("octo-abc", {
+        urlTemplate: "http://127.0.0.1:9110",
+      }),
+      "http://127.0.0.1:9110"
+    );
+    assert.equal(
+      resolveCodespaceEngineBaseUrl("octo-abc", {
+        urlTemplate: "https://{name}-{port}.tunnel.example/",
+      }),
+      `https://octo-abc-${CODESPACE_ENGINE_PORT}.tunnel.example`
+    );
+    assert.throws(() =>
+      resolveCodespaceEngineBaseUrl("octo-abc", { urlTemplate: "ftp://nope" })
+    );
+    // Empty template falls through to the default derivation.
+    assert.equal(
+      resolveCodespaceEngineBaseUrl("octo-abc", { urlTemplate: "  " }),
+      codespaceEngineBaseUrl("octo-abc")
+    );
   });
 });
 

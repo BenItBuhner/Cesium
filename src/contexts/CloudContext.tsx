@@ -486,40 +486,66 @@ function CloudBridge({
     ]
   );
 
+  // Device-key deployments authenticate GitHub actions with the same
+  // identity args as every other cloud call; Clerk identities ride the JWT.
   const githubActions = useMemo<CloudGithubActions>(
     () => ({
       async connectionStatus() {
-        return await convex.action(api.github.connectionStatus, {});
+        return await convex.action(api.github.connectionStatus, { ...identityArgs });
       },
       async listRepos() {
-        return await convex.action(api.github.reposList, {});
+        return await convex.action(api.github.reposList, { ...identityArgs });
       },
       async listMachines(repoFullName) {
-        return await convex.action(api.github.machinesList, { repoFullName });
+        return await convex.action(api.github.machinesList, {
+          ...identityArgs,
+          repoFullName,
+        });
       },
       async ensureDevcontainer(input) {
-        return await convex.action(api.github.ensureDevcontainer, input);
+        return await convex.action(api.github.ensureDevcontainer, {
+          ...identityArgs,
+          ...input,
+        });
       },
       async setupCodespaceSecrets(input) {
-        return await convex.action(api.github.setupCodespaceSecrets, input);
+        return await convex.action(api.github.setupCodespaceSecrets, {
+          ...identityArgs,
+          ...input,
+        });
       },
       async createCodespace(input) {
-        return await convex.action(api.github.codespaceCreate, input);
+        return await convex.action(api.github.codespaceCreate, {
+          ...identityArgs,
+          ...input,
+        });
       },
       async getCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceGet, { codespaceName });
+        return await convex.action(api.github.codespaceGet, {
+          ...identityArgs,
+          codespaceName,
+        });
       },
       async startCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceStart, { codespaceName });
+        return await convex.action(api.github.codespaceStart, {
+          ...identityArgs,
+          codespaceName,
+        });
       },
       async stopCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceStop, { codespaceName });
+        return await convex.action(api.github.codespaceStop, {
+          ...identityArgs,
+          codespaceName,
+        });
       },
       async deleteCodespace(codespaceName) {
-        await convex.action(api.github.codespaceDelete, { codespaceName });
+        await convex.action(api.github.codespaceDelete, {
+          ...identityArgs,
+          codespaceName,
+        });
       },
     }),
-    [convex]
+    [convex, identityArgs]
   );
 
   // Autonomous restore: when the cloud context arrives, fold servers and
@@ -629,9 +655,10 @@ function CloudBridge({
       userEmail: bootstrap?.user.email ?? clerkEmail,
       bootstrap: bootstrap ?? null,
       actions: active ? actions : null,
-      // GitHub actions require a Clerk-backed identity; device-key accounts
-      // have no connected-accounts store to fetch a GitHub token from.
-      github: active && mode === "clerk" ? githubActions : null,
+      // Clerk accounts resolve GitHub tokens via connected accounts; device
+      // deployments via the CESIUM_GITHUB_TOKEN env var. Either way the
+      // proxy is available whenever the cloud identity is.
+      github: active ? githubActions : null,
     }),
     [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions, githubActions]
   );

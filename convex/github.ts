@@ -25,7 +25,7 @@ import {
 } from "./lib/githubApi";
 import {
   buildCodespaceTemplateFiles,
-  codespaceEngineBaseUrl,
+  resolveCodespaceEngineBaseUrl,
   CODESPACE_AUTH_PASSWORD_SECRET,
   CODESPACE_AUTH_USERNAME_SECRET,
   CODESPACE_BOOTSTRAP_PATH,
@@ -36,17 +36,26 @@ import {
 /**
  * GitHub Codespaces device integration - server-side GitHub proxy.
  *
- * Every action resolves the signed-in user's GitHub OAuth token through
- * Clerk's connected-accounts backend API (`CLERK_SECRET_KEY` must be set on
- * this deployment) and talks to GitHub on their behalf. The token never
- * reaches Cesium clients.
+ * Tokens never reach Cesium clients. Two identity paths, mirroring
+ * `convex/lib/identity.ts`:
  *
- * Clerk dashboard prerequisites (one-time):
- * - Enable the GitHub social connection with **custom credentials** (your own
- *   GitHub OAuth App) so custom scopes are allowed.
- * - Scopes: `read:user user:email repo codespace`.
- *   `repo` covers the devcontainer commit/PR; `codespace` covers codespace
- *   lifecycle + Codespaces user secrets.
+ * - **Clerk accounts** (production): the user's GitHub OAuth token comes from
+ *   Clerk's connected-accounts backend API (`CLERK_SECRET_KEY` must be set on
+ *   this deployment). Clerk dashboard prerequisites (one-time): enable the
+ *   GitHub social connection with **custom credentials** (your own GitHub
+ *   OAuth App) and scopes `read:user user:email repo codespace`.
+ * - **Device-key accounts** (self-hosted / local-first deployments that opt
+ *   in with `CESIUM_ALLOW_DEVICE_KEYS=1`): a deployment-level token from the
+ *   `CESIUM_GITHUB_TOKEN` env var (classic PAT or OAuth token with `repo` +
+ *   `codespace` scopes). Single-operator deployments only - every device key
+ *   on the deployment shares it.
+ *
+ * Deployment env overrides:
+ * - `CESIUM_GITHUB_API_URL` - GitHub Enterprise API host (default
+ *   https://api.github.com).
+ * - `CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN` /
+ *   `CESIUM_CODESPACES_ENGINE_URL_TEMPLATE` - forwarded-port URL shape (see
+ *   `resolveCodespaceEngineBaseUrl`).
  */
 
 const CLERK_API_BASE = "https://api.clerk.com/v1";
@@ -55,19 +64,35 @@ const SETUP_BRANCH = "cesium/codespace-setup";
 /** Codespaces secret names must be SCREAMING_SNAKE and never GITHUB_*. */
 const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,199}$/;
 
-async function requireClerkSubject(ctx: {
+const DEVICE_KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+
+type ActionAuthCtx = {
   auth: { getUserIdentity(): Promise<{ subject: string } | null> };
-}): Promise<string> {
+};
+
+type GithubIdentity =
+  | { kind: "clerk"; subject: string }
+  | { kind: "device"; deviceKey: string };
+
+async function resolveGithubIdentity(
+  ctx: ActionAuthCtx,
+  deviceKey: string | undefined
+): Promise<GithubIdentity> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error(
-      "GitHub integration requires a signed-in Cesium account (Clerk)."
-    );
+  if (identity) {
+    return { kind: "clerk", subject: identity.subject };
   }
-  return identity.subject;
+  if (
+    deviceKey &&
+    process.env.CESIUM_ALLOW_DEVICE_KEYS === "1" &&
+    DEVICE_KEY_PATTERN.test(deviceKey)
+  ) {
+    return { kind: "device", deviceKey };
+  }
+  throw new Error("GitHub integration requires a signed-in Cesium account.");
 }
 
-async function getGithubToken(subject: string): Promise<string | null> {
+async function getClerkGithubToken(subject: string): Promise<string | null> {
   const secretKey = process.env.CLERK_SECRET_KEY;
   if (!secretKey) {
     throw new Error(
@@ -98,17 +123,33 @@ async function getGithubToken(subject: string): Promise<string | null> {
     : null;
 }
 
-async function requireGithubClient(ctx: {
-  auth: { getUserIdentity(): Promise<{ subject: string } | null> };
-}): Promise<GithubClient> {
-  const subject = await requireClerkSubject(ctx);
-  const token = await getGithubToken(subject);
-  if (!token) {
-    throw new Error(
-      "No GitHub account is connected to this Cesium account. Connect GitHub in Settings -> Account first."
-    );
+async function getGithubToken(identity: GithubIdentity): Promise<string | null> {
+  if (identity.kind === "device") {
+    return process.env.CESIUM_GITHUB_TOKEN?.trim() || null;
   }
-  return createGithubClient(token);
+  return await getClerkGithubToken(identity.subject);
+}
+
+function githubApiBaseUrl(): string | undefined {
+  return process.env.CESIUM_GITHUB_API_URL?.trim() || undefined;
+}
+
+function noConnectionMessage(identity: GithubIdentity): string {
+  return identity.kind === "device"
+    ? "No GitHub token is configured. Set CESIUM_GITHUB_TOKEN on this Convex deployment (repo + codespace scopes)."
+    : "No GitHub account is connected to this Cesium account. Connect GitHub in Settings -> Account first.";
+}
+
+async function requireGithubClient(
+  ctx: ActionAuthCtx,
+  deviceKey: string | undefined
+): Promise<GithubClient> {
+  const identity = await resolveGithubIdentity(ctx, deviceKey);
+  const token = await getGithubToken(identity);
+  if (!token) {
+    throw new Error(noConnectionMessage(identity));
+  }
+  return createGithubClient(token, undefined, githubApiBaseUrl());
 }
 
 const codespaceValidator = v.object({
@@ -126,20 +167,22 @@ const codespaceValidator = v.object({
 
 /** Whether this account has a usable GitHub connection (and who it is). */
 export const connectionStatus = action({
-  args: {},
+  args: { deviceKey: v.optional(v.string()) },
   returns: v.object({
     connected: v.boolean(),
     login: v.union(v.string(), v.null()),
     error: v.union(v.string(), v.null()),
   }),
-  handler: async (ctx) => {
-    const subject = await requireClerkSubject(ctx);
-    const token = await getGithubToken(subject);
+  handler: async (ctx, args) => {
+    const identity = await resolveGithubIdentity(ctx, args.deviceKey);
+    const token = await getGithubToken(identity);
     if (!token) {
       return { connected: false, login: null, error: null };
     }
     try {
-      const login = await getAuthenticatedLogin(createGithubClient(token));
+      const login = await getAuthenticatedLogin(
+        createGithubClient(token, undefined, githubApiBaseUrl())
+      );
       return { connected: true, login, error: null };
     } catch (error) {
       return {
@@ -152,7 +195,7 @@ export const connectionStatus = action({
 });
 
 export const reposList = action({
-  args: {},
+  args: { deviceKey: v.optional(v.string()) },
   returns: v.array(
     v.object({
       id: v.number(),
@@ -163,14 +206,14 @@ export const reposList = action({
       description: v.union(v.string(), v.null()),
     })
   ),
-  handler: async (ctx) => {
-    const client = await requireGithubClient(ctx);
+  handler: async (ctx, args) => {
+    const client = await requireGithubClient(ctx, args.deviceKey);
     return await listRepos(client);
   },
 });
 
 export const machinesList = action({
-  args: { repoFullName: v.string() },
+  args: { deviceKey: v.optional(v.string()), repoFullName: v.string() },
   returns: v.array(
     v.object({
       name: v.string(),
@@ -182,7 +225,7 @@ export const machinesList = action({
     })
   ),
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     const { owner, repo } = splitRepoFullName(args.repoFullName);
     return await listMachines(client, owner, repo);
   },
@@ -197,6 +240,7 @@ export const machinesList = action({
  */
 export const ensureDevcontainer = action({
   args: {
+    deviceKey: v.optional(v.string()),
     repoFullName: v.string(),
     mode: v.union(v.literal("commit"), v.literal("pr")),
   },
@@ -211,7 +255,7 @@ export const ensureDevcontainer = action({
     templateVersion: v.number(),
   }),
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     const { owner, repo } = splitRepoFullName(args.repoFullName);
     const defaultBranch = await getDefaultBranch(client, owner, repo);
     const files = buildCodespaceTemplateFiles();
@@ -300,6 +344,7 @@ export const ensureDevcontainer = action({
  */
 export const setupCodespaceSecrets = action({
   args: {
+    deviceKey: v.optional(v.string()),
     repositoryId: v.number(),
     engineUsername: v.string(),
     enginePassword: v.string(),
@@ -312,7 +357,7 @@ export const setupCodespaceSecrets = action({
     if (!args.engineUsername.trim() || !args.enginePassword.trim()) {
       throw new Error("Engine credentials must not be empty.");
     }
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     const publicKey = await getCodespacesPublicKey(client);
     await sodium.ready;
     const keyBytes = sodium.from_base64(
@@ -353,6 +398,7 @@ export const setupCodespaceSecrets = action({
 
 export const codespaceCreate = action({
   args: {
+    deviceKey: v.optional(v.string()),
     repoFullName: v.string(),
     machine: v.optional(v.string()),
     ref: v.optional(v.string()),
@@ -363,7 +409,7 @@ export const codespaceCreate = action({
     engineBaseUrl: v.string(),
   }),
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     const { owner, repo } = splitRepoFullName(args.repoFullName);
     const idleTimeout = args.idleTimeoutMinutes
       ? Math.min(240, Math.max(5, Math.round(args.idleTimeoutMinutes)))
@@ -382,43 +428,46 @@ export const codespaceCreate = action({
     });
     return {
       codespace,
-      engineBaseUrl: codespaceEngineBaseUrl(codespace.name),
+      engineBaseUrl: resolveCodespaceEngineBaseUrl(codespace.name, {
+        urlTemplate: process.env.CESIUM_CODESPACES_ENGINE_URL_TEMPLATE,
+        portForwardingDomain: process.env.CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN,
+      }),
     };
   },
 });
 
 export const codespaceGet = action({
-  args: { codespaceName: v.string() },
+  args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: v.union(codespaceValidator, v.null()),
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     return await getCodespace(client, args.codespaceName);
   },
 });
 
 export const codespaceStart = action({
-  args: { codespaceName: v.string() },
+  args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: codespaceValidator,
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     return await startCodespace(client, args.codespaceName);
   },
 });
 
 export const codespaceStop = action({
-  args: { codespaceName: v.string() },
+  args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: codespaceValidator,
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     return await stopCodespace(client, args.codespaceName);
   },
 });
 
 export const codespaceDelete = action({
-  args: { codespaceName: v.string() },
+  args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx);
+    const client = await requireGithubClient(ctx, args.deviceKey);
     await deleteCodespace(client, args.codespaceName);
     return null;
   },
