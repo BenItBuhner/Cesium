@@ -3,6 +3,7 @@ import { mutation } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { ensureUser } from "./lib/identity";
+import { buildServerSavePatch, type CodespaceMeta } from "./lib/serverRecords";
 
 const RENDEZVOUS_SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const RENDEZVOUS_SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -12,6 +13,19 @@ const rendezvousValidator = v.object({
   serverId: v.string(),
   secret: v.string(),
   registryBaseUrl: v.string(),
+});
+
+const codespaceMetaValidator = v.object({
+  repoFullName: v.string(),
+  repositoryId: v.number(),
+  codespaceName: v.string(),
+  displayName: v.optional(v.string()),
+  machine: v.optional(v.string()),
+  devcontainerPath: v.string(),
+  lastKnownState: v.optional(v.string()),
+  lastSyncedAt: v.optional(v.number()),
+  engineUsername: v.optional(v.string()),
+  enginePassword: v.optional(v.string()),
 });
 
 type RendezvousLocator = {
@@ -54,6 +68,19 @@ async function findByRendezvousServerId(
   return rows.find((row) => row.rendezvous?.serverId === rendezvousServerId) ?? null;
 }
 
+/** Codespace pairings are keyed by repository - one durable row per repo. */
+async function findByCodespaceRepo(
+  ctx: MutationCtx,
+  userId: Doc<"servers">["userId"],
+  repoFullName: string
+): Promise<Doc<"servers"> | null> {
+  const rows = await ctx.db
+    .query("servers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  return rows.find((row) => row.codespace?.repoFullName === repoFullName) ?? null;
+}
+
 /**
  * Upsert one of the user's engines. Tunnel-backed engines (public access) are
  * keyed by their rendezvous server id - their base URL rotates with the
@@ -64,9 +91,10 @@ export const save = mutation({
     deviceKey: v.optional(v.string()),
     name: v.string(),
     baseUrl: v.string(),
-    kind: v.union(v.literal("remote"), v.literal("local")),
+    kind: v.union(v.literal("remote"), v.literal("local"), v.literal("codespace")),
     sessionToken: v.optional(v.string()),
     rendezvous: v.optional(rendezvousValidator),
+    codespace: v.optional(codespaceMetaValidator),
     notes: v.optional(v.string()),
     markConnected: v.optional(v.boolean()),
   },
@@ -90,24 +118,46 @@ export const save = mutation({
         "cesium.techlitnow.com is the Cesium account site, not an engine."
       );
     }
+    if (args.kind === "codespace" && !args.codespace) {
+      throw new Error("Codespace servers require codespace metadata.");
+    }
     const rendezvous = args.rendezvous ? validateRendezvous(args.rendezvous) : undefined;
     const now = Date.now();
+    const byUrl = await ctx.db
+      .query("servers")
+      .withIndex("by_user_url", (q) => q.eq("userId", userId).eq("baseUrl", baseUrl))
+      .unique();
     const existing =
       (rendezvous
         ? await findByRendezvousServerId(ctx, userId, rendezvous.serverId)
         : null) ??
-      (await ctx.db
-        .query("servers")
-        .withIndex("by_user_url", (q) => q.eq("userId", userId).eq("baseUrl", baseUrl))
-        .unique());
-    if (existing) {
-      await ctx.db.patch(existing._id, {
+      (args.codespace
+        ? await findByCodespaceRepo(ctx, userId, args.codespace.repoFullName)
+        : null) ??
+      byUrl;
+    // A recreated codespace moves the pairing row to a new base URL; if a
+    // plain push already created a row for that URL, fold it away so the
+    // pairing stays single-rowed.
+    if (existing && byUrl && byUrl._id !== existing._id && args.codespace) {
+      await ctx.db.delete(byUrl._id);
+    }
+    const patch = buildServerSavePatch(
+      existing
+        ? { kind: existing.kind, codespace: existing.codespace as CodespaceMeta | undefined }
+        : null,
+      {
         name: args.name,
         baseUrl,
         kind: args.kind,
-        ...(args.sessionToken !== undefined ? { sessionToken: args.sessionToken } : {}),
+        sessionToken: args.sessionToken,
+        notes: args.notes,
+        codespace: args.codespace,
+      }
+    );
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...patch,
         ...(rendezvous ? { rendezvous } : {}),
-        ...(args.notes !== undefined ? { notes: args.notes } : {}),
         ...(args.markConnected ? { lastConnectedAt: now } : {}),
         updatedAt: now,
       });
@@ -115,12 +165,8 @@ export const save = mutation({
     }
     const id = await ctx.db.insert("servers", {
       userId,
-      name: args.name,
-      baseUrl,
-      kind: args.kind,
-      sessionToken: args.sessionToken,
+      ...patch,
       ...(rendezvous ? { rendezvous } : {}),
-      notes: args.notes,
       lastConnectedAt: args.markConnected ? now : undefined,
       createdAt: now,
       updatedAt: now,
