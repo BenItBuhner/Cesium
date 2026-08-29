@@ -40,6 +40,7 @@ import {
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import type { CloudExecutionDevice } from "@/lib/cloud-execution-devices";
 import {
+  categorizeCodespaceState,
   codespaceBaseUrlKeys,
   codespaceStateLabel,
   type CodespaceDevice,
@@ -467,7 +468,12 @@ export function ServerPickerPopover({
                           ? WAKE_PHASE_LABELS[codespaceWakeStatus.phase]
                           : health === "healthy"
                             ? "Running"
-                            : codespaceStateLabel(device.lastKnownState)}
+                            : categorizeCodespaceState(device.lastKnownState) ===
+                                "running"
+                              ? // Engine unreachable but GitHub last said running:
+                                // it likely idled out since we last synced.
+                                "Asleep - select to wake"
+                              : codespaceStateLabel(device.lastKnownState)}
                       </span>
                     </span>
                     {selected ? (
