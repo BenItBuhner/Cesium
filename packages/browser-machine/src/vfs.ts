@@ -84,6 +84,10 @@ export class Vfs {
   private changeTimer: ReturnType<typeof setTimeout> | null = null;
   private hydrated = false;
 
+  constructor() {
+    this.ensureRootDir();
+  }
+
   async hydrate(): Promise<void> {
     if (this.hydrated) return;
     const records = await idbGetAll<VfsRecord>(FILES_STORE);
@@ -127,6 +131,8 @@ export class Vfs {
   }
 
   private markDirty(path: string, deleted: boolean): void {
+    // Without IndexedDB (tests, exotic embeds) the VFS is memory-only.
+    if (typeof indexedDB === "undefined") return;
     if (deleted) {
       this.dirtyPuts.delete(path);
       this.dirtyDeletes.add(path);
@@ -261,6 +267,11 @@ export class Vfs {
 
   mkdir(path: string, options?: { recursive?: boolean }): void {
     const normalized = normalizePath(path);
+    if (normalized === "/") {
+      this.ensureRootDir();
+      if (!options?.recursive) throw new FsError("EEXIST", path, "mkdir");
+      return;
+    }
     if (this.nodes.has(normalized)) {
       const existing = this.nodes.get(normalized);
       if (existing?.type === "dir") {

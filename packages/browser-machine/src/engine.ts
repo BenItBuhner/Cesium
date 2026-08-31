@@ -22,6 +22,12 @@ import { BrowserAgentHarness } from "./harness/runtime";
 import { BrowserGit } from "./git/browser-git";
 import { ShellRuntime } from "./shell/runtime";
 import { registerTerminalRoutes } from "./routes/terminal-routes";
+import { registerNodeCommand } from "./exec/node-command";
+import { registerNpmCommands } from "./npm/npm-command";
+import { registerPreviewCommands, registerPreviewServiceWorker } from "./preview/preview";
+import { PackManager } from "./packs/registry";
+import { registerBuiltinPacks } from "./packs/language-packs";
+import { registerVmCommand } from "./vm/linux-vm";
 
 export class BrowserMachineEngine {
   readonly router = new EngineRouter();
@@ -33,12 +39,14 @@ export class BrowserMachineEngine {
   readonly settings = new SettingsStore();
   readonly git = new BrowserGit(this.vfs);
   readonly shell = new ShellRuntime(this.vfs, this.git);
+  readonly packs = new PackManager(this.shell, this.vfs);
   readonly harness = new BrowserAgentHarness({
     vfs: this.vfs,
     conversations: this.conversations,
     settings: this.settings,
     git: this.git,
     shell: this.shell,
+    installedPacks: () => this.packs.installedSummaries(),
   });
   private fsChannels!: FsChannelHub;
   private agentChannels!: AgentChannelHub;
@@ -55,6 +63,16 @@ export class BrowserMachineEngine {
     engine.fsChannels = new FsChannelHub(engine.vfs, engine.workspaces);
     engine.agentChannels = new AgentChannelHub(engine.conversations);
     engine.terminalChannels = new TerminalChannelHub(engine.shell, engine.workspaces);
+
+    // Execution surface: JS/TS + npm + build/preview + optional packs + VM tier.
+    registerNodeCommand(engine.shell, engine.vfs);
+    registerNpmCommands(engine.shell, engine.vfs);
+    registerPreviewCommands(engine.shell, engine.vfs);
+    registerBuiltinPacks(engine.packs);
+    engine.packs.registerShellCommand();
+    registerVmCommand(engine.shell);
+    void engine.packs.restoreInstalled();
+    void registerPreviewServiceWorker();
 
     registerCoreRoutes(engine.router);
     registerFsRoutes(engine.router, { vfs: engine.vfs, workspaces: engine.workspaces });

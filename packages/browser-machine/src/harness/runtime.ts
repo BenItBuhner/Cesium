@@ -104,6 +104,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       settings: SettingsStore;
       git: BrowserGit;
       shell: ShellRuntime;
+      installedPacks?: () => string[];
     }
   ) {
     this.tools = new BrowserToolExecutor(deps.vfs, deps.git, deps.shell);
@@ -208,7 +209,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         dirty: status?.dirty,
       }),
       shellCommands: this.deps.shell.listCommands(),
-      installedPacks: [],
+      installedPacks: this.deps.installedPacks?.() ?? [],
       dateLabel: new Date().toLocaleString(undefined, {
         weekday: "long",
         year: "numeric",

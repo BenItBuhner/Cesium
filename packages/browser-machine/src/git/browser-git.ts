@@ -60,39 +60,7 @@ function normalizeRepositoryId(repoUrl: string): string {
     .toLowerCase();
 }
 
-/** Minimal tar extractor for GitHub tarball import (ustar, gzip-compressed). */
-async function extractTarball(
-  bytes: Uint8Array,
-  writeEntry: (path: string, data: Uint8Array, isDir: boolean) => void
-): Promise<void> {
-  let data = bytes;
-  // Gzip magic: 1f 8b
-  if (data.length > 2 && data[0] === 0x1f && data[1] === 0x8b) {
-    const stream = new Blob([bytes.slice().buffer]).stream().pipeThrough(
-      new DecompressionStream("gzip")
-    );
-    data = new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-  const decoder = new TextDecoder();
-  let offset = 0;
-  while (offset + 512 <= data.length) {
-    const header = data.subarray(offset, offset + 512);
-    const name = decoder.decode(header.subarray(0, 100)).replace(/\0.*$/, "");
-    if (!name) break;
-    const sizeOctal = decoder.decode(header.subarray(124, 136)).replace(/\0.*$/, "").trim();
-    const size = Number.parseInt(sizeOctal || "0", 8) || 0;
-    const typeFlag = String.fromCharCode(header[156] ?? 48);
-    const prefix = decoder.decode(header.subarray(345, 500)).replace(/\0.*$/, "");
-    const fullName = prefix ? `${prefix}/${name}` : name;
-    offset += 512;
-    if (typeFlag === "0" || typeFlag === "\0" || typeFlag === "") {
-      writeEntry(fullName, data.subarray(offset, offset + size), false);
-    } else if (typeFlag === "5") {
-      writeEntry(fullName, new Uint8Array(0), true);
-    }
-    offset += Math.ceil(size / 512) * 512;
-  }
-}
+import { extractTarball } from "../tar";
 
 export class BrowserGit {
   readonly fs: ReturnType<typeof createPromisesFs>;
