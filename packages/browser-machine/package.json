@@ -16,7 +16,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cesium/contracts": "file:../contracts",
     "@cesium/core": "file:../core",
     "esbuild-wasm": "^0.27.0",
     "isomorphic-git": "^1.35.1"

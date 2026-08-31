@@ -73,6 +73,7 @@ export class BrowserMachineEngine {
     registerVmCommand(engine.shell);
     void engine.packs.restoreInstalled();
     void registerPreviewServiceWorker();
+    void engine.settings.applyEnvBootstrap();
 
     registerCoreRoutes(engine.router);
     registerFsRoutes(engine.router, { vfs: engine.vfs, workspaces: engine.workspaces });

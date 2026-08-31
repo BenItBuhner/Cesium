@@ -27,6 +27,39 @@ export type CesiumAgentStoredSettings = {
 };
 
 export class SettingsStore {
+  private envBootstrapDone = false;
+
+  /**
+   * Merge an env-provided inference provider from the hosting deployment
+   * (see src/app/api/browser-machine-bootstrap). Stored keys always win;
+   * this only fills the gap when no provider is configured yet.
+   */
+  async applyEnvBootstrap(): Promise<void> {
+    if (this.envBootstrapDone || typeof fetch === "undefined") return;
+    this.envBootstrapDone = true;
+    try {
+      const response = await fetch("/api/browser-machine-bootstrap", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as {
+        enabled?: boolean;
+        defaultModelId?: string;
+        provider?: StoredProvider;
+      };
+      if (!payload.enabled || !payload.provider) return;
+      const stored = await this.getCesiumAgentSettings();
+      if (stored.providers.some((provider) => provider.id === payload.provider?.id)) {
+        return;
+      }
+      stored.providers.push(payload.provider);
+      if (!stored.defaultModelId && payload.defaultModelId) {
+        stored.defaultModelId = payload.defaultModelId;
+      }
+      await this.putCesiumAgentSettings(stored);
+    } catch {
+      // No bootstrap endpoint (desktop renderer, static hosting) - fine.
+    }
+  }
+
   async getGlobalSettings(): Promise<Record<string, unknown>> {
     return (await readDoc<Record<string, unknown>>(GLOBAL_SETTINGS_KEY)) ?? {};
   }

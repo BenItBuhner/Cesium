@@ -4,12 +4,25 @@
  * disabled + authenticated, exactly like a loopback engine without a
  * password.
  */
-import { CESIUM_CAPABILITIES, CESIUM_PROTOCOL_VERSION } from "@cesium/contracts";
 import type { EngineRouter } from "../http";
 import { jsonResponse } from "../http";
 
 export const BROWSER_MACHINE_INSTANCE_ID = "browser-machine";
 export const BROWSER_MACHINE_VERSION = "0.1.0";
+
+/** Mirrors @cesium/contracts meta (imported inline: the contracts package's
+ * `.js`-suffixed source imports do not resolve under Turbopack path mapping). */
+const CESIUM_PROTOCOL_VERSION = "1.0.0";
+const CESIUM_CAPABILITIES = [
+  "auth.sessions",
+  "workspaces",
+  "workspaces.files",
+  "workspaces.git",
+  "workspaces.terminals",
+  "agents.conversations",
+  "agents.events",
+  "settings",
+] as const;
 
 export function registerCoreRoutes(router: EngineRouter): void {
   router.get("/health", () =>
