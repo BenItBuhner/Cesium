@@ -51,6 +51,7 @@ import {
   AGENT_RAIL_SOURCE_FILTER_LABELS,
   AGENT_RAIL_STATUS_FILTER_LABELS,
 } from "@/lib/agent-rail";
+import { getGlobalPinnedAgentConversationIdsSnapshot } from "@/lib/agent-rail-pins";
 import {
   agentRailConversationIsSettled,
   agentRailConversationNeedsAttention,
@@ -113,19 +114,25 @@ import {
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
 import {
+  PINNED_CHATS_FOLDER_SCOPE,
   STANDALONE_CHATS_FOLDER_SCOPE,
+  collectChatFolderConversationIds,
   createChatFolderState,
   getChatFoldersForScope,
+  isPinnedChatFolderScope,
   isStandaloneChatFolderScope,
   moveConversationInChatFolders,
+  orderConversationsByIds,
   partitionConversationsByFolders,
+  remapChatFoldersToPinnedScope,
+  removeConversationFromChatFolders,
   reorderChatFolders,
   updateRootOrderForMove,
   upsertChatFoldersWithNewFolder,
   type ChatFolderPlacement,
 } from "@/lib/chat-folders";
 
-const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
+const PINNED_SECTION_WORKSPACE_ID = PINNED_CHATS_FOLDER_SCOPE;
 const ATTENTION_SECTION_WORKSPACE_ID = "__agentAttention__";
 const RUNNING_SECTION_WORKSPACE_ID = "__agentRunning__";
 const CHATS_SECTION_WORKSPACE_ID = STANDALONE_CHATS_FOLDER_SCOPE;
@@ -776,11 +783,15 @@ export function AgentWorkspaceRail() {
   }, [groups]);
 
   const resolveConversationFolderScope = useCallback(
-    (conversation: Pick<AgentRailConversationSummary, "workspaceId">) =>
-      standaloneWorkspaceIds.has(conversation.workspaceId)
+    (conversation: Pick<AgentRailConversationSummary, "id" | "workspaceId">) => {
+      if (pinnedRailConversations.some((item) => item.id === conversation.id)) {
+        return PINNED_CHATS_FOLDER_SCOPE;
+      }
+      return standaloneWorkspaceIds.has(conversation.workspaceId)
         ? STANDALONE_CHATS_FOLDER_SCOPE
-        : conversation.workspaceId,
-    [standaloneWorkspaceIds]
+        : conversation.workspaceId;
+    },
+    [pinnedRailConversations, standaloneWorkspaceIds]
   );
 
   const findRailConversationById = useCallback(
@@ -814,28 +825,41 @@ export function AgentWorkspaceRail() {
       if (options?.includeConversationId) {
         folderedIds.delete(options.includeConversationId);
       }
-      const conversations = isStandaloneChatFolderScope(scopeId)
-        ? standaloneChatConversations
-        : groups.flatMap((group) =>
-            group.workspace.id === scopeId ? group.conversations : []
-          );
+      const conversations = isPinnedChatFolderScope(scopeId)
+        ? pinnedRailConversations
+        : isStandaloneChatFolderScope(scopeId)
+          ? standaloneChatConversations
+          : groups.flatMap((group) =>
+              group.workspace.id === scopeId ? group.conversations : []
+            );
       return conversations
         .filter((conversation) => !folderedIds.has(conversation.id))
         .map((conversation) => conversation.id);
     },
-    [groups, settings.general.chatFolders, standaloneChatConversations]
+    [groups, pinnedRailConversations, settings.general.chatFolders, standaloneChatConversations]
   );
 
   const railSectionOrder = useMemo(() => {
     const order =
-      agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"];
+      agentRailSettings.sectionOrder ?? [
+        "attention",
+        "running",
+        "pinned",
+        "chats",
+        "workspaces",
+      ];
     const hidden = new Set(agentRailSettings.hiddenSections ?? []);
     hidden.add("chats");
+    hidden.delete("pinned");
     if (agentRailSettings.groupBy === "priority") {
       hidden.add("attention");
       hidden.add("running");
     }
-    return order.filter((id) => !hidden.has(id));
+    const locked = ["attention", "running", "pinned"] as const;
+    const rest = order.filter(
+      (id) => !locked.includes(id as (typeof locked)[number]) && !hidden.has(id)
+    );
+    return [...locked.filter((id) => !hidden.has(id)), ...rest];
   }, [
     agentRailSettings.groupBy,
     agentRailSettings.hiddenSections,
@@ -889,7 +913,7 @@ export function AgentWorkspaceRail() {
 
   const setRailSectionHidden = useCallback(
     (sectionId: AgentRailSectionId, hidden: boolean) => {
-      if (sectionId === "workspaces") {
+      if (sectionId === "workspaces" || sectionId === "pinned") {
         return;
       }
       updateSettings((current) => {
@@ -1213,11 +1237,16 @@ export function AgentWorkspaceRail() {
   }, [activeServer.id, settings.general.chatFolders, visibleGroups]);
 
   const createFolderForWorkspace = useCallback(
-    (scopeId: string, options?: { conversationId?: string }) => {
+    (_scopeId: string, options?: { conversationId?: string }) => {
+      const scopeId = PINNED_CHATS_FOLDER_SCOPE;
       const folderId = createChatFolderId();
       const conversationId = options?.conversationId;
+      if (conversationId) {
+        pinConversation(conversationId);
+      }
       updateSettings((current) => {
-        const workspaceFolders = getChatFoldersForScope(current.general.chatFolders, scopeId);
+        const folders = remapChatFoldersToPinnedScope(current.general.chatFolders);
+        const workspaceFolders = getChatFoldersForScope(folders, scopeId);
         const nextFolder = createChatFolderState({
           id: folderId,
           scopeId,
@@ -1231,12 +1260,7 @@ export function AgentWorkspaceRail() {
             folderedIds.add(id);
           }
         }
-        const scopeConversations = isStandaloneChatFolderScope(scopeId)
-          ? standaloneChatConversations
-          : groups.flatMap((group) =>
-              group.workspace.id === scopeId ? group.conversations : []
-            );
-        const knownRootIds = scopeConversations
+        const knownRootIds = pinnedRailConversations
           .filter((conversation) => !folderedIds.has(conversation.id))
           .map((conversation) => conversation.id);
         const nextRootOrderByScope = conversationId
@@ -1251,11 +1275,7 @@ export function AgentWorkspaceRail() {
           ...current,
           general: {
             ...current.general,
-            chatFolders: upsertChatFoldersWithNewFolder(
-              current.general.chatFolders,
-              nextFolder,
-              conversationId
-            ),
+            chatFolders: upsertChatFoldersWithNewFolder(folders, nextFolder, conversationId),
             chatRootOrderByScope: nextRootOrderByScope,
           },
         };
@@ -1271,8 +1291,21 @@ export function AgentWorkspaceRail() {
       });
       setEditingFolderId(folderId);
     },
-    [groups, standaloneChatConversations, updateSettings]
+    [pinConversation, pinnedRailConversations, updateSettings]
   );
+
+  useEffect(() => {
+    const folderIds = collectChatFolderConversationIds(settings.general.chatFolders);
+    if (folderIds.length === 0) {
+      return;
+    }
+    const pinnedIds = new Set(getGlobalPinnedAgentConversationIdsSnapshot());
+    for (const conversationId of folderIds) {
+      if (!pinnedIds.has(conversationId)) {
+        pinConversation(conversationId);
+      }
+    }
+  }, [pinConversation, settings.general.chatFolders]);
 
   const updateFolder = useCallback(
     (folderId: string, updater: (folder: ChatFolderState) => ChatFolderState) => {
@@ -1375,11 +1408,8 @@ export function AgentWorkspaceRail() {
 
   const deleteFolder = useCallback(
     (folder: ChatFolderState) => {
-      const rootLabel = isStandaloneChatFolderScope(folder.workspaceId)
-        ? "Chats"
-        : "this workspace root";
       const confirmed = window.confirm(
-        `Delete "${folder.name}"? Chats move back to ${rootLabel}.`
+        `Delete "${folder.name}"? Chats stay pinned at the Pinned root.`
       );
       if (!confirmed) {
         return;
@@ -1453,6 +1483,35 @@ export function AgentWorkspaceRail() {
     [collectScopeRootConversationIds, updateSettings]
   );
 
+  const unpinConversationFromRail = useCallback(
+    (conversationId: string) => {
+      updateSettings((current) => {
+        const nextFolders = removeConversationFromChatFolders(
+          remapChatFoldersToPinnedScope(current.general.chatFolders),
+          conversationId
+        );
+        const pinnedRoot = current.general.chatRootOrderByScope[PINNED_CHATS_FOLDER_SCOPE];
+        const nextRoot =
+          pinnedRoot && pinnedRoot.includes(conversationId)
+            ? {
+                ...current.general.chatRootOrderByScope,
+                [PINNED_CHATS_FOLDER_SCOPE]: pinnedRoot.filter((id) => id !== conversationId),
+              }
+            : current.general.chatRootOrderByScope;
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            chatFolders: nextFolders,
+            chatRootOrderByScope: nextRoot,
+          },
+        };
+      });
+      unpinConversation(conversationId);
+    },
+    [unpinConversation, updateSettings]
+  );
+
   const handleConversationDrop = useCallback(
     (
       event: ReactDragEvent<HTMLElement>,
@@ -1469,11 +1528,7 @@ export function AgentWorkspaceRail() {
         return;
       }
       const source = findRailConversationById(conversationId);
-      if (!source) {
-        return;
-      }
-      const sourceScope = resolveConversationFolderScope(source);
-      if (sourceScope !== scopeId) {
+      if (!source && !isPinnedChatFolderScope(scopeId)) {
         return;
       }
       event.preventDefault();
@@ -1484,7 +1539,23 @@ export function AgentWorkspaceRail() {
         const rect = event.currentTarget.getBoundingClientRect();
         placement = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
       }
-      moveConversationToFolder(conversationId, scopeId, folderId, {
+      if (isPinnedChatFolderScope(scopeId)) {
+        pinConversation(conversationId);
+        moveConversationToFolder(conversationId, PINNED_CHATS_FOLDER_SCOPE, folderId, {
+          targetConversationId,
+          placement,
+        });
+        return;
+      }
+      const sourceIsPinned = pinnedRailConversations.some((item) => item.id === conversationId);
+      if (sourceIsPinned) {
+        unpinConversationFromRail(conversationId);
+      }
+      const sourceScope = source ? resolveConversationFolderScope(source) : scopeId;
+      if (sourceScope !== scopeId && !sourceIsPinned) {
+        return;
+      }
+      moveConversationToFolder(conversationId, scopeId, null, {
         targetConversationId,
         placement,
       });
@@ -1494,7 +1565,10 @@ export function AgentWorkspaceRail() {
       draggingFolderId,
       findRailConversationById,
       moveConversationToFolder,
+      pinConversation,
+      pinnedRailConversations,
       resolveConversationFolderScope,
+      unpinConversationFromRail,
     ]
   );
 
@@ -1979,10 +2053,10 @@ export function AgentWorkspaceRail() {
 
   const handleBulkUnpin = useCallback(() => {
     for (const conversation of bulkSelectedConversations) {
-      unpinConversation(conversation.id);
+      unpinConversationFromRail(conversation.id);
     }
     exitBulkSelect();
-  }, [bulkSelectedConversations, exitBulkSelect, unpinConversation]);
+  }, [bulkSelectedConversations, exitBulkSelect, unpinConversationFromRail]);
 
   type RailConversationRowSection = {
     inPinnedSection?: boolean;
@@ -2099,8 +2173,7 @@ export function AgentWorkspaceRail() {
       const inPinned = options?.inPinnedSection ?? false;
       const orderedConversations = options?.orderedConversations ?? [conversation];
       const conversationId = conversation.id;
-      const folderScopeId =
-        options?.folderScopeId ?? resolveConversationFolderScope(conversation);
+      const folderScopeId = PINNED_CHATS_FOLDER_SCOPE;
       const workspaceFolders = getChatFoldersForScope(
         settings.general.chatFolders,
         folderScopeId
@@ -2108,42 +2181,42 @@ export function AgentWorkspaceRail() {
       const currentFolder = workspaceFolders.find((folder) =>
         folder.conversationIds.includes(conversationId)
       );
-      const rootLabel = isStandaloneChatFolderScope(folderScopeId)
-        ? "Move to Chats Root"
-        : "Move to Workspace Root";
-      const moveItems: WorkbenchMenuItem[] = [
-        { type: "sep" },
-        {
-          type: "item",
-          id: "move-new-folder",
-          label: "Move to New Folder...",
-          onSelect: () =>
-            createFolderForWorkspace(folderScopeId, {
-              conversationId,
-            }),
-        },
-        ...(workspaceFolders.length > 0
-          ? [
-              {
-                type: "item" as const,
-                id: "move-root",
-                label: rootLabel,
-                disabled: !currentFolder,
-                onSelect: () => moveConversationToFolder(conversationId, folderScopeId, null),
-              },
-              ...workspaceFolders.map(
-                (folder): WorkbenchMenuItem => ({
-                  type: "item",
-                  id: `move-folder-${folder.id}`,
-                  label: `Move to ${folder.name}`,
-                  disabled: currentFolder?.id === folder.id,
-                  onSelect: () =>
-                    moveConversationToFolder(conversationId, folderScopeId, folder.id),
-                })
-              ),
-            ]
-          : []),
-      ];
+      const moveItems: WorkbenchMenuItem[] = inPinned
+        ? [
+            { type: "sep" },
+            {
+              type: "item",
+              id: "move-new-folder",
+              label: "Move to New Folder...",
+              onSelect: () =>
+                createFolderForWorkspace(folderScopeId, {
+                  conversationId,
+                }),
+            },
+            ...(workspaceFolders.length > 0
+              ? [
+                  {
+                    type: "item" as const,
+                    id: "move-root",
+                    label: "Move to Pinned Root",
+                    disabled: !currentFolder,
+                    onSelect: () =>
+                      moveConversationToFolder(conversationId, folderScopeId, null),
+                  },
+                  ...workspaceFolders.map(
+                    (folder): WorkbenchMenuItem => ({
+                      type: "item",
+                      id: `move-folder-${folder.id}`,
+                      label: `Move to ${folder.name}`,
+                      disabled: currentFolder?.id === folder.id,
+                      onSelect: () =>
+                        moveConversationToFolder(conversationId, folderScopeId, folder.id),
+                    })
+                  ),
+                ]
+              : []),
+          ]
+        : [];
       // Physical relocation (workspace / repository / branch) is Cesium-only:
       // other harnesses pin native sessions to their original working directory.
       const relocateBusy =
@@ -2229,7 +2302,7 @@ export function AgentWorkspaceRail() {
               type: "item",
               id: "unpin",
               label: "Unpin",
-              onSelect: () => unpinConversation(conversationId),
+              onSelect: () => unpinConversationFromRail(conversationId),
             }
           : {
               type: "item",
@@ -2350,12 +2423,11 @@ export function AgentWorkspaceRail() {
       pinConversation,
       pushNotification,
       relocateConversationTo,
-      resolveConversationFolderScope,
       servers,
       settings.general.chatFolders,
       settleConversation,
       unarchiveConversation,
-      unpinConversation,
+      unpinConversationFromRail,
       unsettleConversation,
     ]
   );
@@ -2679,134 +2751,24 @@ export function AgentWorkspaceRail() {
   ]);
 
   const pinnedSection: ReactNode = useMemo(() => {
-    if (pinnedRailConversations.length === 0) {
-      return null;
-    }
     const isPinnedHeaderCollapsed = collapsedWorkspaceIds.has(PINNED_SECTION_WORKSPACE_ID);
-    return (
-      <section className="pb-[12px]">
-        <div className="group flex items-center gap-[2px] px-px pb-[4px]">
-          <button
-            type="button"
-            onClick={() => toggleWorkspaceCollapsed(PINNED_SECTION_WORKSPACE_ID)}
-            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
-          >
-            <span className="relative grid size-[10px] shrink-0 place-items-center">
-              <Pin
-                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] group-hover/wshead:opacity-0"
-                strokeWidth={2}
-              />
-              <ChevronRight
-                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
-                  isPinnedHeaderCollapsed ? "" : "rotate-90"
-                }`}
-                strokeWidth={2}
-              />
-            </span>
-            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
-              Pinned
-            </span>
-          </button>
-        </div>
-        {!isPinnedHeaderCollapsed ? (
-          <div className="flex flex-col gap-[2px]">
-            {pinnedRailConversations.map((conversation, index) => {
-              const pinnedSection: RailConversationRowSection = {
-                inPinnedSection: true,
-                workspaceId: conversation.workspaceId,
-                orderedConversations: pinnedRailConversations,
-              };
-              const railKey = getRailConversationKey(conversation);
-              return (
-                <AgentConversationRow
-                  key={conversation.conversationKey ?? conversation.id}
-                  conversation={conversation}
-                  detail={railRowDetail}
-                  unreadCompletion={isConversationUnread(conversation)}
-                  acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                  rowIndex={index}
-                  selected={isConversationChatSelected(conversation)}
-                  bulkSelectMode={bulkSelectMode}
-                  bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
-                  editing={renameState?.conversationId === conversation.id}
-                  editValue={renameState?.draft}
-                  onBeginRename={() => beginConversationRename(conversation)}
-                  onEditValueChange={updateConversationRenameDraft}
-                  onCommitRename={commitConversationRename}
-                  onCancelRename={cancelConversationRename}
-                  onSelect={(event) => {
-                    if (bulkSelectMode) {
-                      handleBulkRowClick(event, conversation, pinnedSection);
-                      return;
-                    }
-                    handleConversationSelect(conversation);
-                  }}
-                  showEnvironmentBadge={agentRailSettings.showEnvironment}
-                  showBranchBadge={agentRailSettings.showBranch}
-                  onContextMenu={(e, currentConversation) =>
-                    handleConversationContextMenu(e, currentConversation, {
-                      inPinnedSection: true,
-                      orderedConversations: pinnedRailConversations,
-                    })
-                  }
-                  showOverflowMenu={experimentalIpadCustomButtons}
-                  onOverflowMenu={(anchor) =>
-                    handleConversationOverflowMenu(conversation, anchor, {
-                      inPinnedSection: true,
-                      orderedConversations: pinnedRailConversations,
-                    })
-                  }
-                />
-              );
-            })}
-          </div>
-        ) : null}
-      </section>
-    );
-  }, [
-    beginConversationRename,
-    cancelConversationRename,
-    collapsedWorkspaceIds,
-    commitConversationRename,
-    experimentalIpadCustomButtons,
-    handleConversationOverflowMenu,
-    bulkSelectMode,
-    bulkSelectedKeys,
-    handleBulkRowClick,
-    handleConversationSelect,
-    handleConversationContextMenu,
-    agentRailSettings.showEnvironment,
-    agentRailSettings.showBranch,
-    isConversationAcknowledgedFailed,
-    isConversationChatSelected,
-    isConversationUnread,
-    pinnedRailConversations,
-    railRowDetail,
-    renameState?.conversationId,
-    renameState?.draft,
-    toggleWorkspaceCollapsed,
-    updateConversationRenameDraft,
-  ]);
-
-  const chatsSection: ReactNode = useMemo(() => {
-    const isChatsHeaderCollapsed = collapsedWorkspaceIds.has(CHATS_SECTION_WORKSPACE_ID);
-    const chatsFolders = getChatFoldersForScope(
+    const pinnedFolders = getChatFoldersForScope(
       settings.general.chatFolders,
-      STANDALONE_CHATS_FOLDER_SCOPE
+      PINNED_CHATS_FOLDER_SCOPE
     );
     const { folderConversations, rootConversations } = partitionConversationsByFolders(
-      standaloneChatConversations,
-      chatsFolders,
-      settings.general.chatRootOrderByScope[STANDALONE_CHATS_FOLDER_SCOPE]
+      pinnedRailConversations,
+      pinnedFolders,
+      settings.general.chatRootOrderByScope[PINNED_CHATS_FOLDER_SCOPE]
     );
-    const renderConversationRow = (
+    const renderPinnedRow = (
       conversation: AgentRailConversationSummary,
       index: number,
       folderId: string | null,
       orderedConversations: AgentRailConversationSummary[]
     ) => {
-      const chatsRowSection: RailConversationRowSection = {
-        inPinnedSection: false,
+      const pinnedRowSection: RailConversationRowSection = {
+        inPinnedSection: true,
         workspaceId: conversation.workspaceId,
         folderId,
         orderedConversations,
@@ -2831,7 +2793,7 @@ export function AgentWorkspaceRail() {
           onCancelRename={cancelConversationRename}
           onSelect={(event) => {
             if (bulkSelectMode) {
-              handleBulkRowClick(event, conversation, chatsRowSection);
+              handleBulkRowClick(event, conversation, pinnedRowSection);
               return;
             }
             handleConversationSelect(conversation);
@@ -2841,9 +2803,7 @@ export function AgentWorkspaceRail() {
           onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
           onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
           onDragOver={
-            bulkSelectMode
-              ? undefined
-              : (event) => handleFolderDropTargetDragOver(event)
+            bulkSelectMode ? undefined : (event) => handleFolderDropTargetDragOver(event)
           }
           onDrop={
             bulkSelectMode
@@ -2851,25 +2811,25 @@ export function AgentWorkspaceRail() {
               : (event) =>
                   handleConversationDrop(
                     event,
-                    STANDALONE_CHATS_FOLDER_SCOPE,
+                    PINNED_CHATS_FOLDER_SCOPE,
                     folderId,
                     conversation.id
                   )
           }
           onContextMenu={(e, currentConversation) =>
             handleConversationContextMenu(e, currentConversation, {
-              inPinnedSection: false,
+              inPinnedSection: true,
               folderId,
-              folderScopeId: STANDALONE_CHATS_FOLDER_SCOPE,
+              folderScopeId: PINNED_CHATS_FOLDER_SCOPE,
               orderedConversations,
             })
           }
           showOverflowMenu={experimentalIpadCustomButtons}
           onOverflowMenu={(anchor) =>
             handleConversationOverflowMenu(conversation, anchor, {
-              inPinnedSection: false,
+              inPinnedSection: true,
               folderId,
-              folderScopeId: STANDALONE_CHATS_FOLDER_SCOPE,
+              folderScopeId: PINNED_CHATS_FOLDER_SCOPE,
               orderedConversations,
             })
           }
@@ -2878,68 +2838,51 @@ export function AgentWorkspaceRail() {
     };
     return (
       <section className="pb-[12px]">
-        {showStandaloneSectionHeader ? (
         <div className="group flex items-center gap-[2px] px-px pb-[4px]">
           <button
             type="button"
-            onClick={() => toggleWorkspaceCollapsed(CHATS_SECTION_WORKSPACE_ID)}
+            onClick={() => toggleWorkspaceCollapsed(PINNED_SECTION_WORKSPACE_ID)}
             className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
           >
             <span className="relative grid size-[10px] shrink-0 place-items-center">
-              <MessageSquare
+              <Pin
                 className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] group-hover/wshead:opacity-0"
                 strokeWidth={2}
               />
               <ChevronRight
                 className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
-                  isChatsHeaderCollapsed ? "" : "rotate-90"
+                  isPinnedHeaderCollapsed ? "" : "rotate-90"
                 }`}
                 strokeWidth={2}
               />
             </span>
             <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
-              {standaloneHomeLabel}
+              Pinned
             </span>
           </button>
           <button
             type="button"
-            onClick={() => createFolderForWorkspace(STANDALONE_CHATS_FOLDER_SCOPE)}
+            onClick={() => createFolderForWorkspace(PINNED_CHATS_FOLDER_SCOPE)}
             className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-            aria-label="New chats folder"
+            aria-label="New pinned folder"
             title="New folder"
           >
             <FolderPlus className="size-[12px]" strokeWidth={1.5} />
           </button>
-          <button
-            type="button"
-            onClick={handleNewStandaloneChat}
-            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-            aria-label="Start new chat without workspace"
-            title="New chat (no workspace)"
-          >
-            <Plus className="size-[12px]" strokeWidth={1.5} />
-          </button>
         </div>
-        ) : null}
-        {!isChatsHeaderCollapsed || !showStandaloneSectionHeader ? (
+        {!isPinnedHeaderCollapsed ? (
           <div
             className="flex flex-col gap-[2px]"
             onDragOver={handleFolderDropTargetDragOver}
-            onDrop={(event) =>
-              handleConversationDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, null)
-            }
+            onDrop={(event) => handleConversationDrop(event, PINNED_CHATS_FOLDER_SCOPE, null)}
           >
-            {standaloneChatConversations.length === 0 && chatsFolders.length === 0 ? (
-              <button
-                type="button"
-                onClick={handleNewStandaloneChat}
-                className="rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--text-disabled)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-secondary)]"
-              >
-                New chat without a workspace
-              </button>
+            {pinnedRailConversations.length === 0 && pinnedFolders.length === 0 ? (
+              <div className="rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-disabled)]">
+                Pin a conversation or create a folder
+              </div>
             ) : (
               <>
-                {chatsFolders.map((folder) => {
+                {pinnedFolders.map((folder) => {
                   const isFolderCollapsed = collapsedFolderIds.has(folder.id);
                   const Icon = getFolderIcon(folder.icon);
                   const conversationsInFolder = folderConversations.get(folder.id) ?? [];
@@ -2953,7 +2896,7 @@ export function AgentWorkspaceRail() {
                       } ${draggingFolderId === folder.id ? "opacity-60" : ""}`}
                       onDragOver={handleFolderDropTargetDragOver}
                       onDrop={(event) =>
-                        handleFolderReorderDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, folder.id)
+                        handleFolderReorderDrop(event, PINNED_CHATS_FOLDER_SCOPE, folder.id)
                       }
                     >
                       <div
@@ -3035,7 +2978,7 @@ export function AgentWorkspaceRail() {
                           onDrop={(event) =>
                             handleConversationDrop(
                               event,
-                              STANDALONE_CHATS_FOLDER_SCOPE,
+                              PINNED_CHATS_FOLDER_SCOPE,
                               folder.id
                             )
                           }
@@ -3046,7 +2989,7 @@ export function AgentWorkspaceRail() {
                             </div>
                           ) : (
                             conversationsInFolder.map((conversation, index) =>
-                              renderConversationRow(
+                              renderPinnedRow(
                                 conversation,
                                 index,
                                 folder.id,
@@ -3060,9 +3003,185 @@ export function AgentWorkspaceRail() {
                   );
                 })}
                 {rootConversations.map((conversation, index) =>
-                  renderConversationRow(conversation, index, null, rootConversations)
+                  renderPinnedRow(conversation, index, null, rootConversations)
                 )}
               </>
+            )}
+          </div>
+        ) : null}
+      </section>
+    );
+  }, [
+    beginConversationRename,
+    cancelConversationRename,
+    collapsedFolderIds,
+    collapsedWorkspaceIds,
+    commitConversationRename,
+    createFolderForWorkspace,
+    draggingConversationId,
+    draggingFolderId,
+    editingFolderId,
+    experimentalIpadCustomButtons,
+    handleConversationOverflowMenu,
+    bulkSelectMode,
+    bulkSelectedKeys,
+    handleBulkRowClick,
+    handleConversationSelect,
+    handleConversationContextMenu,
+    handleConversationDragEnd,
+    handleConversationDragStart,
+    handleConversationDrop,
+    handleFolderContextMenu,
+    handleFolderDragEnd,
+    handleFolderDragStart,
+    handleFolderDropTargetDragOver,
+    handleFolderReorderDrop,
+    agentRailSettings.showEnvironment,
+    agentRailSettings.showBranch,
+    isConversationAcknowledgedFailed,
+    isConversationChatSelected,
+    isConversationUnread,
+    pinnedRailConversations,
+    railRowDetail,
+    renameState?.conversationId,
+    renameState?.draft,
+    settings.general.chatFolders,
+    settings.general.chatRootOrderByScope,
+    toggleFolderCollapsed,
+    toggleWorkspaceCollapsed,
+    updateConversationRenameDraft,
+    updateFolder,
+  ]);
+
+  const chatsSection: ReactNode = useMemo(() => {
+    const isChatsHeaderCollapsed = collapsedWorkspaceIds.has(CHATS_SECTION_WORKSPACE_ID);
+    const rootConversations = orderConversationsByIds(
+      standaloneChatConversations,
+      settings.general.chatRootOrderByScope[STANDALONE_CHATS_FOLDER_SCOPE]
+    );
+    return (
+      <section className="pb-[12px]">
+        {showStandaloneSectionHeader ? (
+        <div className="group flex items-center gap-[2px] px-px pb-[4px]">
+          <button
+            type="button"
+            onClick={() => toggleWorkspaceCollapsed(CHATS_SECTION_WORKSPACE_ID)}
+            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
+          >
+            <span className="relative grid size-[10px] shrink-0 place-items-center">
+              <MessageSquare
+                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] group-hover/wshead:opacity-0"
+                strokeWidth={2}
+              />
+              <ChevronRight
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                  isChatsHeaderCollapsed ? "" : "rotate-90"
+                }`}
+                strokeWidth={2}
+              />
+            </span>
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
+              {standaloneHomeLabel}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={handleNewStandaloneChat}
+            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            aria-label="Start new chat without workspace"
+            title="New chat (no workspace)"
+          >
+            <Plus className="size-[12px]" strokeWidth={1.5} />
+          </button>
+        </div>
+        ) : null}
+        {!isChatsHeaderCollapsed || !showStandaloneSectionHeader ? (
+          <div
+            className="flex flex-col gap-[2px]"
+            onDragOver={handleFolderDropTargetDragOver}
+            onDrop={(event) =>
+              handleConversationDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, null)
+            }
+          >
+            {rootConversations.length === 0 ? (
+              <button
+                type="button"
+                onClick={handleNewStandaloneChat}
+                className="rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--text-disabled)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-secondary)]"
+              >
+                New chat without a workspace
+              </button>
+            ) : (
+              rootConversations.map((conversation, index) => {
+                const chatsRowSection: RailConversationRowSection = {
+                  inPinnedSection: false,
+                  workspaceId: conversation.workspaceId,
+                  folderId: null,
+                  orderedConversations: rootConversations,
+                };
+                const railKey = getRailConversationKey(conversation);
+                return (
+                  <AgentConversationRow
+                    key={conversation.conversationKey ?? conversation.id}
+                    conversation={conversation}
+                    detail={railRowDetail}
+                    unreadCompletion={isConversationUnread(conversation)}
+                    acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
+                    rowIndex={index}
+                    selected={isConversationChatSelected(conversation)}
+                    bulkSelectMode={bulkSelectMode}
+                    bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
+                    editing={renameState?.conversationId === conversation.id}
+                    editValue={renameState?.draft}
+                    onBeginRename={() => beginConversationRename(conversation)}
+                    onEditValueChange={updateConversationRenameDraft}
+                    onCommitRename={commitConversationRename}
+                    onCancelRename={cancelConversationRename}
+                    onSelect={(event) => {
+                      if (bulkSelectMode) {
+                        handleBulkRowClick(event, conversation, chatsRowSection);
+                        return;
+                      }
+                      handleConversationSelect(conversation);
+                    }}
+                    showEnvironmentBadge={agentRailSettings.showEnvironment}
+                    showBranchBadge={agentRailSettings.showBranch}
+                    onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
+                    onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
+                    onDragOver={
+                      bulkSelectMode
+                        ? undefined
+                        : (event) => handleFolderDropTargetDragOver(event)
+                    }
+                    onDrop={
+                      bulkSelectMode
+                        ? undefined
+                        : (event) =>
+                            handleConversationDrop(
+                              event,
+                              STANDALONE_CHATS_FOLDER_SCOPE,
+                              null,
+                              conversation.id
+                            )
+                    }
+                    onContextMenu={(e, currentConversation) =>
+                      handleConversationContextMenu(e, currentConversation, {
+                        inPinnedSection: false,
+                        folderId: null,
+                        orderedConversations: rootConversations,
+                      })
+                    }
+                    showOverflowMenu={experimentalIpadCustomButtons}
+                    onOverflowMenu={(anchor) =>
+                      handleConversationOverflowMenu(conversation, anchor, {
+                        inPinnedSection: false,
+                        folderId: null,
+                        orderedConversations: rootConversations,
+                      })
+                    }
+                  />
+                );
+              })
             )}
           </div>
         ) : null}
@@ -3073,13 +3192,8 @@ export function AgentWorkspaceRail() {
     bulkSelectMode,
     bulkSelectedKeys,
     cancelConversationRename,
-    collapsedFolderIds,
     collapsedWorkspaceIds,
     commitConversationRename,
-    createFolderForWorkspace,
-    draggingConversationId,
-    draggingFolderId,
-    editingFolderId,
     experimentalIpadCustomButtons,
     handleBulkRowClick,
     handleConversationContextMenu,
@@ -3088,11 +3202,7 @@ export function AgentWorkspaceRail() {
     handleConversationDrop,
     handleConversationOverflowMenu,
     handleConversationSelect,
-    handleFolderContextMenu,
-    handleFolderDragEnd,
-    handleFolderDragStart,
     handleFolderDropTargetDragOver,
-    handleFolderReorderDrop,
     handleNewStandaloneChat,
     agentRailSettings.showEnvironment,
     agentRailSettings.showBranch,
@@ -3102,15 +3212,12 @@ export function AgentWorkspaceRail() {
     railRowDetail,
     renameState?.conversationId,
     renameState?.draft,
-    settings.general.chatFolders,
     settings.general.chatRootOrderByScope,
     showStandaloneSectionHeader,
     standaloneChatConversations,
     standaloneHomeLabel,
-    toggleFolderCollapsed,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
-    updateFolder,
   ]);
 
   const workspaceGroupsSection: ReactNode = (
@@ -3148,16 +3255,8 @@ export function AgentWorkspaceRail() {
                       ? machineOptions.find((machine) => machine.id === group.serverId)?.label
                       : null;
                 const isWorkspaceCollapsed = collapsedWorkspaceIds.has(groupKey);
-                const workspaceFolders = getChatFoldersForScope(
-                  settings.general.chatFolders,
-                  group.workspace.id
-                );
-                const {
-                  folderConversations,
-                  rootConversations,
-                } = partitionConversationsByFolders(
+                const rootConversations = orderConversationsByIds(
                   group.conversations,
-                  workspaceFolders,
                   settings.general.chatRootOrderByScope[group.workspace.id]
                 );
                 const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
@@ -3171,8 +3270,7 @@ export function AgentWorkspaceRail() {
                     : group.repository?.currentBranch;
                 if (
                   !showWorkspaceGroupHeaders &&
-                  group.conversations.length === 0 &&
-                  workspaceFolders.length === 0
+                  group.conversations.length === 0
                 ) {
                   return null;
                 }
@@ -3272,193 +3370,6 @@ export function AgentWorkspaceRail() {
                       onDragOver={handleFolderDropTargetDragOver}
                       onDrop={(event) => handleConversationDrop(event, group.workspace.id, null)}
                     >
-                      {workspaceFolders.map((folder) => {
-                        const isFolderCollapsed = collapsedFolderIds.has(folder.id);
-                        const Icon = getFolderIcon(folder.icon);
-                        const folderConversationList =
-                          folderConversations.get(folder.id) ?? [];
-                        return (
-                          <div
-                            key={folder.id}
-                            className={`rounded-[var(--agent-control-radius)] ${
-                              draggingConversationId || draggingFolderId === folder.id
-                                ? "bg-[var(--bg-card)]"
-                                : ""
-                            } ${draggingFolderId === folder.id ? "opacity-60" : ""}`}
-                            onDragOver={handleFolderDropTargetDragOver}
-                            onDrop={(event) =>
-                              handleFolderReorderDrop(event, group.workspace.id, folder.id)
-                            }
-                          >
-                            <div
-                              draggable
-                              onDragStart={(event) => handleFolderDragStart(event, folder)}
-                              onDragEnd={handleFolderDragEnd}
-                              className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-                              onContextMenu={(event) => handleFolderContextMenu(event, folder)}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => toggleFolderCollapsed(folder.id)}
-                                className="flex h-full min-w-0 flex-1 items-center gap-[6px] px-[9px] text-left"
-                                title={`${folder.name} (${folderConversationList.length})`}
-                              >
-                                <ChevronRight
-                                  className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform ${
-                                    isFolderCollapsed ? "" : "rotate-90"
-                                  }`}
-                                  strokeWidth={2}
-                                />
-                                <Icon
-                                  className="size-[13px] shrink-0"
-                                  color={folder.color}
-                                  strokeWidth={1.8}
-                                />
-                                <span className="min-w-0 flex-1 truncate font-sans text-[12.5px]">
-                                  {folder.name}
-                                </span>
-                                <span className="shrink-0 font-sans text-[10px] text-[var(--text-disabled)]">
-                                  {folderConversationList.length}
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  setEditingFolderId((current) =>
-                                    current === folder.id ? null : folder.id
-                                  );
-                                }}
-                                className="mr-[3px] flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
-                                title={`Customize ${folder.name}`}
-                                aria-label={`Customize ${folder.name}`}
-                              >
-                                <Settings className="size-[12px]" strokeWidth={1.7} />
-                              </button>
-                            </div>
-                            {editingFolderId === folder.id ? (
-                              <RailIconCustomizePanel
-                                title={folder.name}
-                                icon={folder.icon}
-                                color={folder.color}
-                                showNameField
-                                name={folder.name}
-                                onClose={() => setEditingFolderId(null)}
-                                onUpdate={(patch) =>
-                                  updateFolder(folder.id, (current) => ({
-                                    ...current,
-                                    ...patch,
-                                    name:
-                                      typeof patch.name === "string"
-                                        ? patch.name.trim().slice(0, 80) || "Folder"
-                                        : current.name,
-                                    color:
-                                      typeof patch.color === "string" &&
-                                      isValidFolderColor(patch.color)
-                                        ? patch.color
-                                        : current.color,
-                                  }))
-                                }
-                              />
-                            ) : null}
-                            {!isFolderCollapsed ? (
-                              <div
-                                className="ml-[13px] mt-[2px] flex flex-col gap-[2px] border-l border-[var(--border-subtle)] pl-[5px]"
-                                onDragOver={handleFolderDropTargetDragOver}
-                                onDrop={(event) =>
-                                  handleConversationDrop(event, group.workspace.id, folder.id)
-                                }
-                              >
-                                {folderConversationList.length === 0 ? (
-                                  <div className="px-[9px] py-[5px] font-sans text-[12px] text-[var(--text-disabled)]">
-                                    Empty folder
-                                  </div>
-                                ) : (
-                                  folderConversationList.map((conversation, index) => {
-                                    const folderSection: RailConversationRowSection = {
-                                      workspaceId: group.workspace.id,
-                                      folderId: folder.id,
-                                      orderedConversations: folderConversationList,
-                                    };
-                                    const railKey = getRailConversationKey(conversation);
-                                    return (
-                                      <AgentConversationRow
-                                        key={conversation.conversationKey ?? conversation.id}
-                                        conversation={conversation}
-                                        detail={railRowDetail}
-                                        unreadCompletion={isConversationUnread(conversation)}
-                                        acknowledgedFailure={isConversationAcknowledgedFailed(conversation)}
-                                        showMachineBadge={showConversationMachine && agentRailSettings.showMachine}
-                                        rowIndex={index}
-                                        selected={isConversationChatSelected(conversation)}
-                                        bulkSelectMode={bulkSelectMode}
-                                        bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
-                                        editing={renameState?.conversationId === conversation.id}
-                                        editValue={renameState?.draft}
-                                        onBeginRename={() => beginConversationRename(conversation)}
-                                        onEditValueChange={updateConversationRenameDraft}
-                                        onCommitRename={commitConversationRename}
-                                        onCancelRename={cancelConversationRename}
-                                        onSelect={(event) => {
-                                          if (bulkSelectMode) {
-                                            handleBulkRowClick(event, conversation, folderSection);
-                                            return;
-                                          }
-                                          handleConversationSelect(conversation);
-                                        }}
-                                        showEnvironmentBadge={agentRailSettings.showEnvironment}
-                                        showBranchBadge={agentRailSettings.showBranch}
-                                        onDragStart={
-                                          bulkSelectMode || !workspaceActionsEnabled
-                                            ? undefined
-                                            : handleConversationDragStart
-                                        }
-                                        onDragEnd={
-                                          bulkSelectMode || !workspaceActionsEnabled
-                                            ? undefined
-                                            : handleConversationDragEnd
-                                        }
-                                        onDragOver={
-                                          bulkSelectMode || !workspaceActionsEnabled
-                                            ? undefined
-                                            : (event) => handleFolderDropTargetDragOver(event)
-                                        }
-                                        onDrop={
-                                          bulkSelectMode || !workspaceActionsEnabled
-                                            ? undefined
-                                            : (event) =>
-                                                handleConversationDrop(
-                                                  event,
-                                                  group.workspace.id,
-                                                  folder.id,
-                                                  conversation.id
-                                                )
-                                        }
-                                        onContextMenu={(e, currentConversation) =>
-                                          handleConversationContextMenu(e, currentConversation, {
-                                            inPinnedSection: false,
-                                            folderId: folder.id,
-                                            orderedConversations: folderConversationList,
-                                          })
-                                        }
-                                        showOverflowMenu={experimentalIpadCustomButtons}
-                                        onOverflowMenu={(anchor) =>
-                                          handleConversationOverflowMenu(conversation, anchor, {
-                                            inPinnedSection: false,
-                                            folderId: folder.id,
-                                            orderedConversations: folderConversationList,
-                                          })
-                                        }
-                                      />
-                                    );
-                                  })
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
                       {rootConversations.map((conversation, index) => {
                           const rootSection: RailConversationRowSection = {
                             workspaceId: group.workspace.id,
@@ -3590,7 +3501,9 @@ export function AgentWorkspaceRail() {
     return () => window.clearTimeout(timer);
   }, [desktopRailCollapsed, desktopRailCollapsedTarget]);
   const railHasContent =
+    !railFilterActive ||
     pinnedRailConversations.length > 0 ||
+    settings.general.chatFolders.length > 0 ||
     standaloneChatConversations.length > 0 ||
     visibleGroups.length > 0 ||
     showStandaloneHomeGroup;

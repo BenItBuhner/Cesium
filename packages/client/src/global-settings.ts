@@ -198,8 +198,9 @@ export type GeneralSettingsState = {
   quickSwitcherScope: QuickSwitcherScopeId;
   chatFolders: ChatFolderState[];
   /**
-   * Custom root (unfoldered) conversation order keyed by folder scope id.
-   * Scope is a real workspace id, or `__agentStandaloneChats__` for the Chats section.
+   * Custom root (unfoldered) conversation order keyed by scope id.
+   * Workspace / standalone chats stay flat lists. Folders live only on
+   * `__agentPinned__`.
    */
   chatRootOrderByScope: Record<string, string[]>;
   agentRail: AgentRailSettingsState;
@@ -548,7 +549,7 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
     const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
     folders.push({
       id,
-      workspaceId,
+      workspaceId: "__agentPinned__",
       name:
         typeof record.name === "string" && record.name.trim()
           ? record.name.trim().slice(0, 80)
@@ -562,7 +563,10 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
       conversationIds,
     });
   }
-  return folders.slice(0, 500);
+  return folders.slice(0, 500).map((folder, index) => ({
+    ...folder,
+    sortOrder: index,
+  }));
 }
 
 function normalizeChatRootOrderByScope(raw: unknown): Record<string, string[]> {
@@ -766,12 +770,19 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!ordered.includes("running")) {
     ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
   }
+  // Pinned is the only place folders/groups live — keep it under the inbox
+  // sections and never let a saved order bury it among workspaces.
+  const withoutPinned = ordered.filter((id) => id !== "pinned");
+  const runningIdx = withoutPinned.indexOf("running");
+  const attentionIdx = withoutPinned.indexOf("attention");
+  const pinnedInsertAt = (runningIdx >= 0 ? runningIdx : attentionIdx) + 1;
+  withoutPinned.splice(Math.max(0, pinnedInsertAt), 0, "pinned");
   const sectionOrder: AgentRailSectionId[] = [
-    ...ordered,
-    ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
+    ...withoutPinned,
+    ...AGENT_RAIL_SECTION_IDS.filter((id) => !withoutPinned.includes(id)),
   ];
   const hiddenSections = normalizeAgentRailSectionIds(record.hiddenSections).filter(
-    (id) => id !== "workspaces"
+    (id) => id !== "workspaces" && id !== "pinned"
   );
   return {
     groupBy,

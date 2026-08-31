@@ -478,7 +478,7 @@ export function AgentRailFilterMenuPortal({
         />
         <div className={popoverMenuSeparatorClass} />
         <div className={popoverMenuSectionLabelClass}>Sections</div>
-        {(["attention", "running", "pinned"] as const).map((sectionId) => {
+        {(["attention", "running"] as const).map((sectionId) => {
           const foldedByPriority =
             priorityMode && (sectionId === "attention" || sectionId === "running");
           return (

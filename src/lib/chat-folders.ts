@@ -3,10 +3,59 @@ import type { ChatFolderState } from "@/lib/global-settings";
 /** Synthetic folder scope for standalone (no-workspace) chats in the Chats rail section. */
 export const STANDALONE_CHATS_FOLDER_SCOPE = "__agentStandaloneChats__";
 
+/** Only the Pinned rail section may own folders / groups. */
+export const PINNED_CHATS_FOLDER_SCOPE = "__agentPinned__";
+
 export type ChatFolderPlacement = "before" | "after";
 
 export function isStandaloneChatFolderScope(scopeId: string): boolean {
   return scopeId === STANDALONE_CHATS_FOLDER_SCOPE;
+}
+
+export function isPinnedChatFolderScope(scopeId: string): boolean {
+  return scopeId === PINNED_CHATS_FOLDER_SCOPE;
+}
+
+/** Folders are a pinned-only concept. Remap every persisted scope onto Pinned. */
+export function remapChatFoldersToPinnedScope(folders: ChatFolderState[]): ChatFolderState[] {
+  return folders.map((folder, index) => ({
+    ...folder,
+    workspaceId: PINNED_CHATS_FOLDER_SCOPE,
+    sortOrder: index,
+  }));
+}
+
+export function collectChatFolderConversationIds(folders: ChatFolderState[]): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const folder of folders) {
+    for (const conversationId of folder.conversationIds) {
+      if (seen.has(conversationId)) {
+        continue;
+      }
+      seen.add(conversationId);
+      ids.push(conversationId);
+    }
+  }
+  return ids;
+}
+
+export function removeConversationFromChatFolders(
+  folders: ChatFolderState[],
+  conversationId: string
+): ChatFolderState[] {
+  let changed = false;
+  const next = folders.map((folder) => {
+    if (!folder.conversationIds.includes(conversationId)) {
+      return folder;
+    }
+    changed = true;
+    return {
+      ...folder,
+      conversationIds: folder.conversationIds.filter((id) => id !== conversationId),
+    };
+  });
+  return changed ? next : folders;
 }
 
 export function compareConversationsByRecency<T extends { updatedAt: number; title: string }>(
