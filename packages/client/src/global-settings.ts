@@ -772,7 +772,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   }
   // Pinned is the only place folders/groups live — keep it under the inbox
   // sections and never let a saved order bury it among workspaces.
-  const withoutPinned = ordered.filter((id) => id !== "pinned");
+  const withoutPinned: AgentRailSectionId[] = ordered.filter((id) => id !== "pinned");
   const runningIdx = withoutPinned.indexOf("running");
   const attentionIdx = withoutPinned.indexOf("attention");
   const pinnedInsertAt = (runningIdx >= 0 ? runningIdx : attentionIdx) + 1;

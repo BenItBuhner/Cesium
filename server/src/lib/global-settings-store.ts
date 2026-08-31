@@ -722,7 +722,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!ordered.includes("running")) {
     ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
   }
-  const withoutPinned = ordered.filter((id) => id !== "pinned");
+  const withoutPinned: AgentRailSectionId[] = ordered.filter((id) => id !== "pinned");
   const runningIdx = withoutPinned.indexOf("running");
   const attentionIdx = withoutPinned.indexOf("attention");
   const pinnedInsertAt = (runningIdx >= 0 ? runningIdx : attentionIdx) + 1;
