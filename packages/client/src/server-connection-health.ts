@@ -1,3 +1,4 @@
+import { engineFetch } from "./browser-machine";
 import { attachSessionToken } from "./auth-client";
 import { normalizeServerBaseUrl } from "./server-connections";
 import { resolveServerRequestBaseUrlForCurrentWindow } from "./resolve-server-base-url";
@@ -28,7 +29,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
   // though every actual API call works via same-origin.
   const requestBaseUrl = resolveServerRequestBaseUrlForCurrentWindow(normalizedBaseUrl);
   try {
-    const healthResponse = await fetch(`${requestBaseUrl}/health`, {
+    const healthResponse = await engineFetch(requestBaseUrl, "/health", {
       method: "GET",
       cache: "no-store",
       signal: timeoutSignal(8_000),
@@ -44,7 +45,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
     }
 
     try {
-      const authResponse = await fetch(`${requestBaseUrl}/api/auth/status`, {
+      const authResponse = await engineFetch(requestBaseUrl, "/api/auth/status", {
         method: "GET",
         headers: attachSessionToken(undefined, normalizedBaseUrl),
         credentials: "include",

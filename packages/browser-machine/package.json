@@ -1,5 +1,5 @@
 {
-  "name": "@cesium/client",
+  "name": "@cesium/browser-machine",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/react.js"
     }
   },
   "scripts": {
@@ -22,15 +18,11 @@
   "dependencies": {
     "@cesium/contracts": "file:../contracts",
     "@cesium/core": "file:../core",
-    "@cesium/design": "file:../design",
-    "@cesium/browser-machine": "file:../browser-machine"
-  },
-  "peerDependencies": {
-    "react": ">=19"
+    "esbuild-wasm": "^0.27.0",
+    "isomorphic-git": "^1.35.1"
   },
   "devDependencies": {
     "@cesium/config": "file:../config",
-    "@types/react": "^19",
     "typescript": "^5"
   }
 }
