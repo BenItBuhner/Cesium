@@ -32,15 +32,15 @@ export function registerTerminalRoutes(
       return errorResponse(`Unknown workspace: ${request.workspaceId}`, 404);
     }
     const record = await terminals.create(workspace.id);
+    // The client reads `id` from the top level (see createTerminal in
+    // @cesium/client server-api).
     return jsonResponse(
       {
-        terminal: {
-          id: record.id,
-          shell: "cesium-sh (browser)",
-          cwd: record.cwd,
-          alive: true,
-          attachedClients: 0,
-        },
+        id: record.id,
+        shell: "cesium-sh (browser)",
+        cwd: record.cwd,
+        alive: true,
+        attachedClients: 0,
       },
       201
     );
