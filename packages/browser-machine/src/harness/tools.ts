@@ -271,6 +271,7 @@ export class BrowserToolExecutor {
     const path = asString(args.path);
     const oldString = asString(args.oldString ?? args.old_string);
     const newString = asString(args.newString ?? args.new_string);
+    const replaceAll = args.replaceAll === true || args.replace_all === true;
     if (!path || !oldString) {
       return { result: "edit_file requires path and oldString.", isError: true };
     }
@@ -288,13 +289,15 @@ export class BrowserToolExecutor {
         isError: true,
       };
     }
-    if (text.indexOf(oldString, first + 1) !== -1) {
+    if (!replaceAll && text.indexOf(oldString, first + 1) !== -1) {
       return {
-        result: `oldString matches multiple locations in ${path}; provide more surrounding context.`,
+        result: `oldString matches multiple locations in ${path}; provide more surrounding context or set replaceAll to true.`,
         isError: true,
       };
     }
-    const next = text.slice(0, first) + newString + text.slice(first + oldString.length);
+    const next = replaceAll
+      ? text.split(oldString).join(newString)
+      : text.slice(0, first) + newString + text.slice(first + oldString.length);
     this.vfs.writeFile(absolute, next);
     const line = text.slice(0, first).split("\n").length;
     return {

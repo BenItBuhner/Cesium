@@ -36,8 +36,9 @@ type StoredEventRow = {
   event: AgentStoredEvent;
 };
 
-const DEFAULT_HEAD_TURNS = 20;
-const DEFAULT_HEAD_EVENTS = 600;
+// Mirrors the engine's session-store defaults (DEFAULT_PAGE_TURNS/EVENTS_CAP).
+const DEFAULT_HEAD_TURNS = 96;
+const DEFAULT_HEAD_EVENTS = 2000;
 
 function padSeq(seq: number): string {
   return String(seq).padStart(12, "0");

@@ -178,6 +178,15 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       },
     ]);
     await this.appendReminder(workspace, conversationId, messageId);
+    await this.deps.conversations.appendEvents(workspace.id, conversationId, [
+      {
+        eventId: newEventId(),
+        conversationId,
+        kind: "status",
+        status: "running",
+        detail: "Cesium is starting…",
+      },
+    ]);
     await this.deps.conversations.update(workspace.id, conversationId, (current) => ({
       ...current,
       status: "running",
@@ -390,6 +399,15 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         }
       }
 
+      await append([
+        {
+          eventId: newEventId(),
+          conversationId,
+          kind: "status",
+          status: "idle",
+          detail: "Cesium turn complete.",
+        },
+      ]);
       await this.deps.conversations.update(workspace.id, conversationId, (current) => ({
         ...current,
         status: "idle",
@@ -657,6 +675,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       { optionId: "allow_once", name: "Allow", kind: "allow_once" as const },
       { optionId: "allow_always", name: "Always allow", kind: "allow_always" as const },
       { optionId: "reject_once", name: "Reject", kind: "reject_once" as const },
+      { optionId: "reject_always", name: "Always reject", kind: "reject_always" as const },
     ];
     const pending: AgentPendingPermission = {
       requestId,

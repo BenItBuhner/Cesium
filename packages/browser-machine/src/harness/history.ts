@@ -9,6 +9,14 @@ import type { AdapterContentPart, AdapterMessage } from "./adapters";
 type ToolRaw = { callId?: string; name?: string; argsJson?: string };
 type ToolResultRaw = { result?: string };
 
+/** Mirrors the engine's per-tool result cap when feeding results back to the model. */
+const MAX_TOOL_RESULT_CHARS = 12_000;
+
+function capToolResult(result: string): string {
+  if (result.length <= MAX_TOOL_RESULT_CHARS) return result;
+  return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}\n[Tool result truncated at ${MAX_TOOL_RESULT_CHARS} characters.]`;
+}
+
 function attachmentParts(attachments: ImageAttachment[] | undefined): AdapterContentPart[] {
   const parts: AdapterContentPart[] = [];
   for (const attachment of attachments ?? []) {
@@ -132,7 +140,7 @@ export function buildHistoryFromEvents(input: {
           );
           pendingToolResults.push({
             id: matching?.id ?? raw.callId ?? event.toolCallId,
-            result: raw.result,
+            result: capToolResult(raw.result),
           });
         }
         break;
