@@ -630,6 +630,33 @@ export function createBuiltins(): Map<string, BuiltinHandler> {
     return 0;
   });
 
+  /** Expand tr-style sets: character ranges (a-z, 0-9) and class shorthands. */
+  const expandCharSet = (spec: string): string[] => {
+    const withClasses = spec
+      .replace(/\[:upper:\]/g, "A-Z")
+      .replace(/\[:lower:\]/g, "a-z")
+      .replace(/\[:digit:\]/g, "0-9");
+    const out: string[] = [];
+    for (let i = 0; i < withClasses.length; i += 1) {
+      const ch = withClasses[i] as string;
+      const next = withClasses[i + 1];
+      const end = withClasses[i + 2];
+      if (next === "-" && end !== undefined) {
+        const from = ch.charCodeAt(0);
+        const to = end.charCodeAt(0);
+        if (to >= from) {
+          for (let code = from; code <= to; code += 1) {
+            out.push(String.fromCharCode(code));
+          }
+          i += 2;
+          continue;
+        }
+      }
+      out.push(ch);
+    }
+    return out;
+  };
+
   builtins.set("tr", (argv, ctx) => {
     const deleteMode = argv[0] === "-d";
     const from = deleteMode ? argv[1] : argv[0];
@@ -640,12 +667,12 @@ export function createBuiltins(): Map<string, BuiltinHandler> {
     }
     let text = ctx.io.stdin;
     if (deleteMode) {
-      for (const ch of from) {
+      for (const ch of expandCharSet(from)) {
         text = text.split(ch).join("");
       }
     } else if (to !== undefined) {
-      const fromChars = [...from];
-      const toChars = [...to];
+      const fromChars = expandCharSet(from);
+      const toChars = expandCharSet(to);
       text = [...text]
         .map((ch) => {
           const index = fromChars.indexOf(ch);

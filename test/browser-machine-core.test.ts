@@ -120,6 +120,14 @@ describe("browser machine shell execution", () => {
     assert.equal(result.stdout.trim(), "hello world nested");
   });
 
+  test("tr expands character ranges", async () => {
+    const { shell } = makeShell();
+    const result = await shell.exec("echo hello browser | tr a-z A-Z", {
+      cwd: "/workspaces/demo",
+    });
+    assert.equal(result.stdout.trim(), "HELLO BROWSER");
+  });
+
   test("cd/pwd, mkdir -p, ls, find, and sed", async () => {
     const { shell } = makeShell();
     const result = await shell.exec(
