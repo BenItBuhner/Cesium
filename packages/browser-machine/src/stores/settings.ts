@@ -27,37 +27,42 @@ export type CesiumAgentStoredSettings = {
 };
 
 export class SettingsStore {
-  private envBootstrapDone = false;
+  private bootstrapPromise: Promise<void> | null = null;
 
   /**
    * Merge an env-provided inference provider from the hosting deployment
    * (see src/app/api/browser-machine-bootstrap). Stored keys always win;
-   * this only fills the gap when no provider is configured yet.
+   * this only fills the gap when no provider is configured yet. All settings
+   * reads await this so early conversations pick up bootstrapped defaults.
    */
-  async applyEnvBootstrap(): Promise<void> {
-    if (this.envBootstrapDone || typeof fetch === "undefined") return;
-    this.envBootstrapDone = true;
-    try {
-      const response = await fetch("/api/browser-machine-bootstrap", { cache: "no-store" });
-      if (!response.ok) return;
-      const payload = (await response.json()) as {
-        enabled?: boolean;
-        defaultModelId?: string;
-        provider?: StoredProvider;
-      };
-      if (!payload.enabled || !payload.provider) return;
-      const stored = await this.getCesiumAgentSettings();
-      if (stored.providers.some((provider) => provider.id === payload.provider?.id)) {
-        return;
-      }
-      stored.providers.push(payload.provider);
-      if (!stored.defaultModelId && payload.defaultModelId) {
-        stored.defaultModelId = payload.defaultModelId;
-      }
-      await this.putCesiumAgentSettings(stored);
-    } catch {
-      // No bootstrap endpoint (desktop renderer, static hosting) - fine.
+  applyEnvBootstrap(): Promise<void> {
+    if (!this.bootstrapPromise) {
+      this.bootstrapPromise = (async () => {
+        if (typeof fetch === "undefined" || typeof location === "undefined") return;
+        try {
+          const response = await fetch("/api/browser-machine-bootstrap", { cache: "no-store" });
+          if (!response.ok) return;
+          const payload = (await response.json()) as {
+            enabled?: boolean;
+            defaultModelId?: string;
+            provider?: StoredProvider;
+          };
+          if (!payload.enabled || !payload.provider) return;
+          const stored = await this.readStoredSettings();
+          if (stored.providers.some((provider) => provider.id === payload.provider?.id)) {
+            return;
+          }
+          stored.providers.push(payload.provider);
+          if (!stored.defaultModelId && payload.defaultModelId) {
+            stored.defaultModelId = payload.defaultModelId;
+          }
+          await this.putCesiumAgentSettings(stored);
+        } catch {
+          // No bootstrap endpoint (desktop renderer, static hosting) - fine.
+        }
+      })();
     }
+    return this.bootstrapPromise;
   }
 
   async getGlobalSettings(): Promise<Record<string, unknown>> {
@@ -68,13 +73,18 @@ export class SettingsStore {
     await writeDoc(GLOBAL_SETTINGS_KEY, settings);
   }
 
-  async getCesiumAgentSettings(): Promise<CesiumAgentStoredSettings> {
+  private async readStoredSettings(): Promise<CesiumAgentStoredSettings> {
     return (
       (await readDoc<CesiumAgentStoredSettings>(CESIUM_AGENT_SETTINGS_KEY)) ?? {
         defaultModelId: null,
         providers: [],
       }
     );
+  }
+
+  async getCesiumAgentSettings(): Promise<CesiumAgentStoredSettings> {
+    await this.applyEnvBootstrap().catch(() => undefined);
+    return this.readStoredSettings();
   }
 
   async putCesiumAgentSettings(settings: CesiumAgentStoredSettings): Promise<void> {

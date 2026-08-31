@@ -346,6 +346,64 @@ export function registerSettingsRoutes(
     jsonResponse({ ok: true, models: await settings.listModels() })
   );
 
+  // Cross-backend model toggle surface: the browser machine has exactly one
+  // backend, so mirror the cesium-agent catalog with everything enabled.
+  async function modelToggleState(): Promise<Record<string, unknown>> {
+    const models = await settings.listModels();
+    return {
+      byBackend: {
+        "cesium-agent": models.map((model) => ({
+          id: `${model.providerId}/${model.modelId}`,
+          name: model.modelName,
+          on: true,
+          backendId: "cesium-agent",
+        })),
+      },
+    };
+  }
+
+  router.get("/api/settings/models", async () => jsonResponse(await modelToggleState()));
+  router.get("/api/settings/models-by-backend", async () => {
+    const models = await settings.listModels();
+    return jsonResponse({
+      byBackend: {
+        "cesium-agent": models.map((model) => ({
+          id: `${model.providerId}/${model.modelId}`,
+          name: model.modelName,
+        })),
+      },
+    });
+  });
+  router.post("/api/settings/models/refresh", async () =>
+    jsonResponse({ ...(await modelToggleState()), timedOut: [], failed: [] })
+  );
+  router.post("/api/settings/models/toggles", async () =>
+    jsonResponse(await modelToggleState())
+  );
+
+  // Cloud Agents are a real-server feature; expose a disabled stub so the
+  // settings surface renders instead of erroring.
+  router.get("/api/cloud-agents/settings", async () =>
+    jsonResponse({
+      settings: {
+        schemaVersion: 1,
+        updatedAt: Date.now(),
+        defaults: {
+          backendId: "cesium-agent",
+          modelId: null,
+          executionMode: "queue",
+          autoDispatch: false,
+          workspaceId: null,
+        },
+        routingRules: [],
+        connections: [],
+        oauthApps: [],
+      },
+      endpoints: { oauthCallbackUrl: "", webhooks: {} },
+    })
+  );
+  router.get("/api/cloud-agents/tasks", async () => jsonResponse({ tasks: [] }));
+
   router.post("/api/settings/cesium-agent/providers/discover", async (request) => {
     const body = await request.json<{
       apiKind: CesiumProviderKind;

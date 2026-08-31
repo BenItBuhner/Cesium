@@ -55,6 +55,29 @@ function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
+/**
+ * POST to a provider endpoint: direct first (works when the provider sends
+ * CORS headers), then through the same-origin /api/inference-relay when the
+ * direct call is blocked (no CORS, sandboxed network, etc.).
+ */
+async function providerFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (directError) {
+    const canRelay =
+      typeof location !== "undefined" &&
+      (location.protocol === "http:" || location.protocol === "https:");
+    if (!canRelay) throw directError;
+    try {
+      const headers = new Headers(init.headers);
+      headers.set("x-cesium-upstream-url", url);
+      return await fetch("/api/inference-relay", { ...init, headers });
+    } catch {
+      throw directError;
+    }
+  }
+}
+
 async function* sseEvents(
   response: Response
 ): AsyncGenerator<{ event: string | null; data: string }> {
@@ -111,7 +134,7 @@ async function streamOpenAiChatCompletions(
   request: AdapterRequest,
   callbacks: AdapterCallbacks
 ): Promise<AdapterResult> {
-  const response = await fetch(`${trimBase(request.baseUrl)}/chat/completions`, {
+  const response = await providerFetch(`${trimBase(request.baseUrl)}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -250,7 +273,7 @@ async function streamOpenAiResponses(
       message.role === "system"
   );
   const rest = request.messages.filter((message) => message.role !== "system");
-  const response = await fetch(`${trimBase(request.baseUrl)}/responses`, {
+  const response = await providerFetch(`${trimBase(request.baseUrl)}/responses`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -410,7 +433,7 @@ async function streamAnthropicMessages(
       return { role: "user" as const, content };
     });
 
-  const response = await fetch(`${trimBase(request.baseUrl) || "https://api.anthropic.com/v1"}/messages`, {
+  const response = await providerFetch(`${trimBase(request.baseUrl) || "https://api.anthropic.com/v1"}/messages`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
