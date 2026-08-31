@@ -2863,7 +2863,7 @@ export function AgentWorkspaceRail() {
           <button
             type="button"
             onClick={() => createFolderForWorkspace(PINNED_CHATS_FOLDER_SCOPE)}
-            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
             aria-label="New pinned folder"
             title="New folder"
           >
