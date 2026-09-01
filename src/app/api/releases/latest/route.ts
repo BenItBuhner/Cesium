@@ -12,10 +12,9 @@ export const revalidate = 0;
 /**
  * Latest-release catalog for the /download page.
  *
- * Always hit GitHub for the current `releases/latest` payload. The previous
- * `next: { revalidate: 600 }` + `stale-while-revalidate=3600` combo kept
- * serving the prior tag (v0.9.0) after v0.10.0 published - Vercel CDN MISS
- * still returned the Next data-cache SWR entry. A new GitHub release must
+ * Always hit GitHub for the current `releases/latest` payload. Caching this
+ * catalog (Next Incremental Cache plus a long CDN stale window) kept serving
+ * the previous tag after a new GitHub release published. A new release must
  * show up on /download immediately. Set GITHUB_TOKEN (or
  * GITHUB_RELEASES_TOKEN) in the deployment for a higher upstream rate limit;
  * a public repo works fine without one.

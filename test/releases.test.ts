@@ -98,12 +98,13 @@ describe("parseGitHubRelease", () => {
 
 describe("latest-release catalog freshness", () => {
   test("API route never caches GitHub latest in the Next data cache", () => {
+    const handler = latestRoute.slice(latestRoute.indexOf("export async function GET"));
     assert.match(latestRoute, /export const dynamic = "force-dynamic"/);
     assert.match(latestRoute, /export const revalidate = 0/);
-    assert.match(latestRoute, /cache: "no-store"/);
-    assert.doesNotMatch(latestRoute, /revalidate:\s*600/);
-    assert.doesNotMatch(latestRoute, /stale-while-revalidate/);
-    assert.match(latestRoute, /cache-control": "private, no-store, must-revalidate"/);
+    assert.match(handler, /cache: "no-store"/);
+    assert.doesNotMatch(handler, /revalidate:\s*\d+/);
+    assert.doesNotMatch(handler, /stale-while-revalidate/);
+    assert.match(handler, /cache-control": "private, no-store, must-revalidate"/);
   });
 
   test("download page bypasses the browser HTTP cache for the catalog", () => {
