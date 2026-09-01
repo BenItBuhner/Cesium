@@ -76,6 +76,11 @@ function WorkbenchShell() {
         const surface = settingsSurfaceRef.current;
         if (surface) {
           surface.style.transition = "none";
+          // Only promote a compositor layer while the preview is moving.
+          // A parked `will-change: transform` makes the settings nav
+          // drawer's backdrop-filter sample an empty layer, so the page
+          // punches through as sharp text.
+          surface.style.willChange = "transform";
         }
         applySettingsBackPreview(event.progress, event.swipeEdge);
       },
@@ -91,6 +96,7 @@ function WorkbenchShell() {
         surface.style.transform = "";
         surface.style.borderRadius = "";
         surface.style.boxShadow = "";
+        surface.style.willChange = "auto";
       },
     }
   );
@@ -98,7 +104,7 @@ function WorkbenchShell() {
     return (
       <div
         ref={settingsSurfaceRef}
-        className="aurora-settings-shell relative z-[1] h-full w-full overflow-hidden will-change-transform"
+        className="aurora-settings-shell relative z-[1] h-full w-full overflow-hidden"
       >
         <SettingsShellView />
       </div>
@@ -125,6 +131,9 @@ function WorkbenchAuroraHost({ children }: { children: ReactNode }) {
       >
         <AuroraShellBackdrop />
         {children}
+        {/* Settings nav drawer portals here so backdrop-filter can sample
+            the settings surface as a sibling, matching the agent rail. */}
+        <div id="cesium-overlay-drawer-root" />
       </div>
     </AuroraSceneProvider>
   );
