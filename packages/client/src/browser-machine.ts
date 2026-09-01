@@ -14,6 +14,8 @@ export const BROWSER_MACHINE_HOSTNAME = "browser.cesium.internal";
 export const BROWSER_MACHINE_BASE_URL = `https://${BROWSER_MACHINE_HOSTNAME}`;
 export const BROWSER_MACHINE_SERVER_ID = "browser:local";
 export const BROWSER_MACHINE_SERVER_LABEL = "This browser";
+export const BROWSER_MACHINE_NATIVE_UNAVAILABLE_MESSAGE =
+  "The in-browser engine is only available on the website and PWA.";
 
 /** WebSocket-compatible surface produced by the browser machine transport. */
 export type BrowserMachineSocketLike = {

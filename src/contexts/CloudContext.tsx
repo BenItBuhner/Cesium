@@ -31,6 +31,8 @@ import {
   setStoredSessionToken,
   VOICE_CLIENT_SETTINGS_EVENT,
   writeStoredServerConnectionsState,
+  isBrowserMachineOffered,
+  isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
   type RendezvousLocator,
   type ServerConnection,
@@ -60,6 +62,7 @@ import {
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
   cloudServerIdentity,
   diffRemovedCloudServers,
+  isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
   serializeCloudServerTombstones,
@@ -338,15 +341,26 @@ function reconcilePersonalization(
  * do not resurrect on every bootstrap.
  */
 function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
-  const banned = servers.filter((server) => isCesiumAccountSiteUrl(server.baseUrl));
-  const usable = servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl));
+  const banned = servers.filter((server) => !isCloudSyncableServerUrl(server.baseUrl));
+  const usable = servers.filter((server) => isCloudSyncableServerUrl(server.baseUrl));
   const tombstones = parseCloudServerTombstones(
     clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
   );
   const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
+  const keepLocalServer = (baseUrl: string) => {
+    if (isCesiumAccountSiteUrl(baseUrl)) {
+      return false;
+    }
+    // Native shells ignore a tab-local engine that leaked in via older sync.
+    // The website / PWA keeps its own in-tab copy.
+    if (!isBrowserMachineOffered() && isBrowserMachineUrl(baseUrl)) {
+      return false;
+    }
+    return true;
+  };
   const withoutAccountSite = {
     ...state,
-    servers: state.servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl)),
+    servers: state.servers.filter((server) => keepLocalServer(server.baseUrl)),
   };
   if (withoutAccountSite.servers.length === 0) {
     withoutAccountSite.activeServerId = null;

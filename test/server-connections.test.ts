@@ -17,6 +17,7 @@ import {
   markServerConnectionUsed,
   mergeServerConnectionBootstrap,
   normalizeServerConnectionsState,
+  omitBrowserMachineFromState,
   requiresDefaultServerSelection,
   setDefaultServerConnection,
   shouldApplyServerUrlFromSearch,
@@ -106,6 +107,46 @@ describe("server connections", () => {
     mockWindow.location.protocol = "https:";
     const state = createDefaultServerConnectionsState("http://localhost:9100");
     assert.deepEqual(state.servers, []);
+  });
+
+  test("omitBrowserMachineFromState drops the in-tab engine and reassigns selection", () => {
+    const phone = {
+      id: "phone",
+      label: "This phone",
+      baseUrl: "http://10.0.2.2:9100",
+      createdAt: 1,
+      updatedAt: 1,
+      lastUsedAt: 1,
+    };
+    const browser = {
+      id: "browser:local",
+      label: "This browser",
+      baseUrl: "https://browser.cesium.internal",
+      createdAt: 2,
+      updatedAt: 2,
+      lastUsedAt: 2,
+    };
+    const stripped = omitBrowserMachineFromState({
+      version: 1,
+      activeServerId: browser.id,
+      defaultServerId: browser.id,
+      servers: [browser, phone],
+    });
+    assert.deepEqual(
+      stripped.servers.map((server) => server.id),
+      [phone.id]
+    );
+    assert.equal(stripped.activeServerId, phone.id);
+    assert.equal(stripped.defaultServerId, phone.id);
+
+    const untouched = omitBrowserMachineFromState({
+      version: 1,
+      activeServerId: phone.id,
+      defaultServerId: phone.id,
+      servers: [phone],
+    });
+    assert.equal(untouched.servers.length, 1);
+    assert.equal(untouched.activeServerId, phone.id);
   });
 
   test("normalization drops the Cesium account site and does not re-inject it", () => {

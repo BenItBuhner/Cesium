@@ -118,6 +118,11 @@ export const save = mutation({
         "cesium.techlitnow.com is the Cesium account site, not an engine."
       );
     }
+    if (hostname === "browser.cesium.internal") {
+      throw new Error(
+        "The in-browser engine is tab-local and cannot be saved to the account."
+      );
+    }
     if (args.kind === "codespace" && !args.codespace) {
       throw new Error("Codespace servers require codespace metadata.");
     }

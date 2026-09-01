@@ -1,6 +1,6 @@
 "use client";
 
-import { isCesiumDesktopApp } from "@cesium/client";
+import { isCesiumDesktopApp, isCesiumMobileApp } from "@cesium/client";
 
 /**
  * Platform-adaptive setup profiles.
@@ -23,19 +23,6 @@ export type PlatformSetupProfile = {
   /** Whether connecting a server is a wizard step or an optional footnote. */
   serverConnection: "step" | "footnote";
 };
-
-type CesiumMobileGlobals = {
-  __CESIUM_MOBILE_SERVER__?: unknown;
-  cesiumMobile?: unknown;
-};
-
-function isMobileShell(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const globals = window as Window & CesiumMobileGlobals;
-  return Boolean(globals.__CESIUM_MOBILE_SERVER__ || globals.cesiumMobile);
-}
 
 export const SETUP_STEP_LABELS: Record<SetupStepId, string> = {
   "connect-server": "Connect your first server",
@@ -80,7 +67,7 @@ export function getPlatformSetupProfile(): PlatformSetupProfile {
       serverConnection: "footnote",
     };
   }
-  if (isMobileShell()) {
+  if (isCesiumMobileApp()) {
     return {
       platform: "mobile",
       steps: ["connect-server", "agents", "import", "first-chat"],
