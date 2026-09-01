@@ -24,6 +24,10 @@ import {
   type GithubClient,
 } from "./lib/githubApi";
 import {
+  extractClerkApiErrorMessage,
+  readClerkGithubOauthToken,
+} from "./lib/clerkGithub";
+import {
   buildCodespaceTemplateFiles,
   resolveCodespaceEngineBaseUrl,
   CODESPACE_AUTH_PASSWORD_SECRET,
@@ -41,9 +45,14 @@ import {
  *
  * - **Clerk accounts** (production): the user's GitHub OAuth token comes from
  *   Clerk's connected-accounts backend API (`CLERK_SECRET_KEY` must be set on
- *   this deployment). Clerk dashboard prerequisites (one-time): enable the
- *   GitHub social connection with **custom credentials** (your own GitHub
- *   OAuth App) and scopes `read:user user:email repo codespace`.
+ *   this deployment). Clerk dashboard prerequisites (one-time): create a
+ *   GitHub OAuth App whose Authorization callback URL is Clerk's
+ *   `…/v1/oauth_callback`, paste Client ID + Client Secret into SSO
+ *   connections → GitHub, add scopes `read:user user:email repo codespace`,
+ *   then **Enable connection**. "Enable for sign-up and sign-in" can stay
+ *   off — linking after email sign-in is enough. Production Clerk instances
+ *   require those custom credentials; shared Clerk credentials cannot
+ *   request `repo` / `codespace`.
  * - **Device-key accounts** (self-hosted / local-first deployments that opt
  *   in with `CESIUM_ALLOW_DEVICE_KEYS=1`): a deployment-level token from the
  *   `CESIUM_GITHUB_TOKEN` env var (classic PAT or OAuth token with `repo` +
@@ -106,21 +115,16 @@ async function getClerkGithubToken(subject: string): Promise<string | null> {
   if (response.status === 404) {
     return null;
   }
+  const payload = (await response.json()) as unknown;
   if (!response.ok) {
+    const detail = extractClerkApiErrorMessage(payload);
     throw new Error(
-      `Could not fetch the GitHub token from Clerk (${response.status}).`
+      detail
+        ? `Could not fetch the GitHub token from Clerk (${response.status}): ${detail}`
+        : `Could not fetch the GitHub token from Clerk (${response.status}).`
     );
   }
-  const payload = (await response.json()) as unknown;
-  const rows = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as { data?: unknown[] })?.data)
-      ? (payload as { data: unknown[] }).data
-      : [];
-  const first = rows[0] as { token?: string } | undefined;
-  return typeof first?.token === "string" && first.token.length > 0
-    ? first.token
-    : null;
+  return readClerkGithubOauthToken(payload);
 }
 
 async function getGithubToken(identity: GithubIdentity): Promise<string | null> {
@@ -174,12 +178,12 @@ export const connectionStatus = action({
     error: v.union(v.string(), v.null()),
   }),
   handler: async (ctx, args) => {
-    const identity = await resolveGithubIdentity(ctx, args.deviceKey);
-    const token = await getGithubToken(identity);
-    if (!token) {
-      return { connected: false, login: null, error: null };
-    }
     try {
+      const identity = await resolveGithubIdentity(ctx, args.deviceKey);
+      const token = await getGithubToken(identity);
+      if (!token) {
+        return { connected: false, login: null, error: null };
+      }
       const login = await getAuthenticatedLogin(
         createGithubClient(token, undefined, githubApiBaseUrl())
       );

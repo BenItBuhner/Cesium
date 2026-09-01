@@ -558,3 +558,59 @@ describe("codespace wake flow", () => {
     assert.equal(!result.ok && result.reason, "failed");
   });
 });
+
+/* -------------------- Clerk GitHub connect errors ------------------------ */
+
+describe("Clerk GitHub connect errors", () => {
+  test("maps additional-verification copy to Clerk SSO setup guidance", async () => {
+    const { formatGithubConnectError } = await import(
+      "../src/lib/github-clerk-errors.ts"
+    );
+    const message = formatGithubConnectError(
+      new Error(
+        "You need to provide additional verification to perform this operation"
+      )
+    );
+    assert.ok(message.includes("Enable connection"));
+    assert.ok(message.includes("repo and codespace"));
+    assert.ok(!message.toLowerCase().includes("additional verification"));
+  });
+
+  test("reads Clerk error arrays and Convex connectionStatus dumps", async () => {
+    const { formatGithubConnectError } = await import(
+      "../src/lib/github-clerk-errors.ts"
+    );
+    const fromClerk = formatGithubConnectError({
+      errors: [
+        {
+          longMessage:
+            "You need to provide additional verification to perform this operation",
+        },
+      ],
+    });
+    assert.ok(fromClerk.includes("Enable connection"));
+
+    const fromConvex = formatGithubConnectError(
+      new Error(
+        "[CONVEX A(github:connectionStatus)] [Request ID: abc] Server Error Called by client"
+      )
+    );
+    assert.ok(fromConvex.includes("CLERK_SECRET_KEY"));
+  });
+
+  test("parses Clerk oauth token payloads and error bodies", async () => {
+    const {
+      extractClerkApiErrorMessage,
+      readClerkGithubOauthToken,
+    } = await import("../convex/lib/clerkGithub.ts");
+    assert.equal(readClerkGithubOauthToken([{ token: "gho_test" }]), "gho_test");
+    assert.equal(readClerkGithubOauthToken({ data: [] }), null);
+    assert.equal(
+      extractClerkApiErrorMessage({
+        errors: [{ long_message: "Missing Clerk secret", message: "short" }],
+      }),
+      "Missing Clerk secret"
+    );
+  });
+});
+
