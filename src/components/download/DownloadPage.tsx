@@ -1,34 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  Apple,
-  AppWindow,
   ArrowRight,
   Check,
   Copy,
   Download,
   ExternalLink,
   Github,
-  Globe,
-  Monitor,
-  Smartphone,
   TerminalSquare,
-  Watch,
 } from "lucide-react";
+import { PlatformIcon } from "@/components/download/PlatformIcon";
 import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
 import { SiteLegalLinks } from "@/components/legal/SiteLegalLinks";
 import {
-  detectClientPlatform,
-  type DetectedPlatform,
-} from "@/lib/platform-detect";
-import {
-  CESIUM_RELEASES_URL,
-  formatAssetSize,
-  type ReleaseAsset,
-  type ReleaseCatalog,
-} from "@/lib/releases";
+  installerButtonLabel,
+  pickRecommendedAsset,
+  userFacingAssets,
+} from "@/lib/download-assets";
+import { detectClientPlatform, type DetectedPlatform } from "@/lib/platform-detect";
+import { CESIUM_RELEASES_URL, type ReleaseAsset, type ReleaseCatalog } from "@/lib/releases";
 import { buildCesiumServerInstallCommand } from "@/lib/server-install-command";
 
 /* ------------------------------------------------------------------------ */
@@ -47,93 +39,19 @@ function CesiumMark({ className }: { className?: string }) {
   );
 }
 
-const ARCH_LABELS: Record<string, string> = {
-  arm64: "Apple silicon",
-  x64: "Intel",
-};
-
-function archLabel(platform: string, arch: string): string {
-  if (platform === "mac") {
-    return ARCH_LABELS[arch] ?? arch;
-  }
-  return arch;
-}
-
-const KIND_LABELS: Record<string, string> = {
-  dmg: "DMG",
-  zip: "ZIP",
-  exe: "Installer",
-  appimage: "AppImage",
-  deb: "DEB",
-  apk: "APK",
-};
-
-/* ------------------------------------------------------------------------ */
-/* Recommendation logic                                                     */
-/* ------------------------------------------------------------------------ */
-
-type Recommendation = {
+function AssetButton({
+  asset,
+  siblings,
+}: {
   asset: ReleaseAsset;
-  label: string;
-};
-
-function pickRecommendedAsset(
-  catalog: ReleaseCatalog,
-  detected: DetectedPlatform
-): Recommendation | null {
-  const { os, arch } = detected;
-  const find = (predicate: (asset: ReleaseAsset) => boolean) =>
-    catalog.assets.find(predicate) ?? null;
-  if (os === "mac") {
-    const wantArch = arch ?? "arm64";
-    const asset =
-      find((a) => a.platform === "mac" && a.arch === wantArch && a.kind === "dmg") ??
-      find((a) => a.platform === "mac" && a.kind === "dmg");
-    return asset
-      ? { asset, label: `macOS (${archLabel("mac", asset.arch)})` }
-      : null;
-  }
-  if (os === "win") {
-    const wantArch = arch ?? "x64";
-    const asset =
-      find((a) => a.platform === "win" && a.arch === wantArch && a.kind === "exe") ??
-      find((a) => a.platform === "win" && a.kind === "exe");
-    return asset ? { asset, label: `Windows (${asset.arch})` } : null;
-  }
-  if (os === "linux") {
-    const wantArch = arch ?? "x64";
-    const asset =
-      find(
-        (a) => a.platform === "linux" && a.arch === wantArch && a.kind === "appimage"
-      ) ?? find((a) => a.platform === "linux" && a.kind === "appimage");
-    return asset ? { asset, label: `Linux (${asset.arch})` } : null;
-  }
-  if (os === "android") {
-    const asset = find((a) => a.platform === "android");
-    return asset ? { asset, label: "Android" } : null;
-  }
-  return null;
-}
-
-/* ------------------------------------------------------------------------ */
-/* Small components                                                         */
-/* ------------------------------------------------------------------------ */
-
-function AssetButton({ asset }: { asset: ReleaseAsset }) {
-  const size = formatAssetSize(asset.sizeBytes);
+  siblings: readonly ReleaseAsset[];
+}) {
   return (
     <a
       href={asset.url}
-      className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[12px] py-[7px] text-[12.5px] text-[var(--text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-card-hover)]"
+      className="inline-flex items-center justify-center rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[14px] py-[8px] text-[13px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-card-hover)]"
     >
-      <Download className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.75} aria-hidden />
-      <span className="font-medium">
-        {KIND_LABELS[asset.kind] ?? asset.kind}
-      </span>
-      <span className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-        {archLabel(asset.platform, asset.arch)}
-        {size ? ` · ${size}` : ""}
-      </span>
+      {installerButtonLabel(asset, siblings)}
     </a>
   );
 }
@@ -143,9 +61,7 @@ function CopyableCommand({ command, label }: { command: string; label: string })
   return (
     <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)]">
       <div className="flex items-center justify-between gap-[10px] border-b border-[var(--border-subtle)] px-[14px] py-[8px]">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-[var(--text-disabled)]">
-          {label}
-        </span>
+        <span className="text-[12px] text-[var(--text-secondary)]">{label}</span>
         <button
           type="button"
           onClick={() => {
@@ -154,7 +70,7 @@ function CopyableCommand({ command, label }: { command: string; label: string })
               window.setTimeout(() => setCopied(false), 1600);
             });
           }}
-          className="inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-[11.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+          className="inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
         >
           {copied ? (
             <Check className="size-[12px]" strokeWidth={2} aria-hidden />
@@ -170,6 +86,34 @@ function CopyableCommand({ command, label }: { command: string; label: string })
     </div>
   );
 }
+
+function PlatformCard({
+  title,
+  platform,
+  children,
+}: {
+  title: string;
+  platform: "mac" | "win" | "linux" | "android" | "wear" | "ios" | "web";
+  children: ReactNode;
+}) {
+  return (
+    <article className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-[22px]">
+      <div className="mb-[16px] flex items-center gap-[12px]">
+        <span className="flex size-[36px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--accent-bg)] text-[var(--text-primary)]">
+          <PlatformIcon platform={platform} className="size-[20px]" />
+        </span>
+        <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
+      </div>
+      {children}
+    </article>
+  );
+}
+
+const PRIMARY_BUTTON =
+  "inline-flex items-center justify-center gap-[10px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[24px] py-[12px] text-[15px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]";
+
+const SECONDARY_BUTTON =
+  "inline-flex items-center justify-center rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[14px] py-[8px] text-[13px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-card-hover)]";
 
 /* ------------------------------------------------------------------------ */
 /* Page                                                                     */
@@ -189,7 +133,7 @@ export function DownloadPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/releases/latest")
+    void fetch("/api/releases/latest", { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`release catalog unavailable (${response.status})`);
@@ -235,20 +179,22 @@ export function DownloadPage() {
     if (!catalog) {
       return [];
     }
-    const byPlatform = (platform: string) =>
-      catalog.assets.filter((asset) => asset.platform === platform);
     return [
-      { key: "mac", title: "macOS", icon: Apple, note: "macOS 12+, DMG or ZIP", assets: byPlatform("mac") },
-      { key: "win", title: "Windows", icon: AppWindow, note: "Windows 10+, NSIS installer", assets: byPlatform("win") },
-      { key: "linux", title: "Linux", icon: Monitor, note: "AppImage or Debian package", assets: byPlatform("linux") },
-      { key: "android", title: "Android", icon: Smartphone, note: "Android 8+, sideload APK", assets: byPlatform("android") },
-      { key: "wear", title: "Wear OS", icon: Watch, note: "Companion APK for paired watches", assets: byPlatform("wear") },
-    ].filter((section) => section.assets.length > 0);
+      { key: "mac" as const, title: "macOS" },
+      { key: "win" as const, title: "Windows" },
+      { key: "linux" as const, title: "Linux" },
+      { key: "android" as const, title: "Android" },
+      { key: "wear" as const, title: "Wear OS" },
+    ]
+      .map((section) => ({
+        ...section,
+        assets: userFacingAssets(catalog.assets, section.key),
+      }))
+      .filter((section) => section.assets.length > 0);
   }, [catalog]);
 
   return (
     <div className="fixed inset-0 z-0 overflow-y-auto overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-primary)]">
-      {/* nav */}
       <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-main)_82%,transparent)] backdrop-blur-md">
         <div className="mx-auto flex h-[56px] max-w-[1100px] items-center justify-between px-[24px]">
           <Link href="/" className="flex items-center gap-[10px]">
@@ -266,92 +212,68 @@ export function DownloadPage() {
         </div>
       </header>
 
-      {/* hero */}
       <section className="relative">
         <div className="landing-grid-bg pointer-events-none absolute inset-0" aria-hidden />
-        <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[56px] pt-[64px] text-center">
-          <p className="mx-auto mb-[20px] inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-            <span className="size-[6px] rounded-full bg-[var(--ask-accent)]" />
-            {catalog ? `Latest release · v${catalog.version}` : "Downloads"}
-          </p>
+        <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[56px] pt-[72px] text-center sm:pt-[88px]">
           <h1 className="text-balance text-[38px] font-semibold leading-[1.08] tracking-tight sm:text-[52px]">
             Get Cesium on every screen
           </h1>
-          <p className="mx-auto mt-[18px] max-w-[540px] text-pretty text-[15.5px] leading-relaxed text-[var(--text-secondary)]">
-            The desktop app bundles the engine for a zero-setup local workbench. Mobile and web
-            clients connect to an engine running on hardware you control.
+          <p className="mx-auto mt-[18px] max-w-[500px] text-pretty text-[15.5px] leading-relaxed text-[var(--text-secondary)]">
+            The desktop app is a complete local workbench. Phone, watch, and web
+            clients connect to an engine on hardware you control.
           </p>
 
-          <div className="mt-[32px] flex flex-col items-center gap-[12px]">
+          <div className="mt-[32px] flex flex-col items-center gap-[14px]">
             {catalogState.status === "loading" ? (
-              <div className="inline-flex items-center gap-[10px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[12px] text-[14px] text-[var(--text-secondary)]">
-                Checking the latest release…
+              <div className="inline-flex items-center rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[12px] text-[14px] text-[var(--text-secondary)]">
+                Finding your download…
               </div>
             ) : recommendation ? (
+              <a href={recommendation.asset.url} className={PRIMARY_BUTTON}>
+                <Download className="size-[17px]" strokeWidth={2} aria-hidden />
+                Download for {recommendation.label}
+              </a>
+            ) : catalogState.status === "ready" && detected?.os === "ios" ? (
               <>
-                <a
-                  href={recommendation.asset.url}
-                  className="inline-flex items-center gap-[10px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[24px] py-[12px] text-[15px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
-                >
-                  <Download className="size-[17px]" strokeWidth={2} aria-hidden />
-                  Download for {recommendation.label}
-                </a>
-                <p className="font-mono text-[11px] text-[var(--text-disabled)]">
-                  {recommendation.asset.name}
-                  {formatAssetSize(recommendation.asset.sizeBytes)
-                    ? ` · ${formatAssetSize(recommendation.asset.sizeBytes)}`
-                    : ""}
-                  {detected && !detected.archConfident && detected.os !== "android"
-                    ? " · detected from your browser - pick another build below if this looks wrong"
-                    : " · detected from your browser"}
+                <WorkbenchLink className={PRIMARY_BUTTON}>Open the workbench</WorkbenchLink>
+                <p className="max-w-[400px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
+                  On iPhone and iPad, open this in Safari, then Share and Add to Home
+                  Screen.
                 </p>
               </>
-            ) : catalogState.status === "ready" && detected?.os === "ios" ? (
-              <div className="max-w-[440px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[16px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-                <Globe className="mx-auto mb-[8px] size-[18px] text-[var(--text-primary)]" strokeWidth={1.5} aria-hidden />
-                There is no signed iOS build yet - on iPhone and iPad, install Cesium as a PWA:
-                open the workbench in Safari, then Share → Add to Home Screen.
-              </div>
             ) : (
               <a
                 href={catalog?.htmlUrl ?? CESIUM_RELEASES_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-[10px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[24px] py-[12px] text-[15px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
+                className={PRIMARY_BUTTON}
               >
                 <Github className="size-[17px]" strokeWidth={2} aria-hidden />
-                Browse releases on GitHub
+                Browse releases
               </a>
             )}
           </div>
         </div>
       </section>
 
-      {/* all platforms */}
       <section className="border-t border-[var(--border-subtle)] bg-[var(--bg-panel)]">
         <div className="mx-auto max-w-[1100px] px-[24px] py-[56px]">
           <div className="mb-[28px] flex flex-wrap items-end justify-between gap-[12px]">
-            <div>
-              <h2 className="text-[24px] font-semibold tracking-tight">All platforms</h2>
-              <p className="mt-[6px] text-[13.5px] text-[var(--text-secondary)]">
-                Every build from the latest release{catalog ? ` (v${catalog.version})` : ""}.
-              </p>
-            </div>
+            <h2 className="text-[24px] font-semibold tracking-tight">All platforms</h2>
             <a
               href={catalog?.htmlUrl ?? CESIUM_RELEASES_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-[6px] text-[12.5px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+              className="inline-flex items-center gap-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
             >
+              Release notes
               <ExternalLink className="size-[13px]" strokeWidth={1.75} aria-hidden />
-              Release notes &amp; older versions
             </a>
           </div>
 
           {catalogState.status === "unavailable" ? (
             <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[24px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-              The release catalog could not be loaded right now. All builds remain available
-              directly from the{" "}
+              Builds are on the{" "}
               <a
                 href={CESIUM_RELEASES_URL}
                 target="_blank"
@@ -359,47 +281,37 @@ export function DownloadPage() {
                 className="text-[var(--text-primary)] underline underline-offset-2"
               >
                 GitHub releases page
-              </a>
-              .
+              </a>{" "}
+              if the catalog does not load.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2 lg:grid-cols-3">
-              {desktopSections.map(({ key, title, icon: Icon, note, assets }) => (
-                <article
-                  key={key}
-                  className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-[20px]"
-                >
-                  <div className="mb-[12px] flex items-center gap-[10px]">
-                    <Icon className="size-[19px] text-[var(--text-primary)]" strokeWidth={1.5} aria-hidden />
-                    <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
-                  </div>
-                  <p className="mb-[14px] font-mono text-[10.5px] text-[var(--text-disabled)]">{note}</p>
+              {desktopSections.map(({ key, title, assets }) => (
+                <PlatformCard key={key} title={title} platform={key}>
                   <div className="flex flex-wrap gap-[8px]">
                     {assets.map((asset) => (
-                      <AssetButton key={asset.name} asset={asset} />
+                      <AssetButton key={asset.name} asset={asset} siblings={assets} />
                     ))}
                   </div>
-                </article>
+                </PlatformCard>
               ))}
-              <article className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-[20px]">
-                <div className="mb-[12px] flex items-center gap-[10px]">
-                  <Globe className="size-[19px] text-[var(--text-primary)]" strokeWidth={1.5} aria-hidden />
-                  <h3 className="text-[15px] font-semibold tracking-tight">iOS &amp; web</h3>
-                </div>
-                <p className="mb-[14px] font-mono text-[10.5px] text-[var(--text-disabled)]">
-                  Installable PWA - no store required
+              <PlatformCard title="iOS" platform="ios">
+                <p className="mb-[14px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
+                  Share from Safari, then Add to Home Screen.
                 </p>
-                <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-                  Open the workbench in any modern browser and install it from the address bar
-                  (or Share → Add to Home Screen on iPhone/iPad).
+                <WorkbenchLink className={SECONDARY_BUTTON}>Open workbench</WorkbenchLink>
+              </PlatformCard>
+              <PlatformCard title="Web" platform="web">
+                <p className="mb-[14px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
+                  Works in any modern browser.
                 </p>
-              </article>
+                <WorkbenchLink className={SECONDARY_BUTTON}>Open workbench</WorkbenchLink>
+              </PlatformCard>
             </div>
           )}
         </div>
       </section>
 
-      {/* engine install */}
       <section className="mx-auto max-w-[1100px] px-[24px] py-[56px]">
         <div className="grid grid-cols-1 items-start gap-[28px] lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
           <div>
@@ -408,13 +320,12 @@ export function DownloadPage() {
               Run the engine anywhere
             </h2>
             <p className="mt-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-              The desktop app ships with an embedded engine. To use the web or mobile clients
-              against your own hardware - a workstation, homelab box, or VPS - install the engine
-              with one command. It sets up the runtime, credentials, a secure tunnel, and
-              registers with this deployment so your devices can find it.
+              The desktop app already includes the engine. To point web or mobile
+              clients at your own machine, install it with one command. It sets up
+              the runtime, a tunnel, and registers with this deployment.
             </p>
             <p className="mt-[10px] text-[13.5px] leading-relaxed text-[var(--text-secondary)]">
-              Prefer npm? The same lifecycle is available as a CLI:{" "}
+              Prefer npm?{" "}
               <code className="rounded bg-[var(--accent-bg)] px-[5px] py-[2px] font-mono text-[12px]">
                 npx cesium-workbench install
               </code>{" "}
@@ -427,21 +338,17 @@ export function DownloadPage() {
           </div>
           <div className="space-y-[12px]">
             {installCommand ? (
-              <CopyableCommand command={installCommand} label="Linux · macOS · WSL" />
+              <CopyableCommand command={installCommand} label="Linux, macOS, and WSL" />
             ) : null}
-            <p className="font-mono text-[10.5px] text-[var(--text-disabled)]">
-              Installs to ~/.cesium · manage it afterwards with `cesium-server status | logs | update`
-            </p>
           </div>
         </div>
       </section>
 
-      {/* footer */}
       <footer className="border-t border-[var(--border-subtle)]">
         <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-[14px] px-[24px] py-[26px]">
           <div className="flex items-center gap-[8px] text-[var(--text-disabled)]">
             <CesiumMark className="h-[16px] w-auto" />
-            <span className="text-[12px]">Cesium - local-first AI workbench</span>
+            <span className="text-[12px]">Cesium</span>
           </div>
           <div className="flex items-center gap-[18px] text-[12px] text-[var(--text-disabled)]">
             <Link href="/" className="transition-colors hover:text-[var(--text-primary)]">

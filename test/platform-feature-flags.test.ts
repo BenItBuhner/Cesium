@@ -6,6 +6,9 @@ import {
 } from "../src/lib/preferences.ts";
 import {
   getCesiumRendererFeatureFlags,
+  isBrowserMachineOffered,
+  isCesiumMobileApp,
+  isNativeCesiumShell,
   resolveEffectiveUserPreferences,
 } from "../src/lib/platform-feature-flags.ts";
 
@@ -64,6 +67,36 @@ describe("platform feature flags", () => {
       ...DEFAULT_USER_PREFERENCES,
       vscodeExtensionsBeta: false,
     });
+  });
+
+  test("offers the browser machine on hosted web, not native shells", () => {
+    delete (globalThis as typeof globalThis & { window?: unknown }).window;
+    assert.equal(isBrowserMachineOffered(), false);
+    assert.equal(isNativeCesiumShell(), false);
+
+    (globalThis as typeof globalThis & { window?: unknown }).window = {};
+    assert.equal(isBrowserMachineOffered(), true);
+    assert.equal(isNativeCesiumShell(), false);
+    assert.equal(isCesiumMobileApp(), false);
+
+    (globalThis as typeof globalThis & { window?: unknown }).window = {
+      cesiumDesktop: { isElectron: true },
+    };
+    assert.equal(isBrowserMachineOffered(), false);
+    assert.equal(isNativeCesiumShell(), true);
+
+    (globalThis as typeof globalThis & { window?: unknown }).window = {
+      cesiumMobile: { isReactNative: true },
+    };
+    assert.equal(isCesiumMobileApp(), true);
+    assert.equal(isNativeCesiumShell(), true);
+    assert.equal(isBrowserMachineOffered(), false);
+
+    (globalThis as typeof globalThis & { window?: unknown }).window = {
+      __CESIUM_MOBILE_SERVER__: { baseUrl: "http://10.0.2.2:9100" },
+    };
+    assert.equal(isCesiumMobileApp(), true);
+    assert.equal(isBrowserMachineOffered(), false);
   });
 
   test("allows VS Code extensions beta only on desktop", () => {

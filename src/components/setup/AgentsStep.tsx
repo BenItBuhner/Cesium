@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Circle, Download, KeyRound, Loader2 } from "lucide-react";
 import { useCloudContext } from "@/contexts/CloudContext";
 import {
@@ -9,6 +9,7 @@ import {
   saveCesiumAgentProviderKey,
   type EngineBackendInfo,
 } from "@/lib/onboarding/engine-api";
+import { HarnessAuthSyncOffer } from "@/components/editor/settings/HarnessAuthSyncSection";
 
 /**
  * Step 2 - set up your agents. Lists the engine's backends with live
@@ -24,6 +25,7 @@ export function AgentsStep({
   onReady: (ready: boolean) => void;
 }) {
   const cloud = useCloudContext();
+  const serverContext = useMemo(() => ({ baseUrl }), [baseUrl]);
   const [backends, setBackends] = useState<EngineBackendInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -130,6 +132,11 @@ export function AgentsStep({
 
   return (
     <div className="space-y-[12px]">
+      <HarnessAuthSyncOffer
+        server={serverContext}
+        heading="Sign in your agents automatically"
+        onApplied={() => void refresh()}
+      />
       <div className="space-y-[8px]">
         {backends.map((backend) => (
           <div

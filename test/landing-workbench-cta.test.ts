@@ -69,10 +69,11 @@ describe("landing workbench CTAs", () => {
       fileURLToPath(new URL("../src/app/sign-up/[[...sign-up]]/page.tsx", import.meta.url)),
       "utf8"
     );
-    assert.match(cloudContext, /signInFallbackRedirectUrl="\/setup\?resume=1"/);
-    assert.match(cloudContext, /signUpFallbackRedirectUrl="\/setup\?resume=1"/);
-    assert.match(signIn, /forceRedirectUrl="\/setup\?resume=1"/);
-    assert.match(signUp, /<SignUpWithTerms \/>/);
+    assert.match(cloudContext, /signInFallbackRedirectUrl=\{getClerkFallbackRedirectUrl\(\)\}/);
+    assert.match(cloudContext, /signUpFallbackRedirectUrl=\{getClerkFallbackRedirectUrl\(\)\}/);
+    assert.match(signIn, /clerkAuthRedirectPath/);
+    assert.match(signIn, /forceRedirectUrl=\{redirectUrl\}/);
+    assert.match(signUp, /<SignUpWithTerms redirectUrl=\{redirectUrl\} \/>/);
     const signUpWithTerms = readFileSync(
       fileURLToPath(
         new URL("../src/components/auth/SignUpWithTerms.tsx", import.meta.url)

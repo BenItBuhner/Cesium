@@ -35,6 +35,7 @@ export * from "./rail-fetch";
 export * from "./server-api";
 export * from "./voice-client-settings";
 export * from "./secret-wrapping-key";
+export * from "./harness-auth-sync";
 export * from "./update-status";
 export * from "./preferences";
 export * from "./preferences-dom";

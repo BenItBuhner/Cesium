@@ -207,9 +207,9 @@ export type MobileNativeToWebMessage =
   // Progressive predictive-back stream (Android 14+ gesture navigation). The
   // gesture `progress` runs 0..1 as the finger travels from the `swipeEdge`;
   // the web layer previews the pop (drawer follows the finger, settings view
-  // scales down) and then either commits on `backRequest` or reverts on
-  // `backCancelled`. Older Androids and 3-button navigation never send these,
-  // so `backRequest` alone must stay sufficient.
+  // slides away revealing the agent view beneath) and then either commits on
+  // `backRequest` or reverts on `backCancelled`. Older Androids and 3-button
+  // navigation never send these, so `backRequest` alone must stay sufficient.
   | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backCancelled" }
@@ -390,6 +390,17 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data && typeof data.type === "string") {
+          // Host chrome (safe-area inset + native root class) is applied at
+          // the relay itself, not only by the workbench's React handler. The
+          // real inset routinely lands while the page is still hydrating or
+          // held behind a first-run gate - before any CustomEvent listener
+          // exists - and dropping that one message used to pin the top chrome
+          // under the status bar for the rest of the session.
+          if (data.type === "nativeConfigChanged" && data.server) {
+            window.__CESIUM_MOBILE_SERVER__ = data.server;
+            if (window.cesiumMobile) window.cesiumMobile.server = data.server;
+            applyHostChrome();
+          }
           window.dispatchEvent(
             new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data })
           );

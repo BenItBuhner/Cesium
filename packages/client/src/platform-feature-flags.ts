@@ -11,14 +11,51 @@ export type CesiumRendererFeatureFlags = {
   vscodeExtensionsBetaSettings: boolean;
 };
 
+type CesiumShellGlobals = {
+  cesiumDesktop?: { isElectron?: boolean };
+  cesiumMobile?: unknown;
+  __CESIUM_MOBILE_SERVER__?: unknown;
+};
+
+function shellGlobals(): CesiumShellGlobals | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window as Window & CesiumShellGlobals;
+}
+
 function isCesiumDesktopRenderer(): boolean {
+  return Boolean(shellGlobals()?.cesiumDesktop?.isElectron);
+}
+
+/**
+ * True inside the official Android / iOS app WebView (the RN shell injects
+ * `window.cesiumMobile` / `__CESIUM_MOBILE_SERVER__`). Regular mobile
+ * browsers and installed PWAs do not set these.
+ */
+export function isCesiumMobileApp(): boolean {
+  const globals = shellGlobals();
+  return Boolean(globals?.cesiumMobile || globals?.__CESIUM_MOBILE_SERVER__);
+}
+
+/**
+ * Electron desktop (Windows / Linux / macOS) or the native mobile app.
+ * These surfaces ship their own official engines and must not surface the
+ * tab-local browser machine.
+ */
+export function isNativeCesiumShell(): boolean {
+  return isCesiumDesktopRenderer() || isCesiumMobileApp();
+}
+
+/**
+ * The in-tab "Use this browser" engine is only for hosted web and PWA
+ * surfaces. Native shells already have a real local/remote server.
+ */
+export function isBrowserMachineOffered(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
-  return Boolean(
-    (window as Window & { cesiumDesktop?: { isElectron?: boolean } }).cesiumDesktop
-      ?.isElectron
-  );
+  return !isNativeCesiumShell();
 }
 
 /**

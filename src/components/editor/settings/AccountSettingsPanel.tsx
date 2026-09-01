@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignInButton, SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, UserButton } from "@clerk/nextjs";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
+import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
+import { formatGithubConnectError } from "@/lib/github-clerk-errors";
 import {
   Check,
   ChevronDown,
@@ -28,6 +31,7 @@ import {
   useSettingsShellChrome,
 } from "@/components/editor/settings-ui";
 import { useOptionalAuth } from "@/components/auth/AuthProvider";
+import { HarnessAuthSyncSummaryCard } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
@@ -73,6 +77,9 @@ function AccountIdentityCard() {
   const cloud = useCloudContext();
   return (
     <SettingsBlock searchId="account-identity">
+      {identity.kind === "clerk-signed-out" ? (
+        <span data-settings-search-id="account-cloud-mode" hidden />
+      ) : null}
       <div className="flex items-center gap-[14px]">
         {identity.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -105,14 +112,14 @@ function AccountIdentityCard() {
         </div>
         {cloud.mode === "clerk" ? (
           identity.kind === "clerk-signed-out" ? (
-            <SignInButton mode="modal">
+            <ClerkAuthTrigger mode="sign-in">
               <button
                 type="button"
                 className="inline-flex shrink-0 items-center rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] font-sans text-[12px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
               >
                 Sign in
               </button>
-            </SignInButton>
+            </ClerkAuthTrigger>
           ) : (
             <span className="shrink-0">
               <UserButton />
@@ -239,36 +246,26 @@ function CloudAccountSection() {
     );
   }
 
-  // clerk mode
+  // clerk mode — sign-in lives on AccountIdentityCard at the top of the page.
+  // Do not render a second "Not signed in" row when signed out.
+  if (cloud.status === "signed-out") {
+    return null;
+  }
+
   return (
     <SettingsSection>
-      {cloud.status === "signed-out" ? (
-        <SettingsRow
-          title="Not signed in"
-          description="Sign in to use your account on this device."
-          trailing={
-            <SignInButton mode="modal">
-              <button type="button" className={rowButtonClass}>
-                Sign in
-              </button>
-            </SignInButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      ) : (
-        <SettingsRow
-          title="Sign out"
-          description="Sign out of this device."
-          trailing={
-            <SignOutButton>
-              <button type="button" className={rowButtonClass}>
-                Sign out
-              </button>
-            </SignOutButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      )}
+      <SettingsRow
+        title="Sign out"
+        description="Sign out of this device."
+        trailing={
+          <SignOutButton>
+            <button type="button" className={rowButtonClass}>
+              Sign out
+            </button>
+          </SignOutButton>
+        }
+        searchId="account-cloud-mode"
+      />
     </SettingsSection>
   );
 }
@@ -288,7 +285,7 @@ function GithubAccountSection() {
 
 function GithubAccountSectionInner() {
   const cloud = useCloudContext();
-  const { user } = useUser();
+  const { connectGithub, disconnectGithub, formatError } = useClerkGithubLink();
   const [status, setStatus] = useState<{
     connected: boolean;
     login: string | null;
@@ -308,7 +305,7 @@ function GithubAccountSectionInner() {
       setStatus({
         connected: false,
         login: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatGithubConnectError(error),
       });
     }
   }, [cloud.github]);
@@ -318,34 +315,17 @@ function GithubAccountSectionInner() {
   }, [refresh]);
 
   const connect = useCallback(async () => {
-    if (!user) return;
     setPending(true);
     setActionError(null);
     try {
-      const external = await user.createExternalAccount({
-        strategy: "oauth_github",
-        redirectUrl: window.location.href,
-      });
-      const redirect = external.verification?.externalVerificationRedirectURL;
-      if (!redirect) {
-        throw new Error("Clerk did not return a GitHub authorization URL.");
-      }
-      window.location.href = redirect.toString();
+      await connectGithub();
     } catch (error) {
       setPending(false);
-      setActionError(error instanceof Error ? error.message : String(error));
+      setActionError(formatError(error));
     }
-  }, [user]);
+  }, [connectGithub, formatError]);
 
   const disconnect = useCallback(async () => {
-    if (!user) return;
-    const account = user.externalAccounts.find(
-      (entry) => entry.provider === "github"
-    );
-    if (!account) {
-      setActionError("No linked GitHub account was found on this Clerk user.");
-      return;
-    }
     if (
       typeof window !== "undefined" &&
       !window.confirm(
@@ -357,14 +337,14 @@ function GithubAccountSectionInner() {
     setPending(true);
     setActionError(null);
     try {
-      await account.destroy();
+      await disconnectGithub();
       await refresh();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
+      setActionError(formatError(error));
     } finally {
       setPending(false);
     }
-  }, [refresh, user]);
+  }, [disconnectGithub, formatError, refresh]);
 
   if (cloud.status !== "ready" || !cloud.github) {
     return null;
@@ -715,6 +695,7 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
+      {engineConnected ? <HarnessAuthSyncSummaryCard /> : null}
       <GithubAccountSection />
       {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />

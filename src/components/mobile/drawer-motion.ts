@@ -29,7 +29,7 @@ export const ENGAGE_DOMINANCE = 1.35;
 /** Vertical movement that hands the touch to native scrolling. */
 export const SCROLL_CLAIM_PX = 16;
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
     (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)
@@ -84,6 +84,36 @@ export function isRightPaneSwipeAction(
   action: AgentShellSwipeAction | null
 ): action is "open-right" | "close-right" {
   return action === "open-right" || action === "close-right";
+}
+
+/** Progress at which an overlay drawer is treated as fully open / at rest. */
+export const DRAWER_RESTING_PROGRESS = 0.999;
+
+/**
+ * Write the sliding transform for a mobile overlay drawer.
+ *
+ * At rest the transform is dropped so `backdrop-filter` on
+ * `.mobile-*-drawer-surface` can sample the dimmed content behind the pane
+ * instead of the drawer's own empty compositor layer. Leaving a
+ * `translate3d(...)` parked at 0% (what the settings nav used to do) makes
+ * the frost sample nothing and the page punches through as sharp text.
+ */
+export function applyOverlayDrawerSurfaceFrame(
+  drawer: HTMLElement | null,
+  progress: number,
+  side: DrawerSide
+): void {
+  if (!drawer) {
+    return;
+  }
+  if (progress >= DRAWER_RESTING_PROGRESS) {
+    drawer.style.transform = "none";
+    drawer.style.willChange = "auto";
+    return;
+  }
+  const offset = side === "left" ? (progress - 1) * 100 : (1 - progress) * 100;
+  drawer.style.transform = `translate3d(${offset}%, 0, 0)`;
+  drawer.style.willChange = "transform";
 }
 
 /**

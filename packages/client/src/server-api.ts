@@ -19,6 +19,9 @@ import type {
   AgentImportSessionSummary,
   AgentImportSourceInfo,
   AgentRailRepositoryInfo,
+  HarnessAuthSnapshot,
+  HarnessAuthSyncEngineState,
+  HarnessAuthSyncId,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -2587,6 +2590,52 @@ export async function cancelHarnessCliAuthLogin(
   return request<HarnessCliAuthState>(
     `/api/settings/harness-auth/${encodeURIComponent(backendId)}/cancel`,
     { method: "POST" }
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Harness auth sync (engine export/import of harness sign-ins)             */
+/* ------------------------------------------------------------------------ */
+
+/** Per-harness sync readiness reported by an engine (no secret material). */
+export async function fetchHarnessAuthSyncStates(
+  server?: ServerRequestContext
+): Promise<HarnessAuthSyncEngineState[]> {
+  const payload = await request<{ harnesses: HarnessAuthSyncEngineState[] }>(
+    "/api/settings/harness-auth-sync",
+    { method: "GET" },
+    { skipWorkspaceHeader: true, server }
+  );
+  return payload.harnesses ?? [];
+}
+
+/**
+ * Read one harness's credential snapshot from an engine. The plaintext only
+ * travels over the authenticated engine channel; callers must seal it (see
+ * `sealHarnessAuthSnapshot`) before uploading anywhere.
+ */
+export async function exportHarnessAuthSnapshotFromServer(
+  syncId: HarnessAuthSyncId,
+  server?: ServerRequestContext
+): Promise<HarnessAuthSnapshot | null> {
+  const payload = await request<{ snapshot: HarnessAuthSnapshot | null }>(
+    `/api/settings/harness-auth-sync/${encodeURIComponent(syncId)}/export`,
+    { method: "GET" },
+    { skipWorkspaceHeader: true, server, cache: "no-store" }
+  );
+  return payload.snapshot ?? null;
+}
+
+/** Apply an opened credential snapshot to an engine host. */
+export async function importHarnessAuthSnapshotToServer(
+  syncId: HarnessAuthSyncId,
+  snapshot: HarnessAuthSnapshot,
+  server?: ServerRequestContext
+): Promise<{ ok: boolean; applied: number; errors: string[] }> {
+  return request<{ ok: boolean; applied: number; errors: string[] }>(
+    `/api/settings/harness-auth-sync/${encodeURIComponent(syncId)}/import`,
+    { method: "POST", body: JSON.stringify({ snapshot }) },
+    { skipWorkspaceHeader: true, server }
   );
 }
 

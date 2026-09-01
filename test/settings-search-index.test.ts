@@ -258,6 +258,12 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes unsigned-in account under the identity row", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "not signed in");
+    assert.ok(hits.some((hit) => hit.rowId === "account-identity"));
+  });
+
   test("can omit iPad beta rows for desktop shells", () => {
     const index = buildSettingsSearchIndex({}, { includeIpadBeta: false });
     assert.equal(

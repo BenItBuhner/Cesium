@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { SignInButton, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
 import { Check, Cloud, CloudOff, Link2 } from "lucide-react";
 import { useCloudContext } from "@/contexts/CloudContext";
 
@@ -30,7 +31,7 @@ export function CloudAccountChip() {
   if (cloud.mode === "clerk") {
     if (cloud.status === "signed-out") {
       return (
-        <SignInButton mode="modal">
+        <ClerkAuthTrigger mode="sign-in">
           <button
             type="button"
             className="inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] bg-[var(--accent)] px-[14px] py-[6px] text-[12.5px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
@@ -38,7 +39,7 @@ export function CloudAccountChip() {
             <Cloud className="size-[13px]" strokeWidth={1.75} aria-hidden />
             Sign in to sync
           </button>
-        </SignInButton>
+        </ClerkAuthTrigger>
       );
     }
     return (

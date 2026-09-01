@@ -2,6 +2,9 @@
 export {
   areIpadBetaFeaturesEnabled,
   getCesiumRendererFeatureFlags,
+  isBrowserMachineOffered,
+  isCesiumMobileApp,
+  isNativeCesiumShell,
   resolveEffectiveUserPreferences,
 } from "@cesium/client";
 export type {

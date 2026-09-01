@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { NativeHandoffBounce } from "@/components/setup/NativeHandoffBounce";
 import { SetupWizard } from "@/components/setup/SetupWizard";
 
 export const metadata: Metadata = {
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
 export default function SetupPage() {
   return (
     <Suspense fallback={null}>
+      <NativeHandoffBounce />
       <SetupWizard />
     </Suspense>
   );

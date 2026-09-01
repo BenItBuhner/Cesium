@@ -26,6 +26,8 @@ const requireSignIn = isSignInRequired();
  * - `/`, `/download` - the public marketing surface.
  * - `/terms`, `/license` - legal documents must stay reachable signed-out.
  * - `/sign-in`, `/sign-up` - the Clerk pages (gating these would loop).
+ * - `/auth/native-return` - packaged-app ticket handoff; the page itself
+ *   bounces unsigned visitors back to sign-in with `native_handoff=1`.
  * - `/api/rendezvous` - engines (curl, no browser session) publish here.
  * - `/api/releases` - powers the download page for signed-out visitors.
  * - `/~offline`, `/manifest.json` - PWA plumbing fetched without credentials.
@@ -37,6 +39,7 @@ const isPublicRoute = createRouteMatcher([
   "/license(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  "/auth/native-return",
   "/api/rendezvous(.*)",
   "/api/releases(.*)",
   "/~offline",

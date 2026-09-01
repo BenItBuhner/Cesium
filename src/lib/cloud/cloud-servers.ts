@@ -2,6 +2,7 @@
 
 import {
   getServerConnectionKey,
+  isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
   normalizeRendezvousLocator,
   upsertServerConnection,
@@ -9,6 +10,11 @@ import {
   type ServerConnection,
   type ServerConnectionsState,
 } from "@cesium/client";
+
+/** Account-synced engines only - never the tab-local browser machine. */
+export function isCloudSyncableServerUrl(baseUrl: string): boolean {
+  return !isCesiumAccountSiteUrl(baseUrl) && !isBrowserMachineUrl(baseUrl);
+}
 
 /**
  * Account-level server sync helpers.
@@ -103,7 +109,7 @@ export function mergeCloudServersIntoState(
   const beforeSignature = serverConnectionsSignature(state);
   let next = state;
   for (const cloudServer of cloudServers) {
-    if (isCesiumAccountSiteUrl(cloudServer.baseUrl)) {
+    if (!isCloudSyncableServerUrl(cloudServer.baseUrl)) {
       continue;
     }
     let locator: RendezvousLocator | null = null;
@@ -169,7 +175,7 @@ export function buildCloudServerPushPayloads(
 ): CloudServerPushPayload[] {
   const payloads: CloudServerPushPayload[] = [];
   for (const server of servers) {
-    if (isCesiumAccountSiteUrl(server.baseUrl)) {
+    if (!isCloudSyncableServerUrl(server.baseUrl)) {
       continue;
     }
     const sessionToken = getSessionToken(server.baseUrl);

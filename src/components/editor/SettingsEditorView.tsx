@@ -898,9 +898,10 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   if (isMobile) {
     return (
       <SettingsShellChromeContext.Provider value={shellChrome}>
-      {/* The nav drawer shares the agent shell's swipe/spring physics: swipe
-          right anywhere opens it pinned to the finger, swipe left (or a scrim
-          tap / Android back gesture) closes it. */}
+      {/* The nav drawer shares the agent shell's swipe/spring physics and the
+          same frosted `.mobile-left-drawer-surface` material: swipe right
+          anywhere opens it pinned to the finger, swipe left (or a scrim tap /
+          Android back gesture) closes it. */}
       <MobileNavDrawerShell
         open={navDrawerOpen}
         setOpen={setNavDrawerOpen}

@@ -1,22 +1,15 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { SignInButton } from "@clerk/nextjs";
 import { ArrowRight } from "lucide-react";
 import { TermsNotice } from "@/components/legal/TermsAgreement";
 import { useCloudContext } from "@/contexts/CloudContext";
-import {
-  getHostedClerkSignInUrl,
-  getHostedClerkSignUpUrl,
-  shouldUseHostedClerkAuth,
-} from "@/lib/cloud/clerk-urls";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
 import {
   dismissFirstRunAccount,
   isFirstRunAccountDismissed,
   shouldPromptFirstRunAccount,
 } from "@/lib/cloud/first-run-account";
-import { openExternalUrl } from "@/lib/mobile-bridge";
 
 const accentButtonClass =
   "inline-flex w-full items-center justify-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[12px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]";
@@ -68,13 +61,6 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
     return children;
   }
 
-  const hosted = shouldUseHostedClerkAuth(
-    typeof window === "undefined"
-      ? null
-      : { protocol: window.location.protocol, hostname: window.location.hostname },
-    cloud.status
-  );
-
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-[var(--bg-main)] text-[var(--text-primary)]">
       <div className="mx-auto flex min-h-full max-w-[440px] flex-col justify-center px-[24px] py-[48px]">
@@ -88,41 +74,23 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
           Or keep going locally.
         </h1>
         <p className="mt-[14px] text-pretty text-[14px] leading-relaxed text-[var(--text-secondary)]">
-          Create an account to bring servers, preferences, and chats with you.
-          Your code stays on your machine either way.
+          Create an account to bring servers, preferences, and chats with you -
+          and, if you choose, your agent sign-ins and API keys, end-to-end
+          encrypted so only your devices can read them. Your code stays on
+          your machine either way.
         </p>
         <div className="mt-[28px] flex flex-col gap-[10px]">
-          {hosted ? (
-            <>
-              <button
-                type="button"
-                className={accentButtonClass}
-                onClick={() => openExternalUrl(getHostedClerkSignUpUrl())}
-              >
-                Sign up
-                <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className={outlineButtonClass}
-                onClick={() => openExternalUrl(getHostedClerkSignInUrl())}
-              >
-                Sign in
-              </button>
-            </>
-          ) : (
-            <>
-              <Link href="/sign-up" className={accentButtonClass}>
-                Sign up
-                <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-              </Link>
-              <SignInButton mode="modal">
-                <button type="button" className={outlineButtonClass}>
-                  Sign in
-                </button>
-              </SignInButton>
-            </>
-          )}
+          <ClerkAuthTrigger mode="sign-up">
+            <button type="button" className={accentButtonClass}>
+              Sign up
+              <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+            </button>
+          </ClerkAuthTrigger>
+          <ClerkAuthTrigger mode="sign-in">
+            <button type="button" className={outlineButtonClass}>
+              Sign in
+            </button>
+          </ClerkAuthTrigger>
           <button
             type="button"
             aria-label="Continue as guest"

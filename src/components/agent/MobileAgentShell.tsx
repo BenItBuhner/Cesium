@@ -48,6 +48,7 @@ import {
   ENGAGE_DOMINANCE,
   FLICK_VELOCITY_THRESHOLD,
   SCROLL_CLAIM_PX,
+  applyOverlayDrawerSurfaceFrame,
   gestureBlockedByTarget,
   isRightPaneSwipeAction,
   resolveAgentShellSwipeAction,
@@ -120,18 +121,7 @@ export function MobileAgentShell({
   rightCloseGestureEnabledRef.current = rightCloseGestureEnabled;
 
   const applyLeftFrame = useCallback((progress: number) => {
-    const drawer = leftDrawerRef.current;
-    if (drawer) {
-      // Drop the resting transform so backdrop-filter can sample the chat
-      // instead of the drawer's own empty compositor layer.
-      if (progress >= 0.999) {
-        drawer.style.transform = "none";
-        drawer.style.willChange = "auto";
-      } else {
-        drawer.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
-        drawer.style.willChange = "transform";
-      }
-    }
+    applyOverlayDrawerSurfaceFrame(leftDrawerRef.current, progress, "left");
     const scrim = scrimRef.current;
     if (scrim) {
       scrim.style.opacity = String(progress);
@@ -141,14 +131,8 @@ export function MobileAgentShell({
 
   const applyRightFrame = useCallback((progress: number) => {
     const pane = rightPaneRef.current;
+    applyOverlayDrawerSurfaceFrame(pane, progress, "right");
     if (pane) {
-      if (progress >= 0.999) {
-        pane.style.transform = "none";
-        pane.style.willChange = "auto";
-      } else {
-        pane.style.transform = `translate3d(${(1 - progress) * 100}%, 0, 0)`;
-        pane.style.willChange = "transform";
-      }
       pane.style.visibility = progress <= 0.001 ? "hidden" : "visible";
       pane.style.pointerEvents = progress >= 0.999 ? "auto" : "none";
     }
