@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Minimize2, Volume2, VolumeX, X } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useIsShellUnderlay } from "@/components/layout/ShellUnderlayContext";
 import { useAgentDraftComposer } from "@/hooks/useAgentDraftComposer";
 import type { SessionOrbStatus } from "@/lib/voice/session-orb-renderer";
 import { useVoiceSession } from "./VoiceSessionProvider";
@@ -39,13 +40,16 @@ export function VoiceAgentView() {
   const session = useVoiceSession();
   const { workspaceSession } = useWorkspace();
   const draft = useAgentDraftComposer();
+  // The full-screen voice view portals above everything (z-10000), so it must
+  // not render while its tree is the hidden preview layer beneath settings.
+  const isShellUnderlay = useIsShellUnderlay();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const open = session.view === "full";
+  const open = session.view === "full" && !isShellUnderlay;
 
   // Escape minimizes (matching the Android back gesture); the composer's own
   // Escape handling (closing pickers) stops propagation before reaching this.

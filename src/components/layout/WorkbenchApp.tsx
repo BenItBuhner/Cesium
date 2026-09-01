@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -27,13 +26,18 @@ import {
   useBackHandler,
 } from "@/components/mobile/BackIntentContext";
 import { DrawerMotion, prefersReducedMotion } from "@/components/mobile/drawer-motion";
+import { hasMobileBridge } from "@/lib/mobile-bridge";
 import {
+  SETTINGS_BACK_MIN_COMMIT_VELOCITY,
+  estimateGestureVelocity,
   gestureProgressToDeparture,
   settingsBackDirection,
   settingsBackFrame,
   type SettingsBackDirection,
+  type SettingsBackGestureSample,
 } from "@/lib/settings-back-motion";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
+import { ShellUnderlayProvider } from "@/components/layout/ShellUnderlayContext";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
 
 function WorkbenchShell() {
@@ -48,15 +52,19 @@ function WorkbenchShell() {
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const settingsSurfaceRef = useRef<HTMLDivElement | null>(null);
 
-  // Predictive-back reveal for the full-screen settings view: the agent view
-  // mounts beneath settings only for the duration of a back gesture / exit
-  // animation, so the gesture genuinely previews the content it returns to.
-  // It stays unmounted at rest because the agent tree attaches document-level
-  // key listeners (IDEKeyboardLayer) that must not run twice, and because the
-  // settings surface is a translucent window over the shared aurora canvas.
-  const [underlayMounted, setUnderlayMounted] = useState(false);
-  const underlayMountedRef = useRef(underlayMounted);
-  underlayMountedRef.current = underlayMounted;
+  // Predictive-back reveal for the full-screen settings view. Only the native
+  // mobile shell delivers back-gesture streams, so only there does the agent
+  // view stay mounted (hidden) beneath settings - pre-warmed, so a gesture
+  // reveals it with a compositor-level visibility flip instead of a janky
+  // mid-gesture React mount. Elsewhere the old exclusive swap is kept: no
+  // hidden tree, no cost. Enabled post-mount so server and first client
+  // render agree (the bridge global exists before any page script runs).
+  const [layered, setLayered] = useState(false);
+  const layeredRef = useRef(layered);
+  layeredRef.current = layered;
+  useEffect(() => {
+    setLayered(hasMobileBridge());
+  }, []);
 
   /** Slide direction of the in-flight gesture (finger travel). */
   const directionRef = useRef<SettingsBackDirection>(1);
@@ -64,14 +72,18 @@ function WorkbenchShell() {
   const gestureSessionRef = useRef(false);
   /** True while the committed exit animation runs (extra backs are swallowed). */
   const exitingRef = useRef(false);
+  /** Recent (time, departure) samples for seeding the springs with finger velocity. */
+  const samplesRef = useRef<SettingsBackGestureSample[]>([]);
 
-  // The settings surface slides away with the finger (picking up a slight
-  // scale-down, corner radius, and shadow for depth) while the agent view
-  // beneath scales up from 96% behind a clearing scrim - the same
-  // cross-surface motion Android uses between activities. Frames are written
-  // imperatively (no per-frame React re-render) through the drawers' shared
-  // spring engine, so commit flings the surface off-screen and cancel springs
-  // it back with the exact physics of the rail/pane drawers.
+  // The settings surface travels with the finger nearly 1:1 (picking up a
+  // slight scale-down, corner radius, and shadow for depth) while the agent
+  // view beneath slides into place with a parallax offset, scaling up behind
+  // a clearing scrim - the cross-surface motion Android uses between
+  // activities. Frames are written imperatively (no per-frame React
+  // re-render) through the drawers' shared spring engine. Commit springs the
+  // surface past the viewport edge (115% travel) seeded with the finger's own
+  // velocity, so the visible exit finishes at speed instead of stalling at
+  // the edge; cancel springs everything back.
   const applyFrame = useCallback((departure: number) => {
     const frame = settingsBackFrame(departure, directionRef.current);
     const surface = settingsSurfaceRef.current;
@@ -85,11 +97,28 @@ function WorkbenchShell() {
     }
     const underlay = agentHostRef.current;
     if (underlay && showSettingsRef.current) {
-      underlay.style.transform = `scale(${frame.underlayScale})`;
+      underlay.style.transform = `translate3d(${frame.underlayTranslateXPct}%, 0, 0) scale(${frame.underlayScale})`;
     }
     const scrim = scrimRef.current;
     if (scrim) {
       scrim.style.opacity = String(frame.scrimOpacity);
+    }
+  }, []);
+
+  /**
+   * Shows/hides the reveal layers (agent underlay + scrim). Hidden at rest so
+   * nothing shows through the translucent settings surface; revealed for the
+   * duration of a gesture / exit animation. `visibility` keeps layout warm,
+   * so flipping it never re-runs the agent tree.
+   */
+  const setPreviewVisible = useCallback((visible: boolean) => {
+    const underlay = agentHostRef.current;
+    if (underlay) {
+      underlay.style.visibility = visible ? "" : "hidden";
+    }
+    const scrim = scrimRef.current;
+    if (scrim) {
+      scrim.style.visibility = visible ? "" : "hidden";
     }
   }, []);
 
@@ -118,40 +147,34 @@ function WorkbenchShell() {
   if (motionRef.current == null) {
     motionRef.current = new DrawerMotion(0, applyFrame, (departure) => {
       if (departure >= 1) {
-        // Committed exit: the surface is fully off-screen (left there until
-        // the view flip unmounts it) and the underlay beneath becomes the
-        // live agent view. Its React position is stable across the flip, so
-        // no remount happens.
+        // Committed exit: the surface has fully cleared the viewport (left
+        // off-screen until the view flip unmounts it) and the underlay
+        // beneath becomes the live agent view. Its React position is stable
+        // across the flip, so no remount happens.
         exitingRef.current = false;
         clearUnderlayStyles();
+        const underlay = agentHostRef.current;
+        if (underlay) {
+          underlay.style.visibility = "";
+        }
         closeSettingsViewRef.current();
       } else if (departure <= 0) {
-        // Cancelled gesture settled back to rest: drop the preview layer.
+        // Cancelled gesture settled back to rest: hide the preview again.
         clearUnderlayStyles();
         clearSurfaceStyles();
-        setUnderlayMounted(false);
+        setPreviewVisible(false);
       }
     });
   }
 
-  // Opening settings starts from a clean slate: no preview layer beneath.
-  // `underlayMounted` is intentionally kept across a committed exit's view
-  // flip (so the agent host never unmounts in the same breath it becomes the
-  // live view); retire it during render when settings opens again, before
-  // anything stale can paint behind the translucent settings surface.
-  const [prevShowSettings, setPrevShowSettings] = useState(showSettings);
-  if (showSettings !== prevShowSettings) {
-    setPrevShowSettings(showSettings);
-    if (showSettings) {
-      setUnderlayMounted(false);
-    }
-  }
-
-  // ... and reset the motion engine itself once the settings surface exists.
-  useEffect(() => {
-    if (!showSettings) {
-      return;
-    }
+  // Whenever settings is (re)opened - or the layered shell finishes booting
+  // while settings is already up - start from a clean slate: motion at rest,
+  // preview hidden before anything can paint through the translucent surface.
+  // When settings closes by any path (gesture commit, the close button,
+  // programmatic view switches), the agent host must come back to live
+  // styling - in particular its `visibility`, which was hidden while it was
+  // the underlay.
+  useLayoutEffect(() => {
     const motion = motionRef.current;
     if (motion) {
       motion.cancel();
@@ -162,16 +185,15 @@ function WorkbenchShell() {
     gestureSessionRef.current = false;
     clearUnderlayStyles();
     clearSurfaceStyles();
-  }, [showSettings, clearSurfaceStyles, clearUnderlayStyles]);
-
-  // A freshly mounted preview layer must carry the current frame before it
-  // first paints (mirrors the drawer shell's re-mount style application).
-  useLayoutEffect(() => {
-    if (!underlayMounted || !showSettings) {
-      return;
+    if (showSettings) {
+      setPreviewVisible(false);
+    } else {
+      const underlay = agentHostRef.current;
+      if (underlay) {
+        underlay.style.visibility = "";
+      }
     }
-    applyFrame(motionRef.current?.progress ?? 0);
-  }, [underlayMounted, showSettings, applyFrame]);
+  }, [showSettings, layered, clearSurfaceStyles, clearUnderlayStyles, setPreviewVisible]);
 
   // A back gesture in the full-screen settings view returns to the agent view
   // rather than exiting the app or walking WebView history. The discrete back
@@ -186,23 +208,30 @@ function WorkbenchShell() {
         // animation is in flight: swallow it.
         return true;
       }
-      if (!settingsSurfaceRef.current || prefersReducedMotion()) {
+      const hadGesture = gestureSessionRef.current;
+      gestureSessionRef.current = false;
+      if (!layeredRef.current || !settingsSurfaceRef.current || prefersReducedMotion()) {
         closeSettingsView();
         return true;
       }
-      if (!gestureSessionRef.current) {
+      if (!hadGesture) {
         // Discrete back (no preceding gesture): don't inherit a stale slide
         // direction from an earlier gesture - use the default rightward exit.
         directionRef.current = settingsBackDirection(undefined);
       }
-      gestureSessionRef.current = false;
       exitingRef.current = true;
-      if (!underlayMountedRef.current) {
-        // Discrete back with no preceding gesture: the reveal layer must
-        // exist before the first spring frame lands.
-        flushSync(() => setUnderlayMounted(true));
+      const motion = motionRef.current;
+      if (motion) {
+        // The fling continues at the finger's own speed (with a decisive
+        // floor so slow lifts and button backs never crawl off-screen).
+        const velocity = Math.max(
+          SETTINGS_BACK_MIN_COMMIT_VELOCITY,
+          hadGesture ? estimateGestureVelocity(samplesRef.current) : 0
+        );
+        applyFrame(motion.progress);
+        setPreviewVisible(true);
+        motion.springTo(1, velocity);
       }
-      motionRef.current?.springTo(1);
       return true;
     },
     {
@@ -212,36 +241,54 @@ function WorkbenchShell() {
         }
         gestureSessionRef.current = true;
         directionRef.current = settingsBackDirection(event.swipeEdge);
-        if (prefersReducedMotion()) {
+        const departure = gestureProgressToDeparture(event.progress);
+        samplesRef.current = [{ timeMs: performance.now(), departure }];
+        if (!layeredRef.current || prefersReducedMotion()) {
           return;
         }
-        setUnderlayMounted(true);
         const motion = motionRef.current;
         if (motion) {
           motion.beginDrag();
-          motion.dragTo(gestureProgressToDeparture(event.progress), 0);
+          motion.dragTo(departure, 0);
         }
+        setPreviewVisible(true);
       },
       onProgress: (event) => {
-        if (exitingRef.current || prefersReducedMotion()) {
+        if (exitingRef.current || !gestureSessionRef.current) {
           return;
         }
-        motionRef.current?.dragTo(gestureProgressToDeparture(event.progress), 0);
+        const departure = gestureProgressToDeparture(event.progress);
+        const samples = samplesRef.current;
+        samples.push({ timeMs: performance.now(), departure });
+        if (samples.length > 6) {
+          samples.shift();
+        }
+        if (!layeredRef.current || prefersReducedMotion()) {
+          return;
+        }
+        motionRef.current?.dragTo(departure, 0);
       },
       onCancel: () => {
         if (exitingRef.current) {
           return;
         }
         gestureSessionRef.current = false;
-        motionRef.current?.springTo(0);
+        if (!layeredRef.current) {
+          return;
+        }
+        // Seed the return spring with the finger's speed when it was already
+        // heading back; never with outward velocity.
+        const velocity = Math.min(0, estimateGestureVelocity(samplesRef.current));
+        motionRef.current?.springTo(0, velocity);
       },
     }
   );
 
   // The agent view keeps one stable child position whether it is the live
-  // shell or the gesture's reveal layer, so a committed back hands the very
-  // DOM the gesture revealed over to the live view - no remount, no flash.
-  const agentMounted = !showSettings || underlayMounted;
+  // shell or the hidden reveal layer beneath settings, so a committed back
+  // hands the very DOM the gesture revealed over to the live view - no
+  // remount, no flash.
+  const agentMounted = !showSettings || layered;
   return (
     <>
       {agentMounted ? (
@@ -253,17 +300,19 @@ function WorkbenchShell() {
             showSettings ? "pointer-events-none will-change-transform" : ""
           }`}
         >
-          <AgentLayout />
+          <ShellUnderlayProvider value={showSettings}>
+            <AgentLayout />
+          </ShellUnderlayProvider>
         </div>
       ) : null}
       {showSettings ? (
         <>
-          {underlayMounted ? (
+          {layered ? (
             <div
               ref={scrimRef}
               aria-hidden
               className="pointer-events-none absolute inset-0 z-[2] bg-[var(--palette-backdrop)]"
-              style={{ opacity: 1 }}
+              style={{ opacity: 1, visibility: "hidden" }}
             />
           ) : null}
           <div

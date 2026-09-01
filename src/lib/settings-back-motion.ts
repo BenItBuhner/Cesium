@@ -7,39 +7,70 @@
  * The motion is a single "departure" scalar in [0, 1]:
  *
  * - 0   = the settings surface is at rest, fully covering the shell.
- * - 1   = the surface has fully slid off-screen (a committed back).
+ * - 1   = the surface has finished leaving (a committed back).
  *
- * While the finger drags, gesture progress maps onto the leading
+ * While the finger drags, gesture progress maps near 1:1 onto the leading
  * `SETTINGS_BACK_GESTURE_MAX_DEPARTURE` slice of that range - the surface
- * slides with the finger, picks up a slight scale-down / corner radius /
- * shadow for depth, and the agent view is revealed beneath it (scaling up
- * from `UNDERLAY_MIN_SCALE` behind a clearing scrim). A committed gesture
- * springs departure to 1 so the surface flings the rest of the way off; a
- * cancelled gesture springs it back to 0.
+ * genuinely travels with the finger (picking up a slight scale-down, corner
+ * radius, and shadow for depth) while the agent view is revealed beneath it,
+ * sliding in with a parallax offset and scaling up behind a clearing scrim.
+ *
+ * A committed gesture springs departure to 1 seeded with the finger's own
+ * velocity. Critically, the surface's translation at departure 1 overshoots
+ * the viewport (`SURFACE_EXIT_TRAVEL_PCT` > 100), so the visible exit -
+ * shadow included - completes while the spring still carries real speed; the
+ * spring's asymptotic settling tail happens entirely off-screen instead of
+ * visibly stalling at the edge. A cancelled gesture springs back to 0.
  */
 
-/** Fraction of the shell width the surface departs at full gesture pull. */
-export const SETTINGS_BACK_GESTURE_MAX_DEPARTURE = 0.3;
+/**
+ * Departure at a full gesture pull (progress 1). Kept just shy of 1 so a
+ * maximal uncommitted pull still leaves a sliver of the surface on-screen -
+ * the "not released yet" cue - while tracking the finger nearly 1:1.
+ */
+export const SETTINGS_BACK_GESTURE_MAX_DEPARTURE = 0.85;
 
+/**
+ * Floor for the committed exit's spring velocity (departure/sec). Slow lifts
+ * and the discrete back paths still get a decisive fling instead of a crawl.
+ */
+export const SETTINGS_BACK_MIN_COMMIT_VELOCITY = 3;
+
+/**
+ * Horizontal travel (% of the surface's own width) at departure 1. Over 100
+ * so the surface - including its scale inset and elevation shadow - fully
+ * clears the viewport before the spring settles.
+ */
+const SURFACE_EXIT_TRAVEL_PCT = 115;
 /** Scale of the departing surface once the depth ramp completes. */
 const SURFACE_MIN_SCALE = 0.96;
 /** Corner radius (px) of the departing surface once the depth ramp completes. */
 const SURFACE_MAX_RADIUS_PX = 24;
+/** Departure by which scale / radius reach their peak (depth engages early). */
+const SURFACE_DEPTH_RAMP_DEPARTURE = 0.25;
 /** Elevation shadow alpha of the departing surface. */
 const SURFACE_SHADOW_MAX_ALPHA = 0.45;
 /** Departure by which the shadow is fully faded in (it leads the motion). */
 const SURFACE_SHADOW_RAMP = 0.08;
 /** Resting scale of the revealed agent view when the gesture begins. */
 const UNDERLAY_MIN_SCALE = 0.96;
+/** Parallax offset (% of width) the revealed view slides in from. */
+const UNDERLAY_PARALLAX_PCT = 8;
 /**
- * Departure at which the revealed view has fully "arrived" (scale 1, scrim
- * clear) - slightly before the surface finishes leaving, so the destination
- * settles while the old page clears the screen.
+ * Departure at which the revealed view has fully "arrived" (scale 1, parallax
+ * 0, scrim clear) - as the surface clears the viewport, the destination is
+ * already settled.
  */
 const UNDERLAY_ARRIVAL_DEPARTURE = 0.85;
 
 /** +1 slides the surface rightward (left-edge swipe), -1 leftward. */
 export type SettingsBackDirection = 1 | -1;
+
+/** One (time, departure) gesture sample for velocity estimation. */
+export type SettingsBackGestureSample = {
+  timeMs: number;
+  departure: number;
+};
 
 /**
  * One rendered frame of the motion. Numeric values only, so tests can assert
@@ -54,6 +85,8 @@ export type SettingsBackFrame = {
   surfaceShadowAlpha: number;
   /** Scale of the revealed agent view beneath. */
   underlayScale: number;
+  /** Parallax translation of the revealed view, % of its own width. */
+  underlayTranslateXPct: number;
   /** Multiplier against the scrim's own backdrop color (1 = fully dimmed). */
   scrimOpacity: number;
 };
@@ -87,23 +120,45 @@ export function gestureProgressToDeparture(progress: number): number {
   return clamp01(progress) * SETTINGS_BACK_GESTURE_MAX_DEPARTURE;
 }
 
+/**
+ * Departure velocity (units/sec) estimated from the most recent gesture
+ * samples, used to seed the commit/cancel springs with the finger's real
+ * speed. Returns 0 when there is not enough signal.
+ */
+export function estimateGestureVelocity(
+  samples: readonly SettingsBackGestureSample[]
+): number {
+  if (samples.length < 2) {
+    return 0;
+  }
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const dtMs = last.timeMs - first.timeMs;
+  if (dtMs <= 0) {
+    return 0;
+  }
+  return ((last.departure - first.departure) / dtMs) * 1000;
+}
+
 /** Computes one frame of the motion for a departure in [0, 1]. */
 export function settingsBackFrame(
   departure: number,
   direction: SettingsBackDirection
 ): SettingsBackFrame {
   const d = clamp01(departure);
-  // Depth (scale / radius) completes within the gesture range and then holds
-  // while the commit spring carries the surface the rest of the way off.
-  const depth = clamp01(d / SETTINGS_BACK_GESTURE_MAX_DEPARTURE);
+  // Depth (scale / radius) engages within the first stretch of the pull and
+  // then holds while the surface travels the rest of the way off.
+  const depth = clamp01(d / SURFACE_DEPTH_RAMP_DEPARTURE);
   const reveal = easeOutQuad(clamp01(d / UNDERLAY_ARRIVAL_DEPARTURE));
   return {
-    surfaceTranslateXPct: direction * d * 100,
+    surfaceTranslateXPct: direction * d * SURFACE_EXIT_TRAVEL_PCT,
     surfaceScale: 1 - (1 - SURFACE_MIN_SCALE) * depth,
     surfaceRadiusPx: SURFACE_MAX_RADIUS_PX * depth,
     surfaceShadowAlpha:
       d <= 0 ? 0 : SURFACE_SHADOW_MAX_ALPHA * clamp01(d / SURFACE_SHADOW_RAMP),
     underlayScale: UNDERLAY_MIN_SCALE + (1 - UNDERLAY_MIN_SCALE) * reveal,
+    // `+ 0` normalizes the -0 produced at full reveal.
+    underlayTranslateXPct: -direction * UNDERLAY_PARALLAX_PCT * (1 - reveal) + 0,
     scrimOpacity: 1 - reveal,
   };
 }
