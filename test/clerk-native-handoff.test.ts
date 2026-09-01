@@ -201,6 +201,7 @@ describe("native Clerk handoff", () => {
     assert.match(nativeReturn, /createClerkNativeHandoffTicket/);
     assert.match(gate, /ClerkAuthTrigger/);
     assert.match(cloud, /ClerkNativeHandoff/);
+    assert.match(cloud, /getClerkFallbackRedirectUrl/);
     assert.match(proxy, /\/auth\/native-return/);
   });
 });

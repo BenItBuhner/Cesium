@@ -12,18 +12,17 @@ import { useCloudContext } from "@/contexts/CloudContext";
 import {
   getHostedClerkSignInUrl,
   getHostedClerkSignUpUrl,
+  isPackagedClerkRuntime,
+  readClerkAuthLocation,
   shouldUseHostedClerkAuth,
 } from "@/lib/cloud/clerk-urls";
 import { openExternalUrl } from "@/lib/mobile-bridge";
 
 export function useHostedClerkAuth(): boolean {
   const cloud = useCloudContext();
-  return shouldUseHostedClerkAuth(
-    typeof window === "undefined"
-      ? null
-      : { protocol: window.location.protocol, hostname: window.location.hostname },
-    cloud.status
-  );
+  return shouldUseHostedClerkAuth(readClerkAuthLocation(), cloud.status, {
+    packaged: isPackagedClerkRuntime(),
+  });
 }
 
 export function openHostedClerkAuth(mode: "sign-in" | "sign-up" = "sign-in"): void {
@@ -33,9 +32,11 @@ export function openHostedClerkAuth(mode: "sign-in" | "sign-up" = "sign-in"): vo
 }
 
 /**
- * Sign-in / sign-up control that stays in-app on allowlisted Clerk origins
- * and opens the hosted account pages (with a native return ticket) from
- * file:// / localhost packaged clients.
+ * Sign-in / sign-up control. The production website keeps the in-app Clerk
+ * modal. Every packaged / emulator / localhost client opens the hosted
+ * account pages and comes back with a native return ticket - Settings →
+ * Account uses this same path as first-run, so guest → Sign in does not
+ * mount a Clerk modal that dies on a prohibited redirect scheme.
  */
 export function ClerkAuthTrigger({
   mode = "sign-in",
