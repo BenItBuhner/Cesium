@@ -96,7 +96,9 @@ export class BrowserToolExecutor {
   constructor(
     private readonly vfs: Vfs,
     private readonly git: BrowserGit,
-    private readonly shell: ShellRuntime
+    private readonly shell: ShellRuntime,
+    /** Settings-tunable wait cap (Settings → Agents → Cesium harness limits). */
+    private readonly getWaitMaxSeconds?: () => Promise<number>
   ) {}
 
   getTodoList(conversationId: string): AgentPlanEntry[] {
@@ -125,7 +127,8 @@ export class BrowserToolExecutor {
       case "todo":
         return this.todo(conversationId, args);
       case "wait": {
-        const seconds = Math.min(Math.max(asNumber(args.seconds) ?? 1, 0), 300);
+        const maxSeconds = (await this.getWaitMaxSeconds?.().catch(() => null)) ?? 300;
+        const seconds = Math.min(Math.max(asNumber(args.seconds) ?? 1, 0), maxSeconds);
         await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
         return { result: `Waited ${seconds} seconds.` };
       }

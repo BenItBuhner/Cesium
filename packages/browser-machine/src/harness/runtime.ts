@@ -10,12 +10,18 @@ import type {
   AgentPermissionCategory,
   WorkspaceRecord,
 } from "@cesium/core";
-import { buildCesiumBaseSystemPrompt, CESIUM_TOOL_DEFINITIONS } from "@cesium/core";
+import {
+  buildCesiumBaseSystemPrompt,
+  CESIUM_TOOL_DEFINITIONS,
+  normalizeCesiumMode,
+  resolveCesiumModeToolPolicy,
+} from "@cesium/core";
 import type { Vfs } from "../vfs";
 import type { BrowserGit } from "../git/browser-git";
 import type { ShellRuntime } from "../shell/runtime";
 import type { ConversationStore } from "../stores/conversations";
-import type { SettingsStore } from "../stores/settings";
+import type { BrowserModeId, SettingsStore } from "../stores/settings";
+import { BROWSER_MODE_IDS } from "../stores/settings";
 import { newEventId } from "../stores/conversations";
 import type { BrowserAgentRuntime, PromptInput } from "../routes/agent-routes";
 import { streamModelTurn, type AdapterToolDefinition } from "./adapters";
@@ -80,6 +86,7 @@ const BROWSER_TOOL_NAMES = new Set([
   "ask_question",
   "wait",
   "switch_branch",
+  "switch_mode",
 ]);
 
 type TurnState = {
@@ -107,10 +114,18 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       installedPacks?: () => string[];
     }
   ) {
-    this.tools = new BrowserToolExecutor(deps.vfs, deps.git, deps.shell);
+    this.tools = new BrowserToolExecutor(deps.vfs, deps.git, deps.shell, async () => {
+      const prefs = await deps.settings.getAgentPrefs();
+      return prefs.limits.waitMaxSeconds;
+    });
   }
 
-  private toolDefinitions(): AdapterToolDefinition[] {
+  /**
+   * Tool schemas advertised for a mode: the browser tool set filtered by the
+   * shared Cesium mode policy, so Ask stays read-only and Plan hides direct
+   * edit tools exactly like the server harness.
+   */
+  private toolDefinitions(mode: string): AdapterToolDefinition[] {
     const shared = CESIUM_TOOL_DEFINITIONS.filter((tool) => BROWSER_TOOL_NAMES.has(tool.name)).map(
       (tool) => ({
         name: tool.name,
@@ -118,7 +133,9 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         parameters: tool.parameters,
       })
     );
-    return [...shared, ...EXTRA_TOOLS];
+    return [...shared, ...EXTRA_TOOLS].filter(
+      (tool) => resolveCesiumModeToolPolicy({ mode, toolName: tool.name }).allowed
+    );
   }
 
   async promptConversation(
@@ -275,10 +292,14 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       }
 
       const systemPrompt = buildCesiumBaseSystemPrompt();
-      const toolDefinitions = record.config.mode === "ask" ? [] : this.toolDefinitions();
 
       for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
         if (turn.cancelled) return;
+        // Re-resolve the mode each iteration so switch_mode mid-turn swaps
+        // the advertised tool set immediately (server parity).
+        const liveRecord = await this.deps.conversations.get(workspace.id, conversationId);
+        const mode = normalizeCesiumMode(liveRecord?.config.mode ?? record.config.mode);
+        const toolDefinitions = this.toolDefinitions(mode);
         const events = await this.deps.conversations.readEvents(conversationId);
         const messages = buildHistoryFromEvents({
           events,
@@ -442,6 +463,16 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
     });
   }
 
+  /** Global settings switch: answer every permission prompt with Allow. */
+  private async autoAcceptAllPermissions(): Promise<boolean> {
+    const globalSettings = await this.deps.settings.getGlobalSettings().catch(() => null);
+    const agents =
+      globalSettings && typeof globalSettings.agents === "object" && globalSettings.agents
+        ? (globalSettings.agents as Record<string, unknown>)
+        : null;
+    return agents?.autoAcceptAllAgentPermissions === true;
+  }
+
   private async checkRemembered(category: AgentPermissionCategory, toolKey: string): Promise<boolean> {
     const rules = (await readDoc<RememberedRule[]>(REMEMBERED_PERMISSIONS_KEY)) ?? [];
     return rules.some(
@@ -496,30 +527,81 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
       });
     }
 
+    // Mode policy gate (shared with the server harness): a tool the active
+    // mode forbids fails with the policy reason so the model can adapt.
+    const activeRecord = await this.deps.conversations.get(workspace.id, conversationId);
+    const activeMode = normalizeCesiumMode(activeRecord?.config.mode);
+    const modePolicy = resolveCesiumModeToolPolicy({
+      mode: activeMode,
+      toolName: toolCall.name,
+    });
+    if (!modePolicy.allowed) {
+      await append([
+        {
+          eventId: newEventId(),
+          conversationId,
+          kind: "tool_call_update",
+          toolCallId,
+          status: "failed",
+          detail: "Blocked by mode policy",
+          raw: {
+            callId: toolCall.id,
+            result: modePolicy.reason ?? `Tool ${toolCall.name} is blocked in ${activeMode} mode.`,
+          },
+        },
+      ]);
+      return true;
+    }
+
     const category = PERMISSION_BY_TOOL[toolCall.name];
     if (category) {
-      const remembered = await this.checkRemembered(category, toolCall.name);
-      if (!remembered) {
-        const approved = await this.requestPermission(workspace, conversationId, turn, {
-          toolCallId,
-          category,
-          toolName: toolCall.name,
-          title,
-          detail: this.toolDetail(toolCall.name, args),
-        });
-        if (!approved) {
-          await append([
-            {
-              eventId: newEventId(),
-              conversationId,
-              kind: "tool_call_update",
-              toolCallId,
-              status: "cancelled",
-              detail: "Rejected by user",
-              raw: { callId: toolCall.id, result: "The user rejected this tool call." },
+      // Settings cascade (server parity): tool permission deny blocks
+      // outright, allow skips the prompt; otherwise remembered rules, the
+      // global auto-approve switch, then an interactive prompt.
+      const prefs = await this.deps.settings.getAgentPrefs();
+      const decision = prefs.toolPermissions[category];
+      if (decision === "deny") {
+        await append([
+          {
+            eventId: newEventId(),
+            conversationId,
+            kind: "tool_call_update",
+            toolCallId,
+            status: "cancelled",
+            detail: "Blocked by permission settings",
+            raw: {
+              callId: toolCall.id,
+              result: `${title} blocked by Cesium permission settings.`,
             },
-          ]);
-          return false;
+          },
+        ]);
+        return false;
+      }
+      if (decision !== "allow") {
+        const remembered = await this.checkRemembered(category, toolCall.name);
+        const autoAccept = !remembered && (await this.autoAcceptAllPermissions());
+        if (!remembered && !autoAccept) {
+          const approved = await this.requestPermission(workspace, conversationId, turn, {
+            toolCallId,
+            category,
+            toolName: toolCall.name,
+            title,
+            detail: this.toolDetail(toolCall.name, args),
+          });
+          if (!approved) {
+            await append([
+              {
+                eventId: newEventId(),
+                conversationId,
+                kind: "tool_call_update",
+                toolCallId,
+                status: "cancelled",
+                detail: "Rejected by user",
+                raw: { callId: toolCall.id, result: "The user rejected this tool call." },
+              },
+            ]);
+            return false;
+          }
         }
       }
     }
@@ -536,6 +618,54 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         },
       ]);
       return false;
+    }
+
+    // switch_mode is handled by the harness itself: the target must be a
+    // mode this engine implements and one the user left enabled in Settings.
+    if (toolCall.name === "switch_mode") {
+      const rawTarget = args.target_mode ?? args.mode ?? args.target;
+      const target = normalizeCesiumMode(typeof rawTarget === "string" ? rawTarget : "agent");
+      const prefs = await this.deps.settings.getAgentPrefs();
+      const supported = BROWSER_MODE_IDS.includes(target as BrowserModeId);
+      const enabled = supported && prefs.modes.enabled[target as BrowserModeId];
+      if (!supported || !enabled) {
+        await append([
+          {
+            eventId: newEventId(),
+            conversationId,
+            kind: "tool_call_update",
+            toolCallId,
+            status: "failed",
+            detail: `Mode ${target} unavailable`,
+            raw: {
+              callId: toolCall.id,
+              result: supported
+                ? `Mode ${target} is disabled in Settings on this browser machine.`
+                : `Mode ${target} is not available on the browser machine (available: ${BROWSER_MODE_IDS.join(", ")}).`,
+            },
+          },
+        ]);
+        return true;
+      }
+      await this.deps.conversations.update(workspace.id, conversationId, (current) => ({
+        ...current,
+        config: { ...current.config, mode: target },
+        configOptions: current.configOptions.map((option) =>
+          option.id === "mode" ? { ...option, currentValue: target } : option
+        ),
+      }));
+      await append([
+        {
+          eventId: newEventId(),
+          conversationId,
+          kind: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          detail: `Switched to ${target} mode`,
+          raw: { callId: toolCall.id, result: `Switched to ${target} mode.` },
+        },
+      ]);
+      return true;
     }
 
     const execution = await this.tools
@@ -563,14 +693,6 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         },
       ]);
     }
-    if (toolCall.name === "switch_mode" && !execution.isError) {
-      const targetMode = typeof args.target_mode === "string" ? args.target_mode : "agent";
-      await this.deps.conversations.update(workspace.id, conversationId, (current) => ({
-        ...current,
-        config: { ...current.config, mode: targetMode },
-      }));
-    }
-
     await append([
       {
         eventId: newEventId(),
