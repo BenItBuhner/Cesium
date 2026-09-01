@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   classifyReleaseAsset,
   formatAssetSize,
   parseGitHubRelease,
 } from "../src/lib/releases.ts";
 import { detectOs } from "../src/lib/platform-detect.ts";
+
+const latestRoute = readFileSync(
+  fileURLToPath(new URL("../src/app/api/releases/latest/route.ts", import.meta.url)),
+  "utf8"
+);
+const downloadPage = readFileSync(
+  fileURLToPath(new URL("../src/components/download/DownloadPage.tsx", import.meta.url)),
+  "utf8"
+);
 
 const MB = 1024 * 1024;
 
@@ -82,6 +93,21 @@ describe("parseGitHubRelease", () => {
     assert.equal(parseGitHubRelease(null), null);
     assert.equal(parseGitHubRelease("nope"), null);
     assert.equal(parseGitHubRelease({}), null);
+  });
+});
+
+describe("latest-release catalog freshness", () => {
+  test("API route never caches GitHub latest in the Next data cache", () => {
+    assert.match(latestRoute, /export const dynamic = "force-dynamic"/);
+    assert.match(latestRoute, /export const revalidate = 0/);
+    assert.match(latestRoute, /cache: "no-store"/);
+    assert.doesNotMatch(latestRoute, /revalidate:\s*600/);
+    assert.doesNotMatch(latestRoute, /stale-while-revalidate/);
+    assert.match(latestRoute, /cache-control": "private, no-store, must-revalidate"/);
+  });
+
+  test("download page bypasses the browser HTTP cache for the catalog", () => {
+    assert.match(downloadPage, /fetch\("\/api\/releases\/latest", \{ cache: "no-store" \}\)/);
   });
 });
 
