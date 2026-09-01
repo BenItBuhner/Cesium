@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { SignUp } from "@clerk/nextjs";
+import { SignUpWithTerms } from "@/components/auth/SignUpWithTerms";
 import { getCloudMode } from "@/lib/cloud/cloud-flags";
 
 export const metadata: Metadata = {
@@ -30,7 +30,7 @@ export default function SignUpPage() {
   }
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignUp forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
+      <SignUpWithTerms />
     </main>
   );
 }

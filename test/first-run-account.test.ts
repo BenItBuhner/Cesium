@@ -142,11 +142,13 @@ describe("first-run account prompt", () => {
     );
     assert.match(providers, /FirstRunAccountGate/);
     assert.match(providers, /<FirstRunAccountGate>/);
-    assert.match(gate, /<SignUpButton mode="modal">/);
+    assert.match(gate, /href="\/sign-up"/);
+    assert.doesNotMatch(gate, /<SignUpButton/);
     assert.match(gate, /<SignInButton mode="modal">/);
     assert.match(gate, /getHostedClerkSignUpUrl/);
     assert.match(gate, /Continue as guest/);
     assert.match(gate, /aria-label="Continue as guest"/);
+    assert.match(gate, /TermsNotice/);
   });
 
   test("desktop demo driver dismisses the first-run gate as guest", () => {

@@ -22,6 +22,7 @@ import {
   LandingHeaderActions,
   LandingHeroActions,
 } from "@/components/landing/LandingAuthActions";
+import { SiteLegalLinks } from "@/components/legal/SiteLegalLinks";
 
 /* ------------------------------------------------------------------------ */
 /* Shared bits                                                              */
@@ -321,7 +322,7 @@ export function LandingPage() {
                 Chat with any coding agent, edit real files, and run real terminals - on your
                 machine, from anywhere.
               </p>
-              <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
+              <div className="mt-[32px]">
                 <LandingHeroActions />
               </div>
             </div>
@@ -530,8 +531,8 @@ export function LandingPage() {
             <Link href="/download" className="transition-colors hover:text-[var(--text-primary)]">
               Download
             </Link>
+            <SiteLegalLinks />
             <LandingFooterActions />
-            <span className="font-mono">AGPL-3.0</span>
           </div>
         </div>
       </footer>

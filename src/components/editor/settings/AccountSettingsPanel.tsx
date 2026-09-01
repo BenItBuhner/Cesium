@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   CircleUserRound,
+  ExternalLink,
   Github,
   Link2,
   Loader2,
@@ -45,6 +46,14 @@ import {
   isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
+import { openExternalUrl } from "@/lib/mobile-bridge";
+import {
+  AGPL_SPDX,
+  CESIUM_SOURCE_URL,
+  getLegalPageUrl,
+  LICENSE_PATH,
+  TERMS_PATH,
+} from "@/lib/legal/terms";
 
 function formatSessionTimestamp(ms: number): string {
   try {
@@ -644,6 +653,53 @@ function ActiveServerSection() {
   );
 }
 
+function LegalExternalButton({
+  href,
+  children,
+}: {
+  href: string;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={rowButtonClass}
+      onClick={() => openExternalUrl(href)}
+    >
+      {children}
+      <ExternalLink className="size-[12px]" strokeWidth={1.75} aria-hidden />
+    </button>
+  );
+}
+
+function LegalLinksSection() {
+  const termsUrl = getLegalPageUrl(TERMS_PATH);
+  const licenseUrl = getLegalPageUrl(LICENSE_PATH);
+  return (
+    <SettingsSection title="Legal">
+      <SettingsRow
+        title="Terms of Service"
+        description="Hosted service terms. You are responsible for secrets, agents, and sync."
+        trailing={<LegalExternalButton href={termsUrl}>Open</LegalExternalButton>}
+        searchId="account-terms"
+      />
+      <SettingsRow
+        title="Software license"
+        description={`${AGPL_SPDX} — run, study, share, and modify under the GNU Affero license.`}
+        trailing={<LegalExternalButton href={licenseUrl}>Open</LegalExternalButton>}
+        searchId="account-license"
+      />
+      <SettingsRow
+        title="Source code"
+        description={CESIUM_SOURCE_URL.replace(/^https:\/\//, "")}
+        trailing={
+          <LegalExternalButton href={CESIUM_SOURCE_URL}>GitHub</LegalExternalButton>
+        }
+      />
+    </SettingsSection>
+  );
+}
+
 /**
  * Account & session overview: who you are (cloud account, device sync, or
  * local), the engine password session on the active server, and which server
@@ -662,6 +718,7 @@ export function AccountSettingsPanel() {
       <GithubAccountSection />
       {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />
+      <LegalLinksSection />
       <SettingsCallout className="px-[2px]">
         Account and session state vary by deployment: local-first builds keep
         everything on this device and can protect engines with a password

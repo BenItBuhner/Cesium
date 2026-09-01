@@ -24,6 +24,7 @@ const requireSignIn = isSignInRequired();
 /**
  * Routes that must stay reachable signed-out even in the gated posture:
  * - `/`, `/download` - the public marketing surface.
+ * - `/terms`, `/license` - legal documents must stay reachable signed-out.
  * - `/sign-in`, `/sign-up` - the Clerk pages (gating these would loop).
  * - `/api/rendezvous` - engines (curl, no browser session) publish here.
  * - `/api/releases` - powers the download page for signed-out visitors.
@@ -32,6 +33,8 @@ const requireSignIn = isSignInRequired();
 const isPublicRoute = createRouteMatcher([
   "/",
   "/download(.*)",
+  "/terms(.*)",
+  "/license(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/rendezvous(.*)",

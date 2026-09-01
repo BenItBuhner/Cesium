@@ -46,6 +46,7 @@ import {
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
 import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
+import { TERMS_PATH } from "@/lib/legal/terms";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -749,6 +750,11 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         signUpUrl={getClerkSignUpUrl()}
         signInFallbackRedirectUrl="/setup?resume=1"
         signUpFallbackRedirectUrl="/setup?resume=1"
+        appearance={{
+          options: {
+            termsPageUrl: TERMS_PATH,
+          },
+        }}
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

@@ -144,6 +144,21 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "The server this client is connected to; switch or manage servers.",
     ["server", "switch", "connection"]
   ),
+  section("account", "legal", "Legal", "terms license source agpl"),
+  row(
+    "account",
+    "account-terms",
+    "Terms of Service",
+    "Hosted service terms, secrets, agents, and sync responsibilities.",
+    ["terms", "tos", "legal", "conditions", "agreement"]
+  ),
+  row(
+    "account",
+    "account-license",
+    "Software license",
+    "GNU Affero General Public License version 3 and the public source.",
+    ["agpl", "license", "source", "github", "open source"]
+  ),
 
   // -- General --
   section("general", "preferences", "Preferences"),

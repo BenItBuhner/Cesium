@@ -50,6 +50,12 @@ describe("landing workbench CTAs", () => {
     assert.doesNotMatch(landingAuth, /Launch the workbench/);
   });
 
+  test("marketing footers expose terms, license, and source", () => {
+    assert.match(landingPage, /<SiteLegalLinks \/>/);
+    assert.match(downloadPage, /<SiteLegalLinks \/>/);
+    assert.match(landingAuth, /TermsNotice/);
+  });
+
   test("sign-in and sign-up land on account setup instead of the workbench", () => {
     const cloudContext = readFileSync(
       fileURLToPath(new URL("../src/contexts/CloudContext.tsx", import.meta.url)),
@@ -66,7 +72,15 @@ describe("landing workbench CTAs", () => {
     assert.match(cloudContext, /signInFallbackRedirectUrl="\/setup\?resume=1"/);
     assert.match(cloudContext, /signUpFallbackRedirectUrl="\/setup\?resume=1"/);
     assert.match(signIn, /forceRedirectUrl="\/setup\?resume=1"/);
-    assert.match(signUp, /forceRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signUp, /<SignUpWithTerms \/>/);
+    const signUpWithTerms = readFileSync(
+      fileURLToPath(
+        new URL("../src/components/auth/SignUpWithTerms.tsx", import.meta.url)
+      ),
+      "utf8"
+    );
+    assert.match(signUpWithTerms, /forceRedirectUrl=\{SIGN_UP_REDIRECT\}/);
+    assert.match(signUpWithTerms, /unsafeMetadata=\{buildTermsAcceptanceMetadata/);
   });
 
   test("download header also signs in instead of launching the workbench", () => {

@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { SignInButton, SignUpButton } from "@clerk/nextjs";
+import Link from "next/link";
+import { SignInButton } from "@clerk/nextjs";
 import { ArrowRight } from "lucide-react";
+import { TermsNotice } from "@/components/legal/TermsAgreement";
 import { useCloudContext } from "@/contexts/CloudContext";
 import {
   getHostedClerkSignInUrl,
@@ -110,12 +112,10 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
             </>
           ) : (
             <>
-              <SignUpButton mode="modal">
-                <button type="button" className={accentButtonClass}>
-                  Sign up
-                  <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-                </button>
-              </SignUpButton>
+              <Link href="/sign-up" className={accentButtonClass}>
+                Sign up
+                <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+              </Link>
               <SignInButton mode="modal">
                 <button type="button" className={outlineButtonClass}>
                   Sign in
@@ -134,6 +134,7 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
           >
             Continue as guest
           </button>
+          <TermsNotice className="mt-[8px] text-center text-[12px] leading-relaxed text-[var(--text-disabled)]" />
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
+import { TermsNotice } from "@/components/legal/TermsAgreement";
 
 const accentButtonClass =
   "inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]";
@@ -54,13 +55,16 @@ export function LandingHeroActions() {
   }
 
   return (
-    <>
-      <Link href="/sign-up" className={accentButtonClass}>
-        Sign up
-        <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-      </Link>
-      <WorkbenchLink className={outlineButtonClass}>Continue as guest</WorkbenchLink>
-    </>
+    <div className="flex flex-col items-start gap-[10px]">
+      <div className="flex flex-wrap items-center gap-[12px]">
+        <Link href="/sign-up" className={accentButtonClass}>
+          Sign up
+          <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+        </Link>
+        <WorkbenchLink className={outlineButtonClass}>Continue as guest</WorkbenchLink>
+      </div>
+      <TermsNotice />
+    </div>
   );
 }
 

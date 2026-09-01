@@ -18,6 +18,7 @@ import {
   Watch,
 } from "lucide-react";
 import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
+import { SiteLegalLinks } from "@/components/legal/SiteLegalLinks";
 import {
   detectClientPlatform,
   type DetectedPlatform,
@@ -446,6 +447,7 @@ export function DownloadPage() {
             <Link href="/" className="transition-colors hover:text-[var(--text-primary)]">
               Home
             </Link>
+            <SiteLegalLinks />
             <WorkbenchLink className="transition-colors hover:text-[var(--text-primary)]">
               Workbench
               <ArrowRight className="ml-[4px] inline size-[11px]" strokeWidth={2} aria-hidden />

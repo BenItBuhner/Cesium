@@ -19,6 +19,14 @@ describe("settings search index", () => {
     assert.ok(composerLayout.some((hit) => hit.rowId === "composer-layout"));
   });
 
+  test("indexes Terms of Service under Account", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "terms of service");
+    assert.ok(hits.some((hit) => hit.rowId === "account-terms"));
+    const license = searchSettingsIndex(index, "agpl license");
+    assert.ok(license.some((hit) => hit.rowId === "account-license"));
+  });
+
   test("indexes the composer footer under General", () => {
     const index = buildSettingsSearchIndex({});
     const hits = searchSettingsIndex(index, "composer footer");
