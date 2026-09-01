@@ -42,6 +42,15 @@ export const SETTINGS_BACK_MIN_COMMIT_VELOCITY = 3;
  * clears the viewport before the spring settles.
  */
 const SURFACE_EXIT_TRAVEL_PCT = 115;
+/**
+ * Departure by which the motion's cross-fades complete: the aurora-mode
+ * settings surface is a translucent window, so an opaque backdrop fades in
+ * behind its content (the surface lifts off as a solid card) while the
+ * reveal layers beneath fade in from nothing. Without this window the reveal
+ * would pop into view through the surface's translucency the instant the
+ * gesture starts.
+ */
+const MOTION_FADE_RAMP_DEPARTURE = 0.1;
 /** Scale of the departing surface once the depth ramp completes. */
 const SURFACE_MIN_SCALE = 0.96;
 /** Corner radius (px) of the departing surface once the depth ramp completes. */
@@ -83,10 +92,14 @@ export type SettingsBackFrame = {
   surfaceRadiusPx: number;
   /** 0 = no shadow. */
   surfaceShadowAlpha: number;
+  /** Opacity of the opaque backdrop that solidifies the translucent surface. */
+  surfaceBackdropAlpha: number;
   /** Scale of the revealed agent view beneath. */
   underlayScale: number;
   /** Parallax translation of the revealed view, % of its own width. */
   underlayTranslateXPct: number;
+  /** Opacity of the revealed view (fades in over the fade ramp). */
+  previewOpacity: number;
   /** Multiplier against the scrim's own backdrop color (1 = fully dimmed). */
   scrimOpacity: number;
 };
@@ -150,15 +163,20 @@ export function settingsBackFrame(
   // then holds while the surface travels the rest of the way off.
   const depth = clamp01(d / SURFACE_DEPTH_RAMP_DEPARTURE);
   const reveal = easeOutQuad(clamp01(d / UNDERLAY_ARRIVAL_DEPARTURE));
+  const fade = clamp01(d / MOTION_FADE_RAMP_DEPARTURE);
   return {
     surfaceTranslateXPct: direction * d * SURFACE_EXIT_TRAVEL_PCT,
     surfaceScale: 1 - (1 - SURFACE_MIN_SCALE) * depth,
     surfaceRadiusPx: SURFACE_MAX_RADIUS_PX * depth,
     surfaceShadowAlpha:
       d <= 0 ? 0 : SURFACE_SHADOW_MAX_ALPHA * clamp01(d / SURFACE_SHADOW_RAMP),
+    surfaceBackdropAlpha: fade,
     underlayScale: UNDERLAY_MIN_SCALE + (1 - UNDERLAY_MIN_SCALE) * reveal,
     // `+ 0` normalizes the -0 produced at full reveal.
     underlayTranslateXPct: -direction * UNDERLAY_PARALLAX_PCT * (1 - reveal) + 0,
-    scrimOpacity: 1 - reveal,
+    previewOpacity: fade,
+    // The dim clears with the reveal; the fade keeps its appearance gradual
+    // during the first frames so nothing snaps in behind the surface.
+    scrimOpacity: (1 - reveal) * fade,
   };
 }

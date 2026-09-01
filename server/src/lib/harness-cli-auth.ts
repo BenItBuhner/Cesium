@@ -171,6 +171,39 @@ export function harnessCliAuthBackendIds(): HarnessCliAuthBackendId[] {
   return Object.keys(AUTH_SPECS) as HarnessCliAuthBackendId[];
 }
 
+/**
+ * Deduped union of home-relative credential paths for every backend that
+ * authenticates through the given harness CLI (e.g. `codex-app-server` and
+ * `codex-acp` both ride `~/.codex`). This is the write allowlist for
+ * harness auth sync imports - nothing outside these paths is ever touched.
+ */
+export function harnessCliCredentialRelPaths(cliId: HarnessCliId): string[][] {
+  const out: string[][] = [];
+  const seen = new Set<string>();
+  for (const spec of Object.values(AUTH_SPECS)) {
+    if (spec.harnessCliId !== cliId) {
+      continue;
+    }
+    for (const segments of spec.credentialRelPaths) {
+      const key = segments.join("/");
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push([...segments]);
+      }
+    }
+  }
+  return out;
+}
+
+/** Backend ids whose auth state should refresh after a credential import. */
+export function harnessCliAuthBackendIdsForCli(
+  cliId: HarnessCliId
+): HarnessCliAuthBackendId[] {
+  return (Object.values(AUTH_SPECS) as AuthSpec[])
+    .filter((spec) => spec.harnessCliId === cliId)
+    .map((spec) => spec.backendId);
+}
+
 /** Strip ANSI escapes so URL/code extraction works on styled CLI output. */
 export function stripHarnessAuthAnsi(value: string): string {
   // eslint-disable-next-line no-control-regex

@@ -17,6 +17,7 @@ import {
   type MobileServerConfig,
   type MobileWebToNativeMessage,
 } from "@cesium/core";
+import { ensureNativeClerkHandoffOnAuthUrl } from "@/lib/cloud/clerk-native-handoff";
 
 export {
   isMobileExternalHttpUrl,
@@ -84,13 +85,14 @@ export function openExternalUrl(
   if (!url) {
     return false;
   }
-  if (postMobileBridgeMessage({ type: "openExternalUrl", url })) {
+  const resolved = ensureNativeClerkHandoffOnAuthUrl(url);
+  if (postMobileBridgeMessage({ type: "openExternalUrl", url: resolved })) {
     return true;
   }
   if (typeof window === "undefined") {
     return false;
   }
-  window.open(url, options?.target ?? "_blank", options?.features ?? "noopener,noreferrer");
+  window.open(resolved, options?.target ?? "_blank", options?.features ?? "noopener,noreferrer");
   return true;
 }
 

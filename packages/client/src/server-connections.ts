@@ -1,5 +1,6 @@
 "use client";
 
+import { isBrowserMachineUrl } from "./browser-machine";
 import { isLoopbackServerBaseUrl } from "./configured-server-base-url";
 import {
   assertEngineServerUrlAllowed,
@@ -134,6 +135,34 @@ export function createEmptyServerConnectionsState(): ServerConnectionsState {
     activeServerId: null,
     defaultServerId: null,
     servers: [],
+  };
+}
+
+/**
+ * Drop the tab-local browser machine from a connections state. Native shells
+ * must never activate or list it; if it was the selection, fall back to the
+ * next remaining engine.
+ */
+export function omitBrowserMachineFromState(
+  state: ServerConnectionsState
+): ServerConnectionsState {
+  const servers = state.servers.filter((server) => !isBrowserMachineUrl(server.baseUrl));
+  if (servers.length === state.servers.length) {
+    return state;
+  }
+  const activeServerId = servers.some((server) => server.id === state.activeServerId)
+    ? state.activeServerId
+    : (servers[0]?.id ?? null);
+  const defaultServerId = servers.some((server) => server.id === state.defaultServerId)
+    ? state.defaultServerId
+    : servers.length === 1
+      ? (servers[0]?.id ?? null)
+      : null;
+  return {
+    ...state,
+    servers,
+    activeServerId,
+    defaultServerId,
   };
 }
 

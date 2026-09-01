@@ -20,6 +20,7 @@ export {
   mergeServerConnectionBootstrap,
   normalizeServerBaseUrl,
   normalizeServerConnectionsState,
+  omitBrowserMachineFromState,
   readStoredServerConnectionsState,
   removeServerConnection,
   requiresDefaultServerSelection,

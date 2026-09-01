@@ -51,6 +51,7 @@ function WorkbenchShell() {
   const agentHostRef = useRef<HTMLDivElement | null>(null);
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const settingsSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const surfaceBackdropRef = useRef<HTMLDivElement | null>(null);
 
   // Predictive-back reveal for the full-screen settings view. Only the native
   // mobile shell delivers back-gesture streams, so only there does the agent
@@ -79,11 +80,15 @@ function WorkbenchShell() {
   // slight scale-down, corner radius, and shadow for depth) while the agent
   // view beneath slides into place with a parallax offset, scaling up behind
   // a clearing scrim - the cross-surface motion Android uses between
-  // activities. Frames are written imperatively (no per-frame React
-  // re-render) through the drawers' shared spring engine. Commit springs the
-  // surface past the viewport edge (115% travel) seeded with the finger's own
-  // velocity, so the visible exit finishes at speed instead of stalling at
-  // the edge; cancel springs everything back.
+  // activities. The aurora-mode surface is a translucent window, so during
+  // the first stretch of the pull an opaque backdrop fades in behind its
+  // content (the surface lifts off as a solid card) while the reveal layers
+  // fade in beneath - nothing ever pops through the translucency. Frames are
+  // written imperatively (no per-frame React re-render) through the drawers'
+  // shared spring engine. Commit springs the surface past the viewport edge
+  // (115% travel) seeded with the finger's own velocity, so the visible exit
+  // finishes at speed instead of stalling at the edge; cancel springs
+  // everything back (fading the backdrop and reveal layers back out).
   const applyFrame = useCallback((departure: number) => {
     const frame = settingsBackFrame(departure, directionRef.current);
     const surface = settingsSurfaceRef.current;
@@ -95,13 +100,36 @@ function WorkbenchShell() {
           ? `0 12px 48px rgba(0, 0, 0, ${frame.surfaceShadowAlpha.toFixed(3)})`
           : "";
     }
+    const backdrop = surfaceBackdropRef.current;
+    if (backdrop) {
+      backdrop.style.opacity = String(frame.surfaceBackdropAlpha);
+    }
     const underlay = agentHostRef.current;
     if (underlay && showSettingsRef.current) {
       underlay.style.transform = `translate3d(${frame.underlayTranslateXPct}%, 0, 0) scale(${frame.underlayScale})`;
+      underlay.style.opacity = String(frame.previewOpacity);
     }
     const scrim = scrimRef.current;
     if (scrim) {
       scrim.style.opacity = String(frame.scrimOpacity);
+    }
+  }, []);
+
+  /**
+   * Compositor-layer promotion for the moving planes, applied only while the
+   * motion is live: a parked `will-change: transform` makes the settings nav
+   * drawer's backdrop-filter sample an empty promoted layer, so the page
+   * punches through the frost as sharp text.
+   */
+  const setMotionLayerPromotion = useCallback((active: boolean) => {
+    const value = active ? "transform" : "";
+    const surface = settingsSurfaceRef.current;
+    if (surface) {
+      surface.style.willChange = value;
+    }
+    const underlay = agentHostRef.current;
+    if (underlay) {
+      underlay.style.willChange = value;
     }
   }, []);
 
@@ -127,6 +155,7 @@ function WorkbenchShell() {
     const underlay = agentHostRef.current;
     if (underlay) {
       underlay.style.transform = "";
+      underlay.style.opacity = "";
     }
     const scrim = scrimRef.current;
     if (scrim) {
@@ -141,6 +170,10 @@ function WorkbenchShell() {
       surface.style.borderRadius = "";
       surface.style.boxShadow = "";
     }
+    const backdrop = surfaceBackdropRef.current;
+    if (backdrop) {
+      backdrop.style.opacity = "0";
+    }
   }, []);
 
   const motionRef = useRef<DrawerMotion | null>(null);
@@ -153,6 +186,7 @@ function WorkbenchShell() {
         // across the flip, so no remount happens.
         exitingRef.current = false;
         clearUnderlayStyles();
+        setMotionLayerPromotion(false);
         const underlay = agentHostRef.current;
         if (underlay) {
           underlay.style.visibility = "";
@@ -162,6 +196,7 @@ function WorkbenchShell() {
         // Cancelled gesture settled back to rest: hide the preview again.
         clearUnderlayStyles();
         clearSurfaceStyles();
+        setMotionLayerPromotion(false);
         setPreviewVisible(false);
       }
     });
@@ -185,6 +220,7 @@ function WorkbenchShell() {
     gestureSessionRef.current = false;
     clearUnderlayStyles();
     clearSurfaceStyles();
+    setMotionLayerPromotion(false);
     if (showSettings) {
       setPreviewVisible(false);
     } else {
@@ -193,7 +229,14 @@ function WorkbenchShell() {
         underlay.style.visibility = "";
       }
     }
-  }, [showSettings, layered, clearSurfaceStyles, clearUnderlayStyles, setPreviewVisible]);
+  }, [
+    showSettings,
+    layered,
+    clearSurfaceStyles,
+    clearUnderlayStyles,
+    setMotionLayerPromotion,
+    setPreviewVisible,
+  ]);
 
   // A back gesture in the full-screen settings view returns to the agent view
   // rather than exiting the app or walking WebView history. The discrete back
@@ -228,6 +271,7 @@ function WorkbenchShell() {
           SETTINGS_BACK_MIN_COMMIT_VELOCITY,
           hadGesture ? estimateGestureVelocity(samplesRef.current) : 0
         );
+        setMotionLayerPromotion(true);
         applyFrame(motion.progress);
         setPreviewVisible(true);
         motion.springTo(1, velocity);
@@ -248,6 +292,7 @@ function WorkbenchShell() {
         }
         const motion = motionRef.current;
         if (motion) {
+          setMotionLayerPromotion(true);
           motion.beginDrag();
           motion.dragTo(departure, 0);
         }
@@ -287,7 +332,9 @@ function WorkbenchShell() {
   // The agent view keeps one stable child position whether it is the live
   // shell or the hidden reveal layer beneath settings, so a committed back
   // hands the very DOM the gesture revealed over to the live view - no
-  // remount, no flash.
+  // remount, no flash. No layer carries a parked `will-change` (that would
+  // make the settings nav drawer's backdrop-filter sample an empty promoted
+  // layer); promotion happens imperatively only while the motion runs.
   const agentMounted = !showSettings || layered;
   return (
     <>
@@ -297,7 +344,7 @@ function WorkbenchShell() {
           inert={showSettings || undefined}
           aria-hidden={showSettings || undefined}
           className={`relative z-[1] h-full w-full ${
-            showSettings ? "pointer-events-none will-change-transform" : ""
+            showSettings ? "pointer-events-none" : ""
           }`}
         >
           <ShellUnderlayProvider value={showSettings}>
@@ -312,13 +359,22 @@ function WorkbenchShell() {
               ref={scrimRef}
               aria-hidden
               className="pointer-events-none absolute inset-0 z-[2] bg-[var(--palette-backdrop)]"
-              style={{ opacity: 1, visibility: "hidden" }}
+              style={{ opacity: 0, visibility: "hidden" }}
             />
           ) : null}
           <div
             ref={settingsSurfaceRef}
-            className="aurora-settings-shell absolute inset-0 z-[3] overflow-hidden will-change-transform"
+            className="aurora-settings-shell absolute inset-0 z-[3] overflow-hidden"
           >
+            {/* Fades to opaque during the back motion so the translucent
+                aurora surface stops transmitting the reveal layers beneath -
+                the surface lifts off as a solid card instead of ghosting. */}
+            <div
+              ref={surfaceBackdropRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 -z-10 bg-[var(--bg-main)]"
+              style={{ opacity: 0 }}
+            />
             <SettingsShellView />
           </div>
         </>
@@ -345,6 +401,9 @@ function WorkbenchAuroraHost({ children }: { children: ReactNode }) {
       >
         <AuroraShellBackdrop />
         {children}
+        {/* Settings nav drawer portals here so backdrop-filter can sample
+            the settings surface as a sibling, matching the agent rail. */}
+        <div id="cesium-overlay-drawer-root" />
       </div>
     </AuroraSceneProvider>
   );

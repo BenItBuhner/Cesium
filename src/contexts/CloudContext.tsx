@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
+import { ClerkNativeHandoff } from "@/components/auth/ClerkNativeHandoff";
 import {
   ConvexProvider,
   ConvexReactClient,
@@ -31,6 +32,8 @@ import {
   setStoredSessionToken,
   VOICE_CLIENT_SETTINGS_EVENT,
   writeStoredServerConnectionsState,
+  isBrowserMachineOffered,
+  isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
   type RendezvousLocator,
   type ServerConnection,
@@ -45,7 +48,11 @@ import {
   isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
-import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
+import {
+  getClerkFallbackRedirectUrl,
+  getClerkSignInUrl,
+  getClerkSignUpUrl,
+} from "@/lib/cloud/clerk-urls";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -60,6 +67,7 @@ import {
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
   cloudServerIdentity,
   diffRemovedCloudServers,
+  isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
   serializeCloudServerTombstones,
@@ -161,6 +169,7 @@ export type CloudActions = {
   removeServer(input: CloudServerRemoval): Promise<void>;
   savePreferences(payload: string): Promise<void>;
   saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
+  removeSecret(input: { kind: string }): Promise<void>;
   saveAgentPref(input: {
     backendId: string;
     enabled: boolean;
@@ -337,15 +346,26 @@ function reconcilePersonalization(
  * do not resurrect on every bootstrap.
  */
 function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
-  const banned = servers.filter((server) => isCesiumAccountSiteUrl(server.baseUrl));
-  const usable = servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl));
+  const banned = servers.filter((server) => !isCloudSyncableServerUrl(server.baseUrl));
+  const usable = servers.filter((server) => isCloudSyncableServerUrl(server.baseUrl));
   const tombstones = parseCloudServerTombstones(
     clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
   );
   const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
+  const keepLocalServer = (baseUrl: string) => {
+    if (isCesiumAccountSiteUrl(baseUrl)) {
+      return false;
+    }
+    // Native shells ignore a tab-local engine that leaked in via older sync.
+    // The website / PWA keeps its own in-tab copy.
+    if (!isBrowserMachineOffered() && isBrowserMachineUrl(baseUrl)) {
+      return false;
+    }
+    return true;
+  };
   const withoutAccountSite = {
     ...state,
-    servers: state.servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl)),
+    servers: state.servers.filter((server) => keepLocalServer(server.baseUrl)),
   };
   if (withoutAccountSite.servers.length === 0) {
     withoutAccountSite.activeServerId = null;
@@ -428,6 +448,7 @@ function CloudBridge({
   const removeServerMutation = useMutation(api.servers.remove);
   const savePreferencesMutation = useMutation(api.preferences.save);
   const saveSecretMutation = useMutation(api.secrets.save);
+  const removeSecretMutation = useMutation(api.secrets.remove);
   const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
@@ -457,6 +478,9 @@ function CloudBridge({
       async saveSecret(input) {
         await saveSecretMutation({ ...identityArgs, ...input });
       },
+      async removeSecret(input) {
+        await removeSecretMutation({ ...identityArgs, ...input });
+      },
       async saveAgentPref(input) {
         await saveAgentPrefMutation({ ...identityArgs, ...input });
       },
@@ -477,6 +501,7 @@ function CloudBridge({
       convex,
       identityArgs,
       pushSnapshotMutation,
+      removeSecretMutation,
       removeServerMutation,
       saveAgentPrefMutation,
       savePreferencesMutation,
@@ -689,6 +714,7 @@ function ClerkCloudBridge({ children }: { children: ReactNode }) {
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >
+      <ClerkNativeHandoff />
       {children}
     </CloudBridge>
   );
@@ -747,8 +773,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         publishableKey={getClerkPublishableKey() ?? undefined}
         signInUrl={getClerkSignInUrl()}
         signUpUrl={getClerkSignUpUrl()}
-        signInFallbackRedirectUrl="/setup?resume=1"
-        signUpFallbackRedirectUrl="/setup?resume=1"
+        signInFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
+        signUpFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

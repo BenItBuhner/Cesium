@@ -462,6 +462,11 @@ html.dark .landing-shot-dark {
  * gutter) is a dim tint so the field reads through without washing the
  * settings cards. Cards stay fully opaque. No backdrop-filter - same
  * software-raster reason as the agent columns.
+ *
+ * The mobile settings nav is an overlay drawer, not a split column: that
+ * aurora tint would let the settings page punch through as sharp text.
+ * `.mobile-left-drawer-surface` paints the frost instead and forces the
+ * nav child transparent (see the drawer-surface rules below).
  */
 [data-aurora-scene="on"] .aurora-settings-shell {
   background: transparent;
@@ -580,6 +585,7 @@ html.dark .landing-shot-dark {
 }
 
 .mobile-left-drawer-surface > *,
+.mobile-left-drawer-surface .aurora-settings-nav,
 .mobile-right-drawer-surface .agent-side-pane,
 .mobile-right-drawer-surface .aurora-editor-surface {
   background: transparent !important;
@@ -592,6 +598,7 @@ html.dark .landing-shot-dark {
   }
 
   .mobile-left-drawer-surface > *,
+  .mobile-left-drawer-surface .aurora-settings-nav,
   .mobile-right-drawer-surface .agent-side-pane,
   .mobile-right-drawer-surface .aurora-editor-surface {
     background: var(--bg-panel) !important;

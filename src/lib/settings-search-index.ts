@@ -121,7 +121,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "account-identity",
     "Signed-in account",
     "Your cloud account, device sync identity, or local workspace.",
-    ["profile", "avatar", "email", "clerk", "identity", "user"]
+    ["profile", "avatar", "email", "clerk", "identity", "user", "sign in", "not signed in"]
   ),
   row(
     "account",

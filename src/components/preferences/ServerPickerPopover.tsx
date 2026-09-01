@@ -17,6 +17,7 @@ import {
   BROWSER_MACHINE_SERVER_ID,
   BROWSER_MACHINE_SERVER_LABEL,
   getServerConnectionKey,
+  isBrowserMachineOffered,
   isBrowserMachineUrl,
 } from "@cesium/client";
 import {
@@ -237,18 +238,28 @@ export function ServerPickerPopover({
   );
   // Codespace engines also live in the plain connection list (cloud merge);
   // hide them there so each device renders exactly once, in its section.
+  const offerBrowserMachine = isBrowserMachineOffered();
   const visibleServers = useMemo(() => {
+    const surfaceServers = offerBrowserMachine
+      ? servers
+      : servers.filter((server) => !isBrowserMachineUrl(server.baseUrl));
     if (codespaceDevices.length === 0 || !showCodespaceSection) {
-      return servers;
+      return surfaceServers;
     }
-    return servers.filter((server) => {
+    return surfaceServers.filter((server) => {
       try {
         return !codespaceKeys.has(getServerConnectionKey(server.baseUrl));
       } catch {
         return true;
       }
     });
-  }, [codespaceDevices.length, codespaceKeys, servers, showCodespaceSection]);
+  }, [
+    codespaceDevices.length,
+    codespaceKeys,
+    offerBrowserMachine,
+    servers,
+    showCodespaceSection,
+  ]);
 
   if (!open) {
     return null;
@@ -577,7 +588,8 @@ export function ServerPickerPopover({
             connectOpen ? "flex-1 overflow-hidden" : ""
           }`}
         >
-          {servers.some((server) => isBrowserMachineUrl(server.baseUrl)) ? null : (
+          {offerBrowserMachine &&
+          !servers.some((server) => isBrowserMachineUrl(server.baseUrl)) ? (
             <button
               type="button"
               onClick={() => {
@@ -599,7 +611,7 @@ export function ServerPickerPopover({
                 </span>
               </span>
             </button>
-          )}
+          ) : null}
           <button
             type="button"
             aria-expanded={connectOpen}

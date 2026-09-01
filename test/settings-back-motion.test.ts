@@ -79,15 +79,33 @@ describe("estimateGestureVelocity", () => {
 });
 
 describe("settingsBackFrame", () => {
-  test("rest frame leaves the surface untouched and the reveal fully veiled", () => {
+  test("rest frame leaves the surface untouched and every motion layer faded out", () => {
     const frame = settingsBackFrame(0, 1);
     assert.equal(frame.surfaceTranslateXPct, 0);
     assert.equal(frame.surfaceScale, 1);
     assert.equal(frame.surfaceRadiusPx, 0);
     assert.equal(frame.surfaceShadowAlpha, 0);
-    assert.equal(frame.scrimOpacity, 1);
+    // At rest nothing may alter the surface's translucent look or show
+    // behind it: the opaque backdrop, the reveal layer, and the scrim all
+    // start fully transparent and fade in with the pull.
+    assert.equal(frame.surfaceBackdropAlpha, 0);
+    assert.equal(frame.previewOpacity, 0);
+    assert.equal(frame.scrimOpacity, 0);
     assert.ok(frame.underlayScale < 1, "underlay starts pushed back");
     assert.ok(frame.underlayTranslateXPct < 0, "underlay starts offset opposite the exit");
+  });
+
+  test("the cross-fades ramp in smoothly and complete early in the pull", () => {
+    const early = settingsBackFrame(0.05, 1);
+    assert.ok(early.surfaceBackdropAlpha > 0 && early.surfaceBackdropAlpha < 1);
+    assert.ok(early.previewOpacity > 0 && early.previewOpacity < 1);
+    assert.ok(early.scrimOpacity > 0 && early.scrimOpacity < 1);
+    const faded = settingsBackFrame(0.12, 1);
+    assert.equal(faded.surfaceBackdropAlpha, 1);
+    assert.equal(faded.previewOpacity, 1);
+    const committed = settingsBackFrame(1, 1);
+    assert.equal(committed.surfaceBackdropAlpha, 1);
+    assert.equal(committed.previewOpacity, 1);
   });
 
   test("the surface slides with the gesture in the swipe direction", () => {
@@ -140,11 +158,13 @@ describe("settingsBackFrame", () => {
 
   test("the revealed view slides in with parallax while its scrim clears", () => {
     const start = settingsBackFrame(0, 1);
+    const shallow = settingsBackFrame(0.15, 1);
     const mid = settingsBackFrame(gestureProgressToDeparture(0.5), 1);
     const committed = settingsBackFrame(1, 1);
     assert.ok(mid.underlayScale > start.underlayScale);
     assert.ok(mid.underlayTranslateXPct > start.underlayTranslateXPct);
-    assert.ok(mid.scrimOpacity < start.scrimOpacity);
+    // Past the fade ramp the dim is strong, then clears as the pull deepens.
+    assert.ok(shallow.scrimOpacity > mid.scrimOpacity);
     assert.equal(committed.underlayScale, 1);
     assert.equal(committed.underlayTranslateXPct, 0);
     assert.equal(committed.scrimOpacity, 0);
