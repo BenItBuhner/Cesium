@@ -86,8 +86,10 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
           Or keep going locally.
         </h1>
         <p className="mt-[14px] text-pretty text-[14px] leading-relaxed text-[var(--text-secondary)]">
-          Create an account to bring servers, preferences, and chats with you.
-          Your code stays on your machine either way.
+          Create an account to bring servers, preferences, and chats with you -
+          and, if you choose, your agent sign-ins and API keys, end-to-end
+          encrypted so only your devices can read them. Your code stays on
+          your machine either way.
         </p>
         <div className="mt-[28px] flex flex-col gap-[10px]">
           {hosted ? (
