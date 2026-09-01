@@ -11,6 +11,11 @@
  * - Android predictive back drags the drawer shut frame by frame.
  * - Swipes never start from text inputs or horizontally scrollable content
  *   that can still consume the swipe direction.
+ *
+ * The drawer + scrim portal to `document.body`. Settings lives inside a
+ * predictive-back surface (`overflow` / stacking context) that makes
+ * in-tree `backdrop-filter` sample an empty layer; portaling puts the
+ * frost on the same overlay plane as the agent conversation rail.
  */
 
 import {
@@ -21,7 +26,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useBackHandler } from "@/components/mobile/BackIntentContext";
 import {
   DrawerMotion,
@@ -72,6 +77,7 @@ export function MobileNavDrawerShell({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const scrimRef = useRef<HTMLDivElement | null>(null);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   // The drawer mounts only while visible, mirroring the agent shell rail.
   const [mounted, setMounted] = useState(open);
@@ -99,10 +105,10 @@ export function MobileNavDrawerShell({
     });
   }
 
-  // Apply resting styles whenever the drawer node (re)mounts.
+  // Apply resting styles whenever the drawer node (re)mounts / portals.
   useLayoutEffect(() => {
     applyFrame(motionRef.current?.progress ?? 0);
-  }, [applyFrame, mounted]);
+  }, [applyFrame, mounted, portalTarget]);
 
   // Android predictive back drags the drawer shut 1:1 with the gesture;
   // commit pops it, cancel springs it back open.
@@ -150,6 +156,10 @@ export function MobileNavDrawerShell({
     if (!shell) {
       return;
     }
+    const overlayNodes = [drawerRef.current, scrimRef.current].filter(
+      (el): el is HTMLDivElement => el != null
+    );
+    const gestureRoots = [shell, ...overlayNodes];
 
     const onTouchStart = (event: TouchEvent) => {
       if (gestureRef.current || event.touches.length !== 1) {
@@ -319,49 +329,63 @@ export function MobileNavDrawerShell({
       settleGesture(gesture, true);
     };
 
-    shell.addEventListener("touchstart", onTouchStart, { passive: true });
-    shell.addEventListener("touchmove", onTouchMove, { passive: false });
-    shell.addEventListener("touchend", onTouchEnd, { passive: true });
-    shell.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    for (const root of gestureRoots) {
+      root.addEventListener("touchstart", onTouchStart, { passive: true });
+      root.addEventListener("touchmove", onTouchMove, { passive: false });
+      root.addEventListener("touchend", onTouchEnd, { passive: true });
+      root.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    }
     return () => {
-      shell.removeEventListener("touchstart", onTouchStart);
-      shell.removeEventListener("touchmove", onTouchMove);
-      shell.removeEventListener("touchend", onTouchEnd);
-      shell.removeEventListener("touchcancel", onTouchCancel);
+      for (const root of gestureRoots) {
+        root.removeEventListener("touchstart", onTouchStart);
+        root.removeEventListener("touchmove", onTouchMove);
+        root.removeEventListener("touchend", onTouchEnd);
+        root.removeEventListener("touchcancel", onTouchCancel);
+      }
     };
-  }, [setOpen]);
+  }, [mounted, portalTarget, setOpen]);
 
   // Legacy WebViews (Chromium < 90): see useLegacyOverflowClipGuard.
   useLegacyOverflowClipGuard(shellRef);
 
+  useLayoutEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
+  const overlay =
+    mounted && portalTarget
+      ? createPortal(
+          <>
+            <div
+              ref={scrimRef}
+              className="fixed inset-0 z-30 bg-[var(--palette-backdrop)]"
+              style={{ opacity: 0, pointerEvents: "none" }}
+              onClick={() => setOpen(false)}
+            />
+            <div
+              ref={drawerRef}
+              data-mobile-drawer="left"
+              className={`mobile-left-drawer-surface fixed inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
+              style={{
+                width: `${drawerWidth}px`,
+                transform: open ? "none" : "translate3d(-100%, 0, 0)",
+                willChange: open ? "auto" : "transform",
+              }}
+            >
+              {drawer}
+            </div>
+          </>,
+          portalTarget
+        )
+      : null;
+
   return (
-    // `overflow-clip` so the parked drawer's off-screen overflow can never
-    // become scrollable area that focus/scroll heuristics drag into view.
+    // `overflow-clip` so in-tree leftovers can never become scrollable area
+    // that focus/scroll heuristics drag into view. The drawer itself is
+    // portaled out of this clip so its frost can sample the page.
     <div ref={shellRef} className="relative h-full min-h-0 w-full overflow-clip">
       {children}
-
-      {mounted ? (
-        <>
-          <div
-            ref={scrimRef}
-            className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
-            style={{ opacity: 0, pointerEvents: "none" }}
-            onClick={() => setOpen(false)}
-          />
-          <div
-            ref={drawerRef}
-            data-mobile-drawer="left"
-            className={`mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
-            style={{
-              width: `${drawerWidth}px`,
-              transform: open ? "none" : "translate3d(-100%, 0, 0)",
-              willChange: open ? "auto" : "transform",
-            }}
-          >
-            {drawer}
-          </div>
-        </>
-      ) : null}
+      {overlay}
     </div>
   );
 }
