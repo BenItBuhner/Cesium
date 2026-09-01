@@ -4,6 +4,7 @@ import {
   buildCloudServerPushPayloads,
   cloudServerIdentity,
   diffRemovedCloudServers,
+  isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
   serializeCloudServerTombstones,
@@ -129,6 +130,47 @@ describe("cloud server sync helpers", () => {
     assert.equal(
       merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
       true
+    );
+  });
+
+  test("browser machine URLs are not cloud-syncable", () => {
+    assert.equal(isCloudSyncableServerUrl("https://browser.cesium.internal"), false);
+    assert.equal(isCloudSyncableServerUrl("https://cesium.techlitnow.com"), false);
+    assert.equal(isCloudSyncableServerUrl("https://engine.example.com"), true);
+  });
+
+  test("merge never inherits the in-tab browser machine", () => {
+    const merged = mergeCloudServersIntoState(defaultState(), [
+      { name: "This browser", baseUrl: "https://browser.cesium.internal" },
+      { name: "Real engine", baseUrl: "https://engine.example.com" },
+    ]);
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl.includes("browser.cesium.internal")),
+      false
+    );
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
+      true
+    );
+  });
+
+  test("push payloads omit the in-tab browser machine", () => {
+    const payloads = buildCloudServerPushPayloads(
+      [
+        createServerConnection({
+          label: "This browser",
+          baseUrl: "https://browser.cesium.internal",
+        }),
+        createServerConnection({
+          label: "Real engine",
+          baseUrl: "https://engine.example.com",
+        }),
+      ],
+      () => null
+    );
+    assert.deepEqual(
+      payloads.map((payload) => payload.baseUrl),
+      ["https://engine.example.com"]
     );
   });
 

@@ -162,6 +162,11 @@ export default function App() {
     () => buildMobileBootstrapScript(hostServerConfig),
     [hostServerConfig]
   );
+  // Freshest config for reply paths (`webReady`) - reading through a ref
+  // instead of the message handler's closure so a reply can never re-deliver
+  // a config older than the last `nativeConfigChanged` push.
+  const hostServerConfigRef = useRef(hostServerConfig);
+  hostServerConfigRef.current = hostServerConfig;
 
   const lastPhoneControlConfigRef = useRef<string | null>(null);
   const configureNativeServices = useCallback(
@@ -516,6 +521,12 @@ export default function App() {
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
         void sendNativeStatus();
+        // Re-deliver the current host config now that the web layer is
+        // definitely listening. Config pushes fired while the workbench was
+        // still hydrating (or held behind a first-run gate) reached no
+        // listener, and the safe-area inset they carried was lost - leaving
+        // the top chrome pinned under the status bar for the whole session.
+        sendToWeb({ type: "nativeConfigChanged", server: hostServerConfigRef.current });
         webReadyRef.current = true;
         flushPendingShare();
         return;
@@ -632,7 +643,7 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, flushPendingShare, focused, sendNativeStatus, syncBackIntercept]
+    [configureNativeServices, flushPendingShare, focused, sendNativeStatus, sendToWeb, syncBackIntercept]
   );
 
   const handleNavigation = useCallback(

@@ -6,13 +6,16 @@ import {
 } from "@/lib/releases";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 /**
  * Latest-release catalog for the /download page.
  *
- * Proxying GitHub through our own origin keeps the client free of GitHub API
- * rate limits (60/hr per IP unauthenticated) - the fetch below is cached by
- * Next for 10 minutes and shared across all visitors. Set GITHUB_TOKEN (or
+ * Always hit GitHub for the current `releases/latest` payload. Caching this
+ * catalog (Next Incremental Cache plus a long CDN stale window) kept serving
+ * the previous tag after a new GitHub release published. A new release must
+ * show up on /download immediately. Set GITHUB_TOKEN (or
  * GITHUB_RELEASES_TOKEN) in the deployment for a higher upstream rate limit;
  * a public repo works fine without one.
  */
@@ -24,12 +27,12 @@ export async function GET() {
     const response = await fetch(
       `https://api.github.com/repos/${CESIUM_GITHUB_REPO}/releases/latest`,
       {
+        cache: "no-store",
         headers: {
           accept: "application/vnd.github+json",
           "x-github-api-version": "2022-11-28",
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
-        next: { revalidate: 600 },
       }
     );
     if (!response.ok) {
@@ -41,7 +44,7 @@ export async function GET() {
     }
     return NextResponse.json(catalog, {
       headers: {
-        "cache-control": "public, s-maxage=600, stale-while-revalidate=3600",
+        "cache-control": "private, no-store, must-revalidate",
       },
     });
   } catch (error) {
