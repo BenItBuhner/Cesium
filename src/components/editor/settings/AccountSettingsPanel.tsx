@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
+import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
+import { formatGithubConnectError } from "@/lib/github-clerk-errors";
 import {
   Check,
   ChevronDown,
@@ -274,7 +276,7 @@ function GithubAccountSection() {
 
 function GithubAccountSectionInner() {
   const cloud = useCloudContext();
-  const { user } = useUser();
+  const { connectGithub, disconnectGithub, formatError } = useClerkGithubLink();
   const [status, setStatus] = useState<{
     connected: boolean;
     login: string | null;
@@ -294,7 +296,7 @@ function GithubAccountSectionInner() {
       setStatus({
         connected: false,
         login: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatGithubConnectError(error),
       });
     }
   }, [cloud.github]);
@@ -304,34 +306,17 @@ function GithubAccountSectionInner() {
   }, [refresh]);
 
   const connect = useCallback(async () => {
-    if (!user) return;
     setPending(true);
     setActionError(null);
     try {
-      const external = await user.createExternalAccount({
-        strategy: "oauth_github",
-        redirectUrl: window.location.href,
-      });
-      const redirect = external.verification?.externalVerificationRedirectURL;
-      if (!redirect) {
-        throw new Error("Clerk did not return a GitHub authorization URL.");
-      }
-      window.location.href = redirect.toString();
+      await connectGithub();
     } catch (error) {
       setPending(false);
-      setActionError(error instanceof Error ? error.message : String(error));
+      setActionError(formatError(error));
     }
-  }, [user]);
+  }, [connectGithub, formatError]);
 
   const disconnect = useCallback(async () => {
-    if (!user) return;
-    const account = user.externalAccounts.find(
-      (entry) => entry.provider === "github"
-    );
-    if (!account) {
-      setActionError("No linked GitHub account was found on this Clerk user.");
-      return;
-    }
     if (
       typeof window !== "undefined" &&
       !window.confirm(
@@ -343,14 +328,14 @@ function GithubAccountSectionInner() {
     setPending(true);
     setActionError(null);
     try {
-      await account.destroy();
+      await disconnectGithub();
       await refresh();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
+      setActionError(formatError(error));
     } finally {
       setPending(false);
     }
-  }, [refresh, user]);
+  }, [disconnectGithub, formatError, refresh]);
 
   if (cloud.status !== "ready" || !cloud.github) {
     return null;

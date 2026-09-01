@@ -22,6 +22,7 @@ export {
   UserButton,
   useAuth,
   useClerk,
+  useReverification,
   useSignIn,
   useSignUp,
   useUser,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useUser } from "@clerk/nextjs";
+import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
 import {
   Check,
   ExternalLink,
@@ -27,6 +27,7 @@ import {
   type GithubRepoInfo,
 } from "@/lib/github-codespaces";
 import { probeEngineHealthy } from "@/hooks/useGithubCodespaces";
+import { formatGithubConnectError } from "@/lib/github-clerk-errors";
 
 /**
  * GitHub Codespace setup wizard.
@@ -119,34 +120,24 @@ function ClerkGithubConnectCta({
 }: {
   onError: (message: string) => void;
 }) {
-  const { user } = useUser();
+  const { user, connectGithub, formatError } = useClerkGithubLink();
   const [linkPending, setLinkPending] = useState(false);
 
-  const connectGithub = useCallback(async () => {
-    if (!user) return;
+  const startConnect = useCallback(async () => {
     setLinkPending(true);
     try {
-      const external = await user.createExternalAccount({
-        strategy: "oauth_github",
-        redirectUrl: window.location.href,
-      });
-      const redirect = external.verification?.externalVerificationRedirectURL;
-      if (redirect) {
-        window.location.href = redirect.toString();
-        return;
-      }
-      throw new Error("Clerk did not return a GitHub authorization URL.");
+      await connectGithub();
     } catch (err) {
       setLinkPending(false);
-      onError(err instanceof Error ? err.message : String(err));
+      onError(formatError(err));
     }
-  }, [onError, user]);
+  }, [connectGithub, formatError, onError]);
 
   return (
     <>
       <button
         type="button"
-        onClick={() => void connectGithub()}
+        onClick={() => void startConnect()}
         disabled={linkPending || !user}
         className={primaryButtonClass}
       >
@@ -159,7 +150,9 @@ function ClerkGithubConnectCta({
       </button>
       <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
         You will be sent to GitHub to authorize Cesium (repo and codespace
-        access), then return here - reopen this wizard to continue.
+        access), then return here - reopen this wizard to continue. GitHub
+        must be enabled as an SSO connection in Clerk with a GitHub OAuth
+        App that includes the repo and codespace scopes.
       </p>
     </>
   );
@@ -311,7 +304,7 @@ function CodespaceSetupWizardInner({
         setConnection({
           connected: false,
           login: null,
-          error: err instanceof Error ? err.message : String(err),
+          error: formatGithubConnectError(err),
         });
         setStep("github");
       }
