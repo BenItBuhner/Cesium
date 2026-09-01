@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
+import { ClerkNativeHandoff } from "@/components/auth/ClerkNativeHandoff";
 import {
   ConvexProvider,
   ConvexReactClient,
@@ -47,7 +48,11 @@ import {
   isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
-import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
+import {
+  getClerkFallbackRedirectUrl,
+  getClerkSignInUrl,
+  getClerkSignUpUrl,
+} from "@/lib/cloud/clerk-urls";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -709,6 +714,7 @@ function ClerkCloudBridge({ children }: { children: ReactNode }) {
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >
+      <ClerkNativeHandoff />
       {children}
     </CloudBridge>
   );
@@ -767,8 +773,8 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         publishableKey={getClerkPublishableKey() ?? undefined}
         signInUrl={getClerkSignInUrl()}
         signUpUrl={getClerkSignUpUrl()}
-        signInFallbackRedirectUrl="/setup?resume=1"
-        signUpFallbackRedirectUrl="/setup?resume=1"
+        signInFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
+        signUpFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

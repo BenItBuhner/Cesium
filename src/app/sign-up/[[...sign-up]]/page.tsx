@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SignUp } from "@clerk/nextjs";
+import { clerkAuthRedirectPath } from "@/lib/cloud/clerk-native-handoff";
 import { getCloudMode } from "@/lib/cloud/cloud-flags";
 
 export const metadata: Metadata = {
@@ -8,7 +9,11 @@ export const metadata: Metadata = {
 };
 
 /** Dedicated Clerk sign-up route; see sign-in/page.tsx for the mode notes. */
-export default function SignUpPage() {
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   if (getCloudMode() !== "clerk") {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-[14px] bg-[var(--bg-main)] px-[24px] text-center">
@@ -28,9 +33,10 @@ export default function SignUpPage() {
       </main>
     );
   }
+  const redirectUrl = clerkAuthRedirectPath(await searchParams);
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignUp forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
+      <SignUp forceRedirectUrl={redirectUrl} fallbackRedirectUrl={redirectUrl} />
     </main>
   );
 }

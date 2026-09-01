@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignInButton, SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
 import {
   Check,
   ChevronDown,
@@ -100,14 +101,14 @@ function AccountIdentityCard() {
         </div>
         {cloud.mode === "clerk" ? (
           identity.kind === "clerk-signed-out" ? (
-            <SignInButton mode="modal">
+            <ClerkAuthTrigger mode="sign-in">
               <button
                 type="button"
                 className="inline-flex shrink-0 items-center rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] font-sans text-[12px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
               >
                 Sign in
               </button>
-            </SignInButton>
+            </ClerkAuthTrigger>
           ) : (
             <span className="shrink-0">
               <UserButton />
