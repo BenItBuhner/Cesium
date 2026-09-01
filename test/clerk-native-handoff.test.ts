@@ -107,23 +107,21 @@ describe("native Clerk handoff", () => {
     );
   });
 
-  test("ticket activation calls Clerk setActive", async () => {
+  test("ticket activation finalizes the Clerk future sign-in", async () => {
     const calls: string[] = [];
-    const sessionId = await activateClerkSessionFromTicket(
-      {
-        signIn: {
-          async create(params) {
-            assert.equal(params.strategy, "ticket");
-            assert.equal(params.ticket, "tick_abc");
-            return { createdSessionId: "sess_123", status: "complete" };
-          },
-        },
-        async setActive(params) {
-          calls.push(params.session);
-        },
+    const signIn = {
+      createdSessionId: null as string | null,
+      async ticket(params: { ticket: string }) {
+        assert.equal(params.ticket, "tick_abc");
+        signIn.createdSessionId = "sess_123";
+        return { error: null };
       },
-      "tick_abc"
-    );
+      async finalize() {
+        calls.push(signIn.createdSessionId ?? "");
+        return { error: null };
+      },
+    };
+    const sessionId = await activateClerkSessionFromTicket({ signIn }, "tick_abc");
     assert.equal(sessionId, "sess_123");
     assert.deepEqual(calls, ["sess_123"]);
   });
@@ -200,8 +198,17 @@ describe("native Clerk handoff", () => {
     );
     assert.match(nativeReturn, /createClerkNativeHandoffTicket/);
     assert.match(gate, /ClerkAuthTrigger/);
+    const handoff = readFileSync(
+      fileURLToPath(
+        new URL("../src/components/auth/ClerkNativeHandoff.tsx", import.meta.url)
+      ),
+      "utf8"
+    );
     assert.match(cloud, /ClerkNativeHandoff/);
     assert.match(cloud, /getClerkFallbackRedirectUrl/);
     assert.match(proxy, /\/auth\/native-return/);
+    assert.match(handoff, /useSignIn\(\)/);
+    assert.doesNotMatch(handoff, /isLoaded/);
+    assert.doesNotMatch(handoff, /setActive/);
   });
 });

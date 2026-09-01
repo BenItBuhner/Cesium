@@ -35,13 +35,13 @@ function ticketFromUnknown(value: unknown): string | null {
  * browser finishes hosted sign-in and returns via cesium://oauth/done.
  */
 export function ClerkNativeHandoff() {
-  const { isLoaded, signIn, setActive } = useSignIn();
+  const { signIn } = useSignIn();
   const pendingTicketRef = useRef<string | null>(null);
   const consumingRef = useRef(false);
 
   useEffect(() => {
     const consume = async (ticket: string) => {
-      if (!signIn || !setActive) {
+      if (!signIn) {
         pendingTicketRef.current = ticket;
         return;
       }
@@ -51,7 +51,7 @@ export function ClerkNativeHandoff() {
       consumingRef.current = true;
       pendingTicketRef.current = null;
       try {
-        await activateClerkSessionFromTicket({ signIn, setActive }, ticket);
+        await activateClerkSessionFromTicket({ signIn }, ticket);
       } catch (error) {
         console.error("Failed to activate Clerk session from native handoff", error);
       } finally {
@@ -59,7 +59,7 @@ export function ClerkNativeHandoff() {
       }
     };
 
-    if (isLoaded && pendingTicketRef.current) {
+    if (signIn && pendingTicketRef.current) {
       void consume(pendingTicketRef.current);
     }
 
@@ -83,7 +83,7 @@ export function ClerkNativeHandoff() {
       window.removeEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onBridge);
       window.removeEventListener("message", onWindowMessage);
     };
-  }, [isLoaded, setActive, signIn]);
+  }, [signIn]);
 
   return null;
 }

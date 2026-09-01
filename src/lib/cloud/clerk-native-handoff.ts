@@ -105,11 +105,14 @@ export function readClerkHandoffTicket(input: {
   return ticket ? ticket : null;
 }
 
+export type ClerkTicketError = {
+  message?: string | null;
+} | null;
+
 export type ClerkTicketClient = {
-  create: (params: { strategy: "ticket"; ticket: string }) => Promise<{
-    status?: string | null;
-    createdSessionId?: string | null;
-  }>;
+  ticket: (params: { ticket: string }) => Promise<{ error?: ClerkTicketError }>;
+  createdSessionId?: string | null;
+  finalize: () => Promise<{ error?: ClerkTicketError }>;
 };
 
 export function buildClerkHandoffDeepLink(ticket: string): string {
@@ -128,25 +131,40 @@ export function buildAndroidClerkHandoffIntent(ticket: string): string {
   return `intent://oauth/done?${params.toString()}#Intent;scheme=cesium;package=com.cesium.mobile;end`;
 }
 
+function clerkTicketErrorMessage(
+  error: ClerkTicketError,
+  fallback: string
+): string {
+  const message = error && typeof error.message === "string" ? error.message.trim() : "";
+  return message || fallback;
+}
+
 export async function activateClerkSessionFromTicket(
-  input: {
-    signIn: ClerkTicketClient;
-    setActive: (params: { session: string }) => Promise<unknown>;
-  },
+  input: { signIn: ClerkTicketClient },
   ticket: string
 ): Promise<string> {
   const trimmed = ticket.trim();
   if (!trimmed) {
     throw new Error("Missing Clerk sign-in ticket.");
   }
-  const result = await input.signIn.create({
-    strategy: "ticket",
-    ticket: trimmed,
-  });
-  const sessionId = result.createdSessionId?.trim();
+  const result = await input.signIn.ticket({ ticket: trimmed });
+  if (result.error) {
+    throw new Error(
+      clerkTicketErrorMessage(result.error, "Clerk ticket sign-in failed.")
+    );
+  }
+  const sessionId = input.signIn.createdSessionId?.trim();
   if (!sessionId) {
     throw new Error("Clerk ticket did not create a session.");
   }
-  await input.setActive({ session: sessionId });
+  const finalized = await input.signIn.finalize();
+  if (finalized.error) {
+    throw new Error(
+      clerkTicketErrorMessage(
+        finalized.error,
+        "Clerk failed to activate the ticket session."
+      )
+    );
+  }
   return sessionId;
 }
