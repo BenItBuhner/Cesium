@@ -7,7 +7,7 @@ import { basename, dirname, extname, joinPath, normalizePath } from "../paths";
 import type { Vfs } from "../vfs";
 import type { ShellRuntime } from "../shell/runtime";
 import { resolvePath, type ShellContext } from "../shell/builtins";
-import { bundleWithVfs } from "../build/esbuild-service";
+import { bundleWithVfs } from "../bundler/esbuild-service";
 
 function pathShim(): Record<string, unknown> {
   return {

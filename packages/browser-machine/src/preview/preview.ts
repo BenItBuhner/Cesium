@@ -12,7 +12,7 @@ import type { Vfs } from "../vfs";
 import type { ShellRuntime } from "../shell/runtime";
 import { resolvePath, type ShellContext } from "../shell/builtins";
 import { inferMimeType } from "../lang";
-import { bundleWithVfs } from "../build/esbuild-service";
+import { bundleWithVfs } from "../bundler/esbuild-service";
 
 export const PREVIEW_CACHE_NAME = "cesium-browser-machine-preview";
 export const PREVIEW_SCOPE = "/preview/";
