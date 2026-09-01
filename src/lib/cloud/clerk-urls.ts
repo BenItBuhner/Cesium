@@ -1,16 +1,21 @@
+import { withNativeClerkHandoffQuery } from "@/lib/cloud/clerk-native-handoff";
 import { DEFAULT_PRODUCTION_SITE_URL } from "@/lib/site-url";
 
 export function getHostedClerkSignInUrl(): string {
-  return resolveHostedClerkPageUrl(
-    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL,
-    "/sign-in"
+  return withNativeClerkHandoffQuery(
+    resolveHostedClerkPageUrl(
+      process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL,
+      "/sign-in"
+    )
   );
 }
 
 export function getHostedClerkSignUpUrl(): string {
-  return resolveHostedClerkPageUrl(
-    process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL,
-    "/sign-up"
+  return withNativeClerkHandoffQuery(
+    resolveHostedClerkPageUrl(
+      process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL,
+      "/sign-up"
+    )
   );
 }
 

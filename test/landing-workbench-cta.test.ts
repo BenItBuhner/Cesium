@@ -65,8 +65,10 @@ describe("landing workbench CTAs", () => {
     );
     assert.match(cloudContext, /signInFallbackRedirectUrl="\/setup\?resume=1"/);
     assert.match(cloudContext, /signUpFallbackRedirectUrl="\/setup\?resume=1"/);
-    assert.match(signIn, /forceRedirectUrl="\/setup\?resume=1"/);
-    assert.match(signUp, /forceRedirectUrl="\/setup\?resume=1"/);
+    assert.match(signIn, /clerkAuthRedirectPath/);
+    assert.match(signIn, /forceRedirectUrl=\{redirectUrl\}/);
+    assert.match(signUp, /clerkAuthRedirectPath/);
+    assert.match(signUp, /forceRedirectUrl=\{redirectUrl\}/);
   });
 
   test("download header also signs in instead of launching the workbench", () => {

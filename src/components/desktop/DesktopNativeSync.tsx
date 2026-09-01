@@ -17,14 +17,26 @@ import {
   type DesktopNativeEvent,
 } from "@/lib/desktop-native-bridge";
 import { dispatchMobileBridgeMessage } from "@/lib/mobile-bridge";
+import { parseOAuthCompletedDeepLink } from "@/lib/oauth-deep-link";
 
 /**
  * Routes a `cesium://` deep link into the workbench:
  * - `cesium://open?conversationId=…&workspaceId=…` focuses a conversation
  *   (same path as tapping an Android notification).
  * - `cesium://share?text=…&subject=…` stages text into the share intake UI.
+ * - `cesium://oauth/done?…` completes hosted Clerk / MCP OAuth in the renderer.
  */
 export function handleDesktopDeepLink(url: string): void {
+  const oauth = parseOAuthCompletedDeepLink(url);
+  if (oauth) {
+    dispatchMobileBridgeMessage({
+      type: "oauthCompleted",
+      sessionId: oauth.sessionId,
+      ok: oauth.ok,
+      kind: oauth.kind,
+    });
+    return;
+  }
   let parsed: URL;
   try {
     parsed = new URL(url);

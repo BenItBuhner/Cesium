@@ -297,7 +297,10 @@ export default function App() {
         const parsed = new URL(url);
         sendToWeb({
           type: "oauthCompleted",
-          sessionId: parsed.searchParams.get("session") ?? undefined,
+          sessionId:
+            parsed.searchParams.get("ticket") ??
+            parsed.searchParams.get("session") ??
+            undefined,
           ok: parsed.searchParams.get("ok") !== "0",
           kind: parsed.searchParams.get("kind") ?? undefined,
         });

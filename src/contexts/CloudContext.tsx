@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
+import { ClerkNativeHandoff } from "@/components/auth/ClerkNativeHandoff";
 import {
   ConvexProvider,
   ConvexReactClient,
@@ -689,6 +690,7 @@ function ClerkCloudBridge({ children }: { children: ReactNode }) {
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >
+      <ClerkNativeHandoff />
       {children}
     </CloudBridge>
   );

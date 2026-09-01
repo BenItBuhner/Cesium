@@ -104,12 +104,24 @@ describe("first-run account prompt", () => {
   });
 
   test("hosted clerk pages are always absolute production URLs", () => {
-    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
-    assert.equal(getHostedClerkSignUpUrl(), "https://cesium.techlitnow.com/sign-up");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://cesium.techlitnow.com/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
+    assert.equal(
+      getHostedClerkSignUpUrl(),
+      "https://cesium.techlitnow.com/sign-up?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
     process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/sign-in";
-    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://cesium.techlitnow.com/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
     process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "https://accounts.example/sign-in";
-    assert.equal(getHostedClerkSignInUrl(), "https://accounts.example/sign-in");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://accounts.example/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
   });
 
   test("hosted clerk auth is required on file://, localhost, and while Clerk is loading", () => {
@@ -142,9 +154,9 @@ describe("first-run account prompt", () => {
     );
     assert.match(providers, /FirstRunAccountGate/);
     assert.match(providers, /<FirstRunAccountGate>/);
-    assert.match(gate, /<SignUpButton mode="modal">/);
-    assert.match(gate, /<SignInButton mode="modal">/);
-    assert.match(gate, /getHostedClerkSignUpUrl/);
+    assert.match(gate, /ClerkAuthTrigger/);
+    assert.match(gate, /mode="sign-up"/);
+    assert.match(gate, /mode="sign-in"/);
     assert.match(gate, /Continue as guest/);
     assert.match(gate, /aria-label="Continue as guest"/);
   });
