@@ -12,10 +12,11 @@
  * - Swipes never start from text inputs or horizontally scrollable content
  *   that can still consume the swipe direction.
  *
- * The drawer + scrim portal to `document.body`. Settings lives inside a
- * predictive-back surface (`overflow` / stacking context) that makes
- * in-tree `backdrop-filter` sample an empty layer; portaling puts the
- * frost on the same overlay plane as the agent conversation rail.
+ * The drawer + scrim portal to `#cesium-overlay-drawer-root` (the aurora
+ * host). Settings lives inside a predictive-back surface that makes
+ * in-tree `backdrop-filter` sample an empty layer; portaling as a sibling
+ * of that surface puts the frost on the same overlay plane as the agent
+ * conversation rail. `document.body` is the fallback if the host is gone.
  */
 
 import {
@@ -349,7 +350,9 @@ export function MobileNavDrawerShell({
   useLegacyOverflowClipGuard(shellRef);
 
   useLayoutEffect(() => {
-    setPortalTarget(document.body);
+    setPortalTarget(
+      document.getElementById("cesium-overlay-drawer-root") ?? document.body
+    );
   }, []);
 
   const overlay =
@@ -358,14 +361,14 @@ export function MobileNavDrawerShell({
           <>
             <div
               ref={scrimRef}
-              className="fixed inset-0 z-30 bg-[var(--palette-backdrop)]"
+              className="absolute inset-0 z-30 bg-[var(--palette-backdrop)]"
               style={{ opacity: 0, pointerEvents: "none" }}
               onClick={() => setOpen(false)}
             />
             <div
               ref={drawerRef}
               data-mobile-drawer="left"
-              className={`mobile-left-drawer-surface fixed inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
+              className={`mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
               style={{
                 width: `${drawerWidth}px`,
                 transform: open ? "none" : "translate3d(-100%, 0, 0)",

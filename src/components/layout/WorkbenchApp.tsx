@@ -131,6 +131,9 @@ function WorkbenchAuroraHost({ children }: { children: ReactNode }) {
       >
         <AuroraShellBackdrop />
         {children}
+        {/* Settings nav drawer portals here so backdrop-filter can sample
+            the settings surface as a sibling, matching the agent rail. */}
+        <div id="cesium-overlay-drawer-root" />
       </div>
     </AuroraSceneProvider>
   );
