@@ -207,9 +207,9 @@ export type MobileNativeToWebMessage =
   // Progressive predictive-back stream (Android 14+ gesture navigation). The
   // gesture `progress` runs 0..1 as the finger travels from the `swipeEdge`;
   // the web layer previews the pop (drawer follows the finger, settings view
-  // scales down) and then either commits on `backRequest` or reverts on
-  // `backCancelled`. Older Androids and 3-button navigation never send these,
-  // so `backRequest` alone must stay sufficient.
+  // slides away revealing the agent view beneath) and then either commits on
+  // `backRequest` or reverts on `backCancelled`. Older Androids and 3-button
+  // navigation never send these, so `backRequest` alone must stay sufficient.
   | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backCancelled" }

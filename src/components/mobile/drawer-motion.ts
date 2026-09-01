@@ -29,7 +29,7 @@ export const ENGAGE_DOMINANCE = 1.35;
 /** Vertical movement that hands the touch to native scrolling. */
 export const SCROLL_CLAIM_PX = 16;
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
     (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)
