@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, Loader2, Server } from "lucide-react";
 import { accountOwnsServers } from "@/lib/account-server-sync";
+import { isCloudSyncableServerUrl } from "@/lib/cloud/cloud-servers";
 import {
   assertEngineConnectionAllowed,
   CESIUM_ACCOUNT_SITE_NOT_A_SERVER_MESSAGE,
@@ -51,7 +52,9 @@ export function ConnectServerStep({
   const [connectedUrl, setConnectedUrl] = useState<string | null>(null);
   const [fallbackOpen, setFallbackOpen] = useState(false);
 
-  const cloudServers = cloud.bootstrap?.servers ?? [];
+  const cloudServers = (cloud.bootstrap?.servers ?? []).filter((server) =>
+    isCloudSyncableServerUrl(server.baseUrl)
+  );
   const linked = accountOwnsServers(cloud);
   const showManual = !linked || fallbackOpen;
 

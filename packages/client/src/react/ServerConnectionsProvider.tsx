@@ -14,6 +14,7 @@ import {
   applyRendezvousBootstrap,
   applyServerUrlBootstrap,
   getSettingsServerConnection,
+  omitBrowserMachineFromState,
   requiresDefaultServerSelection,
   setDefaultServerConnection,
   updateRendezvousServerEndpoint,
@@ -23,6 +24,11 @@ import {
   type ServerConnection,
   type ServerConnectionsState,
 } from "../server-connections";
+import {
+  BROWSER_MACHINE_NATIVE_UNAVAILABLE_MESSAGE,
+  isBrowserMachineUrl,
+} from "../browser-machine";
+import { isBrowserMachineOffered } from "../platform-feature-flags";
 import {
   parseConnectSessionHash,
   parseRendezvousBootstrapHash,
@@ -160,6 +166,18 @@ function mergeRuntimeStatusesIfChanged(
   return next;
 }
 
+function readSurfaceServerConnectionsState(): ServerConnectionsState {
+  const state = readStoredServerConnectionsState();
+  if (isBrowserMachineOffered()) {
+    return state;
+  }
+  const stripped = omitBrowserMachineFromState(state);
+  if (stripped !== state) {
+    writeStoredServerConnectionsState(stripped);
+  }
+  return stripped;
+}
+
 function connectionDedupeKey(server: ServerConnection): string {
   return server.rendezvous
     ? `rendezvous:${server.rendezvous.serverId}`
@@ -180,7 +198,9 @@ function dedupeServersByResolvedBaseUrl(servers: ServerConnection[]): ServerConn
 
 export function ServerConnectionsProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [state, setState] = useState<ServerConnectionsState>(() => readStoredServerConnectionsState());
+  const [state, setState] = useState<ServerConnectionsState>(() =>
+    readSurfaceServerConnectionsState()
+  );
   const [serverStatusById, setServerStatusById] = useState<Record<string, ServerRuntimeStatus>>({});
   const healthRecoveryRanRef = useRef(false);
   const healthRefreshEpochRef = useRef(0);
@@ -189,14 +209,14 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
 
   useEffect(() => {
     const sync = () => {
-      setState(readStoredServerConnectionsState());
+      setState(readSurfaceServerConnectionsState());
     };
     let cancelled = false;
     void (async () => {
       // The whole shell (rail load, auth, workspace bootstrap) gates on
       // `ready`. Nothing in this bootstrap may block readiness forever: every
       // network call is time-boxed and any unexpected failure still resolves.
-      let next = readStoredServerConnectionsState();
+      let next = readSurfaceServerConnectionsState();
       try {
         const location = clientLocation();
         let bootstrap: RendezvousBootstrap | null = null;
@@ -503,6 +523,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   const saveServer = useCallback((input: { id?: string; label?: string; baseUrl: string }) => {
     const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
     assertEngineServerUrlAllowed(normalizedBaseUrl);
+    if (isBrowserMachineUrl(normalizedBaseUrl) && !isBrowserMachineOffered()) {
+      throw new Error(BROWSER_MACHINE_NATIVE_UNAVAILABLE_MESSAGE);
+    }
     let savedServer: ServerConnection | null = null;
     setState((current) => {
       const next = upsertServerConnection(current, input);
