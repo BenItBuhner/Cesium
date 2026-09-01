@@ -45,8 +45,11 @@ import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { CodespaceSetupWizard } from "@/components/preferences/CodespaceSetupWizard";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
+import { useGithubCodespaces } from "@/hooks/useGithubCodespaces";
+import type { CodespaceDevice } from "@/lib/github-codespaces";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -152,6 +155,7 @@ export function AgentNewChatLanding({
     activeCloudDevice,
   } = useAgentDraftComposer({ onInstantSubmit });
   const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
+  const codespaces = useGithubCodespaces();
 
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
@@ -227,7 +231,34 @@ export function AgentNewChatLanding({
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+  const [codespaceWizardOpen, setCodespaceWizardOpen] = useState(false);
+  const [codespaceRecreateDevice, setCodespaceRecreateDevice] =
+    useState<CodespaceDevice | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  // Selecting a codespace device wakes it first (start + engine health +
+  // session), with progress rendered inline in the picker; only a successful
+  // wake runs the normal server switch.
+  const handleSelectCodespaceDevice = useCallback(
+    (device: CodespaceDevice) => {
+      void codespaces.connectDevice(device).then((localServerId) => {
+        if (localServerId) {
+          handleActiveServerChange(localServerId);
+        }
+      });
+    },
+    [codespaces, handleActiveServerChange]
+  );
+
+  const handleRecreateCodespaceDevice = useCallback(
+    (device: CodespaceDevice) => {
+      codespaces.dismissFailure();
+      setCodespaceRecreateDevice(device);
+      setCodespaceWizardOpen(true);
+      setDevicePickerOpen(false);
+    },
+    [codespaces]
+  );
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
 
@@ -732,6 +763,32 @@ export function AgentNewChatLanding({
           });
           setDevicePickerOpen(false);
         }}
+        codespaceDevices={codespaces.available ? codespaces.devices : []}
+        codespaceWakeStatus={codespaces.wakeStatus}
+        codespaceWakeFailure={codespaces.wakeFailure}
+        onSelectCodespaceDevice={
+          codespaces.available ? handleSelectCodespaceDevice : undefined
+        }
+        onRecreateCodespaceDevice={handleRecreateCodespaceDevice}
+        onSetupCodespace={
+          codespaces.available
+            ? () => {
+                setCodespaceRecreateDevice(null);
+                setCodespaceWizardOpen(true);
+                setDevicePickerOpen(false);
+              }
+            : undefined
+        }
+      />
+      <CodespaceSetupWizard
+        open={codespaceWizardOpen}
+        onClose={() => {
+          setCodespaceWizardOpen(false);
+          setCodespaceRecreateDevice(null);
+        }}
+        onConnected={handleActiveServerChange}
+        devices={codespaces.devices}
+        recreateDevice={codespaceRecreateDevice}
       />
       <WorkspacePickerMenu
         open={workspacePickerOpen}

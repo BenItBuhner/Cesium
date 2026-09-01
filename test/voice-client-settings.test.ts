@@ -85,6 +85,54 @@ describe("account voice settings", () => {
     assert.equal(current.transcription?.baseUrl, "https://local.example/v1");
   });
 
+  test("push/apply round-trip is a no-op (no cloud sync ping-pong)", async () => {
+    // Regression: applying the exact payload this client just pushed must NOT
+    // rewrite local state or emit VOICE_CLIENT_SETTINGS_EVENT - the event
+    // listener re-pushes to the cloud, which re-triggers apply, producing an
+    // infinite mutation loop (surfaces as TooManyConcurrentMutations on
+    // local Convex deployments).
+    const store = createMemoryKeyValueStore();
+    let emits = 0;
+    setClientPlatform({
+      ...originalPlatform,
+      keyValueStore: store,
+      emitEvent: () => {
+        emits += 1;
+      },
+      addEventListener: () => () => undefined,
+    });
+
+    // Fresh profile: pushed records must carry a stable updatedAt (not now).
+    const freshPush = getVoiceSecretsForCloud();
+    const freshSettings = freshPush.find((record) => record.kind === "voice.settings");
+    assert.ok(freshSettings);
+    assert.equal(freshSettings.updatedAt, 0);
+    const emitsAfterPush = emits;
+    applyCloudVoiceSecrets(freshPush);
+    assert.equal(emits, emitsAfterPush, "fresh-profile apply must not emit");
+
+    // Configured profile: same guarantee after a real save.
+    await saveVoiceClientSettings({
+      transcription: {
+        baseUrl: "https://local.example/v1",
+        apiKey: "local-key",
+        model: "whisper-1",
+      },
+    });
+    const configuredPush = getVoiceSecretsForCloud();
+    const emitsAfterConfiguredPush = emits;
+    applyCloudVoiceSecrets(configuredPush);
+    applyCloudVoiceSecrets(configuredPush);
+    assert.equal(
+      emits,
+      emitsAfterConfiguredPush,
+      "configured apply of an already-synced payload must not emit"
+    );
+    // And the settings survive untouched.
+    const current = await loadVoiceClientSettings();
+    assert.equal(current.transcription?.baseUrl, "https://local.example/v1");
+  });
+
   test("clear keeps the preferred source", async () => {
     useMemoryStore();
     await saveVoiceClientSettings({

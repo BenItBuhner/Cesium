@@ -10,7 +10,11 @@
 
 import type * as agents from "../agents.js";
 import type * as context from "../context.js";
+import type * as github from "../github.js";
+import type * as lib_codespaceBootstrap from "../lib/codespaceBootstrap.js";
+import type * as lib_githubApi from "../lib/githubApi.js";
 import type * as lib_identity from "../lib/identity.js";
+import type * as lib_serverRecords from "../lib/serverRecords.js";
 import type * as onboarding from "../onboarding.js";
 import type * as preferences from "../preferences.js";
 import type * as secrets from "../secrets.js";
@@ -26,7 +30,11 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   context: typeof context;
+  github: typeof github;
+  "lib/codespaceBootstrap": typeof lib_codespaceBootstrap;
+  "lib/githubApi": typeof lib_githubApi;
   "lib/identity": typeof lib_identity;
+  "lib/serverRecords": typeof lib_serverRecords;
   onboarding: typeof onboarding;
   preferences: typeof preferences;
   secrets: typeof secrets;

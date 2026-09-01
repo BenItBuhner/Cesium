@@ -56,6 +56,7 @@ export const bootstrap = query({
         kind: server.kind,
         sessionToken: server.sessionToken ?? null,
         rendezvous: server.rendezvous ?? null,
+        codespace: server.codespace ?? null,
         notes: server.notes ?? null,
         lastConnectedAt: server.lastConnectedAt ?? null,
       })),

@@ -29,7 +29,12 @@ export default defineSchema({
     userId: v.id("users"),
     name: v.string(),
     baseUrl: v.string(),
-    kind: v.union(v.literal("remote"), v.literal("local")),
+    kind: v.union(
+      v.literal("remote"),
+      v.literal("local"),
+      /** Engine running inside a paired GitHub Codespace. */
+      v.literal("codespace")
+    ),
     /**
      * Engine session token from password auth, when the engine requires it.
      * Lets a fresh device reconnect without re-entering credentials.
@@ -48,6 +53,28 @@ export default defineSchema({
         serverId: v.string(),
         secret: v.string(),
         registryBaseUrl: v.string(),
+      })
+    ),
+    /**
+     * Durable GitHub Codespace pairing: exactly one row per (user, repo).
+     * The codespace itself is disposable - if GitHub deletes it (retention
+     * expiry) this metadata drives one-click recreation, and `codespaceName`
+     * / `baseUrl` simply move to the replacement. Engine credentials are
+     * mirrored here (same trust model as `sessionToken`) so any signed-in
+     * device can re-login after a session expires.
+     */
+    codespace: v.optional(
+      v.object({
+        repoFullName: v.string(),
+        repositoryId: v.number(),
+        codespaceName: v.string(),
+        displayName: v.optional(v.string()),
+        machine: v.optional(v.string()),
+        devcontainerPath: v.string(),
+        lastKnownState: v.optional(v.string()),
+        lastSyncedAt: v.optional(v.number()),
+        engineUsername: v.optional(v.string()),
+        enginePassword: v.optional(v.string()),
       })
     ),
     notes: v.optional(v.string()),
