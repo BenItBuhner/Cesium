@@ -337,8 +337,8 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "attention",
       "running",
-      "chats",
       "pinned",
+      "chats",
       "workspaces",
     ]);
   });
@@ -359,12 +359,27 @@ describe("global settings", () => {
     });
     assert.equal(settings.general.agentRail.rowDetail, "expanded");
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
-      "pinned",
       "attention",
       "running",
+      "pinned",
       "chats",
       "workspaces",
     ]);
+    assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
+  });
+
+  test("drops a hidden pinned section so folders always have a home", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          hiddenSections: ["pinned", "attention"],
+        },
+      },
+    });
     assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
   });
 

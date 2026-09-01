@@ -59,9 +59,9 @@ test("agent rail view settings survive a save/read round-trip", async () => {
   // Persisted orders missing the running section surface it in its default
   // slot, right below Needs attention.
   assert.deepEqual(persisted.general.agentRail.sectionOrder, [
-    "pinned",
     "attention",
     "running",
+    "pinned",
     "chats",
     "workspaces",
   ]);
