@@ -18,6 +18,7 @@ import type { ConversationStore } from "../stores/conversations";
 import type { SettingsStore } from "../stores/settings";
 import type { WorkspaceStore } from "../stores/workspaces";
 import { buildBrowserBackendInfo, buildConfigOptions, CESIUM_AGENT_CAPABILITIES } from "../backend-info";
+import { BROWSER_MODE_IDS, type BrowserModeId } from "../stores/settings";
 import { resolveSafePath } from "../paths";
 import type { Vfs } from "../vfs";
 
@@ -128,11 +129,20 @@ export function registerAgentRoutes(
     input: AgentConversationCreateInput
   ): Promise<AgentConversationRecord> {
     const defaults = await settings.resolveDefaultModel();
-    const models = await settings.listModels();
+    const prefs = await settings.getAgentPrefs();
     const now = Date.now();
-    const mode = input.mode ?? "agent";
+    // Clamp to modes the in-page harness implements; unknown/legacy ids fall
+    // back to agent instead of creating a conversation this engine can't run.
+    const requestedMode = input.mode ?? "agent";
+    const mode = BROWSER_MODE_IDS.includes(requestedMode as BrowserModeId)
+      ? requestedMode
+      : "agent";
     const modelId = input.modelId || defaults.modelId;
     const modelName = input.modelName || defaults.modelName;
+    // Model access filtering (server parity): disabled models leave the
+    // picker, but the default and the conversation's own model always stay.
+    const models = await settings.listPickerModels({ keepModelId: modelId });
+    const enabledModes = BROWSER_MODE_IDS.filter((id) => prefs.modes.enabled[id]);
     const record: AgentConversationRecord = {
       schemaVersion: 1,
       id: newConversationId(),
@@ -158,6 +168,7 @@ export function registerAgentRoutes(
           id: `${model.providerId}/${model.modelId}`,
           name: model.modelName,
         })),
+        enabledModes,
       }),
       capabilities: CESIUM_AGENT_CAPABILITIES,
       pendingPermission: null,

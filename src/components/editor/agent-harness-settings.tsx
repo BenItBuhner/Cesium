@@ -92,6 +92,7 @@ import {
   summarizeCesiumModelAccess,
 } from "@/components/editor/settings/CesiumModelAccessSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
+import { useEngineSupportedHarnessFamilies } from "@/hooks/useEngineSupportedHarnessFamilies";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import {
   ACTIVE_AGENT_BACKEND_IDS,
@@ -3795,6 +3796,7 @@ function HarnessListView({
   rememberedByHarness,
   workspaceNameById,
   modLabel,
+  supportedFamilyIds,
   onPatchAgents,
   onOpenHarness,
 }: {
@@ -3802,9 +3804,29 @@ function HarnessListView({
   rememberedByHarness: Map<AgentBackendId, RememberedAgentPermissionRule[]>;
   workspaceNameById: Map<string, string>;
   modLabel: string;
+  /** Family ids the connected engine can run; null while the catalog loads. */
+  supportedFamilyIds: Set<string> | null;
   onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
   onOpenHarness: (backendId: AgentBackendId) => void;
 }) {
+  // Only harnesses the connected engine can actually execute get settings
+  // rows: browser-only clients must not customize show/hide for harnesses
+  // that do not exist there. New engine-side harness support (e.g. an
+  // in-page Cursor SDK) lights rows up automatically via the backend catalog.
+  const visibleFamilies = useMemo(
+    () =>
+      supportedFamilyIds
+        ? HARNESS_FAMILIES.filter((family) => supportedFamilyIds.has(family.id))
+        : [...HARNESS_FAMILIES],
+    [supportedFamilyIds]
+  );
+  const hiddenFamilies = useMemo(
+    () =>
+      supportedFamilyIds
+        ? HARNESS_FAMILIES.filter((family) => !supportedFamilyIds.has(family.id))
+        : [],
+    [supportedFamilyIds]
+  );
   const { updateWorkspaceSession } = useWorkspace();
   const sortedRemembered = useMemo(
     () => [...agents.rememberedPermissions].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -3947,7 +3969,7 @@ function HarnessListView({
       </SettingsSection>
 
       <SettingsSection title="Harnesses">
-        {HARNESS_FAMILIES.map((family, index) => {
+        {visibleFamilies.map((family, index) => {
           const remembered = rememberedByHarness.get(family.settingsId) ?? [];
           const enabled = isHarnessFamilyEnabled(agents.enabledHarnesses, family);
           const selected = resolveHarnessFamilyTransport(family, {
@@ -3957,11 +3979,12 @@ function HarnessListView({
           const blurb = harnessFamilyHasMultipleTransports(family)
             ? `${FAMILY_BLURBS[family.id] ?? family.label} · ${selected.label}`
             : FAMILY_BLURBS[family.id] ?? HARNESS_BLURBS[family.settingsId];
+          const isLast = index === visibleFamilies.length - 1 && hiddenFamilies.length === 0;
           return (
             <div
               key={family.id}
               className={`flex min-h-[56px] w-full items-center gap-[12px] px-[16px] py-[12px] ${
-                index < HARNESS_FAMILIES.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
+                isLast ? "" : "border-b border-[var(--border-subtle)]"
               }`}
             >
               <button
@@ -4022,6 +4045,18 @@ function HarnessListView({
             </div>
           );
         })}
+        {hiddenFamilies.length > 0 ? (
+          <div className="px-[16px] py-[12px]">
+            <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+              {hiddenFamilies.map((family) => family.label).join(", ")}{" "}
+              {hiddenFamilies.length === 1 ? "is" : "are"} not available on the connected engine,
+              so {hiddenFamilies.length === 1 ? "its settings are" : "their settings are"} hidden
+              here. Connect a Cesium server that runs{" "}
+              {hiddenFamilies.length === 1 ? "this harness" : "these harnesses"} to configure{" "}
+              {hiddenFamilies.length === 1 ? "it" : "them"}.
+            </p>
+          </div>
+        ) : null}
       </SettingsSection>
     </>
   );
@@ -4034,6 +4069,20 @@ export function AgentsHarnessSettingsPanel() {
     useAgentsHarnessNavigation();
   const agents = settings.agents;
   const modLabel = useMemo(() => primaryModifierLabel(detectShortcutPlatform()), []);
+
+  // Families the connected engine can execute, fetched straight from its
+  // backend catalog (real servers list every harness; the browser machine
+  // only lists in-page ones). Null while the catalog has not loaded yet - in
+  // that case the list stays unfiltered instead of flashing empty.
+  const supportedFamilyIds = useEngineSupportedHarnessFamilies();
+
+  const activeHarnessSupported = useMemo(() => {
+    if (!activeHarnessId || !supportedFamilyIds) {
+      return true;
+    }
+    const family = harnessFamilyForBackend(activeHarnessId);
+    return family ? supportedFamilyIds.has(family.id) : true;
+  }, [activeHarnessId, supportedFamilyIds]);
 
   const workspaceNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -4086,7 +4135,23 @@ export function AgentsHarnessSettingsPanel() {
       ) : (
         <SettingsBreadcrumbs segments={[{ label: "Agents" }]} />
       )}
-      {activeHarnessId ? (
+      {activeHarnessId && !activeHarnessSupported ? (
+        <SettingsSection title={harnessDisplayName(activeHarnessId)}>
+          <div className="px-[16px] py-[14px]">
+            <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+              Not available on the connected engine
+            </p>
+            <p className="mt-[4px] max-w-[560px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+              {harnessDisplayName(activeHarnessId)} cannot run on the engine this client is
+              connected to, so its settings are read-only elsewhere and hidden here. Connect a
+              Cesium server that supports this harness to configure it.
+            </p>
+            <button type="button" className={`${rowButtonClass} mt-[10px]`} onClick={openAgentsList}>
+              Back to harnesses
+            </button>
+          </div>
+        </SettingsSection>
+      ) : activeHarnessId ? (
         <HarnessDetailView
           backendId={activeHarnessId}
           agents={agents}
@@ -4101,6 +4166,7 @@ export function AgentsHarnessSettingsPanel() {
           rememberedByHarness={rememberedByHarness}
           workspaceNameById={workspaceNameById}
           modLabel={modLabel}
+          supportedFamilyIds={supportedFamilyIds}
           onPatchAgents={patchAgents}
           onOpenHarness={openHarness}
         />
