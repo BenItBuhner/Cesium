@@ -5,12 +5,20 @@ import {
   CircleUserRound,
   Cloud,
   Github,
+  Globe,
   Loader2,
   Pencil,
   Plus,
   Settings,
   Trash2,
 } from "lucide-react";
+import {
+  BROWSER_MACHINE_BASE_URL,
+  BROWSER_MACHINE_SERVER_ID,
+  BROWSER_MACHINE_SERVER_LABEL,
+  getServerConnectionKey,
+  isBrowserMachineUrl,
+} from "@cesium/client";
 import {
   useEffect,
   useLayoutEffect,
@@ -50,7 +58,6 @@ import type {
   CodespaceWakeFailure,
   CodespaceWakeStatus,
 } from "@/hooks/useGithubCodespaces";
-import { getServerConnectionKey } from "@cesium/client";
 
 const WAKE_PHASE_LABELS: Record<CodespaceWakePhase, string> = {
   "checking-engine": "Checking…",
@@ -309,7 +316,13 @@ export function ServerPickerPopover({
                   }}
                   className="flex min-w-0 flex-1 items-center gap-[8px] px-[8px] py-[8px] text-left sm:py-[7px]"
                 >
-                  {isLocalDevice ? (
+                  {isBrowserMachineUrl(server.baseUrl) ? (
+                    <Globe
+                      className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    />
+                  ) : isLocalDevice ? (
                     <CircleUserRound
                       className="size-[14px] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
@@ -359,7 +372,7 @@ export function ServerPickerPopover({
                     {shouldShowServerUrlInDevicePicker({
                       cloud,
                       isLocalDevice,
-                    }) ? (
+                    }) && !isBrowserMachineUrl(server.baseUrl) ? (
                       <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
                         {server.baseUrl}
                       </span>
@@ -564,6 +577,29 @@ export function ServerPickerPopover({
             connectOpen ? "flex-1 overflow-hidden" : ""
           }`}
         >
+          {servers.some((server) => isBrowserMachineUrl(server.baseUrl)) ? null : (
+            <button
+              type="button"
+              onClick={() => {
+                const saved = saveServer({
+                  id: BROWSER_MACHINE_SERVER_ID,
+                  label: BROWSER_MACHINE_SERVER_LABEL,
+                  baseUrl: BROWSER_MACHINE_BASE_URL,
+                });
+                onSelect(saved.id);
+                onClose();
+              }}
+              className="flex w-full shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+            >
+              <Globe className="size-[13px] shrink-0" strokeWidth={1.5} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">Use this browser</span>
+                <span className="mt-[1px] block truncate font-sans text-[10.5px] text-[var(--text-secondary)]">
+                  Runs entirely in this tab - no server needed
+                </span>
+              </span>
+            </button>
+          )}
           <button
             type="button"
             aria-expanded={connectOpen}

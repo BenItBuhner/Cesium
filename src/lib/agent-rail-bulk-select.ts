@@ -16,7 +16,7 @@ export function buildRailBulkSectionId(input: {
   folderId?: string | null;
 }): string {
   if (input.inPinnedSection) {
-    return "pinned";
+    return input.folderId ? `pinned:folder:${input.folderId}` : "pinned";
   }
   if (input.folderId) {
     return `ws:${input.workspaceId}:folder:${input.folderId}`;

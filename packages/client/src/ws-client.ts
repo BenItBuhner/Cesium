@@ -1,6 +1,7 @@
 "use client";
 
 import { clientLocation } from "./platform";
+import { openEngineWebSocket } from "./browser-machine";
 
 /**
  * Convert an HTTP(S) origin to a WebSocket origin. Empty / relative `url`
@@ -125,7 +126,7 @@ abstract class BaseReconnectSocket<TMessage> {
     }
     this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
-    const ws = new WebSocket(this.getResolvedUrl());
+    const ws = openEngineWebSocket(this.getResolvedUrl());
     this.ws = ws;
     this.configureSocket(ws);
   }

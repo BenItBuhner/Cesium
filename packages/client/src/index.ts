@@ -1,5 +1,6 @@
 export * from "./platform";
 export * from "./configured-server-base-url";
+export * from "./browser-machine";
 export * from "./server-connections";
 export * from "./server-connections-provider-shared";
 export * from "./resolve-server-base-url";
