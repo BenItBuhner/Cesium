@@ -26,6 +26,7 @@ export default defineConfig({
       // surface from @clerk/react so cloud sign-in works in packaged apps.
       // The real `convex` package (a renderer dependency) needs no shims.
       "@clerk/nextjs": r("./src/next-shims/clerk.tsx"),
+      "@cesium/browser-machine": r("../../packages/browser-machine/src/index.ts"),
       "@cesium/core": r("../../packages/core/src/index.ts"),
       "@cesium/contracts/cloud-agents": r("../../packages/contracts/src/cloud-agents.ts"),
       "@cesium/contracts/meta": r("../../packages/contracts/src/meta.ts"),

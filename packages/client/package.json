@@ -22,7 +22,8 @@
   "dependencies": {
     "@cesium/contracts": "file:../contracts",
     "@cesium/core": "file:../core",
-    "@cesium/design": "file:../design"
+    "@cesium/design": "file:../design",
+    "@cesium/browser-machine": "file:../browser-machine"
   },
   "peerDependencies": {
     "react": ">=19"

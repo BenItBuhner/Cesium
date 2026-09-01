@@ -12,6 +12,8 @@ const LOOPBACK_HOSTS = new Set([
   "::1",
   // Android emulator alias for the host loopback interface.
   "10.0.2.2",
+  // In-page browser machine engine - local by definition.
+  "browser.cesium.internal",
 ]);
 
 export const REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE =
