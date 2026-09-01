@@ -11,9 +11,9 @@ import {
   parsePbxprojMarketingVersions,
 } from "../scripts/assert-release-versions.mjs";
 
-const RELEASE_VERSION = "0.9.0";
+const RELEASE_VERSION = "0.10.0";
 
-test("shipped package, Android, and iOS versions all advertise 0.9.0", () => {
+test("shipped package, Android, and iOS versions all advertise 0.10.0", () => {
   const versions = collectReleaseVersions();
   assert.deepEqual(findReleaseVersionMismatches(RELEASE_VERSION, versions), []);
   assert.doesNotThrow(() => assertReleaseVersions(RELEASE_VERSION));

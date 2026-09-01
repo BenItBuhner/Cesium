@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-01
+
+Browser Machine and Codespaces cut. Tag `v0.10.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Added
+
+- Browser Machine: a **This browser** device that runs a full Cesium engine in the tab (`@cesium/browser-machine`) - IndexedDB VFS, client-side git, built-in shell with npm/node, and the first-party agent harness - plus a settings surface with engine-aware harness gating. Any device with a browser becomes a workspace.
+- GitHub Codespaces as a first-class device: pair a repository once, then create, wake, connect to, or recreate a codespace running the Cesium engine without a self-hosted server.
+- Account-scoped voice settings with sealed API keys.
+- Concise and detailed chat composer layouts.
+- Conversation rail customization with a Cursor-style cascading menu.
+- Unified voice transcription shortcut: tap or hold.
+- First-install sign-in prompt.
+
+### Changed
+
+- Conversation folders live in the Pinned rail section.
+- Swap side columns is wired through the agent shell and settings nav.
+- Engine-bound settings hide when no server is connected, and the composer no longer shows a phantom mock model in that state.
+- Account and Servers are grouped in the settings sidebar; Integrations is a workspace-first hub.
+- Account lives in the rail footer; devices only appear on new chat.
+- SSH workspace mode is gone; clients sign in from connect URLs.
+- Account settings no longer treat `cesium.techlitnow.com` as a connectable server. The server install command stays on one line, and URL connect is hidden on production.
+- Settings chrome: breadcrumbs, aurora backdrop with a dim tint, opaque search-shortcut hint, and a right workbench pane that matches the left rail (scrim + frost, no scene blur).
+- In-app documentation surface is removed.
+- Em-dashes are replaced with ASCII hyphens across the repo.
+
+### Fixed
+
+- Microphone is released when voice capture is cancelled mid-start.
+- Workspace 404 toast is replaced with first-server onboarding.
+- Engine password env-var hint is hidden on cloud-backed deployments.
+
 ## [0.9.0] - 2026-08-27
 
 Hosted production cut. Tag `v0.9.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64.
