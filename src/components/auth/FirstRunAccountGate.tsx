@@ -144,7 +144,7 @@ export function FirstRunAccountGate({ children }: { children: ReactNode }) {
 
 function FirstRunSplash() {
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
+    <div className="cesium-app-shell flex items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
       Starting Cesium…
     </div>
   );

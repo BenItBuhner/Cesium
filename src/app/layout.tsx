@@ -6,6 +6,7 @@ import { CloudProviders } from "@/contexts/CloudContext";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
 import { getSiteUrl } from "@/lib/site-url";
 import { buildThemeBootstrapScript } from "@/lib/theme-bootstrap";
+import { buildVisualViewportBootstrapScript } from "@/lib/visual-viewport";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,6 +47,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fafafa" },
     { media: "(prefers-color-scheme: dark)", color: "#191919" },
@@ -53,6 +57,7 @@ export const viewport: Viewport = {
 };
 
 const themeBootstrap = buildThemeBootstrapScript();
+const visualViewportBootstrap = buildVisualViewportBootstrapScript();
 const preferencesBootstrap = `(()=>{try{var K=${JSON.stringify(USER_PREFERENCES_STORAGE_KEY)};var desktop=!!(window.cesiumDesktop&&window.cesiumDesktop.isElectron);var enabled=false;var resume=false;if(!desktop){try{var raw=localStorage.getItem(K);var parsed=raw?JSON.parse(raw):null;enabled=!!(parsed&&parsed.experimentalIpadMode===true);resume=!!(parsed&&parsed.experimentalIpadResumeCache===true)}catch(e){}}document.documentElement.setAttribute("data-experimental-ipad-mode",enabled?"true":"false");document.documentElement.classList.toggle("experimental-ipad-mode",enabled);document.documentElement.setAttribute("data-experimental-ipad-resume-cache",resume?"true":"false");document.documentElement.classList.toggle("experimental-ipad-resume-cache",resume)}catch(e){}})();`;
 
 export default function RootLayout({
@@ -67,6 +72,9 @@ export default function RootLayout({
       >
         <Script id="theme-bootstrap" strategy="beforeInteractive">
           {themeBootstrap}
+        </Script>
+        <Script id="visual-viewport-bootstrap" strategy="beforeInteractive">
+          {visualViewportBootstrap}
         </Script>
         <Script id="preferences-bootstrap" strategy="beforeInteractive">
           {preferencesBootstrap}

@@ -8,6 +8,7 @@ import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsP
 import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { VisualViewportLock } from "@/components/layout/VisualViewportLock";
 
 function ThemedAuthBoundary({ children }: { children: ReactNode }) {
   const { ready, enabled, authenticated, connectionError, hasServerStatus } = useAuth();
@@ -30,6 +31,7 @@ function ThemedAuthBoundary({ children }: { children: ReactNode }) {
 export function WorkbenchRouteProviders({ children }: { children: ReactNode }) {
   return (
     <ServerConnectionsProvider>
+      <VisualViewportLock />
       <AuthProvider>
         <ThemedAuthBoundary>
           <FirstRunAccountGate>

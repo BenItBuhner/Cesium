@@ -3679,7 +3679,7 @@ export function AgentWorkspaceRail() {
             <>{orderedRailSections}</>
           )}
               </AgentRailConversationListScroll>
-              <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
+              <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[10px] pb-[max(10px,env(safe-area-inset-bottom,0px))]">
                 <button
                   ref={accountAnchorRef}
                   type="button"
