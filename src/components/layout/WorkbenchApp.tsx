@@ -395,7 +395,7 @@ function WorkbenchAuroraHost({ children }: { children: ReactNode }) {
   return (
     <AuroraSceneProvider>
       <div
-        className="relative isolate h-screen w-screen overflow-hidden bg-[var(--bg-main)]"
+        className="cesium-app-shell relative isolate bg-[var(--bg-main)]"
         data-aurora-scene={auroraEnabled ? "on" : undefined}
         data-aurora-surface={auroraEnabled ? "on" : undefined}
       >
@@ -451,7 +451,7 @@ function WorkbenchWithConversationProviders() {
 
 function LoadingFallback() {
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
+    <div className="cesium-app-shell flex items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
       Loading agent...
     </div>
   );

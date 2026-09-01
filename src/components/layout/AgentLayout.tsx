@@ -308,7 +308,7 @@ function AgentLayoutShell() {
 
   if (showBlockingWorkspaceLoad) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
+      <div className="cesium-app-shell flex items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
         Loading workspace...
       </div>
     );
