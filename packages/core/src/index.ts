@@ -30,3 +30,5 @@ export * from "./orchestration-types";
 export * from "./phone-control";
 export * from "./quick-actions";
 export * from "./secret-envelope";
+export * from "./cesium-model-access";
+export * from "./cesium-mode-policy";
