@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CESIUM_SOURCE_URL, LICENSE_PATH, TERMS_PATH } from "@/lib/legal/terms";
+import { LICENSE_PATH, TERMS_PATH } from "@/lib/legal/terms";
 
 const legalLinkClass =
   "text-[var(--text-primary)] underline decoration-[var(--border-card)] underline-offset-[3px] hover:decoration-[var(--text-primary)]";
@@ -24,7 +24,7 @@ export function TermsAgreementCheckbox({
         onChange={(event) => onChange(event.target.checked)}
         className="mt-[3px] size-[15px] shrink-0 accent-[var(--accent)]"
       />
-      <span className="min-w-0 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+      <span className="min-w-0 text-[13px] leading-[1.45] text-[var(--text-secondary)]">
         I agree to the{" "}
         <Link
           href={TERMS_PATH}
@@ -34,28 +34,17 @@ export function TermsAgreementCheckbox({
           onClick={(event) => event.stopPropagation()}
         >
           Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link
+          href={LICENSE_PATH}
+          target="_blank"
+          rel="noreferrer"
+          className={legalLinkClass}
+          onClick={(event) => event.stopPropagation()}
+        >
+          License
         </Link>
-        <span className="mt-[2px] block text-[11.5px] leading-relaxed text-[var(--text-disabled)]">
-          <Link
-            href={LICENSE_PATH}
-            target="_blank"
-            rel="noreferrer"
-            className={legalLinkClass}
-            onClick={(event) => event.stopPropagation()}
-          >
-            License
-          </Link>
-          <span aria-hidden> · </span>
-          <a
-            href={CESIUM_SOURCE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className={legalLinkClass}
-            onClick={(event) => event.stopPropagation()}
-          >
-            Source
-          </a>
-        </span>
       </span>
     </label>
   );

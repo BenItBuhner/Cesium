@@ -57,6 +57,8 @@ const allowedDevOrigins =
       "localhost:3000",
       "127.0.0.1",
       "127.0.0.1:3000",
+      "cesium.techlitnow.com",
+      "cesium.techlitnow.com:3000",
       "192.168.4.150",
     ];
 
