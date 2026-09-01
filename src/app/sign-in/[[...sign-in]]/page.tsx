@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SignIn } from "@clerk/nextjs";
+import { clerkAuthRedirectPath } from "@/lib/cloud/clerk-native-handoff";
 import { getCloudMode } from "@/lib/cloud/cloud-flags";
 
 export const metadata: Metadata = {
@@ -13,7 +14,11 @@ export const metadata: Metadata = {
  * the widget below always has its provider. Local-first builds (no Clerk keys)
  * render a plain explainer instead of crashing on a missing provider.
  */
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   if (getCloudMode() !== "clerk") {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-[14px] bg-[var(--bg-main)] px-[24px] text-center">
@@ -33,9 +38,10 @@ export default function SignInPage() {
       </main>
     );
   }
+  const redirectUrl = clerkAuthRedirectPath(await searchParams);
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg-main)] px-[24px] py-[48px]">
-      <SignIn forceRedirectUrl="/setup?resume=1" fallbackRedirectUrl="/setup?resume=1" />
+      <SignIn forceRedirectUrl={redirectUrl} fallbackRedirectUrl={redirectUrl} />
     </main>
   );
 }

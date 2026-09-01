@@ -13,10 +13,14 @@ import {
   writeFirstRunAccountState,
 } from "../src/lib/cloud/first-run-account.ts";
 import {
+  getClerkFallbackRedirectUrl,
   getClerkSignInUrl,
   getClerkSignUpUrl,
   getHostedClerkSignInUrl,
   getHostedClerkSignUpUrl,
+  isClerkWidgetOrigin,
+  isLoopbackOrEmulatorHostname,
+  isPackagedClerkRuntime,
   shouldUseHostedClerkAuth,
 } from "../src/lib/cloud/clerk-urls.ts";
 
@@ -104,12 +108,24 @@ describe("first-run account prompt", () => {
   });
 
   test("hosted clerk pages are always absolute production URLs", () => {
-    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
-    assert.equal(getHostedClerkSignUpUrl(), "https://cesium.techlitnow.com/sign-up");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://cesium.techlitnow.com/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
+    assert.equal(
+      getHostedClerkSignUpUrl(),
+      "https://cesium.techlitnow.com/sign-up?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
     process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/sign-in";
-    assert.equal(getHostedClerkSignInUrl(), "https://cesium.techlitnow.com/sign-in");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://cesium.techlitnow.com/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
     process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = "https://accounts.example/sign-in";
-    assert.equal(getHostedClerkSignInUrl(), "https://accounts.example/sign-in");
+    assert.equal(
+      getHostedClerkSignInUrl(),
+      "https://accounts.example/sign-in?native_handoff=1&redirect_url=https%3A%2F%2Fcesium.techlitnow.com%2Fauth%2Fnative-return"
+    );
   });
 
   test("hosted clerk auth is required on file://, localhost, and while Clerk is loading", () => {
@@ -127,6 +143,54 @@ describe("first-run account prompt", () => {
     assert.equal(shouldUseHostedClerkAuth(null, "signed-out"), true);
   });
 
+  test("hosted clerk auth is required on emulator, packaged shells, and any non-account origin", () => {
+    const prod = { protocol: "https:", hostname: "cesium.techlitnow.com" };
+    assert.equal(isClerkWidgetOrigin(prod), true);
+    assert.equal(
+      isClerkWidgetOrigin({ protocol: "http:", hostname: "10.0.2.2" }),
+      false
+    );
+    assert.equal(isLoopbackOrEmulatorHostname("10.0.2.2"), true);
+    assert.equal(isLoopbackOrEmulatorHostname("10.0.3.2"), true);
+    assert.equal(
+      shouldUseHostedClerkAuth(
+        { protocol: "http:", hostname: "10.0.2.2" },
+        "signed-out"
+      ),
+      true
+    );
+    assert.equal(
+      shouldUseHostedClerkAuth(
+        { protocol: "https:", hostname: "appassets.androidplatform.net" },
+        "signed-out"
+      ),
+      true
+    );
+    assert.equal(shouldUseHostedClerkAuth(prod, "signed-out", { packaged: true }), true);
+    assert.equal(
+      isPackagedClerkRuntime({
+        ReactNativeWebView: {},
+        location: { protocol: "https:" },
+      }),
+      true
+    );
+    assert.equal(
+      isPackagedClerkRuntime({
+        cesiumDesktop: { isElectron: true },
+        location: { protocol: "https:" },
+      }),
+      true
+    );
+    assert.equal(
+      getClerkFallbackRedirectUrl(
+        { protocol: "http:", hostname: "10.0.2.2" },
+        { packaged: true }
+      ),
+      "https://cesium.techlitnow.com/setup?resume=1"
+    );
+    assert.equal(getClerkFallbackRedirectUrl(prod, { packaged: false }), "/setup?resume=1");
+  });
+
   test("workbench providers mount the first-run account gate", () => {
     const providers = readFileSync(
       fileURLToPath(
@@ -142,11 +206,19 @@ describe("first-run account prompt", () => {
     );
     assert.match(providers, /FirstRunAccountGate/);
     assert.match(providers, /<FirstRunAccountGate>/);
-    assert.match(gate, /<SignUpButton mode="modal">/);
-    assert.match(gate, /<SignInButton mode="modal">/);
-    assert.match(gate, /getHostedClerkSignUpUrl/);
+    assert.match(gate, /ClerkAuthTrigger/);
+    assert.match(gate, /mode="sign-up"/);
+    assert.match(gate, /mode="sign-in"/);
     assert.match(gate, /Continue as guest/);
     assert.match(gate, /aria-label="Continue as guest"/);
+    const trigger = readFileSync(
+      fileURLToPath(
+        new URL("../src/components/auth/ClerkAuthTrigger.tsx", import.meta.url)
+      ),
+      "utf8"
+    );
+    assert.match(trigger, /isPackagedClerkRuntime/);
+    assert.match(trigger, /openHostedClerkAuth/);
   });
 
   test("desktop demo driver dismisses the first-run gate as guest", () => {

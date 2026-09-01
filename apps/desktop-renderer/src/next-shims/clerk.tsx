@@ -21,6 +21,9 @@ export {
   SignUpButton,
   UserButton,
   useAuth,
+  useClerk,
   useReverification,
+  useSignIn,
+  useSignUp,
   useUser,
 } from "@clerk/react";
