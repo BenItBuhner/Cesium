@@ -2382,7 +2382,22 @@ busy,
     setConversationLoadStatusById({});
 
     void (async () => {
-      const result = await listAgentConversations();
+      let result: Awaited<ReturnType<typeof listAgentConversations>>;
+      try {
+        result = await listAgentConversations();
+      } catch {
+        // The active engine may not know this workspace (e.g. right after a
+        // device switch, before the workspace context settles on the new
+        // engine). Still refresh the backend catalog so composer pickers and
+        // settings reflect the engine that is actually connected.
+        const fallback = await listCrossWorkspaceAgentConversations({ limit: 1 }).catch(
+          () => null
+        );
+        if (!cancelled && fallback) {
+          setBackends(fallback.backends);
+        }
+        return;
+      }
       if (cancelled) {
         return;
       }
@@ -2533,7 +2548,17 @@ busy,
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, eventRenderBatcher, eventsStore, updateWorkspaceSession]);
+    // agentSocketServerKey: refetch conversations + the backend catalog when
+    // the active engine changes (device switch), even if the workspace id is
+    // unchanged - otherwise pickers keep showing the previous engine's
+    // harnesses.
+  }, [
+    activeWorkspaceId,
+    agentSocketServerKey,
+    eventRenderBatcher,
+    eventsStore,
+    updateWorkspaceSession,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !bootstrapped) {

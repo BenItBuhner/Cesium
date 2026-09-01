@@ -92,7 +92,7 @@ import {
   summarizeCesiumModelAccess,
 } from "@/components/editor/settings/CesiumModelAccessSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useEngineSupportedHarnessFamilies } from "@/hooks/useEngineSupportedHarnessFamilies";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import {
   ACTIVE_AGENT_BACKEND_IDS,
@@ -4065,29 +4065,16 @@ function HarnessListView({
 export function AgentsHarnessSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const { workspaces } = useWorkspace();
-  const { backends } = useAgentConversations();
   const { activeHarnessId, openHarness, openAgentsList, openModelsSettings } =
     useAgentsHarnessNavigation();
   const agents = settings.agents;
   const modLabel = useMemo(() => primaryModifierLabel(detectShortcutPlatform()), []);
 
-  // Families the connected engine can execute, derived from its backend
-  // catalog (real servers list every harness; the browser machine only lists
-  // in-page ones). Null while the catalog has not loaded yet - in that case
-  // the list stays unfiltered instead of flashing empty.
-  const supportedFamilyIds = useMemo(() => {
-    if (backends.length === 0) {
-      return null;
-    }
-    const ids = new Set<string>();
-    for (const backend of backends) {
-      const family = harnessFamilyForBackend(backend.id);
-      if (family) {
-        ids.add(family.id);
-      }
-    }
-    return ids;
-  }, [backends]);
+  // Families the connected engine can execute, fetched straight from its
+  // backend catalog (real servers list every harness; the browser machine
+  // only lists in-page ones). Null while the catalog has not loaded yet - in
+  // that case the list stays unfiltered instead of flashing empty.
+  const supportedFamilyIds = useEngineSupportedHarnessFamilies();
 
   const activeHarnessSupported = useMemo(() => {
     if (!activeHarnessId || !supportedFamilyIds) {
