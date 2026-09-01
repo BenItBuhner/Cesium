@@ -60,6 +60,8 @@ function WorkbenchShell() {
 
   /** Slide direction of the in-flight gesture (finger travel). */
   const directionRef = useRef<SettingsBackDirection>(1);
+  /** True between a gesture's start and its cancel/commit resolution. */
+  const gestureSessionRef = useRef(false);
   /** True while the committed exit animation runs (extra backs are swallowed). */
   const exitingRef = useRef(false);
 
@@ -157,6 +159,7 @@ function WorkbenchShell() {
       motion.velocity = 0;
     }
     exitingRef.current = false;
+    gestureSessionRef.current = false;
     clearUnderlayStyles();
     clearSurfaceStyles();
   }, [showSettings, clearSurfaceStyles, clearUnderlayStyles]);
@@ -187,6 +190,12 @@ function WorkbenchShell() {
         closeSettingsView();
         return true;
       }
+      if (!gestureSessionRef.current) {
+        // Discrete back (no preceding gesture): don't inherit a stale slide
+        // direction from an earlier gesture - use the default rightward exit.
+        directionRef.current = settingsBackDirection(undefined);
+      }
+      gestureSessionRef.current = false;
       exitingRef.current = true;
       if (!underlayMountedRef.current) {
         // Discrete back with no preceding gesture: the reveal layer must
@@ -201,6 +210,7 @@ function WorkbenchShell() {
         if (exitingRef.current) {
           return;
         }
+        gestureSessionRef.current = true;
         directionRef.current = settingsBackDirection(event.swipeEdge);
         if (prefersReducedMotion()) {
           return;
@@ -222,6 +232,7 @@ function WorkbenchShell() {
         if (exitingRef.current) {
           return;
         }
+        gestureSessionRef.current = false;
         motionRef.current?.springTo(0);
       },
     }
