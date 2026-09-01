@@ -224,6 +224,15 @@ export function MobileBridgeSync() {
     if (nativeReady) {
       dispatchMobileBridgeMessage(nativeReady);
     }
+    // `nativeConfigChanged` messages that arrived before this component
+    // mounted (hydration, first-run gate) were dispatched to no listener. The
+    // bootstrap relay keeps `__CESIUM_MOBILE_SERVER__` current, so re-apply it
+    // here to converge the safe-area inset and system theme on the latest
+    // host state instead of whatever the boot-time bootstrap embedded.
+    const currentServer = window.__CESIUM_MOBILE_SERVER__;
+    if (currentServer && window.ReactNativeWebView) {
+      applyMobileHostConfig(currentServer);
+    }
   }, []);
 
   useEffect(() => {
