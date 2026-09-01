@@ -21,7 +21,7 @@ import type {
   ReleasePlatform,
 } from "@/lib/releases";
 
-const HIDDEN_INSTALLER_KINDS = new Set<ReleaseAssetKind>(["zip"]);
+const HIDDEN_INSTALLER_KINDS = new Set<ReleaseAssetKind>(["zip", "deb"]);
 
 const ARCH_LABELS: Record<ReleasePlatform, Partial<Record<ReleaseArch, string>>> = {
   mac: { arm64: "Apple silicon", x64: "Intel" },

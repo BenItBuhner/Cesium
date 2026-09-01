@@ -45,14 +45,16 @@ describe("user-facing installers", () => {
   test("hides ZIP archives published for auto-update", () => {
     const zip = asset("cesium-desktop-0.9.0-mac-arm64.zip");
     const dmg = asset("cesium-desktop-0.9.0-mac-arm64.dmg");
+    const deb = asset("cesium-desktop-0.9.0-linux-x64.deb");
     assert.equal(isUserFacingInstaller(zip), false);
+    assert.equal(isUserFacingInstaller(deb), false);
     assert.equal(isUserFacingInstaller(dmg), true);
   });
 
-  test("keeps the real installers: DMG, exe, AppImage, Debian, APK", () => {
+  test("keeps the real installers: DMG, exe, AppImage, APK", () => {
     assert.ok(CATALOG);
     const visible = userFacingAssets(CATALOG.assets).map((entry) => entry.kind);
-    assert.deepEqual(visible, ["dmg", "dmg", "exe", "appimage", "deb", "apk", "apk"]);
+    assert.deepEqual(visible, ["dmg", "dmg", "exe", "appimage", "apk", "apk"]);
   });
 
   test("labels only what the visitor needs to choose", () => {
@@ -62,18 +64,17 @@ describe("user-facing installers", () => {
     const android = userFacingAssets(CATALOG.assets, "android");
     assert.equal(installerButtonLabel(mac[0]!, mac), "Apple silicon");
     assert.equal(installerButtonLabel(mac[1]!, mac), "Intel");
-    assert.equal(installerButtonLabel(linux[0]!, linux), "AppImage");
-    assert.equal(installerButtonLabel(linux[1]!, linux), "Debian");
+    assert.equal(installerButtonLabel(linux[0]!, linux), "Download");
     assert.equal(installerButtonLabel(android[0]!, android), "Download");
   });
 
-  test("names both format and arch when Linux ships mixed builds", () => {
+  test("names Linux arch when both x64 and ARM AppImages ship", () => {
     const mixed = [
       asset("cesium-desktop-0.9.0-linux-x64.AppImage"),
-      asset("cesium-desktop-0.9.0-linux-arm64.deb"),
+      asset("cesium-desktop-0.9.0-linux-arm64.AppImage"),
     ];
-    assert.equal(installerButtonLabel(mixed[0]!, mixed), "AppImage · x64");
-    assert.equal(installerButtonLabel(mixed[1]!, mixed), "Debian · ARM");
+    assert.equal(installerButtonLabel(mixed[0]!, mixed), "x64");
+    assert.equal(installerButtonLabel(mixed[1]!, mixed), "ARM");
   });
 });
 

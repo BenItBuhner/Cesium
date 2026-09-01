@@ -35,7 +35,7 @@ describe("download page copy", () => {
     assert.match(platformIcon, /label: "Linux"/);
     assert.match(platformIcon, /label: "Android"/);
     assert.match(platformIcon, /label: "Wear OS"/);
-    assert.match(platformIcon, /label: "iOS"/);
+    assert.match(platformIcon, /ios:/);
     assert.match(platformIcon, /label: "Web"/);
     assert.doesNotMatch(platformIcon, /lucide-react/);
   });

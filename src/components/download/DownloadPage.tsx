@@ -99,7 +99,7 @@ function PlatformCard({
     <article className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-[22px]">
       <div className="mb-[16px] flex items-center gap-[12px]">
         <span className="flex size-[36px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--accent-bg)] text-[var(--text-primary)]">
-          <PlatformIcon platform={platform} className="size-[18px]" />
+          <PlatformIcon platform={platform} className="size-[20px]" />
         </span>
         <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
       </div>
