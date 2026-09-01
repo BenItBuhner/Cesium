@@ -73,6 +73,7 @@ import {
   type SettingsSearchEntry,
 } from "@/lib/settings-search-index";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import { useIsShellUnderlay } from "@/components/layout/ShellUnderlayContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
   BACK_INTENT_PRIORITY,
@@ -151,6 +152,10 @@ function shouldUseNativeEditableHandling(target: EventTarget | null): boolean {
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const { setShellView, openSettingsView } = useShellView();
+  // While this tree is the hidden preview layer beneath the settings view,
+  // its document-level listeners stand down entirely so the settings tree's
+  // own keyboard layer is the only one reacting to input.
+  const isShellUnderlay = useIsShellUnderlay();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -501,6 +506,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (isShellUnderlay) {
+      return;
+    }
     const onOpenStudio = (event: Event) => {
       if (!isOpenWorkspaceStudioEvent(event)) {
         return;
@@ -511,7 +519,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
     window.addEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
     return () => window.removeEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
-  }, []);
+  }, [isShellUnderlay]);
 
   const promptToRemoveWorkspace = useCallback(() => {
     setPalette("closed");
@@ -703,7 +711,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     browserPromptOpen ||
     workspaceWindowsModalOpen ||
     renameWindowOpen;
-  useBackHandler(anyIdeOverlayOpen, BACK_INTENT_PRIORITY.overlay, () => {
+  useBackHandler(anyIdeOverlayOpen && !isShellUnderlay, BACK_INTENT_PRIORITY.overlay, () => {
     if (renameWindowOpen) {
       setRenameWindowOpen(false);
     } else if (workspaceWindowsModalOpen) {
@@ -1744,6 +1752,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    if (isShellUnderlay) {
+      return;
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       const t = e.target;
       const insidePalette =
@@ -1940,6 +1951,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   handleInputSinkWorkbenchKeyDown,
   handleWorkbenchKeyDown,
   hardwareInputEnabled,
+  isShellUnderlay,
   palette,
   routeKeyDown,
   handlePaste,

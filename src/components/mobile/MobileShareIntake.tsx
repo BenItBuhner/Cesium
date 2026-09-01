@@ -13,6 +13,7 @@ import {
   BACK_INTENT_PRIORITY,
   useBackHandler,
 } from "@/components/mobile/BackIntentContext";
+import { useIsShellUnderlay } from "@/components/layout/ShellUnderlayContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { uploadAttachments } from "@/lib/server-api";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
@@ -76,11 +77,18 @@ export function MobileShareIntake() {
   } = useAgentShellState();
   const { activeWorkspaceId } = useWorkspace();
   const { upsertComposerDraft } = useOpenInEditor();
+  // While the agent tree is the hidden preview layer beneath settings, share
+  // intake stands down (matching the pre-underlay behavior where this
+  // component did not exist while settings was open).
+  const isShellUnderlay = useIsShellUnderlay();
   const [payload, setPayload] = useState<MobileSharePayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (isShellUnderlay) {
+      return;
+    }
     const onBridgeMessage = (event: Event) => {
       const message = (event as CustomEvent<MobileNativeToWebMessage>).detail;
       if (!message || message.type !== "shareIntake") {
@@ -94,7 +102,7 @@ export function MobileShareIntake() {
     return () => {
       window.removeEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onBridgeMessage);
     };
-  }, []);
+  }, [isShellUnderlay]);
 
   const dismiss = useCallback(() => {
     if (busy) return;
@@ -102,7 +110,7 @@ export function MobileShareIntake() {
     setError(null);
   }, [busy]);
 
-  useBackHandler(payload != null, BACK_INTENT_PRIORITY.overlay, () => {
+  useBackHandler(payload != null && !isShellUnderlay, BACK_INTENT_PRIORITY.overlay, () => {
     if (busy) return true;
     setPayload(null);
     setError(null);
@@ -206,7 +214,7 @@ export function MobileShareIntake() {
     ]
   );
 
-  if (!payload || typeof document === "undefined") {
+  if (!payload || isShellUnderlay || typeof document === "undefined") {
     return null;
   }
 

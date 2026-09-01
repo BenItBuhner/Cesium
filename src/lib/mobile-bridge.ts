@@ -54,6 +54,15 @@ export {
   type MobileWebToNativeMessage,
 } from "@cesium/core";
 
+/**
+ * Whether the page runs inside the native mobile shell (the WebView host
+ * injects `ReactNativeWebView` before any page script executes, so this is
+ * stable for the whole session).
+ */
+export function hasMobileBridge(): boolean {
+  return typeof window !== "undefined" && window.ReactNativeWebView?.postMessage != null;
+}
+
 export function postMobileBridgeMessage(message: MobileWebToNativeMessage): boolean {
   const bridge = typeof window !== "undefined" ? window.ReactNativeWebView : undefined;
   if (!bridge?.postMessage) {
