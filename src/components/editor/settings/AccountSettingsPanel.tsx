@@ -64,6 +64,9 @@ function AccountIdentityCard() {
   const cloud = useCloudContext();
   return (
     <SettingsBlock searchId="account-identity">
+      {identity.kind === "clerk-signed-out" ? (
+        <span data-settings-search-id="account-cloud-mode" hidden />
+      ) : null}
       <div className="flex items-center gap-[14px]">
         {identity.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -230,36 +233,26 @@ function CloudAccountSection() {
     );
   }
 
-  // clerk mode
+  // clerk mode — sign-in lives on AccountIdentityCard at the top of the page.
+  // Do not render a second "Not signed in" row when signed out.
+  if (cloud.status === "signed-out") {
+    return null;
+  }
+
   return (
     <SettingsSection>
-      {cloud.status === "signed-out" ? (
-        <SettingsRow
-          title="Not signed in"
-          description="Sign in to use your account on this device."
-          trailing={
-            <SignInButton mode="modal">
-              <button type="button" className={rowButtonClass}>
-                Sign in
-              </button>
-            </SignInButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      ) : (
-        <SettingsRow
-          title="Sign out"
-          description="Sign out of this device."
-          trailing={
-            <SignOutButton>
-              <button type="button" className={rowButtonClass}>
-                Sign out
-              </button>
-            </SignOutButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      )}
+      <SettingsRow
+        title="Sign out"
+        description="Sign out of this device."
+        trailing={
+          <SignOutButton>
+            <button type="button" className={rowButtonClass}>
+              Sign out
+            </button>
+          </SignOutButton>
+        }
+        searchId="account-cloud-mode"
+      />
     </SettingsSection>
   );
 }
