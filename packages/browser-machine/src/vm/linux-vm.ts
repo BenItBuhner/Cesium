@@ -120,10 +120,30 @@ export function registerVmCommand(shell: ShellRuntime): void {
         ctx.io.writeErr("vm exec: missing command\n");
         return 1;
       }
-      const before = vmState.serialBuffer.length;
-      vmState.emulator.serial0_send(`${command}\n`);
-      await new Promise((resolve) => setTimeout(resolve, 4_000));
-      ctx.io.write(vmState.serialBuffer.slice(before));
+      const state = vmState;
+      const before = state.serialBuffer.length;
+      state.emulator.serial0_send(`${command}\n`);
+      // Adaptive wait: stream until the serial console goes quiet for 1.5s
+      // (or 45s hard cap) - full emulation can take a while per command.
+      let printed = before;
+      let lastGrowth = Date.now();
+      const startedAt = Date.now();
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (state.serialBuffer.length > printed) {
+          ctx.io.write(state.serialBuffer.slice(printed));
+          printed = state.serialBuffer.length;
+          lastGrowth = Date.now();
+        }
+        if (Date.now() - lastGrowth > 1_500 && printed > before) break;
+        if (Date.now() - startedAt > 45_000) {
+          ctx.io.writeErr(
+            "\nvm exec: still running after 45s; output keeps streaming to `vm tail`.\n"
+          );
+          break;
+        }
+        if (ctx.signal?.aborted) break;
+      }
       return 0;
     }
     if (sub === "tail") {
