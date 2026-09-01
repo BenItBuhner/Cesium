@@ -1,6 +1,10 @@
 "use client";
 
-import { attachSessionToken, syncAuthTokenFromResponse } from "@cesium/client";
+import {
+  attachSessionToken,
+  engineFetch as clientEngineFetch,
+  syncAuthTokenFromResponse,
+} from "@cesium/client";
 
 /**
  * Minimal engine API client for the setup wizard. Every call targets an
@@ -80,7 +84,9 @@ async function engineFetch(
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(`${baseUrl}${path}`, {
+  // clientEngineFetch routes the in-page Browser Machine's synthetic base
+  // URL to the local engine; every other base URL is a plain network fetch.
+  const response = await clientEngineFetch(baseUrl, path, {
     ...init,
     headers: attachSessionToken(headers, baseUrl),
     credentials: "include",
