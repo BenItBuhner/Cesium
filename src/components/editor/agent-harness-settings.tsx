@@ -91,6 +91,10 @@ import {
   CesiumModelAccessSection,
   summarizeCesiumModelAccess,
 } from "@/components/editor/settings/CesiumModelAccessSection";
+import {
+  HarnessAuthSyncDetailSection,
+  HarnessAuthSyncSummaryCard,
+} from "@/components/editor/settings/HarnessAuthSyncSection";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
 import { useEngineSupportedHarnessFamilies } from "@/hooks/useEngineSupportedHarnessFamilies";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
@@ -3759,6 +3763,7 @@ function HarnessDetailView({
           />
         ) : null}
         <HarnessSpecificSettings backendId={settingsBackendId} />
+        <HarnessAuthSyncDetailSection backendId={settingsBackendId} />
         <HarnessDetailBlock>
           <div className="mb-[10px] flex flex-wrap items-center justify-between gap-[8px]">
             <div className="min-w-0">
@@ -4058,6 +4063,8 @@ function HarnessListView({
           </div>
         ) : null}
       </SettingsSection>
+
+      <HarnessAuthSyncSummaryCard />
     </>
   );
 }

@@ -27,6 +27,7 @@ import {
   useSettingsShellChrome,
 } from "@/components/editor/settings-ui";
 import { useOptionalAuth } from "@/components/auth/AuthProvider";
+import { HarnessAuthSyncSummaryCard } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
@@ -659,6 +660,7 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
+      {engineConnected ? <HarnessAuthSyncSummaryCard /> : null}
       <GithubAccountSection />
       {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />

@@ -161,6 +161,7 @@ export type CloudActions = {
   removeServer(input: CloudServerRemoval): Promise<void>;
   savePreferences(payload: string): Promise<void>;
   saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
+  removeSecret(input: { kind: string }): Promise<void>;
   saveAgentPref(input: {
     backendId: string;
     enabled: boolean;
@@ -428,6 +429,7 @@ function CloudBridge({
   const removeServerMutation = useMutation(api.servers.remove);
   const savePreferencesMutation = useMutation(api.preferences.save);
   const saveSecretMutation = useMutation(api.secrets.save);
+  const removeSecretMutation = useMutation(api.secrets.remove);
   const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
@@ -457,6 +459,9 @@ function CloudBridge({
       async saveSecret(input) {
         await saveSecretMutation({ ...identityArgs, ...input });
       },
+      async removeSecret(input) {
+        await removeSecretMutation({ ...identityArgs, ...input });
+      },
       async saveAgentPref(input) {
         await saveAgentPrefMutation({ ...identityArgs, ...input });
       },
@@ -477,6 +482,7 @@ function CloudBridge({
       convex,
       identityArgs,
       pushSnapshotMutation,
+      removeSecretMutation,
       removeServerMutation,
       saveAgentPrefMutation,
       savePreferencesMutation,

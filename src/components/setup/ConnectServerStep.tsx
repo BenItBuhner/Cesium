@@ -18,6 +18,7 @@ import {
   writeStoredServerConnectionsState,
 } from "@cesium/client";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
+import { HarnessAuthSyncOffer } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { useCloudContext, type CloudServer } from "@/contexts/CloudContext";
 import {
   checkEngineHealth,
@@ -146,18 +147,24 @@ export function ConnectServerStep({
 
   if (phase === "connected" && connectedUrl) {
     return (
-      <div className="flex items-center gap-[12px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[18px]">
-        <CheckCircle2 className="size-[20px] text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
-        <div>
-          <p className="text-[14px] font-medium text-[var(--text-primary)]">
-            Connected to {connectedUrl}
-          </p>
-          <p className="text-[12.5px] text-[var(--text-secondary)]">
-            {cloud.actions
-              ? "Saved to your cloud account - future devices reconnect automatically."
-              : "Saved on this device."}
-          </p>
+      <div className="space-y-[12px]">
+        <div className="flex items-center gap-[12px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[18px]">
+          <CheckCircle2 className="size-[20px] text-[var(--ask-accent)]" strokeWidth={1.75} aria-hidden />
+          <div>
+            <p className="text-[14px] font-medium text-[var(--text-primary)]">
+              Connected to {connectedUrl}
+            </p>
+            <p className="text-[12.5px] text-[var(--text-secondary)]">
+              {cloud.actions
+                ? "Saved to your cloud account - future devices reconnect automatically."
+                : "Saved on this device."}
+            </p>
+          </div>
         </div>
+        <HarnessAuthSyncOffer
+          server={{ baseUrl: connectedUrl }}
+          heading="Sign in this server's agents automatically"
+        />
       </div>
     );
   }
