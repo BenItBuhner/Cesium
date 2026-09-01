@@ -491,10 +491,13 @@ export function HarnessAuthSyncOffer({
     [api.items]
   );
 
+  // Keep the banner mounted after a successful apply/upload (the refresh
+  // empties `applicable`, but the user still needs to see the outcome).
+  const hasWork = applicable.length > 0 || uploadable.length > 0;
   if (
     cloud.status !== "ready" ||
     dismissed ||
-    (applicable.length === 0 && uploadable.length === 0)
+    (!hasWork && !result && !error)
   ) {
     return null;
   }
@@ -567,17 +570,19 @@ export function HarnessAuthSyncOffer({
           <p className="text-[13px] font-medium text-[var(--text-primary)]">
             {heading ?? "Sync agent sign-ins"}
           </p>
-          <p className="mt-[2px] text-[12px] leading-snug text-[var(--text-secondary)]">
-            {applicable.length > 0
-              ? `Your account has encrypted sign-ins for ${applicable
-                  .map((item) => item.label)
-                  .join(", ")} that this server is missing.`
-              : `Back up ${uploadable
-                  .map((item) => item.label)
-                  .join(", ")} to your account so other devices can sign in automatically.`}{" "}
-            Sign-ins stay end-to-end encrypted and are only used to sign in
-            devices you approve.
-          </p>
+          {hasWork ? (
+            <p className="mt-[2px] text-[12px] leading-snug text-[var(--text-secondary)]">
+              {applicable.length > 0
+                ? `Your account has encrypted sign-ins for ${applicable
+                    .map((item) => item.label)
+                    .join(", ")} that this server is missing.`
+                : `Back up ${uploadable
+                    .map((item) => item.label)
+                    .join(", ")} to your account so other devices can sign in automatically.`}{" "}
+              Sign-ins stay end-to-end encrypted and are only used to sign in
+              devices you approve.
+            </p>
+          ) : null}
           {result ? (
             <p className="mt-[6px] flex items-center gap-[6px] text-[12px] text-[var(--text-primary)]">
               <Check className="size-[13px]" strokeWidth={2} aria-hidden />
@@ -628,7 +633,7 @@ export function HarnessAuthSyncOffer({
               disabled={busy != null}
               onClick={() => setDismissed(true)}
             >
-              Not now
+              {hasWork ? "Not now" : "Done"}
             </button>
           </div>
         </div>
