@@ -29,6 +29,7 @@ import {
   ENGAGE_DOMINANCE,
   FLICK_VELOCITY_THRESHOLD,
   SCROLL_CLAIM_PX,
+  applyOverlayDrawerSurfaceFrame,
   gestureBlockedByTarget,
   useLegacyOverflowClipGuard,
   type DrawerSide,
@@ -63,7 +64,7 @@ export function MobileNavDrawerShell({
   /** BACK_INTENT_PRIORITY tier for the drawer's predictive-back layer. */
   backPriority: number;
   drawerWidth: number;
-  /** Surface styling for the drawer panel (border, shadow, background). */
+  /** Extra drawer chrome (border, shadow). Frost lives on `.mobile-left-drawer-surface`. */
   drawerClassName: string;
   drawer: ReactNode;
   children: ReactNode;
@@ -81,10 +82,7 @@ export function MobileNavDrawerShell({
   openRef.current = open;
 
   const applyFrame = useCallback((progress: number) => {
-    const drawerEl = drawerRef.current;
-    if (drawerEl) {
-      drawerEl.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
-    }
+    applyOverlayDrawerSurfaceFrame(drawerRef.current, progress, "left");
     const scrim = scrimRef.current;
     if (scrim) {
       scrim.style.opacity = String(progress);
@@ -353,11 +351,11 @@ export function MobileNavDrawerShell({
           <div
             ref={drawerRef}
             data-mobile-drawer="left"
-            className={`absolute inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
+            className={`mobile-left-drawer-surface absolute inset-y-0 left-0 z-40 overflow-hidden ${drawerClassName}`}
             style={{
               width: `${drawerWidth}px`,
-              transform: "translate3d(-100%, 0, 0)",
-              willChange: "transform",
+              transform: open ? "none" : "translate3d(-100%, 0, 0)",
+              willChange: open ? "auto" : "transform",
             }}
           >
             {drawer}

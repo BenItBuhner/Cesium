@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
+  applyOverlayDrawerSurfaceFrame,
   isRightPaneSwipeAction,
   resolveAgentShellSwipeAction,
 } from "../src/components/mobile/drawer-motion.ts";
@@ -125,6 +126,39 @@ describe("resolveAgentShellSwipeAction", () => {
       }),
       "close-right"
     );
+  });
+});
+
+describe("applyOverlayDrawerSurfaceFrame", () => {
+  function fakeDrawer(): { el: HTMLElement; style: Record<string, string> } {
+    const style: Record<string, string> = {};
+    return { el: { style } as unknown as HTMLElement, style };
+  }
+
+  test("drops the resting transform so backdrop-filter can sample behind the pane", () => {
+    const { el, style } = fakeDrawer();
+    applyOverlayDrawerSurfaceFrame(el, 1, "left");
+    assert.equal(style.transform, "none");
+    assert.equal(style.willChange, "auto");
+  });
+
+  test("keeps a sliding transform while the left drawer is mid-flight", () => {
+    const { el, style } = fakeDrawer();
+    applyOverlayDrawerSurfaceFrame(el, 0.4, "left");
+    assert.equal(style.transform, "translate3d(-60%, 0, 0)");
+    assert.equal(style.willChange, "transform");
+  });
+
+  test("slides the right drawer from the opposite edge", () => {
+    const { el, style } = fakeDrawer();
+    applyOverlayDrawerSurfaceFrame(el, 0.25, "right");
+    assert.equal(style.transform, "translate3d(75%, 0, 0)");
+    applyOverlayDrawerSurfaceFrame(el, 1, "right");
+    assert.equal(style.transform, "none");
+  });
+
+  test("ignores a missing drawer node", () => {
+    assert.doesNotThrow(() => applyOverlayDrawerSurfaceFrame(null, 1, "left"));
   });
 });
 
