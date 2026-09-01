@@ -36,40 +36,17 @@ const legalUrls = {
 } as const;
 
 /**
- * Shared Clerk chrome: Cesium tokens + legal URLs so SignIn / SignUp
- * pick up the same card and Clerk's built-in Terms footer links.
+ * Shared Clerk chrome: Cesium tokens + legal URLs so the real SignIn / SignUp
+ * widgets pick up Terms links in Clerk's own footer.
  */
-export function getClerkAppearance(options?: {
-  /** Flatten Clerk's own card so a host shell can own the border. */
-  embedInHostCard?: boolean;
-  /** Disable Clerk's Continue until express Terms consent. */
-  primaryActionDisabled?: boolean;
-}): ClerkAppearance {
-  const embed = options?.embedInHostCard === true;
-  const gatePrimary = options?.primaryActionDisabled === true;
+export function getClerkAppearance(): ClerkAppearance {
   return {
     layout: legalUrls,
     options: legalUrls,
     variables: clerkVariables,
     elements: {
       rootBox: "w-full",
-      ...(embed
-        ? {
-            cardBox: "w-full border-0 bg-transparent shadow-none",
-            card: "border-0 bg-transparent shadow-none",
-          }
-        : {
-            cardBox: "w-full",
-          }),
-      ...(gatePrimary
-        ? {
-            formButtonPrimary: "pointer-events-none opacity-40",
-          }
-        : {}),
+      cardBox: "w-full",
     },
   };
 }
-
-/** Host card that wraps a flattened Clerk widget. */
-export const clerkHostCardClass =
-  "w-full max-w-[400px] overflow-hidden rounded-[0.75rem] border border-[var(--border-card)] bg-[var(--bg-card)] shadow-[0_1px_2px_color-mix(in_srgb,var(--text-primary)_6%,transparent)]";

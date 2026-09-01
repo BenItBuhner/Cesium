@@ -79,7 +79,7 @@ describe("landing workbench CTAs", () => {
       ),
       "utf8"
     );
-    assert.match(signUpWithTerms, /forceRedirectUrl=\{SIGN_UP_REDIRECT\}/);
+    assert.match(signUpWithTerms, /forceRedirectUrl=\{redirectUrl\}/);
     assert.match(signUpWithTerms, /buildTermsAcceptanceMetadata\(acceptedAt\)/);
   });
 

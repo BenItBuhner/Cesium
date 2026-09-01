@@ -124,20 +124,17 @@ describe("terms of service content", () => {
 });
 
 describe("terms wiring", () => {
-  test("sign-up puts express Terms consent between the fields and Continue", () => {
+  test("sign-up mounts the real Clerk SignUp widget plus terms notice", () => {
     const signUp = readFileSync(
       fileURLToPath(new URL("../src/components/auth/SignUpWithTerms.tsx", import.meta.url)),
       "utf8"
     );
-    assert.match(signUp, /TermsAgreementCheckbox/);
-    assert.match(signUp, /unsafeMetadata=\{/);
-    assert.match(signUp, /buildTermsAcceptanceMetadata/);
-    assert.match(signUp, /embedInHostCard: true/);
-    assert.match(signUp, /primaryActionDisabled: !agreed/);
-    assert.match(signUp, /ClerkSignUpFrame/);
-    assert.match(signUp, /useInjectBeforeClerkPrimary/);
+    assert.match(signUp, /<SignUp/);
+    assert.match(signUp, /unsafeMetadata=\{buildTermsAcceptanceMetadata\(acceptedAt\)\}/);
+    assert.match(signUp, /TermsNotice/);
+    assert.doesNotMatch(signUp, /ClerkSignUpFrame/);
+    assert.doesNotMatch(signUp, /Email address/);
     assert.doesNotMatch(signUp, /Check the box above to continue to sign-up/);
-    assert.doesNotMatch(signUp, /clerkHostLegalRowClass/);
   });
 
   test("public routes, sitemap, and robots keep terms reachable", () => {
@@ -173,7 +170,6 @@ describe("terms wiring", () => {
     assert.match(cloud, /appearance=\{getClerkAppearance\(\)\}/);
     assert.match(appearance, /termsPageUrl: TERMS_PATH/);
     assert.match(appearance, /privacyPageUrl: `\$\{TERMS_PATH\}#privacy`/);
-    assert.match(appearance, /primaryActionDisabled/);
     assert.match(appearance, /layout: legalUrls/);
   });
 
