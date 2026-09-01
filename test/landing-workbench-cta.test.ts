@@ -80,7 +80,7 @@ describe("landing workbench CTAs", () => {
       "utf8"
     );
     assert.match(signUpWithTerms, /forceRedirectUrl=\{SIGN_UP_REDIRECT\}/);
-    assert.match(signUpWithTerms, /unsafeMetadata=\{buildTermsAcceptanceMetadata/);
+    assert.match(signUpWithTerms, /buildTermsAcceptanceMetadata\(acceptedAt\)/);
   });
 
   test("download header also signs in instead of launching the workbench", () => {

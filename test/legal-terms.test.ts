@@ -124,15 +124,18 @@ describe("terms of service content", () => {
 });
 
 describe("terms wiring", () => {
-  test("sign-up is gated on an express agreement checkbox", () => {
+  test("sign-up mounts Clerk in one card and gates it on the legal row", () => {
     const signUp = readFileSync(
       fileURLToPath(new URL("../src/components/auth/SignUpWithTerms.tsx", import.meta.url)),
       "utf8"
     );
     assert.match(signUp, /TermsAgreementCheckbox/);
-    assert.match(signUp, /unsafeMetadata=\{buildTermsAcceptanceMetadata/);
-    assert.match(signUp, /Check the box above to continue to sign-up/);
-    assert.match(signUp, /\{agreed && acceptedAt \?/);
+    assert.match(signUp, /unsafeMetadata=\{/);
+    assert.match(signUp, /buildTermsAcceptanceMetadata/);
+    assert.match(signUp, /getClerkAppearance\(\{ embedInHostCard: true \}\)/);
+    assert.match(signUp, /pointer-events-none/);
+    assert.doesNotMatch(signUp, /Check the box above to continue to sign-up/);
+    assert.doesNotMatch(signUp, /Create your account/);
   });
 
   test("public routes, sitemap, and robots keep terms reachable", () => {
@@ -161,7 +164,13 @@ describe("terms wiring", () => {
       fileURLToPath(new URL("../src/contexts/CloudContext.tsx", import.meta.url)),
       "utf8"
     );
-    assert.match(cloud, /termsPageUrl: TERMS_PATH/);
+    const appearance = readFileSync(
+      fileURLToPath(new URL("../src/lib/cloud/clerk-appearance.ts", import.meta.url)),
+      "utf8"
+    );
+    assert.match(cloud, /appearance=\{getClerkAppearance\(\)\}/);
+    assert.match(appearance, /termsPageUrl: TERMS_PATH/);
+    assert.match(appearance, /privacyPageUrl: `\$\{TERMS_PATH\}#privacy`/);
   });
 
   test("license page embeds the repository LICENSE file", () => {

@@ -3,13 +3,19 @@
 import { useMemo, useState } from "react";
 import { SignUp } from "@clerk/nextjs";
 import { TermsAgreementCheckbox } from "@/components/legal/TermsAgreement";
+import {
+  clerkHostCardClass,
+  clerkHostLegalRowClass,
+  clerkWidgetGateStyle,
+  getClerkAppearance,
+} from "@/lib/cloud/clerk-appearance";
 import { buildTermsAcceptanceMetadata } from "@/lib/legal/terms";
 
 const SIGN_UP_REDIRECT = "/setup?resume=1";
 
 /**
- * Clerk sign-up gated on an express Terms of Service checkbox.
- * Acceptance is copied onto the created user as unsafeMetadata.
+ * Clerk SignUp with an express Terms checkbox in the same card.
+ * The widget stays mounted; agreeing enables it and stamps unsafeMetadata.
  */
 export function SignUpWithTerms() {
   const [agreed, setAgreed] = useState(false);
@@ -17,33 +23,29 @@ export function SignUpWithTerms() {
     () => (agreed ? new Date().toISOString() : null),
     [agreed]
   );
+  const appearance = useMemo(() => getClerkAppearance({ embedInHostCard: true }), []);
 
   return (
-    <div className="flex w-full max-w-[420px] flex-col gap-[16px]">
-      <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
-          Create your account
-        </h1>
-        <p className="mt-[8px] text-[13px] leading-relaxed text-[var(--text-secondary)]">
-          Agree to the Terms first. That is the click that binds you — not the
-          OAuth button.
-        </p>
-      </div>
-      <TermsAgreementCheckbox checked={agreed} onChange={setAgreed} />
-      {agreed && acceptedAt ? (
+    <div className={clerkHostCardClass}>
+      <div
+        aria-disabled={!agreed}
+        className={agreed ? undefined : "pointer-events-none select-none"}
+        style={agreed ? undefined : clerkWidgetGateStyle}
+      >
         <SignUp
           forceRedirectUrl={SIGN_UP_REDIRECT}
           fallbackRedirectUrl={SIGN_UP_REDIRECT}
-          unsafeMetadata={buildTermsAcceptanceMetadata(acceptedAt)}
+          appearance={appearance}
+          unsafeMetadata={
+            agreed && acceptedAt
+              ? buildTermsAcceptanceMetadata(acceptedAt)
+              : undefined
+          }
         />
-      ) : (
-        <div
-          role="status"
-          className="rounded-[var(--radius-card)] border border-dashed border-[var(--border-card)] bg-[var(--bg-panel)] px-[18px] py-[22px] text-center text-[13px] leading-relaxed text-[var(--text-disabled)]"
-        >
-          Check the box above to continue to sign-up.
-        </div>
-      )}
+      </div>
+      <div className={clerkHostLegalRowClass}>
+        <TermsAgreementCheckbox checked={agreed} onChange={setAgreed} />
+      </div>
     </div>
   );
 }
