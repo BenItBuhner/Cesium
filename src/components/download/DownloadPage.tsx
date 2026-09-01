@@ -188,7 +188,7 @@ export function DownloadPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/releases/latest")
+    void fetch("/api/releases/latest", { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`release catalog unavailable (${response.status})`);
