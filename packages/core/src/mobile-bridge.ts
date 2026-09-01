@@ -390,6 +390,17 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data && typeof data.type === "string") {
+          // Host chrome (safe-area inset + native root class) is applied at
+          // the relay itself, not only by the workbench's React handler. The
+          // real inset routinely lands while the page is still hydrating or
+          // held behind a first-run gate - before any CustomEvent listener
+          // exists - and dropping that one message used to pin the top chrome
+          // under the status bar for the rest of the session.
+          if (data.type === "nativeConfigChanged" && data.server) {
+            window.__CESIUM_MOBILE_SERVER__ = data.server;
+            if (window.cesiumMobile) window.cesiumMobile.server = data.server;
+            applyHostChrome();
+          }
           window.dispatchEvent(
             new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data })
           );
