@@ -15,8 +15,10 @@ import type { ShellRuntime } from "../shell/runtime";
 import type { ShellContext } from "../shell/builtins";
 import { readDoc, writeDoc } from "../stores/kv-docs";
 
-const V86_MODULE_URL = "https://cdn.jsdelivr.net/npm/v86@0.5.308/build/libv86.mjs";
+const V86_MODULE_URL = "https://cdn.jsdelivr.net/npm/v86@0.5.451/build/libv86.mjs";
 const VM_IMAGE_KEY = "vm:image-url";
+/** v86's official demo Linux (buildroot, serial console), served with CORS. */
+const DEFAULT_VM_IMAGE = "https://i.copy.sh/linux4.iso";
 
 type V86Emulator = {
   add_listener(event: string, handler: (data: unknown) => void): void;
@@ -79,10 +81,10 @@ export function registerVmCommand(shell: ShellRuntime): void {
         else if (arg === "--memory") memoryMb = Number.parseInt(argv[++i] ?? "256", 10) || 256;
       }
       if (!imageUrl) {
-        ctx.io.writeErr(
-          "vm start: no image configured. Pass --image <url> pointing at a v86-compatible Linux image (e.g. a 32-bit Alpine ISO hosted with CORS enabled). The URL is remembered for next time.\n"
+        imageUrl = DEFAULT_VM_IMAGE;
+        ctx.io.write(
+          `vm: no --image given; using the default demo Linux (${DEFAULT_VM_IMAGE}). Pass --image <url> for a custom v86-compatible (32-bit x86) image hosted with CORS.\n`
         );
-        return 1;
       }
       await writeDoc(VM_IMAGE_KEY, imageUrl);
       ctx.io.write(

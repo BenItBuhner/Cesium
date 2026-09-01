@@ -212,7 +212,13 @@ function createRubyPack(): ToolchainPack {
       if (!wasmResponse.ok) {
         throw new Error(`ruby.wasm download failed (${wasmResponse.status})`);
       }
-      const wasmModule = await WebAssembly.compileStreaming(wasmResponse);
+      let wasmModule: WebAssembly.Module;
+      try {
+        wasmModule = await WebAssembly.compileStreaming(wasmResponse.clone());
+      } catch {
+        // Some hosts mislabel the wasm MIME type; compile from bytes instead.
+        wasmModule = await WebAssembly.compile(await wasmResponse.arrayBuffer());
+      }
       vm = (await rubyModule.DefaultRubyVM(wasmModule)).vm;
       shell.registerCommand("ruby", async (argv: string[], ctx: ShellContext) => {
         if (!vm) {
