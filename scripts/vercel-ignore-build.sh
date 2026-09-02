@@ -45,7 +45,7 @@ fi
 
 # Everything the root `next build` reads. Keep in sync with tsconfig.json
 # `include` and next.config.ts.
-web_paths='^(src/|convex/|public/|packages/(core|contracts|sdk|browser-machine|client|design|ui-web|config)/|scripts/vercel-ignore-build\.sh$|next\.config\.ts$|next-env\.d\.ts$|tsconfig\.json$|package\.json$|package-lock\.json$|vercel\.json$|postcss\.config\.mjs$|\.npmrc$|\.env(\..*)?$)'
+web_paths='^(src/|convex/|public/|packages/(core|contracts|sdk|browser-machine|client|design|ui-web|config)/|scripts/vercel-(ignore-build\.sh|build\.mjs)$|next\.config\.ts$|next-env\.d\.ts$|tsconfig\.json$|package\.json$|package-lock\.json$|vercel\.json$|postcss\.config\.mjs$|\.npmrc$|\.env(\..*)?$)'
 
 relevant="$(printf '%s\n' "$changed" | grep -E "$web_paths" || true)"
 
