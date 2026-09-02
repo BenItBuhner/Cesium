@@ -16,6 +16,7 @@ import type {
 } from "../lib/agents/types.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { noteCodespaceClientActivity } from "../lib/codespace-keepalive.js";
 import { measureServerPerf } from "../lib/perf.js";
 
 type AgentSocketState = {
@@ -541,6 +542,9 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
         return;
       }
       if (message.type === "request_history") {
+        // Only user scrolling asks for older history - a presence signal for
+        // the codespace keep-alive (subscribe/gap-fill frames are automatic).
+        noteCodespaceClientActivity();
         const conversationId =
           typeof message.conversationId === "string" ? message.conversationId.trim() : "";
         const beforeSeq =
