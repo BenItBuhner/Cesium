@@ -366,6 +366,18 @@ describe("codespace device model", () => {
     );
   });
 
+  test("repo workspace root follows the Codespaces checkout convention", async () => {
+    const { codespaceRepoWorkspaceName, codespaceRepoWorkspaceRoot } = await import(
+      "../src/lib/github-codespaces.ts"
+    );
+    assert.equal(
+      codespaceRepoWorkspaceRoot("BenItBuhner/Model-Proxy"),
+      "/workspaces/Model-Proxy"
+    );
+    assert.equal(codespaceRepoWorkspaceName("BenItBuhner/Model-Proxy"), "Model-Proxy");
+    assert.equal(codespaceRepoWorkspaceRoot("bare-name"), "/workspaces/bare-name");
+  });
+
   test("state categorization and labels", () => {
     assert.equal(categorizeCodespaceState("Available"), "running");
     assert.equal(categorizeCodespaceState("Shutdown"), "stopped");
@@ -597,6 +609,41 @@ describe("Clerk GitHub connect errors", () => {
     );
     assert.ok(fromConvex.includes("npx convex deploy"));
     assert.ok(!fromConvex.includes("CLERK_SECRET_KEY"));
+  });
+
+  test("classifies the Clerk-side GitHub link and explains Convex mismatches", async () => {
+    const { describeGithubLink, explainGithubLinkMismatch } = await import(
+      "../src/hooks/useClerkGithubLink.ts"
+    );
+    assert.deepEqual(describeGithubLink(undefined), { kind: "none" });
+    assert.equal(explainGithubLinkMismatch({ kind: "none" }), null);
+
+    const unverified = describeGithubLink({
+      username: "octo",
+      approvedScopes: "read:user user:email",
+      verification: { status: "unverified" },
+    });
+    assert.equal(unverified.kind === "linked" && unverified.verified, false);
+    assert.ok(explainGithubLinkMismatch(unverified)?.includes("never completed"));
+
+    const missingScopes = describeGithubLink({
+      username: "octo",
+      approvedScopes: "read:user user:email",
+      verification: { status: "verified" },
+    });
+    assert.deepEqual(
+      missingScopes.kind === "linked" && missingScopes.missingScopes,
+      ["repo", "codespace"]
+    );
+    assert.ok(explainGithubLinkMismatch(missingScopes)?.includes("repo and codespace"));
+
+    const healthy = describeGithubLink({
+      username: "octo",
+      approvedScopes: "read:user user:email repo codespace",
+      verification: { status: "verified" },
+    });
+    assert.equal(healthy.kind === "linked" && healthy.missingScopes.length, 0);
+    assert.ok(explainGithubLinkMismatch(healthy)?.includes("CLERK_SECRET_KEY"));
   });
 
   test("parses Clerk oauth token payloads and error bodies", async () => {

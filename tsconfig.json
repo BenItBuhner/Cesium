@@ -34,19 +34,30 @@
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "next.config.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "convex/**/*.ts",
+    "packages/browser-machine/src/**/*.ts",
+    "packages/browser-machine/src/**/*.tsx",
+    "packages/client/src/**/*.ts",
+    "packages/client/src/**/*.tsx",
+    "packages/contracts/src/**/*.ts",
+    "packages/core/src/**/*.ts",
+    "packages/design/src/**/*.ts",
+    "packages/design/src/**/*.tsx",
+    "packages/sdk/src/**/*.ts",
+    "packages/ui-web/src/**/*.ts",
+    "packages/ui-web/src/**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
+    "**/dist/**",
     "server/**/*",
     "test/**/*",
-    "apps/mobile/**/*",
-    "apps/desktop/**/*",
-    "apps/desktop-renderer/**/*",
-    "apps/web/**/*"
+    "scripts/**/*",
+    "apps/**/*"
   ]
 }

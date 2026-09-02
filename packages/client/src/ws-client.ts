@@ -319,7 +319,7 @@ export class BinaryWebSocket extends BaseReconnectSocket<
     this.sendText(JSON.stringify(data));
   }
 
-  sendBinary(data: string | ArrayBufferLike | Blob): void {
+  sendBinary(data: string | BufferSource | Blob): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (typeof data === "string") {
       this.ws.send(this.encoder.encode(data));

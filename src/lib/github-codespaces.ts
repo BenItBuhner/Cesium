@@ -66,6 +66,25 @@ export function codespaceDeviceKey(repoFullName: string): string {
   return `codespace:${repoFullName}`;
 }
 
+/**
+ * Where GitHub checks the repository out inside its codespace. Codespaces
+ * always clone to `/workspaces/<repo-name>` (the name half of `owner/repo`,
+ * case preserved), and the Cesium bootstrap points the engine's workspace
+ * root at `/workspaces`, so this is the folder to register as the device's
+ * workspace.
+ */
+export function codespaceRepoWorkspaceRoot(repoFullName: string): string {
+  const repo = repoFullName.split("/").pop()?.trim() || repoFullName.trim();
+  return `/workspaces/${repo}`;
+}
+
+export function codespaceRepoWorkspaceName(repoFullName: string): string {
+  return repoFullName.split("/").pop()?.trim() || repoFullName.trim();
+}
+
+/** Label for the device pill / rail when the active server is a codespace. */
+export const CODESPACE_DEVICE_LABEL = "GitHub Codespace";
+
 export function deriveCodespaceDevices(
   cloudServers: CloudServer[],
   localServers: Array<{ id: string; baseUrl: string }>

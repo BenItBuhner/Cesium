@@ -112,9 +112,16 @@ export class VoiceCapture {
     const track = stream.getAudioTracks()[0];
     if (track && this.callbacks.onSettings) {
       const settings = track.getSettings();
+      // Newer lib.dom types echoCancellation as boolean | string (e.g. "all"/"remote-only").
+      const echoCancellation =
+        typeof settings.echoCancellation === "boolean"
+          ? settings.echoCancellation
+          : typeof settings.echoCancellation === "string"
+            ? true
+            : null;
       this.callbacks.onSettings({
         sampleRate: settings.sampleRate ?? null,
-        echoCancellation: settings.echoCancellation ?? null,
+        echoCancellation,
         noiseSuppression: settings.noiseSuppression ?? null,
         autoGainControl: settings.autoGainControl ?? null,
         deviceLabel: track.label || null,

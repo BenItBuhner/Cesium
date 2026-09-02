@@ -25,7 +25,8 @@
     "dev:desktop": "npm run dev --workspace @cesium/desktop",
     "dev:mobile": "npm run dev --workspace @cesium/mobile",
     "dev:server": "npm run dev --prefix server",
-    "build": "next build",
+    "build": "npm run typecheck && next build",
+    "typecheck": "next typegen && node node_modules/typescript-native/lib/tsc.js --noEmit -p tsconfig.json",
     "build:web": "npm run build --workspace @cesium/web",
     "build:desktop": "npm run build --workspace @cesium/desktop",
     "build:mobile": "npm run build --workspace @cesium/mobile",
@@ -54,7 +55,7 @@
     "libsodium-wrappers": "^0.8.4",
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
-    "next": "16.1.7",
+    "next": "16.3.4",
     "onnxruntime-web": "^1.23.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -62,6 +63,19 @@
   },
   "overrides": {
     "lightningcss": "1.30.1"
+  },
+  "allowScripts": {
+    "sharp": true,
+    "esbuild": true,
+    "protobufjs": true,
+    "unrs-resolver": true,
+    "node-pty": true,
+    "sqlite3": true,
+    "@google/genai": false,
+    "detox": false,
+    "dtrace-provider": false,
+    "electron-winstaller": false,
+    "onnxruntime-node": false
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -71,11 +85,12 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.7",
+    "eslint-config-next": "16.3.4",
     "lightningcss": "1.30.1",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5",
+    "typescript-native": "npm:typescript@7.0.2",
     "webpack": "^5.105.4"
   }
 }
