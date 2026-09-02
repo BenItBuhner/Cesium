@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
   AgentStoredEvent,
@@ -21,6 +22,9 @@ import {
 export type AgentCompletionErrorDockState = {
   visible: boolean;
   error: ReturnType<typeof parseAgentCompletionError>;
+  /** Harness that failed; drives the "Open <harness> settings" shortcut. */
+  backendId: AgentBackendId | null;
+  backendLabel: string | null;
   supportsRetry: boolean;
   retryDelayMs: number;
   retriesRemaining: number;
@@ -174,6 +178,8 @@ export function useAgentCompletionErrorDock({
   return {
     visible,
     error,
+    backendId: conversation?.config.backendId ?? backend?.id ?? null,
+    backendLabel: backend?.label ?? null,
     supportsRetry,
     retryDelayMs,
     retriesRemaining,
