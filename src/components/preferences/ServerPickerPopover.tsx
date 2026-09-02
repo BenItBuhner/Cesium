@@ -30,6 +30,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { DeviceConnectPanel } from "@/components/preferences/DeviceConnectPanel";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useShellView } from "@/components/layout/ShellViewContext";
@@ -145,6 +146,7 @@ export function ServerPickerPopover({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const { saveServer, removeServer } = useServerConnections();
+  const dialogs = useWorkbenchDialogs();
   const { updateWorkspaceSession } = useWorkspace();
   const { openSettingsView } = useShellView();
   const cloud = useCloudContext();
@@ -418,13 +420,22 @@ export function ServerPickerPopover({
                         if (servers.length <= 1) {
                           return;
                         }
-                        if (
-                          typeof window !== "undefined" &&
-                          !window.confirm(`Remove ${displayLabel} from this device list?`)
-                        ) {
-                          return;
-                        }
-                        removeServer(server.id);
+                        void dialogs
+                          .confirm({
+                            title: `Remove ${displayLabel}?`,
+                            message:
+                              "The device is removed from this list only. Nothing on the device itself changes, and you can connect it again later.",
+                            detail: isBrowserMachineUrl(server.baseUrl)
+                              ? undefined
+                              : server.baseUrl,
+                            tone: "danger",
+                            confirmLabel: "Remove",
+                          })
+                          .then((confirmed) => {
+                            if (confirmed) {
+                              removeServer(server.id);
+                            }
+                          });
                       }}
                       className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-35"
                     >
