@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import {
   explainGithubLinkMismatch,
   useClerkGithubLink,
@@ -281,6 +282,7 @@ function GithubAccountSectionInner() {
   const cloud = useCloudContext();
   const { linkState, connectGithub, disconnectGithub, formatError } =
     useClerkGithubLink();
+  const dialogs = useWorkbenchDialogs();
   const [status, setStatus] = useState<{
     connected: boolean;
     login: string | null;
@@ -321,12 +323,14 @@ function GithubAccountSectionInner() {
   }, [connectGithub, formatError]);
 
   const disconnect = useCallback(async () => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Disconnect GitHub? Paired Codespace devices stay registered but cannot be woken or recreated until you reconnect."
-      )
-    ) {
+    const confirmed = await dialogs.confirm({
+      title: "Disconnect GitHub?",
+      message:
+        "Paired Codespace devices stay registered but cannot be woken or recreated until you reconnect.",
+      tone: "danger",
+      confirmLabel: "Disconnect",
+    });
+    if (!confirmed) {
       return;
     }
     setPending(true);
@@ -339,7 +343,7 @@ function GithubAccountSectionInner() {
     } finally {
       setPending(false);
     }
-  }, [disconnectGithub, formatError, refresh]);
+  }, [dialogs, disconnectGithub, formatError, refresh]);
 
   if (cloud.status !== "ready" || !cloud.github) {
     return null;

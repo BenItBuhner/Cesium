@@ -17,6 +17,7 @@ import { useAgentConversations } from "@/components/chat/AgentConversationsConte
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { SETUP_ROUTE } from "@/lib/onboarding/workspace-errors";
@@ -127,6 +128,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   } = useAgentShellState();
   const { hasServer } = useServerConnections();
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
+  const dialogs = useWorkbenchDialogs();
 
   /**
    * Submitting without any usable backend must not silently no-op: surface a
@@ -335,9 +337,12 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         );
         if (!currentWorktree) return false;
         if (currentWorktree.current) {
-          window.alert(
-            "Open another checkout first, then delete this worktree from Workspace Studio."
-          );
+          await dialogs.alert({
+            title: "This worktree is currently open",
+            message:
+              "Open another checkout first, then delete this worktree from Workspace Studio.",
+            detail: currentWorktree.path,
+          });
           return true;
         }
         await deleteWorktree({ path: currentWorktree.path });
@@ -387,6 +392,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       draftModel,
       createWorktree,
       deleteWorktree,
+      dialogs,
       gitStatus?.currentBranch,
       gitStatus?.worktrees,
       notifyNoBackendAvailable,

@@ -18,6 +18,7 @@ import { AuroraSceneProvider } from "@/components/agent/AuroraSceneContext";
 import { AuroraShellBackdrop } from "@/components/agent/AuroraBackdrop";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
+import { WorkbenchDialogProvider } from "@/components/dialogs/WorkbenchDialogProvider";
 import { DesktopNativeSync } from "@/components/desktop/DesktopNativeSync";
 import { MobileBackController } from "@/components/mobile/MobileBackController";
 import {
@@ -466,9 +467,12 @@ export function WorkbenchApp({
   return (
     <Suspense fallback={suspenseFallback ?? <LoadingFallback />}>
       <BackIntentProvider>
-        <ShellViewProvider>
-          <WorkbenchWithConversationProviders />
-        </ShellViewProvider>
+        {/* Under BackIntentProvider so Android back cancels the active dialog. */}
+        <WorkbenchDialogProvider>
+          <ShellViewProvider>
+            <WorkbenchWithConversationProviders />
+          </ShellViewProvider>
+        </WorkbenchDialogProvider>
       </BackIntentProvider>
     </Suspense>
   );
