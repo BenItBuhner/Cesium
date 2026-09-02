@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Pen, RefreshCw, SquareTerminal } from "lucide-react";
 import type { BrowserConsoleEntry, BrowserEngineEvent } from "@/lib/browser-engine";
 import {
+  isTunnelInterstitialHost,
   REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS,
   REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS,
   REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS,
@@ -147,6 +148,72 @@ function withBrowserTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   });
 }
 
+/**
+ * Iframe whose document is fetched with an auto-submitted POST form carrying
+ * the `__ocs_navigate=1` marker instead of a plain `src` GET.
+ *
+ * GitHub Codespaces / dev-tunnels forwarded hosts intercept GET+text/html
+ * document loads with an anti-phishing interstitial whose "Verifying session"
+ * step never completes inside an embedded iframe - but they pass non-GET
+ * requests straight through. The engine's proxy converts the marker POST back
+ * into a plain upstream GET, so the target site never sees the POST.
+ */
+function PostNavigatedIframe({
+  src,
+  title,
+  className,
+  sandbox,
+  onLoad,
+  frameRef,
+}: {
+  src: string;
+  title: string;
+  className: string;
+  sandbox?: string;
+  onLoad?: () => void;
+  frameRef?: React.MutableRefObject<HTMLIFrameElement | null>;
+}) {
+  const frameId = useId();
+  const frameName = `cesium-postnav-${frameId.replace(/[^a-zA-Z0-9-]/g, "")}`;
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const action = useMemo(() => {
+    try {
+      const url = new URL(src);
+      url.searchParams.set("__ocs_navigate", "1");
+      return url.toString();
+    } catch {
+      return src;
+    }
+  }, [src]);
+  useEffect(() => {
+    formRef.current?.submit();
+  }, [action]);
+  return (
+    <>
+      <iframe
+        ref={(element) => {
+          if (frameRef) {
+            frameRef.current = element;
+          }
+        }}
+        name={frameName}
+        title={title}
+        sandbox={sandbox}
+        onLoad={onLoad}
+        className={className}
+      />
+      <form
+        ref={formRef}
+        method="post"
+        action={action}
+        target={frameName}
+        hidden
+        aria-hidden
+      />
+    </>
+  );
+}
+
 export function BrowserTab({
   tab,
   dispatch,
@@ -261,7 +328,13 @@ export function BrowserTab({
 
   const designMode = tab.browser?.designMode ?? false;
   const devtoolsOpen = tab.browser?.devtoolsOpen ?? false;
-  const newBrowserEnabled = settings.agents.newBrowser;
+  // Engines reached through a Codespaces / dev-tunnels forwarded host cannot
+  // render iframe document loads (the tunnel's "Verifying session"
+  // interstitial hijacks them), so force the server-side Chromium engine
+  // there regardless of the New browser beta flag, and load any residual
+  // iframes via POST navigation.
+  const tunnelForwardedServer = isTunnelInterstitialHost(getServerBaseUrl());
+  const newBrowserEnabled = settings.agents.newBrowser || tunnelForwardedServer;
   const nativeSessionId = tab.browser?.nativeSessionId ?? null;
   const usingNativeBrowser =
     nativeBrowserReady &&
@@ -830,8 +903,18 @@ export function BrowserTab({
           debugSessionId: session.sessionId,
           devtoolsPath: session.devtoolsPath,
         });
-      } catch {
+      } catch (error) {
         setRemoteBrowserReady(false);
+        if (tunnelForwardedServer) {
+          // The proxy fallback still works through the POST-navigation path,
+          // but the streamed Chromium preview is strictly better on tunneled
+          // engines - tell the user how to get it back.
+          const message =
+            error instanceof Error ? error.message : "Chromium is unavailable on this engine.";
+          setConsoleError(
+            `${message} Falling back to the proxy preview. Re-run Codespace setup (or on the engine: cd server && npx playwright install chromium) to enable the streamed browser.`
+          );
+        }
         dispatch({
           type: "UPDATE_BROWSER_TAB_META",
           tabId: tab.id,
@@ -857,6 +940,7 @@ export function BrowserTab({
     tab.browser?.debugSessionId,
     tab.browser?.engine,
     tab.id,
+    tunnelForwardedServer,
   ]);
 
   const refreshRemoteViewport = useCallback(async () => {
@@ -1841,6 +1925,16 @@ export function BrowserTab({
                 </span>
               )}
             </div>
+          ) : tunnelForwardedServer ? (
+            <PostNavigatedIframe
+              key={iframeKey}
+              frameRef={iframeRef}
+              title="Browser preview"
+              src={iframeSrc}
+              sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
+              onLoad={() => pushDesignToGuest(designModeRef.current)}
+              className="h-full w-full border-0 bg-[var(--bg-main)]"
+            />
           ) : (
             <iframe
               ref={iframeRef}
@@ -1858,11 +1952,19 @@ export function BrowserTab({
             className="min-h-0 flex-1 border-t border-[var(--border-subtle)]"
             data-ide-browser-devtools
           >
-            <iframe
-              title="Browser debug console"
-              src={consoleViewerSrc ?? undefined}
-              className="h-full w-full border-0 bg-[var(--bg-main)]"
-            />
+            {tunnelForwardedServer && consoleViewerSrc ? (
+              <PostNavigatedIframe
+                title="Browser debug console"
+                src={consoleViewerSrc}
+                className="h-full w-full border-0 bg-[var(--bg-main)]"
+              />
+            ) : (
+              <iframe
+                title="Browser debug console"
+                src={consoleViewerSrc ?? undefined}
+                className="h-full w-full border-0 bg-[var(--bg-main)]"
+              />
+            )}
           </div>
         ) : null}
         {showNativeDevtoolsPanel ? (
