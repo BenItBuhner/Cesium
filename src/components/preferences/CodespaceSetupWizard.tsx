@@ -380,7 +380,11 @@ function CodespaceSetupWizardInner({
   }, [github, loadMachines, recreateDevice]);
 
   const finishProvision = useCallback(
-    async (codespace: CloudGithubCodespace, engineBaseUrl: string) => {
+    async (
+      codespace: CloudGithubCodespace,
+      engineBaseUrl: string,
+      adopted = false
+    ) => {
       if (!github || !selectedRepo) return;
       const auth = engineAuthRef.current;
 
@@ -445,7 +449,22 @@ function CodespaceSetupWizardInner({
       }
 
       setProvisionPhase("signing-in");
-      const { token } = await loginToEngine(engineBaseUrl, auth.username, auth.password);
+      let token: string;
+      try {
+        token = (await loginToEngine(engineBaseUrl, auth.username, auth.password)).token;
+      } catch (error) {
+        // Adopted codespaces (left over from an interrupted setup run) only
+        // pick up freshly pushed Codespaces secrets on their next start, so a
+        // running orphan can still hold older engine credentials.
+        if (adopted) {
+          throw new Error(
+            `Could not sign in to the engine of the existing codespace ${current.name}` +
+              ` (${error instanceof Error ? error.message : String(error)}).` +
+              " Stop that codespace at github.com/codespaces (or delete it) and run setup again so it picks up the refreshed credentials."
+          );
+        }
+        throw error;
+      }
       setStoredSessionToken(token, null, engineBaseUrl);
 
       setProvisionPhase("saving");
@@ -506,7 +525,14 @@ function CodespaceSetupWizardInner({
       idleTimeoutMinutes: idleTimeout,
     });
     if (cancelledRef.current) return;
-    await finishProvision(created.codespace, created.engineBaseUrl);
+    // `adopted` means an existing Cesium codespace for this repository was
+    // reused (e.g. one left behind by an interrupted setup run) instead of
+    // creating a duplicate. Older deployed functions omit the flag.
+    await finishProvision(
+      created.codespace,
+      created.engineBaseUrl,
+      Boolean(created.adopted)
+    );
   }, [extraSecrets, finishProvision, github, idleTimeout, selectedMachine, selectedRepo]);
 
   const startProvision = useCallback(async () => {

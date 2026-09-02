@@ -1,6 +1,6 @@
 "use node";
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import sodium from "libsodium-wrappers";
 import { action } from "./_generated/server";
 import {
@@ -16,7 +16,9 @@ import {
   getDefaultBranch,
   getRepoFile,
   listMachines,
+  listRepoCodespaces,
   listRepos,
+  pickAdoptableCodespace,
   putUserCodespaceSecret,
   splitRepoFullName,
   startCodespace,
@@ -69,6 +71,26 @@ import {
 
 const CLERK_API_BASE = "https://api.clerk.com/v1";
 const SETUP_BRANCH = "cesium/codespace-setup";
+
+/**
+ * Production Convex redacts plain `Error`s to an opaque "Server Error"
+ * before they reach clients; only `ConvexError` data survives. GitHub /
+ * Clerk failures are exactly the messages the user must read to act
+ * (billing limits, max-codespaces caps, expired tokens, missing scopes),
+ * so every action handler funnels its work through this wrapper.
+ */
+async function surfaceErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof ConvexError) {
+      throw error;
+    }
+    throw new ConvexError(
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
 
 /** Codespaces secret names must be SCREAMING_SNAKE and never GITHUB_*. */
 const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,199}$/;
@@ -210,10 +232,11 @@ export const reposList = action({
       description: v.union(v.string(), v.null()),
     })
   ),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    return await listRepos(client);
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      return await listRepos(client);
+    }),
 });
 
 export const machinesList = action({
@@ -228,11 +251,12 @@ export const machinesList = action({
       prebuildAvailability: v.union(v.string(), v.null()),
     })
   ),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    const { owner, repo } = splitRepoFullName(args.repoFullName);
-    return await listMachines(client, owner, repo);
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      const { owner, repo } = splitRepoFullName(args.repoFullName);
+      return await listMachines(client, owner, repo);
+    }),
 });
 
 /**
@@ -258,87 +282,88 @@ export const ensureDevcontainer = action({
     devcontainerPath: v.string(),
     templateVersion: v.number(),
   }),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    const { owner, repo } = splitRepoFullName(args.repoFullName);
-    const defaultBranch = await getDefaultBranch(client, owner, repo);
-    const files = buildCodespaceTemplateFiles();
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      const { owner, repo } = splitRepoFullName(args.repoFullName);
+      const defaultBranch = await getDefaultBranch(client, owner, repo);
+      const files = buildCodespaceTemplateFiles();
 
-    const current = await Promise.all(
-      files.map((file) => getRepoFile(client, owner, repo, file.path, defaultBranch))
-    );
-    const upToDate = files.every(
-      (file, index) => current[index]?.content === file.content
-    );
-    if (upToDate) {
-      return {
-        status: "ready" as const,
-        prUrl: null,
-        devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
-        templateVersion: CODESPACE_TEMPLATE_VERSION,
-      };
-    }
+      const current = await Promise.all(
+        files.map((file) => getRepoFile(client, owner, repo, file.path, defaultBranch))
+      );
+      const upToDate = files.every(
+        (file, index) => current[index]?.content === file.content
+      );
+      if (upToDate) {
+        return {
+          status: "ready" as const,
+          prUrl: null,
+          devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
+          templateVersion: CODESPACE_TEMPLATE_VERSION,
+        };
+      }
 
-    const isUpdate = current.some((file) => file !== null);
-    const message = isUpdate
-      ? `Update Cesium Codespaces engine bootstrap (template v${CODESPACE_TEMPLATE_VERSION})`
-      : `Add Cesium Codespaces engine bootstrap (template v${CODESPACE_TEMPLATE_VERSION})`;
-    const commitPayload = files.map((file) => ({
-      path: file.path,
-      content: file.content,
-      executable: file.path === CODESPACE_BOOTSTRAP_PATH,
-    }));
+      const isUpdate = current.some((file) => file !== null);
+      const message = isUpdate
+        ? `Update Cesium Codespaces engine bootstrap (template v${CODESPACE_TEMPLATE_VERSION})`
+        : `Add Cesium Codespaces engine bootstrap (template v${CODESPACE_TEMPLATE_VERSION})`;
+      const commitPayload = files.map((file) => ({
+        path: file.path,
+        content: file.content,
+        executable: file.path === CODESPACE_BOOTSTRAP_PATH,
+      }));
 
-    if (args.mode === "commit") {
+      if (args.mode === "commit") {
+        await commitFiles(client, {
+          owner,
+          repo,
+          branch: defaultBranch,
+          fromBranch: defaultBranch,
+          message,
+          files: commitPayload,
+        });
+        return {
+          status: "committed" as const,
+          prUrl: null,
+          devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
+          templateVersion: CODESPACE_TEMPLATE_VERSION,
+        };
+      }
+
       await commitFiles(client, {
         owner,
         repo,
-        branch: defaultBranch,
+        branch: SETUP_BRANCH,
         fromBranch: defaultBranch,
         message,
         files: commitPayload,
       });
+      const existingPr = await findOpenPullRequest(client, owner, repo, SETUP_BRANCH);
+      const pr =
+        existingPr ??
+        (await createPullRequest(client, {
+          owner,
+          repo,
+          headBranch: SETUP_BRANCH,
+          baseBranch: defaultBranch,
+          title: "Add Cesium Codespaces engine bootstrap",
+          body: [
+            "Cesium uses this devcontainer to run its engine inside GitHub Codespaces:",
+            "",
+            `- \`${CODESPACE_DEVCONTAINER_PATH}\` - devcontainer config (port ${9100} forwarded).`,
+            `- \`${CODESPACE_BOOTSTRAP_PATH}\` - installs and starts the Cesium engine, then publishes the forwarded port.`,
+            "",
+            "Merge this PR, then finish Codespace setup from the Cesium device picker.",
+          ].join("\n"),
+        }));
       return {
-        status: "committed" as const,
-        prUrl: null,
+        status: "pr-open" as const,
+        prUrl: pr.htmlUrl,
         devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
         templateVersion: CODESPACE_TEMPLATE_VERSION,
       };
-    }
-
-    await commitFiles(client, {
-      owner,
-      repo,
-      branch: SETUP_BRANCH,
-      fromBranch: defaultBranch,
-      message,
-      files: commitPayload,
-    });
-    const existingPr = await findOpenPullRequest(client, owner, repo, SETUP_BRANCH);
-    const pr =
-      existingPr ??
-      (await createPullRequest(client, {
-        owner,
-        repo,
-        headBranch: SETUP_BRANCH,
-        baseBranch: defaultBranch,
-        title: "Add Cesium Codespaces engine bootstrap",
-        body: [
-          "Cesium uses this devcontainer to run its engine inside GitHub Codespaces:",
-          "",
-          `- \`${CODESPACE_DEVCONTAINER_PATH}\` - devcontainer config (port ${9100} forwarded).`,
-          `- \`${CODESPACE_BOOTSTRAP_PATH}\` - installs and starts the Cesium engine, then publishes the forwarded port.`,
-          "",
-          "Merge this PR, then finish Codespace setup from the Cesium device picker.",
-        ].join("\n"),
-      }));
-    return {
-      status: "pr-open" as const,
-      prUrl: pr.htmlUrl,
-      devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
-      templateVersion: CODESPACE_TEMPLATE_VERSION,
-    };
-  },
+    }),
 });
 
 /**
@@ -357,48 +382,58 @@ export const setupCodespaceSecrets = action({
     ),
   },
   returns: v.object({ secretNames: v.array(v.string()) }),
-  handler: async (ctx, args) => {
-    if (!args.engineUsername.trim() || !args.enginePassword.trim()) {
-      throw new Error("Engine credentials must not be empty.");
-    }
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    const publicKey = await getCodespacesPublicKey(client);
-    await sodium.ready;
-    const keyBytes = sodium.from_base64(
-      publicKey.key,
-      sodium.base64_variants.ORIGINAL
-    );
-    const seal = (value: string): string =>
-      sodium.to_base64(
-        sodium.crypto_box_seal(sodium.from_string(value), keyBytes),
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      if (!args.engineUsername.trim() || !args.enginePassword.trim()) {
+        throw new Error("Engine credentials must not be empty.");
+      }
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      const publicKey = await getCodespacesPublicKey(client);
+      await sodium.ready;
+      const keyBytes = sodium.from_base64(
+        publicKey.key,
         sodium.base64_variants.ORIGINAL
       );
+      const seal = (value: string): string =>
+        sodium.to_base64(
+          sodium.crypto_box_seal(sodium.from_string(value), keyBytes),
+          sodium.base64_variants.ORIGINAL
+        );
 
-    const secrets: Array<{ name: string; value: string }> = [
-      { name: CODESPACE_AUTH_USERNAME_SECRET, value: args.engineUsername },
-      { name: CODESPACE_AUTH_PASSWORD_SECRET, value: args.enginePassword },
-      ...(args.extraSecrets ?? []),
-    ];
-    for (const secret of secrets) {
-      const name = secret.name.trim().toUpperCase();
-      if (!SECRET_NAME_PATTERN.test(name) || name.startsWith("GITHUB_")) {
-        throw new Error(`Invalid secret name: ${secret.name}`);
+      const secrets: Array<{ name: string; value: string }> = [
+        { name: CODESPACE_AUTH_USERNAME_SECRET, value: args.engineUsername },
+        { name: CODESPACE_AUTH_PASSWORD_SECRET, value: args.enginePassword },
+        ...(args.extraSecrets ?? []),
+      ];
+      for (const secret of secrets) {
+        const name = secret.name.trim().toUpperCase();
+        if (!SECRET_NAME_PATTERN.test(name) || name.startsWith("GITHUB_")) {
+          throw new Error(`Invalid secret name: ${secret.name}`);
+        }
+        if (!secret.value) {
+          throw new Error(`Secret ${name} has no value.`);
+        }
+        await putUserCodespaceSecret(client, {
+          name,
+          encryptedValue: seal(secret.value),
+          keyId: publicKey.keyId,
+          repositoryId: args.repositoryId,
+        });
       }
-      if (!secret.value) {
-        throw new Error(`Secret ${name} has no value.`);
-      }
-      await putUserCodespaceSecret(client, {
-        name,
-        encryptedValue: seal(secret.value),
-        keyId: publicKey.keyId,
-        repositoryId: args.repositoryId,
-      });
-    }
-    return {
-      secretNames: secrets.map((secret) => secret.name.trim().toUpperCase()),
-    };
-  },
+      return {
+        secretNames: secrets.map((secret) => secret.name.trim().toUpperCase()),
+      };
+    }),
 });
+
+const STOPPED_CODESPACE_STATES = new Set(["shutdown", "archived", "stopped"]);
+
+function engineBaseUrlFor(codespaceName: string): string {
+  return resolveCodespaceEngineBaseUrl(codespaceName, {
+    urlTemplate: process.env.CESIUM_CODESPACES_ENGINE_URL_TEMPLATE,
+    portForwardingDomain: process.env.CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN,
+  });
+}
 
 export const codespaceCreate = action({
   args: {
@@ -411,68 +446,98 @@ export const codespaceCreate = action({
   returns: v.object({
     codespace: codespaceValidator,
     engineBaseUrl: v.string(),
+    /** True when an existing Cesium codespace was reused instead of created. */
+    adopted: v.boolean(),
   }),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    const { owner, repo } = splitRepoFullName(args.repoFullName);
-    const idleTimeout = args.idleTimeoutMinutes
-      ? Math.min(240, Math.max(5, Math.round(args.idleTimeoutMinutes)))
-      : undefined;
-    const codespace = await createCodespace(client, {
-      owner,
-      repo,
-      ...(args.ref ? { ref: args.ref } : {}),
-      ...(args.machine ? { machine: args.machine } : {}),
-      devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
-      displayName: `Cesium - ${args.repoFullName}`,
-      ...(idleTimeout ? { idleTimeoutMinutes: idleTimeout } : {}),
-      // Keep the paired codespace around as long as GitHub allows (30 days
-      // idle); the Convex pairing survives deletion and drives recreation.
-      retentionPeriodMinutes: 43200,
-    });
-    return {
-      codespace,
-      engineBaseUrl: resolveCodespaceEngineBaseUrl(codespace.name, {
-        urlTemplate: process.env.CESIUM_CODESPACES_ENGINE_URL_TEMPLATE,
-        portForwardingDomain: process.env.CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN,
-      }),
-    };
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      const { owner, repo } = splitRepoFullName(args.repoFullName);
+
+      // A setup run that died between "create" and "save pairing" leaves an
+      // orphaned Cesium codespace on GitHub; creating another would double
+      // the billing and can trip GitHub's max-codespaces limit. The pairing
+      // model is one codespace per repository, so any live codespace built
+      // from the Cesium devcontainer is ours to adopt.
+      const adoptable = pickAdoptableCodespace(
+        await listRepoCodespaces(client, owner, repo),
+        CODESPACE_DEVCONTAINER_PATH
+      );
+      if (adoptable) {
+        // A stopped orphan is restarted here so it picks up the freshly
+        // pushed Codespaces secrets and the caller's wait loop can proceed.
+        const codespace = STOPPED_CODESPACE_STATES.has(
+          adoptable.state.trim().toLowerCase()
+        )
+          ? await startCodespace(client, adoptable.name)
+          : adoptable;
+        return {
+          codespace,
+          engineBaseUrl: engineBaseUrlFor(codespace.name),
+          adopted: true,
+        };
+      }
+
+      const idleTimeout = args.idleTimeoutMinutes
+        ? Math.min(240, Math.max(5, Math.round(args.idleTimeoutMinutes)))
+        : undefined;
+      const codespace = await createCodespace(client, {
+        owner,
+        repo,
+        ...(args.ref ? { ref: args.ref } : {}),
+        ...(args.machine ? { machine: args.machine } : {}),
+        devcontainerPath: CODESPACE_DEVCONTAINER_PATH,
+        displayName: `Cesium - ${args.repoFullName}`,
+        ...(idleTimeout ? { idleTimeoutMinutes: idleTimeout } : {}),
+        // Keep the paired codespace around as long as GitHub allows (30 days
+        // idle); the Convex pairing survives deletion and drives recreation.
+        retentionPeriodMinutes: 43200,
+      });
+      return {
+        codespace,
+        engineBaseUrl: engineBaseUrlFor(codespace.name),
+        adopted: false,
+      };
+    }),
 });
 
 export const codespaceGet = action({
   args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: v.union(codespaceValidator, v.null()),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    return await getCodespace(client, args.codespaceName);
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      return await getCodespace(client, args.codespaceName);
+    }),
 });
 
 export const codespaceStart = action({
   args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: codespaceValidator,
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    return await startCodespace(client, args.codespaceName);
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      return await startCodespace(client, args.codespaceName);
+    }),
 });
 
 export const codespaceStop = action({
   args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: codespaceValidator,
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    return await stopCodespace(client, args.codespaceName);
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      return await stopCodespace(client, args.codespaceName);
+    }),
 });
 
 export const codespaceDelete = action({
   args: { deviceKey: v.optional(v.string()), codespaceName: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
-    const client = await requireGithubClient(ctx, args.deviceKey);
-    await deleteCodespace(client, args.codespaceName);
-    return null;
-  },
+  handler: (ctx, args) =>
+    surfaceErrors(async () => {
+      const client = await requireGithubClient(ctx, args.deviceKey);
+      await deleteCodespace(client, args.codespaceName);
+      return null;
+    }),
 });

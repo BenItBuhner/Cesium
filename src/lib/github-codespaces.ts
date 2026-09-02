@@ -381,6 +381,42 @@ export async function wakeCodespaceDevice(input: {
 
 /* ------------------------------ meta helpers ------------------------------ */
 
+/**
+ * Account-row codespace metadata for an already-derived device. Used by the
+ * pairing bookkeeping writes (state transitions, renames) so every caller
+ * persists the same shape and none of them drops the engine credentials.
+ */
+export function codespacePairingMeta(
+  device: Pick<
+    CodespaceDevice,
+    | "repoFullName"
+    | "repositoryId"
+    | "codespaceName"
+    | "machine"
+    | "devcontainerPath"
+    | "engineAuth"
+    | "lastKnownState"
+  >,
+  overrides?: { lastKnownState?: string }
+): CloudCodespaceMeta {
+  const lastKnownState = overrides?.lastKnownState ?? device.lastKnownState ?? undefined;
+  return {
+    repoFullName: device.repoFullName,
+    repositoryId: device.repositoryId,
+    codespaceName: device.codespaceName,
+    ...(device.machine ? { machine: device.machine } : {}),
+    devcontainerPath: device.devcontainerPath,
+    ...(lastKnownState ? { lastKnownState } : {}),
+    lastSyncedAt: Date.now(),
+    ...(device.engineAuth
+      ? {
+          engineUsername: device.engineAuth.username,
+          enginePassword: device.engineAuth.password,
+        }
+      : {}),
+  };
+}
+
 export function buildCodespaceMeta(input: {
   repoFullName: string;
   repositoryId: number;
