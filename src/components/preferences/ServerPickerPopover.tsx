@@ -96,6 +96,7 @@ const WAKE_PHASE_LABELS: Record<CodespaceWakePhase, string> = {
   "starting-codespace": "Starting codespace…",
   "waiting-engine": "Waiting for the engine…",
   "signing-in": "Signing in…",
+  "updating-engine": "Updating the engine…",
   ready: "Connected",
 };
 

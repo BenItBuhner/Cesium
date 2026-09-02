@@ -275,14 +275,44 @@ export type CodespaceWakePhase =
   | "starting-codespace"
   | "waiting-engine"
   | "signing-in"
+  | "updating-engine"
   | "ready";
 
 export type CodespaceWakeResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /**
+       * Non-fatal problem worth telling the user about (keep-alive missing or
+       * failing, engine update failed). The wake still succeeded.
+       */
+      warning?: string;
+    }
   | {
       ok: false;
       reason: "deleted" | "failed" | "timeout" | "error";
       message: string;
+    };
+
+/**
+ * What the engine's `/health` says about its codespace keep-alive service.
+ *
+ * - `unsupported`: health answered but had no `codespace` snapshot - the
+ *   engine predates the keep-alive and WILL be stopped by GitHub's idle
+ *   timeout mid-run. Fixable in place via the engine's self-update API,
+ *   which every codespace engine has shipped since before Codespaces
+ *   pairing existed.
+ * - `reported`: the snapshot exists; `enabled`/`consecutiveFailures` say
+ *   whether heartbeats are actually protecting the codespace.
+ * - `unknown`: the probe failed (engine restarting/unreachable) - no verdict.
+ */
+export type CodespaceEngineKeepaliveProbe =
+  | { status: "unknown" }
+  | { status: "unsupported" }
+  | {
+      status: "reported";
+      enabled: boolean;
+      lastError: string | null;
+      consecutiveFailures: number;
     };
 
 export type CodespaceWakeDeps = {
@@ -294,6 +324,14 @@ export type CodespaceWakeDeps = {
     baseUrl: string,
     auth: CodespaceEngineAuth | null
   ): Promise<void>;
+  /**
+   * Inspect the engine's keep-alive support/health. Optional together with
+   * `applyEngineUpdate`; when either is missing the wake flow skips the
+   * stale-engine remediation entirely.
+   */
+  probeEngineKeepalive?(baseUrl: string): Promise<CodespaceEngineKeepaliveProbe>;
+  /** Kick the engine's in-place self-update (requires a minted session). */
+  applyEngineUpdate?(baseUrl: string): Promise<{ ok: boolean; error?: string }>;
   sleep(ms: number): Promise<void>;
   now(): number;
 };
@@ -301,6 +339,8 @@ export type CodespaceWakeDeps = {
 export type CodespaceWakeTimeouts = {
   codespaceAvailableMs: number;
   engineHealthyMs: number;
+  /** How long the updated engine gets to reinstall + restart before we give up waiting. */
+  engineUpdateMs: number;
   pollIntervalMs: number;
 };
 
@@ -309,8 +349,92 @@ export const DEFAULT_WAKE_TIMEOUTS: CodespaceWakeTimeouts = {
   codespaceAvailableMs: 5 * 60_000,
   // postStart reinstall paths can be slow on first boot after rebuild.
   engineHealthyMs: 10 * 60_000,
+  // Self-update re-runs the installer (git pull + bun install + package builds).
+  engineUpdateMs: 10 * 60_000,
   pollIntervalMs: 4_000,
 };
+
+/** Heartbeat failures at/above this count are surfaced as a wake warning. */
+const KEEPALIVE_FAILURE_WARNING_THRESHOLD = 3;
+
+/**
+ * Post-sign-in guard: make sure the engine actually holds the codespace
+ * awake. Engines installed before the keep-alive shipped never receive it
+ * otherwise - the bootstrap's install marker freezes them at creation-time
+ * code, and GitHub cannot raise a codespace's idle timeout after creation -
+ * so a stale engine is updated in place through its own update API and the
+ * wake waits for the new engine to come back.
+ *
+ * Returns a user-facing warning when the engine could not be brought up to
+ * date (or its keep-alive is failing); never blocks the wake outright.
+ */
+async function ensureKeepaliveCapableEngine(input: {
+  device: Pick<CodespaceDevice, "baseUrl" | "engineAuth">;
+  deps: CodespaceWakeDeps;
+  timeouts: CodespaceWakeTimeouts;
+  phase: (value: CodespaceWakePhase) => void;
+}): Promise<string | undefined> {
+  const { device, deps, timeouts, phase } = input;
+  if (!deps.probeEngineKeepalive || !deps.applyEngineUpdate) {
+    return undefined;
+  }
+  let probe = await deps.probeEngineKeepalive(device.baseUrl);
+  if (probe.status === "unsupported") {
+    phase("updating-engine");
+    let updateError: string | null = null;
+    try {
+      const update = await deps.applyEngineUpdate(device.baseUrl);
+      if (!update.ok) {
+        updateError = update.error ?? "the engine rejected the update";
+      }
+    } catch (error) {
+      updateError = error instanceof Error ? error.message : String(error);
+    }
+    if (updateError) {
+      return (
+        "This codespace runs an outdated Cesium engine without the keep-alive, " +
+        "so GitHub may stop it mid-run. Updating it failed: " +
+        `${updateError}. Recreate the codespace to fix this permanently.`
+      );
+    }
+    // The manager CLI stops the engine right after the stream closes; wait
+    // for the rebuilt engine to come back and report keep-alive support.
+    const deadline = deps.now() + timeouts.engineUpdateMs;
+    for (;;) {
+      await deps.sleep(timeouts.pollIntervalMs);
+      probe = await deps.probeEngineKeepalive(device.baseUrl);
+      if (probe.status === "reported") {
+        break;
+      }
+      if (deps.now() > deadline) {
+        return (
+          "The codespace engine update did not come back in time. It may still " +
+          "be installing - check /workspaces/.cesium/logs in the codespace, or " +
+          "recreate it if this persists."
+        );
+      }
+    }
+    // The restart may have invalidated the session that authorized the update.
+    phase("signing-in");
+    await deps.ensureEngineSession(device.baseUrl, device.engineAuth);
+  }
+  if (probe.status === "reported") {
+    if (!probe.enabled) {
+      return (
+        "The codespace engine's keep-alive is not active, so GitHub may stop " +
+        "the codespace mid-run. Restart the codespace; recreate it if this persists."
+      );
+    }
+    if (probe.consecutiveFailures >= KEEPALIVE_FAILURE_WARNING_THRESHOLD) {
+      return (
+        "The codespace engine's keep-alive heartbeats are failing" +
+        `${probe.lastError ? ` (${probe.lastError})` : ""}, so GitHub may stop ` +
+        "the codespace mid-run. Restart the codespace; recreate it if this persists."
+      );
+    }
+  }
+  return undefined;
+}
 
 /**
  * Bring a paired codespace engine online:
@@ -333,8 +457,9 @@ export async function wakeCodespaceDevice(input: {
     if (await deps.checkEngineHealthy(device.baseUrl)) {
       phase("signing-in");
       await deps.ensureEngineSession(device.baseUrl, device.engineAuth);
+      const warning = await ensureKeepaliveCapableEngine({ device, deps, timeouts, phase });
       phase("ready");
-      return { ok: true };
+      return warning ? { ok: true, warning } : { ok: true };
     }
 
     phase("checking-codespace");
@@ -411,8 +536,9 @@ export async function wakeCodespaceDevice(input: {
 
     phase("signing-in");
     await deps.ensureEngineSession(device.baseUrl, device.engineAuth);
+    const warning = await ensureKeepaliveCapableEngine({ device, deps, timeouts, phase });
     phase("ready");
-    return { ok: true };
+    return warning ? { ok: true, warning } : { ok: true };
   } catch (error) {
     return {
       ok: false,

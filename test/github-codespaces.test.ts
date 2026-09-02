@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, test } from "node:test";
 import {
   buildBootstrapScript,
@@ -40,6 +41,7 @@ import {
   pickExistingEngineAuth,
   serializeCodespaceEngineAuthSecret,
   wakeCodespaceDevice,
+  type CodespaceWakeDeps,
   type GithubCodespaceInfo,
 } from "../src/lib/github-codespaces.ts";
 import {
@@ -105,6 +107,40 @@ describe("codespace bootstrap template", () => {
     assert.ok(script.includes("OPENCURSOR_AUTH_PASSWORD=%q"));
     assert.ok(script.includes("sync_env"));
     assert.ok(CODESPACE_TEMPLATE_VERSION >= 2, "template must be bumped so stale repos refresh");
+  });
+
+  test("bootstrap start path self-updates a stale engine", () => {
+    const script = buildBootstrapScript();
+    // Without this, codespaces run creation-time engine code forever: the
+    // install marker skips the installer, GitHub cannot raise idle timeouts
+    // post-create, and the checkout's bootstrap never refreshes itself.
+    assert.ok(script.includes("update_engine"));
+    assert.ok(script.includes("ls-remote origin"));
+    // The canonical installer URL rides updates, not the (stale) checkout.
+    assert.ok(script.includes("run_installer"));
+    // A failed update must fall back to the existing engine, never block start.
+    assert.ok(script.includes("Engine update FAILED; keeping the existing engine."));
+    const startCase = script.slice(script.indexOf("  start)"));
+    assert.ok(startCase.includes("install_engine"));
+    assert.ok(startCase.indexOf("install_engine") < startCase.indexOf("update_engine"));
+    assert.ok(startCase.indexOf("update_engine") < startCase.indexOf("start_engine"));
+    assert.ok(
+      CODESPACE_TEMPLATE_VERSION >= 3,
+      "template must be bumped so stale repos refresh the self-updating bootstrap"
+    );
+  });
+
+  test("bootstrap script is valid bash (bash -n)", (t) => {
+    const probe = spawnSync("bash", ["-c", "true"]);
+    if (probe.error) {
+      t.skip("bash is not available on this platform");
+      return;
+    }
+    const result = spawnSync("bash", ["-n"], {
+      input: buildBootstrapScript(),
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
   });
 
   test("template file set covers both paths", () => {
@@ -796,6 +832,182 @@ describe("codespace wake flow", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(!result.ok && result.reason, "failed");
+  });
+});
+
+/* -------------------- stale-engine remediation on wake -------------------- */
+
+function keepaliveWakeDeps(overrides: Partial<CodespaceWakeDeps>): CodespaceWakeDeps {
+  return {
+    checkEngineHealthy: async () => true,
+    getCodespace: async () => {
+      throw new Error("should not be called");
+    },
+    startCodespace: async () => {
+      throw new Error("should not be called");
+    },
+    ensureEngineSession: async () => {},
+    sleep: async () => {},
+    now: () => 0,
+    ...overrides,
+  };
+}
+
+describe("codespace wake flow: stale-engine keep-alive remediation", () => {
+  test("engine without keep-alive support is updated in place", async () => {
+    const phases: string[] = [];
+    let clock = 0;
+    let sessions = 0;
+    let updates = 0;
+    let probes = 0;
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        ensureEngineSession: async () => {
+          sessions += 1;
+        },
+        probeEngineKeepalive: async () => {
+          probes += 1;
+          // Pre-update engine, then unreachable while it reinstalls/restarts,
+          // then the rebuilt engine reporting its keep-alive.
+          if (probes === 1) return { status: "unsupported" };
+          if (probes === 2) return { status: "unknown" };
+          return {
+            status: "reported",
+            enabled: true,
+            lastError: null,
+            consecutiveFailures: 0,
+          };
+        },
+        applyEngineUpdate: async () => {
+          updates += 1;
+          return { ok: true };
+        },
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+      }),
+      onPhase: (phase) => phases.push(phase),
+    });
+    assert.deepEqual(result, { ok: true });
+    assert.equal(updates, 1);
+    // Signed in again after the update restarted the engine.
+    assert.equal(sessions, 2);
+    assert.deepEqual(phases, [
+      "checking-engine",
+      "signing-in",
+      "updating-engine",
+      "signing-in",
+      "ready",
+    ]);
+  });
+
+  test("failed engine update degrades to a warning, not a failed wake", async () => {
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => ({ status: "unsupported" }),
+        applyEngineUpdate: async () => ({ ok: false, error: "update stream died" }),
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.ok && result.warning?.includes("update stream died"));
+  });
+
+  test("update that never comes back times out into a warning", async () => {
+    let clock = 0;
+    let probes = 0;
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      timeouts: { engineUpdateMs: 20_000, pollIntervalMs: 5_000 },
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => {
+          probes += 1;
+          return probes === 1 ? { status: "unsupported" } : { status: "unknown" };
+        },
+        applyEngineUpdate: async () => ({ ok: true }),
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.ok && result.warning?.includes("did not come back"));
+  });
+
+  test("disabled keep-alive surfaces a warning without updating", async () => {
+    let updates = 0;
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => ({
+          status: "reported",
+          enabled: false,
+          lastError: null,
+          consecutiveFailures: 0,
+        }),
+        applyEngineUpdate: async () => {
+          updates += 1;
+          return { ok: true };
+        },
+      }),
+    });
+    assert.equal(updates, 0);
+    assert.equal(result.ok, true);
+    assert.ok(result.ok && result.warning?.includes("keep-alive is not active"));
+  });
+
+  test("failing heartbeats surface the last error as a warning", async () => {
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => ({
+          status: "reported",
+          enabled: true,
+          lastError: "codespace host RPC timed out after 10000ms",
+          consecutiveFailures: 5,
+        }),
+        applyEngineUpdate: async () => ({ ok: true }),
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.ok && result.warning?.includes("codespace host RPC timed out"));
+  });
+
+  test("healthy keep-alive leaves the wake result clean", async () => {
+    const phases: string[] = [];
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => ({
+          status: "reported",
+          enabled: true,
+          lastError: null,
+          consecutiveFailures: 0,
+        }),
+        applyEngineUpdate: async () => {
+          throw new Error("should not be called");
+        },
+      }),
+      onPhase: (phase) => phases.push(phase),
+    });
+    assert.deepEqual(result, { ok: true });
+    assert.ok(!phases.includes("updating-engine"));
+  });
+
+  test("unreachable probe skips remediation quietly", async () => {
+    const result = await wakeCodespaceDevice({
+      device: wakeDevice,
+      deps: keepaliveWakeDeps({
+        probeEngineKeepalive: async () => ({ status: "unknown" }),
+        applyEngineUpdate: async () => {
+          throw new Error("should not be called");
+        },
+      }),
+    });
+    assert.deepEqual(result, { ok: true });
   });
 });
 

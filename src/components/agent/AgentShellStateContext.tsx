@@ -2191,6 +2191,17 @@ export function AgentShellStateProvider({
               return;
             }
             targetServerId = wokenServerId;
+            const warning = codespaces.getLastWakeWarning();
+            if (warning) {
+              pushNotification({
+                kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                severity: "warning",
+                title: "Codespace Keep-Alive Warning",
+                message: warning,
+                autoDismissMs: 15_000,
+                compact: true,
+              });
+            }
             void refreshConversationGroupsWithState();
           } else {
             // Plain machines have no remote start button; switch anyway so
