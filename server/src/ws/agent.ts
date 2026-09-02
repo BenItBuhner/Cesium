@@ -23,6 +23,14 @@ type AgentSocketState = {
   socket: RuntimeSocket;
   subscribedConversationIds: Set<string>;
   subscribeChain: Promise<void>;
+  /**
+   * Conversations whose live `event_batch` frames were dropped for this
+   * socket under backpressure, mapped to the highest dropped seq. Flushed as
+   * tiny non-droppable `events_dropped` markers so the client knows to pull a
+   * delta instead of silently rendering a transcript with a hole.
+   */
+  droppedThroughSeqByConversationId: Map<string, number>;
+  dropMarkerFlushTimer: ReturnType<typeof setTimeout> | null;
 };
 
 // Node/desktop fallback path (Bun.serve configures its own compression).
@@ -44,6 +52,17 @@ const agentWebSocketServer = new WebSocketServer({
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
 const MAX_EVENT_BATCH_EVENTS = 100;
 const MAX_SOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
+/** Coalesce per-conversation drop markers so a sustained burst of dropped frames costs one tiny frame, not hundreds. */
+const DROP_MARKER_FLUSH_DELAY_MS = 300;
+
+/**
+ * Latest event seq observed on the in-process fan-out per conversation.
+ * Piggybacked onto heartbeat `pong` frames so a client on a lossy link can
+ * detect that its local log is behind even when every droppable frame (and
+ * every record push) was lost. Purely in-memory: absent entries simply omit
+ * the conversation from the pong, which the client treats as "no signal".
+ */
+const latestSeqByConversationKey = new Map<string, number>();
 
 /** Buffers live agent events for one I/O turn so a burst of row writes = one `event_batch` frame. */
 const eventBroadcastPending = new Map<string, AgentStoredEvent[]>();
@@ -60,6 +79,9 @@ function pushLiveAgentEventForBatch(
   event: AgentStoredEvent
 ): void {
   const k = keyForEventWorkspaceConversation(workspaceId, conversationId);
+  if (event.seq > (latestSeqByConversationKey.get(k) ?? 0)) {
+    latestSeqByConversationKey.set(k, event.seq);
+  }
   const q = eventBroadcastPending.get(k) ?? [];
   const first = q.length === 0;
   q.push(event);
@@ -75,27 +97,80 @@ function pushLiveAgentEventForBatch(
       if (!clients) {
         return;
       }
-      const serializedChunks: string[] = [];
+      const chunks: { serialized: string; lastSeq: number }[] = [];
       for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
-        serializedChunks.push(
-          JSON.stringify({
+        const events = batch.slice(i, i + MAX_EVENT_BATCH_EVENTS);
+        chunks.push({
+          serialized: JSON.stringify({
             type: "event_batch",
             workspaceId,
             conversationId,
-            events: batch.slice(i, i + MAX_EVENT_BATCH_EVENTS),
-          } satisfies AgentSocketServerMessage)
-        );
+            events,
+          } satisfies AgentSocketServerMessage),
+          lastSeq: events.reduce((max, e) => Math.max(max, e.seq), 0),
+        });
       }
       for (const client of clients) {
         if (!client.subscribedConversationIds.has(conversationId)) {
           continue;
         }
-        for (const chunk of serializedChunks) {
-          sendSerialized(client.socket, chunk, { droppable: true });
+        for (const chunk of chunks) {
+          const delivered = sendSerialized(client.socket, chunk.serialized, {
+            droppable: true,
+          });
+          if (!delivered) {
+            recordDroppedEvents(client, conversationId, chunk.lastSeq);
+          }
         }
       }
     });
   }
+}
+
+/**
+ * A live frame was dropped for a backpressured socket. Remember the highest
+ * dropped seq and schedule one coalesced `events_dropped` marker per
+ * conversation - a few dozen bytes queued behind the congestion - so the
+ * client deterministically learns about the hole instead of depending on a
+ * later frame happening to expose the gap.
+ */
+function recordDroppedEvents(
+  client: AgentSocketState,
+  conversationId: string,
+  throughSeq: number
+): void {
+  const prior = client.droppedThroughSeqByConversationId.get(conversationId) ?? 0;
+  if (throughSeq > prior) {
+    client.droppedThroughSeqByConversationId.set(conversationId, throughSeq);
+  }
+  if (client.dropMarkerFlushTimer != null) {
+    return;
+  }
+  client.dropMarkerFlushTimer = setTimeout(() => {
+    client.dropMarkerFlushTimer = null;
+    flushDropMarkers(client);
+  }, DROP_MARKER_FLUSH_DELAY_MS);
+  client.dropMarkerFlushTimer.unref?.();
+}
+
+function flushDropMarkers(client: AgentSocketState): void {
+  const pending = client.droppedThroughSeqByConversationId;
+  if (pending.size === 0 || !client.socket.isOpen) {
+    pending.clear();
+    return;
+  }
+  for (const [conversationId, throughSeq] of pending) {
+    if (!client.subscribedConversationIds.has(conversationId)) {
+      continue;
+    }
+    send(client.socket, {
+      type: "events_dropped",
+      workspaceId: client.workspaceId,
+      conversationId,
+      throughSeq,
+    });
+  }
+  pending.clear();
 }
 
 function pushConversationUpsertForBatch(
@@ -129,14 +204,17 @@ function pushConversationUpsertForBatch(
   }, 100);
 }
 
+/**
+ * Direct frames are NEVER dropped for backpressure. This deliberately
+ * includes recovery `event_batch` replays (subscribe cursors,
+ * `request_events_since`): dropping the heal path leaves a lossy client with
+ * a permanent transcript hole it can do nothing about. Only the live
+ * broadcast fan-out opts into droppability - and it records the drop so a
+ * marker frame tells the client to pull a delta.
+ */
 function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
   if (!socket.isOpen) {
     return;
-  }
-  if ((socket.bufferedAmount ?? 0) > MAX_SOCKET_BUFFERED_BYTES) {
-    if (message.type === "event_batch" || message.type === "conversation_upserted") {
-      return;
-    }
   }
   socket.send(JSON.stringify(message));
 }
@@ -146,20 +224,22 @@ function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
  * every client. With N clients and hundreds of running agents, per-client
  * JSON.stringify of identical frames was pure CPU burn on the event loop.
  * Droppable frames (stream batches, coalesced record pushes) are skipped for
- * backpressured sockets; the client heals via its subscribe cursor.
+ * backpressured sockets. Returns whether the frame was actually written so
+ * callers can record the drop and notify the client.
  */
 function sendSerialized(
   socket: RuntimeSocket,
   serialized: string,
   options: { droppable: boolean }
-): void {
+): boolean {
   if (!socket.isOpen) {
-    return;
+    return false;
   }
   if (options.droppable && (socket.bufferedAmount ?? 0) > MAX_SOCKET_BUFFERED_BYTES) {
-    return;
+    return false;
   }
   socket.send(serialized);
+  return true;
 }
 
 function addClient(state: AgentSocketState): void {
@@ -190,6 +270,13 @@ subscribeAgentStoreEvents((event) => {
   }
 
   if (event.type === "conversation") {
+    const seqKey = keyForEventWorkspaceConversation(
+      event.conversation.workspaceId,
+      event.conversation.id
+    );
+    if (event.conversation.lastEventSeq > (latestSeqByConversationKey.get(seqKey) ?? 0)) {
+      latestSeqByConversationKey.set(seqKey, event.conversation.lastEventSeq);
+    }
     const clients = workspaceClients.get(event.conversation.workspaceId);
     if (!clients) {
       return;
@@ -219,9 +306,12 @@ subscribeAgentStoreEvents((event) => {
   }
 
   if (event.type === "conversation_deleted") {
-    eventBroadcastPending.delete(
-      keyForEventWorkspaceConversation(event.workspaceId, event.conversationId)
+    const deletedKey = keyForEventWorkspaceConversation(
+      event.workspaceId,
+      event.conversationId
     );
+    eventBroadcastPending.delete(deletedKey);
+    latestSeqByConversationKey.delete(deletedKey);
     const pendingUpserts = conversationUpsertPending.get(event.workspaceId);
     pendingUpserts?.delete(event.conversationId);
     if (pendingUpserts?.size === 0) {
@@ -239,6 +329,7 @@ subscribeAgentStoreEvents((event) => {
         // Drop it from the in-memory subscription set eagerly; the client will
         // receive its own notice to purge local state.
         client.subscribedConversationIds.delete(event.conversationId);
+        client.droppedThroughSeqByConversationId.delete(event.conversationId);
         sendSerialized(client.socket, serialized, { droppable: false });
       }
     }
@@ -273,6 +364,9 @@ async function sendSubscriptionDataUnmeasured(
 
   for (const conversationId of conversationIds) {
     const since = sinceByConversationId[conversationId] ?? 0;
+    // Whatever a pending drop marker covered is about to be superseded by the
+    // cursor replay / snapshot below.
+    state.droppedThroughSeqByConversationId.delete(conversationId);
     if (since > 0) {
       const record = await readConversationRecord(state.workspaceId, conversationId);
       if (!record) {
@@ -291,14 +385,30 @@ async function sendSubscriptionDataUnmeasured(
         conversationId,
         since
       );
-      if (replay.length > 0) {
+      // Chunked so a long-gap resume doesn't serialize one multi-megabyte
+      // frame; never droppable - this IS the reconnect heal path.
+      for (let i = 0; i < replay.length; i += MAX_EVENT_BATCH_EVENTS) {
         send(state.socket, {
           type: "event_batch",
           workspaceId: state.workspaceId,
           conversationId,
-          events: replay,
+          events: replay.slice(i, i + MAX_EVENT_BATCH_EVENTS),
         });
       }
+      // Same completion contract as request_events_since: the client can
+      // treat seqs still missing in (since, throughSeq] as deleted rows and
+      // knows its resume cursor has been fully served.
+      send(state.socket, {
+        type: "events_delta_done",
+        workspaceId: state.workspaceId,
+        conversationId,
+        sinceSeq: since,
+        throughSeq: Math.max(
+          replay.at(-1)?.seq ?? 0,
+          record.lastEventSeq,
+          since
+        ),
+      });
       continue;
     }
 
@@ -328,6 +438,8 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
       socket: ws,
       subscribedConversationIds: new Set(),
       subscribeChain: Promise.resolve(),
+      droppedThroughSeqByConversationId: new Map(),
+      dropMarkerFlushTimer: null,
     };
     addClient(state);
     send(ws, { type: "connected" });
@@ -344,7 +456,21 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
         return;
       }
       if (message.type === "ping") {
-        send(ws, { type: "pong" });
+        // Heartbeat doubles as a consistency probe: report the latest known
+        // seq for each subscribed conversation so a client that lost every
+        // droppable frame still discovers exactly how far behind it is.
+        let latestSeqByConversationId: Record<string, number> | undefined;
+        for (const conversationId of state.subscribedConversationIds) {
+          const latest = latestSeqByConversationKey.get(
+            keyForEventWorkspaceConversation(state.workspaceId, conversationId)
+          );
+          if (latest == null) {
+            continue;
+          }
+          latestSeqByConversationId ??= {};
+          latestSeqByConversationId[conversationId] = latest;
+        }
+        send(ws, { type: "pong", latestSeqByConversationId });
         return;
       }
       if (message.type === "request_events_since") {
@@ -385,6 +511,20 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
                 events: replay.slice(i, i + MAX_EVENT_BATCH_EVENTS),
               });
             }
+            // The pending drop marker (if any) is now stale: everything it
+            // covered was just replayed.
+            state.droppedThroughSeqByConversationId.delete(conversationId);
+            // throughSeq must never overstate what this replay actually read:
+            // claiming coverage past the read snapshot would make the client
+            // treat a concurrently-appended (real) event as deleted. The
+            // replay tail is the only authoritative bound here.
+            send(ws, {
+              type: "events_delta_done",
+              workspaceId: state.workspaceId,
+              conversationId,
+              sinceSeq,
+              throughSeq: Math.max(replay.at(-1)?.seq ?? 0, sinceSeq),
+            });
           } catch (error) {
             console.error("[ws/agent] request_events_since failed:", error);
             send(ws, {
@@ -519,6 +659,11 @@ export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void 
     });
 
     ws.onClose(() => {
+      if (state.dropMarkerFlushTimer != null) {
+        clearTimeout(state.dropMarkerFlushTimer);
+        state.dropMarkerFlushTimer = null;
+      }
+      state.droppedThroughSeqByConversationId.clear();
       for (const conversationId of state.subscribedConversationIds) {
         void agentRuntimeManager.releaseConversationRuntime(
           state.workspaceId,
