@@ -9,6 +9,7 @@
  */
 
 import type * as agents from "../agents.js";
+import type * as catalogs from "../catalogs.js";
 import type * as context from "../context.js";
 import type * as github from "../github.js";
 import type * as lib_codespaceBootstrap from "../lib/codespaceBootstrap.js";
@@ -29,6 +30,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
+  catalogs: typeof catalogs;
   context: typeof context;
   github: typeof github;
   "lib/codespaceBootstrap": typeof lib_codespaceBootstrap;

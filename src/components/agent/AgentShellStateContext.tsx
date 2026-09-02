@@ -143,6 +143,21 @@ import {
 } from "@/lib/workspace-session";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { useCloudContext } from "@/contexts/CloudContext";
+import { useCodespaces } from "@/contexts/CodespacesContext";
+import {
+  annotateRailGroupsForServer,
+  buildConversationCatalog,
+  conversationCatalogServerKey,
+  conversationCatalogSignature,
+  readConversationCatalogStore,
+  resolveOfflineCatalogGroups,
+  serializeConversationCatalogPayload,
+  upsertConversationCatalog,
+} from "@/lib/conversation-catalog";
+
+/** Debounce for mirroring freshly fetched catalogs to the account. */
+const CATALOG_CLOUD_PUSH_DELAY_MS = 4_000;
 
 const AGENT_RAIL_CYCLE_PINNED_SECTION_ID = "__agentPinned__";
 const AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY =
@@ -406,38 +421,6 @@ function removePlaceholderRailConversations(
   }));
 }
 
-function annotateRailGroupsForServer(
-  groups: AgentConversationGroup[],
-  server: Pick<ServerConnection, "id" | "label" | "baseUrl">
-): AgentConversationGroup[] {
-  return groups.map((group) => {
-    const workspaceKey = `${server.id}:${group.workspace.id}`;
-    const repositoryKey = group.repository?.isGitRepo
-      ? getRepositoryGroupingKey({
-          repository: group.repository,
-          serverId: server.id,
-          fallbackRoot: group.workspace.root,
-        })
-      : undefined;
-    return {
-      ...group,
-      serverId: server.id,
-      serverLabel: server.label,
-      workspaceKey,
-      repositoryKey,
-      conversations: group.conversations.map((conversation) => ({
-        ...conversation,
-        serverId: server.id,
-        serverLabel: server.label,
-        workspaceKey,
-        conversationKey: `${server.id}:${conversation.id}`,
-        repositoryKey,
-        repository: conversation.repository ?? group.repository,
-      })),
-    };
-  });
-}
-
 /**
  * Ensure every workspace returned by the live directory has at least an empty
  * group in the rail. Without this, workspaces whose owning server has no
@@ -589,6 +572,8 @@ export function AgentShellStateProvider({
   } = useServerConnections();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
+  const cloud = useCloudContext();
+  const codespaces = useCodespaces();
   const {
     composerDrafts,
     resetComposerDraft,
@@ -666,6 +651,113 @@ export function AgentShellStateProvider({
     sharedAgentShellDesktopLayoutRef.current = sharedAgentShellDesktopLayout;
   }, [sharedAgentShellDesktopLayout]);
 
+  /* ---------------------- conversation catalogs ---------------------- */
+
+  const serversRef = useRef(servers);
+  serversRef.current = servers;
+  const codespaceDevicesRef = useRef(codespaces.devices);
+  codespaceDevicesRef.current = codespaces.devices;
+  const cloudActionsRef = useRef(cloud.actions);
+  cloudActionsRef.current = cloud.actions;
+  const pushedCatalogSignaturesRef = useRef(new Map<string, string>());
+  const pendingCatalogPushRef = useRef(
+    new Map<string, ReturnType<typeof setTimeout>>()
+  );
+
+  const catalogServerKeyFor = useCallback(
+    (server: Pick<ServerConnection, "baseUrl">) =>
+      conversationCatalogServerKey(server, codespaceDevicesRef.current),
+    []
+  );
+
+  /**
+   * A live listing just arrived from `server`: remember it locally and mirror
+   * it to the account (debounced, only when it actually changed) so this and
+   * every other device can show it once the engine goes to sleep.
+   */
+  const recordConversationCatalog = useCallback(
+    (server: ServerConnection, liveGroups: AgentConversationGroup[]) => {
+      const serverKey = catalogServerKeyFor(server);
+      if (!serverKey) {
+        return;
+      }
+      const catalog = buildConversationCatalog({ serverKey, server, groups: liveGroups });
+      upsertConversationCatalog(catalog);
+      const signature = conversationCatalogSignature(catalog);
+      if (pushedCatalogSignaturesRef.current.get(serverKey) === signature) {
+        return;
+      }
+      const existingTimer = pendingCatalogPushRef.current.get(serverKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      pendingCatalogPushRef.current.set(
+        serverKey,
+        setTimeout(() => {
+          pendingCatalogPushRef.current.delete(serverKey);
+          const actions = cloudActionsRef.current;
+          if (!actions) {
+            return;
+          }
+          pushedCatalogSignaturesRef.current.set(serverKey, signature);
+          void actions
+            .saveConversationCatalog({
+              serverKey,
+              serverName: catalog.serverName,
+              baseUrl: catalog.baseUrl,
+              payload: serializeConversationCatalogPayload(catalog),
+              conversationCount: catalog.conversationCount,
+              sourceUpdatedAt: catalog.sourceUpdatedAt,
+            })
+            .catch(() => {
+              // Retry on the next changed listing.
+              pushedCatalogSignaturesRef.current.delete(serverKey);
+            });
+        }, CATALOG_CLOUD_PUSH_DELAY_MS)
+      );
+    },
+    [catalogServerKeyFor]
+  );
+
+  useEffect(
+    () => () => {
+      for (const timer of pendingCatalogPushRef.current.values()) {
+        clearTimeout(timer);
+      }
+      pendingCatalogPushRef.current.clear();
+    },
+    []
+  );
+
+  /**
+   * Cached groups for every saved server that did not answer this round.
+   * Servers whose health is still unprobed are skipped so a healthy machine
+   * never flashes as offline during the first paint; auth-required servers
+   * already get their own placeholder.
+   */
+  const resolveOfflineGroups = useCallback(
+    (fetchedServerIds: ReadonlySet<string>) => {
+      const statusById = serverStatusByIdRef.current;
+      const candidates = serversRef.current.filter((server) => {
+        if (fetchedServerIds.has(server.id)) {
+          return false;
+        }
+        const health = statusById[server.id]?.health ?? "unknown";
+        return health !== "unknown" && health !== "auth_required";
+      });
+      if (candidates.length === 0) {
+        return [];
+      }
+      return resolveOfflineCatalogGroups({
+        servers: candidates,
+        fetchedServerIds,
+        store: readConversationCatalogStore(),
+        serverKeyFor: catalogServerKeyFor,
+      });
+    },
+    [catalogServerKeyFor]
+  );
+
   const applyRailGroupsResult = useCallback(
     (
       servers: ServerConnection[],
@@ -675,14 +767,19 @@ export function AgentShellStateProvider({
         groups: AgentConversationGroup[];
       }>
     ) => {
-      if (successful.length === 0) {
+      const offlineGroups = resolveOfflineGroups(
+        new Set(successful.map((result) => result.server.id))
+      );
+      if (successful.length === 0 && offlineGroups.length === 0) {
         return false;
       }
-      setBackends(mergeAgentBackends(successful.map((result) => result.backends)));
+      if (successful.length > 0) {
+        setBackends(mergeAgentBackends(successful.map((result) => result.backends)));
+      }
       setGroups(
         mergeAuthRequiredServerPlaceholders(
           mergeDirectoryPlaceholders(
-            successful.flatMap((result) => result.groups),
+            [...successful.flatMap((result) => result.groups), ...offlineGroups],
             directoryWorkspaces
           ),
           servers,
@@ -692,7 +789,7 @@ export function AgentShellStateProvider({
       railHasDataRef.current = true;
       return true;
     },
-    [directoryWorkspaces]
+    [directoryWorkspaces, resolveOfflineGroups]
   );
 
   const refreshConversationGroups = useCallback(async () => {
@@ -713,13 +810,15 @@ export function AgentShellStateProvider({
                 baseUrl: server.baseUrl,
               }, { cache: "no-store", signal })
           );
+          const liveGroups = annotateRailGroupsForServer(
+            removePlaceholderRailConversations(result.groups),
+            server
+          );
+          recordConversationCatalog(server, liveGroups);
           return {
             server,
             backends: result.backends,
-            groups: annotateRailGroupsForServer(
-              removePlaceholderRailConversations(result.groups),
-              server
-            ),
+            groups: liveGroups,
           };
         } catch (error) {
           if (typeof console !== "undefined") {
@@ -750,11 +849,16 @@ export function AgentShellStateProvider({
       if (fetchGeneration !== railFetchGenerationRef.current) {
         return;
       }
+      const liveGroups = annotateRailGroupsForServer(
+        removePlaceholderRailConversations(result.groups),
+        activeServer
+      );
+      recordConversationCatalog(activeServer, liveGroups);
       setBackends(result.backends);
       setGroups(
         mergeAuthRequiredServerPlaceholders(
           mergeDirectoryPlaceholders(
-            removePlaceholderRailConversations(result.groups),
+            [...liveGroups, ...resolveOfflineGroups(new Set([activeServer.id]))],
             directoryWorkspaces
           ),
           servers,
@@ -768,7 +872,14 @@ export function AgentShellStateProvider({
       }
       throw error;
     }
-  }, [activeServer, applyRailGroupsResult, directoryWorkspaces, onlineServers]);
+  }, [
+    activeServer,
+    applyRailGroupsResult,
+    directoryWorkspaces,
+    onlineServers,
+    recordConversationCatalog,
+    resolveOfflineGroups,
+  ]);
 
   // Failsafe for the initial "Loading chats..." spinner. Deliberately
   // decoupled from the loader effect below: that effect re-runs whenever its
@@ -2011,20 +2122,56 @@ export function AgentShellStateProvider({
       markConversationSwitchStart(summary.id, "rail");
       bumpAgentConversationMruForServer(summary.id);
       setStandaloneDraftActive(false);
-      if (summary.serverId && summary.serverId !== activeServer.id) {
-        setActiveServer(summary.serverId);
-      }
       setPendingConversationSelection({
         workspaceId: summary.workspaceId,
         conversationId: summary.id,
       });
+      let targetServerId = summary.serverId ?? null;
       try {
+        // A row restored from a catalog belongs to an engine that did not
+        // answer. For a paired codespace that means "asleep": start it (and
+        // sign in) before switching, otherwise the switch would land on a
+        // dead connection and the conversation could not load.
+        if (summary.serverOffline && summary.serverId) {
+          const device = codespaces.deviceForServerId(summary.serverId);
+          if (device) {
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "info",
+              title: "Waking Codespace",
+              message: `Starting ${device.label} so "${summary.title}" can load. This can take a minute on a cold resume.`,
+              autoDismissMs: 12_000,
+              compact: true,
+            });
+            const wokenServerId = await codespaces.connectDevice(device);
+            if (!wokenServerId) {
+              const failure = codespaces.getLastWakeFailure();
+              pushNotification({
+                kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                severity: "error",
+                title:
+                  failure?.reason === "deleted"
+                    ? "Codespace No Longer Exists"
+                    : "Could Not Wake Codespace",
+                message:
+                  failure?.message ??
+                  "The codespace did not come online. Open the device picker to retry or recreate it.",
+                autoDismissMs: 12_000,
+                compact: true,
+              });
+              return;
+            }
+            targetServerId = wokenServerId;
+            void refreshConversationGroupsWithState();
+          }
+        }
+        if (targetServerId && targetServerId !== activeServer.id) {
+          setActiveServer(targetServerId);
+        }
         if (summary.workspaceId !== activeWorkspaceId) {
           await openWorkspaceById(summary.workspaceId);
         }
         setSelectedConversationId(summary.id);
-      } catch (error) {
-        throw error;
       } finally {
         setPendingConversationSelection((current) =>
           current?.workspaceId === summary.workspaceId && current.conversationId === summary.id
@@ -2037,7 +2184,10 @@ export function AgentShellStateProvider({
       activeServer.id,
       activeWorkspaceId,
       bumpAgentConversationMruForServer,
+      codespaces,
       openWorkspaceById,
+      pushNotification,
+      refreshConversationGroupsWithState,
       setActiveServer,
       setSelectedConversationId,
     ]

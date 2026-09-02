@@ -147,4 +147,32 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_key", ["userId", "snapshotKey"]),
+
+  /**
+   * Per-engine conversation catalogs: the rail summaries (`/api/agents/
+   * conversations/all` groups, trimmed) a client last fetched from one of the
+   * user's engines. Engines that sleep - GitHub Codespaces idle out within
+   * hours - are unreachable most of the time, so without this every device
+   * saw their conversations vanish. Any signed-in client refreshes the row
+   * whenever it fetches the live list; every other client reads it back
+   * when the engine is asleep and wakes the engine on open.
+   *
+   * `serverKey` is the durable engine identity: `codespace:<owner/repo>` for
+   * codespace pairings (their base URL moves on recreate), otherwise the
+   * normalized base URL.
+   */
+  conversationCatalogs: defineTable({
+    userId: v.id("users"),
+    serverKey: v.string(),
+    serverName: v.string(),
+    baseUrl: v.string(),
+    /** JSON `{ version, groups }` - rail groups with summaries only. */
+    payload: v.string(),
+    conversationCount: v.number(),
+    /** Newest `updatedAt` among the catalogued conversations. */
+    sourceUpdatedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_server", ["userId", "serverKey"]),
 });

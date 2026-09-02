@@ -340,6 +340,18 @@ export function AgentNewChatLanding({
     useState<CodespaceDevice | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
+  // The picker shows each codespace's cached GitHub state; re-read it lazily
+  // (throttled inside the provider) whenever the picker opens so "Asleep" vs
+  // "Stopped" vs "Deleted" reflects reality instead of the last connect.
+  const refreshCodespaceStates = codespaces.refreshDeviceStates;
+  const codespaceCount = codespaces.devices.length;
+  useEffect(() => {
+    if (!devicePickerOpen || codespaceCount === 0) {
+      return;
+    }
+    void refreshCodespaceStates();
+  }, [codespaceCount, devicePickerOpen, refreshCodespaceStates]);
+
   // Selecting a codespace device wakes it first (start + engine health +
   // session), with progress rendered inline in the picker; only a successful
   // wake runs the normal server switch.
