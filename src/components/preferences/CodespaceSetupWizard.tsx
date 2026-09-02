@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
+import {
+  explainGithubLinkMismatch,
+  useClerkGithubLink,
+} from "@/hooks/useClerkGithubLink";
 import {
   Check,
   ExternalLink,
@@ -120,21 +123,34 @@ function ClerkGithubConnectCta({
 }: {
   onError: (message: string) => void;
 }) {
-  const { user, connectGithub, formatError } = useClerkGithubLink();
+  const { user, linkState, connectGithub, formatError } = useClerkGithubLink();
   const [linkPending, setLinkPending] = useState(false);
+  const mismatch = explainGithubLinkMismatch(linkState);
 
   const startConnect = useCallback(async () => {
     setLinkPending(true);
     try {
-      await connectGithub();
+      const outcome = await connectGithub();
+      if (outcome === "already-linked") {
+        setLinkPending(false);
+        onError(
+          explainGithubLinkMismatch(linkState) ??
+            "GitHub is already linked in Clerk; the Convex deployment could not fetch its token."
+        );
+      }
     } catch (err) {
       setLinkPending(false);
       onError(formatError(err));
     }
-  }, [connectGithub, formatError, onError]);
+  }, [connectGithub, formatError, linkState, onError]);
 
   return (
     <>
+      {mismatch ? (
+        <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
+          {mismatch}
+        </p>
+      ) : null}
       <button
         type="button"
         onClick={() => void startConnect()}
