@@ -26,17 +26,27 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { DeviceConnectPanel } from "@/components/preferences/DeviceConnectPanel";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { shouldShowServerUrlInDevicePicker } from "@/lib/account-server-sync";
-import type { ServerRailAppearance } from "@/lib/global-settings";
+import {
+  devicePickerCodespaceEntryId,
+  devicePickerServerEntryId,
+  isDevicePickerEntryHidden,
+  isDevicePickerSectionHidden,
+  sortByDevicePickerOrder,
+  type DevicePickerSectionId,
+  type ServerRailAppearance,
+} from "@/lib/global-settings";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
@@ -148,6 +158,7 @@ export function ServerPickerPopover({
   const { updateWorkspaceSession } = useWorkspace();
   const { openSettingsView } = useShellView();
   const cloud = useCloudContext();
+  const devicePicker = useGlobalSettings().settings.general.devicePicker;
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -229,9 +240,52 @@ export function ServerPickerPopover({
     };
   }, [anchorRef, onClose, open]);
 
+  // User-hidden entries stay visible while they are the active selection so
+  // the picker never shows an empty highlight for what is currently in use.
+  const visibleCodespaceDevices = useMemo(
+    () =>
+      sortByDevicePickerOrder(
+        codespaceDevices.filter((device) => {
+          const selected =
+            device.localServerId !== null && device.localServerId === selectedServerId;
+          return (
+            selected ||
+            !isDevicePickerEntryHidden(devicePicker, devicePickerCodespaceEntryId(device.key))
+          );
+        }),
+        devicePicker.order,
+        (device) => devicePickerCodespaceEntryId(device.key)
+      ),
+    [codespaceDevices, devicePicker, selectedServerId]
+  );
+  const visibleCloudDevices = useMemo(
+    () =>
+      sortByDevicePickerOrder(
+        cloudDevices.filter(
+          (device) =>
+            device.id === selectedCloudDeviceId ||
+            !isDevicePickerEntryHidden(devicePicker, device.id)
+        ),
+        devicePicker.order,
+        (device) => device.id
+      ),
+    [cloudDevices, devicePicker, selectedCloudDeviceId]
+  );
+  const showSetupCodespace =
+    variant === "device" &&
+    Boolean(onSetupCodespace) &&
+    !isDevicePickerEntryHidden(devicePicker, "action:setup-codespace");
   const showCodespaceSection =
     Boolean(onSelectCodespaceDevice) &&
-    (codespaceDevices.length > 0 || (variant === "device" && Boolean(onSetupCodespace)));
+    !isDevicePickerSectionHidden(devicePicker, "codespaces") &&
+    (visibleCodespaceDevices.length > 0 || showSetupCodespace);
+  const showCloudSection =
+    Boolean(onSelectCloudDevice) &&
+    !isDevicePickerSectionHidden(devicePicker, "cloud") &&
+    visibleCloudDevices.length > 0;
+  const showServersSection = !isDevicePickerSectionHidden(devicePicker, "servers");
+  const showBrowserAction = !isDevicePickerEntryHidden(devicePicker, "action:browser");
+  const showConnectAction = !isDevicePickerEntryHidden(devicePicker, "action:connect");
   const codespaceKeys = useMemo(
     () => codespaceBaseUrlKeys(codespaceDevices),
     [codespaceDevices]
@@ -243,10 +297,19 @@ export function ServerPickerPopover({
     const surfaceServers = offerBrowserMachine
       ? servers
       : servers.filter((server) => !isBrowserMachineUrl(server.baseUrl));
+    const customized = sortByDevicePickerOrder(
+      surfaceServers.filter(
+        (server) =>
+          server.id === selectedServerId ||
+          !isDevicePickerEntryHidden(devicePicker, devicePickerServerEntryId(server.id))
+      ),
+      devicePicker.order,
+      (server) => devicePickerServerEntryId(server.id)
+    );
     if (codespaceDevices.length === 0 || !showCodespaceSection) {
-      return surfaceServers;
+      return customized;
     }
-    return surfaceServers.filter((server) => {
+    return customized.filter((server) => {
       try {
         return !codespaceKeys.has(getServerConnectionKey(server.baseUrl));
       } catch {
@@ -256,7 +319,9 @@ export function ServerPickerPopover({
   }, [
     codespaceDevices.length,
     codespaceKeys,
+    devicePicker,
     offerBrowserMachine,
+    selectedServerId,
     servers,
     showCodespaceSection,
   ]);
@@ -282,32 +347,15 @@ export function ServerPickerPopover({
     onClose();
   };
 
-  return createPortal(
-    <div
-      ref={popoverRef}
-      role="menu"
-      aria-label={label}
-      className="fixed z-[10050] flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
-      style={{
-        top: popoverPos.top,
-        bottom: popoverPos.bottom,
-        left: popoverPos.left,
-        width: popoverPos.width,
-        maxHeight: popoverPos.maxHeight,
-      }}
-      data-ide-input-sink
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <VerticalFadedScroll
-        wrapperClassName={connectOpen ? "shrink-0" : undefined}
-        measureKey={`${servers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${cloudDevices.length}\0${selectedCloudDeviceId ?? ""}\0${codespaceDevices.length}\0${codespaceWakeStatus?.phase ?? ""}\0${codespaceWakeFailure?.deviceKey ?? ""}`}
-        scrollClassName={
-          connectOpen
-            ? "hide-scrollbar-y max-h-[min(140px,28dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
-            : "hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
-        }
-      >
-        {visibleServers.map((server, index) => {
+  const sectionShellClass = (first: boolean) =>
+    first ? "" : "mt-[4px] border-t border-[var(--border-card)] pt-[4px]";
+  const sectionHeadingClass =
+    "px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]";
+
+  const renderServersSection = (first: boolean) => (
+    <div key="servers" className={sectionShellClass(first)}>
+      {!first ? <div className={sectionHeadingClass}>Servers</div> : null}
+      {visibleServers.map((server, index) => {
           const selected = server.id === selectedServerId && !selectedCloudDeviceId;
           const health = serverStatusById[server.id]?.health ?? "unknown";
           const appearance = getServerRailAppearance(serverRailAppearances, server.id, index);
@@ -436,12 +484,13 @@ export function ServerPickerPopover({
             </div>
           );
         })}
-        {showCodespaceSection ? (
-          <div className="mt-[4px] border-t border-[var(--border-card)] pt-[4px]">
-            <div className="px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-              GitHub Codespaces
-            </div>
-            {codespaceDevices.map((device) => {
+    </div>
+  );
+
+  const renderCodespaceSection = (first: boolean) => (
+    <div key="codespaces" className={sectionShellClass(first)}>
+      <div className={sectionHeadingClass}>GitHub Codespaces</div>
+      {visibleCodespaceDevices.map((device) => {
               const selected =
                 device.localServerId !== null &&
                 device.localServerId === selectedServerId &&
@@ -526,7 +575,7 @@ export function ServerPickerPopover({
                 </div>
               );
             })}
-            {variant === "device" && onSetupCodespace ? (
+      {showSetupCodespace ? (
               <button
                 type="button"
                 onClick={onSetupCodespace}
@@ -536,14 +585,13 @@ export function ServerPickerPopover({
                 Set up a Codespace…
               </button>
             ) : null}
-          </div>
-        ) : null}
-        {cloudDevices.length > 0 && onSelectCloudDevice ? (
-          <div className="mt-[4px] border-t border-[var(--border-card)] pt-[4px]">
-            <div className="px-[8px] pb-[2px] pt-[4px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-secondary)]">
-              Cloud
-            </div>
-            {cloudDevices.map((device) => {
+    </div>
+  );
+
+  const renderCloudSection = (first: boolean) => (
+    <div key="cloud" className={sectionShellClass(first)}>
+      <div className={sectionHeadingClass}>Cloud</div>
+      {visibleCloudDevices.map((device) => {
               const selected = device.id === selectedCloudDeviceId;
               return (
                 <button
@@ -552,7 +600,7 @@ export function ServerPickerPopover({
                   role="menuitemradio"
                   aria-checked={selected}
                   onClick={() => {
-                    onSelectCloudDevice(device.id);
+                    onSelectCloudDevice?.(device.id);
                     onClose();
                   }}
                   className="flex w-full min-w-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[8px] text-left hover:bg-[var(--accent-bg)] sm:py-[7px]"
@@ -579,7 +627,53 @@ export function ServerPickerPopover({
                 </button>
               );
             })}
-          </div>
+    </div>
+  );
+
+  const sectionVisibility: Record<DevicePickerSectionId, boolean> = {
+    servers: showServersSection,
+    codespaces: showCodespaceSection,
+    cloud: showCloudSection,
+  };
+  const sectionRenderers: Record<DevicePickerSectionId, (first: boolean) => ReactNode> = {
+    servers: renderServersSection,
+    codespaces: renderCodespaceSection,
+    cloud: renderCloudSection,
+  };
+  const orderedSections = devicePicker.sectionOrder.filter(
+    (section) => sectionVisibility[section]
+  );
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      role="menu"
+      aria-label={label}
+      className="fixed z-[10050] flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
+      style={{
+        top: popoverPos.top,
+        bottom: popoverPos.bottom,
+        left: popoverPos.left,
+        width: popoverPos.width,
+        maxHeight: popoverPos.maxHeight,
+      }}
+      data-ide-input-sink
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <VerticalFadedScroll
+        wrapperClassName={connectOpen ? "shrink-0" : undefined}
+        measureKey={`${visibleServers.length}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${visibleCloudDevices.length}\0${selectedCloudDeviceId ?? ""}\0${visibleCodespaceDevices.length}\0${codespaceWakeStatus?.phase ?? ""}\0${codespaceWakeFailure?.deviceKey ?? ""}\0${orderedSections.join(",")}`}
+        scrollClassName={
+          connectOpen
+            ? "hide-scrollbar-y max-h-[min(140px,28dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+            : "hide-scrollbar-y max-h-[min(420px,70dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+        }
+      >
+        {orderedSections.map((section, index) => sectionRenderers[section](index === 0))}
+        {orderedSections.length === 0 ? (
+          <p className="px-[8px] py-[10px] text-center font-sans text-[11.5px] text-[var(--text-secondary)]">
+            Everything is hidden. Restore entries under Settings → Servers.
+          </p>
         ) : null}
       </VerticalFadedScroll>
       {variant === "device" ? (
@@ -589,6 +683,7 @@ export function ServerPickerPopover({
           }`}
         >
           {offerBrowserMachine &&
+          showBrowserAction &&
           !servers.some((server) => isBrowserMachineUrl(server.baseUrl)) ? (
             <button
               type="button"
@@ -612,16 +707,18 @@ export function ServerPickerPopover({
               </span>
             </button>
           ) : null}
-          <button
-            type="button"
-            aria-expanded={connectOpen}
-            onClick={() => setConnectOpen((openConnect) => !openConnect)}
-            className="flex w-full shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
-          >
-            <Plus className="size-[13px] shrink-0" strokeWidth={1.5} />
-            Connect a device
-          </button>
-          {connectOpen ? (
+          {showConnectAction ? (
+            <button
+              type="button"
+              aria-expanded={connectOpen}
+              onClick={() => setConnectOpen((openConnect) => !openConnect)}
+              className="flex w-full shrink-0 items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+            >
+              <Plus className="size-[13px] shrink-0" strokeWidth={1.5} />
+              Connect a device
+            </button>
+          ) : null}
+          {connectOpen && showConnectAction ? (
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <DeviceConnectPanel
                 onConnected={(serverId) => {

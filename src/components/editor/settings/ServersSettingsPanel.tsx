@@ -8,6 +8,7 @@ import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultSer
 import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { DevicePickerSettingsSection } from "@/components/editor/settings/DevicePickerSettingsSection";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   serverHealthColorClass,
@@ -264,6 +265,7 @@ export function ServerConnectionsSettingsPanel() {
           />
         </SettingsSection>
       ) : null}
+      <DevicePickerSettingsSection />
       {availability === "connected" ? (
         <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
       ) : null}

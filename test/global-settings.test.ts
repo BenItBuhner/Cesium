@@ -455,6 +455,45 @@ describe("global settings", () => {
     });
   });
 
+  test("device picker defaults to every section visible in default order", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.deepEqual(settings.general.devicePicker, {
+      sectionOrder: ["servers", "codespaces", "cloud"],
+      order: [],
+      hidden: [],
+    });
+  });
+
+  test("legacy profiles without devicePicker get the defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const { devicePicker: _ignored, ...generalWithoutPicker } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutPicker,
+    });
+    assert.deepEqual(settings.general.devicePicker, base.general.devicePicker);
+  });
+
+  test("normalizes device picker section order and dedupes ids", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        devicePicker: {
+          sectionOrder: ["cloud", "bogus", "cloud"],
+          order: ["server:a", "", "server:a", 42, "cloud:cursor-sdk"],
+          hidden: ["section:codespaces", "section:codespaces", null, "action:browser"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.devicePicker, {
+      sectionOrder: ["cloud", "servers", "codespaces"],
+      order: ["server:a", "cloud:cursor-sdk"],
+      hidden: ["section:codespaces", "action:browser"],
+    });
+  });
+
   test("normalizes machine workspace sorting", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
