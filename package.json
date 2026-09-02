@@ -63,6 +63,19 @@
   "overrides": {
     "lightningcss": "1.30.1"
   },
+  "allowScripts": {
+    "sharp": true,
+    "esbuild": true,
+    "protobufjs": true,
+    "unrs-resolver": true,
+    "node-pty": true,
+    "sqlite3": true,
+    "@google/genai": false,
+    "detox": false,
+    "dtrace-provider": false,
+    "electron-winstaller": false,
+    "onnxruntime-node": false
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/libsodium-wrappers": "^0.7.14",
