@@ -62,6 +62,123 @@ describe("completion failure projection", () => {
     );
   });
 
+  test("hides provider setup failures from the thread (dock owns them)", () => {
+    const message =
+      "No API key configured for OpenAI. Add one in Settings → Agents → Cesium Agent, or connect an OAuth account.";
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m1",
+        content: "test",
+      },
+      {
+        seq: 2,
+        eventId: "sys1",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "system",
+        level: "error",
+        text: message,
+      },
+      {
+        seq: 3,
+        eventId: "st1",
+        conversationId: "c1",
+        createdAt: 3,
+        kind: "status",
+        status: "failed",
+        detail: message,
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+    assert.equal(messages.filter((entry) => entry.type === "assistant").length, 0);
+    assert.equal(
+      deriveConversationCompletionError(
+        { status: "failed", lastError: message } as AgentConversationRecord,
+        events
+      ),
+      message
+    );
+  });
+
+  test("hides any system error paired with a failed status, regardless of wording", () => {
+    const message = "Something completely novel exploded in the provider adapter.";
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m1",
+        content: "Run",
+      },
+      {
+        seq: 2,
+        eventId: "sys1",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "system",
+        level: "error",
+        text: message,
+      },
+      {
+        seq: 3,
+        eventId: "st1",
+        conversationId: "c1",
+        createdAt: 3,
+        kind: "status",
+        status: "failed",
+        detail: message,
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+    assert.equal(messages.filter((entry) => entry.type === "assistant").length, 0);
+  });
+
+  test("keeps unpaired informational system messages in the thread", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m1",
+        content: "Run",
+      },
+      {
+        seq: 2,
+        eventId: "sys1",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "system",
+        level: "info",
+        text: "Switched to plan mode.",
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+    assert.equal(
+      messages.some(
+        (entry) => entry.type === "assistant" && entry.content === "Switched to plan mode."
+      ),
+      true
+    );
+  });
+
   test("drops legacy Cesium failure assistant chunks", () => {
     const events: AgentStoredEvent[] = [
       {

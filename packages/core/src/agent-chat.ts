@@ -308,6 +308,7 @@ import {
 import type { ProjectAgentEventsOptions } from "./agent-subagent-routing";
 import { formatToolFileLabel, toolPathBasename } from "./workspace-tool-path-display";
 import {
+  collectCompletionFailureDetails,
   isCesiumFailureAssistantChunk,
   isCompletionFailureThreadContent,
 } from "./agent-completion-error";
@@ -4200,6 +4201,10 @@ export function projectAgentEventsToChatMessages(
   // dedupeAgentStoredEvents sorts internally (and fast-paths already-ordered
   // logs, the per-flush common case) - no need to copy + pre-sort here.
   const ordered = stripSpuriousAcpToolCallReplays(dedupeAgentStoredEvents(events));
+  // Providers persist a turn failure as `system`/error + `status: failed` with
+  // the same text. The completion error dock owns that text; the thread must
+  // not echo it as a fake assistant reply.
+  const completionFailureDetails = collectCompletionFailureDetails(ordered);
   const hiddenHandoffTranscriptMessageIds = new Set<string>();
   for (let index = 0; index < ordered.length - 1; index += 1) {
     const current = ordered[index];
@@ -4862,7 +4867,11 @@ const toolEntryByIdAcrossTurns = new Map<
           break;
         }
         const turn = ensureTurn();
-        if (event.level === "error" && isCompletionFailureThreadContent(event.text)) {
+        if (
+          event.level === "error" &&
+          (completionFailureDetails.has(event.text.trim()) ||
+            isCompletionFailureThreadContent(event.text))
+        ) {
           break;
         }
         appendTimelineMessage(turn, {

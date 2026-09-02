@@ -110,6 +110,7 @@ import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
   createPersistableWorkspaceSession,
@@ -343,6 +344,7 @@ export function EditorPanel({
   const { experimentalIpadWindowedTabInset, vscodeExtensionsBeta } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
   const { openAt } = useWorkbenchContextMenu();
+  const dialogs = useWorkbenchDialogs();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
   const persistedSession = sessionOverride ?? workspaceSession.editor;
   const expandedComposerDraftId =
@@ -1652,22 +1654,31 @@ export function EditorPanel({
           id: "tab-group-custom-color",
           label: "Custom color…",
           onSelect: () => {
-            queueMicrotask(() => {
-              const snap = stateRef.current;
-              const gr = snap[groupsKey][groupId];
-              if (!gr) return;
-              const c = window.prompt(
-                "Hex color (#rrggbb)",
-                resolveTabGroupColorHex(gr.color)
-              );
-              if (c == null || !/^#[0-9a-fA-F]{6}$/.test(c.trim())) return;
-              dispatch({
-                type: "UPDATE_TAB_GROUP_META",
-                pane,
-                groupId,
-                color: c.trim(),
+            const gr = stateRef.current[groupsKey][groupId];
+            if (!gr) return;
+            void dialogs
+              .prompt({
+                title: "Custom tab group color",
+                message: "Enter a hex color such as #3b82f6.",
+                defaultValue: resolveTabGroupColorHex(gr.color),
+                placeholder: "#rrggbb",
+                inputLabel: "Hex color",
+                monospace: true,
+                confirmLabel: "Apply",
+                validate: (value) =>
+                  /^#[0-9a-fA-F]{6}$/.test(value)
+                    ? null
+                    : "Use six hex digits, for example #3b82f6.",
+              })
+              .then((color) => {
+                if (color == null || !stateRef.current[groupsKey][groupId]) return;
+                dispatch({
+                  type: "UPDATE_TAB_GROUP_META",
+                  pane,
+                  groupId,
+                  color,
+                });
               });
-            });
           },
         },
         { type: "sep" },
@@ -1681,7 +1692,7 @@ export function EditorPanel({
         },
       ]);
     },
-    [dispatch, openAt]
+    [dialogs, dispatch, openAt]
   );
 
   const handleEditorTabContextMenu = useCallback(

@@ -23,6 +23,7 @@ import {
 } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -148,6 +149,7 @@ export function AgentNewChatLanding({
     homeWorkspaceId,
     activeWorkspaceId,
   } = useWorkspace();
+  const dialogs = useWorkbenchDialogs();
   const {
     activeWorkspaceGroup,
     expandedComposerDraftId,
@@ -633,19 +635,28 @@ export function AgentNewChatLanding({
   );
 
   const handleNewBranchWorktree = useCallback(async () => {
-    const name = window.prompt("New branch name");
-    if (!name?.trim()) {
+    const name = await dialogs.prompt({
+      title: "New branch worktree",
+      message: gitStatus?.currentBranch
+        ? `A new worktree is created for the branch, based on ${gitStatus.currentBranch}.`
+        : "A new worktree is created for the branch.",
+      placeholder: "feature/my-change",
+      inputLabel: "Branch name",
+      monospace: true,
+      confirmLabel: "Create",
+    });
+    if (!name) {
       return;
     }
     await runGitAction(`new:${name}`, async () => {
       await createWorktree({
-        branch: name.trim(),
+        branch: name,
         baseBranch: gitStatus?.currentBranch ?? undefined,
         newBranch: true,
       });
       setBranchPickerOpen(false);
     });
-  }, [createWorktree, gitStatus?.currentBranch, runGitAction]);
+  }, [createWorktree, dialogs, gitStatus?.currentBranch, runGitAction]);
 
   useEffect(() => {
     const onShortcut = (e: Event) => {

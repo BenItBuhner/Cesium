@@ -32,6 +32,56 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // Browser-side code must never block on native `alert` / `confirm` /
+    // `prompt`: they look foreign, cannot be styled, break on Electron and
+    // WebView shells, and stall the whole event loop. Use `useWorkbenchDialogs()`
+    // from `@/components/dialogs/WorkbenchDialogProvider` instead.
+    files: [
+      "src/**",
+      "apps/web/src/**",
+      "apps/desktop-renderer/src/**",
+      "apps/mobile/src/**",
+      "packages/ui-web/src/**",
+    ],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "alert",
+          message: "Use useWorkbenchDialogs().alert() instead of the native alert().",
+        },
+        {
+          name: "confirm",
+          message: "Use useWorkbenchDialogs().confirm() instead of the native confirm().",
+        },
+        {
+          name: "prompt",
+          message: "Use useWorkbenchDialogs().prompt() instead of the native prompt().",
+        },
+      ],
+      "no-restricted-properties": [
+        "error",
+        ...["window", "globalThis", "self"].flatMap((object) => [
+          {
+            object,
+            property: "alert",
+            message: "Use useWorkbenchDialogs().alert() instead of the native alert().",
+          },
+          {
+            object,
+            property: "confirm",
+            message: "Use useWorkbenchDialogs().confirm() instead of the native confirm().",
+          },
+          {
+            object,
+            property: "prompt",
+            message: "Use useWorkbenchDialogs().prompt() instead of the native prompt().",
+          },
+        ]),
+      ],
+    },
+  },
+  {
     // Node-side code: React hook naming/call rules don't apply outside React trees.
     files: ["server/**", "scripts/**", "apps/desktop/src/**", "apps/mobile/scripts/**"],
     rules: {

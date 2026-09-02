@@ -42,6 +42,7 @@ import {
   orderedRailConversationKeys,
   railBulkClickModifierInBulkMode,
 } from "@/lib/agent-rail-bulk-select";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
@@ -507,6 +508,7 @@ export function AgentWorkspaceRail() {
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
+  const dialogs = useWorkbenchDialogs();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const accountIdentity = useAccountIdentity();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
@@ -1125,15 +1127,23 @@ export function AgentWorkspaceRail() {
     isGitRepo?: boolean
   ) => {
     if (isGitRepo === false) {
-      window.alert("Orchestration Mode worktrees require a Git repository.");
+      await dialogs.alert({
+        title: "Orchestration Mode needs a Git repository",
+        message: `${workspaceName} is not a Git repository. Initialize one first, then start Orchestration Mode from a worktree.`,
+      });
       return;
     }
     const defaultBranch = `orchestration/${Date.now().toString(36)}`;
-    const branch = window.prompt(
-      `New orchestration branch name for ${workspaceName}`,
-      defaultBranch
-    );
-    const trimmed = branch?.trim();
+    const trimmed = await dialogs.prompt({
+      title: "Start Orchestration Mode",
+      message: `A new worktree and branch are created in ${workspaceName}${
+        baseBranch ? ` from ${baseBranch}` : ""
+      }.`,
+      defaultValue: defaultBranch,
+      inputLabel: "Orchestration branch name",
+      monospace: true,
+      confirmLabel: "Create worktree",
+    });
     if (!trimmed) {
       return;
     }
@@ -1166,15 +1176,16 @@ export function AgentWorkspaceRail() {
       });
       void refreshConversationGroups();
     } catch (error) {
-      window.alert(
-        error instanceof Error
-          ? `Failed to start Orchestration Mode: ${error.message}`
-          : "Failed to start Orchestration Mode."
-      );
+      await dialogs.alert({
+        title: "Couldn’t start Orchestration Mode",
+        message: error instanceof Error ? error.message : "An unknown error occurred.",
+        tone: "danger",
+      });
     }
   }, [
     activeServer.id,
     activeServer.label,
+    dialogs,
     editorBridgeRef,
     openConversationSummary,
     openWorkspaceById,
@@ -1407,10 +1418,16 @@ export function AgentWorkspaceRail() {
   );
 
   const deleteFolder = useCallback(
-    (folder: ChatFolderState) => {
-      const confirmed = window.confirm(
-        `Delete "${folder.name}"? Chats stay pinned at the Pinned root.`
-      );
+    async (folder: ChatFolderState) => {
+      const confirmed = await dialogs.confirm({
+        title: `Delete folder “${folder.name}”?`,
+        message:
+          folder.conversationIds.length > 0
+            ? `The ${folder.conversationIds.length === 1 ? "chat" : `${folder.conversationIds.length} chats`} inside stay pinned at the Pinned root.`
+            : "The folder is empty; nothing else changes.",
+        tone: "danger",
+        confirmLabel: "Delete",
+      });
       if (!confirmed) {
         return;
       }
@@ -1440,7 +1457,7 @@ export function AgentWorkspaceRail() {
       });
       setEditingFolderId((current) => (current === folder.id ? null : current));
     },
-    [updateSettings]
+    [dialogs, updateSettings]
   );
 
   const moveConversationToFolder = useCallback(
@@ -2265,14 +2282,21 @@ export function AgentWorkspaceRail() {
                 label: "Relocate to Branch...",
                 disabled: relocateBusy,
                 onSelect: () => {
-                  const branch = window.prompt(
-                    `Switch "${conversation.title}" to branch`,
-                    conversation.repository?.currentBranch ?? ""
-                  );
-                  const trimmed = branch?.trim();
-                  if (trimmed) {
-                    void relocateConversationTo(conversation, { branch: trimmed });
-                  }
+                  void dialogs
+                    .prompt({
+                      title: "Relocate to branch",
+                      message: `“${conversation.title}” continues on the branch you enter.`,
+                      defaultValue: conversation.repository?.currentBranch ?? "",
+                      placeholder: "main",
+                      inputLabel: "Branch name",
+                      monospace: true,
+                      confirmLabel: "Relocate",
+                    })
+                    .then((branch) => {
+                      if (branch) {
+                        void relocateConversationTo(conversation, { branch });
+                      }
+                    });
                 },
               },
             ]
@@ -2416,6 +2440,7 @@ export function AgentWorkspaceRail() {
       bulkSelectMode,
       bulkSelectedKeys,
       createFolderForWorkspace,
+      dialogs,
       groups,
       toggleBulkSelectConversation,
       handleOpenConversationInEditor,
@@ -2482,7 +2507,7 @@ export function AgentWorkspaceRail() {
         type: "item",
         id: "delete-folder",
         label: "Delete Folder",
-        onSelect: () => deleteFolder(folder),
+        onSelect: () => void deleteFolder(folder),
       },
     ],
     [deleteFolder, renameFolder]

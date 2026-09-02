@@ -12,7 +12,56 @@ export type AgentCompletionErrorViewModel = {
   code?: string;
   retryable: boolean;
   rawMessage: string;
+  /**
+   * Set when the failure is a local configuration problem (missing provider
+   * key / OAuth account, no model selected) that the user fixes in
+   * Settings → Agents → <harness>, not something a retry can recover from.
+   */
+  setupRequired?: AgentCompletionSetupKind;
 };
+
+export type AgentCompletionSetupKind = "provider-auth" | "model";
+
+const PROVIDER_AUTH_SETUP_ERROR =
+  /no api key configured|no api key (?:is )?(?:set|found|available)|missing api key|api key (?:is )?(?:missing|required|not configured)|connect an oauth account|settings\s*(?:→|->|>)\s*agents/i;
+const MODEL_SETUP_ERROR =
+  /no model (?:selected|configured)|select a model|unknown model|model .* (?:is )?not (?:available|configured|found)/i;
+
+/** Classify configuration failures the user must resolve in Settings. */
+export function detectCompletionSetupRequired(
+  text: string
+): AgentCompletionSetupKind | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (PROVIDER_AUTH_SETUP_ERROR.test(trimmed)) {
+    return "provider-auth";
+  }
+  if (MODEL_SETUP_ERROR.test(trimmed)) {
+    return "model";
+  }
+  return undefined;
+}
+
+/**
+ * Text of every `status: failed` event. A `system` error carrying the same text
+ * is the paired thread copy of a completion failure the dock already surfaces.
+ */
+export function collectCompletionFailureDetails(
+  events: readonly AgentStoredEvent[]
+): Set<string> {
+  const details = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "status" && event.status === "failed") {
+      const detail = event.detail?.trim();
+      if (detail) {
+        details.add(detail);
+      }
+    }
+  }
+  return details;
+}
 
 const CESIUM_FAILED_PREFIX = /^Cesium Agent failed:\s*/i;
 
@@ -40,6 +89,9 @@ export function isCompletionFailureThreadContent(text: string): boolean {
     return true;
   }
   if (RATE_LIMIT_ERROR.test(trimmed)) {
+    return true;
+  }
+  if (detectCompletionSetupRequired(trimmed)) {
     return true;
   }
   if (/\b[45]\d{2}\b/.test(trimmed) && /error|invalid|unauthorized|forbidden|timeout/i.test(trimmed)) {
@@ -113,7 +165,17 @@ function parseHttpStatus(message: string): number | undefined {
   return Number.isFinite(status) ? status : undefined;
 }
 
-function defaultTitle(httpStatus?: number, code?: string): string {
+function defaultTitle(
+  httpStatus?: number,
+  code?: string,
+  setupRequired?: AgentCompletionSetupKind
+): string {
+  if (setupRequired === "provider-auth") {
+    return "Provider not configured";
+  }
+  if (setupRequired === "model") {
+    return "Model not configured";
+  }
   if (httpStatus === 429) {
     return "Rate limited";
   }
@@ -250,12 +312,14 @@ export function parseAgentCompletionError(
     }
   }
 
-  const title = defaultTitle(httpStatus, code);
+  const setupRequired = detectCompletionSetupRequired(summary);
+  const title = defaultTitle(httpStatus, code, setupRequired);
   const retryable =
-    httpStatus === 429 ||
-    (httpStatus !== undefined && httpStatus >= 500) ||
-    code === "queueexceeded" ||
-    /timeout|timed out|econnreset|network/i.test(summary);
+    !setupRequired &&
+    (httpStatus === 429 ||
+      (httpStatus !== undefined && httpStatus >= 500) ||
+      code === "queueexceeded" ||
+      /timeout|timed out|econnreset|network/i.test(summary));
 
   const detail =
     working.length > summary.length + 24 || working !== summary ? working : undefined;
@@ -268,6 +332,7 @@ export function parseAgentCompletionError(
     code,
     retryable,
     rawMessage,
+    ...(setupRequired ? { setupRequired } : {}),
   };
 }
 
