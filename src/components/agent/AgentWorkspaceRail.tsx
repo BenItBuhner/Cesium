@@ -2761,6 +2761,9 @@ export function AgentWorkspaceRail() {
       pinnedFolders,
       settings.general.chatRootOrderByScope[PINNED_CHATS_FOLDER_SCOPE]
     );
+    if (pinnedRailConversations.length === 0 && pinnedFolders.length === 0) {
+      return null;
+    }
     const renderPinnedRow = (
       conversation: AgentRailConversationSummary,
       index: number,
@@ -2876,12 +2879,7 @@ export function AgentWorkspaceRail() {
             onDragOver={handleFolderDropTargetDragOver}
             onDrop={(event) => handleConversationDrop(event, PINNED_CHATS_FOLDER_SCOPE, null)}
           >
-            {pinnedRailConversations.length === 0 && pinnedFolders.length === 0 ? (
-              <div className="rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-disabled)]">
-                Pin a conversation or create a folder
-              </div>
-            ) : (
-              <>
+            <>
                 {pinnedFolders.map((folder) => {
                   const isFolderCollapsed = collapsedFolderIds.has(folder.id);
                   const Icon = getFolderIcon(folder.icon);
@@ -3005,8 +3003,7 @@ export function AgentWorkspaceRail() {
                 {rootConversations.map((conversation, index) =>
                   renderPinnedRow(conversation, index, null, rootConversations)
                 )}
-              </>
-            )}
+            </>
           </div>
         ) : null}
       </section>
@@ -3059,6 +3056,9 @@ export function AgentWorkspaceRail() {
       standaloneChatConversations,
       settings.general.chatRootOrderByScope[STANDALONE_CHATS_FOLDER_SCOPE]
     );
+    if (rootConversations.length === 0) {
+      return null;
+    }
     return (
       <section className="pb-[12px]">
         {showStandaloneSectionHeader ? (
@@ -3103,16 +3103,7 @@ export function AgentWorkspaceRail() {
               handleConversationDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, null)
             }
           >
-            {rootConversations.length === 0 ? (
-              <button
-                type="button"
-                onClick={handleNewStandaloneChat}
-                className="rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--text-disabled)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-secondary)]"
-              >
-                New chat without a workspace
-              </button>
-            ) : (
-              rootConversations.map((conversation, index) => {
+            {rootConversations.map((conversation, index) => {
                 const chatsRowSection: RailConversationRowSection = {
                   inPinnedSection: false,
                   workspaceId: conversation.workspaceId,
@@ -3181,8 +3172,7 @@ export function AgentWorkspaceRail() {
                     }
                   />
                 );
-              })
-            )}
+              })}
           </div>
         ) : null}
       </section>
