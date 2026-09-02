@@ -10,6 +10,7 @@ import {
   FolderGit2,
   GitBranch,
   GitFork,
+  Github,
   Import,
   MessageSquare,
 } from "lucide-react";
@@ -49,7 +50,12 @@ import { CodespaceSetupWizard } from "@/components/preferences/CodespaceSetupWiz
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
 import { useGithubCodespaces } from "@/hooks/useGithubCodespaces";
-import type { CodespaceDevice } from "@/lib/github-codespaces";
+import {
+  CODESPACE_DEVICE_LABEL,
+  codespaceRepoWorkspaceName,
+  codespaceRepoWorkspaceRoot,
+  type CodespaceDevice,
+} from "@/lib/github-codespaces";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -133,6 +139,7 @@ export function AgentNewChatLanding({
     workspaceInfo,
     workspaceSession,
     openWorkspaceById,
+    openFolder,
     gitStatus,
     refreshGitStatus,
     initializeGitRepo,
@@ -196,13 +203,38 @@ export function AgentNewChatLanding({
       ),
     [activeServer.id, serverRailAppearances, servers]
   );
-  const activeDeviceLabel = activeCloudDevice?.label ?? getServerDisplayLabel(
-    activeServer,
-    activeServerAppearance
+  // The active server is a paired GitHub Codespace when a codespace device
+  // resolves to it. Its stored label is the repo (owner/name); the pill
+  // should say what kind of machine it is and let the workspace pill carry
+  // the repository name.
+  const activeCodespaceDevice = useMemo(
+    () =>
+      codespaces.devices.find((device) => device.localServerId === activeServer.id) ??
+      null,
+    [activeServer.id, codespaces.devices]
   );
+  const activeDeviceLabel =
+    activeCloudDevice?.label ??
+    (activeCodespaceDevice
+      ? CODESPACE_DEVICE_LABEL
+      : getServerDisplayLabel(activeServer, activeServerAppearance));
+  const activeDeviceTitle = activeCodespaceDevice
+    ? `${CODESPACE_DEVICE_LABEL} · ${activeCodespaceDevice.repoFullName}`
+    : activeDeviceLabel;
 
+  /**
+   * Switch servers, then land in a workspace. Without a hint this restores
+   * the last workspace used on that server (or its first one). Codespace
+   * devices pass `workspace` so the repository checkout at
+   * `/workspaces/<repo>` is registered on that engine (idempotent - reuses
+   * an existing registration) and opened, instead of dropping the user into
+   * "No workspace".
+   */
   const handleActiveServerChange = useCallback(
-    (serverId: string) => {
+    (
+      serverId: string,
+      options?: { workspace?: { root: string; name: string } }
+    ) => {
       if (activeCloudDevice) {
         // Leaving the cloud device view: stop hiding local conversations.
         setRailFilters({
@@ -213,15 +245,37 @@ export function AgentNewChatLanding({
         });
       }
       setActiveCloudDeviceId(null);
+      setDevicePickerOpen(false);
+      const workspaceHint = options?.workspace;
+      const openHintedWorkspace = async () => {
+        if (!workspaceHint) return;
+        // Let React commit the server switch so the request targets the
+        // newly active engine.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await openFolder(workspaceHint.root, workspaceHint.name);
+        // A "No workspace" draft would otherwise keep masking the workspace
+        // we just opened.
+        setStandaloneDraftActive(false);
+      };
       if (serverId === activeServer.id) {
-        setDevicePickerOpen(false);
+        if (workspaceHint && !activeWorkspaceId) {
+          void openHintedWorkspace().catch(() => undefined);
+        }
         return;
       }
       if (activeWorkspaceId) {
         rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
       }
       setActiveServer(serverId);
-      setDevicePickerOpen(false);
+      if (workspaceHint) {
+        void openHintedWorkspace().catch(() => {
+          // Folder missing or engine refused: fall back to whatever the
+          // engine already has registered.
+          const first = (directoryByServerId.get(serverId) ?? [])[0]?.id;
+          if (first) void openWorkspaceById(first).catch(() => undefined);
+        });
+        return;
+      }
       const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
       const serverWorkspaces = directoryByServerId.get(serverId) ?? [];
       const targetWorkspaceId =
@@ -238,12 +292,24 @@ export function AgentNewChatLanding({
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      openFolder,
       openWorkspaceById,
       railFilters,
       setActiveCloudDeviceId,
       setActiveServer,
       setRailFilters,
+      setStandaloneDraftActive,
     ]
+  );
+
+  const codespaceWorkspaceHint = useCallback(
+    (repoFullName: string) => ({
+      workspace: {
+        root: codespaceRepoWorkspaceRoot(repoFullName),
+        name: codespaceRepoWorkspaceName(repoFullName),
+      },
+    }),
+    []
   );
 
   useRegisterDesignCaptureComposer(composerDraftId, 9);
@@ -281,11 +347,14 @@ export function AgentNewChatLanding({
     (device: CodespaceDevice) => {
       void codespaces.connectDevice(device).then((localServerId) => {
         if (localServerId) {
-          handleActiveServerChange(localServerId);
+          handleActiveServerChange(
+            localServerId,
+            codespaceWorkspaceHint(device.repoFullName)
+          );
         }
       });
     },
-    [codespaces, handleActiveServerChange]
+    [codespaceWorkspaceHint, codespaces, handleActiveServerChange]
   );
 
   const handleRecreateCodespaceDevice = useCallback(
@@ -694,8 +763,8 @@ export function AgentNewChatLanding({
               <button
                 ref={devicePickerRef}
                 type="button"
-                aria-label={`Switch device (${activeDeviceLabel})`}
-                title={devicePillCondensed ? activeDeviceLabel : undefined}
+                aria-label={`Switch device (${activeDeviceTitle})`}
+                title={devicePillCondensed || activeCodespaceDevice ? activeDeviceTitle : undefined}
                 aria-expanded={devicePickerOpen}
                 aria-haspopup="menu"
                 data-perf="agent-device-picker-button"
@@ -708,6 +777,8 @@ export function AgentNewChatLanding({
               >
                 {activeCloudDevice ? (
                   <Cloud className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
+                ) : activeCodespaceDevice ? (
+                  <Github className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
                 ) : isLocalDeviceServer(activeServer) ? (
                   <CircleUserRound className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
                 ) : (
@@ -876,7 +947,12 @@ export function AgentNewChatLanding({
           setCodespaceWizardOpen(false);
           setCodespaceRecreateDevice(null);
         }}
-        onConnected={handleActiveServerChange}
+        onConnected={(localServerId, connected) =>
+          handleActiveServerChange(
+            localServerId,
+            codespaceWorkspaceHint(connected.repoFullName)
+          )
+        }
         devices={codespaces.devices}
         recreateDevice={codespaceRecreateDevice}
       />

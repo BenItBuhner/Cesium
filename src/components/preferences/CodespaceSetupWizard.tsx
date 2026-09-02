@@ -117,8 +117,12 @@ function formatMachine(machine: GithubMachineInfo): string {
 export type CodespaceSetupWizardProps = {
   open: boolean;
   onClose: () => void;
-  /** Receives the local server id once the codespace engine is connected. */
-  onConnected: (localServerId: string) => void;
+  /**
+   * Receives the local server id once the codespace engine is connected,
+   * plus the repository so the caller can open its `/workspaces/<repo>`
+   * folder as the device's workspace.
+   */
+  onConnected: (localServerId: string, connected: { repoFullName: string }) => void;
   /** Existing paired devices (used to reuse account-wide engine credentials). */
   devices: CodespaceDevice[];
   /** Prefills repo + machine for the deleted-codespace recreate flow. */
@@ -467,7 +471,7 @@ function CodespaceSetupWizardInner({
 
       setConnectedServerId(saved.id);
       setStep("done");
-      onConnected(saved.id);
+      onConnected(saved.id, { repoFullName: selectedRepo.fullName });
     },
     [cloud.actions, github, onConnected, recreateDevice, removeServer, saveServer, selectedRepo]
   );
