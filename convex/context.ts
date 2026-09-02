@@ -77,9 +77,15 @@ async function collectShareViews(
   const incomingShares = incomingRows.map((share) => {
     const owner = userById.get(share.ownerUserId) ?? null;
     const server = serverById.get(share.serverId) ?? null;
+    const accepted = share.status === "accepted";
     return {
       shareId: share._id,
       serverName: server?.name ?? "Shared server",
+      // Identity of the underlying server, exposed only after acceptance so
+      // recipient clients can track the local entry across pause/resume
+      // without tombstoning it. Pending invites never leak the address.
+      serverBaseUrl: accepted ? (server?.baseUrl ?? null) : null,
+      serverRendezvousId: accepted ? (server?.rendezvous?.serverId ?? null) : null,
       ownerName: owner?.name ?? null,
       ownerEmail: owner?.email ?? null,
       status: share.status as "pending" | "accepted",

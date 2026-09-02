@@ -84,6 +84,10 @@ import {
   type CloudConversationCatalogRow,
 } from "@/lib/conversation-catalog";
 import { unwrapConvexActionErrors } from "@/lib/cloud/convex-errors";
+import {
+  consumeShareInviteFromLocation,
+  setPendingShareInvite,
+} from "@/lib/cloud/share-invites";
 
 /**
  * Cesium Cloud Context - the client side of the cross-device user context.
@@ -139,6 +143,9 @@ export type CloudSharedServer = {
 export type CloudIncomingShare = {
   shareId: string;
   serverName: string;
+  /** Underlying server identity - present only once the share is accepted. */
+  serverBaseUrl: string | null;
+  serverRendezvousId: string | null;
   ownerName: string | null;
   ownerEmail: string | null;
   status: "pending" | "accepted";
@@ -470,12 +477,18 @@ function reconcilePersonalization(
  *
  * Servers shared by other accounts merge the same way, but their identities
  * are tracked in a dedicated set so the push loop never uploads them as owned
- * rows, and so grants that vanish from bootstrap (revoked / paused / expired /
- * left) are removed from the local list instead of lingering forever.
+ * rows (or tombstones them when share state removes them locally), and so
+ * grants that vanish from bootstrap (revoked / paused / expired / left) are
+ * removed from the local list instead of lingering forever.
+ *
+ * The tracked set is keyed off *accepted* incoming shares - paused/expired
+ * ones included - so a pause only removes the local entry temporarily; the
+ * identity stays protected and the server resurfaces on resume.
  */
 function mergeCloudServersIntoLocal(
   servers: CloudServer[],
-  sharedServers: CloudSharedServer[]
+  sharedServers: CloudSharedServer[],
+  incomingShares: CloudIncomingShare[]
 ): CloudServer[] {
   const banned = servers.filter((server) => !isCloudSyncableServerUrl(server.baseUrl));
   const usable = servers.filter((server) => isCloudSyncableServerUrl(server.baseUrl));
@@ -527,21 +540,63 @@ function mergeCloudServersIntoLocal(
   const previousSharedIds = parseCloudServerTombstones(
     store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
   );
+  // Every accepted grant's identity stays tracked while the grant exists -
+  // even when paused/expired, when it carries no connection payload. A server
+  // the user also owns is never treated as "shared" locally.
+  const currentSharedIds = new Set<string>();
+  for (const share of incomingShares) {
+    if (share.status !== "accepted" || (!share.serverBaseUrl && !share.serverRendezvousId)) {
+      continue;
+    }
+    const identity = cloudServerIdentity({
+      baseUrl: share.serverBaseUrl ?? "",
+      rendezvous: share.serverRendezvousId ? { serverId: share.serverRendezvousId } : null,
+    });
+    if (!ownedIdentities.has(identity)) {
+      currentSharedIds.add(identity);
+    }
+  }
+  for (const server of usableShared) {
+    const identity = cloudServerIdentity(server);
+    if (!ownedIdentities.has(identity)) {
+      currentSharedIds.add(identity);
+    }
+  }
+  // Accepting a share is an explicit user action: it clears any tombstone
+  // left behind by an earlier revoke/removal of the same server, so a
+  // re-share of that server can come back.
+  let tombstonesChanged = false;
+  for (const identity of currentSharedIds) {
+    if (tombstones.delete(identity)) {
+      tombstonesChanged = true;
+    }
+  }
+  if (tombstonesChanged) {
+    store.setItem(
+      CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+      serializeCloudServerTombstones(tombstones)
+    );
+  }
   const sharedMerge = mergeCloudServersIntoState(merged.state, usableShared, {
     skipIdentities: tombstones,
   });
-  // A server the user also owns is never treated as "shared" locally.
-  const currentSharedIds = new Set(
-    usableShared
-      .map((server) => cloudServerIdentity(server))
-      .filter((identity) => !ownedIdentities.has(identity))
+  const liveSharedIdentities = new Set(
+    usableShared.map((server) => cloudServerIdentity(server))
   );
-  const staleSharedIds = new Set(
-    [...previousSharedIds].filter(
-      (identity) => !currentSharedIds.has(identity) && !ownedIdentities.has(identity)
-    )
-  );
-  const afterRemoval = removeServersByIdentity(sharedMerge.state, staleSharedIds);
+  // Remove locally: grants that fully ended (revoked / left / declined), and
+  // tracked grants that are currently dormant (paused / expired).
+  const removalIds = new Set<string>();
+  for (const identity of previousSharedIds) {
+    if (!currentSharedIds.has(identity) && !ownedIdentities.has(identity)) {
+      removalIds.add(identity);
+    }
+  }
+  for (const identity of currentSharedIds) {
+    if (!liveSharedIdentities.has(identity)) {
+      removalIds.add(identity);
+    }
+  }
+  const afterRemoval = removeServersByIdentity(sharedMerge.state, removalIds);
   store.setItem(
     CLOUD_SHARED_SERVER_IDS_STORAGE_KEY,
     serializeCloudServerTombstones(currentSharedIds)
@@ -659,8 +714,12 @@ function CloudBridge({
       async removeServer(input) {
         await removeServerMutation({ ...identityArgs, ...input });
       },
+      // Share failures render directly in settings and toasts, so every call
+      // unwraps Convex error envelopes into human-readable messages.
       async createServerShare(input) {
-        const result = await createShareMutation({ ...identityArgs, ...input });
+        const result = await unwrapConvexActionErrors(() =>
+          createShareMutation({ ...identityArgs, ...input })
+        );
         return {
           shareId: result.shareId as string,
           inviteCode: result.inviteCode,
@@ -668,34 +727,44 @@ function CloudBridge({
         };
       },
       async respondServerShare(input) {
-        await respondShareMutation({
-          ...identityArgs,
-          shareId: input.shareId as Id<"serverShares">,
-          accept: input.accept,
-        });
+        await unwrapConvexActionErrors(() =>
+          respondShareMutation({
+            ...identityArgs,
+            shareId: input.shareId as Id<"serverShares">,
+            accept: input.accept,
+          })
+        );
       },
       async claimServerShareByCode(inviteCode) {
-        return await claimShareMutation({ ...identityArgs, inviteCode });
+        return await unwrapConvexActionErrors(() =>
+          claimShareMutation({ ...identityArgs, inviteCode })
+        );
       },
       async updateServerShare(input) {
-        await updateShareMutation({
-          ...identityArgs,
-          shareId: input.shareId as Id<"serverShares">,
-          ...(input.paused !== undefined ? { paused: input.paused } : {}),
-          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-        });
+        await unwrapConvexActionErrors(() =>
+          updateShareMutation({
+            ...identityArgs,
+            shareId: input.shareId as Id<"serverShares">,
+            ...(input.paused !== undefined ? { paused: input.paused } : {}),
+            ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          })
+        );
       },
       async revokeServerShare(shareId) {
-        await revokeShareMutation({
-          ...identityArgs,
-          shareId: shareId as Id<"serverShares">,
-        });
+        await unwrapConvexActionErrors(() =>
+          revokeShareMutation({
+            ...identityArgs,
+            shareId: shareId as Id<"serverShares">,
+          })
+        );
       },
       async removeServerShare(shareId) {
-        await removeShareMutation({
-          ...identityArgs,
-          shareId: shareId as Id<"serverShares">,
-        });
+        await unwrapConvexActionErrors(() =>
+          removeShareMutation({
+            ...identityArgs,
+            shareId: shareId as Id<"serverShares">,
+          })
+        );
       },
       async savePreferences(payload) {
         await savePreferencesMutation({ ...identityArgs, payload });
@@ -826,7 +895,8 @@ function CloudBridge({
     lastAppliedBootstrapRef.current = bootstrap;
     const banned = mergeCloudServersIntoLocal(
       bootstrap.servers,
-      bootstrap.sharedServers ?? []
+      bootstrap.sharedServers ?? [],
+      bootstrap.incomingShares ?? []
     );
     for (const server of banned) {
       void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
@@ -857,6 +927,14 @@ function CloudBridge({
       const tombstones = parseCloudServerTombstones(
         store.getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
       );
+      // Servers shared *to* this account are cloud-managed, not owned: they
+      // are never pushed up as owned rows (that would clone them into this
+      // account and defeat revocation), and their share-driven local removals
+      // (pause / revoke) must not leave tombstones - a tombstone would block
+      // the server from returning when the owner resumes the share.
+      const sharedIdentities = parseCloudServerTombstones(
+        store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
+      );
       let tombstonesChanged = false;
       for (const server of state.servers) {
         if (tombstones.delete(cloudServerIdentity(server))) {
@@ -871,6 +949,9 @@ function CloudBridge({
             : removal.baseUrl
               ? cloudServerIdentity({ baseUrl: removal.baseUrl })
               : null;
+          if (identity && sharedIdentities.has(identity)) {
+            continue;
+          }
           if (identity) {
             tombstones.add(identity);
             tombstonesChanged = true;
@@ -885,11 +966,6 @@ function CloudBridge({
         );
       }
       lastPushedServersRef.current = state.servers;
-      // Servers shared *to* this account are never pushed back up as owned
-      // rows - that would clone them into this account and defeat revocation.
-      const sharedIdentities = parseCloudServerTombstones(
-        store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
-      );
       for (const payload of buildCloudServerPushPayloads(
         state.servers,
         (baseUrl) => getStoredSessionToken(baseUrl),
@@ -1020,6 +1096,15 @@ export function CloudProviders({ children }: { children: ReactNode }) {
   // (file:// pages send `Origin: null`, which Clerk rejects), so FAPI traffic
   // is relayed through the native shell. No-op everywhere else.
   useState(() => installClerkFapiTunnel());
+  // Capture a server-share invite code from the URL fragment on ANY route
+  // (landing page, sign-in, workbench) before navigation can drop it. The
+  // stash is redeemed later, once the user is signed in inside the workbench.
+  useEffect(() => {
+    const inviteCode = consumeShareInviteFromLocation();
+    if (inviteCode) {
+      setPendingShareInvite(inviteCode);
+    }
+  }, []);
   const [localOnly, setLocalOnly] = useState(false);
   useEffect(() => {
     setLocalOnly(isCloudLocallyDisabled());

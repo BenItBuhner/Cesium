@@ -54,6 +54,9 @@ export function ServerShareNotifier() {
           message: result.alreadyAccepted
             ? `"${result.serverName}" is already in your servers list.`
             : `"${result.serverName}"${result.ownerName ? ` from ${result.ownerName}` : ""} was added to your servers list.`,
+          // Link claims often land mid-navigation (guest gate → workbench);
+          // give the confirmation extra time on screen.
+          autoDismissMs: 20_000,
         });
       })
       .catch((error: unknown) => {
