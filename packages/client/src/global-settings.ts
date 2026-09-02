@@ -34,6 +34,11 @@ import {
   normalizeComposerStatusBarVisibility,
   type ComposerStatusBarVisibility,
 } from "./composer-status-bar";
+import {
+  createDefaultDevicePickerState,
+  normalizeDevicePickerState,
+  type DevicePickerState,
+} from "./device-picker";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 
@@ -206,6 +211,8 @@ export type GeneralSettingsState = {
   agentRail: AgentRailSettingsState;
   /** Order + visibility of the widgets on the new-chat landing. */
   newChatWidgets: NewChatWidgetsState;
+  /** Section / entry order and hidden entries in the device (server) picker. */
+  devicePicker: DevicePickerState;
   /**
    * Defaults for the repo / branch / goal / context row beneath the composer.
    * Omitted on legacy profiles so their workspace's last-used value migrates
@@ -391,6 +398,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         scope: { type: "all" },
       },
       newChatWidgets: createDefaultNewChatWidgetsState(),
+      devicePicker: createDefaultDevicePickerState(),
     },
     agents: {
       submitCtrlEnter: false,
@@ -963,6 +971,9 @@ export function normalizeLoadedGlobalSettings(
       ),
       newChatWidgets: normalizeNewChatWidgetsState(
         (r.general as Record<string, unknown> | undefined)?.newChatWidgets
+      ),
+      devicePicker: normalizeDevicePickerState(
+        (r.general as Record<string, unknown> | undefined)?.devicePicker
       ),
       composerStatusBarVisibility:
         (r.general as Record<string, unknown> | undefined)

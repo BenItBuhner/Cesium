@@ -993,7 +993,14 @@ export function AgentShellStateProvider({
   const lastRailRefreshAtRef = useRef(0);
   const refreshConversationGroupsWithState = useCallback(async () => {
     if (railRefreshInFlightRef.current) {
-      return railRefreshInFlightRef.current;
+      // The owner of the in-flight promise handles its rejection below; every
+      // other caller `void`s this function, so hand them a settled-safe view or
+      // an offline server surfaces as "Uncaught (in promise) TypeError: Failed
+      // to fetch" on each focus/visibility refresh.
+      return railRefreshInFlightRef.current.then(
+        () => undefined,
+        () => undefined
+      );
     }
     setRailRefreshing(true);
     setRailLoadError(null);
@@ -1998,7 +2005,7 @@ export function AgentShellStateProvider({
         linkReferences: snapshot.linkReferences,
       });
       dispatchAgentConversationUpserted(conversation);
-      void refreshConversationGroups();
+      void refreshConversationGroups().catch(() => undefined);
       return conversation;
     } catch (error) {
       upsertComposerDraft(draftId, {

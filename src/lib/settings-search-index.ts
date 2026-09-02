@@ -692,6 +692,45 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("servers", "active-chat", "Active chat server", "New chats and workspace actions."),
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
+  row(
+    "servers",
+    "device-picker-entries",
+    "Device picker",
+    "Show, hide, and reorder servers, Codespaces, and cloud devices in the Switch device dropdown.",
+    ["device picker", "switch device", "server dropdown", "hide codespaces", "hide cloud", "reorder"]
+  ),
+  row(
+    "servers",
+    "device-picker-kind-codespace",
+    "GitHub Codespaces in device picker",
+    "Hide every Codespace from the device picker.",
+    ["codespaces", "github"]
+  ),
+  row(
+    "servers",
+    "device-picker-kind-cloud",
+    "Cloud execution in device picker",
+    "Hide every cloud execution device from the device picker.",
+    ["cursor cloud"]
+  ),
+  row(
+    "servers",
+    "device-picker-action:browser",
+    "Use this browser action",
+    "Hide the in-browser engine shortcut from the device picker."
+  ),
+  row(
+    "servers",
+    "device-picker-action:connect",
+    "Connect a device action",
+    "Hide the connect-a-device shortcut from the device picker."
+  ),
+  row(
+    "servers",
+    "device-picker-action:setup-codespace",
+    "Set up a Codespace action",
+    "Hide the Codespace setup shortcut from the device picker."
+  ),
   section("servers", "public-access-section", "Public access", "share expose tunnel remote link"),
   row(
     "servers",

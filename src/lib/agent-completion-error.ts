@@ -5,6 +5,7 @@ export {
   COMPLETION_RETRY_MIN_BUSY_MS,
   COMPRESSING_CONTEXT_STATUS_PREFIX,
   TAKING_LONGER_STATUS_PREFIX,
+  collectCompletionFailureDetails,
   completionErrorDismissKey,
   computeCompletionAutoRetryActive,
   computeCompletionRetriesRemaining,
@@ -12,6 +13,7 @@ export {
   computeRetryCountdownProgress,
   conversationHasCompletionFailure,
   deriveConversationCompletionError,
+  detectCompletionSetupRequired,
   isAgentComposerBusy,
   isCesiumFailureAssistantChunk,
   isCompletionFailureThreadContent,
@@ -24,4 +26,5 @@ export {
 } from "@cesium/core";
 export type {
   AgentCompletionErrorViewModel,
+  AgentCompletionSetupKind,
 } from "@cesium/core";

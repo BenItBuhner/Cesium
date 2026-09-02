@@ -455,6 +455,40 @@ describe("global settings", () => {
     });
   });
 
+  test("device picker defaults to everything visible in natural order", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.deepEqual(settings.general.devicePicker, { order: [], hidden: [] });
+  });
+
+  test("legacy profiles without devicePicker get the defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const { devicePicker: _ignored, ...generalWithoutPicker } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutPicker,
+    });
+    assert.deepEqual(settings.general.devicePicker, base.general.devicePicker);
+  });
+
+  test("normalizes device picker ids: dedupes, drops non-strings and unknown keys", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        devicePicker: {
+          sectionOrder: ["cloud"],
+          order: ["server:a", "", "server:a", 42, "codespace:owner/repo", "cloud:cursor-sdk"],
+          hidden: ["kind:codespace", "kind:codespace", null, "action:browser"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.devicePicker, {
+      order: ["server:a", "codespace:owner/repo", "cloud:cursor-sdk"],
+      hidden: ["kind:codespace", "action:browser"],
+    });
+  });
+
   test("normalizes machine workspace sorting", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
