@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
-import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
+import {
+  explainGithubLinkMismatch,
+  useClerkGithubLink,
+} from "@/hooks/useClerkGithubLink";
 import { formatGithubConnectError } from "@/lib/github-clerk-errors";
 import {
   Check,
@@ -276,7 +279,8 @@ function GithubAccountSection() {
 
 function GithubAccountSectionInner() {
   const cloud = useCloudContext();
-  const { connectGithub, disconnectGithub, formatError } = useClerkGithubLink();
+  const { linkState, connectGithub, disconnectGithub, formatError } =
+    useClerkGithubLink();
   const [status, setStatus] = useState<{
     connected: boolean;
     login: string | null;
@@ -309,12 +313,19 @@ function GithubAccountSectionInner() {
     setPending(true);
     setActionError(null);
     try {
-      await connectGithub();
+      const outcome = await connectGithub();
+      if (outcome === "already-linked") {
+        setPending(false);
+        setActionError(
+          explainGithubLinkMismatch(linkState) ??
+            "GitHub is already linked in Clerk; the Convex deployment could not fetch its token."
+        );
+      }
     } catch (error) {
       setPending(false);
       setActionError(formatError(error));
     }
-  }, [connectGithub, formatError]);
+  }, [connectGithub, formatError, linkState]);
 
   const disconnect = useCallback(async () => {
     if (
@@ -396,6 +407,10 @@ function GithubAccountSectionInner() {
       {status?.error || actionError ? (
         <SettingsCallout className="px-[2px]">
           {actionError ?? status?.error}
+        </SettingsCallout>
+      ) : status && !status.connected && explainGithubLinkMismatch(linkState) ? (
+        <SettingsCallout className="px-[2px]">
+          {explainGithubLinkMismatch(linkState)}
         </SettingsCallout>
       ) : null}
     </SettingsSection>
