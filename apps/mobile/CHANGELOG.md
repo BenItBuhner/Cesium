@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-02
+
+Patch cut so Android, Wear OS, and desktop installers pick up the native Clerk sign-in fix that landed after `v0.11.0`. Tag `v0.11.1` after this lands on `main` to publish the rebuilt APKs and desktop installers. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Fixed
+
+- Native Android/desktop Clerk sign-in: the packaged `file://` workbench no longer sends `Origin: null` to Clerk's Frontend API. Sign-in tickets from the hosted browser hand-back now create a session instead of bouncing back to the signed-out wall.
+
 ## [0.11.0] - 2026-09-02
 
 Codespaces reliability and account-sync cut. Tag `v0.11.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
