@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useClerkGithubLink } from "@/hooks/useClerkGithubLink";
+import {
+  explainGithubLinkMismatch,
+  useClerkGithubLink,
+} from "@/hooks/useClerkGithubLink";
 import {
   Check,
   ExternalLink,
@@ -120,8 +123,9 @@ function ClerkGithubConnectCta({
 }: {
   onError: (message: string) => void;
 }) {
-  const { user, connectGithub, formatError } = useClerkGithubLink();
+  const { user, linkState, connectGithub, formatError } = useClerkGithubLink();
   const [linkPending, setLinkPending] = useState(false);
+  const mismatch = explainGithubLinkMismatch(linkState);
 
   const startConnect = useCallback(async () => {
     setLinkPending(true);
@@ -135,6 +139,11 @@ function ClerkGithubConnectCta({
 
   return (
     <>
+      {mismatch ? (
+        <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
+          {mismatch}
+        </p>
+      ) : null}
       <button
         type="button"
         onClick={() => void startConnect()}
@@ -146,7 +155,7 @@ function ClerkGithubConnectCta({
         ) : (
           <Github className="size-[13px]" strokeWidth={1.7} aria-hidden />
         )}
-        Connect GitHub
+        {linkState.kind === "linked" ? "Re-authorize GitHub" : "Connect GitHub"}
       </button>
       <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
         You will be sent to GitHub to authorize Cesium (repo and codespace

@@ -241,6 +241,7 @@ test("compacts only adjacent chunks from the same assistant message", () => {
   assert.equal(compacted.length, 3);
   assert.deepEqual(compacted[0], {
     ...events[1],
+    firstSeq: 1,
     text: "xy",
   });
   assert.equal(compacted[1], events[2]);
@@ -270,6 +271,7 @@ test("live map merging compacts chunks across consecutive render windows", () =>
   assert.equal(second.conversation?.length, 1);
   assert.deepEqual(second.conversation?.[0], {
     ...chunkEvent("conversation", 3),
+    firstSeq: 1,
     text: "xyz",
   });
 });

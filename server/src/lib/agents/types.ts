@@ -824,7 +824,44 @@ export type AgentSocketServerMessage =
       conversationId: string;
       workspaceId: string;
     }
-  | { type: "pong" }
+  /**
+   * Live `event_batch` frames for this conversation were dropped for this
+   * socket under backpressure. Tiny and never dropped itself, so a lossy
+   * client always learns it must `request_events_since` instead of silently
+   * rendering a transcript with a hole in it. `throughSeq` is the highest
+   * seq among the dropped frames.
+   */
+  | {
+      type: "events_dropped";
+      workspaceId: string;
+      conversationId: string;
+      throughSeq: number;
+    }
+  /**
+   * Terminates a `request_events_since` replay. Everything the server has in
+   * `(sinceSeq, throughSeq]` was sent in the preceding non-droppable
+   * `event_batch` frames; seqs still missing locally inside that range do not
+   * exist server-side (deleted events), so the client can stop waiting for
+   * them. Doubles as a delivery ack: a client that never receives this knows
+   * its recovery request (or the replay) was lost and can retry.
+   */
+  | {
+      type: "events_delta_done";
+      workspaceId: string;
+      conversationId: string;
+      sinceSeq: number;
+      throughSeq: number;
+    }
+  | {
+      type: "pong";
+      /**
+       * Latest known event seq for each conversation this socket subscribes
+       * to. Piggybacked liveness + consistency: even when every droppable
+       * frame was lost, the periodic heartbeat exposes how far behind the
+       * local log is.
+       */
+      latestSeqByConversationId?: Record<string, number>;
+    }
   | {
       type: "error";
       message: string;

@@ -123,6 +123,8 @@ function agentSocketMessageWorkspaceScope(
     case "history_page":
     case "event":
     case "event_batch":
+    case "events_dropped":
+    case "events_delta_done":
     case "conversation_deleted":
       return message.workspaceId;
     default:
@@ -443,6 +445,25 @@ const EVENT_DELTA_REQUEST_COOLDOWN_MS = 2_000;
 /** Grace before treating record.lastEventSeq > local tail as lost frames. */
 const EVENT_CONSISTENCY_GRACE_MS = 2_000;
 /**
+ * Base wait for the `events_delta_done` ack before re-requesting a recovery
+ * delta (scaled by attempt count - generous on purpose so very-high-latency
+ * links get their replay through before the watchdog fires again).
+ */
+const EVENT_DELTA_ACK_TIMEOUT_MS = 10_000;
+/** Bounded watchdog retries; past this, reconnect subscribe cursors take over. */
+const EVENT_DELTA_MAX_ATTEMPTS = 5;
+/** Heartbeat cadence on the agent socket (visible tabs only). */
+const AGENT_SOCKET_PING_INTERVAL_MS = 15_000;
+/**
+ * No inbound frame (of any kind) for this long on a connected, visible socket
+ * means the connection is half-open - the TCP session died without a FIN/RST
+ * reaching us (common on flaky Wi-Fi / mobile handoffs). Force-close so the
+ * reconnect + gap-aware subscribe cursor path replays what was missed.
+ */
+const AGENT_SOCKET_STALE_MS = 45_000;
+/** How often the heartbeat timer wakes to ping / check staleness. */
+const AGENT_SOCKET_HEARTBEAT_TICK_MS = 5_000;
+/**
  * Very long transcripts make each commit expensive (full projection +
  * reconciliation downstream), so the batch window stretches with the largest
  * pending log to bound the projection work per second.
@@ -507,7 +528,10 @@ export function shouldFlushAgentEventRenderBatch(
 /**
  * Adjacent assistant deltas are observationally equivalent to one concatenated
  * delta. Keep the newest sequence/id so reconnect cursors still advance to the
- * last event represented by the compacted row.
+ * last event represented by the compacted row, and record the oldest swallowed
+ * seq as `firstSeq` so the row still declares the full seq range it covers -
+ * without it, a recovery replay overlapping the compacted range would not be
+ * recognized as duplicate and its text would be inserted a second time.
  */
 export function compactAdjacentAgentMessageChunks(
   events: AgentStoredEvent[]
@@ -521,7 +545,12 @@ export function compactAdjacentAgentMessageChunks(
     if (
       previous?.kind === "assistant_message_chunk" &&
       event.kind === "assistant_message_chunk" &&
-      previous.messageId === event.messageId
+      previous.messageId === event.messageId &&
+      // Only stream-adjacent chunks may merge. Array-adjacent rows can sit on
+      // either side of a sequence hole (dropped frames); gluing across it
+      // would claim coverage of seqs this client never received and block the
+      // recovery replay from inserting them.
+      eventCoverageStart(event) === previous.seq + 1
     ) {
       if (!compacted) {
         compacted = events.slice(0, index);
@@ -529,6 +558,7 @@ export function compactAdjacentAgentMessageChunks(
       compacted[compacted.length - 1] = {
         ...previous,
         ...event,
+        firstSeq: eventCoverageStart(previous),
         text: previous.text + event.text,
       };
       continue;
@@ -536,6 +566,53 @@ export function compactAdjacentAgentMessageChunks(
     compacted?.push(event);
   }
   return compacted ?? events;
+}
+
+/** Oldest seq a (possibly compacted) row represents; rows cover `[start, seq]` inclusive. */
+function eventCoverageStart(event: AgentStoredEvent): number {
+  const firstSeq = event.firstSeq;
+  return typeof firstSeq === "number" && firstSeq > 0 && firstSeq < event.seq
+    ? firstSeq
+    : event.seq;
+}
+
+/**
+ * Whether `seq` is already represented by a row in the log, either exactly or
+ * inside a compacted row's covered range. `sortedBySeq` must be ascending by
+ * `seq` (the merge layer's invariant); lookup is a binary search for the first
+ * row whose tail seq reaches `seq`.
+ */
+export function isSeqCoveredByEvents(
+  sortedBySeq: readonly AgentStoredEvent[],
+  seq: number
+): boolean {
+  if (seq <= 0) {
+    return false;
+  }
+  let lo = 0;
+  let hi = sortedBySeq.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedBySeq[mid]!.seq < seq) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  const candidate = sortedBySeq[lo];
+  if (!candidate || candidate.seq < seq) {
+    return false;
+  }
+  return candidate.seq === seq || eventCoverageStart(candidate) <= seq;
+}
+
+function isSortedBySeq(events: readonly AgentStoredEvent[]): boolean {
+  for (let i = 1; i < events.length; i += 1) {
+    if (events[i]!.seq < events[i - 1]!.seq) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function compactConversationEvents(events: AgentStoredEvent[]): AgentStoredEvent[] {
@@ -594,11 +671,22 @@ export function mergeAgentConversationEventBatch(
       return compactConversationEvents(compactAdjacentAgentMessageChunks(next));
     }
   }
-  const seenSeq = new Set(existing.map((event) => event.seq));
+  // Coverage-aware dedupe: compacted chunk rows swallow their predecessors'
+  // seq/eventId, so a plain seq Set would fail to recognize replayed chunks
+  // whose text already lives inside a compacted row - re-inserting them
+  // garbles the assistant message. Rows are matched by their covered seq
+  // range instead.
+  const existingSorted = isSortedBySeq(existing)
+    ? existing
+    : [...existing].sort((a, b) => a.seq - b.seq);
   const seenEventIds = new Set(existing.map((event) => event.eventId));
+  const addedSeq = new Set<number>();
   let next: AgentStoredEvent[] = existing;
   for (const event of incoming) {
-    if (seenSeq.has(event.seq) || seenEventIds.has(event.eventId)) {
+    const seqDuplicate =
+      event.seq > 0 &&
+      (addedSeq.has(event.seq) || isSeqCoveredByEvents(existingSorted, event.seq));
+    if (seqDuplicate || seenEventIds.has(event.eventId)) {
       continue;
     }
     if (isIncomingEventDroppedByAcpToolStrip(next, event)) {
@@ -608,7 +696,9 @@ export function mergeAgentConversationEventBatch(
       next = [...existing];
     }
     next.push(event);
-    seenSeq.add(event.seq);
+    if (event.seq > 0) {
+      addedSeq.add(event.seq);
+    }
     seenEventIds.add(event.eventId);
   }
   if (next === existing) {
@@ -648,9 +738,12 @@ export function mergeAgentConversationSnapshotHeadEvents(
 ): AgentStoredEvent[] {
   // A prompt ACK can carry an older head than events already delivered over
   // the socket. Treat only the advertised window as authoritative: retain
-  // loaded history before it and live events that raced ahead of it.
+  // loaded history before it and live events that raced ahead of it. Rows are
+  // matched by covered seq range: a compacted chunk row overlapping the
+  // window must be replaced by the window's raw rows or its text duplicates.
   const kept = existing.filter(
-    (event) => event.seq < window.oldestSeq || event.seq > window.newestSeq
+    (event) =>
+      event.seq < window.oldestSeq || eventCoverageStart(event) > window.newestSeq
   );
   const bySeq = new Map<number, AgentStoredEvent>();
   for (const event of kept) {
@@ -967,13 +1060,21 @@ export function AgentConversationsProvider({
           [incoming.id]: { hasOlder: false },
         }));
       }
-      // Snapshots reset the gap-detection baseline to the merged tail.
+      // Snapshots reset the gap-detection baseline to the merged tail. Any
+      // outstanding hole bookkeeping is superseded: the snapshot window is
+      // authoritative for the range it covers.
       {
         const ledger = lastSeenSeqByConversationRef.current;
         const tailSeq = getConversationLatestSeq(eventsStore.get(incoming.id));
         if (tailSeq > (ledger.get(incoming.id) ?? 0)) {
           ledger.set(incoming.id, tailSeq);
         }
+        gapSinceSeqByConversationRef.current.delete(incoming.id);
+        const recovery = deltaRecoveryRef.current.get(incoming.id);
+        if (recovery?.timer != null) {
+          clearTimeout(recovery.timer);
+        }
+        deltaRecoveryRef.current.delete(incoming.id);
       }
 
 updateWorkspaceSession((current) => {
@@ -1230,15 +1331,65 @@ updateWorkspaceSession((current) => {
   const lastSeenSeqByConversationRef = useRef(new Map<string, number>());
   const deltaRequestCooldownUntilRef = useRef(new Map<string, number>());
   const consistencyCheckTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /**
+   * Safe resume cursor per conversation while a sequence hole is outstanding:
+   * the highest seq up to which the local log was known contiguous when the
+   * hole appeared. Recovery requests and reconnect subscribe cursors must
+   * start here, not at the (post-hole) tail, or the hole survives forever.
+   * Cleared when a recovery ack (`events_delta_done`) covers it or a fresh
+   * snapshot resets the log.
+   */
+  const gapSinceSeqByConversationRef = useRef(new Map<string, number>());
+  /**
+   * In-flight delta recovery awaiting its `events_delta_done` ack. On a lossy
+   * link the request or the replay itself can be lost; without an ack-driven
+   * retry the transcript stays holed until some unrelated frame re-exposes
+   * the gap. Attempts back off linearly and are bounded - a reconnect's
+   * subscribe cursor (gap-aware) is the recovery path of last resort.
+   */
+  const deltaRecoveryRef = useRef(
+    new Map<string, { timer: ReturnType<typeof setTimeout> | null; attempts: number }>()
+  );
+  const requestEventsDeltaRef = useRef<(conversationId: string) => void>(() => {});
+
+  const recordEventGap = useCallback((conversationId: string, safeSinceSeq: number) => {
+    if (safeSinceSeq <= 0) {
+      return;
+    }
+    const gaps = gapSinceSeqByConversationRef.current;
+    const existing = gaps.get(conversationId);
+    gaps.set(
+      conversationId,
+      existing == null ? safeSinceSeq : Math.min(existing, safeSinceSeq)
+    );
+  }, []);
+
+  const clearDeltaRecovery = useCallback((conversationId: string) => {
+    const recovery = deltaRecoveryRef.current.get(conversationId);
+    if (recovery?.timer != null) {
+      clearTimeout(recovery.timer);
+    }
+    deltaRecoveryRef.current.delete(conversationId);
+  }, []);
 
   const requestEventsDelta = useCallback((conversationId: string) => {
     const socket = socketRef.current;
     if (!socket?.connected) {
+      // The reconnect subscribe cursor (gap-aware) takes over once the
+      // socket is back; an offline retry loop would be wasted work.
       return;
     }
     const now = Date.now();
     const cooldownUntil = deltaRequestCooldownUntilRef.current.get(conversationId) ?? 0;
     if (cooldownUntil > now) {
+      return;
+    }
+    const lastSeen = lastSeenSeqByConversationRef.current.get(conversationId) ?? 0;
+    const gapSince = gapSinceSeqByConversationRef.current.get(conversationId);
+    const sinceSeq = gapSince == null ? lastSeen : Math.min(gapSince, lastSeen);
+    if (sinceSeq <= 0) {
+      // Nothing local yet - first hydration belongs to the snapshot path,
+      // not a full-log delta replay.
       return;
     }
     deltaRequestCooldownUntilRef.current.set(
@@ -1248,34 +1399,52 @@ updateWorkspaceSession((current) => {
     socket.send({
       type: "request_events_since",
       conversationId,
-      sinceSeq: lastSeenSeqByConversationRef.current.get(conversationId) ?? 0,
+      sinceSeq,
     });
+    // Arm the ack watchdog: if no events_delta_done lands, re-request.
+    const recovery = deltaRecoveryRef.current;
+    const entry = recovery.get(conversationId) ?? { timer: null, attempts: 0 };
+    if (entry.timer != null) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    entry.attempts += 1;
+    if (entry.attempts <= EVENT_DELTA_MAX_ATTEMPTS) {
+      entry.timer = setTimeout(() => {
+        entry.timer = null;
+        requestEventsDeltaRef.current(conversationId);
+      }, EVENT_DELTA_ACK_TIMEOUT_MS * entry.attempts);
+    }
+    recovery.set(conversationId, entry);
   }, []);
 
+  useEffect(() => {
+    requestEventsDeltaRef.current = requestEventsDelta;
+  }, [requestEventsDelta]);
+
   /**
-   * A pushed record whose `lastEventSeq` runs ahead of the local log means
-   * frames were lost (or never subscribed-through). Give in-flight batches a
-   * grace period, then heal with a delta if the hole is still there.
+   * A pushed record / heartbeat pong whose latest seq runs ahead of the local
+   * log means frames were lost (or never subscribed-through). Give in-flight
+   * batches a grace period, then heal with a delta if the hole is still there.
    */
   const scheduleEventConsistencyCheck = useCallback(
-    (conversationId: string) => {
+    (conversationId: string, targetSeq?: number) => {
       if (consistencyCheckTimersRef.current.has(conversationId)) {
         return;
       }
       const timer = setTimeout(() => {
         consistencyCheckTimersRef.current.delete(conversationId);
         const record = conversationsByIdRef.current[conversationId];
-        if (!record) {
-          return;
-        }
+        const target = Math.max(targetSeq ?? 0, record?.lastEventSeq ?? 0);
         const lastSeen = lastSeenSeqByConversationRef.current.get(conversationId) ?? 0;
-        if (record.lastEventSeq > lastSeen && lastSeen > 0) {
+        if (target > lastSeen && lastSeen > 0) {
+          recordEventGap(conversationId, lastSeen);
           requestEventsDelta(conversationId);
         }
       }, EVENT_CONSISTENCY_GRACE_MS);
       consistencyCheckTimersRef.current.set(conversationId, timer);
     },
-    [requestEventsDelta]
+    [recordEventGap, requestEventsDelta]
   );
 
   const ingestConversationEvents = useCallback(
@@ -1297,6 +1466,9 @@ updateWorkspaceSession((current) => {
       }
       if (lastSeen > 0 && minIncoming > lastSeen + 1) {
         // Sequence hole: frames between lastSeen and this batch were dropped.
+        // Pin the safe cursor before the ledger advances past the hole so
+        // retries and reconnect subscribes keep replaying from solid ground.
+        recordEventGap(conversationId, lastSeen);
         requestEventsDelta(conversationId);
       }
       ledger.set(conversationId, maxIncoming);
@@ -1307,7 +1479,7 @@ updateWorkspaceSession((current) => {
         shouldFlushAgentEventRenderBatch(incoming)
       );
     },
-    [eventRenderBatcher, requestEventsDelta]
+    [eventRenderBatcher, recordEventGap, requestEventsDelta]
   );
 
   useEffect(() => {
@@ -2267,10 +2439,16 @@ busy,
       ]),
     ];
     const sinceByConversationId = Object.fromEntries(
-      conversationIds.map((conversationId) => [
-        conversationId,
-        getConversationLatestSeq(eventsStore.get(conversationId)),
-      ])
+      conversationIds.map((conversationId) => {
+        const tailSeq = getConversationLatestSeq(eventsStore.get(conversationId));
+        // An unhealed sequence hole caps the resume cursor: subscribing from
+        // the post-hole tail would replay nothing and fossilize the gap.
+        const gapSince = gapSinceSeqByConversationRef.current.get(conversationId);
+        return [
+          conversationId,
+          gapSince == null ? tailSeq : Math.min(gapSince, tailSeq),
+        ];
+      })
     );
     socket.send({
       type: "subscribe",
@@ -2675,7 +2853,40 @@ busy,
     );
     socketRef.current = socket;
 
+    // App-level heartbeat: protocol-level pings keep middleboxes happy but a
+    // half-open TCP session (flaky Wi-Fi, mobile network handoff) leaves the
+    // browser believing it is connected while nothing arrives. Any inbound
+    // frame counts as liveness; a stale connected socket is force-closed so
+    // the reconnect + gap-aware subscribe cursor replays what was missed.
+    let lastInboundAt = Date.now();
+    let lastPingAt = 0;
+    const heartbeatTimer = setInterval(() => {
+      if (!socket.connected) {
+        // Never count reconnect downtime against the next connection.
+        lastInboundAt = Date.now();
+        return;
+      }
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        // Hidden tabs throttle timers hard enough to fake staleness, and
+        // pinging from a backgrounded mobile WebView burns radio for nothing.
+        lastInboundAt = Date.now();
+        return;
+      }
+      const now = Date.now();
+      if (now - lastInboundAt > AGENT_SOCKET_STALE_MS) {
+        lastInboundAt = now;
+        socket.forceCloseConnection();
+        return;
+      }
+      if (now - lastPingAt >= AGENT_SOCKET_PING_INTERVAL_MS) {
+        lastPingAt = now;
+        socket.send({ type: "ping" });
+      }
+    }, AGENT_SOCKET_HEARTBEAT_TICK_MS);
+
     const disposeOpen = socket.onOpen(() => {
+      lastInboundAt = Date.now();
+      lastPingAt = 0;
       flushAgentSubscription();
     });
     const disposeClose = socket.onClose(() => {
@@ -2683,6 +2894,7 @@ busy,
       setLoadingOlderById({});
     });
     const disposeMessage = socket.onMessage((message) => {
+      lastInboundAt = Date.now();
       const expectWs = activeWorkspaceIdRef.current;
       const scoped = agentSocketMessageWorkspaceScope(message);
       if (scoped != null && scoped !== expectWs) {
@@ -2710,6 +2922,8 @@ busy,
           pendingSocketUpsertsRef.current.delete(deletedId);
           lastSeenSeqByConversationRef.current.delete(deletedId);
           deltaRequestCooldownUntilRef.current.delete(deletedId);
+          gapSinceSeqByConversationRef.current.delete(deletedId);
+          clearDeltaRecovery(deletedId);
           const consistencyTimer = consistencyCheckTimersRef.current.get(deletedId);
           if (consistencyTimer != null) {
             clearTimeout(consistencyTimer);
@@ -2785,6 +2999,50 @@ busy,
         case "event_batch":
           ingestConversationEvents(message.conversationId, message.events);
           return;
+        case "events_dropped": {
+          // The server explicitly told us live frames were dropped for this
+          // socket - no grace period needed, pull the delta immediately.
+          const cid = message.conversationId;
+          const lastSeen = lastSeenSeqByConversationRef.current.get(cid) ?? 0;
+          if (lastSeen <= 0 || message.throughSeq <= lastSeen) {
+            return;
+          }
+          recordEventGap(cid, lastSeen);
+          requestEventsDelta(cid);
+          return;
+        }
+        case "events_delta_done": {
+          // Recovery ack: everything the server has in (sinceSeq, throughSeq]
+          // has been replayed on this socket. Seqs still missing in that
+          // range are deleted rows - stop hunting for them.
+          const cid = message.conversationId;
+          clearDeltaRecovery(cid);
+          const ledger = lastSeenSeqByConversationRef.current;
+          if (message.throughSeq > (ledger.get(cid) ?? 0)) {
+            ledger.set(cid, message.throughSeq);
+          }
+          const gapSince = gapSinceSeqByConversationRef.current.get(cid);
+          if (gapSince != null && message.sinceSeq <= gapSince) {
+            gapSinceSeqByConversationRef.current.delete(cid);
+          }
+          return;
+        }
+        case "pong": {
+          // Heartbeat consistency probe: the server reports the latest seq of
+          // every subscribed conversation, catching holes even when all
+          // droppable frames AND all record pushes were lost.
+          const latestByCid = message.latestSeqByConversationId;
+          if (!latestByCid) {
+            return;
+          }
+          for (const [cid, latest] of Object.entries(latestByCid)) {
+            const lastSeen = lastSeenSeqByConversationRef.current.get(cid) ?? 0;
+            if (lastSeen > 0 && latest > lastSeen) {
+              scheduleEventConsistencyCheck(cid, latest);
+            }
+          }
+          return;
+        }
         case "error": {
           const forConv = message.conversationId;
           if (forConv) {
@@ -2803,6 +3061,7 @@ busy,
 
     socket.connect();
     return () => {
+      clearInterval(heartbeatTimer);
       disposeOpen();
       disposeClose();
       disposeMessage();
@@ -2821,11 +3080,18 @@ busy,
       }
       consistencyCheckTimersRef.current.clear();
       deltaRequestCooldownUntilRef.current.clear();
+      for (const recovery of deltaRecoveryRef.current.values()) {
+        if (recovery.timer != null) {
+          clearTimeout(recovery.timer);
+        }
+      }
+      deltaRecoveryRef.current.clear();
     };
   }, [
     activeWorkspaceId,
     agentSocketServerKey,
     bootstrapped,
+    clearDeltaRecovery,
     eventRenderBatcher,
     eventsStore,
     flushAgentSubscription,
@@ -2834,6 +3100,9 @@ busy,
     prependHistoryPage,
     queueForeignConversationUpsert,
     queueSocketConversationUpsert,
+    recordEventGap,
+    requestEventsDelta,
+    scheduleEventConsistencyCheck,
     updateWorkspaceSession,
   ]);
 
