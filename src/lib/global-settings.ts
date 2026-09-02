@@ -44,6 +44,28 @@ export {
   normalizeNewChatWidgetsState,
 } from "@cesium/client";
 export {
+  DEVICE_PICKER_ACTION_IDS,
+  DEVICE_PICKER_ACTION_LABELS,
+  DEVICE_PICKER_KIND_IDS,
+  DEVICE_PICKER_KIND_LABELS,
+  createDefaultDevicePickerState,
+  devicePickerKindHiddenId,
+  devicePickerServerEntryId,
+  isDevicePickerActionId,
+  isDevicePickerEntryHidden,
+  isDevicePickerKindHidden,
+  isDevicePickerKindId,
+  moveDevicePickerEntry,
+  normalizeDevicePickerState,
+  sortByDevicePickerOrder,
+  toggleDevicePickerHidden,
+} from "@cesium/client";
+export type {
+  DevicePickerActionId,
+  DevicePickerKindId,
+  DevicePickerState,
+} from "@cesium/client";
+export {
   AURORA_MAX_CUSTOM_COLORS,
   AURORA_MIN_CUSTOM_COLORS,
   AURORA_PLACEMENT_IDS,
