@@ -21,8 +21,14 @@ import { getClerkPublishableKey, isSignInRequired } from "./cloud-flags";
 export type ClerkServerPosture =
   /** Cloud disabled or device mode - Clerk is not configured anywhere. */
   | { kind: "off" }
-  /** Both keys present: `clerkMiddleware()` can verify sessions. */
-  | { kind: "ready"; publishableKey: string; secretKey: string }
+  /**
+   * Both keys present: `clerkMiddleware()` can verify sessions. The secret is
+   * intentionally not surfaced here - Clerk reads `CLERK_SECRET_KEY` from the
+   * environment itself, and passing it as a middleware option switches Clerk
+   * into "dynamic keys" mode, which additionally requires
+   * `CLERK_ENCRYPTION_KEY`.
+   */
+  | { kind: "ready"; publishableKey: string }
   /**
    * The browser bundle has a publishable key (committed default or env) but
    * the server has no secret, so sessions cannot be verified server-side.
@@ -51,9 +57,8 @@ export function resolveClerkServerPosture(): ClerkServerPosture {
   if (!publishableKey) {
     return { kind: "off" };
   }
-  const secretKey = getClerkSecretKey();
-  if (secretKey) {
-    return { kind: "ready", publishableKey, secretKey };
+  if (getClerkSecretKey()) {
+    return { kind: "ready", publishableKey };
   }
   return { kind: "client-only", publishableKey, signInRequired: isSignInRequired() };
 }

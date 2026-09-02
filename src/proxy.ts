@@ -61,9 +61,12 @@ const signInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL?.trim() || "/sign-in
 
 function buildProxy() {
   if (behavior === "clerk" && posture.kind === "ready") {
-    // Pass the resolved keys explicitly: the publishable key may come from the
-    // committed default rather than NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, which is
-    // the only place Clerk's own runtime looks.
+    // Pass the publishable key explicitly: it may come from the committed
+    // default rather than NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, which is the only
+    // place Clerk's own runtime looks. The secret is deliberately NOT passed as
+    // an option - Clerk treats that as "dynamic keys" and then demands
+    // CLERK_ENCRYPTION_KEY to propagate it; the `ready` posture already
+    // guarantees CLERK_SECRET_KEY is in the environment where Clerk reads it.
     return clerkMiddleware(
       async (auth, request) => {
         if (requireSignIn && !isPublicRoute(request)) {
@@ -72,7 +75,7 @@ function buildProxy() {
           });
         }
       },
-      { publishableKey: posture.publishableKey, secretKey: posture.secretKey }
+      { publishableKey: posture.publishableKey }
     );
   }
   if (behavior === "fail-closed") {

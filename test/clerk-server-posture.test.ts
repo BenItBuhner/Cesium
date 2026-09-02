@@ -50,10 +50,12 @@ describe("clerk server posture", () => {
   test("secret key alone completes the committed publishable default", () => {
     setEnv({ CLERK_SECRET_KEY: "sk_test_secret" });
     const posture = resolveClerkServerPosture();
+    // The secret itself is never surfaced: Clerk reads CLERK_SECRET_KEY from
+    // env, and passing it as a middleware option would require
+    // CLERK_ENCRYPTION_KEY as well.
     assert.deepEqual(posture, {
       kind: "ready",
       publishableKey: CESIUM_CLOUD_DEFAULTS.clerkPublishableKey,
-      secretKey: "sk_test_secret",
     });
     assert.equal(selectClerkProxyBehavior(posture), "clerk");
   });
@@ -63,10 +65,10 @@ describe("clerk server posture", () => {
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_override",
       CLERK_SECRET_KEY: "  sk_test_padded  ",
     });
+    assert.equal(getClerkSecretKey(), "sk_test_padded");
     assert.deepEqual(resolveClerkServerPosture(), {
       kind: "ready",
       publishableKey: "pk_test_override",
-      secretKey: "sk_test_padded",
     });
   });
 
