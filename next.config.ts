@@ -82,10 +82,20 @@ const nextConfig: NextConfig = {
     /**
      * Persist Turbopack's compile graph under .next/cache so builds that
      * restore the previous cache (Vercel, CI with .next/cache cached) start
-     * warm instead of recompiling everything. Default is off in Next 16.1.
+     * warm instead of recompiling everything. Default-on since Next 16.3;
+     * kept explicit so a future default flip cannot silently regress builds.
      */
     turbopackFileSystemCacheForBuild: true,
   },
+  /**
+   * Type checking is NOT skipped: `npm run build` runs `npm run typecheck`
+   * (next typegen + TypeScript 7 native compiler) before `next build`, and a
+   * type error still fails the build. Next's own pass would re-run the same
+   * check with the TypeScript 5 API (~25s on Vercel), so it is turned off.
+   * TS 5 stays installed as `typescript` only because typescript-eslint does
+   * not support TS 7 yet.
+   */
+  typescript: { ignoreBuildErrors: true },
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
   poweredByHeader: false,
