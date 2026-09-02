@@ -70,6 +70,30 @@ const PROVISION_LABELS: Record<ProvisionPhase, string> = {
 
 const IDLE_TIMEOUT_OPTIONS = [30, 60, 120, 240] as const;
 
+/**
+ * Upper bound for a single status poll. Convex action calls have no client
+ * timeout; a call that never settles (socket blip mid-request, throttled
+ * background tab) would otherwise freeze the wizard on the spinner forever
+ * without ever reaching the phase deadline.
+ */
+const POLL_CALL_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 const inputClass =
   "w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none";
 const primaryButtonClass =
@@ -374,7 +398,11 @@ function CodespaceSetupWizardInner({
         }
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         if (cancelledRef.current) return;
-        const next = await github.getCodespace(current.name);
+        const next = await withTimeout(
+          github.getCodespace(current.name),
+          POLL_CALL_TIMEOUT_MS,
+          `GitHub status check for ${current.name} did not answer within ${POLL_CALL_TIMEOUT_MS / 1000}s. Check your connection and retry from the device list.`
+        );
         if (!next) {
           throw new Error("The codespace disappeared while provisioning.");
         }
