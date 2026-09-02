@@ -8,6 +8,7 @@ import {
   IFRAME_ACCESS_TOKEN_QUERY_PARAM,
   SESSION_TOKEN_HEADER,
 } from "../lib/auth.js";
+import { TUNNEL_NAVIGATE_QUERY_PARAM } from "../lib/tunnel-interstitial.js";
 import {
   captureDebugSessionViewport,
   captureRenderedElementScreenshot,
@@ -507,11 +508,39 @@ function relaxDevtoolsHtml(html: string): string {
   );
 }
 
+/**
+ * Strip the client-side markers from the query before it reaches Chromium's
+ * DevTools HTTP server (`__ocs_navigate` marks a POST-shaped document load
+ * used to dodge the Codespaces/dev-tunnels anti-phishing interstitial, and
+ * `__ocs_access` is the IDE iframe auth token - neither belongs upstream).
+ */
+function sanitizeChromiumSearch(search: string): string {
+  if (!search) return "";
+  const params = new URLSearchParams(
+    search.startsWith("?") ? search.slice(1) : search
+  );
+  params.delete(TUNNEL_NAVIGATE_QUERY_PARAM);
+  params.delete(IFRAME_ACCESS_TOKEN_QUERY_PARAM);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 browserDebugRoutes.get("/browser-debug/:sessionId/devtools/*", async (c) => {
   const sessionId = c.req.param("sessionId");
   const url = new URL(c.req.url);
   const subPath = url.pathname.slice(`/browser-debug/${sessionId}`.length);
   return proxyGetToChromium(c, sessionId, subPath, url.search);
+});
+
+// POST-shaped document load of the DevTools frontend: through a Codespaces /
+// dev-tunnels forwarded host, a GET+text/html iframe navigation is hijacked
+// by the tunnel's "Verifying session" interstitial. The client submits a
+// marker POST instead; Chromium still receives a plain GET.
+browserDebugRoutes.post("/browser-debug/:sessionId/devtools/*", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const url = new URL(c.req.url);
+  const subPath = url.pathname.slice(`/browser-debug/${sessionId}`.length);
+  return proxyGetToChromium(c, sessionId, subPath, sanitizeChromiumSearch(url.search));
 });
 
 browserDebugRoutes.get("/browser-debug/:sessionId/json", async (c) => {

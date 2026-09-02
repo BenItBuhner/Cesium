@@ -71,6 +71,15 @@ export function toLiveUpdatePayload(
       ? null
       : getMobileNotificationChip(projection.status);
 
+  // While the run is blocked on the user, currentActivity carries the actual
+  // question / permission text - that outranks routine progress headlines in
+  // the body for the same reason the chip flips to INPUT. No "~Nm left"
+  // suffix either: the clock is not running while the agent waits.
+  const interventionBody =
+    projection.pendingIntervention != null && projection.currentActivity
+      ? projection.currentActivity
+      : null;
+
   const goal = projection.goalProgress;
   if (goal) {
     // Goals are long-running; their ETA carries signal (unless disabled).
@@ -82,10 +91,12 @@ export function toLiveUpdatePayload(
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: withRemainingTime(
-        goal.headline || projection.currentActivity || "Goal is running",
-        remaining
-      ),
+      body:
+        interventionBody ??
+        withRemainingTime(
+          goal.headline || projection.currentActivity || "Goal is running",
+          remaining
+        ),
       shortText: statusChip ?? `${goal.percent}%`,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
@@ -121,11 +132,13 @@ export function toLiveUpdatePayload(
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: withRemainingTime(
-        projection.currentActivity ||
-          `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
-        remaining
-      ),
+      body:
+        interventionBody ??
+        withRemainingTime(
+          projection.currentActivity ||
+            `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
+          remaining
+        ),
       shortText: statusChip ?? progressLabel,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,

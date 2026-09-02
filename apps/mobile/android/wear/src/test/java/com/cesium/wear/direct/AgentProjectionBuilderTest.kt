@@ -1,5 +1,7 @@
 package com.cesium.wear.direct
 
+import com.cesium.wear.model.WatchPendingIntervention
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
@@ -16,6 +18,61 @@ class AgentProjectionBuilderTest {
   private val longCommand =
     "find / -name \"bun\" -type f -not -path \"*/node_modules/*\" 2>/dev/null | head -5; " +
       "echo \"---\"; ls -la ~/.bun/bin"
+
+  private fun parse(json: String): JsonObject =
+    Json.parseToJsonElement(json) as JsonObject
+
+  private val awaitingQuestionConversation =
+    """
+    {
+      "type": "conversation",
+      "conversation": {
+        "id": "c1",
+        "workspaceId": "w1",
+        "title": "Mobile run",
+        "status": "awaiting_question",
+        "updatedAt": 2000,
+        "lastEventSeq": 1,
+        "pendingQuestion": { "questionId": "q1", "requestedAt": 2000 }
+      }
+    }
+    """
+
+  @Test
+  fun surfacesThePendingQuestionPromptVerbatim() {
+    val builder = AgentProjectionBuilder()
+    builder.applySocketMessage(parse(awaitingQuestionConversation))
+    val projection = builder.applySocketMessage(
+      parse(
+        """
+        {
+          "type": "event",
+          "event": {
+            "seq": 1,
+            "kind": "question",
+            "questionId": "q1",
+            "prompt": "Which area of the Model-Proxy monorepo should this land in?",
+            "status": "pending"
+          }
+        }
+        """
+      )
+    )
+
+    assertEquals(WatchPendingIntervention.QUESTION, projection?.pendingIntervention)
+    assertEquals(
+      "Which area of the Model-Proxy monorepo should this land in?",
+      projection?.currentActivity
+    )
+  }
+
+  @Test
+  fun fallsBackWhenTheQuestionEventIsOutsideTheWindow() {
+    val builder = AgentProjectionBuilder()
+    val projection = builder.applySocketMessage(parse(awaitingQuestionConversation))
+
+    assertEquals("Needs an answer", projection?.currentActivity)
+  }
 
   @Test
   fun neverSurfacesRawToolCallJsonArguments() {

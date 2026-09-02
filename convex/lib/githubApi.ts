@@ -213,6 +213,80 @@ function mapCodespace(raw: RawCodespace): GithubCodespace {
   };
 }
 
+/** One row of the authenticated user's codespaces in a repository. */
+export type RepoCodespaceListing = {
+  codespace: GithubCodespace;
+  /** devcontainer.json path the codespace was created from, if reported. */
+  devcontainerPath: string | null;
+};
+
+export async function listRepoCodespaces(
+  client: GithubClient,
+  owner: string,
+  repo: string
+): Promise<RepoCodespaceListing[]> {
+  const payload = await client.request<{
+    codespaces?: Array<RawCodespace & { devcontainer_path?: string | null }>;
+  }>("GET", `/repos/${owner}/${repo}/codespaces?per_page=100`);
+  return (payload?.codespaces ?? []).map((raw) => ({
+    codespace: mapCodespace(raw),
+    devcontainerPath: raw.devcontainer_path ?? null,
+  }));
+}
+
+const DEAD_CODESPACE_STATES = new Set([
+  "deleted",
+  "moved",
+  "failed",
+  "unavailable",
+]);
+
+/** Lower ranks first: running, then booting, then stopped-but-alive. */
+function adoptionRank(state: string): number {
+  const normalized = state.trim().toLowerCase();
+  if (normalized === "available") {
+    return 0;
+  }
+  if (
+    ["queued", "provisioning", "starting", "awaiting", "rebuilding", "created"].includes(
+      normalized
+    )
+  ) {
+    return 1;
+  }
+  return 2;
+}
+
+/**
+ * The codespace a new pairing should reuse instead of creating a duplicate.
+ *
+ * A setup run that dies between "create codespace" and "save pairing"
+ * (network drop, closed wizard, redacted server error) leaves an orphaned
+ * Cesium codespace behind; creating another one on retry double-bills the
+ * user and can trip GitHub's max-codespaces limit. Any live codespace built
+ * from the same devcontainer is that orphan, so adopt it. Prefer running
+ * ones, then booting ones, then stopped ones; ties go to the most recently
+ * used.
+ */
+export function pickAdoptableCodespace(
+  rows: RepoCodespaceListing[],
+  devcontainerPath: string
+): GithubCodespace | null {
+  const candidates = rows.filter(
+    (row) =>
+      row.devcontainerPath === devcontainerPath &&
+      !DEAD_CODESPACE_STATES.has(row.codespace.state.trim().toLowerCase())
+  );
+  candidates.sort((a, b) => {
+    const byRank = adoptionRank(a.codespace.state) - adoptionRank(b.codespace.state);
+    if (byRank !== 0) {
+      return byRank;
+    }
+    return (b.codespace.lastUsedAt ?? "").localeCompare(a.codespace.lastUsedAt ?? "");
+  });
+  return candidates[0]?.codespace ?? null;
+}
+
 export async function getCodespace(
   client: GithubClient,
   codespaceName: string

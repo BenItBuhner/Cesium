@@ -94,6 +94,30 @@ test("pending intervention outranks the todo fraction in the chip", () => {
   assert.equal(payload.progressLabel, "1/4");
 });
 
+test("pending question text outranks the goal headline in the body", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "awaiting_question",
+    pendingIntervention: "question",
+    currentActivity: "Which area of the Model-Proxy monorepo should this land in?",
+    goalProgress: {
+      percent: 62,
+      headline: "Goal verification",
+      runtimeMs: 120_000,
+      estimatedRemainingMs: 74_000,
+      estimatedCompletionAt: 196_000,
+    },
+  });
+
+  assert.equal(payload.progressKind, "goal");
+  assert.equal(payload.shortText, "INPUT");
+  // No "~Nm left" suffix: the clock is not running while the agent waits.
+  assert.equal(
+    payload.body,
+    "Which area of the Model-Proxy monorepo should this land in?"
+  );
+});
+
 test("prioritizes Goal percentage over todo progress", () => {
   const payload = toLiveUpdatePayload({
     ...baseProjection,

@@ -14,16 +14,19 @@ import { setStoredSessionToken } from "@cesium/client";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
+  applyEngineSelfUpdate,
   checkEngineHealth,
   getEngineAuthStatus,
   loginToEngine,
 } from "@/lib/onboarding/engine-api";
 import {
   categorizeCodespaceState,
+  codespacePairingMeta,
   deriveCodespaceDevices,
   wakeCodespaceDevice,
   type CodespaceDevice,
   type CodespaceEngineAuth,
+  type CodespaceEngineKeepaliveProbe,
   type CodespaceWakePhase,
 } from "@/lib/github-codespaces";
 
@@ -63,6 +66,12 @@ export type CodespacesContextValue = {
   dismissFailure: () => void;
   /** Failure of the most recent wake attempt, readable right after `connectDevice` resolves null. */
   getLastWakeFailure: () => CodespaceWakeFailure | null;
+  /**
+   * Non-fatal warning from the most recent successful wake (keep-alive
+   * missing/failing, engine update problems). Readable right after
+   * `connectDevice` resolves with a server id.
+   */
+  getLastWakeWarning: () => string | null;
   /** Device paired to a local connection id, if any. */
   deviceForServerId: (serverId: string) => CodespaceDevice | null;
   /**
@@ -83,6 +92,7 @@ const DISABLED_VALUE: CodespacesContextValue = {
   connectDevice: async () => null,
   dismissFailure: () => undefined,
   getLastWakeFailure: () => null,
+  getLastWakeWarning: () => null,
   deviceForServerId: () => null,
   refreshDeviceStates: async () => undefined,
   lastStateRefreshAt: null,
@@ -114,6 +124,49 @@ export async function probeEngineHealthy(baseUrl: string): Promise<boolean> {
   }
 }
 
+/**
+ * Read the engine's keep-alive snapshot from `/health`. A body without a
+ * `codespace` field marks an engine installed before the keep-alive shipped;
+ * the wake flow updates such engines in place so GitHub's idle timeout stops
+ * killing codespaces mid-run.
+ */
+export async function probeEngineKeepalive(
+  baseUrl: string
+): Promise<CodespaceEngineKeepaliveProbe> {
+  try {
+    const health = await Promise.race([
+      checkEngineHealth(baseUrl),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), ENGINE_PROBE_TIMEOUT_MS)
+      ),
+    ]);
+    const snapshot = health.codespace;
+    if (!snapshot || typeof snapshot !== "object") {
+      return { status: "unsupported" };
+    }
+    return {
+      status: "reported",
+      enabled: snapshot.enabled === true,
+      lastError: typeof snapshot.lastError === "string" ? snapshot.lastError : null,
+      consecutiveFailures:
+        typeof snapshot.consecutiveFailures === "number"
+          ? snapshot.consecutiveFailures
+          : 0,
+    };
+  } catch {
+    return { status: "unknown" };
+  }
+}
+
+async function applyEngineUpdate(
+  baseUrl: string
+): Promise<{ ok: boolean; error?: string }> {
+  const result = await applyEngineSelfUpdate(baseUrl);
+  return result.ok
+    ? { ok: true }
+    : { ok: false, ...(result.error ? { error: result.error } : {}) };
+}
+
 async function ensureEngineSession(
   baseUrl: string,
   auth: CodespaceEngineAuth | null
@@ -141,6 +194,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
   const [lastStateRefreshAt, setLastStateRefreshAt] = useState<number | null>(null);
   const wakingRef = useRef(false);
   const lastWakeFailureRef = useRef<CodespaceWakeFailure | null>(null);
+  const lastWakeWarningRef = useRef<string | null>(null);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const lastRefreshAtRef = useRef(0);
 
@@ -175,21 +229,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
           baseUrl: device.baseUrl,
           kind: "codespace",
           markConnected: lastKnownState === "Available",
-          codespace: {
-            repoFullName: device.repoFullName,
-            repositoryId: device.repositoryId,
-            codespaceName: device.codespaceName,
-            ...(device.machine ? { machine: device.machine } : {}),
-            devcontainerPath: device.devcontainerPath,
-            lastKnownState,
-            lastSyncedAt: Date.now(),
-            ...(device.engineAuth
-              ? {
-                  engineUsername: device.engineAuth.username,
-                  enginePassword: device.engineAuth.password,
-                }
-              : {}),
-          },
+          codespace: codespacePairingMeta(device, { lastKnownState }),
         })
         .catch(() => undefined);
     },
@@ -204,6 +244,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
       }
       wakingRef.current = true;
       lastWakeFailureRef.current = null;
+      lastWakeWarningRef.current = null;
       setWakeFailure(null);
       setWakeStatus({ deviceKey: device.key, phase: "checking-engine" });
       try {
@@ -214,6 +255,8 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
             getCodespace: (name) => github.getCodespace(name),
             startCodespace: (name) => github.startCodespace(name),
             ensureEngineSession,
+            probeEngineKeepalive,
+            applyEngineUpdate,
             sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
             now: () => Date.now(),
           },
@@ -231,6 +274,10 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
             setStateOverrides((current) => ({ ...current, [device.key]: "Deleted" }));
           }
           return null;
+        }
+        if (result.warning) {
+          lastWakeWarningRef.current = result.warning;
+          console.warn(`[codespaces] ${device.repoFullName}: ${result.warning}`);
         }
         const saved = saveServer({
           id: device.localServerId ?? undefined,
@@ -309,6 +356,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
 
   const dismissFailure = useCallback(() => setWakeFailure(null), []);
   const getLastWakeFailure = useCallback(() => lastWakeFailureRef.current, []);
+  const getLastWakeWarning = useCallback(() => lastWakeWarningRef.current, []);
 
   const value = useMemo<CodespacesContextValue>(
     () => ({
@@ -319,6 +367,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
       connectDevice,
       dismissFailure,
       getLastWakeFailure,
+      getLastWakeWarning,
       deviceForServerId,
       refreshDeviceStates,
       lastStateRefreshAt,
@@ -330,6 +379,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
       devices,
       dismissFailure,
       getLastWakeFailure,
+      getLastWakeWarning,
       lastStateRefreshAt,
       refreshDeviceStates,
       wakeFailure,

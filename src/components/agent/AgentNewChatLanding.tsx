@@ -44,6 +44,8 @@ import type {
   ImageAttachment,
 } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
@@ -190,6 +192,7 @@ export function AgentNewChatLanding({
   } = useAgentDraftComposer({ onInstantSubmit });
   const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
   const codespaces = useGithubCodespaces();
+  const { pushNotification } = useWorkbenchNotifications();
 
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
@@ -361,6 +364,17 @@ export function AgentNewChatLanding({
     (device: CodespaceDevice) => {
       void codespaces.connectDevice(device).then((localServerId) => {
         if (localServerId) {
+          const warning = codespaces.getLastWakeWarning();
+          if (warning) {
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "warning",
+              title: "Codespace Keep-Alive Warning",
+              message: warning,
+              autoDismissMs: 15_000,
+              compact: true,
+            });
+          }
           handleActiveServerChange(
             localServerId,
             codespaceWorkspaceHint(device.repoFullName)
@@ -368,7 +382,7 @@ export function AgentNewChatLanding({
         }
       });
     },
-    [codespaceWorkspaceHint, codespaces, handleActiveServerChange]
+    [codespaceWorkspaceHint, codespaces, handleActiveServerChange, pushNotification]
   );
 
   const handleRecreateCodespaceDevice = useCallback(

@@ -20,10 +20,12 @@
  * Usage:
  *   node test/mock-github-codespaces-server.mjs
  * Env:
- *   MOCK_GITHUB_PORT   (default 9310)
- *   MOCK_ENGINE_PORT   (default 9110)  - matches CESIUM_CODESPACES_ENGINE_URL_TEMPLATE
- *   MOCK_ENGINE_HOME   (default /tmp/cesium-mock-codespace)
- *   MOCK_BUN_BIN       (default ~/.bun/bin/bun)
+ *   MOCK_GITHUB_PORT     (default 9310)
+ *   MOCK_ENGINE_PORT     (default 9110)  - matches CESIUM_CODESPACES_ENGINE_URL_TEMPLATE
+ *   MOCK_ENGINE_HOME     (default /tmp/cesium-mock-codespace)
+ *   MOCK_BUN_BIN         (default ~/.bun/bin/bun)
+ *   MOCK_MAX_CODESPACES  (default unlimited) - creating one beyond the cap
+ *                        fails with GitHub's real max-codespaces 403 message
  */
 
 import { spawn } from "node:child_process";
@@ -36,6 +38,7 @@ import sodium from "libsodium-wrappers";
 
 const PORT = Number(process.env.MOCK_GITHUB_PORT ?? 9310);
 const ENGINE_PORT = Number(process.env.MOCK_ENGINE_PORT ?? 9110);
+const MAX_CODESPACES = Number(process.env.MOCK_MAX_CODESPACES ?? Infinity);
 const ENGINE_HOME = process.env.MOCK_ENGINE_HOME ?? "/tmp/cesium-mock-codespace";
 const BUN_BIN =
   process.env.MOCK_BUN_BIN ?? path.join(homedir(), ".bun", "bin", "bun");
@@ -163,6 +166,7 @@ function codespacePayload(record) {
     web_url: `https://github.com/codespaces/${record.name}`,
     idle_timeout_minutes: record.idle_timeout_minutes,
     retention_expires_at: null,
+    devcontainer_path: record.devcontainer_path ?? null,
   };
 }
 
@@ -385,11 +389,33 @@ const server = createServer(async (req, res) => {
 
   if (
     (match = p.match(/^\/repos\/([^/]+)\/([^/]+)\/codespaces$/)) &&
+    method === "GET"
+  ) {
+    const repo = repoByName(match[1], match[2]);
+    if (!repo) return json(res, 404, { message: "Not Found" });
+    const rows = [...codespaces.values()].filter(
+      (record) => record.repo === repo.full_name
+    );
+    return json(res, 200, {
+      total_count: rows.length,
+      codespaces: rows.map((record) => codespacePayload(record)),
+    });
+  }
+
+  if (
+    (match = p.match(/^\/repos\/([^/]+)\/([^/]+)\/codespaces$/)) &&
     method === "POST"
   ) {
     const repo = repoByName(match[1], match[2]);
     const store = repo ? gitStores.get(repo.full_name) : null;
     if (!repo || !store) return json(res, 404, { message: "Not Found" });
+    if (codespaces.size >= MAX_CODESPACES) {
+      // Real GitHub message for the plan's codespace cap.
+      return json(res, 403, {
+        message:
+          "You have reached the maximum number of codespaces you can create. Delete an existing codespace before creating a new one.",
+      });
+    }
     const body = await readBody(req);
     const branch = store.branches.get(body.ref ?? repo.default_branch);
     if (body.devcontainer_path && !branch?.files.has(body.devcontainer_path)) {
@@ -406,6 +432,7 @@ const server = createServer(async (req, res) => {
       machine: body.machine ?? "basicLinux32gb",
       ref: body.ref ?? repo.default_branch,
       idle_timeout_minutes: body.idle_timeout_minutes ?? 30,
+      devcontainer_path: body.devcontainer_path ?? null,
     };
     codespaces.set(name, record);
     log(`created codespace ${name} (machine ${record.machine})`);

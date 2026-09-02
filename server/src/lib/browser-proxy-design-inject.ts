@@ -12,8 +12,24 @@ function escapeScriptClose(s: string): string {
   return s.replace(/<\/script/gi, "<\\/script");
 }
 
-export function appendDesignModeGuestScript(html: string): string {
-  const scriptBody = buildGuestScriptSource();
+export type GuestScriptOptions = {
+  /**
+   * Route in-page document navigations (link clicks, GET form submits,
+   * window.open to self) through auto-submitted POST forms carrying the
+   * `__ocs_navigate=1` marker. Set when the page is served through a
+   * GitHub Codespaces / dev-tunnels forwarded host, whose ingress intercepts
+   * GET+text/html document loads with an anti-phishing "Verifying session"
+   * interstitial that never completes inside an embedded iframe. The proxy
+   * converts marker POSTs back to plain upstream GETs.
+   */
+  postNavigation?: boolean;
+};
+
+export function appendDesignModeGuestScript(
+  html: string,
+  options?: GuestScriptOptions
+): string {
+  const scriptBody = buildGuestScriptSource(options?.postNavigation === true);
   const tag = `<script ${DESIGN_SCRIPT_MARKER} type="application/javascript">${escapeScriptClose(
     scriptBody
   )}</script>`;
@@ -45,13 +61,14 @@ export function appendDesignModeGuestScript(html: string): string {
  *    descendant) before serialization, which makes fonts, colors, layout,
  *    borders, and backgrounds render correctly.
  */
-function buildGuestScriptSource(): string {
+function buildGuestScriptSource(postNavigation: boolean): string {
   return `(function(){
   if (window.__cesiumDesignGuestInstalled) return;
   window.__cesiumDesignGuestInstalled = true;
 
   var CESIUM_DESIGN = 'cesium-design';
   var CESIUM_SOURCE = 'cesium-design-guest';
+  var POST_NAV = ${postNavigation ? "true" : "false"};
   var enabled = false;
   var hoverTarget = null;
   var highlightBox = null;
@@ -310,6 +327,41 @@ function buildGuestScriptSource(): string {
     return true;
   }
 
+  function isProxyOriginDocUrl(href) {
+    try {
+      var u = new URL(href, location.href);
+      return u.origin === location.origin && /^\\/browser\\/(https?)\\//i.test(u.pathname);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Behind a Codespaces / dev-tunnels forwarded host, plain GET document
+  // navigations are intercepted by the tunnel's anti-phishing interstitial
+  // ("Verifying session"), which cannot complete inside this iframe. The
+  // proxy accepts POST navigations marked with __ocs_navigate=1 and turns
+  // them into upstream GETs, so we submit a throwaway form instead of
+  // assigning location.href. Returns false when POST navigation is off or
+  // the URL is not a proxy document URL - callers then fall back to the
+  // regular navigation path.
+  function postNavigate(href) {
+    if (!POST_NAV) return false;
+    if (!isProxyOriginDocUrl(href)) return false;
+    try {
+      var u = new URL(href, location.href);
+      u.searchParams.set('__ocs_navigate', '1');
+      var form = document.createElement('form');
+      form.method = 'POST';
+      form.action = u.toString();
+      form.style.display = 'none';
+      (document.body || document.documentElement).appendChild(form);
+      form.submit();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   var navSyncTimer = 0;
   function postNavState() {
     try {
@@ -401,7 +453,10 @@ function buildGuestScriptSource(): string {
           var existing = target.search ? target.search.slice(1) + '&' : '';
           var merged = existing + params.toString();
           target.search = merged ? '?' + merged : '';
-          location.href = encodeProxyHref(target.toString());
+          var getNavHref = encodeProxyHref(target.toString());
+          if (!postNavigate(getNavHref)) {
+            location.href = getNavHref;
+          }
         } catch (e) {}
         return;
       }
@@ -447,7 +502,17 @@ function buildGuestScriptSource(): string {
         if (target && target !== '_self') {
           ev.preventDefault();
           ev.stopPropagation();
-          location.href = rewritten;
+          if (!postNavigate(rewritten)) {
+            location.href = rewritten;
+          }
+          return;
+        }
+        // Same-frame link: behind a tunnel the browser's own GET navigation
+        // would hit the interstitial, so take over and POST instead.
+        if (POST_NAV && rewritten && isProxyOriginDocUrl(rewritten)) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          postNavigate(rewritten);
         }
       } catch (e) {}
     }, true);
@@ -465,7 +530,12 @@ function buildGuestScriptSource(): string {
         }
         var t = target == null ? '' : String(target).toLowerCase();
         if (url && (!t || t === '_self' || t === '_top' || t === '_parent')) {
-          try { location.href = String(url); return window; } catch (e) {}
+          try {
+            if (!postNavigate(String(url))) {
+              location.href = String(url);
+            }
+            return window;
+          } catch (e) {}
         }
         return origOpen.call(window, url, target, features);
       };

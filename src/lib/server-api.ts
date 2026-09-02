@@ -117,6 +117,7 @@ export {
   focusBrowserControlTab,
   forkAgentConversation,
   generateDraftTitle,
+  getActiveEngineIdentityBaseUrl,
   getBrowserDebugEvents,
   getBrowserDebugSession,
   getServerBaseUrl,

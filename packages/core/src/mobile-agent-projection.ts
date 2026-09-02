@@ -525,6 +525,26 @@ function describePendingPermission(pending: AgentPendingPermission): string {
   return cleanVerbatimText(pending.detail) ?? "Needs permission";
 }
 
+/**
+ * An awaiting_question run should surface the actual question verbatim, not a
+ * generic "Needs an answer" placeholder: the notification body is often the
+ * only thing the user sees before deciding whether to context-switch. The
+ * caller still runs the prompt through the notification hygiene cap so a
+ * multi-paragraph question renders as one bounded line.
+ */
+function findPendingQuestionPrompt(
+  events: AgentStoredEvent[],
+  questionId: string
+): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event?.kind !== "question" || event.questionId !== questionId) continue;
+    const prompt = event.prompt.trim() || event.questions?.[0]?.prompt.trim();
+    return prompt || null;
+  }
+  return null;
+}
+
 function resolveCurrentActivity(
   conversation: AgentConversationRecord,
   events: AgentStoredEvent[],
@@ -534,7 +554,11 @@ function resolveCurrentActivity(
     return describePendingPermission(conversation.pendingPermission);
   }
   if (conversation.pendingQuestion) {
-    return "Needs an answer";
+    return (
+      sanitizeMobileActivityText(
+        findPendingQuestionPrompt(events, conversation.pendingQuestion.questionId)
+      ) ?? "Needs an answer"
+    );
   }
   if (activeTodo) {
     const todoLabel = sanitizeMobileActivityText(activeTodo.content);
