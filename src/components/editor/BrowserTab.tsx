@@ -23,6 +23,7 @@ import {
   completeBrowserControlCommand,
   createBrowserDebugSession,
   deleteBrowserDebugSession,
+  getActiveEngineIdentityBaseUrl,
   getBrowserDebugEvents,
   getBrowserDebugSession,
   getServerBaseUrl,
@@ -178,7 +179,12 @@ function PostNavigatedIframe({
   const formRef = useRef<HTMLFormElement | null>(null);
   const action = useMemo(() => {
     try {
-      const url = new URL(src);
+      // `src` may be relative (same-origin HTTPS deployments where the proxy
+      // base collapses to ""), so resolve it against the page before adding
+      // the marker.
+      const base =
+        typeof window !== "undefined" ? window.location.href : undefined;
+      const url = new URL(src, base);
       url.searchParams.set("__ocs_navigate", "1");
       return url.toString();
     } catch {
@@ -332,8 +338,13 @@ export function BrowserTab({
   // render iframe document loads (the tunnel's "Verifying session"
   // interstitial hijacks them), so force the server-side Chromium engine
   // there regardless of the New browser beta flag, and load any residual
-  // iframes via POST navigation.
-  const tunnelForwardedServer = isTunnelInterstitialHost(getServerBaseUrl());
+  // iframes via POST navigation. Check the engine's true identity URL, not
+  // just the request base URL: when the workbench itself runs on localhost,
+  // getServerBaseUrl() collapses a `*.app.github.dev` engine down to
+  // `localhost`, which would hide the tunnel.
+  const tunnelForwardedServer =
+    isTunnelInterstitialHost(getActiveEngineIdentityBaseUrl()) ||
+    isTunnelInterstitialHost(getServerBaseUrl());
   const newBrowserEnabled = settings.agents.newBrowser || tunnelForwardedServer;
   const nativeSessionId = tab.browser?.nativeSessionId ?? null;
   const usingNativeBrowser =
