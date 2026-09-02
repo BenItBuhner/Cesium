@@ -130,19 +130,12 @@ function ClerkGithubConnectCta({
   const startConnect = useCallback(async () => {
     setLinkPending(true);
     try {
-      const outcome = await connectGithub();
-      if (outcome === "already-linked") {
-        setLinkPending(false);
-        onError(
-          explainGithubLinkMismatch(linkState) ??
-            "GitHub is already linked in Clerk; the Convex deployment could not fetch its token."
-        );
-      }
+      await connectGithub();
     } catch (err) {
       setLinkPending(false);
       onError(formatError(err));
     }
-  }, [connectGithub, formatError, linkState, onError]);
+  }, [connectGithub, formatError, onError]);
 
   return (
     <>
@@ -162,7 +155,7 @@ function ClerkGithubConnectCta({
         ) : (
           <Github className="size-[13px]" strokeWidth={1.7} aria-hidden />
         )}
-        Connect GitHub
+        {linkState.kind === "linked" ? "Re-authorize GitHub" : "Connect GitHub"}
       </button>
       <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
         You will be sent to GitHub to authorize Cesium (repo and codespace

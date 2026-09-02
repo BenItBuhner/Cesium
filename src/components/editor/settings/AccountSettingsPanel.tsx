@@ -313,19 +313,12 @@ function GithubAccountSectionInner() {
     setPending(true);
     setActionError(null);
     try {
-      const outcome = await connectGithub();
-      if (outcome === "already-linked") {
-        setPending(false);
-        setActionError(
-          explainGithubLinkMismatch(linkState) ??
-            "GitHub is already linked in Clerk; the Convex deployment could not fetch its token."
-        );
-      }
+      await connectGithub();
     } catch (error) {
       setPending(false);
       setActionError(formatError(error));
     }
-  }, [connectGithub, formatError, linkState]);
+  }, [connectGithub, formatError]);
 
   const disconnect = useCallback(async () => {
     if (
@@ -398,7 +391,7 @@ function GithubAccountSectionInner() {
               {pending ? (
                 <Loader2 className="size-[13px] animate-spin" strokeWidth={2} aria-hidden />
               ) : null}
-              Connect GitHub
+              {linkState.kind === "linked" ? "Re-authorize GitHub" : "Connect GitHub"}
             </button>
           )
         }
