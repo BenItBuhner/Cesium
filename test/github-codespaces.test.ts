@@ -366,6 +366,18 @@ describe("codespace device model", () => {
     );
   });
 
+  test("repo workspace root follows the Codespaces checkout convention", async () => {
+    const { codespaceRepoWorkspaceName, codespaceRepoWorkspaceRoot } = await import(
+      "../src/lib/github-codespaces.ts"
+    );
+    assert.equal(
+      codespaceRepoWorkspaceRoot("BenItBuhner/Model-Proxy"),
+      "/workspaces/Model-Proxy"
+    );
+    assert.equal(codespaceRepoWorkspaceName("BenItBuhner/Model-Proxy"), "Model-Proxy");
+    assert.equal(codespaceRepoWorkspaceRoot("bare-name"), "/workspaces/bare-name");
+  });
+
   test("state categorization and labels", () => {
     assert.equal(categorizeCodespaceState("Available"), "running");
     assert.equal(categorizeCodespaceState("Shutdown"), "stopped");

@@ -70,12 +70,43 @@ const PROVISION_LABELS: Record<ProvisionPhase, string> = {
 
 const IDLE_TIMEOUT_OPTIONS = [30, 60, 120, 240] as const;
 
+/**
+ * Upper bound for a single status poll. Convex action calls have no client
+ * timeout; a call that never settles (socket blip mid-request, throttled
+ * background tab) would otherwise freeze the wizard on the spinner forever
+ * without ever reaching the phase deadline.
+ */
+const POLL_CALL_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 const inputClass =
   "w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none";
 const primaryButtonClass =
   "inline-flex items-center justify-center gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[12px] py-[6px] font-sans text-[12px] text-[var(--bg-panel)] disabled:opacity-50";
 const secondaryButtonClass =
   "inline-flex items-center justify-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[12px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] hover:bg-[var(--accent-bg)] disabled:opacity-50";
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+}
 
 function formatMachine(machine: GithubMachineInfo): string {
   const memoryGb = Math.round(machine.memoryInBytes / 1024 ** 3);
@@ -86,8 +117,12 @@ function formatMachine(machine: GithubMachineInfo): string {
 export type CodespaceSetupWizardProps = {
   open: boolean;
   onClose: () => void;
-  /** Receives the local server id once the codespace engine is connected. */
-  onConnected: (localServerId: string) => void;
+  /**
+   * Receives the local server id once the codespace engine is connected,
+   * plus the repository so the caller can open its `/workspaces/<repo>`
+   * folder as the device's workspace.
+   */
+  onConnected: (localServerId: string, connected: { repoFullName: string }) => void;
   /** Existing paired devices (used to reuse account-wide engine credentials). */
   devices: CodespaceDevice[];
   /** Prefills repo + machine for the deleted-codespace recreate flow. */
@@ -240,6 +275,20 @@ function CodespaceSetupWizardInner({
   >([]);
 
   const [provisionPhase, setProvisionPhase] = useState<ProvisionPhase>("devcontainer");
+  // Live detail for the long polling phases: GitHub's raw codespace state,
+  // the codespace name, and how long we have been waiting.
+  const [provisionDetail, setProvisionDetail] = useState<{
+    codespaceName: string;
+    githubState: string | null;
+    webUrl: string | null;
+    startedAt: number;
+  } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (step !== "provision" || !provisionDetail) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [provisionDetail, step]);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [checkingPr, setCheckingPr] = useState(false);
   const [connectedServerId, setConnectedServerId] = useState<string | null>(null);
@@ -330,6 +379,13 @@ function CodespaceSetupWizardInner({
 
       setProvisionPhase("waiting-codespace");
       let current = codespace;
+      const waitStartedAt = Date.now();
+      setProvisionDetail({
+        codespaceName: current.name,
+        githubState: current.state,
+        webUrl: current.webUrl,
+        startedAt: waitStartedAt,
+      });
       const codespaceDeadline = Date.now() + 10 * 60_000;
       while (categorizeCodespaceState(current.state) !== "running") {
         const category = categorizeCodespaceState(current.state);
@@ -340,18 +396,36 @@ function CodespaceSetupWizardInner({
           throw new Error(`GitHub reports the codespace as ${current.state}.`);
         }
         if (Date.now() > codespaceDeadline) {
-          throw new Error("Timed out waiting for the codespace to start.");
+          throw new Error(
+            `Timed out waiting for the codespace to start (GitHub still reports "${current.state}" for ${current.name}). Check its creation log at github.com/codespaces.`
+          );
         }
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         if (cancelledRef.current) return;
-        const next = await github.getCodespace(current.name);
+        const next = await withTimeout(
+          github.getCodespace(current.name),
+          POLL_CALL_TIMEOUT_MS,
+          `GitHub status check for ${current.name} did not answer within ${POLL_CALL_TIMEOUT_MS / 1000}s. Check your connection and retry from the device list.`
+        );
         if (!next) {
           throw new Error("The codespace disappeared while provisioning.");
         }
         current = next;
+        setProvisionDetail({
+          codespaceName: current.name,
+          githubState: current.state,
+          webUrl: current.webUrl,
+          startedAt: waitStartedAt,
+        });
       }
 
       setProvisionPhase("waiting-engine");
+      setProvisionDetail({
+        codespaceName: current.name,
+        githubState: current.state,
+        webUrl: current.webUrl,
+        startedAt: Date.now(),
+      });
       const engineDeadline = Date.now() + 15 * 60_000;
       while (!(await probeEngineHealthy(engineBaseUrl))) {
         if (cancelledRef.current) return;
@@ -397,7 +471,7 @@ function CodespaceSetupWizardInner({
 
       setConnectedServerId(saved.id);
       setStep("done");
-      onConnected(saved.id);
+      onConnected(saved.id, { repoFullName: selectedRepo.fullName });
     },
     [cloud.actions, github, onConnected, recreateDevice, removeServer, saveServer, selectedRepo]
   );
@@ -812,7 +886,36 @@ function CodespaceSetupWizardInner({
                   strokeWidth={2}
                   aria-hidden
                 />
-                {PROVISION_LABELS[provisionPhase]}
+                <span className="flex flex-col gap-[4px]">
+                  {PROVISION_LABELS[provisionPhase]}
+                  {provisionDetail &&
+                  (provisionPhase === "waiting-codespace" ||
+                    provisionPhase === "waiting-engine") ? (
+                    <span className="font-sans text-[11px] leading-snug text-[var(--text-secondary)]">
+                      GitHub state:{" "}
+                      <span className="font-mono text-[10.5px] text-[var(--text-primary)]">
+                        {provisionDetail.githubState ?? "unknown"}
+                      </span>
+                      {" · "}
+                      {formatElapsed(now - provisionDetail.startedAt)} elapsed
+                      {" · "}
+                      <span className="font-mono text-[10.5px]">{provisionDetail.codespaceName}</span>
+                      {provisionDetail.webUrl ? (
+                        <>
+                          {" · "}
+                          <a
+                            href={provisionDetail.webUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[var(--accent)] underline"
+                          >
+                            open on GitHub
+                          </a>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </span>
               </span>
             )}
             {error && provisionPhase !== "pr-wait" ? (
