@@ -66,7 +66,7 @@ export function RouteErrorFallback({ error, reset }: RouteErrorFallbackProps) {
         <button
           type="button"
           onClick={handleReload}
-          className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[7px] font-sans text-[12px] font-medium text-white transition-opacity hover:opacity-90"
+          className="rounded-[var(--radius-tab)] border border-[var(--accent)] bg-[var(--accent)] px-[14px] py-[7px] font-sans text-[12px] font-medium text-[var(--bg-main)] transition-opacity hover:opacity-90 dark:text-[var(--bg-panel)]"
         >
           Reload
         </button>
