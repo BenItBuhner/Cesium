@@ -118,23 +118,19 @@ export function useClerkGithubLink() {
   };
 
   /**
-   * Start (or repair) the GitHub link. Returns `"already-linked"` when Clerk
-   * already holds a verified token with the required scopes - in that case
-   * the caller should look at the Convex side rather than re-running OAuth.
+   * Start (or repair) the GitHub link. Always ends in a redirect to GitHub:
+   * a fresh link uses `createExternalAccount`; an existing link (verified or
+   * not) goes through `reauthorize`, which re-runs OAuth with the required
+   * scopes and refreshes the token Clerk stores for the Backend API.
    */
-  const connectGithub = useCallback(async (): Promise<"redirecting" | "already-linked"> => {
+  const connectGithub = useCallback(async (): Promise<void> => {
     const redirectUrl = window.location.href;
     const existing = findGithubAccount();
-    const state = describeGithubLink(existing);
-    if (state.kind === "linked" && existing) {
-      if (state.verified && state.missingScopes.length === 0) {
-        return "already-linked";
-      }
+    if (existing) {
       followRedirect(await reauthorizeGithubAccount(existing, redirectUrl));
-      return "redirecting";
+      return;
     }
     followRedirect(await createGithubAccount(redirectUrl));
-    return "redirecting";
   }, [createGithubAccount, findGithubAccount, reauthorizeGithubAccount]);
 
   const disconnectGithub = useCallback(async () => {
