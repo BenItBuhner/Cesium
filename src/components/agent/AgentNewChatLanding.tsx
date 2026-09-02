@@ -71,6 +71,7 @@ import {
   NO_WORKSPACE_PICKER_LABEL,
   sortDirectoryWorkspaces,
 } from "@/lib/multi-server-workspaces";
+import { useLandingPickerCondenseTier } from "./landing-picker-overflow";
 
 type BranchPickerItem = {
   key: string;
@@ -83,6 +84,30 @@ type BranchPickerItem = {
 
 function localBranchNameForRemote(branchName: string): string {
   return branchName.replace(/^[^/]+\//, "");
+}
+
+/**
+ * Width stand-in for one picker pill inside the hidden measurement probes:
+ * 13px icon square, optional (max-width-capped) label, optional 13px chevron
+ * square, mirroring the live pills' gaps/padding. Omitting `label` measures
+ * the icon-only condensed form.
+ */
+function LandingPickerProbePill({
+  label,
+  trailingChevron = true,
+}: {
+  label?: string;
+  trailingChevron?: boolean;
+}) {
+  return (
+    <span className="inline-flex max-w-[220px] shrink-0 items-center gap-[5px] px-[6px]">
+      <span className="block size-[13px] shrink-0" />
+      {label !== undefined ? (
+        <span className="min-w-0 max-w-[260px] truncate">{label}</span>
+      ) : null}
+      {trailingChevron ? <span className="block size-[13px] shrink-0" /> : null}
+    </span>
+  );
 }
 
 
@@ -227,6 +252,19 @@ export function AgentNewChatLanding({
   const workspacePickerRef = useRef<HTMLButtonElement>(null);
   const devicePickerRef = useRef<HTMLButtonElement>(null);
   const branchPopoverRef = useRef<HTMLDivElement>(null);
+  const pickerRowContainerRef = useRef<HTMLDivElement>(null);
+  const pickerProbeFullRef = useRef<HTMLDivElement>(null);
+  const pickerProbeNoImportRef = useRef<HTMLDivElement>(null);
+  const pickerProbeCondensedDeviceRef = useRef<HTMLDivElement>(null);
+  const pickerCondenseTier = useLandingPickerCondenseTier(
+    pickerRowContainerRef,
+    pickerProbeFullRef,
+    pickerProbeNoImportRef,
+    pickerProbeCondensedDeviceRef
+  );
+  const importPillHidden = pickerCondenseTier >= 1;
+  const devicePillCondensed = pickerCondenseTier >= 2;
+  const branchPillCondensed = pickerCondenseTier >= 3;
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
@@ -426,6 +464,17 @@ export function AgentNewChatLanding({
     ? gitStatus.currentBranch ?? "Detached"
     : "No git repo";
 
+  const workspacePickerLabel = noWorkspaceDraft
+    ? NO_WORKSPACE_PICKER_LABEL
+    : // The rail-derived group can lag behind a freshly created / opened
+      // workspace (cached rail payload); the active workspace's own name is
+      // always current.
+      (activeWorkspaceGroup?.workspace.name ??
+        workspaceInfo?.name ??
+        "Select workspace");
+  const showBranchPill = !noWorkspaceDraft && !isHomeWorkspace;
+  const showImportPill = !noWorkspaceDraft;
+
   const branchPickerPosition = branchPickerOpen && branchPickerRef.current
     ? branchPickerRef.current.getBoundingClientRect()
     : null;
@@ -547,9 +596,51 @@ export function AgentNewChatLanding({
       <div
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
-        <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
+        <div
+          ref={pickerRowContainerRef}
+          className="relative mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]"
+        >
+          {/*
+            Invisible measurement rows mirroring the picker pills at full size
+            for each condensation step (full row, Import hidden, Import hidden
+            + icon-only device). The live row condenses off these probes - not
+            its own width - so condensing can never feed back into the
+            measurement and oscillate.
+          */}
+          <div
+            aria-hidden
+            className="pointer-events-none invisible absolute left-0 top-0 h-0 overflow-hidden font-sans text-[13px]"
+          >
+            <div
+              ref={pickerProbeFullRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill label={activeDeviceLabel} />
+              {showImportPill ? (
+                <LandingPickerProbePill label="Import" trailingChevron={false} />
+              ) : null}
+            </div>
+            <div
+              ref={pickerProbeNoImportRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill label={activeDeviceLabel} />
+            </div>
+            <div
+              ref={pickerProbeCondensedDeviceRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill />
+            </div>
+          </div>
           <div className="w-fit max-w-full self-start">
-            <div className="flex max-w-full flex-wrap items-center gap-[6px]">
+            <div className="flex max-w-full items-center gap-[6px]">
               <button
                 ref={workspacePickerRef}
                 type="button"
@@ -574,21 +665,37 @@ export function AgentNewChatLanding({
                   <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
-                  {noWorkspaceDraft
-                    ? NO_WORKSPACE_PICKER_LABEL
-                    : // The rail-derived group can lag behind a freshly created /
-                      // opened workspace (cached rail payload); the active
-                      // workspace's own name is always current.
-                      (activeWorkspaceGroup?.workspace.name ??
-                        workspaceInfo?.name ??
-                        "Select workspace")}
+                  {workspacePickerLabel}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              {showBranchPill ? (
+              <button
+                ref={branchPickerRef}
+                type="button"
+                aria-label="Open branch picker"
+                title={branchPillCondensed ? activeBranchLabel : undefined}
+                data-perf="agent-branch-picker-button"
+                onClick={() => {
+                  setWorkspacePickerOpen(false);
+                  setDevicePickerOpen(false);
+                  setBranchPickerOpen((open) => !open);
+                  void refreshGitStatus().catch(() => undefined);
+                }}
+                className="inline-flex min-w-0 max-w-[220px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
+                {!branchPillCondensed ? (
+                  <span className="truncate">{activeBranchLabel}</span>
+                ) : null}
+                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
+              </button>
+              ) : null}
               <button
                 ref={devicePickerRef}
                 type="button"
                 aria-label={`Switch device (${activeDeviceLabel})`}
+                title={devicePillCondensed ? activeDeviceLabel : undefined}
                 aria-expanded={devicePickerOpen}
                 aria-haspopup="menu"
                 data-perf="agent-device-picker-button"
@@ -597,7 +704,7 @@ export function AgentNewChatLanding({
                   setBranchPickerOpen(false);
                   setDevicePickerOpen((open) => !open);
                 }}
-                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                className="inline-flex min-w-0 max-w-[220px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
                 {activeCloudDevice ? (
                   <Cloud className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
@@ -611,29 +718,12 @@ export function AgentNewChatLanding({
                     strokeWidth={1.5}
                   />
                 )}
-                <span className="max-w-[260px] min-w-0 shrink truncate">{activeDeviceLabel}</span>
+                {!devicePillCondensed ? (
+                  <span className="max-w-[260px] min-w-0 shrink truncate">{activeDeviceLabel}</span>
+                ) : null}
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
-              {!noWorkspaceDraft && !isHomeWorkspace ? (
-              <button
-                ref={branchPickerRef}
-                type="button"
-                aria-label="Open branch picker"
-                data-perf="agent-branch-picker-button"
-                onClick={() => {
-                  setWorkspacePickerOpen(false);
-                  setDevicePickerOpen(false);
-                  setBranchPickerOpen((open) => !open);
-                  void refreshGitStatus().catch(() => undefined);
-                }}
-                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              >
-                <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
-                <span className="truncate">{activeBranchLabel}</span>
-                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
-              </button>
-              ) : null}
-              {!noWorkspaceDraft ? (
+              {showImportPill && !importPillHidden ? (
                 <button
                   type="button"
                   aria-label="Import conversation from another harness"
@@ -645,7 +735,7 @@ export function AgentNewChatLanding({
                     setDevicePickerOpen(false);
                     setImportDialogOpen(true);
                   }}
-                  className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                  className="inline-flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                 >
                   <Import className="size-[13px] shrink-0" strokeWidth={1.5} />
                   <span className="whitespace-nowrap">Import</span>
