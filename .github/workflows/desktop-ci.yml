@@ -362,8 +362,28 @@ jobs:
           SMOKE_DIR="$RUNNER_TEMP/cesium-appimage-smoke"
           mkdir -p "$SMOKE_DIR"
           (cd "$SMOKE_DIR" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract > /dev/null)
-          (cd "$SMOKE_DIR" && APPDIR="$SMOKE_DIR/squashfs-root" \
-            xvfb-run --auto-servernum ./squashfs-root/AppRun --no-sandbox --disable-gpu --smoke 2>&1 | tee "$GITHUB_WORKSPACE/smoke.log")
+          # Chromium intermittently hangs before app-ready under Xvfb on
+          # hosted runners and dies minutes later with a SIGTRAP core dump
+          # (the last log line is the single-instance lock; no JS ever runs).
+          # A healthy smoke pass completes in under a minute, so bound each
+          # attempt to 3 minutes and retry the launch instead of failing the
+          # job on a browser-process init flake.
+          for attempt in 1 2 3; do
+            echo "Smoke attempt $attempt"
+            if (cd "$SMOKE_DIR" && APPDIR="$SMOKE_DIR/squashfs-root" \
+                timeout -k 15 180 xvfb-run --auto-servernum \
+                ./squashfs-root/AppRun --no-sandbox --disable-gpu --smoke 2>&1 \
+                | tee "$GITHUB_WORKSPACE/smoke.log") \
+              && grep -q "Cesium packaged smoke passed" smoke.log; then
+              echo "Smoke attempt $attempt passed"
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "Smoke test failed after 3 attempts"
+              exit 1
+            fi
+            sleep 5
+          done
           grep -q "Cesium packaged smoke passed" smoke.log
 
       - name: Launch the packaged app under Xvfb and capture its window
