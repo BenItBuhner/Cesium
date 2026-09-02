@@ -67,6 +67,7 @@ function AgentLayoutShell() {
   const { activeWorkspaceId, fileTree, loading, sessionReady, workspaceInfo } = useWorkspace();
   const { settings: globalSettings } = useGlobalSettings();
   const sideColumnsSwapped = globalSettings.general.sideColumnsSwapped;
+  const showMobilePaneToggles = globalSettings.general.showMobilePaneToggles;
   const {
     isMobile,
     leftRailCollapsed,
@@ -338,7 +339,7 @@ function AgentLayoutShell() {
                 rail={<AgentWorkspaceRail />}
                 rightPane={<AgentSidePane />}
               >
-                {leftRailCollapsed ? (
+                {showMobilePaneToggles && leftRailCollapsed ? (
                   <button
                     type="button"
                     onClick={() => setLeftRailCollapsed(false)}
@@ -355,7 +356,7 @@ function AgentLayoutShell() {
                   </AgentCenterStage>
                 </div>
 
-                {!rightPaneOpen && !isDraftConversationSelected ? (
+                {showMobilePaneToggles && !rightPaneOpen && !isDraftConversationSelected ? (
                   <button
                     type="button"
                     onClick={toggleRightPaneOpen}

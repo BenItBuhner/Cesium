@@ -191,6 +191,12 @@ export type GeneralSettingsState = {
    */
   showVoiceOrb: boolean;
   sideColumnsSwapped: boolean;
+  /**
+   * Show the floating rail / workbench toggle buttons in the top corners of
+   * the mobile chat. On by default; hiding them frees the corners (they can
+   * overlap the pinned user message) and edge swipes still open both panes.
+   */
+  showMobilePaneToggles: boolean;
   workspaceSortMode: WorkspaceSortMode;
   workspaceCustomOrderIds: string[];
   workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
@@ -372,6 +378,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       batchStreamEvents: true,
       showVoiceOrb: false,
       sideColumnsSwapped: false,
+      showMobilePaneToggles: true,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
       workspaceRailAppearances: {},
@@ -939,6 +946,11 @@ export function normalizeLoadedGlobalSettings(
         typeof (r.general as Record<string, unknown> | undefined)?.showVoiceOrb === "boolean"
           ? ((r.general as Record<string, unknown>).showVoiceOrb as boolean)
           : base.general.showVoiceOrb,
+      showMobilePaneToggles:
+        typeof (r.general as Record<string, unknown> | undefined)
+          ?.showMobilePaneToggles === "boolean"
+          ? ((r.general as Record<string, unknown>).showMobilePaneToggles as boolean)
+          : base.general.showMobilePaneToggles,
       workspaceSortMode: normalizeWorkspaceSortMode(
         (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
       ),

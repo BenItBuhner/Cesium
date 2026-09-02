@@ -1,32 +1,15 @@
 "use client";
 
-import {
-  NEW_CHAT_WIDGET_DESCRIPTIONS,
-  NEW_CHAT_WIDGET_LABELS,
-  useNewChatWidgetVisibilityToggle,
-} from "@/components/agent/NewChatWidgets";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   PageIntro,
   SettingsLinkRow,
   SettingsRow,
   SettingsSection,
-  rowButtonClass,
   settingsSelectTriggerClass,
 } from "@/components/editor/settings-ui";
-import {
-  AGENT_RAIL_VIEW_PRESETS,
-  AGENT_RAIL_VIEW_PRESET_INFO,
-  applyAgentRailViewPreset,
-  matchingAgentRailViewPreset,
-} from "@/lib/global-settings";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import {
-  normalizeComposerStatusBarVisibility,
-  type ComposerStatusBarVisibility,
-} from "@/lib/composer-status-bar";
 import {
   QUICK_OPEN_SCOPE_IDS,
   QUICK_OPEN_SCOPE_LABELS,
@@ -38,20 +21,10 @@ import {
 import { DesktopNativeSettings } from "./DesktopNativeSettings";
 import { MobileNativeSettings } from "./MobileNativeSettings";
 
-function composerFooterEnabled(visibility: ComposerStatusBarVisibility): boolean {
-  return visibility.repo || visibility.branch || visibility.goal || visibility.context;
-}
-
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
-  const { enginePagesVisible } = useSettingsEngineAvailability();
-  const { updateWorkspaceSession, workspaceSession } = useWorkspace();
+  const { updateWorkspaceSession } = useWorkspace();
   const general = settings.general;
-  const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
-    general.composerStatusBarVisibility ??
-      workspaceSession.chat.composerStatusBarVisibility
-  );
-  const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
 
   const patchGeneral = (patch: Partial<typeof general>) => {
     updateSettings((current) => ({
@@ -73,17 +46,6 @@ export function GeneralSettingsPanel() {
     }));
   };
 
-  const setComposerFooter = (value: boolean) => {
-    patchGeneral({
-      composerStatusBarVisibility: {
-        repo: value,
-        branch: value,
-        goal: value,
-        context: value,
-      },
-    });
-  };
-
   return (
     <>
       <PageIntro title="General" />
@@ -91,7 +53,7 @@ export function GeneralSettingsPanel() {
         <SettingsLinkRow
           searchId="appearance-link"
           title="Appearance & themes"
-          description="System, light, or dark mode; per-appearance themes; custom token presets."
+          description="Themes, layout, chat design, the new chat page, and conversation list presets."
           onClick={() => openNav("appearance")}
         />
         <SettingsLinkRow
@@ -105,80 +67,6 @@ export function GeneralSettingsPanel() {
           title="Import & export settings"
           description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
           onClick={() => openNav("exportImport")}
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="New chat widgets">
-        {general.newChatWidgets.order.map((id) => {
-          const hidden = general.newChatWidgets.hidden.includes(id);
-          return (
-            <SettingsRow
-              key={id}
-              searchId={`new-chat-widget-${id}`}
-              title={NEW_CHAT_WIDGET_LABELS[id]}
-              description={NEW_CHAT_WIDGET_DESCRIPTIONS[id]}
-              trailing={
-                <ToggleSwitch
-                  checked={!hidden}
-                  onChange={() => toggleNewChatWidget(id)}
-                  size="md"
-                />
-              }
-            />
-          );
-        })}
-        {enginePagesVisible ? (
-          <SettingsLinkRow
-            searchId="new-chat-widget-actions-link"
-            title="Configure quick actions"
-            description="Add, edit, or remove the actions shown on the new chat landing."
-            onClick={() => openNav("actions")}
-            border={false}
-          />
-        ) : null}
-      </SettingsSection>
-      <SettingsSection title="Conversation list">
-        {AGENT_RAIL_VIEW_PRESETS.map((preset, index) => {
-          const info = AGENT_RAIL_VIEW_PRESET_INFO[preset];
-          const active =
-            matchingAgentRailViewPreset(general.agentRail) === preset;
-          return (
-            <SettingsRow
-              key={preset}
-              searchId={`rail-preset-${preset}`}
-              title={`${info.label} preset`}
-              description={info.description}
-              border={index < AGENT_RAIL_VIEW_PRESETS.length - 1}
-              trailing={
-                <button
-                  type="button"
-                  className={`${rowButtonClass} ${active ? "opacity-50" : ""}`}
-                  disabled={active}
-                  onClick={() =>
-                    patchGeneral({
-                      agentRail: applyAgentRailViewPreset(preset, general.agentRail),
-                    })
-                  }
-                >
-                  {active ? "Active" : "Apply"}
-                </button>
-              }
-            />
-          );
-        })}
-      </SettingsSection>
-      <SettingsSection title="Composer">
-        <SettingsRow
-          searchId="composer-status-bar"
-          title="Composer footer"
-          description="Show repository, branch, goal progress, and context usage under the composer in new chats."
-          trailing={
-            <ToggleSwitch
-              checked={composerFooterEnabled(composerStatusBarDefault)}
-              onChange={setComposerFooter}
-              size="md"
-            />
-          }
           border={false}
         />
       </SettingsSection>
