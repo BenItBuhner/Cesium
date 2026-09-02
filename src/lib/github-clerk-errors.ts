@@ -52,13 +52,17 @@ export function formatGithubConnectError(error: unknown): string {
     ].join(" ");
   }
 
+  // A bare Convex "Server Error" envelope carries no detail. The deployed
+  // `github:connectionStatus` action reports real causes inline (`{ error }`);
+  // seeing the envelope usually means the Convex functions are older than the
+  // web client. Do not guess at a specific env var here.
   if (
     lower.includes("[convex") &&
     (lower.includes("connectionstatus") || lower.includes("github:"))
   ) {
     return [
-      "Could not check the GitHub connection on the Convex deployment.",
-      "Confirm CLERK_SECRET_KEY is set on that deployment (Dashboard → Settings → Environment Variables) so Cesium can read the linked GitHub token after you authorize.",
+      "The Convex deployment returned a server error while checking the GitHub connection.",
+      "Redeploy the Convex functions (npx convex deploy) so they match this client, then check the deployment logs for github:connectionStatus if it persists.",
     ].join(" ");
   }
 

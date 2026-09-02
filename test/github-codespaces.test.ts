@@ -595,7 +595,8 @@ describe("Clerk GitHub connect errors", () => {
         "[CONVEX A(github:connectionStatus)] [Request ID: abc] Server Error Called by client"
       )
     );
-    assert.ok(fromConvex.includes("CLERK_SECRET_KEY"));
+    assert.ok(fromConvex.includes("npx convex deploy"));
+    assert.ok(!fromConvex.includes("CLERK_SECRET_KEY"));
   });
 
   test("parses Clerk oauth token payloads and error bodies", async () => {
