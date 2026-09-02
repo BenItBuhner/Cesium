@@ -78,6 +78,14 @@ const nextConfig: NextConfig = {
   // in this deployment. Keep it off so production and dev builds can complete.
   reactCompiler: false,
   turbopack: {},
+  experimental: {
+    /**
+     * Persist Turbopack's compile graph under .next/cache so builds that
+     * restore the previous cache (Vercel, CI with .next/cache cached) start
+     * warm instead of recompiling everything. Default is off in Next 16.1.
+     */
+    turbopackFileSystemCacheForBuild: true,
+  },
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
   poweredByHeader: false,
