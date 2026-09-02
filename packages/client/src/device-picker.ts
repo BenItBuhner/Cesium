@@ -1,18 +1,27 @@
 /**
- * User customization of the device / server picker dropdown: which sections
- * and entries show up, and in what order. Entry ids are stable strings so
- * the same setting covers saved servers, GitHub Codespaces, cloud
- * pseudo-devices, and the footer actions.
+ * User customization of the device / server picker dropdown: which entries
+ * show up and in what order. The picker is a single flat list; every entry
+ * (saved server, GitHub Codespace, cloud pseudo-device) has a stable string
+ * id so one ranking and one hidden list cover all of them.
  */
 
-export const DEVICE_PICKER_SECTION_IDS = ["servers", "codespaces", "cloud"] as const;
+/** Non-server device kinds that can be hidden wholesale. */
+export const DEVICE_PICKER_KIND_IDS = ["codespace", "cloud"] as const;
 
-export type DevicePickerSectionId = (typeof DEVICE_PICKER_SECTION_IDS)[number];
+export type DevicePickerKindId = (typeof DEVICE_PICKER_KIND_IDS)[number];
 
-export const DEVICE_PICKER_SECTION_LABELS: Record<DevicePickerSectionId, string> = {
-  servers: "Saved servers",
-  codespaces: "GitHub Codespaces",
-  cloud: "Cloud",
+export const DEVICE_PICKER_KIND_LABELS: Record<
+  DevicePickerKindId,
+  { label: string; description: string }
+> = {
+  codespace: {
+    label: "GitHub Codespaces",
+    description: "Codespaces paired to your GitHub account, listed alongside your servers.",
+  },
+  cloud: {
+    label: "Cloud execution",
+    description: "Vendor-hosted execution targets contributed by cloud-capable agents.",
+  },
 };
 
 /** Footer actions in the device variant that can be hidden independently. */
@@ -43,21 +52,19 @@ export const DEVICE_PICKER_ACTION_LABELS: Record<
 };
 
 export type DevicePickerState = {
-  /** Section render order. Unknown/missing ids are appended in default order. */
-  sectionOrder: DevicePickerSectionId[];
   /**
-   * Global entry ranking. Entries present here render first (in this order)
-   * within their section; anything not listed keeps its natural order after.
+   * Entry ranking. Entries present here render first (in this order);
+   * anything not listed keeps its natural order after them.
    */
   order: string[];
-  /** Entry, section (`section:*`), and action (`action:*`) ids removed from the picker. */
+  /** Entry, kind (`kind:*`), and action (`action:*`) ids removed from the picker. */
   hidden: string[];
 };
 
 const MAX_DEVICE_PICKER_IDS = 500;
 
-export function isDevicePickerSectionId(value: unknown): value is DevicePickerSectionId {
-  return DEVICE_PICKER_SECTION_IDS.includes(value as DevicePickerSectionId);
+export function isDevicePickerKindId(value: unknown): value is DevicePickerKindId {
+  return DEVICE_PICKER_KIND_IDS.includes(value as DevicePickerKindId);
 }
 
 export function isDevicePickerActionId(value: unknown): value is DevicePickerActionId {
@@ -68,16 +75,12 @@ export function devicePickerServerEntryId(serverId: string): string {
   return `server:${serverId}`;
 }
 
-export function devicePickerCodespaceEntryId(deviceKey: string): string {
-  return `codespace:${deviceKey}`;
-}
-
-export function devicePickerSectionHiddenId(section: DevicePickerSectionId): string {
-  return `section:${section}`;
+export function devicePickerKindHiddenId(kind: DevicePickerKindId): string {
+  return `kind:${kind}`;
 }
 
 export function createDefaultDevicePickerState(): DevicePickerState {
-  return { sectionOrder: [...DEVICE_PICKER_SECTION_IDS], order: [], hidden: [] };
+  return { order: [], hidden: [] };
 }
 
 function dedupeStrings(raw: unknown): string[] {
@@ -100,17 +103,11 @@ function dedupeStrings(raw: unknown): string[] {
 }
 
 export function normalizeDevicePickerState(raw: unknown): DevicePickerState {
-  const defaults = createDefaultDevicePickerState();
   if (!raw || typeof raw !== "object") {
-    return defaults;
+    return createDefaultDevicePickerState();
   }
   const record = raw as Partial<DevicePickerState>;
-  const orderedSections = dedupeStrings(record.sectionOrder).filter(isDevicePickerSectionId);
   return {
-    sectionOrder: [
-      ...orderedSections,
-      ...DEVICE_PICKER_SECTION_IDS.filter((id) => !orderedSections.includes(id)),
-    ],
     order: dedupeStrings(record.order),
     hidden: dedupeStrings(record.hidden),
   };
@@ -120,11 +117,11 @@ export function isDevicePickerEntryHidden(state: DevicePickerState, id: string):
   return state.hidden.includes(id);
 }
 
-export function isDevicePickerSectionHidden(
+export function isDevicePickerKindHidden(
   state: DevicePickerState,
-  section: DevicePickerSectionId
+  kind: DevicePickerKindId
 ): boolean {
-  return state.hidden.includes(devicePickerSectionHiddenId(section));
+  return state.hidden.includes(devicePickerKindHiddenId(kind));
 }
 
 /**
@@ -173,9 +170,9 @@ export function toggleDevicePickerHidden(
 }
 
 /**
- * Move `id` by `delta` within `displayedIds` (the section's ids as currently
- * rendered) and persist that full section order at the front of the ranking,
- * keeping other sections' rankings intact.
+ * Move `id` by `delta` within `displayedIds` (the list as currently rendered)
+ * and persist that full order at the front of the ranking, keeping any
+ * ranked ids that are not currently displayed intact behind it.
  */
 export function moveDevicePickerEntry(
   state: DevicePickerState,
@@ -199,20 +196,4 @@ export function moveDevicePickerEntry(
       MAX_DEVICE_PICKER_IDS
     ),
   };
-}
-
-export function moveDevicePickerSection(
-  state: DevicePickerState,
-  section: DevicePickerSectionId,
-  delta: -1 | 1
-): DevicePickerState {
-  const from = state.sectionOrder.indexOf(section);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= state.sectionOrder.length) {
-    return state;
-  }
-  const next = [...state.sectionOrder];
-  next.splice(from, 1);
-  next.splice(to, 0, section);
-  return { ...state, sectionOrder: next };
 }

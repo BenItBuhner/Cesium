@@ -46,25 +46,23 @@ export {
 export {
   DEVICE_PICKER_ACTION_IDS,
   DEVICE_PICKER_ACTION_LABELS,
-  DEVICE_PICKER_SECTION_IDS,
-  DEVICE_PICKER_SECTION_LABELS,
+  DEVICE_PICKER_KIND_IDS,
+  DEVICE_PICKER_KIND_LABELS,
   createDefaultDevicePickerState,
-  devicePickerCodespaceEntryId,
-  devicePickerSectionHiddenId,
+  devicePickerKindHiddenId,
   devicePickerServerEntryId,
   isDevicePickerActionId,
   isDevicePickerEntryHidden,
-  isDevicePickerSectionHidden,
-  isDevicePickerSectionId,
+  isDevicePickerKindHidden,
+  isDevicePickerKindId,
   moveDevicePickerEntry,
-  moveDevicePickerSection,
   normalizeDevicePickerState,
   sortByDevicePickerOrder,
   toggleDevicePickerHidden,
 } from "@cesium/client";
 export type {
   DevicePickerActionId,
-  DevicePickerSectionId,
+  DevicePickerKindId,
   DevicePickerState,
 } from "@cesium/client";
 export {

@@ -694,23 +694,23 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
   row(
     "servers",
-    "device-picker-section-servers",
+    "device-picker-entries",
     "Device picker",
-    "Show, hide, and reorder sections and entries in the Switch device dropdown.",
+    "Show, hide, and reorder servers, Codespaces, and cloud devices in the Switch device dropdown.",
     ["device picker", "switch device", "server dropdown", "hide codespaces", "hide cloud", "reorder"]
   ),
   row(
     "servers",
-    "device-picker-section-codespaces",
+    "device-picker-kind-codespace",
     "GitHub Codespaces in device picker",
-    "Hide or reorder the GitHub Codespaces section.",
+    "Hide every Codespace from the device picker.",
     ["codespaces", "github"]
   ),
   row(
     "servers",
-    "device-picker-section-cloud",
-    "Cloud in device picker",
-    "Hide or reorder the Cloud execution section.",
+    "device-picker-kind-cloud",
+    "Cloud execution in device picker",
+    "Hide every cloud execution device from the device picker.",
     ["cursor cloud"]
   ),
   row(

@@ -1,11 +1,20 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Cloud, Github, Globe, RotateCcw, Server } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Cloud,
+  Github,
+  Globe,
+  RotateCcw,
+  Server,
+} from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { isBrowserMachineUrl } from "@cesium/client";
 import { useOptionalAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { DeviceKindBadge } from "@/components/preferences/ServerPickerPopover";
 import { SettingsCallout, SettingsRow, SettingsSection } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
@@ -13,18 +22,16 @@ import { useGithubCodespaces } from "@/hooks/useGithubCodespaces";
 import {
   DEVICE_PICKER_ACTION_IDS,
   DEVICE_PICKER_ACTION_LABELS,
-  DEVICE_PICKER_SECTION_LABELS,
+  DEVICE_PICKER_KIND_IDS,
+  DEVICE_PICKER_KIND_LABELS,
   createDefaultDevicePickerState,
-  devicePickerCodespaceEntryId,
-  devicePickerSectionHiddenId,
+  devicePickerKindHiddenId,
   devicePickerServerEntryId,
   isDevicePickerEntryHidden,
-  isDevicePickerSectionHidden,
+  isDevicePickerKindHidden,
   moveDevicePickerEntry,
-  moveDevicePickerSection,
   sortByDevicePickerOrder,
   toggleDevicePickerHidden,
-  type DevicePickerSectionId,
   type DevicePickerState,
 } from "@/lib/global-settings";
 import { getServerDisplayLabel, getServerRailAppearance } from "@/lib/server-rail-appearance";
@@ -34,6 +41,7 @@ type PickerEntry = {
   label: string;
   description?: string;
   icon: ReactNode;
+  badge?: ReactNode;
 };
 
 const ICON_CLASS = "size-[14px] shrink-0 text-[var(--text-secondary)]";
@@ -79,61 +87,10 @@ function ReorderButtons({
   );
 }
 
-function EntryRows({
-  entries,
-  state,
-  update,
-  searchPrefix,
-}: {
-  entries: PickerEntry[];
-  state: DevicePickerState;
-  update: (next: (current: DevicePickerState) => DevicePickerState) => void;
-  searchPrefix: string;
-}) {
-  const displayedIds = entries.map((entry) => entry.id);
-  return (
-    <>
-      {entries.map((entry, index) => {
-        const hidden = isDevicePickerEntryHidden(state, entry.id);
-        return (
-          <SettingsRow
-            key={entry.id}
-            searchId={`${searchPrefix}-${entry.id}`}
-            title={entry.label}
-            description={entry.description}
-            leading={entry.icon}
-            trailing={
-              <div className="flex items-center gap-[8px]">
-                <ReorderButtons
-                  label={entry.label}
-                  canUp={index > 0}
-                  canDown={index < entries.length - 1}
-                  onUp={() =>
-                    update((current) => moveDevicePickerEntry(current, displayedIds, entry.id, -1))
-                  }
-                  onDown={() =>
-                    update((current) => moveDevicePickerEntry(current, displayedIds, entry.id, 1))
-                  }
-                />
-                <ToggleSwitch
-                  checked={!hidden}
-                  onChange={(visible) =>
-                    update((current) => toggleDevicePickerHidden(current, entry.id, !visible))
-                  }
-                  size="md"
-                />
-              </div>
-            }
-          />
-        );
-      })}
-    </>
-  );
-}
-
 /**
- * Settings → Servers → Device picker: show / hide and reorder every section,
- * entry, and footer action of the "Switch device" dropdown.
+ * Settings → Servers → Device picker: show / hide and reorder every entry
+ * and footer action of the "Switch device" dropdown. Servers, Codespaces,
+ * and cloud devices share one list, mirroring the picker itself.
  */
 export function DevicePickerSettingsSection() {
   const { settings, updateSettings } = useGlobalSettings();
@@ -157,75 +114,48 @@ export function DevicePickerSettingsSection() {
     });
   };
 
-  const serverEntries = useMemo<PickerEntry[]>(
-    () =>
-      sortByDevicePickerOrder(
-        servers.map((server, index) => ({
-          id: devicePickerServerEntryId(server.id),
-          label: getServerDisplayLabel(
-            server,
-            getServerRailAppearance(serverRailAppearances, server.id, index)
-          ),
-          description: isBrowserMachineUrl(server.baseUrl) ? undefined : server.baseUrl,
-          icon: isBrowserMachineUrl(server.baseUrl) ? (
-            <Globe className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
-          ) : (
-            <Server className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
-          ),
-        })),
-        state.order,
-        (entry) => entry.id
-      ),
-    [serverRailAppearances, servers, state.order]
-  );
+  const entries = useMemo<PickerEntry[]>(() => {
+    const out: PickerEntry[] = [];
+    servers.forEach((server, index) => {
+      const isBrowser = isBrowserMachineUrl(server.baseUrl);
+      out.push({
+        id: devicePickerServerEntryId(server.id),
+        label: getServerDisplayLabel(
+          server,
+          getServerRailAppearance(serverRailAppearances, server.id, index)
+        ),
+        description: isBrowser ? "Runs entirely in this browser tab." : server.baseUrl,
+        icon: isBrowser ? (
+          <Globe className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
+        ) : (
+          <Server className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
+        ),
+        badge: isBrowser ? <DeviceKindBadge kind="browser" /> : undefined,
+      });
+    });
+    for (const device of codespaces.devices) {
+      out.push({
+        id: device.key,
+        label: device.label,
+        description: device.repoFullName,
+        icon: <Github className={ICON_CLASS} strokeWidth={1.5} aria-hidden />,
+        badge: <DeviceKindBadge kind="codespace" />,
+      });
+    }
+    for (const device of cloudDevices) {
+      out.push({
+        id: device.id,
+        label: device.label,
+        description: device.description,
+        icon: <Cloud className={ICON_CLASS} strokeWidth={1.5} aria-hidden />,
+        badge: <DeviceKindBadge kind="cloud" />,
+      });
+    }
+    return sortByDevicePickerOrder(out, state.order, (entry) => entry.id);
+  }, [cloudDevices, codespaces.devices, serverRailAppearances, servers, state.order]);
 
-  const codespaceEntries = useMemo<PickerEntry[]>(
-    () =>
-      sortByDevicePickerOrder(
-        codespaces.devices.map((device) => ({
-          id: devicePickerCodespaceEntryId(device.key),
-          label: device.label,
-          description: device.repoFullName,
-          icon: <Github className={ICON_CLASS} strokeWidth={1.5} aria-hidden />,
-        })),
-        state.order,
-        (entry) => entry.id
-      ),
-    [codespaces.devices, state.order]
-  );
-
-  const cloudEntries = useMemo<PickerEntry[]>(
-    () =>
-      sortByDevicePickerOrder(
-        cloudDevices.map((device) => ({
-          id: device.id,
-          label: device.label,
-          description: device.description,
-          icon: <Cloud className={ICON_CLASS} strokeWidth={1.5} aria-hidden />,
-        })),
-        state.order,
-        (entry) => entry.id
-      ),
-    [cloudDevices, state.order]
-  );
-
-  const entriesBySection: Record<DevicePickerSectionId, PickerEntry[]> = {
-    servers: serverEntries,
-    codespaces: codespaceEntries,
-    cloud: cloudEntries,
-  };
-  const sectionDescriptions: Record<DevicePickerSectionId, string> = {
-    servers: "Saved engines you have connected to from this client.",
-    codespaces: codespaces.available
-      ? "Codespaces paired to your GitHub account, plus the setup shortcut."
-      : "Shown only when a GitHub account is connected.",
-    cloud: "Vendor-hosted execution targets contributed by cloud-capable agents.",
-  };
-
-  const isDefault =
-    state.order.length === 0 &&
-    state.hidden.length === 0 &&
-    state.sectionOrder.join(",") === createDefaultDevicePickerState().sectionOrder.join(",");
+  const displayedIds = entries.map((entry) => entry.id);
+  const isDefault = state.order.length === 0 && state.hidden.length === 0;
 
   return (
     <>
@@ -244,37 +174,50 @@ export function DevicePickerSettingsSection() {
         }
       >
         <SettingsCallout className="border-b border-[var(--border-subtle)] px-[16px] py-[12px]">
-          Choose what appears in the Switch device dropdown and in what order. Sections and
-          entries you turn off disappear from the picker; the active device always stays
-          visible.
+          Choose what appears in the Switch device dropdown and in what order. Servers,
+          Codespaces, and cloud devices share one list; anything you turn off disappears
+          from the picker, and the active device always stays visible.
         </SettingsCallout>
-        {state.sectionOrder.map((section, index) => {
-          const hidden = isDevicePickerSectionHidden(state, section);
+        {entries.length === 0 ? (
+          <SettingsRow
+            searchId="device-picker-entries"
+            title="No devices yet"
+            description="Connect a server or pair a Codespace and it will show up here."
+            trailing={<span />}
+            border={false}
+          />
+        ) : null}
+        {entries.map((entry, index) => {
+          const hidden = isDevicePickerEntryHidden(state, entry.id);
           return (
             <SettingsRow
-              key={section}
-              searchId={`device-picker-section-${section}`}
-              title={DEVICE_PICKER_SECTION_LABELS[section]}
-              description={sectionDescriptions[section]}
+              key={entry.id}
+              searchId={`device-picker-entry-${entry.id}`}
+              title={entry.label}
+              description={entry.description}
+              leading={entry.icon}
+              titleExtra={entry.badge}
               trailing={
                 <div className="flex items-center gap-[8px]">
                   <ReorderButtons
-                    label={`${DEVICE_PICKER_SECTION_LABELS[section]} section`}
+                    label={entry.label}
                     canUp={index > 0}
-                    canDown={index < state.sectionOrder.length - 1}
-                    onUp={() => update((current) => moveDevicePickerSection(current, section, -1))}
-                    onDown={() => update((current) => moveDevicePickerSection(current, section, 1))}
+                    canDown={index < entries.length - 1}
+                    onUp={() =>
+                      update((current) =>
+                        moveDevicePickerEntry(current, displayedIds, entry.id, -1)
+                      )
+                    }
+                    onDown={() =>
+                      update((current) =>
+                        moveDevicePickerEntry(current, displayedIds, entry.id, 1)
+                      )
+                    }
                   />
                   <ToggleSwitch
                     checked={!hidden}
                     onChange={(visible) =>
-                      update((current) =>
-                        toggleDevicePickerHidden(
-                          current,
-                          devicePickerSectionHiddenId(section),
-                          !visible
-                        )
-                      )
+                      update((current) => toggleDevicePickerHidden(current, entry.id, !visible))
                     }
                     size="md"
                   />
@@ -284,25 +227,42 @@ export function DevicePickerSettingsSection() {
           );
         })}
       </SettingsSection>
-      {state.sectionOrder.map((section) => {
-        const entries = entriesBySection[section];
-        if (entries.length === 0) {
-          return null;
-        }
-        return (
-          <SettingsSection
-            key={`entries-${section}`}
-            title={`${DEVICE_PICKER_SECTION_LABELS[section]} entries`}
-          >
-            <EntryRows
-              entries={entries}
-              state={state}
-              update={update}
-              searchPrefix={`device-picker-${section}`}
+      <SettingsSection title="Device types">
+        {DEVICE_PICKER_KIND_IDS.map((kind) => {
+          const info = DEVICE_PICKER_KIND_LABELS[kind];
+          const hidden = isDevicePickerKindHidden(state, kind);
+          const description =
+            kind === "codespace" && !codespaces.available
+              ? `${info.description} Shown only when a GitHub account is connected.`
+              : info.description;
+          return (
+            <SettingsRow
+              key={kind}
+              searchId={`device-picker-kind-${kind}`}
+              title={info.label}
+              description={description}
+              leading={
+                kind === "codespace" ? (
+                  <Github className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
+                ) : (
+                  <Cloud className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
+                )
+              }
+              trailing={
+                <ToggleSwitch
+                  checked={!hidden}
+                  onChange={(visible) =>
+                    update((current) =>
+                      toggleDevicePickerHidden(current, devicePickerKindHiddenId(kind), !visible)
+                    )
+                  }
+                  size="md"
+                />
+              }
             />
-          </SettingsSection>
-        );
-      })}
+          );
+        })}
+      </SettingsSection>
       <SettingsSection title="Picker actions">
         {DEVICE_PICKER_ACTION_IDS.map((actionId) => {
           const info = DEVICE_PICKER_ACTION_LABELS[actionId];

@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   createDefaultDevicePickerState,
-  devicePickerCodespaceEntryId,
-  devicePickerSectionHiddenId,
+  devicePickerKindHiddenId,
   devicePickerServerEntryId,
   isDevicePickerEntryHidden,
-  isDevicePickerSectionHidden,
+  isDevicePickerKindHidden,
   moveDevicePickerEntry,
-  moveDevicePickerSection,
   sortByDevicePickerOrder,
   toggleDevicePickerHidden,
 } from "../src/lib/global-settings.ts";
@@ -21,10 +19,10 @@ const servers = [
 const ids = servers.map((server) => devicePickerServerEntryId(server.id));
 
 describe("device picker customization", () => {
-  test("entry ids are namespaced per kind", () => {
+  test("ids are namespaced per kind", () => {
     assert.equal(devicePickerServerEntryId("x"), "server:x");
-    assert.equal(devicePickerCodespaceEntryId("k"), "codespace:k");
-    assert.equal(devicePickerSectionHiddenId("cloud"), "section:cloud");
+    assert.equal(devicePickerKindHiddenId("codespace"), "kind:codespace");
+    assert.equal(devicePickerKindHiddenId("cloud"), "kind:cloud");
   });
 
   test("sortByDevicePickerOrder keeps natural order when nothing is ranked", () => {
@@ -44,6 +42,24 @@ describe("device picker customization", () => {
     assert.deepEqual(sorted.map((server) => server.id), ["c", "a", "b"]);
   });
 
+  test("a single ranking interleaves servers, codespaces, and cloud devices", () => {
+    const mixed = [
+      { id: "server:a" },
+      { id: "server:b" },
+      { id: "codespace:owner/repo" },
+      { id: "cloud:cursor-sdk" },
+    ];
+    const sorted = sortByDevicePickerOrder(
+      mixed,
+      ["codespace:owner/repo", "server:b"],
+      (item) => item.id
+    );
+    assert.deepEqual(
+      sorted.map((item) => item.id),
+      ["codespace:owner/repo", "server:b", "server:a", "cloud:cursor-sdk"]
+    );
+  });
+
   test("toggleDevicePickerHidden flips and is idempotent for explicit values", () => {
     const base = createDefaultDevicePickerState();
     const hidden = toggleDevicePickerHidden(base, "server:a");
@@ -55,13 +71,13 @@ describe("device picker customization", () => {
     assert.equal(toggleDevicePickerHidden(base, "server:a", false), base);
   });
 
-  test("section hiding uses the section:* id", () => {
+  test("kind hiding uses the kind:* id", () => {
     const state = toggleDevicePickerHidden(
       createDefaultDevicePickerState(),
-      devicePickerSectionHiddenId("codespaces")
+      devicePickerKindHiddenId("codespace")
     );
-    assert.equal(isDevicePickerSectionHidden(state, "codespaces"), true);
-    assert.equal(isDevicePickerSectionHidden(state, "cloud"), false);
+    assert.equal(isDevicePickerKindHidden(state, "codespace"), true);
+    assert.equal(isDevicePickerKindHidden(state, "cloud"), false);
   });
 
   test("moveDevicePickerEntry writes the full displayed order and round-trips through sort", () => {
@@ -72,11 +88,16 @@ describe("device picker customization", () => {
       devicePickerServerEntryId(server.id)
     );
     assert.deepEqual(sorted.map((server) => server.id), ["a", "c", "b"]);
-    const movedUpAgain = moveDevicePickerEntry(moved, ["server:a", "server:c", "server:b"], "server:c", -1);
+    const movedUpAgain = moveDevicePickerEntry(
+      moved,
+      ["server:a", "server:c", "server:b"],
+      "server:c",
+      -1
+    );
     assert.deepEqual(movedUpAgain.order, ["server:c", "server:a", "server:b"]);
   });
 
-  test("moveDevicePickerEntry preserves other sections' rankings", () => {
+  test("moveDevicePickerEntry keeps ranked ids that are not currently displayed", () => {
     const base = {
       ...createDefaultDevicePickerState(),
       order: ["cloud:cursor-sdk", "codespace:k1"],
@@ -96,13 +117,5 @@ describe("device picker customization", () => {
     assert.equal(moveDevicePickerEntry(base, ids, "server:a", -1), base);
     assert.equal(moveDevicePickerEntry(base, ids, "server:c", 1), base);
     assert.equal(moveDevicePickerEntry(base, ids, "server:zzz", 1), base);
-  });
-
-  test("moveDevicePickerSection reorders sections within bounds", () => {
-    const base = createDefaultDevicePickerState();
-    const moved = moveDevicePickerSection(base, "cloud", -1);
-    assert.deepEqual(moved.sectionOrder, ["servers", "cloud", "codespaces"]);
-    assert.equal(moveDevicePickerSection(base, "servers", -1), base);
-    assert.equal(moveDevicePickerSection(base, "cloud", 1), base);
   });
 });
