@@ -21,6 +21,7 @@ import {
   isBrowserMachineUrl,
 } from "@cesium/client";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -50,16 +51,19 @@ import {
   getServerDisplayLabel,
   getServerRailAppearance,
   isLocalDeviceServer,
+  pickStableServerColor,
 } from "@/lib/server-rail-appearance";
 import {
   serverHealthColorClass,
   serverHealthIndicator,
 } from "@/lib/server-health-display";
-import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
+import { isValidFolderColor, WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
+import { RailIconCustomizePanel } from "@/components/ui/RailIconCustomizePanel";
 import type { CloudExecutionDevice } from "@/lib/cloud-execution-devices";
 import {
   categorizeCodespaceState,
   codespaceBaseUrlKeys,
+  codespacePairingMeta,
   codespaceStateLabel,
   type CodespaceDevice,
   type CodespaceWakePhase,
@@ -205,14 +209,98 @@ export function ServerPickerPopover({
     maxHeight: 420,
   });
   const [connectOpen, setConnectOpen] = useState(false);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
   const { saveServer, removeServer } = useServerConnections();
   const dialogs = useWorkbenchDialogs();
   const { updateWorkspaceSession } = useWorkspace();
   const { openSettingsView } = useShellView();
   const cloud = useCloudContext();
-  const devicePicker = useGlobalSettings().settings.general.devicePicker;
+  const { settings, updateSettings } = useGlobalSettings();
+  const devicePicker = settings.general.devicePicker;
+
+  /**
+   * One inline customize panel (name + icon + color) at a time, shared by
+   * plain servers and Codespace devices so both kinds get the same
+   * customization surface. Icon and color apply live; the name commits when
+   * the panel (or the whole popover) closes.
+   */
+  const [customize, setCustomize] = useState<
+    | { kind: "server"; id: string; baseUrl: string; label: string }
+    | { kind: "codespace"; device: CodespaceDevice }
+    | null
+  >(null);
+  const [nameDraft, setNameDraft] = useState("");
+
+  const commitCustomizeName = useCallback(() => {
+    if (!customize) {
+      return;
+    }
+    const next = nameDraft.trim();
+    if (!next) {
+      return;
+    }
+    if (customize.kind === "server") {
+      if (next !== customize.label) {
+        saveServer({ id: customize.id, label: next, baseUrl: customize.baseUrl });
+      }
+      return;
+    }
+    const device = customize.device;
+    if (next === device.label) {
+      return;
+    }
+    // The durable name lives on the account pairing row (it syncs to every
+    // device); the merged local connection mirrors it so this device agrees
+    // immediately.
+    if (device.localServerId) {
+      saveServer({ id: device.localServerId, label: next, baseUrl: device.baseUrl });
+    }
+    void cloud.actions
+      ?.saveServer({
+        name: next,
+        baseUrl: device.baseUrl,
+        kind: "codespace",
+        codespace: codespacePairingMeta(device),
+      })
+      .catch(() => undefined);
+  }, [cloud.actions, customize, nameDraft, saveServer]);
+
+  const closeCustomize = useCallback(() => {
+    commitCustomizeName();
+    setCustomize(null);
+  }, [commitCustomizeName]);
+  const closeCustomizeRef = useRef(closeCustomize);
+  closeCustomizeRef.current = closeCustomize;
+
+  const updateEntryAppearance = useCallback(
+    (
+      entryId: string,
+      fallback: { icon: string; color: string },
+      patch: { icon?: string; color?: string }
+    ) => {
+      updateSettings((current) => {
+        const saved = current.general.serverRailAppearances[entryId];
+        const base = {
+          icon: saved?.icon || fallback.icon,
+          color: saved?.color || fallback.color,
+          ...(saved?.nickname ? { nickname: saved.nickname } : {}),
+        };
+        const nextIcon = patch.icon?.trim() || base.icon;
+        const nextColor =
+          patch.color && isValidFolderColor(patch.color) ? patch.color : base.color;
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            serverRailAppearances: {
+              ...current.general.serverRailAppearances,
+              [entryId]: { ...base, icon: nextIcon, color: nextColor },
+            },
+          },
+        };
+      });
+    },
+    [updateSettings]
+  );
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -265,12 +353,14 @@ export function ServerPickerPopover({
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
     };
-  }, [anchorRef, connectOpen, open, placement, renamingId, servers.length, variant]);
+  }, [anchorRef, connectOpen, customize, open, placement, servers.length, variant]);
 
   useEffect(() => {
     if (!open) {
       setConnectOpen(false);
-      setRenamingId(null);
+      // Commit a pending rename before the panel state is dropped, so
+      // closing the popover mid-edit never loses the typed name.
+      closeCustomizeRef.current();
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -377,14 +467,6 @@ export function ServerPickerPopover({
     return null;
   }
 
-  const commitRename = (server: PickerServer) => {
-    const nextLabel = renameValue.trim();
-    if (nextLabel && nextLabel !== server.label) {
-      saveServer({ id: server.id, label: nextLabel, baseUrl: server.baseUrl });
-    }
-    setRenamingId(null);
-  };
-
   const openAdvancedServers = () => {
     updateWorkspaceSession((current) => ({
       ...current,
@@ -419,7 +501,7 @@ export function ServerPickerPopover({
     const displayLabel = getServerDisplayLabel(server, appearance);
     const isLocalDevice = isLocalDeviceServer(server);
     const isBrowser = isBrowserMachineUrl(server.baseUrl);
-    const renaming = renamingId === server.id;
+    const customizing = customize?.kind === "server" && customize.id === server.id;
     return (
       <div key={item.id} className="flex w-full min-w-0 flex-col">
         <div className="flex w-full min-w-0 items-center gap-[4px] rounded-[var(--radius-tab)] hover:bg-[var(--accent-bg)]">
@@ -447,30 +529,7 @@ export function ServerPickerPopover({
             )}
             {renderHealth(health)}
             <span className="min-w-0 flex-1">
-              {renaming ? (
-                <input
-                  value={renameValue}
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitRename(server);
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setRenamingId(null);
-                    }
-                  }}
-                  onBlur={() => commitRename(server)}
-                  autoFocus
-                  className="w-full bg-transparent font-sans text-[12.5px] text-[var(--text-primary)] outline-none"
-                  aria-label="Device name"
-                />
-              ) : (
-                <span className={titleClass}>{displayLabel}</span>
-              )}
+              <span className={titleClass}>{displayLabel}</span>
               {shouldShowServerUrlInDevicePicker({ cloud, isLocalDevice }) && !isBrowser ? (
                 <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
                   {server.baseUrl}
@@ -484,12 +543,22 @@ export function ServerPickerPopover({
             <div className="flex shrink-0 items-center pr-[4px]">
               <button
                 type="button"
-                aria-label={`Rename ${displayLabel}`}
-                title="Rename"
+                aria-label={`Customize ${displayLabel}`}
+                title="Rename and customize"
                 onClick={(event) => {
                   event.stopPropagation();
-                  setRenamingId(server.id);
-                  setRenameValue(displayLabel);
+                  if (customizing) {
+                    closeCustomize();
+                    return;
+                  }
+                  commitCustomizeName();
+                  setCustomize({
+                    kind: "server",
+                    id: server.id,
+                    baseUrl: server.baseUrl,
+                    label: server.label,
+                  });
+                  setNameDraft(server.label);
                 }}
                 className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
               >
@@ -527,8 +596,74 @@ export function ServerPickerPopover({
             </div>
           ) : null}
         </div>
+        {customizing ? (
+          <div className="mb-[6px] mr-[8px]">
+            <RailIconCustomizePanel
+              title={displayLabel}
+              icon={appearance.icon}
+              color={appearance.color}
+              showNameField={!isBrowser && !isLocalDevice}
+              name={nameDraft}
+              nameFieldLabel="Device name"
+              allowEmptyName
+              onClose={closeCustomize}
+              onUpdate={(patch) => {
+                if (patch.name !== undefined) {
+                  setNameDraft(patch.name);
+                }
+                if (patch.icon !== undefined || patch.color !== undefined) {
+                  updateEntryAppearance(server.id, appearance, patch);
+                }
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     );
+  };
+
+  /**
+   * Unpair a Codespace device: removes the account pairing (every signed-in
+   * device drops it) and its merged local connection, after offering to also
+   * delete the codespace on GitHub so it stops consuming storage. Keeping
+   * the codespace is safe - setup for the same repository adopts it again.
+   */
+  const unpairCodespace = async (device: CodespaceDevice, displayLabel: string) => {
+    const confirmed = await dialogs.confirm({
+      title: `Remove ${displayLabel}?`,
+      message:
+        "The Codespace pairing is removed from your account, so it disappears from the device list on every signed-in device.",
+      detail: device.repoFullName,
+      tone: "danger",
+      confirmLabel: "Remove",
+    });
+    if (!confirmed) {
+      return;
+    }
+    let deleteOnGithub = false;
+    if (cloud.github) {
+      deleteOnGithub = await dialogs.confirm({
+        title: "Also delete the codespace on GitHub?",
+        message:
+          "Deleting frees your GitHub Codespaces storage but discards any uncommitted work inside it. If you keep it, pairing this repository again reuses it.",
+        detail: device.codespaceName,
+        tone: "danger",
+        confirmLabel: "Delete on GitHub",
+        cancelLabel: "Keep it",
+      });
+    }
+    if (deleteOnGithub) {
+      try {
+        await cloud.github?.deleteCodespace(device.codespaceName);
+      } catch {
+        // Unpairing below still applies; the codespace can be deleted from
+        // github.com/codespaces by hand.
+      }
+    }
+    if (device.localServerId) {
+      removeServer(device.localServerId);
+    }
+    void cloud.actions?.removeServer({ baseUrl: device.baseUrl }).catch(() => undefined);
   };
 
   const renderCodespaceRow = (item: Extract<PickerItem, { kind: "codespace" }>): ReactNode => {
@@ -549,29 +684,107 @@ export function ServerPickerPopover({
         : health === "healthy"
           ? "Running"
           : codespaceSleepingLabel(device.lastKnownState);
+    // Appearance parity with plain servers, keyed by the durable pairing key
+    // so a recreated codespace (new URL, new local id) keeps its look.
+    const savedAppearance = serverRailAppearances[device.key];
+    const appearance = {
+      icon: savedAppearance?.icon || "Github",
+      color: savedAppearance?.color || pickStableServerColor(device.key),
+    };
+    const customizing = customize?.kind === "codespace" && customize.device.key === device.key;
+    // Unpairing only leaves the picker empty when the merged local
+    // connection is the last remaining server.
+    const removable = !device.localServerId || servers.length > 1;
     return (
       <div key={item.id} className="flex w-full min-w-0 flex-col">
-        <button
-          type="button"
-          role="menuitemradio"
-          aria-checked={selected}
-          disabled={waking}
-          onClick={() => onSelectCodespaceDevice?.(device)}
-          className={`${rowClass} hover:bg-[var(--accent-bg)] disabled:opacity-70`}
-        >
-          {waking ? (
-            <Loader2 className={`${iconClass} animate-spin`} strokeWidth={1.7} aria-hidden />
-          ) : (
-            <Github className={iconClass} strokeWidth={1.5} aria-hidden />
-          )}
-          {renderHealth(health)}
-          <span className="min-w-0 flex-1">
-            <span className={titleClass}>{device.label}</span>
-            <span className={subtitleClass}>{stateLabel}</span>
-          </span>
-          <DeviceKindBadge kind="codespace" />
-          {renderCheck(selected)}
-        </button>
+        <div className="flex w-full min-w-0 items-center gap-[4px] rounded-[var(--radius-tab)] hover:bg-[var(--accent-bg)]">
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={selected}
+            disabled={waking}
+            onClick={() => onSelectCodespaceDevice?.(device)}
+            className="flex min-w-0 flex-1 items-center gap-[8px] px-[8px] py-[8px] text-left disabled:opacity-70 sm:py-[7px]"
+          >
+            {waking ? (
+              <Loader2 className={`${iconClass} animate-spin`} strokeWidth={1.7} aria-hidden />
+            ) : (
+              <WorkspaceFolderIcon
+                iconName={appearance.icon}
+                color={appearance.color}
+                className="size-[14px] shrink-0"
+                strokeWidth={1.8}
+              />
+            )}
+            {renderHealth(health)}
+            <span className="min-w-0 flex-1">
+              <span className={titleClass}>{device.label}</span>
+              <span className={subtitleClass}>{stateLabel}</span>
+            </span>
+            <DeviceKindBadge kind="codespace" />
+            {renderCheck(selected)}
+          </button>
+          {variant === "device" ? (
+            <div className="flex shrink-0 items-center pr-[4px]">
+              <button
+                type="button"
+                aria-label={`Customize ${device.label}`}
+                title="Rename and customize"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (customizing) {
+                    closeCustomize();
+                    return;
+                  }
+                  commitCustomizeName();
+                  setCustomize({ kind: "codespace", device });
+                  setNameDraft(device.label);
+                }}
+                className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              >
+                <Pencil className="size-[12px]" strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                aria-label={`Remove ${device.label}`}
+                title="Remove"
+                disabled={waking || !removable}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (waking || !removable) {
+                    return;
+                  }
+                  void unpairCodespace(device, device.label);
+                }}
+                className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-35"
+              >
+                <Trash2 className="size-[12px]" strokeWidth={1.7} />
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {customizing ? (
+          <div className="mb-[6px] mr-[8px]">
+            <RailIconCustomizePanel
+              title={device.label}
+              icon={appearance.icon}
+              color={appearance.color}
+              showNameField
+              name={nameDraft}
+              nameFieldLabel="Device name"
+              allowEmptyName
+              onClose={closeCustomize}
+              onUpdate={(patch) => {
+                if (patch.name !== undefined) {
+                  setNameDraft(patch.name);
+                }
+                if (patch.icon !== undefined || patch.color !== undefined) {
+                  updateEntryAppearance(device.key, appearance, patch);
+                }
+              }}
+            />
+          </div>
+        ) : null}
         {failure ? (
           <div className="mx-[8px] mb-[6px] flex flex-col gap-[6px] rounded-[var(--radius-tab)] bg-[var(--accent-bg)] px-[8px] py-[6px]">
             <p className="font-sans text-[10.5px] leading-snug text-[var(--goal-accent)]">
@@ -639,7 +852,7 @@ export function ServerPickerPopover({
     >
       <VerticalFadedScroll
         wrapperClassName={connectOpen ? "shrink-0" : undefined}
-        measureKey={`${items.map((item) => item.id).join(",")}\0${connectOpen ? 1 : 0}\0${renamingId ?? ""}\0${selectedCloudDeviceId ?? ""}\0${codespaceWakeStatus?.phase ?? ""}\0${codespaceWakeFailure?.deviceKey ?? ""}`}
+        measureKey={`${items.map((item) => item.id).join(",")}\0${connectOpen ? 1 : 0}\0${customize ? (customize.kind === "server" ? customize.id : customize.device.key) : ""}\0${selectedCloudDeviceId ?? ""}\0${codespaceWakeStatus?.phase ?? ""}\0${codespaceWakeFailure?.deviceKey ?? ""}`}
         scrollClassName={
           connectOpen
             ? "hide-scrollbar-y max-h-[min(140px,28dvh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"

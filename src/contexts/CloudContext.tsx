@@ -80,6 +80,7 @@ import {
   writeConversationCatalogStore,
   type CloudConversationCatalogRow,
 } from "@/lib/conversation-catalog";
+import { unwrapConvexActionErrors } from "@/lib/cloud/convex-errors";
 
 /**
  * Cesium Cloud Context - the client side of the cross-device user context.
@@ -273,7 +274,12 @@ export type CloudGithubActions = {
     machine?: string;
     ref?: string;
     idleTimeoutMinutes?: number;
-  }): Promise<{ codespace: CloudGithubCodespace; engineBaseUrl: string }>;
+  }): Promise<{
+    codespace: CloudGithubCodespace;
+    engineBaseUrl: string;
+    /** True when an existing Cesium codespace was reused instead of created. */
+    adopted: boolean;
+  }>;
   getCodespace(codespaceName: string): Promise<CloudGithubCodespace | null>;
   startCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
   stopCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
@@ -589,61 +595,50 @@ function CloudBridge({
 
   // Device-key deployments authenticate GitHub actions with the same
   // identity args as every other cloud call; Clerk identities ride the JWT.
+  // Every call unwraps ConvexError data so the surfaces rendering
+  // `error.message` show GitHub's real failure, not a redacted envelope.
   const githubActions = useMemo<CloudGithubActions>(
     () => ({
-      async connectionStatus() {
-        return await convex.action(api.github.connectionStatus, { ...identityArgs });
-      },
-      async listRepos() {
-        return await convex.action(api.github.reposList, { ...identityArgs });
-      },
-      async listMachines(repoFullName) {
-        return await convex.action(api.github.machinesList, {
-          ...identityArgs,
-          repoFullName,
-        });
-      },
-      async ensureDevcontainer(input) {
-        return await convex.action(api.github.ensureDevcontainer, {
-          ...identityArgs,
-          ...input,
-        });
-      },
-      async setupCodespaceSecrets(input) {
-        return await convex.action(api.github.setupCodespaceSecrets, {
-          ...identityArgs,
-          ...input,
-        });
-      },
-      async createCodespace(input) {
-        return await convex.action(api.github.codespaceCreate, {
-          ...identityArgs,
-          ...input,
-        });
-      },
-      async getCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceGet, {
-          ...identityArgs,
-          codespaceName,
-        });
-      },
-      async startCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceStart, {
-          ...identityArgs,
-          codespaceName,
-        });
-      },
-      async stopCodespace(codespaceName) {
-        return await convex.action(api.github.codespaceStop, {
-          ...identityArgs,
-          codespaceName,
-        });
-      },
-      async deleteCodespace(codespaceName) {
-        await convex.action(api.github.codespaceDelete, {
-          ...identityArgs,
-          codespaceName,
-        });
+      connectionStatus: () =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.connectionStatus, { ...identityArgs })
+        ),
+      listRepos: () =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.reposList, { ...identityArgs })
+        ),
+      listMachines: (repoFullName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.machinesList, { ...identityArgs, repoFullName })
+        ),
+      ensureDevcontainer: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.ensureDevcontainer, { ...identityArgs, ...input })
+        ),
+      setupCodespaceSecrets: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.setupCodespaceSecrets, { ...identityArgs, ...input })
+        ),
+      createCodespace: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceCreate, { ...identityArgs, ...input })
+        ),
+      getCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceGet, { ...identityArgs, codespaceName })
+        ),
+      startCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceStart, { ...identityArgs, codespaceName })
+        ),
+      stopCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceStop, { ...identityArgs, codespaceName })
+        ),
+      deleteCodespace: async (codespaceName) => {
+        await unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceDelete, { ...identityArgs, codespaceName })
+        );
       },
     }),
     [convex, identityArgs]

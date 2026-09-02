@@ -181,7 +181,7 @@ export function ActionsSettingsPanel() {
 
   return (
     <>
-      <SettingsNestedBreadcrumbs parentNav="general" parentLabel="General" label="Actions" />
+      <SettingsNestedBreadcrumbs parentNav="appearance" parentLabel="Appearance" label="Actions" />
 
       <SettingsSection title="Composer pills">
         <SettingsRow

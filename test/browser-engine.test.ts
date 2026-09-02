@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   BROWSER_ENGINE_CAPABILITIES,
+  isTunnelInterstitialHost,
   REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS,
   REMOTE_BROWSER_HOVER_REFRESH_DELAY_MS,
   REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS,
@@ -30,6 +31,40 @@ describe("new browser beta flag", () => {
   test("keeps the legacy proxy browser as the default", () => {
     const settings = createDefaultGlobalSettings();
     assert.equal(settings.agents.newBrowser, false);
+  });
+});
+
+describe("tunnel interstitial host detection", () => {
+  test("flags GitHub Codespaces forwarded-port engine hosts", () => {
+    assert.equal(
+      isTunnelInterstitialHost("https://fluffy-space-1234-9100.app.github.dev"),
+      true
+    );
+    assert.equal(
+      isTunnelInterstitialHost("https://FLUFFY-space-1234-9100.APP.GITHUB.DEV/"),
+      true
+    );
+    assert.equal(
+      isTunnelInterstitialHost("https://octo-legacy-3000.githubpreview.dev"),
+      true
+    );
+    assert.equal(
+      isTunnelInterstitialHost("https://abc123-9100.usw2.devtunnels.ms"),
+      true
+    );
+  });
+
+  test("leaves direct engine hosts alone", () => {
+    assert.equal(isTunnelInterstitialHost("http://localhost:9100"), false);
+    assert.equal(isTunnelInterstitialHost("http://127.0.0.1:9100"), false);
+    assert.equal(isTunnelInterstitialHost("https://cesium.techlitnow.com"), false);
+    // Suffix must match on a label boundary, not as a bare substring.
+    assert.equal(
+      isTunnelInterstitialHost("https://evilapp.github.dev.example.com"),
+      false
+    );
+    assert.equal(isTunnelInterstitialHost(""), false);
+    assert.equal(isTunnelInterstitialHost("not a url"), false);
   });
 });
 

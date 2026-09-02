@@ -68,6 +68,15 @@ PUBLIC_URL="${CESIUM_PUBLIC_URL:-$(existing_env_value CESIUM_PUBLIC_URL)}"
 TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-$(existing_env_value CESIUM_TUNNEL_REQUIRED)}"
 SKIP_TUNNEL="${CESIUM_SKIP_TUNNEL:-0}"
 SKIP_AUTOSTART="${CESIUM_SKIP_AUTOSTART:-0}"
+# Optional headless Chromium for the engine's in-app browser (server-chromium
+# engine / browser debug sessions). Off by default to keep installs lean;
+# remote engines whose clients cannot iframe through the engine host (GitHub
+# Codespaces forwarded ports hijack document GETs with a "Verifying session"
+# interstitial) set CESIUM_INSTALL_BROWSER=1 so previews render inside the
+# engine and stream out over plain API calls.
+INSTALL_BROWSER="${CESIUM_INSTALL_BROWSER:-$(existing_env_value CESIUM_INSTALL_BROWSER)}"
+INSTALL_BROWSER="${INSTALL_BROWSER:-0}"
+BROWSERS_DIR="$CESIUM_HOME/browsers"
 if [[ "$LOCAL_ONLY" == "1" ]]; then
   WEB_URL=""
   SKIP_TUNNEL=1
@@ -328,6 +337,46 @@ if [[ ! -f "$SOURCE_DIR/server/src/runtime/bun-server.ts" ]]; then
   exit 1
 fi
 
+install_browser() {
+  if [[ "$INSTALL_BROWSER" != "1" ]]; then
+    return 0
+  fi
+  local cli=""
+  local candidate
+  for candidate in \
+    "$SOURCE_DIR/server/node_modules/playwright/cli.js" \
+    "$SOURCE_DIR/node_modules/playwright/cli.js"; do
+    if [[ -f "$candidate" ]]; then
+      cli="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$cli" ]]; then
+    printf 'Playwright CLI not found; skipping headless Chromium install.\n' >&2
+    return 0
+  fi
+  mkdir -p "$BROWSERS_DIR"
+  local scope="chromium"
+  # `--with-deps` shells out to apt via sudo; only attempt it when sudo works
+  # without a prompt (e.g. Codespaces) so unattended installs cannot hang.
+  local args=(install)
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    args+=(--with-deps)
+  fi
+  args+=("$scope")
+  printf 'Installing headless Chromium for the in-app browser...\n'
+  # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD guards package postinstalls above; it
+  # must not suppress this explicit download.
+  if ! env -u PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD \
+    PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" \
+    "$BUN_BIN" "$cli" "${args[@]}"; then
+    printf 'Headless Chromium install failed; the in-app browser will fall back to the proxy preview.\n' >&2
+  fi
+  return 0
+}
+
+install_browser
+
 if [[ -z "$AUTH_PASSWORD" ]]; then
   AUTH_PASSWORD="$("$BUN_BIN" -e \
     'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')"
@@ -384,6 +433,10 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value ALLOWED_ORIGINS "$ALLOWED_ORIGINS"
   write_env_value WORKSPACE_ALLOWED_ROOTS "$WORKSPACE_ROOT"
   write_env_value WORKSPACE_ROOT "$WORKSPACE_ROOT"
+  if [[ "$INSTALL_BROWSER" == "1" ]]; then
+    write_env_value CESIUM_INSTALL_BROWSER "1"
+    write_env_value PLAYWRIGHT_BROWSERS_PATH "$BROWSERS_DIR"
+  fi
 } >"$ENV_FILE"
 chmod 600 "$ENV_FILE"
 

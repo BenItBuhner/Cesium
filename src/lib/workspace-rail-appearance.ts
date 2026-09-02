@@ -26,6 +26,8 @@ import {
 
   GitBranch,
 
+  Github,
+
   Globe,
 
   Hash,
@@ -105,6 +107,8 @@ export const FOLDER_ICON_OPTIONS: Array<{ name: string; Icon: LucideIcon }> = [
   { name: "Flame", Icon: Flame },
 
   { name: "GitBranch", Icon: GitBranch },
+
+  { name: "Github", Icon: Github },
 
   { name: "Globe", Icon: Globe },
 

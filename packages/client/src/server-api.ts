@@ -429,6 +429,19 @@ export function getServerBaseUrl(): string {
   return resolveClientServerBaseUrl();
 }
 
+/**
+ * The active engine's true identity URL, BEFORE the window-relative collapse
+ * that {@link getServerBaseUrl} applies (same-origin on HTTPS pages, loopback
+ * rewrites for local dev). Consumers that need to reason about *where the
+ * engine actually lives* - e.g. whether it sits behind a GitHub Codespaces /
+ * dev-tunnels forwarded host - must use this, since the collapse can turn a
+ * `*.app.github.dev` engine into `localhost` when the workbench itself runs on
+ * localhost.
+ */
+export function getActiveEngineIdentityBaseUrl(): string {
+  return getActiveServerBaseUrl(getConfiguredServerBaseUrl());
+}
+
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
   const base = `${toWebSocketUrl(resolveClientServerBaseUrl())}/ws/agent?${params.toString()}`;

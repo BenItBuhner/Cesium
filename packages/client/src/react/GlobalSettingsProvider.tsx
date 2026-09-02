@@ -16,6 +16,10 @@ import {
   type GlobalSettingsState,
 } from "../global-settings";
 import {
+  readCachedGlobalSettings,
+  writeCachedGlobalSettings,
+} from "../global-settings-cache";
+import {
   fetchGlobalSettings,
   saveGlobalSettings,
   fetchModelToggleState,
@@ -82,6 +86,17 @@ export function GlobalSettingsProvider({
   }>({ pending: 0, error: null });
   const settingsRef = useRef(settings);
   const skipNextSaveRef = useRef(false);
+  /**
+   * True only after global settings were successfully fetched for the current
+   * settings server. Every PUT is gated on this: a client that has never seen
+   * the server's real settings holds factory defaults (or another context's
+   * state) in memory, and persisting that would permanently overwrite the
+   * user's saved customizations — the "server hiccuped and everything
+   * reverted" wipe.
+   */
+  const hydratedFromServerRef = useRef(false);
+  const settingsServerIdRef = useRef<string | null>(null);
+  const seededCacheServerIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const modelToggleQueueRef = useRef<Map<string, ModelToggleUpdate>>(new Map());
   const modelToggleTimerRef = useRef<number | null>(null);
@@ -91,10 +106,32 @@ export function GlobalSettingsProvider({
     () => (settingsServer ? toServerRequestContext(settingsServer) : null),
     [settingsServer]
   );
+  const settingsServerId = settingsServer?.id ?? null;
 
   useEffect(() => {
     settingsServerRef.current = settingsRequestContext;
   }, [settingsRequestContext]);
+
+  useEffect(() => {
+    settingsServerIdRef.current = settingsServerId;
+  }, [settingsServerId]);
+
+  // Seed last-known-good settings from the per-server local cache so a boot
+  // while the settings server is unreachable renders the user's customizations
+  // instead of factory defaults. The server stays the source of truth: a
+  // successful fetch below replaces this state, and the hydration gate keeps
+  // seeded state from ever being saved back.
+  useEffect(() => {
+    if (!settingsServerId || seededCacheServerIdRef.current === settingsServerId) {
+      return;
+    }
+    seededCacheServerIdRef.current = settingsServerId;
+    const cached = readCachedGlobalSettings(settingsServerId);
+    if (cached) {
+      skipNextSaveRef.current = true;
+      setSettings(cached);
+    }
+  }, [settingsServerId]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -165,6 +202,12 @@ export function GlobalSettingsProvider({
       if (!server) {
         return;
       }
+      if (!hydratedFromServerRef.current) {
+        // Never flush state that was not hydrated from the server. After a
+        // failed boot fetch this is factory defaults; the pagehide/visibility
+        // flush would persist them and wipe the user's saved customizations.
+        return;
+      }
       await saveGlobalSettings(settingsRef.current, { ...options, server }).catch(() => {});
     },
     [flushModelToggleUpdates, ready]
@@ -172,6 +215,10 @@ export function GlobalSettingsProvider({
 
   useEffect(() => {
     let mounted = true;
+
+    // Any settings-server/context change invalidates hydration; saves stay
+    // blocked until a fetch against the new context succeeds.
+    hydratedFromServerRef.current = false;
 
     async function load(): Promise<void> {
       if (!settingsRequestContext) {
@@ -191,11 +238,20 @@ export function GlobalSettingsProvider({
       try {
         const result = await fetchGlobalSettings({ server: settingsRequestContext });
         if (!mounted) return;
+        const normalized = normalizeLoadedGlobalSettings(result.settings);
+        hydratedFromServerRef.current = true;
+        const serverId = settingsServerIdRef.current;
+        if (serverId) {
+          writeCachedGlobalSettings(serverId, normalized);
+        }
         skipNextSaveRef.current = true;
-        setSettings(normalizeLoadedGlobalSettings(result.settings));
+        setSettings(normalized);
       } catch {
-        // Logged-out, offline, or stale-auth startup keeps defaults; the
-        // workbench stays mounted and in-app surfaces own connect/sign-in UX.
+        // Logged-out, offline, or stale-auth startup keeps the cache-seeded
+        // state (or defaults); the workbench stays mounted and in-app surfaces
+        // own connect/sign-in UX. hydratedFromServerRef stays false so this
+        // state can never be saved over the server's copy; the visibility
+        // handler refetches once the app regains focus/connectivity.
       } finally {
         if (mounted) {
           setReady(true);
@@ -234,8 +290,14 @@ export function GlobalSettingsProvider({
     }
     try {
       const result = await fetchGlobalSettings({ server });
+      const normalized = normalizeLoadedGlobalSettings(result.settings);
+      hydratedFromServerRef.current = true;
+      const serverId = settingsServerIdRef.current;
+      if (serverId) {
+        writeCachedGlobalSettings(serverId, normalized);
+      }
       skipNextSaveRef.current = true;
-      setSettings(normalizeLoadedGlobalSettings(result.settings));
+      setSettings(normalized);
     } catch {
       // Offline or auth; keep in-memory state.
     }
@@ -293,6 +355,20 @@ export function GlobalSettingsProvider({
     if (skipNextSaveRef.current) {
       skipNextSaveRef.current = false;
       return;
+    }
+
+    if (!hydratedFromServerRef.current) {
+      // A failed boot fetch leaves factory defaults (or cache-seeded state) in
+      // memory; without this gate the `ready` flip alone scheduled a PUT that
+      // permanently overwrote the server's saved settings with defaults.
+      // Edits made before hydration stay in memory until a fetch succeeds.
+      return;
+    }
+
+    const serverId = settingsServerIdRef.current;
+    if (serverId) {
+      // Mirror hydrated local edits so an offline relaunch keeps them visible.
+      writeCachedGlobalSettings(serverId, settings);
     }
 
     if (saveTimerRef.current) {
