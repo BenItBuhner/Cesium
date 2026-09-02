@@ -66,14 +66,17 @@ import {
 import {
   buildCloudServerPushPayloads,
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+  CLOUD_SHARED_SERVER_IDS_STORAGE_KEY,
   cloudServerIdentity,
   diffRemovedCloudServers,
   isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
+  removeServersByIdentity,
   serializeCloudServerTombstones,
   type CloudServerRemoval,
 } from "@/lib/cloud/cloud-servers";
+import type { Id } from "@convex/_generated/dataModel";
 import {
   mergeCloudCatalogsIntoStore,
   readConversationCatalogStore,
@@ -119,6 +122,49 @@ export type CloudServer = {
   lastConnectedAt: number | null;
 };
 
+/** A server another account shared with this user (accepted + live). */
+export type CloudSharedServer = {
+  shareId: string;
+  name: string;
+  baseUrl: string;
+  kind: "remote" | "local" | "codespace";
+  sessionToken: string | null;
+  rendezvous: RendezvousLocator | null;
+  notes: string | null;
+  lastConnectedAt: number | null;
+  ownerName: string | null;
+};
+
+/** An invite/grant addressed to this user (recipient-side view). */
+export type CloudIncomingShare = {
+  shareId: string;
+  serverName: string;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  status: "pending" | "accepted";
+  paused: boolean;
+  expiresAt: number | null;
+  expired: boolean;
+  createdAt: number;
+};
+
+/** A grant this user owns on one of their servers (owner-side view). */
+export type CloudOutgoingShare = {
+  shareId: string;
+  serverName: string;
+  serverBaseUrl: string | null;
+  serverRendezvousId: string | null;
+  granteeEmail: string | null;
+  granteeName: string | null;
+  inviteCode: string;
+  status: "pending" | "accepted" | "declined" | "revoked";
+  paused: boolean;
+  expiresAt: number | null;
+  expired: boolean;
+  createdAt: number;
+  respondedAt: number | null;
+};
+
 export type CloudSnapshotMeta = {
   snapshotKey: string;
   title: string;
@@ -146,6 +192,9 @@ export type CloudBootstrap = {
     createdAt: number;
   };
   servers: CloudServer[];
+  sharedServers: CloudSharedServer[];
+  incomingShares: CloudIncomingShare[];
+  outgoingShares: CloudOutgoingShare[];
   preferencesPayload: string | null;
   secrets: Array<{ kind: string; payload: string; updatedAt: number }>;
   agentPrefs: Array<{
@@ -175,6 +224,31 @@ export type CloudActions = {
     markConnected?: boolean;
   }): Promise<void>;
   removeServer(input: CloudServerRemoval): Promise<void>;
+  /** Owner: grant another account access to one of this user's servers. */
+  createServerShare(input: {
+    baseUrl?: string;
+    rendezvousServerId?: string;
+    granteeEmail?: string;
+    expiresAt?: number;
+  }): Promise<{ shareId: string; inviteCode: string; created: boolean }>;
+  /** Recipient: accept/decline a pending invite, or leave an accepted share. */
+  respondServerShare(input: { shareId: string; accept: boolean }): Promise<void>;
+  /** Recipient: redeem an invite link/code (accepts immediately). */
+  claimServerShareByCode(inviteCode: string): Promise<{
+    serverName: string;
+    ownerName: string | null;
+    alreadyAccepted: boolean;
+  }>;
+  /** Owner: pause/resume or adjust expiry (`expiresAt: null` clears it). */
+  updateServerShare(input: {
+    shareId: string;
+    paused?: boolean;
+    expiresAt?: number | null;
+  }): Promise<void>;
+  /** Owner: permanently revoke a grant. */
+  revokeServerShare(shareId: string): Promise<void>;
+  /** Owner: delete a finished (declined/revoked) grant row. */
+  removeServerShare(shareId: string): Promise<void>;
   savePreferences(payload: string): Promise<void>;
   saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
   removeSecret(input: { kind: string }): Promise<void>;
@@ -393,10 +467,21 @@ function reconcilePersonalization(
  * Merge cloud servers into the local connection list (additive). Tombstoned
  * identities - servers the user removed on this device - are skipped so they
  * do not resurrect on every bootstrap.
+ *
+ * Servers shared by other accounts merge the same way, but their identities
+ * are tracked in a dedicated set so the push loop never uploads them as owned
+ * rows, and so grants that vanish from bootstrap (revoked / paused / expired /
+ * left) are removed from the local list instead of lingering forever.
  */
-function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
+function mergeCloudServersIntoLocal(
+  servers: CloudServer[],
+  sharedServers: CloudSharedServer[]
+): CloudServer[] {
   const banned = servers.filter((server) => !isCloudSyncableServerUrl(server.baseUrl));
   const usable = servers.filter((server) => isCloudSyncableServerUrl(server.baseUrl));
+  const usableShared = sharedServers.filter((server) =>
+    isCloudSyncableServerUrl(server.baseUrl)
+  );
   const tombstones = parseCloudServerTombstones(
     clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
   );
@@ -437,17 +522,43 @@ function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
   const merged = mergeCloudServersIntoState(withoutAccountSite, usable, {
     skipIdentities: tombstones,
   });
+  const store = clientKeyValueStore();
+  const ownedIdentities = new Set(usable.map((server) => cloudServerIdentity(server)));
+  const previousSharedIds = parseCloudServerTombstones(
+    store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
+  );
+  const sharedMerge = mergeCloudServersIntoState(merged.state, usableShared, {
+    skipIdentities: tombstones,
+  });
+  // A server the user also owns is never treated as "shared" locally.
+  const currentSharedIds = new Set(
+    usableShared
+      .map((server) => cloudServerIdentity(server))
+      .filter((identity) => !ownedIdentities.has(identity))
+  );
+  const staleSharedIds = new Set(
+    [...previousSharedIds].filter(
+      (identity) => !currentSharedIds.has(identity) && !ownedIdentities.has(identity)
+    )
+  );
+  const afterRemoval = removeServersByIdentity(sharedMerge.state, staleSharedIds);
+  store.setItem(
+    CLOUD_SHARED_SERVER_IDS_STORAGE_KEY,
+    serializeCloudServerTombstones(currentSharedIds)
+  );
   const localChanged =
     merged.changed ||
+    sharedMerge.changed ||
+    afterRemoval.changed ||
     withoutAccountSite.servers.length !== state.servers.length ||
     withoutAccountSite.activeServerId !== state.activeServerId;
-  for (const entry of merged.sessionTokens) {
+  for (const entry of [...merged.sessionTokens, ...sharedMerge.sessionTokens]) {
     if (!getStoredSessionToken(entry.baseUrl)) {
       setStoredSessionToken(entry.sessionToken, null, entry.baseUrl);
     }
   }
   if (localChanged) {
-    writeStoredServerConnectionsState(merged.state);
+    writeStoredServerConnectionsState(afterRemoval.state);
   }
   return banned;
 }
@@ -487,9 +598,20 @@ function CloudBridge({
   const active = authReady && signedIn && identityReady;
 
   const convex = useConvex();
+  // Client clock captured once after mount (queries must stay deterministic,
+  // so the server never reads its own clock). Only used to filter expired
+  // shares, so boot-time precision is plenty.
+  const [bootClock, setBootClock] = useState<number | null>(null);
+  useEffect(() => {
+    setBootClock(Date.now());
+  }, []);
+  const bootstrapArgs = useMemo(
+    () => (bootClock === null ? identityArgs : { ...identityArgs, now: bootClock }),
+    [identityArgs, bootClock]
+  );
   const bootstrap = useQuery(
     api.context.bootstrap,
-    active ? identityArgs : "skip"
+    active ? bootstrapArgs : "skip"
   ) as CloudBootstrap | null | undefined;
 
   // Separate from bootstrap: catalogs carry whole rail listings and change
@@ -503,6 +625,12 @@ function CloudBridge({
   const register = useMutation(api.context.register);
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
+  const createShareMutation = useMutation(api.shares.create);
+  const respondShareMutation = useMutation(api.shares.respond);
+  const claimShareMutation = useMutation(api.shares.claimByCode);
+  const updateShareMutation = useMutation(api.shares.update);
+  const revokeShareMutation = useMutation(api.shares.revoke);
+  const removeShareMutation = useMutation(api.shares.remove);
   const savePreferencesMutation = useMutation(api.preferences.save);
   const saveSecretMutation = useMutation(api.secrets.save);
   const removeSecretMutation = useMutation(api.secrets.remove);
@@ -530,6 +658,44 @@ function CloudBridge({
       },
       async removeServer(input) {
         await removeServerMutation({ ...identityArgs, ...input });
+      },
+      async createServerShare(input) {
+        const result = await createShareMutation({ ...identityArgs, ...input });
+        return {
+          shareId: result.shareId as string,
+          inviteCode: result.inviteCode,
+          created: result.created,
+        };
+      },
+      async respondServerShare(input) {
+        await respondShareMutation({
+          ...identityArgs,
+          shareId: input.shareId as Id<"serverShares">,
+          accept: input.accept,
+        });
+      },
+      async claimServerShareByCode(inviteCode) {
+        return await claimShareMutation({ ...identityArgs, inviteCode });
+      },
+      async updateServerShare(input) {
+        await updateShareMutation({
+          ...identityArgs,
+          shareId: input.shareId as Id<"serverShares">,
+          ...(input.paused !== undefined ? { paused: input.paused } : {}),
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        });
+      },
+      async revokeServerShare(shareId) {
+        await revokeShareMutation({
+          ...identityArgs,
+          shareId: shareId as Id<"serverShares">,
+        });
+      },
+      async removeServerShare(shareId) {
+        await removeShareMutation({
+          ...identityArgs,
+          shareId: shareId as Id<"serverShares">,
+        });
       },
       async savePreferences(payload) {
         await savePreferencesMutation({ ...identityArgs, payload });
@@ -563,18 +729,24 @@ function CloudBridge({
       },
     }),
     [
+      claimShareMutation,
       convex,
+      createShareMutation,
       identityArgs,
       pushSnapshotMutation,
       removeCatalogMutation,
       removeSecretMutation,
       removeServerMutation,
+      removeShareMutation,
+      respondShareMutation,
+      revokeShareMutation,
       saveAgentPrefMutation,
       saveCatalogMutation,
       savePreferencesMutation,
       saveSecretMutation,
       saveServerMutation,
       updateOnboardingMutation,
+      updateShareMutation,
     ]
   );
 
@@ -652,7 +824,10 @@ function CloudBridge({
       return;
     }
     lastAppliedBootstrapRef.current = bootstrap;
-    const banned = mergeCloudServersIntoLocal(bootstrap.servers);
+    const banned = mergeCloudServersIntoLocal(
+      bootstrap.servers,
+      bootstrap.sharedServers ?? []
+    );
     for (const server of banned) {
       void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
     }
@@ -710,9 +885,15 @@ function CloudBridge({
         );
       }
       lastPushedServersRef.current = state.servers;
+      // Servers shared *to* this account are never pushed back up as owned
+      // rows - that would clone them into this account and defeat revocation.
+      const sharedIdentities = parseCloudServerTombstones(
+        store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
+      );
       for (const payload of buildCloudServerPushPayloads(
         state.servers,
-        (baseUrl) => getStoredSessionToken(baseUrl)
+        (baseUrl) => getStoredSessionToken(baseUrl),
+        sharedIdentities
       )) {
         void actions.saveServer(payload).catch(() => undefined);
       }
