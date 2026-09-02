@@ -158,3 +158,28 @@ test("failed runs surface the error text in the terminal body", () => {
   assert.equal(payload.shortText, "ERR");
   assert.equal(payload.body, "Provider responded with 401");
 });
+
+test("failed runs collapse multiline errors into one bounded body line", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError:
+      "Provider responded with 500.\n" +
+      `Request took too long: ${"x".repeat(200)}`,
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.ok(!payload.body.includes("\n"));
+  assert.ok(payload.body.length <= 120);
+  assert.ok(payload.body.startsWith("Provider responded with 500."));
+  assert.ok(payload.body.endsWith("…"));
+});
+
+test("failed runs never show raw JSON error payloads", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError: '{"error":{"message":"Compilation failed","status":500}}',
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.equal(payload.body, "Agent run failed");
+});

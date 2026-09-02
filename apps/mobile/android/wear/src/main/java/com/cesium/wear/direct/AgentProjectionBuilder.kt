@@ -123,40 +123,174 @@ class AgentProjectionBuilder {
     pendingIntervention: WatchPendingIntervention?
   ): String {
     if (pendingIntervention == WatchPendingIntervention.PERMISSION) {
-      val permission = record.obj("pendingPermission")
-      return permission?.string("title")
-        ?: permission?.string("detail")
-        ?: "Needs permission"
+      return describePendingPermission(record.obj("pendingPermission"))
     }
     if (pendingIntervention == WatchPendingIntervention.QUESTION) {
       return "Needs an answer"
     }
-    findCurrentTodo()?.let { return it }
+    findCurrentTodo()?.let { todo ->
+      sanitizeActivityText(todo)?.let { return it }
+    }
     eventsBySeq.values.toList().asReversed().forEach { event ->
       when (event.string("kind")) {
         "subagent" -> if (event.string("status") == "running") {
-          return event.string("recentActivity") ?: event.string("title") ?: "Subagent is running"
+          return cleanVerbatimActivityText(event.string("recentActivity"))
+            ?: cleanVerbatimActivityText(event.string("title"))
+            ?: "Running a subagent"
         }
         "tool_call", "tool_call_update" -> {
           val eventStatus = event.string("status")
           if (eventStatus == "in_progress" || eventStatus == "pending") {
-            return event.string("detail") ?: event.string("title") ?: "Agent is using a tool"
+            return describeToolCallActivity(event)
           }
         }
+        // Status details and system lines can be verbose plumbing (e.g.
+        // "Auto-accepted Run <entire shell command> ..."); only clean
+        // one-liners qualify, everything else falls through to an older,
+        // cleaner source.
         "system" -> if (event.string("level") != "error") {
-          return event.string("text") ?: "Agent is working"
+          cleanVerbatimActivityText(event.string("text"))?.let { return it }
         }
-        "status" -> event.string("detail")?.let { return it }
+        "status" -> cleanVerbatimActivityText(event.string("detail"))?.let { return it }
       }
     }
     return when (status) {
       "idle", "completed" -> "Agent is idle"
-      "failed" -> record.string("lastError") ?: "Agent run failed"
+      "failed" -> sanitizeActivityText(record.string("lastError")) ?: "Agent run failed"
       "cancelled" -> "Agent run cancelled"
       "paused" -> "Agent run paused"
       else -> "Agent is working"
     }
   }
+
+  /**
+   * Clean one-line description of an in-flight tool call. Tool `detail` is
+   * deliberately ignored: providers fill it with raw JSON arguments or output
+   * chunks, which must never surface on a watch face. Updates that omit
+   * descriptive fields recover them from the originating tool_call.
+   */
+  private fun describeToolCallActivity(event: JsonObject): String {
+    var title = event.string("title")
+    var toolKind = event.string("toolKind")
+    var locations = event.array("locations")
+    if (
+      event.string("kind") == "tool_call_update" &&
+      (title == null || toolKind == null || locations == null)
+    ) {
+      val toolCallId = event.string("toolCallId")
+      val eventSeq = event.long("seq") ?: Long.MAX_VALUE
+      val origin = eventsBySeq.values
+        .filter {
+          it.string("kind") == "tool_call" &&
+            it.string("toolCallId") == toolCallId &&
+            (it.long("seq") ?: Long.MAX_VALUE) <= eventSeq
+        }
+        .maxByOrNull { it.long("seq") ?: 0 }
+      if (origin != null) {
+        title = title ?: origin.string("title")
+        toolKind = toolKind ?: origin.string("toolKind")
+        locations = locations ?: origin.array("locations")
+      }
+    }
+    return cleanVerbatimActivityText(title)
+      ?: toolKindActivityLabel(toolKind, locations)
+      ?: sanitizeActivityText(title)
+      ?: "Using a tool"
+  }
+
+  private fun describePendingPermission(permission: JsonObject?): String {
+    cleanVerbatimActivityText(permission?.string("title"))?.let { return it }
+    return when (permission?.string("permission")) {
+      "terminal" -> "Wants to run a terminal command"
+      "editFile" -> "Wants to edit a file"
+      "mcpCall" -> "Wants to use a connected tool"
+      "switchMode" -> "Wants to switch modes"
+      else -> cleanVerbatimActivityText(permission?.string("detail")) ?: "Needs permission"
+    }
+  }
+}
+
+/**
+ * Length budgets mirroring @cesium/core mobile-agent-projection: verbatim
+ * provider text only qualifies when it fits one clean line untruncated;
+ * the hard cap bounds text with no cleaner alternative (error messages).
+ */
+private const val ACTIVITY_VERBATIM_MAX = 72
+private const val ACTIVITY_HARD_MAX = 120
+private const val ACTIVITY_FILE_LABEL_MAX = 40
+
+private val ACTIVITY_WHITESPACE = Regex("\\s+")
+private val ACTIVITY_KEY_VALUE_FRAGMENT = Regex("\"[^\"]{1,80}\"\\s*:")
+private val ACTIVITY_ESCAPED_PAYLOAD = Regex("\\\\n|\\\\t|\\\\\"")
+
+internal fun sanitizeActivityText(
+  value: String?,
+  maxLength: Int = ACTIVITY_HARD_MAX
+): String? {
+  if (value.isNullOrBlank()) return null
+  val collapsed = value.replace(ACTIVITY_WHITESPACE, " ").trim()
+  if (collapsed.isEmpty() || looksLikeStructuredPayload(collapsed)) return null
+  if (collapsed.length <= maxLength) return collapsed
+  return collapsed.take(maxLength - 1).trimEnd() + "…"
+}
+
+internal fun cleanVerbatimActivityText(
+  value: String?,
+  maxLength: Int = ACTIVITY_VERBATIM_MAX
+): String? {
+  if (value.isNullOrBlank()) return null
+  val collapsed = value.replace(ACTIVITY_WHITESPACE, " ").trim()
+  if (
+    collapsed.isEmpty() ||
+    collapsed.length > maxLength ||
+    looksLikeStructuredPayload(collapsed)
+  ) {
+    return null
+  }
+  return collapsed
+}
+
+private fun looksLikeStructuredPayload(text: String): Boolean {
+  if (text.startsWith("{") || text.startsWith("[")) return true
+  if (ACTIVITY_KEY_VALUE_FRAGMENT.containsMatchIn(text)) return true
+  if (ACTIVITY_ESCAPED_PAYLOAD.containsMatchIn(text)) return true
+  return false
+}
+
+internal fun toolKindActivityLabel(toolKind: String?, locations: JsonArray?): String? {
+  val firstPath = (locations?.firstOrNull() as? JsonObject)?.string("path")
+  val file = firstPath?.let {
+    cleanVerbatimActivityText(activityPathBasename(it), ACTIVITY_FILE_LABEL_MAX)
+  }
+  return when (toolKind) {
+    "read" -> if (file != null) "Reading $file" else "Reading files"
+    "edit" -> if (file != null) "Editing $file" else "Editing files"
+    "delete" -> if (file != null) "Deleting $file" else "Deleting files"
+    "move" -> "Moving files"
+    "terminal", "execute" -> "Running a terminal command"
+    "grep", "search" -> "Searching the workspace"
+    "search_web" -> "Searching the web"
+    "fetch" -> "Fetching a web page"
+    "browser" -> "Using the browser"
+    "todo" -> "Updating the plan"
+    "goal" -> "Updating goal progress"
+    "mcp" -> "Using a connected tool"
+    "subagent", "task" -> "Running a subagent"
+    "question" -> "Preparing a question"
+    "memory" -> "Updating memory"
+    "workflow" -> "Running a workflow"
+    "orchestration" -> "Coordinating agents"
+    "mode", "switch_mode" -> "Switching modes"
+    "wait" -> "Waiting"
+    "think" -> "Thinking"
+    else -> null
+  }
+}
+
+private fun activityPathBasename(path: String): String {
+  val cleaned = path.removePrefix("file://").substringBefore('?')
+  val last = cleaned.split('/', '\\').last()
+  return last.ifEmpty { cleaned }
 }
 
 private fun JsonObject.string(key: String): String? =
