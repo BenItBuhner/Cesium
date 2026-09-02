@@ -117,6 +117,19 @@ class AgentProjectionBuilder {
     return null
   }
 
+  private fun findPendingQuestionPrompt(record: JsonObject): String? {
+    val questionId = record.obj("pendingQuestion")?.string("questionId")
+    eventsBySeq.values.toList().asReversed().forEach { event ->
+      if (event.string("kind") != "question") return@forEach
+      if (questionId != null && event.string("questionId") != questionId) return@forEach
+      val prompt = event.string("prompt")?.trim()
+      if (!prompt.isNullOrEmpty()) return prompt
+      return event.array("questions")
+        ?.firstNotNullOfOrNull { (it as? JsonObject)?.string("prompt")?.trim()?.takeIf(String::isNotEmpty) }
+    }
+    return null
+  }
+
   private fun resolveActivity(
     record: JsonObject,
     status: String,
@@ -129,7 +142,9 @@ class AgentProjectionBuilder {
         ?: "Needs permission"
     }
     if (pendingIntervention == WatchPendingIntervention.QUESTION) {
-      return "Needs an answer"
+      // Surface the actual question verbatim; "Needs an answer" is only the
+      // fallback when the question event is outside the loaded window.
+      return findPendingQuestionPrompt(record) ?: "Needs an answer"
     }
     findCurrentTodo()?.let { return it }
     eventsBySeq.values.toList().asReversed().forEach { event ->
