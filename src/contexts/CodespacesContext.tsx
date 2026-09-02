@@ -20,6 +20,7 @@ import {
 } from "@/lib/onboarding/engine-api";
 import {
   categorizeCodespaceState,
+  codespacePairingMeta,
   deriveCodespaceDevices,
   wakeCodespaceDevice,
   type CodespaceDevice,
@@ -175,21 +176,7 @@ export function CodespacesProvider({ children }: { children: ReactNode }) {
           baseUrl: device.baseUrl,
           kind: "codespace",
           markConnected: lastKnownState === "Available",
-          codespace: {
-            repoFullName: device.repoFullName,
-            repositoryId: device.repositoryId,
-            codespaceName: device.codespaceName,
-            ...(device.machine ? { machine: device.machine } : {}),
-            devcontainerPath: device.devcontainerPath,
-            lastKnownState,
-            lastSyncedAt: Date.now(),
-            ...(device.engineAuth
-              ? {
-                  engineUsername: device.engineAuth.username,
-                  enginePassword: device.engineAuth.password,
-                }
-              : {}),
-          },
+          codespace: codespacePairingMeta(device, { lastKnownState }),
         })
         .catch(() => undefined);
     },
