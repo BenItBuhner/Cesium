@@ -14,7 +14,7 @@
   "postStartCommand": "bash .devcontainer/cesium/bootstrap.sh start",
   "customizations": {
     "cesium": {
-      "templateVersion": 2
+      "templateVersion": 3
     }
   }
 }

@@ -115,6 +115,36 @@ describe("codespace bootstrap template", () => {
     );
   });
 
+  test("bootstrap provisions the in-app browser Chromium", () => {
+    const script = buildBootstrapScript();
+    // Codespaces forwarded ports hijack GET+text/html document loads with an
+    // anti-phishing "Verifying session" interstitial, so the in-app browser
+    // must render inside the codespace via the engine's headless Chromium.
+    assert.ok(script.includes("CESIUM_INSTALL_BROWSER=1"));
+    assert.ok(script.includes("ensure_browser"));
+    assert.ok(script.includes("PLAYWRIGHT_BROWSERS_PATH"));
+    assert.ok(script.includes("install --with-deps chromium"));
+    assert.ok(
+      CODESPACE_TEMPLATE_VERSION >= 3,
+      "template must be bumped so stale repos pick up the browser install"
+    );
+  });
+
+  test("committed .devcontainer reference copies match the builders", async () => {
+    const { readFile } = await import("node:fs/promises");
+    for (const file of buildCodespaceTemplateFiles()) {
+      const committed = await readFile(
+        new URL(`../${file.path}`, import.meta.url),
+        "utf8"
+      );
+      assert.equal(
+        committed,
+        file.content,
+        `${file.path} is out of sync with convex/lib/codespaceBootstrap.ts - regenerate it from buildCodespaceTemplateFiles()`
+      );
+    }
+  });
+
   test("engine base URL derivation", () => {
     assert.equal(
       codespaceEngineBaseUrl("octocat-fuzzy-space-1a2b3c"),

@@ -2,6 +2,10 @@ import { Hono } from "hono";
 import { Agent, fetch as undiciFetch } from "undici";
 import { assertBrowserProxyHostAllowed } from "../lib/browser-proxy-allowlist.js";
 import { appendDesignModeGuestScript } from "../lib/browser-proxy-design-inject.js";
+import {
+  isTunnelInterstitialHost,
+  TUNNEL_NAVIGATE_QUERY_PARAM,
+} from "../lib/tunnel-interstitial.js";
 
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 60_000;
@@ -127,6 +131,33 @@ function rewriteLocation(
     rewritten.searchParams.set("__ocs_access", iframeAuthToken);
   }
   return rewritten.toString();
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+/** Minimal page that immediately re-issues a marker POST navigation to `href`. */
+function buildPostNavigationBounceHtml(href: string): string {
+  let action = href;
+  try {
+    const url = new URL(href);
+    url.searchParams.set(TUNNEL_NAVIGATE_QUERY_PARAM, "1");
+    action = url.toString();
+  } catch {
+    /* keep href as-is */
+  }
+  const escaped = escapeHtmlAttribute(action);
+  return (
+    "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>" +
+    `<form method="POST" action="${escaped}"></form>` +
+    "<script>document.forms[0].submit();</script>" +
+    "</body></html>"
+  );
 }
 
 function stripFrameBlockingHeaders(headers: Headers): void {
@@ -280,6 +311,18 @@ browserProxyRoutes.all("/*", async (c) => {
   // the browser stays authenticated across upstream redirects.
   const iframeAuthToken = outerParams.get("__ocs_access");
   outerParams.delete("__ocs_access");
+  // "POST-as-navigation" marker: GitHub Codespaces / dev-tunnels forwarded
+  // hosts intercept GET+text/html document loads with an anti-phishing
+  // interstitial ("Verifying session") that never completes inside an
+  // embedded iframe, but pass non-GET requests through untouched. Client
+  // iframes therefore load documents by auto-submitting a POST form carrying
+  // this marker; we strip the marker + form body and fetch the upstream
+  // document with a plain GET so the target site never sees the POST.
+  const postNavigation =
+    outerParams.get(TUNNEL_NAVIGATE_QUERY_PARAM) === "1" &&
+    c.req.method !== "GET" &&
+    c.req.method !== "HEAD";
+  outerParams.delete(TUNNEL_NAVIGATE_QUERY_PARAM);
   const forwardedQuery = outerParams.toString();
   const search = forwardedQuery ? `?${forwardedQuery}` : "";
   const prefix = "/browser/";
@@ -356,6 +399,18 @@ browserProxyRoutes.all("/*", async (c) => {
 
   const headers = forwardableHeaders(c.req.raw.headers);
   headers.set("host", upstream.host);
+  if (postNavigation) {
+    // The marker POST carries form-submission artifacts that must not leak
+    // into the upstream GET (an empty urlencoded body's headers, plus the
+    // form's Origin, would confuse origin-checking dev servers).
+    headers.delete("content-type");
+    headers.delete("content-length");
+    headers.delete("origin");
+    headers.set(
+      "accept",
+      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    );
+  }
   if (!headers.has("user-agent")) {
     headers.set("user-agent", DEFAULT_UPSTREAM_UA);
   }
@@ -366,14 +421,15 @@ browserProxyRoutes.all("/*", async (c) => {
     );
   }
 
+  const upstreamMethod = postNavigation ? "GET" : c.req.method;
   const init: RequestInit = {
-    method: c.req.method,
+    method: upstreamMethod,
     headers,
     redirect: "manual",
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
 
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+  if (upstreamMethod !== "GET" && upstreamMethod !== "HEAD") {
     init.body = await c.req.arrayBuffer();
   }
 
@@ -411,6 +467,20 @@ browserProxyRoutes.all("/*", async (c) => {
       );
     }
     const rewritten = rewriteLocation(loc, upstream, requestOrigin, iframeAuthToken);
+    if (postNavigation) {
+      // A 3xx answered to the iframe's marker POST would be followed by the
+      // browser as a plain GET - straight into the tunnel interstitial we
+      // are dodging. Bounce through a self-submitting POST form instead so
+      // every hop re-enters this route as a marker navigation (and each hop
+      // keeps its own allowlist check).
+      return new Response(buildPostNavigationBounceHtml(rewritten), {
+        status: 200,
+        headers: new Headers({
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+        }),
+      });
+    }
     return new Response(null, {
       status: res.status,
       // Explicit Content-Length: 0 so Node doesn't fall back to
@@ -475,7 +545,13 @@ browserProxyRoutes.all("/*", async (c) => {
 
   let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
   text = rewriteHtmlBody(text, upstream.href, requestOrigin);
-  text = appendDesignModeGuestScript(text);
+  // When this document is being viewed through an interstitial-injecting
+  // tunnel (Codespaces forwarded port, dev tunnel), in-page document
+  // navigations must also ride marker POSTs or the next link click lands on
+  // GitHub's "Verifying session" wall. The guest script handles it.
+  text = appendDesignModeGuestScript(text, {
+    postNavigation: postNavigation || isTunnelInterstitialHost(incomingHost),
+  });
   outHeaders.set("content-length", String(Buffer.byteLength(text, "utf8")));
 
   return new Response(text, { status: res.status, headers: outHeaders });

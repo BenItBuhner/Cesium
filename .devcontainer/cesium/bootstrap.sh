@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cesium engine bootstrap for GitHub Codespaces.
 # Managed by Cesium - do not edit by hand; rerun Codespace setup to refresh.
-# cesium-template-version: 2
+# cesium-template-version: 3
 set -uo pipefail
 
 CESIUM_ROOT="/workspaces/.cesium"
@@ -36,6 +36,7 @@ install_engine() {
     CESIUM_RENDEZVOUS_REQUIRED=0 \
     CESIUM_SERVICE_MANAGER=detached \
     CESIUM_SKIP_AUTOSTART=1 \
+    CESIUM_INSTALL_BROWSER=1 \
     CESIUM_SERVER_LABEL="Codespace ${GITHUB_REPOSITORY:-}" \
     bash -c "curl -fsSL '${INSTALLER_URL}' | bash" >>"${LOG_DIR}/install.log" 2>&1; then
     date -u +%Y-%m-%dT%H:%M:%SZ >"${INSTALL_MARKER}"
@@ -89,6 +90,48 @@ start_engine() {
   return 1
 }
 
+# The in-app browser must render pages from INSIDE the codespace: document
+# loads through the forwarded port are hijacked by GitHub's dev-tunnel
+# anti-phishing interstitial ("Verifying session"), which cannot complete in
+# an embedded iframe. The engine instead streams a headless Chromium, which
+# needs a browser binary. Fresh installs get it via CESIUM_INSTALL_BROWSER=1
+# above; this backfills engines installed by older bootstrap templates.
+# Always returns 0 - a missing browser degrades the preview, never the engine.
+ensure_browser() {
+  local browsers_dir="${CESIUM_ROOT}/home/browsers"
+  if compgen -G "${browsers_dir}/chromium*" >/dev/null 2>&1; then
+    return 0
+  fi
+  local bun_bin="${CESIUM_ROOT}/home/runtime/bin/bun"
+  local cli=""
+  local candidate
+  for candidate in \
+    "${CESIUM_ROOT}/home/source/server/node_modules/playwright/cli.js" \
+    "${CESIUM_ROOT}/home/source/node_modules/playwright/cli.js"; do
+    if [[ -f "${candidate}" ]]; then
+      cli="${candidate}"
+      break
+    fi
+  done
+  if [[ ! -x "${bun_bin}" || -z "${cli}" ]]; then
+    log "Engine runtime not found; skipping the in-app browser install."
+    return 0
+  fi
+  log "Installing headless Chromium for the in-app browser (log: ${LOG_DIR}/browser.log)..."
+  if env -u PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD \
+    PLAYWRIGHT_BROWSERS_PATH="${browsers_dir}" \
+    "${bun_bin}" "${cli}" install --with-deps chromium >>"${LOG_DIR}/browser.log" 2>&1; then
+    local env_file="${CESIUM_ROOT}/home/server.env"
+    if [[ -f "${env_file}" ]] && ! grep -q '^PLAYWRIGHT_BROWSERS_PATH=' "${env_file}"; then
+      printf 'PLAYWRIGHT_BROWSERS_PATH=%q\n' "${browsers_dir}" >>"${env_file}"
+    fi
+    log "Headless Chromium installed."
+  else
+    log "Chromium install FAILED; the in-app browser falls back to the proxy preview. See ${LOG_DIR}/browser.log"
+  fi
+  return 0
+}
+
 # Browser clients cannot attach auth headers to WebSockets, so the forwarded
 # port must be public; the engine's own password auth is the access gate.
 publish_port() {
@@ -115,7 +158,11 @@ case "${1:-start}" in
     install_engine
     ;;
   start)
-    if install_engine && start_engine; then
+    if ! install_engine; then
+      exit 1
+    fi
+    ensure_browser
+    if start_engine; then
       publish_port
     else
       exit 1
