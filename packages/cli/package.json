@@ -1,6 +1,6 @@
 {
   "name": "cesium-workbench",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Bare-bones CLI to install, start, and manage a local Cesium engine (the Bun + Hono backend of the Cesium AI workbench).",
   "license": "AGPL-3.0",
   "type": "module",

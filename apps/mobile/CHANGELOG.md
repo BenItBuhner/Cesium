@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-02
+
+Codespaces reliability and account-sync cut. Tag `v0.11.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Added
+
+- Codespace engines stay awake during agent runs, conversation catalogs persist on the signed-in account, and sleeping codespaces wake straight from the conversation rail.
+- Flat, customizable device picker: Codespaces and cloud devices sit inline with badges, and Settings can hide or reorder entries.
+- Cross-device harness auth sync through an encrypted account vault, so signing a harness in on one device carries to the others.
+- Reusable workbench dialog that replaces native browser alert/confirm/prompt across the app.
+- Settings predictive back on Android: the settings surface slides away to reveal the agent view beneath.
+
+### Changed
+
+- Codespace devices open the repo workspace on connect, surface provisioning state, and time out stuck status polls.
+- Completion failures stay out of the chat thread and land in the error dock, which gained an Open settings shortcut.
+- Agent stream recovery is deterministic on lossy connections.
+- Empty Pinned, Chat, and workspace sections are hidden in the agent rail, and new-chat landing pickers condense instead of wrapping on narrow panes.
+- The in-tab browser machine is hidden on the native apps.
+- The download page is cleaned up and no longer serves a stale GitHub release catalog.
+- Vercel deployments build faster (native TS typecheck, Turbopack FS cache) and deploy `convex/` from the build.
+
+### Fixed
+
+- Stale chunk loads after a deploy recover in place instead of crashing the workbench, and the proxy no longer 500s self-hosted `next start`.
+- GitHub account linking: Connect re-authorizes when a Clerk link already exists, half-linked accounts repair themselves instead of dead-ending on `external_account_exists`, and Codespace connect errors from Clerk step-up and Convex status are handled.
+- Native app Clerk sign-in returns to the app instead of stranding the browser tab.
+- Clerk modals render above Cesium overlays, and duplicate signed-out cards no longer stack on the Account settings page.
+- Bare Convex server errors are no longer blamed on `CLERK_SECRET_KEY`.
+- Intermittent loss of Android status-bar safe-area padding, and the mobile settings rail frost matches the agent conversation rail.
+
 ## [0.10.0] - 2026-09-01
 
 Browser Machine and Codespaces cut. Tag `v0.10.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
