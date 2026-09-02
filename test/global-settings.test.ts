@@ -61,6 +61,33 @@ describe("global settings", () => {
     assert.equal(settings.general.showVoiceOrb, true);
   });
 
+  test("mobile pane toggle buttons are visible by default", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.equal(settings.general.showMobilePaneToggles, true);
+  });
+
+  test("normalizes missing showMobilePaneToggles to visible default", () => {
+    const base = createDefaultGlobalSettings();
+    const { showMobilePaneToggles: _ignored, ...generalWithoutToggles } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutToggles,
+    });
+    assert.equal(settings.general.showMobilePaneToggles, true);
+  });
+
+  test("preserves explicit showMobilePaneToggles false", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        showMobilePaneToggles: false,
+      },
+    });
+    assert.equal(settings.general.showMobilePaneToggles, false);
+  });
+
   test("leaves composer status defaults unset for legacy workspace migration", () => {
     const settings = createDefaultGlobalSettings();
     assert.equal(settings.general.composerStatusBarVisibility, undefined);

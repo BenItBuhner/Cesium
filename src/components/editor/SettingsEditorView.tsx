@@ -103,7 +103,7 @@ const SETTINGS_NAV_PARENT: Record<string, string> = {
   usage: "agents",
   extensions: "plugins",
   rulesSkills: "plugins",
-  actions: "general",
+  actions: "appearance",
   exportImport: "advanced",
   storage: "advanced",
   updates: "advanced",
