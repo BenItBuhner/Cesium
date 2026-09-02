@@ -135,8 +135,17 @@ public production deployment:
    `vercel.json` already pins the framework). Add the custom domain and set
    `NEXT_PUBLIC_SITE_URL=https://your.domain` so robots/sitemap/OG metadata
    use the canonical origin.
-2. **Convex (database)** - `npx convex deploy` from the repo root (schema and
-   functions live in `convex/`). Set `NEXT_PUBLIC_CONVEX_URL` on Vercel to the
+2. **Convex (database)** - schema and functions live in `convex/`. Vercel's
+   build command is `node scripts/vercel-build.mjs`, which runs
+   `npx convex deploy` **before** `next build` whenever `CONVEX_DEPLOY_KEY`
+   is set, so merging a change under `convex/` updates the backend and the
+   web app together. In Vercel → Settings → Environment Variables add
+   `CONVEX_DEPLOY_KEY` for **Production** (a Production deploy key from the
+   Convex dashboard → Settings → Deploy Keys); optionally add a Preview deploy
+   key for **Preview** to get isolated per-branch Convex deployments. Builds
+   without the key skip the Convex step and use the committed production URL.
+   To deploy by hand instead: `npx convex deploy` from the repo root.
+   Set `NEXT_PUBLIC_CONVEX_URL` on Vercel to the
    deployment URL. Also commit the deployment URL and Clerk publishable key
    (both public-safe) to `src/lib/cloud/cloud-defaults.ts` so the packaged
    desktop and mobile apps default to production cloud behavior too - every
