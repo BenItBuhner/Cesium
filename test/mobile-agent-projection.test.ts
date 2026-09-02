@@ -504,6 +504,225 @@ describe("mobile agent projection", () => {
   });
 });
 
+describe("notification activity hygiene", () => {
+  const LONG_COMMAND =
+    'find / -name "bun" -type f -not -path "*/node_modules/*" 2>/dev/null | head -5; echo "---"; ls -la ~/.bun/bin';
+
+  test("never surfaces raw tool-call JSON arguments as the activity", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 1,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "t1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "tool_call",
+          toolCallId: "call-1",
+          title: `Run ${LONG_COMMAND}`,
+          toolKind: "terminal",
+          status: "in_progress",
+          detail: `{"command":"${LONG_COMMAND}"}`,
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Running a terminal command");
+  });
+
+  test("keeps short clean tool titles verbatim", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 1,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "t1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "tool_call",
+          toolCallId: "call-1",
+          title: "Read package.json",
+          toolKind: "read",
+          status: "in_progress",
+          detail: '{"path":"package.json"}',
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Read package.json");
+  });
+
+  test("humanizes edits to the file basename when the title is oversized", () => {
+    const longPath =
+      "apps/mobile/src/services/deeply/nested/directories/LiveUpdateController.ts";
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 1,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "t1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "tool_call",
+          toolCallId: "call-1",
+          title: `Edit ${longPath} and rewrite the reconciliation loop plus tests`,
+          toolKind: "edit",
+          status: "in_progress",
+          locations: [{ path: longPath }],
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Editing LiveUpdateController.ts");
+  });
+
+  test("tool_call_update without descriptive fields inherits them from the originating call", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 2,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "t1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "tool_call",
+          toolCallId: "call-1",
+          title: `Run ${LONG_COMMAND}`,
+          toolKind: "terminal",
+          status: "pending",
+        },
+        {
+          seq: 2,
+          eventId: "t2",
+          conversationId: "c1",
+          createdAt: 1100,
+          kind: "tool_call_update",
+          toolCallId: "call-1",
+          status: "in_progress",
+          detail: "chunk of raw stdout\nwith newlines",
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Running a terminal command");
+  });
+
+  test("skips verbose auto-accept status details instead of showing command soup", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 2,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "s1",
+          conversationId: "c1",
+          createdAt: 900,
+          kind: "status",
+          status: "running",
+        },
+        {
+          seq: 2,
+          eventId: "s2",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "status",
+          status: "running",
+          detail: `Auto-accepted Run ${LONG_COMMAND} (auto-accept all permissions).`,
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Agent is working");
+  });
+
+  test("keeps short clean status details", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 1,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "s1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "status",
+          status: "running",
+          detail: "Auto-accepted Run npm test.",
+        },
+      ],
+      { now: 2000 }
+    );
+    assert.equal(projection.currentActivity, "Auto-accepted Run npm test.");
+  });
+
+  test("falls back to a category label when a permission title is oversized", () => {
+    const conversation = createConversation({
+      status: "awaiting_permission",
+      pendingPermission: {
+        requestId: "perm",
+        requestedAt: 2000,
+        permission: "terminal",
+        title: `Run ${LONG_COMMAND}`,
+        detail: `{"command":"${LONG_COMMAND}"}`,
+        options: [],
+      },
+    });
+    const projection = deriveMobileAgentProjection(conversation, [], { now: 2500 });
+    assert.equal(projection.currentActivity, "Wants to run a terminal command");
+  });
+
+  test("collapses multiline failure text to one bounded line", () => {
+    const conversation = createConversation({
+      status: "failed",
+      lastError: "Provider responded with 401\n  at fetchCompletion (chat.ts:42)\n  at run (loop.ts:7)",
+      updatedAt: 5000,
+    });
+    const projection = deriveMobileAgentProjection(conversation, [], { now: 6000 });
+    assert.equal(
+      projection.currentActivity,
+      "Provider responded with 401 at fetchCompletion (chat.ts:42) at run (loop.ts:7)"
+    );
+  });
+
+  test("replaces JSON-shaped failure payloads with a plain label", () => {
+    const conversation = createConversation({
+      status: "failed",
+      lastError: '{"error":{"message":"Compilation failed","code":500}}',
+      updatedAt: 5000,
+    });
+    const projection = deriveMobileAgentProjection(conversation, [], { now: 6000 });
+    assert.equal(projection.currentActivity, "Agent run failed");
+  });
+});
+
 function createConversation(
   overrides: Partial<AgentConversationRecord>
 ): AgentConversationRecord {

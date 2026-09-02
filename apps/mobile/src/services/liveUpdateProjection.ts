@@ -1,6 +1,7 @@
 import {
   getMobileNotificationChip,
   isMobileAgentRunActive,
+  sanitizeMobileActivityText,
   type MobileAgentProjection,
 } from "@cesium/core";
 import type { LiveUpdateEtaMode, LiveUpdatePayload } from "./liveUpdateTypes";
@@ -35,11 +36,13 @@ export function toLiveUpdatePayload(
     // Terminal notifications state the outcome plainly. currentActivity is
     // stale once the run ends (it can even be a raw tool-call payload like
     // the last todo replace), so it never belongs in the final body; the
-    // one exception is the actual error text for failed runs.
-    const body =
-      projection.status === "failed" && projection.lastError
-        ? projection.lastError
-        : terminalLabel(projection.status);
+    // one exception is the actual error text for failed runs - collapsed to
+    // one clean line, and dropped entirely when it is a raw payload dump.
+    const failedBody =
+      projection.status === "failed"
+        ? sanitizeMobileActivityText(projection.lastError)
+        : null;
+    const body = failedBody ?? terminalLabel(projection.status);
     return {
       runKey,
       title: projection.title || "Cesium agent",
