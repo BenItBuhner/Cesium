@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, WebContentsView, ipcMain, shell, dialog, powerMonitor } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell, dialog, powerMonitor } from "electron";
 import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -660,6 +660,45 @@ function createRendererBrowserWindow(options = {}) {
   });
 }
 
+/**
+ * The packaged renderer is a file:// page, so Chromium stamps `Origin: null`
+ * onto every POST it makes - and Clerk's production Frontend API rejects any
+ * request whose Origin is not the instance domain (`origin_invalid`), while
+ * requests with no Origin header at all are accepted (that is how Clerk's
+ * native SDKs authenticate). Dropping the meaningless null/file Origin on
+ * Clerk FAPI requests lets cloud sign-in and session refresh work from the
+ * desktop app.
+ */
+function stripClerkFapiOriginHeader() {
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ["https://*/*"] },
+    (details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      let hostname = "";
+      try {
+        hostname = new URL(details.url).hostname.toLowerCase();
+      } catch {
+        callback({ requestHeaders });
+        return;
+      }
+      const isClerkFapi =
+        hostname.startsWith("clerk.") || hostname.endsWith(".clerk.accounts.dev");
+      if (isClerkFapi) {
+        for (const name of Object.keys(requestHeaders)) {
+          if (name.toLowerCase() !== "origin") {
+            continue;
+          }
+          const value = String(requestHeaders[name] ?? "").toLowerCase();
+          if (value === "null" || value.startsWith("file:")) {
+            delete requestHeaders[name];
+          }
+        }
+      }
+      callback({ requestHeaders });
+    }
+  );
+}
+
 function resolvePackagedRendererIndexPath() {
   return resolve(process.resourcesPath, "desktop-renderer/index.html");
 }
@@ -897,6 +936,7 @@ if (deferToLockHolder) {
 
   app.whenReady().then(async () => {
     app.setName("Cesium Desktop");
+    stripClerkFapiOriginHeader();
     installDesktopLifecycleHandlers();
     if (smokeMode) {
       await createMainWindow({ show: false, closeAfterLoad: true });
