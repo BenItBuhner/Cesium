@@ -355,7 +355,9 @@ export function AskQuestionCard({
   const navDisabledNext = stepIndex >= steps.length - 1;
 
   const headerToolbar = (
-    <div className="flex min-w-0 items-center gap-[4px]">
+    // -mt centers the 24px buttons on the 20px first title line (header row
+    // is items-start so multi-line questions keep the toolbar at the top).
+    <div className="-mt-[2px] flex min-w-0 items-center gap-[4px]">
       <span
         className={`shrink-0 overflow-hidden whitespace-nowrap font-mono text-[10px] tabular-nums text-[var(--text-secondary)] transition-[opacity,max-width,margin,padding] ${transitionSnappy} ${
           minimized ? "max-w-0 opacity-0" : "max-w-[48px] opacity-100"
@@ -483,19 +485,22 @@ export function AskQuestionCard({
       }}
       role="presentation"
     >
+      {/* items-start (not center): the expanded title wraps to any number of
+          lines, and the icon/toolbar should hug the first line, not float in
+          the middle of a tall paragraph. */}
       <div
-        className={`flex min-w-0 items-center gap-[6px] transition-[padding] ${transitionSnappy} ${
+        className={`flex min-w-0 items-start gap-[6px] transition-[padding] ${transitionSnappy} ${
           minimized ? "pb-0" : "pb-[6px]"
         }`}
       >
         <CircleHelp
-          className="size-[14px] shrink-0 text-[var(--plan-accent)]"
+          className="mt-[3px] size-[14px] shrink-0 text-[var(--plan-accent)]"
           strokeWidth={1.5}
           aria-hidden
         />
         <div className="relative min-h-[20px] min-w-0 flex-1">
           <span
-            className={`absolute inset-0 flex min-w-0 items-center truncate font-sans text-[13px] font-normal text-[var(--plan-accent-label-strong)] transition-[opacity,transform] ${transitionSnappy} ${
+            className={`absolute inset-x-0 top-0 block h-[20px] min-w-0 truncate font-sans text-[13px] font-normal leading-[20px] text-[var(--plan-accent-label-strong)] transition-[opacity,transform] ${transitionSnappy} ${
               minimized
                 ? "z-[1] translate-y-0 opacity-100"
                 : "z-0 translate-y-[-3px] opacity-0"
@@ -504,11 +509,14 @@ export function AskQuestionCard({
           >
             Questions · {stepNo}/{steps.length}
           </span>
+          {/* In flow (sizes the header) so the question shows verbatim; it
+              only collapses to a single clipped line while minimized, where
+              it is invisible behind the "Questions · N/M" label anyway. */}
           <span
-            className={`absolute inset-0 flex min-w-0 items-center truncate font-sans text-[13px] font-normal text-[var(--plan-accent-label-strong)] transition-[opacity,transform] ${transitionSnappy} ${
+            className={`relative block min-h-[20px] min-w-0 overflow-hidden whitespace-normal break-words font-sans text-[13px] font-normal leading-[20px] text-[var(--plan-accent-label-strong)] transition-[opacity,transform,max-height] ${transitionSnappy} ${
               !minimized
-                ? "z-[1] translate-y-0 opacity-100"
-                : "z-0 translate-y-[3px] opacity-0"
+                ? "z-[1] max-h-[400px] translate-y-0 opacity-100"
+                : "z-0 max-h-[20px] translate-y-[3px] opacity-0"
             }`}
             aria-hidden={minimized}
           >

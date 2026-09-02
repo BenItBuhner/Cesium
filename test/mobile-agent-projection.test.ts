@@ -83,6 +83,75 @@ describe("mobile agent projection", () => {
     assert.equal(getMobileNotificationChip(projection.status), "INPUT");
   });
 
+  test("surfaces the pending question prompt verbatim", () => {
+    const conversation = createConversation({
+      status: "awaiting_question",
+      lastEventSeq: 1,
+      pendingQuestion: { questionId: "q1", requestedAt: 2000 },
+    });
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "q1",
+        conversationId: "c1",
+        createdAt: 2000,
+        kind: "question",
+        questionId: "q1",
+        prompt: "Which area of the Model-Proxy monorepo should this land in?",
+        options: [
+          { id: "a", label: "packages/server" },
+          { id: "b", label: "packages/contracts" },
+        ],
+        status: "pending",
+      },
+    ];
+
+    const projection = deriveMobileAgentProjection(conversation, events, { now: 2500 });
+    assert.equal(projection.pendingIntervention, "question");
+    assert.equal(
+      projection.currentActivity,
+      "Which area of the Model-Proxy monorepo should this land in?"
+    );
+    assert.equal(getMobileNotificationChip(projection.status), "INPUT");
+  });
+
+  test("falls back to the first sub-question prompt, then a generic answer label", () => {
+    const conversation = createConversation({
+      status: "awaiting_question",
+      lastEventSeq: 1,
+      pendingQuestion: { questionId: "q2", requestedAt: 2000 },
+    });
+    const multiStep = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "q2",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "question",
+          questionId: "q2",
+          prompt: "  ",
+          options: [],
+          questions: [
+            {
+              id: "step-1",
+              prompt: "Pick a storage driver",
+              options: [{ id: "a", label: "legacy-json" }],
+            },
+          ],
+          status: "pending",
+        },
+      ],
+      { now: 2500 }
+    );
+    assert.equal(multiStep.currentActivity, "Pick a storage driver");
+
+    // Question event outside the loaded window: keep the generic label.
+    const noEvent = deriveMobileAgentProjection(conversation, [], { now: 2500 });
+    assert.equal(noEvent.currentActivity, "Needs an answer");
+  });
+
   test("projects blocked todo when no item is in progress", () => {
     const conversation = createConversation({
       status: "running",
