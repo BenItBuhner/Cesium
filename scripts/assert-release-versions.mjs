@@ -1,7 +1,7 @@
 /**
  * Fail a release (or a local check) when user-facing version strings diverge.
  *
- * The GitHub release workflow parses the tag (`v0.10.0` / `mobile-v0.10.0`) and
+ * The GitHub release workflow parses the tag (`v0.11.0` / `mobile-v0.11.0`) and
  * then requires every shipped surface to advertise that same version:
  *   - root + desktop + mobile package.json
  *   - Android phone + Wear OS versionName
@@ -118,7 +118,7 @@ export function findReleaseVersionMismatches(expected, versions) {
  */
 export function assertReleaseVersions(expected, rootDir = DEFAULT_ROOT) {
   if (!expected) {
-    throw new Error("Expected a release version (e.g. 0.10.0)");
+    throw new Error("Expected a release version (e.g. 0.11.0)");
   }
   const mismatches = findReleaseVersionMismatches(expected, collectReleaseVersions(rootDir));
   if (mismatches.length > 0) {
