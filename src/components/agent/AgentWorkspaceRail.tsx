@@ -46,7 +46,10 @@ import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvide
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
-import type { AgentRailConversationSummary } from "@/lib/agent-types";
+import type {
+  AgentConversationGroup,
+  AgentRailConversationSummary,
+} from "@/lib/agent-types";
 import {
   AGENT_RAIL_ENVIRONMENT_FILTER_LABELS,
   AGENT_RAIL_SOURCE_FILTER_LABELS,
@@ -63,6 +66,7 @@ import { WorkspacePickerMenu, WorkspacePickerRowIcon } from "@/components/agent/
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useCodespaces } from "@/contexts/CodespacesContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AccountPopover } from "@/components/preferences/AccountPopover";
@@ -576,6 +580,41 @@ export function AgentWorkspaceRail() {
         ),
       })),
     [serverRailAppearances, servers]
+  );
+  const codespaces = useCodespaces();
+  const codespaceServerIds = useMemo(
+    () =>
+      new Set(
+        codespaces.devices
+          .map((device) => device.localServerId)
+          .filter((id): id is string => Boolean(id))
+      ),
+    [codespaces.devices]
+  );
+  /**
+   * Header badge for groups restored from a catalog because their engine did
+   * not answer. Bucket groupings can mix machines, so only flag a group when
+   * every row in it is offline (mixed groups still open rows via the wake
+   * path individually).
+   */
+  const offlineBadgeForGroup = useCallback(
+    (group: AgentConversationGroup): string | null => {
+      const offline =
+        group.serverOffline ||
+        (group.conversations.length > 0 &&
+          group.conversations.every((conversation) => conversation.serverOffline));
+      if (!offline) {
+        return null;
+      }
+      const serverId =
+        group.serverId ?? group.conversations.find((c) => c.serverId)?.serverId ?? null;
+      const isCodespace = serverId ? codespaceServerIds.has(serverId) : false;
+      if (codespaces.wakeStatus && serverId && codespaces.deviceForServerId(serverId)?.key === codespaces.wakeStatus.deviceKey) {
+        return "Waking…";
+      }
+      return isCodespace ? "Asleep" : "Offline";
+    },
+    [codespaceServerIds, codespaces]
   );
   const homeAppearancePersistEntries = useMemo(
     () =>
@@ -3252,6 +3291,7 @@ export function AgentWorkspaceRail() {
                 const workspaceActionsEnabled =
                   agentRailSettings.groupBy === "workspace" &&
                   !group.serverAuthRequired &&
+                  !group.serverOffline &&
                   (!group.serverId || group.serverId === activeServer.id);
                 const groupMachineIds = new Set(
                   [
@@ -3270,6 +3310,7 @@ export function AgentWorkspaceRail() {
                       ? machineOptions.find((machine) => machine.id === group.serverId)?.label
                       : null;
                 const isWorkspaceCollapsed = collapsedWorkspaceIds.has(groupKey);
+                const offlineBadge = offlineBadgeForGroup(group);
                 const rootConversations = orderConversationsByIds(
                   group.conversations,
                   settings.general.chatRootOrderByScope[group.workspace.id]
@@ -3328,6 +3369,19 @@ export function AgentWorkspaceRail() {
                       {groupMachineLabel ? (
                         <span className="max-w-[86px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
                           {groupMachineLabel}
+                        </span>
+                      ) : null}
+                      {offlineBadge ? (
+                        <span
+                          className="shrink-0 rounded-[var(--radius-tab)] border border-dashed border-[var(--border-subtle)] px-[5px] py-px font-sans text-[9px] text-[var(--text-disabled)]"
+                          title={
+                            group.serverCachedAt
+                              ? `Showing the last listing saved ${new Date(group.serverCachedAt).toLocaleString()}. Open a conversation to wake it.`
+                              : "This machine is not reachable right now. Open a conversation to reconnect."
+                          }
+                          data-testid="rail-offline-badge"
+                        >
+                          {offlineBadge}
                         </span>
                       ) : null}
                       {branchLabel ? (

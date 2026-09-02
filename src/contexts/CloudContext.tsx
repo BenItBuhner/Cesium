@@ -73,6 +73,12 @@ import {
   serializeCloudServerTombstones,
   type CloudServerRemoval,
 } from "@/lib/cloud/cloud-servers";
+import {
+  mergeCloudCatalogsIntoStore,
+  readConversationCatalogStore,
+  writeConversationCatalogStore,
+  type CloudConversationCatalogRow,
+} from "@/lib/conversation-catalog";
 
 /**
  * Cesium Cloud Context - the client side of the cross-device user context.
@@ -195,7 +201,22 @@ export type CloudActions = {
     sourceUpdatedAt: number;
   }): Promise<void>;
   getSnapshot(snapshotKey: string): Promise<CloudSnapshot | null>;
+  /**
+   * Mirror one engine's rail listing to the account so other devices can
+   * show it while the engine sleeps. Idempotent upsert keyed by `serverKey`.
+   */
+  saveConversationCatalog(input: {
+    serverKey: string;
+    serverName: string;
+    baseUrl: string;
+    payload: string;
+    conversationCount: number;
+    sourceUpdatedAt: number;
+  }): Promise<void>;
+  removeConversationCatalog(serverKey: string): Promise<void>;
 };
+
+export type CloudConversationCatalog = CloudConversationCatalogRow;
 
 export type CloudStatus = "disabled" | "signed-out" | "loading" | "ready";
 
@@ -281,6 +302,13 @@ export type CloudContextValue = {
   bootstrap: CloudBootstrap | null;
   actions: CloudActions | null;
   github: CloudGithubActions | null;
+  /**
+   * Account-mirrored conversation catalogs (one per engine), live-updated.
+   * `null` until the first result arrives or when the cloud is off. They
+   * are also folded into the local catalog store automatically, so most
+   * consumers read that store rather than this list.
+   */
+  conversationCatalogs: CloudConversationCatalog[] | null;
 };
 
 /**
@@ -305,6 +333,7 @@ const DISABLED_VALUE: CloudContextValue = {
   bootstrap: null,
   actions: null,
   github: null,
+  conversationCatalogs: null,
 };
 
 const CloudContext = createContext<CloudContextValue>(DISABLED_VALUE);
@@ -456,6 +485,14 @@ function CloudBridge({
     active ? identityArgs : "skip"
   ) as CloudBootstrap | null | undefined;
 
+  // Separate from bootstrap: catalogs carry whole rail listings and change
+  // on every agent turn somewhere, so they must not re-fire the bootstrap
+  // restore effects below.
+  const conversationCatalogs = useQuery(
+    api.catalogs.list,
+    active ? identityArgs : "skip"
+  ) as CloudConversationCatalog[] | null | undefined;
+
   const register = useMutation(api.context.register);
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
@@ -465,6 +502,8 @@ function CloudBridge({
   const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
+  const saveCatalogMutation = useMutation(api.catalogs.save);
+  const removeCatalogMutation = useMutation(api.catalogs.remove);
 
   const registeredRef = useRef(false);
   useEffect(() => {
@@ -509,20 +548,43 @@ function CloudBridge({
           snapshotKey,
         })) as CloudSnapshot | null;
       },
+      async saveConversationCatalog(input) {
+        await saveCatalogMutation({ ...identityArgs, ...input });
+      },
+      async removeConversationCatalog(serverKey) {
+        await removeCatalogMutation({ ...identityArgs, serverKey });
+      },
     }),
     [
       convex,
       identityArgs,
       pushSnapshotMutation,
+      removeCatalogMutation,
       removeSecretMutation,
       removeServerMutation,
       saveAgentPrefMutation,
+      saveCatalogMutation,
       savePreferencesMutation,
       saveSecretMutation,
       saveServerMutation,
       updateOnboardingMutation,
     ]
   );
+
+  // Account catalogs flow into the local catalog store (newest capture per
+  // engine wins) so the rail's offline fallback has one place to look.
+  useEffect(() => {
+    if (!conversationCatalogs || conversationCatalogs.length === 0) {
+      return;
+    }
+    const merged = mergeCloudCatalogsIntoStore(
+      readConversationCatalogStore(),
+      conversationCatalogs
+    );
+    if (merged.changed) {
+      writeConversationCatalogStore(merged.store);
+    }
+  }, [conversationCatalogs]);
 
   // Device-key deployments authenticate GitHub actions with the same
   // identity args as every other cloud call; Clerk identities ride the JWT.
@@ -697,8 +759,20 @@ function CloudBridge({
       // deployments via the CESIUM_GITHUB_TOKEN env var. Either way the
       // proxy is available whenever the cloud identity is.
       github: active ? githubActions : null,
+      conversationCatalogs: conversationCatalogs ?? null,
     }),
-    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions, githubActions]
+    [
+      mode,
+      status,
+      bootstrap,
+      deviceKey,
+      clerkName,
+      clerkEmail,
+      active,
+      actions,
+      githubActions,
+      conversationCatalogs,
+    ]
   );
 
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;

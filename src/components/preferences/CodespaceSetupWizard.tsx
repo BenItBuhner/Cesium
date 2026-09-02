@@ -69,6 +69,13 @@ const PROVISION_LABELS: Record<ProvisionPhase, string> = {
 };
 
 const IDLE_TIMEOUT_OPTIONS = [30, 60, 120, 240] as const;
+/**
+ * GitHub caps idle timeouts at 240 minutes. Default to the cap: the engine
+ * reports presence to the codespace host agent while agents run or the user
+ * is active, so this timer only ever counts down after real inactivity - a
+ * short value just makes cold resumes more frequent.
+ */
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 240;
 
 /**
  * Upper bound for a single status poll. Convex action calls have no client
@@ -268,7 +275,7 @@ function CodespaceSetupWizardInner({
 
   const [machines, setMachines] = useState<GithubMachineInfo[] | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
-  const [idleTimeout, setIdleTimeout] = useState<number>(30);
+  const [idleTimeout, setIdleTimeout] = useState<number>(DEFAULT_IDLE_TIMEOUT_MINUTES);
   const [commitMode, setCommitMode] = useState<"commit" | "pr">("commit");
   const [extraSecrets, setExtraSecrets] = useState<
     Array<{ name: string; value: string }>
@@ -720,9 +727,15 @@ function CodespaceSetupWizardInner({
                 {IDLE_TIMEOUT_OPTIONS.map((minutes) => (
                   <option key={minutes} value={minutes}>
                     {minutes >= 60 ? `${minutes / 60} hour${minutes > 60 ? "s" : ""}` : `${minutes} minutes`}
+                    {minutes === 240 ? " (GitHub maximum)" : ""}
                   </option>
                 ))}
               </select>
+              <span className="font-sans text-[10.5px] leading-snug text-[var(--text-disabled)]">
+                Cesium keeps the codespace awake while agents are running or you are
+                working in it, so this only counts down after your last activity. Your
+                conversations stay listed on this account even while it sleeps.
+              </span>
             </label>
             <fieldset className="flex flex-col gap-[6px]">
               <legend className="font-sans text-[11.5px] text-[var(--text-secondary)]">

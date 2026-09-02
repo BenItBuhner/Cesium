@@ -81,6 +81,19 @@ describe("codespace bootstrap template", () => {
     assert.ok(script.startsWith("#!/usr/bin/env bash"));
   });
 
+  test("bootstrap persists the codespace identity for the engine keep-alive", () => {
+    const script = buildBootstrapScript();
+    // Supervised engine restarts do not inherit the postStart shell, so the
+    // codespace name must land in server.env for the keep-alive to arm.
+    assert.ok(script.includes("CESIUM_CODESPACE_NAME=%q"));
+    assert.ok(script.includes("CESIUM_CODESPACE_KEEPALIVE=1"));
+    assert.ok(script.includes("CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN=%q"));
+    // Rotated secrets still refresh the engine password on every start.
+    assert.ok(script.includes("OPENCURSOR_AUTH_PASSWORD=%q"));
+    assert.ok(script.includes("sync_env"));
+    assert.ok(CODESPACE_TEMPLATE_VERSION >= 2, "template must be bumped so stale repos refresh");
+  });
+
   test("template file set covers both paths", () => {
     const files = buildCodespaceTemplateFiles();
     assert.deepEqual(

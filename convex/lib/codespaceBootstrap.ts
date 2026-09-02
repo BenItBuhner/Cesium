@@ -12,7 +12,7 @@
  * `ensureDevcontainer` refreshes stale copies in user repositories.
  */
 
-export const CODESPACE_TEMPLATE_VERSION = 1;
+export const CODESPACE_TEMPLATE_VERSION = 2;
 
 /** Port the engine listens on inside the codespace (forwarded publicly). */
 export const CODESPACE_ENGINE_PORT = 9100;
@@ -113,22 +113,40 @@ install_engine() {
   return 1
 }
 
-# Codespaces secrets only apply to new sessions; refresh the stored engine
-# credentials on every start so a rotated secret takes effect after restart.
-sync_auth() {
+# Refresh the engine's persisted environment on every start:
+# - Codespaces secrets only apply to new sessions, so a rotated engine
+#   password must be re-written for the supervised engine to pick it up.
+# - The codespace identity lets the engine keep GitHub's idle timer at bay
+#   while agents run (it reports presence to the codespace host agent). It is
+#   persisted here because supervised restarts do not inherit this shell.
+sync_env() {
   local env_file="\${CESIUM_ROOT}/home/server.env"
-  [[ -f "\${env_file}" && -n "\${CESIUM_AUTH_PASSWORD:-}" ]] || return 0
+  [[ -f "\${env_file}" ]] || return 0
   local tmp="\${env_file}.tmp.$$"
-  grep -v -e '^OPENCURSOR_AUTH_USERNAME=' -e '^OPENCURSOR_AUTH_PASSWORD=' \\
-    "\${env_file}" >"\${tmp}" || true
-  printf 'OPENCURSOR_AUTH_USERNAME=%q\\n' "\${CESIUM_AUTH_USERNAME:-cesium}" >>"\${tmp}"
-  printf 'OPENCURSOR_AUTH_PASSWORD=%q\\n' "\${CESIUM_AUTH_PASSWORD}" >>"\${tmp}"
+  local strip=(
+    -e '^CESIUM_CODESPACE_NAME=' -e '^CESIUM_CODESPACE_KEEPALIVE='
+    -e '^CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN='
+  )
+  if [[ -n "\${CESIUM_AUTH_PASSWORD:-}" ]]; then
+    strip+=(-e '^OPENCURSOR_AUTH_USERNAME=' -e '^OPENCURSOR_AUTH_PASSWORD=')
+  fi
+  grep -v "\${strip[@]}" "\${env_file}" >"\${tmp}" || true
+  if [[ -n "\${CESIUM_AUTH_PASSWORD:-}" ]]; then
+    printf 'OPENCURSOR_AUTH_USERNAME=%q\\n' "\${CESIUM_AUTH_USERNAME:-cesium}" >>"\${tmp}"
+    printf 'OPENCURSOR_AUTH_PASSWORD=%q\\n' "\${CESIUM_AUTH_PASSWORD}" >>"\${tmp}"
+  fi
+  if [[ -n "\${CODESPACE_NAME:-}" ]]; then
+    printf 'CESIUM_CODESPACE_NAME=%q\\n' "\${CODESPACE_NAME}" >>"\${tmp}"
+    printf 'CESIUM_CODESPACE_KEEPALIVE=1\\n' >>"\${tmp}"
+    printf 'CESIUM_CODESPACES_PORT_FORWARDING_DOMAIN=%q\\n' \\
+      "\${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}" >>"\${tmp}"
+  fi
   mv "\${tmp}" "\${env_file}"
   chmod 600 "\${env_file}"
 }
 
 start_engine() {
-  sync_auth
+  sync_env
   log "Starting the Cesium engine (log: \${LOG_DIR}/engine.log)..."
   if "\${CESIUM_ROOT}/home/bin/cesium-server" run >>"\${LOG_DIR}/engine.log" 2>&1; then
     log "Engine is healthy on port \${ENGINE_PORT}."

@@ -6,6 +6,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { spawnPty, type PtyProcess } from "../lib/pty.js";
+import { noteCodespaceClientActivity } from "../lib/codespace-keepalive.js";
 import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 
 type TerminalSession = {
@@ -371,6 +372,9 @@ function attachTerminalClient(session: TerminalSession, ws: RuntimeSocket): void
 
   ws.onMessage((data, isBinary) => {
     if (isBinary) {
+      // Keystrokes are the same "terminal input" signal GitHub itself counts
+      // as codespace presence; relay it to the keep-alive.
+      noteCodespaceClientActivity();
       session.pty.write(decoder.decode(data as Buffer));
       return;
     }

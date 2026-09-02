@@ -690,6 +690,12 @@ export type AgentRailConversationSummary = Pick<
   conversationKey?: string;
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;
+  /**
+   * Client-side: the owning engine is unreachable (asleep codespace, offline
+   * machine) and this row comes from the last catalog cached for it. Opening
+   * it must wake/reconnect the engine first.
+   */
+  serverOffline?: boolean;
 };
 
 export type AgentRailRepositoryInfo = {
@@ -713,6 +719,13 @@ export type AgentConversationGroup = {
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;
   serverAuthRequired?: boolean;
+  /**
+   * Client-side: the owning engine is unreachable and these conversations
+   * were restored from the last catalog cached for it (locally or on the
+   * account). `serverCachedAt` is when that catalog was captured.
+   */
+  serverOffline?: boolean;
+  serverCachedAt?: number;
 };
 
 export type AgentConversationGroupsResult = {

@@ -69,6 +69,23 @@ import type {
   CodespaceWakeStatus,
 } from "@/hooks/useGithubCodespaces";
 
+/**
+ * Subtitle for a codespace whose engine is not answering. Both "GitHub last
+ * said Available" (idled out since) and "GitHub says Shutdown" mean the same
+ * thing to the user: one click brings it back. Only deleted / failed /
+ * transitional states need their own words.
+ */
+function codespaceSleepingLabel(lastKnownState: string | null): string {
+  switch (categorizeCodespaceState(lastKnownState)) {
+    case "running":
+    case "stopped":
+    case "unknown":
+      return "Asleep - select to wake";
+    default:
+      return codespaceStateLabel(lastKnownState);
+  }
+}
+
 const WAKE_PHASE_LABELS: Record<CodespaceWakePhase, string> = {
   "checking-engine": "Checking…",
   "checking-codespace": "Checking codespace…",
@@ -530,11 +547,7 @@ export function ServerPickerPopover({
         ? WAKE_PHASE_LABELS[codespaceWakeStatus.phase]
         : health === "healthy"
           ? "Running"
-          : categorizeCodespaceState(device.lastKnownState) === "running"
-            ? // Engine unreachable but GitHub last said running: it likely
-              // idled out since we last synced.
-              "Asleep - select to wake"
-            : codespaceStateLabel(device.lastKnownState);
+          : codespaceSleepingLabel(device.lastKnownState);
     return (
       <div key={item.id} className="flex w-full min-w-0 flex-col">
         <button
