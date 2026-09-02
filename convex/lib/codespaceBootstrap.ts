@@ -12,7 +12,7 @@
  * `ensureDevcontainer` refreshes stale copies in user repositories.
  */
 
-export const CODESPACE_TEMPLATE_VERSION = 2;
+export const CODESPACE_TEMPLATE_VERSION = 3;
 
 /** Port the engine listens on inside the codespace (forwarded publicly). */
 export const CODESPACE_ENGINE_PORT = 9100;
@@ -57,7 +57,9 @@ export function buildDevcontainerJson(): string {
  *   (the only volume that survives container rebuilds), tunnel-free - the
  *   codespace forwarded port is the public endpoint.
  * - `start`: refreshes engine credentials from the injected Codespaces
- *   secrets, starts the engine supervisor, and flips port ${PORT} to public
+ *   secrets, fast-forwards the engine to the latest release when the git
+ *   remote moved (codespaces otherwise run creation-time engine code
+ *   forever), starts the engine supervisor, and flips port ${PORT} to public
  *   visibility (mandatory: private forwarded ports cannot be reached by
  *   browser WebSocket clients).
  */
@@ -81,17 +83,11 @@ mkdir -p "\${CESIUM_ROOT}" "\${LOG_DIR}"
 
 log() { printf '[cesium-bootstrap] %s\\n' "$*"; }
 
-install_engine() {
-  if [[ -x "\${CESIUM_ROOT}/home/bin/cesium-server" && -f "\${INSTALL_MARKER}" ]]; then
-    log "Engine already installed."
-    return 0
-  fi
-  if [[ -z "\${CESIUM_AUTH_PASSWORD:-}" ]]; then
-    log "WARNING: CESIUM_AUTH_PASSWORD codespace secret is missing; the engine"
-    log "will generate its own password and Cesium clients cannot sign in"
-    log "automatically. Re-run Codespace setup from Cesium to fix this."
-  fi
-  log "Installing the Cesium engine (log: \${LOG_DIR}/install.log)..."
+# Shared installer invocation for the initial install and later updates. The
+# installer is fetched from the canonical URL (not the codespace checkout) so
+# updates always run the latest install logic, and it fast-forwards the
+# engine source before rebuilding.
+run_installer() {
   if env \\
     CESIUM_HOME="\${CESIUM_ROOT}/home" \\
     CESIUM_STATE_DIR="\${CESIUM_ROOT}/state" \\
@@ -106,11 +102,62 @@ install_engine() {
     CESIUM_SERVER_LABEL="Codespace \${GITHUB_REPOSITORY:-}" \\
     bash -c "curl -fsSL '\${INSTALLER_URL}' | bash" >>"\${LOG_DIR}/install.log" 2>&1; then
     date -u +%Y-%m-%dT%H:%M:%SZ >"\${INSTALL_MARKER}"
+    return 0
+  fi
+  return 1
+}
+
+install_engine() {
+  if [[ -x "\${CESIUM_ROOT}/home/bin/cesium-server" && -f "\${INSTALL_MARKER}" ]]; then
+    log "Engine already installed."
+    return 0
+  fi
+  if [[ -z "\${CESIUM_AUTH_PASSWORD:-}" ]]; then
+    log "WARNING: CESIUM_AUTH_PASSWORD codespace secret is missing; the engine"
+    log "will generate its own password and Cesium clients cannot sign in"
+    log "automatically. Re-run Codespace setup from Cesium to fix this."
+  fi
+  log "Installing the Cesium engine (log: \${LOG_DIR}/install.log)..."
+  if run_installer; then
     log "Engine installed."
     return 0
   fi
   log "Engine install FAILED; see \${LOG_DIR}/install.log"
   return 1
+}
+
+# Keep the engine current on every codespace start. Without this a codespace
+# would run creation-time engine code forever (the install marker skips the
+# installer, GitHub cannot raise idle timeouts post-create, and the checkout's
+# bootstrap never refreshes itself), so fixes like the idle-timeout keep-alive
+# would never reach existing codespaces. Never fatal: when the remote is
+# unreachable or the update fails, the existing engine still starts.
+update_engine() {
+  local src="\${CESIUM_ROOT}/home/source"
+  [[ -d "\${src}/.git" ]] || return 0
+  local branch local_head remote_head
+  branch="$(git -C "\${src}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ -z "\${branch}" || "\${branch}" == "HEAD" ]]; then
+    branch="main"
+  fi
+  local_head="$(git -C "\${src}" rev-parse HEAD 2>/dev/null || true)"
+  remote_head="$(timeout 30 git -C "\${src}" ls-remote origin "refs/heads/\${branch}" \\
+    2>>"\${LOG_DIR}/install.log" | cut -f1)"
+  if [[ -z "\${remote_head}" ]]; then
+    log "Engine update check skipped (git remote unreachable)."
+    return 0
+  fi
+  if [[ "\${remote_head}" == "\${local_head}" ]]; then
+    log "Engine is up to date."
+    return 0
+  fi
+  log "Updating the Cesium engine to \${branch}@\${remote_head} (log: \${LOG_DIR}/install.log)..."
+  if run_installer; then
+    log "Engine updated."
+  else
+    log "Engine update FAILED; keeping the existing engine. See \${LOG_DIR}/install.log"
+  fi
+  return 0
 }
 
 # Refresh the engine's persisted environment on every start:
@@ -182,7 +229,11 @@ case "\${1:-start}" in
     install_engine
     ;;
   start)
-    if install_engine && start_engine; then
+    if ! install_engine; then
+      exit 1
+    fi
+    update_engine
+    if start_engine; then
       publish_port
     else
       exit 1
