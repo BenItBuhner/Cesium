@@ -283,6 +283,19 @@ export type CloudContextValue = {
   github: CloudGithubActions | null;
 };
 
+/**
+ * Clerk's modals (reverification, UserProfile, sign-in) default to
+ * z-index 10000, which is *below* Cesium's own portalled dialogs (the
+ * Codespace wizard, settings pickers, toasts all sit in the 10100-10400
+ * band). Without this, the "additional verification" prompt renders behind
+ * the wizard that triggered it. Keep Clerk above every app overlay.
+ */
+const CLERK_APPEARANCE = {
+  elements: {
+    modalBackdrop: { zIndex: 20000 },
+  },
+} as const;
+
 const DISABLED_VALUE: CloudContextValue = {
   mode: "disabled",
   status: "disabled",
@@ -775,6 +788,7 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         signUpUrl={getClerkSignUpUrl()}
         signInFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
         signUpFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
+        appearance={CLERK_APPEARANCE}
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>
