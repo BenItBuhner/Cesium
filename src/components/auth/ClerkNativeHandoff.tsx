@@ -8,6 +8,7 @@ import {
 } from "@/lib/cloud/clerk-native-handoff";
 import {
   MOBILE_BRIDGE_MESSAGE_EVENT,
+  postMobileBridgeMessage,
   type MobileNativeToWebMessage,
 } from "@/lib/mobile-bridge";
 
@@ -19,15 +20,12 @@ type ClerkHandoffMessage = {
   ok?: boolean;
 };
 
-function ticketFromUnknown(value: unknown): string | null {
+function handoffFromUnknown(value: unknown): ClerkHandoffMessage | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const message = value as ClerkHandoffMessage;
-  if (message.type !== "oauthCompleted") {
-    return null;
-  }
-  return readClerkHandoffTicket(message);
+  return message.type === "oauthCompleted" ? message : null;
 }
 
 /**
@@ -38,6 +36,11 @@ export function ClerkNativeHandoff() {
   const { signIn } = useSignIn();
   const pendingTicketRef = useRef<string | null>(null);
   const consumingRef = useRef(false);
+  // The native shell re-sends unacked OAuth returns (deep links can land
+  // before this component mounts), so the same ticket may arrive repeatedly.
+  // A ticket that already produced a session must not be redeemed again;
+  // failed attempts stay retryable (the failure may have been transient).
+  const activatedTicketsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const consume = async (ticket: string) => {
@@ -45,13 +48,14 @@ export function ClerkNativeHandoff() {
         pendingTicketRef.current = ticket;
         return;
       }
-      if (consumingRef.current) {
+      if (consumingRef.current || activatedTicketsRef.current.has(ticket)) {
         return;
       }
       consumingRef.current = true;
       pendingTicketRef.current = null;
       try {
         await activateClerkSessionFromTicket({ signIn }, ticket);
+        activatedTicketsRef.current.add(ticket);
       } catch (error) {
         console.error("Failed to activate Clerk session from native handoff", error);
       } finally {
@@ -63,18 +67,29 @@ export function ClerkNativeHandoff() {
       void consume(pendingTicketRef.current);
     }
 
-    const onBridge = (event: Event) => {
-      const detail = (event as CustomEvent<MobileNativeToWebMessage>).detail;
-      const ticket = ticketFromUnknown(detail);
-      if (ticket) {
-        void consume(ticket);
+    const receive = (value: unknown) => {
+      const message = handoffFromUnknown(value);
+      if (!message) {
+        return;
       }
+      // Ack every delivery (even failed/foreign ones) so the native shell
+      // stops re-sending; a no-op outside the mobile WebView.
+      postMobileBridgeMessage({
+        type: "oauthCompletedAck",
+        sessionId: message.sessionId ?? message.ticket ?? undefined,
+      });
+      const ticket = readClerkHandoffTicket(message);
+      if (!ticket) {
+        return;
+      }
+      void consume(ticket);
+    };
+
+    const onBridge = (event: Event) => {
+      receive((event as CustomEvent<MobileNativeToWebMessage>).detail);
     };
     const onWindowMessage = (event: MessageEvent) => {
-      const ticket = ticketFromUnknown(event.data);
-      if (ticket) {
-        void consume(ticket);
-      }
+      receive(event.data);
     };
 
     window.addEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onBridge);

@@ -53,6 +53,7 @@ import {
   getClerkSignInUrl,
   getClerkSignUpUrl,
 } from "@/lib/cloud/clerk-urls";
+import { installClerkFapiTunnel } from "@/lib/cloud/clerk-fapi-tunnel";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -764,6 +765,11 @@ function getConvexClient(): ConvexReactClient | null {
  */
 export function CloudProviders({ children }: { children: ReactNode }) {
   const configuredMode = getCloudMode();
+  // Must be installed before ClerkProvider triggers clerk-js's first request:
+  // packaged mobile WebViews cannot reach the Clerk Frontend API directly
+  // (file:// pages send `Origin: null`, which Clerk rejects), so FAPI traffic
+  // is relayed through the native shell. No-op everywhere else.
+  useState(() => installClerkFapiTunnel());
   const [localOnly, setLocalOnly] = useState(false);
   useEffect(() => {
     setLocalOnly(isCloudLocallyDisabled());
