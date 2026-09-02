@@ -23,6 +23,7 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import type { EditorTab, FileNode } from "@/lib/types";
 import { joinPath, parentDir } from "@/lib/path-utils";
+import { loadChunkWithRecovery } from "@/lib/chunk-load-recovery";
 import {
   deletePath,
   mkdir,
@@ -195,7 +196,10 @@ function getExtensionViewEntries(extension: ExtensionInstallRecord): SidebarExte
 // surface module (and the settings panel tree it pulls) into the main chunk,
 // defeating EditorPanel's dynamic import of the same module.
 const ExtensionSurfaceFrame = dynamic(
-  () => import("@/components/editor/ExtensionSurfaceView").then((m) => m.ExtensionSurfaceFrame),
+  () =>
+    loadChunkWithRecovery(() =>
+      import("@/components/editor/ExtensionSurfaceView").then((m) => m.ExtensionSurfaceFrame)
+    ),
   { ssr: false }
 );
 
