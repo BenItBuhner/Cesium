@@ -3259,8 +3259,8 @@ export function AgentWorkspaceRail() {
                     ? gitStatus?.currentBranch
                     : group.repository?.currentBranch;
                 if (
-                  !showWorkspaceGroupHeaders &&
-                  group.conversations.length === 0
+                  group.conversations.length === 0 &&
+                  (!showWorkspaceGroupHeaders || group.workspace.id !== activeWorkspaceId)
                 ) {
                   return null;
                 }
