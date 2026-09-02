@@ -224,6 +224,49 @@ export function pickExistingEngineAuth(
   return null;
 }
 
+/**
+ * Account secret carrying the engine credential pair independent of any
+ * pairing row. Written the moment setup resolves its credentials so an
+ * interrupted run (whose pairing was never saved) leaves an orphan codespace
+ * whose engine password is still recoverable when the retry adopts it.
+ */
+export const CODESPACE_ENGINE_AUTH_SECRET_KIND = "codespace-engine-auth";
+
+export function serializeCodespaceEngineAuthSecret(auth: CodespaceEngineAuth): string {
+  return JSON.stringify({ username: auth.username, password: auth.password });
+}
+
+export function parseCodespaceEngineAuthSecret(
+  payload: string
+): CodespaceEngineAuth | null {
+  try {
+    const parsed = JSON.parse(payload) as {
+      username?: unknown;
+      password?: unknown;
+    };
+    if (
+      typeof parsed?.username === "string" &&
+      parsed.username.trim() &&
+      typeof parsed.password === "string" &&
+      parsed.password
+    ) {
+      return { username: parsed.username, password: parsed.password };
+    }
+  } catch {
+    // Malformed payloads fall through to null.
+  }
+  return null;
+}
+
+export function pickAccountEngineAuth(
+  secrets: Array<{ kind: string; payload: string }>
+): CodespaceEngineAuth | null {
+  const record = secrets.find(
+    (secret) => secret.kind === CODESPACE_ENGINE_AUTH_SECRET_KIND
+  );
+  return record ? parseCodespaceEngineAuthSecret(record.payload) : null;
+}
+
 /* ------------------------------- wake flow -------------------------------- */
 
 export type CodespaceWakePhase =

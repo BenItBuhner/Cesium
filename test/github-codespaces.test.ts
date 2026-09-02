@@ -29,12 +29,16 @@ import {
 } from "../convex/lib/githubApi.ts";
 import {
   categorizeCodespaceState,
+  CODESPACE_ENGINE_AUTH_SECRET_KIND,
   codespaceBaseUrlKeys,
   codespacePairingMeta,
   codespaceStateLabel,
   deriveCodespaceDevices,
   generateEngineCredentials,
+  parseCodespaceEngineAuthSecret,
+  pickAccountEngineAuth,
   pickExistingEngineAuth,
+  serializeCodespaceEngineAuthSecret,
   wakeCodespaceDevice,
   type GithubCodespaceInfo,
 } from "../src/lib/github-codespaces.ts";
@@ -578,6 +582,22 @@ describe("codespace device model", () => {
       ]),
       { username: "cesium", password: "pw" }
     );
+  });
+
+  test("account engine-auth secret round-trips and tolerates junk", () => {
+    const auth = { username: "cesium", password: "s3cret" };
+    const payload = serializeCodespaceEngineAuthSecret(auth);
+    assert.deepEqual(parseCodespaceEngineAuthSecret(payload), auth);
+    assert.equal(parseCodespaceEngineAuthSecret("not json"), null);
+    assert.equal(parseCodespaceEngineAuthSecret('{"username":""}'), null);
+    assert.deepEqual(
+      pickAccountEngineAuth([
+        { kind: "voice.settings", payload: "{}" },
+        { kind: CODESPACE_ENGINE_AUTH_SECRET_KIND, payload },
+      ]),
+      auth
+    );
+    assert.equal(pickAccountEngineAuth([{ kind: "other", payload }]), null);
   });
 });
 

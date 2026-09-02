@@ -23,9 +23,13 @@ import { loginToEngine } from "@/lib/onboarding/engine-api";
 import {
   buildCodespaceMeta,
   categorizeCodespaceState,
+  CODESPACE_ENGINE_AUTH_SECRET_KIND,
   generateEngineCredentials,
+  pickAccountEngineAuth,
   pickExistingEngineAuth,
+  serializeCodespaceEngineAuthSecret,
   type CodespaceDevice,
+  type CodespaceEngineAuth,
   type GithubMachineInfo,
   type GithubRepoInfo,
 } from "@/lib/github-codespaces";
@@ -310,11 +314,20 @@ function CodespaceSetupWizardInner({
 
   // One credential pair per account: Codespaces user secrets are shared
   // across repos, so a second pairing must reuse the first pairing's values.
-  const engineAuthRef = useRef(
-    recreateDevice?.engineAuth ??
-      pickExistingEngineAuth(devices) ??
-      generateEngineCredentials()
-  );
+  // Resolution is lazy (at provision time) and falls back to the
+  // account-level secret so a retry after an interrupted run still signs in
+  // to the orphan codespace's engine even when no pairing was ever saved.
+  const engineAuthRef = useRef<CodespaceEngineAuth | null>(null);
+  const resolveEngineAuth = useCallback((): CodespaceEngineAuth => {
+    if (!engineAuthRef.current) {
+      engineAuthRef.current =
+        recreateDevice?.engineAuth ??
+        pickExistingEngineAuth(devices) ??
+        pickAccountEngineAuth(cloud.bootstrap?.secrets ?? []) ??
+        generateEngineCredentials();
+    }
+    return engineAuthRef.current;
+  }, [cloud.bootstrap?.secrets, devices, recreateDevice]);
 
   const loadMachines = useCallback(
     async (repoFullName: string) => {
@@ -386,7 +399,7 @@ function CodespaceSetupWizardInner({
       adopted = false
     ) => {
       if (!github || !selectedRepo) return;
-      const auth = engineAuthRef.current;
+      const auth = resolveEngineAuth();
 
       setProvisionPhase("waiting-codespace");
       let current = codespace;
@@ -499,14 +512,25 @@ function CodespaceSetupWizardInner({
       setStep("done");
       onConnected(saved.id, { repoFullName: selectedRepo.fullName });
     },
-    [cloud.actions, github, onConnected, recreateDevice, removeServer, saveServer, selectedRepo]
+    [cloud.actions, github, onConnected, recreateDevice, removeServer, resolveEngineAuth, saveServer, selectedRepo]
   );
 
   const continueAfterDevcontainer = useCallback(async () => {
     if (!github || !selectedRepo) return;
-    const auth = engineAuthRef.current;
+    const auth = resolveEngineAuth();
 
     setProvisionPhase("secrets");
+    // Persist the account-wide credentials BEFORE anything is provisioned:
+    // if this run dies after creating the codespace, the retry reads them
+    // back and can sign in to the orphan's engine when it adopts it.
+    try {
+      await cloud.actions?.saveSecret({
+        kind: CODESPACE_ENGINE_AUTH_SECRET_KIND,
+        payload: serializeCodespaceEngineAuthSecret(auth),
+      });
+    } catch {
+      // Best-effort: provisioning still works for this run without it.
+    }
     const validExtras = extraSecrets
       .map((secret) => ({ name: secret.name.trim().toUpperCase(), value: secret.value }))
       .filter((secret) => secret.name && secret.value);
@@ -533,7 +557,7 @@ function CodespaceSetupWizardInner({
       created.engineBaseUrl,
       Boolean(created.adopted)
     );
-  }, [extraSecrets, finishProvision, github, idleTimeout, selectedMachine, selectedRepo]);
+  }, [cloud.actions, extraSecrets, finishProvision, github, idleTimeout, resolveEngineAuth, selectedMachine, selectedRepo]);
 
   const startProvision = useCallback(async () => {
     if (!github || !selectedRepo) return;

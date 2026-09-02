@@ -3,7 +3,18 @@ import { mutation, query } from "./_generated/server";
 import { ensureUser, getAuthedUser } from "./lib/identity";
 
 const MAX_PAYLOAD_CHARS = 32_000;
-const ALLOWED_KINDS = new Set(["wrapping-key", "voice.settings"]);
+/**
+ * `codespace-engine-auth` holds the account-wide Codespace engine
+ * credentials (Codespaces user secrets are account-global, so every pairing
+ * shares one pair). Persisted as soon as setup generates them - before the
+ * codespace exists - so a setup run that dies mid-provision leaves an
+ * orphan whose engine password is still recoverable on retry.
+ */
+const ALLOWED_KINDS = new Set([
+  "wrapping-key",
+  "voice.settings",
+  "codespace-engine-auth",
+]);
 
 /**
  * Harness auth sync: sealed (AES-256-GCM envelope) harness sign-in bundles,
