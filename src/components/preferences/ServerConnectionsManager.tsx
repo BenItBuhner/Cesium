@@ -14,6 +14,7 @@ import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand"
 import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { accountOwnsServers } from "@/lib/account-server-sync";
+import { cloudServerIdentity } from "@/lib/cloud/cloud-servers";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -171,6 +172,20 @@ export function ServerConnectionsManager({
     [authPassword, authUsername, refreshServerHealth, runProbe]
   );
 
+  // Servers that reached this account through another user's share: identity
+  // → share metadata, so the list can badge them and offer Leave instead of
+  // a plain local Remove.
+  const sharedByIdentity = useMemo(() => {
+    const map = new Map<string, { shareId: string; ownerName: string | null }>();
+    for (const shared of cloud.bootstrap?.sharedServers ?? []) {
+      map.set(cloudServerIdentity(shared), {
+        shareId: shared.shareId,
+        ownerName: shared.ownerName,
+      });
+    }
+    return map;
+  }, [cloud.bootstrap?.sharedServers]);
+
   const rows = useMemo(
     () =>
       servers.map((server) => {
@@ -179,7 +194,8 @@ export function ServerConnectionsManager({
         const isDefaultSettings = server.id === settingsServer?.id;
         const runtimeStatus = serverStatusById[server.id];
         const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
-        return { isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server };
+        const share = sharedByIdentity.get(cloudServerIdentity(server)) ?? null;
+        return { isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share };
       }),
     [
       activeServer.id,
@@ -189,6 +205,7 @@ export function ServerConnectionsManager({
       serverStatusById,
       servers,
       settingsServer?.id,
+      sharedByIdentity,
     ]
   );
 
@@ -197,7 +214,7 @@ export function ServerConnectionsManager({
       <div className="flex min-w-0 flex-col gap-[12px] sm:gap-[14px]">
         {rows.length > 0 ? (
           <div className="flex min-w-0 flex-col">
-            {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
+            {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share }, index) => (
               <div
                 key={server.id}
                 className={`flex min-w-0 flex-col gap-[10px] py-[10px] sm:py-[12px] ${
@@ -216,6 +233,14 @@ export function ServerConnectionsManager({
                   <p className="min-w-0 max-w-full truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
                     {server.label}
                   </p>
+                  {share ? (
+                    <span
+                      className="shrink-0 rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]"
+                      title="This server belongs to another account and was shared with you."
+                    >
+                      {share.ownerName ? `Shared by ${share.ownerName}` : "Shared with you"}
+                    </span>
+                  ) : null}
                   {isDefaultSettings ? (
                     <span className="shrink-0 rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
                       Default settings
@@ -328,10 +353,20 @@ export function ServerConnectionsManager({
                   type="button"
                   className={buttonClass}
                   disabled={servers.length <= 1}
-                  onClick={() => removeServer(server.id)}
+                  onClick={() => {
+                    // Shared servers belong to another account: leaving the
+                    // share (not just a local remove) tells the owner and
+                    // keeps every signed-in device consistent.
+                    if (share && cloud.actions) {
+                      void cloud.actions
+                        .respondServerShare({ shareId: share.shareId, accept: false })
+                        .catch(() => undefined);
+                    }
+                    removeServer(server.id);
+                  }}
                 >
                   <Trash2 className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                  Remove
+                  {share ? "Leave" : "Remove"}
                 </button>
               </div>
             </div>

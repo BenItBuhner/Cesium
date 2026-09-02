@@ -86,6 +86,44 @@ export default defineSchema({
     .index("by_user_url", ["userId", "baseUrl"]),
 
   /**
+   * Account-to-account server sharing: one row per grant of one server to one
+   * recipient. The owner keeps full control (pause, expiry, revoke); the
+   * recipient sees the share in their bootstrap - as a pending invite until
+   * they accept, then as a connectable server. Invites are addressable two
+   * ways: by the recipient's account email (auto-matched at bootstrap) and by
+   * a capability `inviteCode` carried in an invite link.
+   */
+  serverShares: defineTable({
+    serverId: v.id("servers"),
+    ownerUserId: v.id("users"),
+    /** Set once a signed-in user accepts (or claims the invite link). */
+    granteeUserId: v.optional(v.id("users")),
+    /** Normalized (lowercase) recipient email for email-addressed invites. */
+    granteeEmail: v.optional(v.string()),
+    /** URL-safe capability token embedded in the invite link. */
+    inviteCode: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      /** Declined by the recipient, or left after accepting. */
+      v.literal("declined"),
+      v.literal("revoked")
+    ),
+    /** Owner-side temporary kill switch; the grant survives, access pauses. */
+    paused: v.boolean(),
+    /** Optional owner-set time limit (ms epoch); expired shares stop resolving. */
+    expiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    respondedAt: v.optional(v.number()),
+  })
+    .index("by_server", ["serverId"])
+    .index("by_owner", ["ownerUserId"])
+    .index("by_grantee", ["granteeUserId"])
+    .index("by_email", ["granteeEmail"])
+    .index("by_code", ["inviteCode"]),
+
+  /**
    * Encrypted or wrapping-key material for account-scoped credentials.
    * Payloads are sealed client-side (AES-256-GCM envelopes) before upload.
    */

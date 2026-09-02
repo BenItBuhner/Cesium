@@ -26,7 +26,16 @@ export function convexActionErrorMessage(error: unknown): string {
       return (data as { message: string }).message.trim();
     }
   }
-  return error instanceof Error ? error.message : String(error);
+  const raw = error instanceof Error ? error.message : String(error);
+  // Dev deployments surface plain thrown errors as a full diagnostic blob
+  // ("[CONVEX M(...)] [Request ID: ...] Server Error\nUncaught Error: <the
+  // actual message>\n  at handler (...)"). Extract the human message so UI
+  // surfaces never render stack traces.
+  const uncaught = raw.match(/Uncaught (?:[A-Za-z]*Error|error): ?([^\n]+)/);
+  if (uncaught?.[1]?.trim()) {
+    return uncaught[1].trim();
+  }
+  return raw;
 }
 
 /**
