@@ -147,5 +147,9 @@
     <receiver
       android:name=".notifications.CesiumNotificationActionReceiver"
       android:exported="false" />
+
+    <receiver
+      android:name=".notifications.CesiumNotificationQuickActionReceiver"
+      android:exported="false" />
   </application>
 </manifest>

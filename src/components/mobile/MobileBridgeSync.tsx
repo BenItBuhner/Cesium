@@ -412,7 +412,11 @@ export function MobileBridgeSync() {
         return;
       }
 
-      if (message.type === "notificationAction" || message.type === "resumeCatchUp") {
+      // Notification taps (actionId "open" / "respond") are routed by
+      // MobileNotificationRouting through the pending-selection path, which
+      // survives the URL's stale ?conversationId= override - the session-only
+      // patch below does not, so it must never be the tap-routing mechanism.
+      if (message.type === "resumeCatchUp") {
         const conversationId = message.conversationId ?? focusedConversationId;
         if (!conversationId) {
           return;

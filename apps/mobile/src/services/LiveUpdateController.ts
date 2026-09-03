@@ -354,6 +354,12 @@ export class LiveUpdateController {
         focus?.pendingIntervention ??
         interventions[0]?.pendingIntervention ??
         null,
+      // Quick-action ids only when exactly one run is blocked - answering
+      // "the" permission is ambiguous otherwise.
+      permissionRequestId: focus?.pendingPermissionRequestId ?? null,
+      permissionAllowOptionId: focus?.pendingPermissionAllowOptionId ?? null,
+      permissionDenyOptionId: focus?.pendingPermissionDenyOptionId ?? null,
+      questionId: focus?.pendingQuestionId ?? null,
       ongoing: true,
       cancellable: false,
       promote: true,

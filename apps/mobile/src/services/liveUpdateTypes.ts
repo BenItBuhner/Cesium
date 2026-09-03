@@ -23,6 +23,16 @@ export type LiveUpdatePayload = {
   goalProgressPercent?: number;
   estimatedRemainingSeconds?: number | null;
   intervention?: "permission" | "question" | null;
+  /**
+   * Identifiers for answering the pending intervention straight from the
+   * notification (Allow / Deny buttons, inline reply). Only present while the
+   * run is blocked on the user; the native layer hides the quick actions when
+   * they are missing (e.g. an older web bundle).
+   */
+  permissionRequestId?: string | null;
+  permissionAllowOptionId?: string | null;
+  permissionDenyOptionId?: string | null;
+  questionId?: string | null;
   ongoing?: boolean;
   cancellable?: boolean;
   promote?: boolean;

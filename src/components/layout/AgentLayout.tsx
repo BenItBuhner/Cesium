@@ -31,6 +31,7 @@ import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWork
 import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { MobileShareIntake } from "@/components/mobile/MobileShareIntake";
+import { MobileNotificationRouting } from "@/components/mobile/MobileNotificationRouting";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
 import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
 import { VoiceAgentView } from "@/components/voice/VoiceAgentView";
@@ -516,6 +517,7 @@ export function AgentLayout() {
           <VoiceSessionProvider>
             <AgentLayoutShell />
             <MobileShareIntake />
+            <MobileNotificationRouting />
             <ExtensionsWorkspaceBridge />
           </VoiceSessionProvider>
         </AgentShellStateProvider>

@@ -233,22 +233,40 @@ export default function App() {
     );
   }, [refreshSafeArea]);
 
-  const consumeNotificationAction = useCallback(async () => {
-    const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
-    if (!action.actionId) return;
-    sendToWeb({
-      type: "notificationAction",
-      actionId: action.actionId,
-      workspaceId: action.workspaceId,
-      conversationId: action.conversationId,
-    });
-  }, [sendToWeb]);
-
   // Share-sheet payloads can arrive before the workbench has booted (cold
   // start straight from the share sheet), so they are staged here and flushed
   // once the web layer reports `webReady`.
   const pendingShareRef = useRef<MobileSharePayload | null>(null);
   const webReadyRef = useRef(false);
+
+  // Notification taps are staged the same way: a cold start straight from a
+  // tapped notification consumes the intent long before the WebView has a
+  // listener, and sending immediately used to drop the routing on the floor -
+  // the app opened on whatever state was last persisted instead of the
+  // conversation the notification pointed at.
+  const pendingNotificationActionRef = useRef<Extract<
+    MobileNativeToWebMessage,
+    { type: "notificationAction" }
+  > | null>(null);
+
+  const flushPendingNotificationAction = useCallback(() => {
+    const message = pendingNotificationActionRef.current;
+    if (!message || !webReadyRef.current) return;
+    pendingNotificationActionRef.current = null;
+    sendToWeb(message);
+  }, [sendToWeb]);
+
+  const consumeNotificationAction = useCallback(async () => {
+    const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
+    if (!action.actionId) return;
+    pendingNotificationActionRef.current = {
+      type: "notificationAction",
+      actionId: action.actionId,
+      workspaceId: action.workspaceId,
+      conversationId: action.conversationId,
+    };
+    flushPendingNotificationAction();
+  }, [flushPendingNotificationAction]);
 
   const flushPendingShare = useCallback(() => {
     const payload = pendingShareRef.current;
@@ -557,6 +575,17 @@ export default function App() {
     return () => subscription.remove();
   }, [consumeSharePayload]);
 
+  useEffect(() => {
+    // Same for notification taps: pulling the shade down over the running app
+    // and tapping a notification re-delivers the intent to the already-resumed
+    // activity, so AppState never flips and nothing would drain the store.
+    const subscription = DeviceEventEmitter.addListener(
+      "cesiumNotificationActionAvailable",
+      () => void consumeNotificationAction()
+    );
+    return () => subscription.remove();
+  }, [consumeNotificationAction]);
+
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       const message = parseMobileBridgeMessage<MobileWebToNativeMessage>(
@@ -604,6 +633,7 @@ export default function App() {
         sendToWeb({ type: "nativeConfigChanged", server: hostServerConfigRef.current });
         webReadyRef.current = true;
         flushPendingShare();
+        flushPendingNotificationAction();
         // Re-deliver an unacked OAuth return: the original send may have hit
         // a page that was still booting (cold start from the browser).
         if (pendingOAuthRef.current) {
@@ -734,6 +764,7 @@ export default function App() {
     [
       clearPendingOAuth,
       configureNativeServices,
+      flushPendingNotificationAction,
       flushPendingShare,
       focused,
       handleClerkFapiRequest,
