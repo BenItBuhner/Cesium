@@ -122,14 +122,20 @@ export function CesiumTurnControlPill({
         easing: "cubic-bezier(0.24, 0.9, 0.3, 1)",
       }
     );
-    void animation.finished.then(
-      () => {
-        lastWidthRef.current = to;
-      },
-      () => {
+    // Animation.finished (the promise) only exists since Chromium 84; the
+    // Android 11 system WebView ships 83, where reading .then off it crashed
+    // the whole workbench the moment this pill mounted. onfinish is Web
+    // Animations v1 and covers those engines.
+    const commitWidth = () => {
+      lastWidthRef.current = to;
+    };
+    if (animation.finished) {
+      void animation.finished.then(commitWidth, () => {
         /* cancelled - cleanup records the in-flight width */
-      }
-    );
+      });
+    } else {
+      animation.onfinish = commitWidth;
+    }
     return () => {
       lastWidthRef.current = el.getBoundingClientRect().width;
       animation.cancel();
