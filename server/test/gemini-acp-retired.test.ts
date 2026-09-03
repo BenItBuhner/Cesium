@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-test("gemini-acp is retired from the active harness menu and remapped to Antigravity", async () => {
+test("gemini-acp and google-antigravity-cli are retired and collapse onto the official ACP server", async () => {
   const [{ listAgentBackends, AGENT_BACKENDS }, { LEGACY_AGENT_BACKEND_IDS, isActiveAgentBackendId }] =
     await Promise.all([
       import("../src/lib/agents/providers.js"),
@@ -9,48 +9,55 @@ test("gemini-acp is retired from the active harness menu and remapped to Antigra
     ]);
 
   const ids = listAgentBackends().map((backend) => backend.id);
-  assert.equal(ids.includes("gemini-acp"), false);
-  assert.ok(ids.includes("google-antigravity-cli"));
-  assert.ok(LEGACY_AGENT_BACKEND_IDS.includes("gemini-acp"));
-  assert.equal(isActiveAgentBackendId("gemini-acp"), false);
-  assert.equal(AGENT_BACKENDS["google-antigravity-cli"].label, "Google Antigravity CLI (Legacy)");
-  assert.match(AGENT_BACKENDS["google-antigravity-cli"].description, /successor to Gemini CLI/i);
-  // The official ACP server is the default Antigravity transport now.
+  assert.equal(ids.includes("gemini-acp" as never), false);
+  assert.equal(ids.includes("google-antigravity-cli" as never), false);
   assert.ok(ids.includes("google-antigravity-acp"));
+  assert.ok(LEGACY_AGENT_BACKEND_IDS.includes("gemini-acp"));
+  assert.ok(LEGACY_AGENT_BACKEND_IDS.includes("google-antigravity-cli"));
+  assert.equal(isActiveAgentBackendId("gemini-acp"), false);
+  assert.equal(isActiveAgentBackendId("google-antigravity-cli"), false);
   assert.equal(AGENT_BACKENDS["google-antigravity-acp"].label, "Google Antigravity");
+  assert.match(AGENT_BACKENDS["google-antigravity-acp"].description, /successor to Gemini CLI/i);
   assert.match(AGENT_BACKENDS["google-antigravity-acp"].description, /official Antigravity ACP server/i);
 });
 
-test("stored gemini-acp conversations migrate to google-antigravity-cli", async () => {
-  const { normalizeConversationRecord } = await import(
-    "../src/lib/agents/conversation-normalize.js"
-  );
-  const { AGENT_BACKENDS } = await import("../src/lib/agents/providers.js");
+for (const legacyId of ["gemini-acp", "google-antigravity-cli"] as const) {
+  test(`stored ${legacyId} conversations migrate to google-antigravity-acp with a fresh session`, async () => {
+    const { normalizeConversationRecord } = await import(
+      "../src/lib/agents/conversation-normalize.js"
+    );
+    const { AGENT_BACKENDS } = await import("../src/lib/agents/providers.js");
 
-  const now = Date.now();
-  const normalized = normalizeConversationRecord({
-    schemaVersion: 1,
-    id: "c-gemini",
-    workspaceId: "ws-1",
-    title: "Old Gemini chat",
-    createdAt: now,
-    updatedAt: now,
-    lastEventSeq: 1,
-    status: "running",
-    providerSessionId: "stale-gemini-session",
-    experimental: false,
-    capabilities: AGENT_BACKENDS["google-antigravity-cli"].capabilities,
-    configOptions: [],
-    pendingPermission: null,
-    config: {
-      backendId: "gemini-acp" as never,
-      mode: "agent",
-      modelId: "auto",
-      modelName: "Auto",
-    },
-  } as never);
+    const now = Date.now();
+    const normalized = normalizeConversationRecord({
+      schemaVersion: 1,
+      id: `c-${legacyId}`,
+      workspaceId: "ws-1",
+      title: "Old Antigravity chat",
+      createdAt: now,
+      updatedAt: now,
+      lastEventSeq: 1,
+      status: "running",
+      // The agy bridge stored `agy --conversation` ids here; the ACP server
+      // keeps its own session store, so the id must not be reused.
+      providerSessionId: "8b6d0f1e-agy-conversation",
+      experimental: false,
+      capabilities: AGENT_BACKENDS["google-antigravity-acp"].capabilities,
+      configOptions: [{ id: "permission", name: "Tool permission", category: "permission", currentValue: "request-review", options: [] }],
+      pendingPermission: null,
+      config: {
+        backendId: legacyId as never,
+        mode: "agent",
+        modelId: "auto",
+        modelName: "Auto",
+      },
+    } as never);
 
-  assert.equal(normalized.config.backendId, "google-antigravity-cli");
-  assert.equal(normalized.providerSessionId, null);
-  assert.equal(normalized.status, "idle");
-});
+    assert.equal(normalized.config.backendId, "google-antigravity-acp");
+    assert.equal(normalized.providerSessionId, null);
+    assert.deepEqual(normalized.configOptions, []);
+    assert.equal(normalized.status, "idle");
+    assert.equal(normalized.config.mode, "default");
+    assert.equal(normalized.config.modelId, "gemini-3.7-flash-high");
+  });
+}

@@ -12,7 +12,7 @@ import type { CliRuntimeSpec } from "./cli-adapter.js";
 
 /**
  * Central discovery layer for external agent harness CLIs (OpenCode, Codex,
- * Grok Build, Devin, Claude Code, Google Antigravity, ...).
+ * Grok Build, Devin, Claude Code, Google's Antigravity ACP server, ...).
  *
  * Every harness is described once by a `HarnessCliDescriptor` and resolved
  * through a single pipeline:
@@ -34,7 +34,6 @@ export type HarnessCliId =
   | "codex"
   | "devin"
   | "grok"
-  | "google-antigravity"
   | "google-antigravity-acp"
   | "claude"
   | "cursor";
@@ -204,11 +203,6 @@ export const HARNESS_CLI_DESCRIPTORS: Record<HarnessCliId, HarnessCliDescriptor>
     // process never mutates the installed CLI or stalls a chat turn.
     defaultArgs: ["--no-auto-update", "agent", "stdio"],
     wellKnownHomeSubdirs: [[".grok", "bin"]],
-  },
-  "google-antigravity": {
-    id: "google-antigravity",
-    binaryNames: ["agy"],
-    envBinVars: ["OPENCURSOR_ANTIGRAVITY_CLI_BIN", "OPENCURSOR_AGY_BIN"],
   },
   "google-antigravity-acp": {
     id: "google-antigravity-acp",

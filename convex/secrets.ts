@@ -31,6 +31,7 @@ const HARNESS_AUTH_SYNC_IDS = new Set([
   "opencode",
   "grok",
   "devin",
+  // Retired `agy` CLI bridge; kept so existing vault rows stay readable/deletable.
   "google-antigravity",
   "google-antigravity-acp",
   "cesium-agent",

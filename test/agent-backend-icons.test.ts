@@ -43,7 +43,7 @@ test("named harness icons resolve to expected filenames", () => {
     light: "Pi-Light.svg",
     dark: "Pi-Dark.svg",
   });
-  assert.deepEqual(AGENT_BACKEND_ICON_FILES["google-antigravity-cli"], {
+  assert.deepEqual(AGENT_BACKEND_ICON_FILES["google-antigravity-acp"], {
     light: "Antigravity-Light.svg",
     dark: "Antigravity-Dark.svg",
   });

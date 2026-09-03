@@ -408,7 +408,7 @@ export function createGeminiImportSource(): HarnessImportSource {
 
   return {
     harnessKey: "gemini",
-    backendIds: ["google-antigravity-acp", "google-antigravity-cli"],
+    backendIds: ["google-antigravity-acp"],
     displayName: "Gemini CLI / Antigravity",
 
     async detect(): Promise<HarnessImportAvailability> {

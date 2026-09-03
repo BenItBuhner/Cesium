@@ -396,7 +396,8 @@ const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
   "opencode-acp": "opencode-server",
   "opencode-v2-beta": "opencode-server",
   "codex-adapter": "codex-app-server",
-  "gemini-acp": "google-antigravity-cli",
+  "gemini-acp": "google-antigravity-acp",
+  "google-antigravity-cli": "google-antigravity-acp",
 };
 
 function normalizeRememberedPermissionBackendId(backendId: string): string {

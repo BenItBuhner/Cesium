@@ -56,7 +56,6 @@ const CLI_SYNC_IDS: Record<CliSyncId, HarnessCliId> = {
   opencode: "opencode",
   grok: "grok",
   devin: "devin",
-  "google-antigravity": "google-antigravity",
   "google-antigravity-acp": "google-antigravity-acp",
 };
 

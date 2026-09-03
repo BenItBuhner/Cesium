@@ -20,7 +20,6 @@ export type AgentBackendId =
   | "codex-acp"
   | "claude-code-sdk"
   | "pi-agent"
-  | "google-antigravity-cli"
   | "google-antigravity-acp";
 
 /**

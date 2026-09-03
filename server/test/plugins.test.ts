@@ -78,7 +78,7 @@ test("custom agent plugins contribute skills without MCP", async () => {
   const attachments = await resolveAgentPluginAttachments({
     workspaceId,
     workspaceRoot: process.cwd(),
-    backendId: "google-antigravity-cli",
+    backendId: "google-antigravity-acp",
   });
   assert.match(attachments.promptSection, /Docs Helper/);
   assert.match(attachments.promptSection, /Keep docs terse/);
@@ -131,15 +131,19 @@ test("plugin discovery includes local Context7 and harness verify identifies all
   assert.equal(openCode.nativeMcp, true);
 
   const antigravity = report.harnesses.find(
-    (entry) => entry.backendId === "google-antigravity-cli"
+    (entry) => entry.backendId === "google-antigravity-acp"
   );
   assert.ok(antigravity?.identified);
   assert.equal(antigravity?.nativeMcp, true);
-
-  const mcpConfig = JSON.parse(
-    await fs.readFile(path.join(workspaceRoot, ".agents", "mcp_config.json"), "utf8")
-  ) as { mcpServers: Record<string, { serverUrl?: string }> };
-  assert.equal(mcpConfig.mcpServers.context7?.serverUrl, "https://mcp.context7.com/mcp");
+  // The official ACP server receives MCP servers over the protocol; nothing is
+  // written into the workspace `.agents/` dir any more.
+  assert.equal(
+    await fs
+      .access(path.join(workspaceRoot, ".agents", "mcp_config.json"))
+      .then(() => true)
+      .catch(() => false),
+    false
+  );
 
   const openCodeConfig = JSON.parse(
     await fs.readFile(path.join(workspaceRoot, "opencode.json"), "utf8")

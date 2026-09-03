@@ -37,7 +37,7 @@ test("concurrent remembered permission saves do not lose updates", async () => {
     "opencode-server",
     "opencode-v2-beta",
     "codex-app-server",
-    "google-antigravity-cli",
+    "google-antigravity-acp",
     "devin-acp",
   ] as const;
   await Promise.all(
@@ -154,7 +154,7 @@ test("alternating upsert hammering keeps exactly one rule with the final decisio
     const optionId = i % 2 === 0 ? "allow_always" : "reject_always";
     await store.saveRememberedAgentPermissionRule({
       workspaceId: "hammer",
-      backendId: "google-antigravity-cli",
+      backendId: "google-antigravity-acp",
       toolKey: "google-antigravity:hammer",
       toolLabel: "Hammer",
       decision: optionId === "allow_always" ? "allow" : "reject",

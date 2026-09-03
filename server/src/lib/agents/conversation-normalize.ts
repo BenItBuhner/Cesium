@@ -10,7 +10,12 @@ const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "opencode-acp": "opencode-server",
   "opencode-v2-beta": "opencode-server",
   "codex-adapter": "codex-app-server",
-  "gemini-acp": "google-antigravity-cli",
+  // Both Gemini-lineage harnesses collapse onto Google's official ACP server.
+  // The legacy `agy` terminal bridge kept its provider session id as an
+  // `agy --conversation` id, which the ACP server cannot resume, so the
+  // generic remap below clears it and the next prompt opens a fresh session.
+  "gemini-acp": "google-antigravity-acp",
+  "google-antigravity-cli": "google-antigravity-acp",
 };
 
 /**

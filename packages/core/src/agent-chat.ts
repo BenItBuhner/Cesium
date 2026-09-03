@@ -335,7 +335,6 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "opencode-server":
     case "opencode-v2-beta":
       return "opencode";
-    case "google-antigravity-cli":
     case "google-antigravity-acp":
       return "google";
     case "grok-build":

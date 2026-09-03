@@ -125,11 +125,11 @@ const HARNESSES: HarnessSpec[] = [
       ),
   },
   {
-    backendId: "google-antigravity-cli",
-    label: "Google Antigravity CLI",
+    backendId: "google-antigravity-acp",
+    label: "Google Antigravity",
     toolKey: (i) =>
       buildRememberedPermissionToolKey(
-        "google-antigravity",
+        "google-antigravity-acp",
         "run_command",
         `target-${i}`,
         "requires shell"

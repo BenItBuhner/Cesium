@@ -13,7 +13,6 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-acp",
-  "google-antigravity-cli",
 ] as const satisfies readonly AgentBackendId[];
 
 /** Retired ACP/adapter harness ids kept only for migration of stored settings. */
@@ -23,6 +22,7 @@ export const LEGACY_AGENT_BACKEND_IDS = [
   "opencode-v2-beta",
   "codex-adapter",
   "gemini-acp",
+  "google-antigravity-cli",
 ] as const;
 
 const ACTIVE_SET = new Set<string>(ACTIVE_AGENT_BACKEND_IDS);

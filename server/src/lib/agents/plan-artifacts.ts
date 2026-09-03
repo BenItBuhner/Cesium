@@ -23,8 +23,7 @@ const BACKEND_PLAN_SEGMENTS: Record<AgentBackendId, string> = {
   "codex-acp": "codex-acp",
   "claude-code-sdk": "claude",
   "pi-agent": "pi-agent",
-  "google-antigravity-cli": "antigravity",
-  "google-antigravity-acp": "antigravity-acp",
+  "google-antigravity-acp": "antigravity",
 };
 
 function backendPlanPath(backendId: AgentBackendId, title: string): string {

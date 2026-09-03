@@ -37,7 +37,6 @@ export type HarnessFamily = {
 export type HarnessTransportsState = Partial<{
   cursor: "sdk" | "acp";
   codex: "server" | "acp";
-  antigravity: "acp" | "cli";
 }>;
 
 export const HARNESS_FAMILIES: readonly HarnessFamily[] = [
@@ -186,14 +185,7 @@ export const HARNESS_FAMILIES: readonly HarnessFamily[] = [
         label: "ACP",
         backendId: "google-antigravity-acp",
         description:
-          "Google's official Antigravity ACP server (`agy_acp_server`, from the ACP Registry). Log in with Google directly through the server; Cesium never brokers tokens. Default Antigravity transport.",
-      },
-      {
-        id: "cli",
-        label: "CLI (Legacy)",
-        backendId: "google-antigravity-cli",
-        description:
-          "Legacy Antigravity CLI (`agy`) terminal bridge with hook and transcript scraping. Kept for hosts without the ACP server; slated for removal.",
+          "Google's official Antigravity ACP server (`agy_acp_server`, from the ACP Registry). Log in with Google directly through the server; Cesium never brokers tokens.",
       },
     ],
   },
@@ -266,9 +258,8 @@ export function normalizeHarnessTransports(raw: unknown): HarnessTransportsState
   if (record.codex === "server" || record.codex === "acp") {
     out.codex = record.codex;
   }
-  if (record.antigravity === "acp" || record.antigravity === "cli") {
-    out.antigravity = record.antigravity;
-  }
+  // `antigravity: "acp" | "cli"` existed while the legacy `agy` bridge was a
+  // sibling transport; the family is ACP-only now, so the key is dropped.
   return out;
 }
 
@@ -281,9 +272,6 @@ function storedTransportId(
   }
   if (family.id === "codex") {
     return transports?.codex ?? null;
-  }
-  if (family.id === "antigravity") {
-    return transports?.antigravity ?? null;
   }
   return null;
 }
@@ -382,9 +370,6 @@ export function applyHarnessFamilyTransport(
   }
   if (family.id === "codex" && (transport.id === "server" || transport.id === "acp")) {
     harnessTransports.codex = transport.id;
-  }
-  if (family.id === "antigravity" && (transport.id === "acp" || transport.id === "cli")) {
-    harnessTransports.antigravity = transport.id;
   }
   return { enabledHarnesses, harnessTransports };
 }

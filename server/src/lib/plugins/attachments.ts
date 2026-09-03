@@ -20,7 +20,6 @@ import type {
   AgentPluginInstallRecord,
   AgentPluginToolDisplay,
 } from "./types.js";
-import { syncWorkspaceAntigravityMcpConfig } from "./workspace-mcp-sync.js";
 import { syncWorkspaceOpenCodeMcpConfig } from "./workspace-opencode-mcp-sync.js";
 import { syncWorkspacePiMcpConfig } from "./workspace-pi-mcp-sync.js";
 
@@ -152,24 +151,6 @@ export async function resolveAgentPluginAttachments(input: {
     plugins.push({ definition, install, mcpServers });
   }
 
-  if (input.backendId === "google-antigravity-cli") {
-    try {
-      await syncWorkspaceAntigravityMcpConfig({
-        workspaceId: input.workspaceId,
-        workspaceRoot: input.workspaceRoot,
-      });
-    } catch (error) {
-      warnings.push({
-        pluginId: "workspace-mcp-sync",
-        pluginName: "Antigravity MCP sync",
-        backendId: input.backendId,
-        reason:
-          error instanceof Error
-            ? `Failed to sync .agents/mcp_config.json: ${error.message}`
-            : "Failed to sync .agents/mcp_config.json.",
-      });
-    }
-  }
   if (input.backendId === "opencode-server" || input.backendId === "opencode-v2-beta") {
     try {
       await syncWorkspaceOpenCodeMcpConfig({
