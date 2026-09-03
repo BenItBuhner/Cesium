@@ -102,6 +102,7 @@ export const CESIUM_PROFILE_TOOL_GROUPS: readonly CesiumProfileToolGroup[] = [
       "list_conversations",
       "read_conversation",
       "search_conversations",
+      "conversation_title",
     ],
   },
   {
@@ -182,6 +183,7 @@ const WORK_PROFILE_ALLOWED_TOOLS: string[] = [
   "list_conversations",
   "read_conversation",
   "search_conversations",
+  "conversation_title",
   "memory",
   // Self-improvement and proactivity (Hermes parity).
   "skill",

@@ -188,6 +188,11 @@ export type AgentConversationConfig = {
    * `supportsCloudExecution` accept "cloud"; set at creation, never patched.
    */
   executionTarget?: AgentExecutionTarget;
+  /**
+   * When true, the Cesium harness reminds the agent to keep this conversation's
+   * display title current via `conversation_title`. Off by default.
+   */
+  titleFollow?: boolean;
 };
 
 export type AgentToolLocation = {

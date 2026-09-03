@@ -27,6 +27,7 @@ import {
 } from "../git-worktrees.js";
 import { remapSourceEventsForFork } from "./fork-event-clone.js";
 import { generateConversationTitle } from "./title-generator.js";
+import { normalizeConversationTitle } from "./cesium/cesium-conversation-tools.js";
 import {
   PROMPT_CONTEXT_LIMIT_EVENTS,
   PROMPT_CONTEXT_LIMIT_TURNS,
@@ -319,11 +320,7 @@ function sameCapabilities(
 }
 
 function truncateConversationTitle(text: string): string {
-  const normalized = text.trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return "New chat";
-  }
-  return normalized.length > 44 ? `${normalized.slice(0, 41)}...` : normalized;
+  return normalizeConversationTitle(text) ?? "New chat";
 }
 
 export class AgentRuntimeManager {

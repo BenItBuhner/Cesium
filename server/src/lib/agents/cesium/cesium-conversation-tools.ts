@@ -5,13 +5,165 @@
  * (which expands into a `<conversation-reference>` block), and these helpers
  * back the `list_conversations` / `read_conversation` / `search_conversations`
  * tools so the agent can triage transcripts from any workspace - not only the
- * ones the user explicitly tagged.
+ * ones the user explicitly tagged. `conversation_title` reads or renames the
+ * current chat when the user asks.
  */
 import { getStorage } from "../../../storage/runtime.js";
 import { listWorkspaces } from "../../workspace-registry.js";
 import type { WorkspaceRecord } from "../../workspace-registry.js";
+import { asString } from "./cesium-coerce.js";
 import { generateTranscriptFromEvents } from "../event-log-read.js";
 import type { AgentConversationRecord, AgentStoredEvent } from "../types.js";
+
+/** Matches the rail / config-patch title cap in the runtime manager. */
+export const CONVERSATION_TITLE_MAX_CHARS = 44;
+
+export type ConversationTitleAction = "read" | "rename";
+
+export type ParsedConversationTitleArgs = {
+  action: ConversationTitleAction;
+  title?: string;
+  follow?: boolean;
+};
+
+export type ConversationTitleToolResult = {
+  nextTitle: string;
+  nextFollow: boolean;
+  changed: boolean;
+  result: string;
+};
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "on" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "off" || normalized === "no") {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+/** Collapse whitespace and cap length the same way user-facing title patches do. */
+export function normalizeConversationTitle(text: string): string | null {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length > CONVERSATION_TITLE_MAX_CHARS
+    ? `${normalized.slice(0, CONVERSATION_TITLE_MAX_CHARS - 3)}...`
+    : normalized;
+}
+
+export function parseConversationTitleToolArgs(
+  args: Record<string, unknown>
+): ParsedConversationTitleArgs {
+  const rawAction = asString(args.action)?.toLowerCase();
+  let action: ConversationTitleAction;
+  if (rawAction === "read" || rawAction === "get") {
+    action = "read";
+  } else if (
+    rawAction === "rename" ||
+    rawAction === "set" ||
+    rawAction === "edit" ||
+    rawAction === "write"
+  ) {
+    action = "rename";
+  } else if (!rawAction && asString(args.title)) {
+    action = "rename";
+  } else if (!rawAction) {
+    action = "read";
+  } else {
+    throw new Error(
+      'conversation_title.action must be "read" or "rename".'
+    );
+  }
+  const title = asString(args.title);
+  if (action === "rename" && !title) {
+    throw new Error("conversation_title.title is required when action is rename.");
+  }
+  const follow = asOptionalBoolean(args.follow);
+  return {
+    action,
+    ...(title ? { title } : {}),
+    ...(follow !== undefined ? { follow } : {}),
+  };
+}
+
+function followLabel(follow: boolean): string {
+  return follow
+    ? "follow is on — keep the name current when the topic meaningfully changes"
+    : "follow is off — only rename when the user asks";
+}
+
+export function formatConversationTitleToolResult(input: {
+  action: ConversationTitleAction;
+  title: string;
+  follow: boolean;
+  previousTitle?: string;
+}): string {
+  const suffix = followLabel(input.follow);
+  if (input.action === "read") {
+    return `Conversation title: "${input.title}" (${suffix}).`;
+  }
+  if (input.previousTitle && input.previousTitle !== input.title) {
+    return `Renamed conversation from "${input.previousTitle}" to "${input.title}" (${suffix}).`;
+  }
+  return `Conversation title is "${input.title}" (${suffix}).`;
+}
+
+/** One reminder line: always the current name; follow guidance only when armed. */
+export function formatConversationTitleReminderLine(
+  title: string,
+  follow: boolean
+): string {
+  const safeTitle = title.trim() || "New chat";
+  return follow
+    ? `- Conversation title: "${safeTitle}" (follow on — update via conversation_title when the topic changes)`
+    : `- Conversation title: "${safeTitle}"`;
+}
+
+export function applyConversationTitleAction(input: {
+  currentTitle: string;
+  currentFollow: boolean;
+  action: ConversationTitleAction;
+  title?: string;
+  follow?: boolean;
+}): ConversationTitleToolResult {
+  const nextFollow = input.follow ?? input.currentFollow;
+  if (input.action === "read") {
+    return {
+      nextTitle: input.currentTitle,
+      nextFollow,
+      changed: nextFollow !== input.currentFollow,
+      result: formatConversationTitleToolResult({
+        action: "read",
+        title: input.currentTitle,
+        follow: nextFollow,
+      }),
+    };
+  }
+  const nextTitle = normalizeConversationTitle(input.title ?? "");
+  if (!nextTitle) {
+    throw new Error("conversation_title.title is required when action is rename.");
+  }
+  return {
+    nextTitle,
+    nextFollow,
+    changed: nextTitle !== input.currentTitle || nextFollow !== input.currentFollow,
+    result: formatConversationTitleToolResult({
+      action: "rename",
+      title: nextTitle,
+      follow: nextFollow,
+      previousTitle: input.currentTitle,
+    }),
+  };
+}
 
 const LIST_DEFAULT_LIMIT = 25;
 const LIST_MAX_LIMIT = 100;

@@ -234,6 +234,9 @@ export async function generateConversationTitle(
     return;
   }
   await updateConversationRecord(workspaceId, conversationId, (current) => {
+    if (current.config.titleFollow) {
+      return current;
+    }
     if (
       !shouldReplaceConversationTitleOnFirstPrompt(
         current.title,

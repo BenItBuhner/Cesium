@@ -1,5 +1,6 @@
 import type { McpServerSummary } from "@cesium/core/mcp";
 import type { OrchestrationBoardSnapshot } from "../orchestration/types.js";
+import { formatConversationTitleReminderLine } from "./cesium/cesium-conversation-tools.js";
 import {
   normalizeCesiumMode,
   summarizeCesiumModeToolPolicy,
@@ -28,6 +29,10 @@ export type CesiumModeReminderInput = {
   goalSummary?: string | null;
   workflowRunSummary?: string | null;
   handoffPlanPath?: string | null;
+  /** Current conversation display title shown as one environment bullet. */
+  conversationTitle?: string | null;
+  /** When true, remind the agent to keep the title current via conversation_title. */
+  conversationTitleFollow?: boolean | null;
 };
 
 function modeTitle(mode: string): string {
@@ -190,6 +195,13 @@ The active mode is authoritative whether the user selected it directly or approv
       ? `\n- Agent profile: ${input.profileName.trim()}${
           input.profileSummary?.trim() ? ` - ${input.profileSummary.trim()}` : ""
         }`
+      : ""
+  }${
+    input.conversationTitle?.trim()
+      ? `\n${formatConversationTitleReminderLine(
+          input.conversationTitle,
+          Boolean(input.conversationTitleFollow)
+        )}`
       : ""
   }
 
