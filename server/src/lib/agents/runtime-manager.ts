@@ -1679,6 +1679,31 @@ export class AgentRuntimeManager {
     }));
   }
 
+  async updateQueuedPromptDelivery(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    itemId: string,
+    delivery: "normal" | "steer"
+  ): Promise<AgentConversationRecord> {
+    return updateConversationRecord(workspace.id, conversationId, (current) => {
+      const queued = current.queuedPrompts ?? [];
+      if (!queued.some((item) => item.id === itemId)) {
+        throw new Error(`Unknown queued prompt: ${itemId}`);
+      }
+      return {
+        ...current,
+        queuedPrompts: queued.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                delivery: delivery === "steer" ? "steer" : undefined,
+              }
+            : item
+        ),
+      };
+    });
+  }
+
   /**
    * Interrupt the current turn (if any) and start this queued item immediately.
    * Remaining queued prompts stay in order and drain after the new turn.

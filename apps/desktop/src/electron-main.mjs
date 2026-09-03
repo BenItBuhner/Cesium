@@ -937,14 +937,25 @@ if (deferToLockHolder) {
   app.whenReady().then(async () => {
     app.setName("Cesium Desktop");
     stripClerkFapiOriginHeader();
-    installDesktopLifecycleHandlers();
     if (smokeMode) {
-      await createMainWindow({ show: false, closeAfterLoad: true });
-      console.log(`Cesium packaged smoke passed at ${backend?.baseUrl ?? "unknown backend"}`);
+      // Do not construct a BrowserWindow. Xvfb + Chromium SIGTRAPs during
+      // window/GPU init on GitHub Linux runners even with --disable-gpu, so
+      // the old hidden-window path hung and dumped core before the backend
+      // started. Packaged smoke is "Electron boots + embedded backend is
+      // healthy", not a renderer paint.
+      const userDataPath = app.getPath("userData");
+      const dataDir = app.isPackaged
+        ? resolvePackagedDesktopDataDir(userDataPath)
+        : resolve(userDataPath, "server-data");
+      console.log("[cesium-desktop] starting backend");
+      backend = await startCesiumBackend({ dataDir });
+      console.log("[cesium-desktop] backend ready", backend.baseUrl);
+      console.log(`Cesium packaged smoke passed at ${backend.baseUrl}`);
       cleanupBackend();
       app.quit();
       return;
     }
+    installDesktopLifecycleHandlers();
     installDesktopNativeIntegrations({
       getMainWindow: () => mainWindow,
       focusMainWindow: () => {

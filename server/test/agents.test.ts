@@ -818,6 +818,76 @@ test("sendQueuedPromptNow interrupts the current turn and starts that item", asy
   assert.equal(completed.conversation.queuedPrompts[0]?.text, "queued first");
 });
 
+test("updateQueuedPromptDelivery flips a queued follow-up to steer", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "permission then steer queue"
+  );
+
+  await waitFor(
+    "permission before queue steer",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => value.conversation.pendingPermission !== null
+  );
+
+  await testRuntimeManager.promptConversation(workspace, conversation.id, "queued follow-up");
+
+  const queued = await waitFor(
+    "follow-up queued",
+    () => readConversationRecord(workspace.id, conversation.id),
+    (record) => (record?.queuedPrompts.length ?? 0) === 1
+  );
+  const item = queued.queuedPrompts[0];
+  assert.ok(item);
+  assert.notEqual(item.delivery, "steer");
+
+  const steered = await testRuntimeManager.updateQueuedPromptDelivery(
+    workspace,
+    conversation.id,
+    item.id,
+    "steer"
+  );
+  assert.equal(steered.queuedPrompts[0]?.delivery, "steer");
+
+  const restored = await testRuntimeManager.updateQueuedPromptDelivery(
+    workspace,
+    conversation.id,
+    item.id,
+    "normal"
+  );
+  assert.equal(restored.queuedPrompts[0]?.delivery, undefined);
+});
+
+test("updateQueuedPromptDelivery rejects an unknown queue item", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await assert.rejects(
+    () =>
+      testRuntimeManager.updateQueuedPromptDelivery(
+        workspace,
+        conversation.id,
+        "missing-item",
+        "steer"
+      ),
+    /Unknown queued prompt/
+  );
+});
+
 test("sendQueuedPromptNow rejects an unknown queue item", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {

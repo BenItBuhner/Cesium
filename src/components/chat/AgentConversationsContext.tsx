@@ -96,6 +96,7 @@ import {
   retryAgentConversation,
   sendAgentConversationQueueItem,
   updateAgentConversationConfig,
+  updateAgentConversationQueueItem,
 } from "@/lib/server-api";
 import {
   endQueuedPromptFlush,
@@ -398,6 +399,11 @@ type AgentConversationsContextValue = {
     planHandoff?: PlanBuildHandoff
   ) => Promise<boolean>;
   sendQueuedPromptNow: (conversationId: string, itemId: string) => Promise<boolean>;
+  setQueuedPromptDelivery: (
+    conversationId: string,
+    itemId: string,
+    delivery: "normal" | "steer"
+  ) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   pauseConversation: (conversationId: string) => Promise<void>;
@@ -2130,6 +2136,29 @@ const executePrompt = useCallback(
     [clearEditingQueuedPromptForConversation, executePrompt]
   );
 
+  const setQueuedPromptDelivery = useCallback(
+    async (
+      conversationId: string,
+      itemId: string,
+      delivery: "normal" | "steer"
+    ) => {
+      try {
+        const { conversation } = await updateAgentConversationQueueItem(
+          conversationId,
+          itemId,
+          { delivery }
+        );
+        upsertConversation(conversation);
+        dispatchAgentConversationUpserted(conversation);
+        return true;
+      } catch {
+        void syncConversationSnapshot(conversationId).catch(() => undefined);
+        return false;
+      }
+    },
+    [syncConversationSnapshot, upsertConversation]
+  );
+
   const sendQueuedPromptNow = useCallback(
     async (conversationId: string, itemId: string) => {
       if (!tryBeginQueuedPromptFlush(conversationId)) {
@@ -3143,6 +3172,7 @@ busy,
       setConversationConfigOption,
       promptConversation,
       sendQueuedPromptNow,
+      setQueuedPromptDelivery,
       retryConversation,
       cancelConversation,
       pauseConversation,
@@ -3179,6 +3209,7 @@ mergeConversationSnapshot,
 pendingConfigByConversationId,
 promptConversation,
 sendQueuedPromptNow,
+setQueuedPromptDelivery,
 pauseConversation,
 resumeConversation,
 retryConversation,

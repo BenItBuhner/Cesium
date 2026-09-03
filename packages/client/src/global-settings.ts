@@ -260,7 +260,6 @@ export type AgentRailSettingsState = {
 
 export type AgentsSettingsState = {
   submitCtrlEnter: boolean;
-  steerCtrlEnter: boolean;
   autocomplete: boolean;
   webSearch: boolean;
   autoWeb: boolean;
@@ -409,7 +408,6 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     },
     agents: {
       submitCtrlEnter: false,
-      steerCtrlEnter: true,
       autocomplete: false,
       webSearch: true,
       autoWeb: true,

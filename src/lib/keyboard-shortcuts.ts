@@ -2,6 +2,7 @@
 export {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   SHORTCUT_COMMAND_DEFINITIONS,
+  STEER_MESSAGE_COMMAND_ID,
   createDefaultKeyboardShortcutsState,
   detectShortcutPlatform,
   eventMatchesAgentSwitcherChord,
@@ -24,6 +25,7 @@ export {
   parseShortcutBindingsInput,
   primaryModifierLabel,
   tryDispatchKeyboardShortcut,
+  withToggledPlainShortcutBinding,
   eventMatchesVoiceShortcutRelease,
   VOICE_SHORTCUT_HOLD_MS,
   applyVoiceShortcutKeyDown,

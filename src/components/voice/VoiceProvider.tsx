@@ -606,8 +606,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       const stale =
         epoch !== captureEpochRef.current ||
         captureRef.current !== capture ||
-        modeRef.current === "off" ||
-        modeRef.current === "paused";
+        isIdleVoiceMode(modeRef.current);
       if (!stale) return false;
       await capture.stop().catch(() => {});
       if (captureRef.current === capture) {
@@ -634,7 +633,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const startCapture = useCallback(async () => {
     if (captureRef.current?.isRunning || captureStartingRef.current) return;
     const epoch = captureEpochRef.current;
-    if (modeRef.current === "off" || modeRef.current === "paused") return;
+    if (isIdleVoiceMode(modeRef.current)) return;
     captureStartingRef.current = true;
     try {
       if (!vadRef.current) {

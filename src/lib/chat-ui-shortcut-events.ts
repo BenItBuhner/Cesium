@@ -16,7 +16,8 @@ export type ChatComposerShortcutAction =
   | "startVoiceInput"
   | "stopVoiceInput"
   | "toggleComposerExpand"
-  | "attachImage";
+  | "attachImage"
+  | "steerMessage";
 
 export type ChatUiShortcutEventDetail =
   | { target: "composer"; action: ChatComposerShortcutAction }

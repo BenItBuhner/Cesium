@@ -137,6 +137,7 @@ export function AgentCenterPane() {
     createAndPromptConversation,
     promptConversation,
     sendQueuedPromptNow,
+    setQueuedPromptDelivery,
     cancelConversation,
     pauseConversation,
     resumeConversation,
@@ -774,6 +775,20 @@ export function AgentCenterPane() {
       void sendQueuedPromptNow(selectedConversationId, item.id);
     },
     [selectedConversationId, sendQueuedPromptNow]
+  );
+
+  const toggleQueuedPromptSteer = useCallback(
+    (item: QueuedChatPrompt) => {
+      if (!selectedConversationId) {
+        return;
+      }
+      void setQueuedPromptDelivery(
+        selectedConversationId,
+        item.id,
+        item.delivery === "steer" ? "normal" : "steer"
+      );
+    },
+    [selectedConversationId, setQueuedPromptDelivery]
   );
 
   const editQueuedPrompt = useCallback(
@@ -1440,6 +1455,7 @@ export function AgentCenterPane() {
                       items={queuedPrompts}
                       onDelete={removeQueuedPrompt}
                       onSendNow={sendQueuedPrompt}
+                      onToggleSteer={toggleQueuedPromptSteer}
                       onEdit={editQueuedPrompt}
                       conversationConfig={conversation?.config}
                       backendLabels={backendLabels}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, ChevronDown, Pencil, Settings2, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronDown, Compass, Pencil, Settings2, Trash2 } from "lucide-react";
 import type { AgentConversationConfig } from "@/lib/agent-types";
 import type { QueuedChatPrompt, QueuedPromptConfigOverride } from "@/lib/types";
 import {
@@ -14,6 +14,7 @@ type ComposerQueueDockProps = {
   items: QueuedChatPrompt[];
   onDelete: (item: QueuedChatPrompt) => void;
   onSendNow: (item: QueuedChatPrompt) => void;
+  onToggleSteer?: (item: QueuedChatPrompt) => void;
   onEdit?: (item: QueuedChatPrompt) => void;
   conversationConfig?: AgentConversationConfig;
   backendLabels?: Record<string, string>;
@@ -30,6 +31,7 @@ export function ComposerQueueDock({
   items,
   onDelete,
   onSendNow,
+  onToggleSteer,
   onEdit,
   conversationConfig,
   backendLabels,
@@ -111,6 +113,30 @@ export function ComposerQueueDock({
                       title="Edit"
                     >
                       <Pencil className="size-[12px]" strokeWidth={2} />
+                    </button>
+                  )}
+                  {onToggleSteer && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleSteer(item)}
+                      className={`flex items-center gap-[4px] rounded-[6px] px-[8px] py-[4px] font-sans text-[10.5px] font-medium transition-colors hover:bg-[var(--bg-card-hover)] ${
+                        item.delivery === "steer"
+                          ? "text-[var(--text-primary)]"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      }`}
+                      title={
+                        item.delivery === "steer"
+                          ? "Send as a regular queued follow-up"
+                          : "Steer after the current turn"
+                      }
+                      aria-label={
+                        item.delivery === "steer"
+                          ? "Unsteer queued message"
+                          : "Steer queued message"
+                      }
+                      aria-pressed={item.delivery === "steer"}
+                    >
+                      <Compass className="size-[12px]" strokeWidth={2} />
                     </button>
                   )}
                   <button
