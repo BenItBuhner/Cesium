@@ -194,21 +194,6 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
   },
-  "google-antigravity-cli": {
-    supportsLoadSession: true,
-    supportsModeSelection: true,
-    supportsModelSelection: true,
-    supportsSlashCommands: true,
-    supportsPermissions: true,
-    supportsToolCalls: true,
-    supportsStructuredPlans: true,
-    supportsTodos: true,
-    supportsSessionResume: true,
-    supportsPromptImages: false,
-    supportsInlineReasoning: true,
-    supportsCompletionRetry: false,
-    supportsCloudExecution: false,
-  },
   "google-antigravity-acp": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -423,21 +408,6 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...permissionEvents,
       "system",
     ],
-  },
-  "google-antigravity-cli": {
-    expectedEventKinds: [
-      ...textTurnEvents,
-      "reasoning",
-      ...toolEvents,
-      "plan",
-      "plan_file",
-      "subagent",
-      "question",
-      ...permissionEvents,
-      "system",
-    ],
-    notes:
-      "Plan/todo events are mirrored from manage_task; MCP and prompt attachments are limited by Antigravity workspace config and CLI support.",
   },
   "google-antigravity-acp": {
     expectedEventKinds: [

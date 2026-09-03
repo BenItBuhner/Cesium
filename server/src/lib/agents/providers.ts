@@ -58,6 +58,7 @@ import {
   buildAntigravityAcpSpawnEnv,
   createGoogleAntigravityAcpConfigOptions,
 } from "./google-antigravity-acp.js";
+import { cleanupLegacyAntigravityWorkspaceArtifacts } from "./google-antigravity-legacy-cleanup.js";
 
 /**
  * Maps CLI-backed agent backends onto the harness runtime descriptor that
@@ -70,7 +71,6 @@ const BACKEND_HARNESS_CLI: Partial<Record<AgentBackendId, HarnessCliId>> = {
   "grok-build": "grok",
   "codex-app-server": "codex",
   "codex-acp": "codex",
-  "google-antigravity-cli": "google-antigravity",
   "google-antigravity-acp": "google-antigravity-acp",
   "claude-code-sdk": "claude",
   "cursor-acp": "cursor",
@@ -342,24 +342,6 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultModelId: "auto",
         defaultModelName: "Auto",
       });
-    case "google-antigravity-cli": {
-      const runtime = resolveHarnessRuntimeSpec("google-antigravity");
-      return createBackendInfo({
-        id: "google-antigravity-cli",
-        label: "Google Antigravity CLI (Legacy)",
-        description:
-          "Legacy Google Antigravity CLI (`agy`) terminal bridge - successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens. Prefer the official ACP transport.",
-        experimental: true,
-        commandPreview: runtime
-          ? `${runtime.commandPreview} interactive`
-          : "Antigravity CLI (agy) not found",
-        available: runtime !== null,
-        capabilities: AGENT_CAPABILITIES["google-antigravity-cli"],
-        defaultMode: "agent",
-        defaultModelId: "auto",
-        defaultModelName: "Auto",
-      });
-    }
     case "google-antigravity-acp": {
       const runtime = resolveHarnessRuntimeSpec("google-antigravity-acp");
       const defaultModel = ANTIGRAVITY_ACP_MODEL_CATALOG.find(
@@ -369,7 +351,7 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         id: "google-antigravity-acp",
         label: "Google Antigravity",
         description:
-          "Google's official Antigravity ACP server (`agy_acp_server` from the ACP Registry). Log in with Google (or Gemini Enterprise / API key) directly through the server; Cesium never brokers tokens.",
+          "Google's official Antigravity ACP server (`agy_acp_server` from the ACP Registry) - successor to Gemini CLI. Log in with Google (or Gemini Enterprise / API key) directly through the server; Cesium never brokers tokens.",
         experimental: true,
         commandPreview: runtime?.commandPreview ?? "Antigravity ACP server not installed",
         available: runtime !== null,
@@ -654,19 +636,6 @@ export async function createAgentProvider(
     });
   }
 
-  if (backendId === "google-antigravity-cli") {
-    const runtime = resolveHarnessRuntimeSpec("google-antigravity");
-    if (!runtime) {
-      throw new Error(`${backend.label} requires the agy binary to be installed and available on PATH.`);
-    }
-    const { createGoogleAntigravityCliProvider } = await import("./google-antigravity-cli-provider.js");
-    return createGoogleAntigravityCliProvider({
-      backend,
-      runtime,
-      configOptions: await readAgentBackendConfigCache(backendId),
-    });
-  }
-
   if (backendId === "google-antigravity-acp") {
     const detected = resolveHarnessRuntimeSpec("google-antigravity-acp");
     if (!detected) {
@@ -685,7 +654,23 @@ export async function createAgentProvider(
       cachedConfigOptions.length > 0
         ? cachedConfigOptions
         : createGoogleAntigravityAcpConfigOptions();
-    return createAcpProvider({ backend, runtime, seedConfigOptions });
+    const provider = createAcpProvider({ backend, runtime, seedConfigOptions });
+    // The retired `agy` terminal bridge injected hooks and MCP config into the
+    // workspace `.agents/` dir; strip them before the official server opens a
+    // session so tools are not double-registered and no stale hook fires.
+    const withCleanup = async <T,>(root: string, open: () => Promise<T>): Promise<T> => {
+      await cleanupLegacyAntigravityWorkspaceArtifacts(root).catch(() => undefined);
+      return open();
+    };
+    return {
+      backend: provider.backend,
+      startSession: (callbacks) =>
+        withCleanup(callbacks.workspace.root, () => provider.startSession(callbacks)),
+      loadSession: (callbacks, providerSessionId) =>
+        withCleanup(callbacks.workspace.root, () =>
+          provider.loadSession(callbacks, providerSessionId)
+        ),
+    };
   }
 
   throw new Error(`${backend.label} is not implemented yet.`);

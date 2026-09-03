@@ -176,8 +176,9 @@ test("roundtrip: exported snapshot imports cleanly on a fresh home", async () =>
 test("sync states cover every sync id and report sign-in presence", async () => {
   const states = await listHarnessAuthSyncStates();
   const bySyncId = new Map(states.map((state) => [state.syncId, state]));
-  assert.equal(bySyncId.size, 9);
+  assert.equal(bySyncId.size, 8);
   assert.ok(bySyncId.has("google-antigravity-acp"), "official ACP server has its own sync unit");
+  assert.ok(!bySyncId.has("google-antigravity"), "retired agy CLI sync unit is gone");
   assert.equal(bySyncId.get("codex")?.signedIn, true);
   assert.equal(bySyncId.get("codex")?.exportable, true);
   assert.equal(bySyncId.get("devin")?.signedIn, false);

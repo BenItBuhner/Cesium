@@ -1,6 +1,7 @@
 /**
  * Host-side CLI login / logout for harnesses that authenticate with their
- * own binary (Cursor ACP, Grok, Codex, OpenCode, Devin, Claude, Antigravity).
+ * own binary (Cursor ACP, Grok, Codex, OpenCode, Devin, Claude), plus the
+ * ACP-driven `authenticate` flow for Google's Antigravity ACP server.
  *
  * Spawns the vendor CLI on the server, scrapes device-auth URLs/codes from
  * stdout, and tracks the process until it exits so Settings can Sign in /
@@ -40,7 +41,6 @@ export type HarnessCliAuthBackendId =
   | "codex-app-server"
   | "codex-acp"
   | "claude-code-sdk"
-  | "google-antigravity-cli"
   | "google-antigravity-acp";
 
 export type HarnessCliAuthStatus =
@@ -176,19 +176,6 @@ const AUTH_SPECS: Record<HarnessCliAuthBackendId, AuthSpec> = {
     credentialRelPaths: [[".claude", ".credentials.json"], [".claude", "auth.json"]],
     loginCommand: "claude auth login",
     logoutCommand: "claude auth logout",
-  },
-  "google-antigravity-cli": {
-    backendId: "google-antigravity-cli",
-    harnessCliId: "google-antigravity",
-    loginArgs: ["auth", "login"],
-    logoutArgs: ["auth", "logout"],
-    credentialRelPaths: [
-      [".agents", "auth.json"],
-      [".antigravity", "auth.json"],
-      [".config", "antigravity", "auth.json"],
-    ],
-    loginCommand: "agy auth login",
-    logoutCommand: "agy auth logout",
   },
   "google-antigravity-acp": {
     backendId: "google-antigravity-acp",

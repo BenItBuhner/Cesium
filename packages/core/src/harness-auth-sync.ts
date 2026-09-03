@@ -3,7 +3,7 @@
  *
  * A snapshot captures the credential material one harness needs to be signed
  * in on an engine host: either the vendor CLI's credential files (Codex,
- * Claude, Cursor, Grok, OpenCode, Devin, Antigravity) or the Cesium Agent
+ * Claude, Cursor, Grok, OpenCode, Devin, Google's Antigravity ACP server) or the Cesium Agent
  * provider API keys. Snapshots are sealed client-side into
  * `cesium-secret.v1` AES-256-GCM envelopes (see `secret-envelope.ts`) before
  * they ever leave the device, and stored in the account secret vault under
@@ -19,7 +19,6 @@ export const HARNESS_AUTH_SYNC_IDS = [
   "opencode",
   "grok",
   "devin",
-  "google-antigravity",
   "google-antigravity-acp",
   "cesium-agent",
 ] as const;
@@ -33,7 +32,6 @@ export const HARNESS_AUTH_SYNC_LABELS: Record<HarnessAuthSyncId, string> = {
   opencode: "OpenCode",
   grok: "Grok",
   devin: "Devin",
-  "google-antigravity": "Google Antigravity CLI (Legacy)",
   "google-antigravity-acp": "Google Antigravity",
   "cesium-agent": "Cesium Agent API keys",
 };
@@ -78,7 +76,6 @@ const BACKEND_SYNC_IDS: Record<string, HarnessAuthSyncId> = {
   "opencode-server": "opencode",
   "grok-build": "grok",
   "devin-acp": "devin",
-  "google-antigravity-cli": "google-antigravity",
   "google-antigravity-acp": "google-antigravity-acp",
   "cesium-agent": "cesium-agent",
 };

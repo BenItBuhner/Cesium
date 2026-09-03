@@ -917,7 +917,8 @@ export function mergeWorkspaceSessionFromImport(
     "opencode-acp": "opencode-server",
     "opencode-v2-beta": "opencode-server",
     "codex-adapter": "codex-app-server",
-    "gemini-acp": "google-antigravity-cli",
+    "gemini-acp": "google-antigravity-acp",
+    "google-antigravity-cli": "google-antigravity-acp",
   };
   const importedChatBackendRawMapped =
     typeof importedChatBackendRaw === "string"

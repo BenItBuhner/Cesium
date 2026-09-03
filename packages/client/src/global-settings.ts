@@ -845,7 +845,8 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
     "opencode-acp": "opencode-server",
     "opencode-v2-beta": "opencode-server",
     "codex-adapter": "codex-app-server",
-    "gemini-acp": "google-antigravity-cli",
+    "gemini-acp": "google-antigravity-acp",
+    "google-antigravity-cli": "google-antigravity-acp",
   };
   const normalizeBackendId = (backendId: string): string =>
     REMEMBERED_PERMISSION_BACKEND_REMAP[backendId] ?? backendId;

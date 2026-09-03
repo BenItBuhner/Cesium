@@ -25,10 +25,6 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   "devin-acp": { light: "Devin-Light.svg", dark: "Devin-Dark.svg" },
   "grok-build": { light: "Grok-Light.svg", dark: "Grok-Dark.svg" },
   "pi-agent": { light: "Pi-Light.svg", dark: "Pi-Dark.svg" },
-  "google-antigravity-cli": {
-    light: "Antigravity-Light.svg",
-    dark: "Antigravity-Dark.svg",
-  },
   "google-antigravity-acp": {
     light: "Antigravity-Light.svg",
     dark: "Antigravity-Dark.svg",

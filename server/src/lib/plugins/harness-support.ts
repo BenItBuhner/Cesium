@@ -68,14 +68,6 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     attachment: "acp-mcp",
     notes: "Grok Build ACP sessions receive MCP servers through the native mcpServers array.",
   },
-  "google-antigravity-cli": {
-    backendId: "google-antigravity-cli",
-    nativeMcp: true,
-    promptSkills: true,
-    attachment: "workspace-mcp-config",
-    notes:
-      "Antigravity reads workspace .agents/mcp_config.json. Cesium syncs plugin MCP servers there automatically.",
-  },
   "google-antigravity-acp": {
     backendId: "google-antigravity-acp",
     nativeMcp: true,

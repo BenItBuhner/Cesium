@@ -427,7 +427,7 @@ test("importer works for every harness backend with local storage", async () => 
     ["codex-app-server", CODEX_THREAD_ID, "17 times 23"],
     ["opencode-server", OPENCODE_SESSION_ID, "Orange"],
     ["pi-agent", PI_SESSION_ID, "Jupiter"],
-    ["google-antigravity-cli", GEMINI_SESSION_ID, "Granite shoulders"],
+    ["google-antigravity-acp", GEMINI_SESSION_ID, "Granite shoulders"],
   ];
   for (const [backendId, sessionId, needle] of cases) {
     const source = getImportSourceForBackend(backendId);

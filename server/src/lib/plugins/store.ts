@@ -15,8 +15,6 @@ import type {
   AgentPluginPublic,
   AgentPluginsFile,
 } from "./types.js";
-import { syncWorkspaceAntigravityMcpConfig } from "./workspace-mcp-sync.js";
-
 function emptyPluginsFile(): AgentPluginsFile {
   return {
     schemaVersion: 1,
@@ -170,15 +168,6 @@ export async function installAgentPlugin(
   return saved!;
 }
 
-async function maybeSyncAntigravityMcp(workspaceId: string, workspaceRoot?: string): Promise<void> {
-  if (!workspaceRoot?.trim()) return;
-  try {
-    await syncWorkspaceAntigravityMcpConfig({ workspaceId, workspaceRoot });
-  } catch {
-    // Workspace root may be unavailable during pure unit tests; harness resolve path retries.
-  }
-}
-
 export async function setAgentPluginEnabled(
   workspaceId: string,
   pluginId: string,
@@ -274,8 +263,7 @@ function pluginMcpServerId(
 export async function syncAgentPluginMcpServers(
   workspaceId: string,
   definition: AgentPluginDefinition,
-  enabled: boolean,
-  workspaceRoot?: string
+  enabled: boolean
 ): Promise<McpServerConfig[]> {
   const saved: McpServerConfig[] = [];
   for (const contribution of definition.mcp) {
@@ -312,6 +300,5 @@ export async function syncAgentPluginMcpServers(
     });
     saved.push(next);
   }
-  await maybeSyncAntigravityMcp(workspaceId, workspaceRoot);
   return saved;
 }

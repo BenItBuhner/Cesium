@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
 import {
@@ -20,7 +19,6 @@ import { harnessLog } from "./harness-diagnostics.js";
 import {
   buildHarnessInvocation,
   detectHarnessCli,
-  harnessHomeDirCandidates,
   refreshHarnessCliDetection,
 } from "./harness-runtime.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
@@ -33,6 +31,7 @@ import {
 } from "./opencode-generation.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
 import { LEGACY_MODE_CONFIG_ID } from "./config-option-parse.js";
+import { createGoogleAntigravityAcpConfigOptions } from "./google-antigravity-acp.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
 
 type AgentBackendCacheRecord = {
@@ -1399,82 +1398,6 @@ async function createPiAgentConfigOptions(): Promise<AgentConfigOption[]> {
   return buildPiAgentSeedConfigOptions();
 }
 
-async function createGoogleAntigravityCliConfigOptions(): Promise<AgentConfigOption[]> {
-  // Settings can live under an overridden or conventional home (packaged
-  // launches rewrite HOME), so every home candidate is checked.
-  let settings: Record<string, unknown> | null = null;
-  for (const home of harnessHomeDirCandidates()) {
-    const settingsPath = path.join(home, ".gemini", "antigravity-cli", "settings.json");
-    settings = await readJsonFile<Record<string, unknown> | null>(settingsPath, null).catch(
-      () => null
-    );
-    if (settings) {
-      break;
-    }
-  }
-  const configuredModel = typeof settings?.model === "string" && settings.model.trim()
-    ? settings.model.trim()
-    : "auto";
-  const configuredPermission =
-    typeof settings?.toolPermission === "string" && settings.toolPermission.trim()
-      ? settings.toolPermission.trim()
-      : "request-review";
-
-  const modelOptions: AgentConfigOptionValue[] = [
-    { value: "auto", name: "Auto" },
-    configuredModel !== "auto"
-      ? { value: configuredModel, name: configuredModel }
-      : null,
-    { value: "gemini-3-pro", name: "Gemini 3 Pro" },
-    { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-  ].filter((option): option is AgentConfigOptionValue => option !== null);
-  const uniqueModelOptions = Array.from(
-    new Map(modelOptions.map((option) => [option.value, option])).values()
-  );
-
-  return [
-    {
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      currentValue: "agent",
-      options: [
-        { value: "agent", name: "Agent" },
-        { value: "plan", name: "Plan" },
-        { value: "ask", name: "Ask" },
-      ],
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      currentValue: configuredModel,
-      description:
-        "Seeded from Antigravity CLI settings when available. The agy CLI owns the final model selection.",
-      options: uniqueModelOptions,
-    },
-    {
-      id: "permission",
-      name: "Tool permission",
-      category: "permission",
-      currentValue: ["request-review", "proceed-in-sandbox", "always-proceed", "strict"].includes(
-        configuredPermission
-      )
-        ? configuredPermission
-        : "request-review",
-      description:
-        "Mapped to Antigravity CLI permission settings; OpenCursor does not manage Google OAuth tokens.",
-      options: [
-        { value: "request-review", name: "Request review" },
-        { value: "proceed-in-sandbox", name: "Proceed in sandbox" },
-        { value: "always-proceed", name: "Always proceed" },
-        { value: "strict", name: "Strict" },
-      ],
-    },
-  ];
-}
-
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
     case "cesium-agent":
@@ -1503,8 +1426,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createClaudeCodeSdkConfigOptions();
     case "pi-agent":
       return createPiAgentConfigOptions();
-    case "google-antigravity-cli":
-      return createGoogleAntigravityCliConfigOptions();
+    case "google-antigravity-acp":
+      return createGoogleAntigravityAcpConfigOptions();
     default:
       return [];
   }

@@ -53,7 +53,6 @@ export const IMPORTABLE_BACKEND_IDS: AgentBackendId[] = [
   "codex-app-server",
   "opencode-server",
   "google-antigravity-acp",
-  "google-antigravity-cli",
   "pi-agent",
   "cursor-sdk",
   "cursor-acp",

@@ -17,45 +17,35 @@ import {
   getSlashMenuSections,
 } from "../packages/core/src/composer-suggestions.ts";
 
-test("google-antigravity-acp is the default Antigravity transport with the agy CLI kept as Legacy", () => {
+test("google-antigravity-acp is the only Antigravity transport; the agy CLI id is retired", () => {
   const id: AgentBackendId = "google-antigravity-acp";
   assert.ok((ACTIVE_AGENT_BACKEND_IDS as readonly string[]).includes(id));
+  assert.ok(!(ACTIVE_AGENT_BACKEND_IDS as readonly string[]).includes("google-antigravity-cli"));
   const family = harnessFamilyForBackend(id);
   assert.equal(family?.id, "antigravity");
   assert.equal(family?.settingsId, "google-antigravity-acp");
   assert.equal(family?.defaultTransportId, "acp");
   assert.deepEqual(
     family?.transports.map((transport) => [transport.id, transport.backendId, transport.label]),
-    [
-      ["acp", "google-antigravity-acp", "ACP"],
-      ["cli", "google-antigravity-cli", "CLI (Legacy)"],
-    ]
+    [["acp", "google-antigravity-acp", "ACP"]]
   );
+  assert.equal(harnessFamilyForBackend("google-antigravity-cli"), null);
   assert.equal(resolvePreferredHarnessBackendId(family!), "google-antigravity-acp");
 
-  const switched = applyHarnessFamilyTransport({}, family!, "cli");
-  assert.equal(switched.harnessTransports.antigravity, "cli");
-  assert.equal(resolvePreferredHarnessBackendId(family!, switched), "google-antigravity-cli");
+  // A stale `antigravity` transport preference from the two-transport era is dropped.
   assert.deepEqual(normalizeHarnessTransports({ antigravity: "cli", cursor: "acp", bogus: 1 }), {
     cursor: "acp",
-    antigravity: "cli",
   });
-  assert.deepEqual(normalizeHarnessTransports({ antigravity: "sdk" }), {});
+  const switched = applyHarnessFamilyTransport({}, family!, "acp");
+  assert.deepEqual(switched.harnessTransports, {});
+  assert.equal(resolvePreferredHarnessBackendId(family!, switched), "google-antigravity-acp");
 
-  // One picker row per family; the stored transport picks the CLI sibling.
   const backends = [
     { id: "google-antigravity-acp", label: "Google Antigravity", enabled: true },
-    { id: "google-antigravity-cli", label: "Google Antigravity CLI (Legacy)", enabled: true },
   ];
   assert.deepEqual(
-    composerVisibleHarnesses(backends).map((entry) => entry.id),
-    ["google-antigravity-acp"]
-  );
-  assert.deepEqual(
-    composerVisibleHarnesses(backends, { harnessTransports: { antigravity: "cli" } }).map(
-      (entry) => entry.id
-    ),
-    ["google-antigravity-cli"]
+    composerVisibleHarnesses(backends).map((entry) => [entry.id, entry.label]),
+    [["google-antigravity-acp", "Google Antigravity"]]
   );
 });
 
@@ -64,7 +54,7 @@ test("google-antigravity-acp frontend wiring: icon, subagent classifier, auth sy
   assert.equal(hasAgentBackendIconAsset(id), true);
   assert.equal(typeof SUBAGENT_TOOL_CALL_CLASSIFIERS[id], "function");
   assert.equal(harnessAuthSyncIdForBackend(id), "google-antigravity-acp");
-  assert.equal(harnessAuthSyncIdForBackend("google-antigravity-cli"), "google-antigravity");
+  assert.equal(harnessAuthSyncIdForBackend("google-antigravity-cli"), null);
 });
 
 test("agent-advertised slash commands appear in the composer Commands section as inserts", () => {

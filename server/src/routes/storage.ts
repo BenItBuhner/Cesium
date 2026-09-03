@@ -281,7 +281,6 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
     "codex-acp",
     "claude-code-sdk",
     "pi-agent",
-    "google-antigravity-cli",
     "google-antigravity-acp",
   ] as const) {
     const entry = await driver.readProviderCache(backendId);
@@ -346,7 +345,6 @@ function isAgentBackendId(value: string): boolean {
     value === "codex-acp" ||
     value === "claude-code-sdk" ||
     value === "pi-agent" ||
-    value === "google-antigravity-cli" ||
     value === "google-antigravity-acp"
   );
 }

@@ -2537,7 +2537,6 @@ export type HarnessCliAuthBackendId =
   | "codex-app-server"
   | "codex-acp"
   | "claude-code-sdk"
-  | "google-antigravity-cli"
   | "google-antigravity-acp";
 
 /** One `authenticate` method an ACP-driven harness (Google Antigravity) offers. */
@@ -2591,7 +2590,6 @@ export function isHarnessCliAuthBackendId(
     backendId === "codex-app-server" ||
     backendId === "codex-acp" ||
     backendId === "claude-code-sdk" ||
-    backendId === "google-antigravity-cli" ||
     backendId === "google-antigravity-acp"
   );
 }

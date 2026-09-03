@@ -54,7 +54,6 @@ export const HARNESS_PROBE_BACKENDS: AgentBackendId[] = [
   "grok-build",
   "pi-agent",
   "google-antigravity-acp",
-  "google-antigravity-cli",
 ];
 
 export type HarnessProbeChecklistItem = {
