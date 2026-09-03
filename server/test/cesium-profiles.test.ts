@@ -101,6 +101,8 @@ test("work and minimal bases produce distinct prompts that keep a persona sectio
   }
   // The work persona drops the coding-first framing in favor of general work.
   assert.ok(!work.includes("sole software developer"));
+  assert.ok(code.includes("conversation_title"));
+  assert.ok(work.includes("conversation_title"));
 });
 
 // ---------------------------------------------------------------------------

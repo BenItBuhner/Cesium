@@ -504,6 +504,31 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "conversation_title",
+    description:
+      "Read or rename this conversation's display title. action=read returns the current name; action=rename sets title. Optional follow=true keeps a tiny reminder to refresh the name when the topic changes (only if the user asked to keep it updated); follow=false turns that off. Use only when the user wants the title changed — do not rename unprompted.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["read", "rename"],
+          description: "read inspects the current title; rename writes a new one.",
+        },
+        title: {
+          type: "string",
+          description: "New display name (required for rename). Keep it short.",
+        },
+        follow: {
+          type: "boolean",
+          description:
+            "When true, keep updating the title as work evolves if the user asked for that. When false, only rename when asked again.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "switch_branch",
     description:
       "Switch this workspace's checked-out git branch (set create=true to branch off the current HEAD). Refuses when the tree is dirty; use create_worktree instead for parallel work. The next reminder reflects the new location - re-verify paths after switching.",
@@ -1063,6 +1088,7 @@ export function toolKind(
     case "list_conversations":
     case "read_conversation":
     case "search_conversations":
+    case "conversation_title":
       return "search";
     case "memory":
       return "memory";
@@ -1267,6 +1293,14 @@ export function toolTitle(
       return `Read conversation ${asString(args.conversationId) ?? ""}`.trim();
     case "search_conversations":
       return `Search conversations for ${asString(args.query) ?? ""}`.trim();
+    case "conversation_title": {
+      const action = asString(args.action)?.trim().toLowerCase();
+      const title = asString(args.title);
+      if (action === "rename" || title) {
+        return title ? `Rename conversation to ${title}` : "Rename conversation";
+      }
+      return "Read conversation title";
+    }
     case "switch_branch":
       return `Switch to branch ${asString(args.branch) ?? ""}`.trim();
     case "create_worktree":

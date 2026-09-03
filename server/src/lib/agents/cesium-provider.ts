@@ -15,7 +15,9 @@ import {
 } from "../git-worktrees.js";
 import { listWorkspaces } from "../workspace-registry.js";
 import {
+  applyConversationTitleAction,
   listConversationsForAgent,
+  parseConversationTitleToolArgs,
   readConversationTranscriptForAgent,
   searchConversationsForAgent,
 } from "./cesium/cesium-conversation-tools.js";
@@ -954,6 +956,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           handoffPlanPath: input.planHandoff?.planPath,
           goalSummary: goalState ? formatGoalForModel(goalState) : null,
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
+          conversationTitle: this.callbacks.conversation.title,
+          conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
         }),
         featureReminder
           ? `<harness-features>\n${featureReminder}\n</harness-features>`
@@ -2396,6 +2400,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "search_conversations":
           result = await this.toolSearchConversations(request.arguments);
           break;
+        case "conversation_title":
+          result = await this.toolConversationTitle(request.arguments);
+          break;
         case "memory":
           result = await this.toolMemory(request.arguments);
           break;
@@ -3233,6 +3240,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
       mcpSummaries: [],
+      conversationTitle: this.callbacks.conversation.title,
+      conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
     });
     const targetMessageId = this.activeUserMessageId;
     if (targetMessageId) {
@@ -4545,6 +4554,30 @@ class CesiumSessionHandle implements AgentSessionHandle {
       conversationId: asString(args.conversationId),
       maxResults: asNumber(args.maxResults),
     });
+  }
+
+  /** Read or rename this conversation's display title; optional follow flag. */
+  private async toolConversationTitle(args: Record<string, unknown>): Promise<string> {
+    const parsed = parseConversationTitleToolArgs(args);
+    const current = this.callbacks.conversation;
+    const applied = applyConversationTitleAction({
+      currentTitle: current.title,
+      currentFollow: Boolean(current.config.titleFollow),
+      action: parsed.action,
+      title: parsed.title,
+      follow: parsed.follow,
+    });
+    if (applied.changed) {
+      await this.callbacks.updateConversation((record) => ({
+        ...record,
+        title: applied.nextTitle,
+        config: {
+          ...record.config,
+          titleFollow: applied.nextFollow,
+        },
+      }));
+    }
+    return applied.result;
   }
 
   /** Curated persistent memory: save/search/list/forget over bounded JSON stores. */

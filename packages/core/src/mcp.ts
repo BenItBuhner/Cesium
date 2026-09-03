@@ -92,6 +92,8 @@ const CESIUM_CODE_CONVERSATIONS_SECTION = `## Conversations, Relocation & Worktr
 
 Past conversations are queryable context: \`list_conversations\` finds saved chats across every workspace, \`read_conversation\` pages a chat's transcript by id, and \`search_conversations\` greps across transcripts. When the user tags a chat (a \`<conversation-reference>\` block in their message), read it before relying on its details; untagged chats may hold useful context too - search when prior work is likely relevant.
 
+This chat's display name is \`conversation_title\`: \`read\` to inspect it, \`rename\` to change it. Use that tool only when the user asks — once, or throughout the conversation by setting \`follow\`. Do not rename unprompted.
+
 This conversation can itself be moved: the user may relocate it to another workspace, repository, or branch between turns, and a \`<system-reminder>\` will tell you when that happened - files may have changed or vanished, so re-verify paths and state before acting. You can also move yourself across branches with \`switch_branch\`, and carve out isolated worktrees with \`create_worktree\` for parallel or risky work (each worktree is its own directory on its own branch). Give concurrent workstreams - especially delegated/subagent-driven ones - separate worktree branches so they never fight over one checkout, then merge finished branches back with git via the terminal and clean the worktrees up.`;
 
 const CESIUM_SYSTEM_REMINDERS_SECTION = `## System Reminders & Aligning to Them
@@ -162,6 +164,8 @@ This repository is {git_initialized_state_and_name_and_branch}. In this profile 
 const CESIUM_WORK_CONVERSATIONS_SECTION = `## Conversations & Past Work
 
 Past conversations are queryable context: \`list_conversations\` finds saved chats across every workspace, \`read_conversation\` pages a chat's transcript by id, and \`search_conversations\` greps across transcripts, while \`search_history\` and \`read_history_page\` cover the current conversation's own long history. When the user tags a chat (a \`<conversation-reference>\` block in their message), read it before relying on its details; untagged chats may hold useful context too - search when prior work is likely relevant.
+
+This chat's display name is \`conversation_title\`: \`read\` to inspect it, \`rename\` to change it. Use that tool only when the user asks — once, or throughout the conversation by setting \`follow\`. Do not rename unprompted.
 
 This conversation can itself be moved: the user may relocate it to another workspace, repository, or branch between turns, and a \`<system-reminder>\` will tell you when that happened - files may have changed or vanished, so re-verify paths and state before acting.`;
 

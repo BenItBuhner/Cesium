@@ -23,6 +23,7 @@ const READ_ONLY_TOOLS = new Set([
   "list_conversations",
   "read_conversation",
   "search_conversations",
+  "conversation_title",
   "ask_question",
   "subagent",
   "read_subagent_transcript",
@@ -160,6 +161,7 @@ export function resolveCesiumModeToolPolicy(input: {
       name === "list_conversations" ||
       name === "read_conversation" ||
       name === "search_conversations" ||
+      name === "conversation_title" ||
       name === "todo" ||
       name === "wait" ||
       name === "subagent" ||
