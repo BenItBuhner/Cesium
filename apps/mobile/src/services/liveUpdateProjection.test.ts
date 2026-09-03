@@ -13,6 +13,10 @@ const baseProjection: MobileAgentProjection = {
   currentTodoId: null,
   currentTodo: null,
   pendingIntervention: null,
+  pendingPermissionRequestId: null,
+  pendingPermissionAllowOptionId: null,
+  pendingPermissionDenyOptionId: null,
+  pendingQuestionId: null,
   startedAt: 1_000,
   updatedAt: 2_000,
   completedAt: null,
@@ -92,6 +96,49 @@ test("pending intervention outranks the todo fraction in the chip", () => {
   assert.equal(payload.progressKind, "todo");
   assert.equal(payload.shortText, "INPUT");
   assert.equal(payload.progressLabel, "1/4");
+});
+
+test("permission quick-action ids ride along while the run is blocked", () => {
+  const payload = toLiveUpdatePayload({
+    ...todoProjection,
+    status: "awaiting_permission",
+    pendingIntervention: "permission",
+    pendingPermissionRequestId: "req-1",
+    pendingPermissionAllowOptionId: "opt-allow",
+    pendingPermissionDenyOptionId: "opt-deny",
+  });
+
+  assert.equal(payload.permissionRequestId, "req-1");
+  assert.equal(payload.permissionAllowOptionId, "opt-allow");
+  assert.equal(payload.permissionDenyOptionId, "opt-deny");
+  assert.equal(payload.questionId, null);
+});
+
+test("question id rides along while the run awaits an answer", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "awaiting_question",
+    pendingIntervention: "question",
+    pendingQuestionId: "question-7",
+  });
+
+  assert.equal(payload.questionId, "question-7");
+  assert.equal(payload.permissionRequestId, null);
+});
+
+test("terminal payloads never carry quick-action ids", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "completed",
+    pendingIntervention: null,
+    pendingPermissionRequestId: "req-stale",
+    pendingPermissionAllowOptionId: "opt-stale",
+    pendingQuestionId: "question-stale",
+  });
+
+  assert.equal(payload.permissionRequestId, undefined);
+  assert.equal(payload.permissionAllowOptionId, undefined);
+  assert.equal(payload.questionId, undefined);
 });
 
 test("pending question text outranks the goal headline in the body", () => {

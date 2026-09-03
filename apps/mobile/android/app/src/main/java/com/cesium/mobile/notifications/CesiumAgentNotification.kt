@@ -151,11 +151,41 @@ object CesiumAgentNotification {
 
     addAction(builder, context, extras, "open", "Open")
     val intervention = extras.getString("intervention")
-    if (intervention == "permission" || intervention == "question") {
-      addAction(builder, context, extras, "respond", "Respond")
-    }
-    if (extras.getBoolean("cancellable", false)) {
-      addAction(builder, context, extras, "cancel", "Cancel")
+    val hasPermissionQuickActions =
+      intervention == "permission" &&
+        !extras.getString("permissionRequestId").isNullOrBlank() &&
+        !extras.getString("permissionAllowOptionId").isNullOrBlank()
+    val hasQuestionReply =
+      intervention == "question" && !extras.getString("questionId").isNullOrBlank()
+    when {
+      // One-tap permission answers straight from the shade. Android renders at
+      // most three actions, so Allow/Deny take the two remaining slots; the
+      // run can still be cancelled after opening the app.
+      hasPermissionQuickActions -> {
+        addQuickAction(builder, context, extras, "allow_permission", "Allow")
+        if (!extras.getString("permissionDenyOptionId").isNullOrBlank()) {
+          addQuickAction(builder, context, extras, "deny_permission", "Deny")
+        }
+      }
+      hasQuestionReply -> {
+        addReplyAction(builder, context, extras)
+        if (extras.getBoolean("cancellable", false)) {
+          addAction(builder, context, extras, "cancel", "Cancel")
+        }
+      }
+      // Older web bundles do not ship the quick-action ids; fall back to a
+      // Respond button that just opens the conversation.
+      intervention == "permission" || intervention == "question" -> {
+        addAction(builder, context, extras, "respond", "Respond")
+        if (extras.getBoolean("cancellable", false)) {
+          addAction(builder, context, extras, "cancel", "Cancel")
+        }
+      }
+      else -> {
+        if (extras.getBoolean("cancellable", false)) {
+          addAction(builder, context, extras, "cancel", "Cancel")
+        }
+      }
     }
 
     return builder.build()
@@ -268,6 +298,81 @@ object CesiumAgentNotification {
     )
   }
 
+  /**
+   * Action answered in the background by [CesiumNotificationQuickActionReceiver]
+   * (HTTP call against the workbench server) - the app never opens.
+   */
+  private fun addQuickAction(
+    builder: NotificationCompat.Builder,
+    context: Context,
+    extras: Bundle,
+    quickAction: String,
+    title: String
+  ) {
+    builder.addAction(
+      NotificationCompat.Action.Builder(
+        android.R.drawable.ic_menu_view,
+        title,
+        quickActionIntent(context, extras, quickAction, mutable = false)
+      ).build()
+    )
+  }
+
+  /** Inline reply for a pending agent question, answered without opening the app. */
+  private fun addReplyAction(
+    builder: NotificationCompat.Builder,
+    context: Context,
+    extras: Bundle
+  ) {
+    val remoteInput = androidx.core.app.RemoteInput.Builder(REMOTE_INPUT_KEY)
+      .setLabel("Answer")
+      .build()
+    builder.addAction(
+      NotificationCompat.Action.Builder(
+        android.R.drawable.ic_menu_send,
+        "Reply",
+        // RemoteInput results are appended by the system, so the intent must
+        // be mutable (mandatory distinction since Android 12).
+        quickActionIntent(context, extras, "reply_question", mutable = true)
+      )
+        .addRemoteInput(remoteInput)
+        .setAllowGeneratedReplies(false)
+        .build()
+    )
+  }
+
+  private fun quickActionIntent(
+    context: Context,
+    extras: Bundle,
+    quickAction: String,
+    mutable: Boolean
+  ): PendingIntent {
+    val runKey = extras.getString("runKey") ?: ""
+    val intent = Intent(context, CesiumNotificationQuickActionReceiver::class.java).apply {
+      action = CesiumNotificationQuickActionReceiver.ACTION_QUICK_ACTION
+      // Carry the FULL payload so the receiver can repost an updated
+      // notification (and keep the state store coherent) after answering.
+      putExtras(extras)
+      putExtra("quickAction", quickAction)
+    }
+    // RemoteInput needs a mutable PendingIntent on EVERY API level: the
+    // system appends the typed reply to the intent. FLAG_MUTABLE only exists
+    // since 31; before that "no flag" is mutable, and passing FLAG_IMMUTABLE
+    // (added in 23) silently prevents the reply from ever being attached.
+    val mutabilityFlag =
+      when {
+        !mutable -> PendingIntent.FLAG_IMMUTABLE
+        Build.VERSION.SDK_INT >= 31 -> PendingIntent.FLAG_MUTABLE
+        else -> 0
+      }
+    return PendingIntent.getBroadcast(
+      context,
+      requestCode(runKey, quickAction),
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or mutabilityFlag
+    )
+  }
+
   private fun openIntent(context: Context, extras: Bundle, action: String): PendingIntent {
     val runKey = extras.getString("runKey") ?: ""
     val intent = Intent(context, MainActivity::class.java).apply {
@@ -319,6 +424,9 @@ object CesiumAgentNotification {
   }
 
   private const val MAX_PROGRESS_SEGMENTS = 100
+
+  /** RemoteInput result key for the inline question reply. */
+  const val REMOTE_INPUT_KEY = "cesium_remote_reply"
 }
 
 /**

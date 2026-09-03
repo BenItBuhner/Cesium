@@ -32,6 +32,18 @@ export function toLiveUpdatePayload(
   const etaMode = options.etaMode ?? "goal";
   const active = isMobileAgentRunActive(projection.status);
   const runKey = getLiveUpdateRunKey(projection);
+  // Quick-action identifiers ride along only while the run is actually
+  // blocked: a terminal notification must never offer Allow/Reply buttons
+  // for a request that no longer exists.
+  const interventionIds =
+    active && projection.pendingIntervention != null
+      ? {
+          permissionRequestId: projection.pendingPermissionRequestId ?? null,
+          permissionAllowOptionId: projection.pendingPermissionAllowOptionId ?? null,
+          permissionDenyOptionId: projection.pendingPermissionDenyOptionId ?? null,
+          questionId: projection.pendingQuestionId ?? null,
+        }
+      : {};
   if (!active) {
     // Terminal notifications state the outcome plainly. currentActivity is
     // stale once the run ends (it can even be a raw tool-call payload like
@@ -112,6 +124,7 @@ export function toLiveUpdatePayload(
         ? toRemainingSeconds(goal.estimatedRemainingMs)
         : null,
       intervention: projection.pendingIntervention,
+      ...interventionIds,
       ongoing: true,
       cancellable: true,
       promote: true,
@@ -156,6 +169,7 @@ export function toLiveUpdatePayload(
         ? toRemainingSeconds(todo.estimatedRemainingMs)
         : null,
       intervention: projection.pendingIntervention,
+      ...interventionIds,
       ongoing: true,
       cancellable: true,
       promote: true,
@@ -176,6 +190,7 @@ export function toLiveUpdatePayload(
     progressMax: 100,
     indeterminate: true,
     intervention: projection.pendingIntervention,
+    ...interventionIds,
     ongoing: true,
     cancellable: true,
     promote: true,

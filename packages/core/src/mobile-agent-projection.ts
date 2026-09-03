@@ -2,6 +2,8 @@ import type {
   AgentConversationRecord,
   AgentConversationStatus,
   AgentPendingPermission,
+  AgentPermissionOption,
+  AgentPermissionOptionKind,
   AgentPlanEntry,
   AgentStoredEvent,
   AgentToolLocation,
@@ -40,6 +42,16 @@ export type MobileAgentProjection = {
   currentTodoId: string | null;
   currentTodo: string | null;
   pendingIntervention: MobilePendingIntervention;
+  /**
+   * Identifiers needed to answer the pending intervention WITHOUT opening the
+   * app (notification quick actions, watch shortcuts). The allow/deny option
+   * ids are pre-resolved here because the notification layer has no access to
+   * the full option list; null when the pending request has no matching kind.
+   */
+  pendingPermissionRequestId: string | null;
+  pendingPermissionAllowOptionId: string | null;
+  pendingPermissionDenyOptionId: string | null;
+  pendingQuestionId: string | null;
   startedAt: number | null;
   updatedAt: number;
   completedAt: number | null;
@@ -136,6 +148,16 @@ export function deriveMobileAgentProjection(
       : conversation.pendingQuestion
         ? "question"
         : null,
+    pendingPermissionRequestId: conversation.pendingPermission?.requestId ?? null,
+    pendingPermissionAllowOptionId: pickPermissionOptionId(
+      conversation.pendingPermission?.options,
+      ["allow_once", "allow_always"]
+    ),
+    pendingPermissionDenyOptionId: pickPermissionOptionId(
+      conversation.pendingPermission?.options,
+      ["reject_once", "reject_always"]
+    ),
+    pendingQuestionId: conversation.pendingQuestion?.questionId ?? null,
     startedAt,
     updatedAt: conversation.updatedAt,
     completedAt,
@@ -144,6 +166,27 @@ export function deriveMobileAgentProjection(
     todoProgress,
     goalProgress,
   };
+}
+
+/**
+ * Resolves the option a one-tap notification button should answer with. The
+ * kinds are tried in order so a bare "allow"/"reject" button maps onto the
+ * least-privileged matching option (once before always).
+ */
+function pickPermissionOptionId(
+  options: AgentPermissionOption[] | undefined,
+  kinds: AgentPermissionOptionKind[]
+): string | null {
+  if (!options || options.length === 0) {
+    return null;
+  }
+  for (const kind of kinds) {
+    const match = options.find((option) => option.kind === kind);
+    if (match) {
+      return match.optionId;
+    }
+  }
+  return null;
 }
 
 function isBusyConversationStatus(status: AgentConversationStatus): boolean {

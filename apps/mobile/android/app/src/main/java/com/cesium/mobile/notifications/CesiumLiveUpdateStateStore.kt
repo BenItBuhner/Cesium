@@ -28,7 +28,11 @@ object CesiumLiveUpdateStateStore {
     "conversationId",
     "progressKind",
     "progressLabel",
-    "intervention"
+    "intervention",
+    "permissionRequestId",
+    "permissionAllowOptionId",
+    "permissionDenyOptionId",
+    "questionId"
   )
   private val longKeys = listOf("startedAt")
   private val intKeys = listOf(

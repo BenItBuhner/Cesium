@@ -93,6 +93,21 @@ class CesiumAndroidRuntimeModule(
   }
 
   override fun onNewIntent(intent: Intent) {
+    if (!reactContext.hasActiveReactInstance()) {
+      return
+    }
+    // A notification tap can land while the activity is already resumed and
+    // top-most (shade pulled down over the running app). AppState never flips
+    // in that case, so JS would not poll `consumeInitialNotificationAction`
+    // on its own - nudge it. MainActivity stages the intent in
+    // CesiumNotificationIntentStore before super.onNewIntent() reaches this
+    // listener.
+    if (intent.getStringExtra("cesiumAction") != null) {
+      reactContext
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(NOTIFICATION_ACTION_EVENT, null)
+      return
+    }
     // A share can arrive while the activity is already resumed and top-most
     // (e.g. sharing from a split-screen or freeform-window app). AppState never
     // flips in that case, so JS would not poll `consumeSharedPayload` on its
@@ -100,9 +115,6 @@ class CesiumAndroidRuntimeModule(
     // before super.onNewIntent() reaches this listener.
     val action = intent.action
     if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
-      return
-    }
-    if (!reactContext.hasActiveReactInstance()) {
       return
     }
     reactContext
@@ -314,6 +326,9 @@ class CesiumAndroidRuntimeModule(
 
     /** DeviceEventEmitter event telling JS a share intent is waiting in the store. */
     const val SHARE_INTAKE_EVENT = "cesiumShareIntakeAvailable"
+
+    /** DeviceEventEmitter event telling JS a notification action is waiting in the store. */
+    const val NOTIFICATION_ACTION_EVENT = "cesiumNotificationActionAvailable"
     private const val MAX_SHARED_FILE_BYTES = 25 * 1024 * 1024
   }
 }
