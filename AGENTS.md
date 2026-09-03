@@ -40,6 +40,20 @@ handles the first two, but you must repeat them by hand if you re-run installs):
  unavailable; sending a chat without a configured backend surfaces a
  "Compilation failed / Provider responded" toast. This is expected, not an
  environment break.
+- **Google Antigravity (`google-antigravity-acp`) uses Google's official ACP
+ server**, not the `agy` CLI. To test it live: download the Linux build from the
+ ACP Registry manifest (`agentclientprotocol/registry/antigravity-acp/agent.json`,
+ ~680 MB zip / ~1.9 GB extracted; the Settings -> Agents install button does the
+ same), then `export OPENCURSOR_ANTIGRAVITY_ACP_BIN=/path/to/agy_acp_server.par`
+ before `npm run dev:server`. Detection also finds it under
+ `{DATA_DIR}/tools/antigravity-acp/current/` and Zed's
+ `~/.local/share/zed/external_agents/registry/antigravity-acp/*/`. Google OAuth
+ needs a browser that can reach `127.0.0.1:<port>` on this host, so on the cloud
+ VM use the headless `gemini-api-key` method instead: set `GEMINI_API_KEY` (a
+ Cloud Agent secret works) and the bootstrap authenticates automatically. State
+ lives under `$GEMINI_HOME/antigravity-acp/` (`OPENCURSOR_ANTIGRAVITY_ACP_HOME`
+ isolates it). Without a key, `session/new` fails with `-32000 Authentication
+ required`, which Cesium surfaces as a "not signed in" system error.
 - **Cloud (Convex + Clerk) config resolution** is env vars first, then the
  committed defaults in `src/lib/cloud/cloud-defaults.ts`; every client has a
  runtime local-only toggle (Settings → Account → Cloud sync). To test cloud
