@@ -352,7 +352,9 @@ function acpAuthState(
     loginCommand: spec.loginCommand,
     logoutCommand: spec.logoutCommand,
     authMethods: acpAuthMethodInfos(),
-    authMethodId: login.methodId ?? signIn?.configuredAuthType ?? null,
+    // The method recorded on disk is what sessions actually use; an in-flight
+    // login only becomes "current" once it succeeds and the server records it.
+    authMethodId: signIn?.configuredAuthType ?? login.methodId ?? null,
     callbackPort: login.callbackPort,
     callbackRelayed: login.callbackRelayed,
     apiKeyAvailable: signIn?.apiKeyAvailable,
