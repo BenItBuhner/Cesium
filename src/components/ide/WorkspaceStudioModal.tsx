@@ -2,6 +2,7 @@
 
 import { ArrowLeft, Folder, FolderGit2 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { browseWorkspaceHostDirectories } from "@/lib/server-api";
 import type { WorkspaceRecord } from "@/lib/types";
@@ -33,6 +34,7 @@ export function WorkspaceStudioModal({
     openFolder,
     workspaces,
   } = useWorkspace();
+  const dialogs = useWorkbenchDialogs();
 
   const titleId = useId();
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -227,10 +229,13 @@ export function WorkspaceStudioModal({
     }
     const label =
       workspaces.find((w) => w.id === workspaceId)?.name ?? workspaceId;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Remove workspace “${label}” from Cesium? This does not delete files on disk.`)
-    ) {
+    const confirmed = await dialogs.confirm({
+      title: `Remove “${label}” from Cesium?`,
+      message: "The workspace disappears from the rail. Nothing on disk is deleted.",
+      tone: "danger",
+      confirmLabel: "Remove",
+    });
+    if (!confirmed) {
       return;
     }
     setRemoveBusy(workspaceId);
@@ -261,10 +266,16 @@ export function WorkspaceStudioModal({
   };
 
   const handleDeleteWorktree = async (root: string, force = false) => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Remove git worktree at ${root}?`)
-    ) {
+    const confirmed = await dialogs.confirm({
+      title: "Remove this git worktree?",
+      message: force
+        ? "The worktree directory is deleted even if it has uncommitted changes."
+        : "The worktree directory is removed from disk and unregistered from the repository.",
+      detail: root,
+      tone: "danger",
+      confirmLabel: "Remove worktree",
+    });
+    if (!confirmed) {
       return;
     }
     setWorktreeBusy(root);

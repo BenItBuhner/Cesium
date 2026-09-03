@@ -2,6 +2,7 @@
 
 import {
   getServerConnectionKey,
+  isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
   normalizeRendezvousLocator,
   upsertServerConnection,
@@ -9,6 +10,11 @@ import {
   type ServerConnection,
   type ServerConnectionsState,
 } from "@cesium/client";
+
+/** Account-synced engines only - never the tab-local browser machine. */
+export function isCloudSyncableServerUrl(baseUrl: string): boolean {
+  return !isCesiumAccountSiteUrl(baseUrl) && !isBrowserMachineUrl(baseUrl);
+}
 
 /**
  * Account-level server sync helpers.
@@ -103,7 +109,7 @@ export function mergeCloudServersIntoState(
   const beforeSignature = serverConnectionsSignature(state);
   let next = state;
   for (const cloudServer of cloudServers) {
-    if (isCesiumAccountSiteUrl(cloudServer.baseUrl)) {
+    if (!isCloudSyncableServerUrl(cloudServer.baseUrl)) {
       continue;
     }
     let locator: RendezvousLocator | null = null;
@@ -162,14 +168,23 @@ export function mergeCloudServersIntoState(
   return { state: changed ? next : state, changed, sessionTokens };
 }
 
-/** Everything the local list knows, shaped for idempotent cloud upserts. */
+/**
+ * Everything the local list knows, shaped for idempotent cloud upserts.
+ * Identities in `skipIdentities` (servers another account shared with this
+ * user) are excluded: pushing them would clone the owner's server into this
+ * account and make revocation meaningless.
+ */
 export function buildCloudServerPushPayloads(
   servers: ServerConnection[],
-  getSessionToken: (baseUrl: string) => string | null
+  getSessionToken: (baseUrl: string) => string | null,
+  skipIdentities?: ReadonlySet<string>
 ): CloudServerPushPayload[] {
   const payloads: CloudServerPushPayload[] = [];
   for (const server of servers) {
-    if (isCesiumAccountSiteUrl(server.baseUrl)) {
+    if (!isCloudSyncableServerUrl(server.baseUrl)) {
+      continue;
+    }
+    if (skipIdentities?.has(cloudServerIdentity(server))) {
       continue;
     }
     const sessionToken = getSessionToken(server.baseUrl);
@@ -216,6 +231,39 @@ export function diffRemovedCloudServers(
 }
 
 export const CLOUD_SERVER_TOMBSTONES_STORAGE_KEY = "cesium-cloud-server-tombstones";
+
+/**
+ * Identities of servers that reached this device through an account-to-account
+ * share (not owned by this user). Tracked separately so:
+ * - the push loop never uploads them as owned rows, and
+ * - a share that disappears from bootstrap (revoked / paused / expired / left)
+ *   is proactively removed from the local list instead of lingering.
+ */
+export const CLOUD_SHARED_SERVER_IDS_STORAGE_KEY = "cesium-cloud-shared-server-ids";
+
+/** Drop servers by identity, repairing active/default selection afterwards. */
+export function removeServersByIdentity(
+  state: ServerConnectionsState,
+  identities: ReadonlySet<string>
+): { state: ServerConnectionsState; changed: boolean } {
+  if (identities.size === 0) {
+    return { state, changed: false };
+  }
+  const servers = state.servers.filter(
+    (server) => !identities.has(cloudServerIdentity(server))
+  );
+  if (servers.length === state.servers.length) {
+    return { state, changed: false };
+  }
+  const next: ServerConnectionsState = { ...state, servers };
+  if (!servers.some((server) => server.id === next.activeServerId)) {
+    next.activeServerId = servers[0]?.id ?? null;
+  }
+  if (!servers.some((server) => server.id === next.defaultServerId)) {
+    next.defaultServerId = servers.length === 1 ? (servers[0]?.id ?? null) : null;
+  }
+  return { state: next, changed: true };
+}
 
 export function parseCloudServerTombstones(raw: string | null): Set<string> {
   if (!raw) {

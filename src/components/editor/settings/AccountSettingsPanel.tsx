@@ -1,8 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignInButton, SignOutButton, UserButton } from "@clerk/nextjs";
-import { Check, ChevronDown, CircleUserRound, Link2 } from "lucide-react";
+import { SignOutButton, UserButton } from "@clerk/nextjs";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
+import {
+  explainGithubLinkMismatch,
+  useClerkGithubLink,
+} from "@/hooks/useClerkGithubLink";
+import { formatGithubConnectError } from "@/lib/github-clerk-errors";
+import {
+  Check,
+  ChevronDown,
+  CircleUserRound,
+  Github,
+  Link2,
+  Loader2,
+} from "lucide-react";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
   getCloudMode,
@@ -20,6 +34,7 @@ import {
   useSettingsShellChrome,
 } from "@/components/editor/settings-ui";
 import { useOptionalAuth } from "@/components/auth/AuthProvider";
+import { HarnessAuthSyncSummaryCard } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
@@ -57,6 +72,9 @@ function AccountIdentityCard() {
   const cloud = useCloudContext();
   return (
     <SettingsBlock searchId="account-identity">
+      {identity.kind === "clerk-signed-out" ? (
+        <span data-settings-search-id="account-cloud-mode" hidden />
+      ) : null}
       <div className="flex items-center gap-[14px]">
         {identity.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -89,14 +107,14 @@ function AccountIdentityCard() {
         </div>
         {cloud.mode === "clerk" ? (
           identity.kind === "clerk-signed-out" ? (
-            <SignInButton mode="modal">
+            <ClerkAuthTrigger mode="sign-in">
               <button
                 type="button"
                 className="inline-flex shrink-0 items-center rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] font-sans text-[12px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
               >
                 Sign in
               </button>
-            </SignInButton>
+            </ClerkAuthTrigger>
           ) : (
             <span className="shrink-0">
               <UserButton />
@@ -223,36 +241,175 @@ function CloudAccountSection() {
     );
   }
 
-  // clerk mode
+  // clerk mode — sign-in lives on AccountIdentityCard at the top of the page.
+  // Do not render a second "Not signed in" row when signed out.
+  if (cloud.status === "signed-out") {
+    return null;
+  }
+
   return (
     <SettingsSection>
-      {cloud.status === "signed-out" ? (
-        <SettingsRow
-          title="Not signed in"
-          description="Sign in to use your account on this device."
-          trailing={
-            <SignInButton mode="modal">
-              <button type="button" className={rowButtonClass}>
-                Sign in
-              </button>
-            </SignInButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      ) : (
-        <SettingsRow
-          title="Sign out"
-          description="Sign out of this device."
-          trailing={
-            <SignOutButton>
-              <button type="button" className={rowButtonClass}>
-                Sign out
-              </button>
-            </SignOutButton>
-          }
-          searchId="account-cloud-mode"
-        />
-      )}
+      <SettingsRow
+        title="Sign out"
+        description="Sign out of this device."
+        trailing={
+          <SignOutButton>
+            <button type="button" className={rowButtonClass}>
+              Sign out
+            </button>
+          </SignOutButton>
+        }
+        searchId="account-cloud-mode"
+      />
+    </SettingsSection>
+  );
+}
+
+/**
+ * GitHub connection for the Codespaces device integration. Rendered only in
+ * Clerk cloud mode (the connection lives on the Clerk account; device-key
+ * and local-only clients have no connected-accounts store).
+ */
+function GithubAccountSection() {
+  const cloud = useCloudContext();
+  if (cloud.mode !== "clerk") {
+    return null;
+  }
+  return <GithubAccountSectionInner />;
+}
+
+function GithubAccountSectionInner() {
+  const cloud = useCloudContext();
+  const { linkState, connectGithub, disconnectGithub, formatError } =
+    useClerkGithubLink();
+  const dialogs = useWorkbenchDialogs();
+  const [status, setStatus] = useState<{
+    connected: boolean;
+    login: string | null;
+    error: string | null;
+  } | null>(null);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!cloud.github) {
+      setStatus(null);
+      return;
+    }
+    try {
+      setStatus(await cloud.github.connectionStatus());
+    } catch (error) {
+      setStatus({
+        connected: false,
+        login: null,
+        error: formatGithubConnectError(error),
+      });
+    }
+  }, [cloud.github]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const connect = useCallback(async () => {
+    setPending(true);
+    setActionError(null);
+    try {
+      await connectGithub();
+    } catch (error) {
+      setPending(false);
+      setActionError(formatError(error));
+    }
+  }, [connectGithub, formatError]);
+
+  const disconnect = useCallback(async () => {
+    const confirmed = await dialogs.confirm({
+      title: "Disconnect GitHub?",
+      message:
+        "Paired Codespace devices stay registered but cannot be woken or recreated until you reconnect.",
+      tone: "danger",
+      confirmLabel: "Disconnect",
+    });
+    if (!confirmed) {
+      return;
+    }
+    setPending(true);
+    setActionError(null);
+    try {
+      await disconnectGithub();
+      await refresh();
+    } catch (error) {
+      setActionError(formatError(error));
+    } finally {
+      setPending(false);
+    }
+  }, [dialogs, disconnectGithub, formatError, refresh]);
+
+  if (cloud.status !== "ready" || !cloud.github) {
+    return null;
+  }
+
+  return (
+    <SettingsSection title="GitHub">
+      <SettingsRow
+        title={
+          status?.connected
+            ? `Connected as ${status.login}`
+            : "GitHub not connected"
+        }
+        description={
+          status?.connected
+            ? "Powers GitHub Codespaces devices: repository access, codespace lifecycle, and engine credentials."
+            : "Connect GitHub to pair repositories with Codespace devices - a full Cesium engine in the cloud with just this client and a GitHub account."
+        }
+        leading={
+          <Github
+            className="size-[16px] shrink-0 text-[var(--text-secondary)]"
+            strokeWidth={1.5}
+            aria-hidden
+          />
+        }
+        trailing={
+          status === null ? (
+            <Loader2
+              className="size-[14px] animate-spin text-[var(--text-secondary)]"
+              strokeWidth={2}
+              aria-hidden
+            />
+          ) : status.connected ? (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={pending}
+              onClick={() => void disconnect()}
+            >
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={rowButtonClass}
+              disabled={pending}
+              onClick={() => void connect()}
+            >
+              {pending ? (
+                <Loader2 className="size-[13px] animate-spin" strokeWidth={2} aria-hidden />
+              ) : null}
+              {linkState.kind === "linked" ? "Re-authorize GitHub" : "Connect GitHub"}
+            </button>
+          )
+        }
+        searchId="account-github-connection"
+      />
+      {status?.error || actionError ? (
+        <SettingsCallout className="px-[2px]">
+          {actionError ?? status?.error}
+        </SettingsCallout>
+      ) : status && !status.connected && explainGithubLinkMismatch(linkState) ? (
+        <SettingsCallout className="px-[2px]">
+          {explainGithubLinkMismatch(linkState)}
+        </SettingsCallout>
+      ) : null}
     </SettingsSection>
   );
 }
@@ -494,6 +651,8 @@ export function AccountSettingsPanel() {
         <AccountIdentityCard />
       </SettingsSection>
       <CloudAccountSection />
+      {engineConnected ? <HarnessAuthSyncSummaryCard /> : null}
+      <GithubAccountSection />
       {engineConnected ? <ServerSessionSection /> : null}
       <ActiveServerSection />
       <SettingsCallout className="px-[2px]">

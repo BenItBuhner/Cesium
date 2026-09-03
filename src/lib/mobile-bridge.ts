@@ -17,6 +17,7 @@ import {
   type MobileServerConfig,
   type MobileWebToNativeMessage,
 } from "@cesium/core";
+import { ensureNativeClerkHandoffOnAuthUrl } from "@/lib/cloud/clerk-native-handoff";
 
 export {
   isMobileExternalHttpUrl,
@@ -53,6 +54,15 @@ export {
   type MobileWebToNativeMessage,
 } from "@cesium/core";
 
+/**
+ * Whether the page runs inside the native mobile shell (the WebView host
+ * injects `ReactNativeWebView` before any page script executes, so this is
+ * stable for the whole session).
+ */
+export function hasMobileBridge(): boolean {
+  return typeof window !== "undefined" && window.ReactNativeWebView?.postMessage != null;
+}
+
 export function postMobileBridgeMessage(message: MobileWebToNativeMessage): boolean {
   const bridge = typeof window !== "undefined" ? window.ReactNativeWebView : undefined;
   if (!bridge?.postMessage) {
@@ -75,13 +85,14 @@ export function openExternalUrl(
   if (!url) {
     return false;
   }
-  if (postMobileBridgeMessage({ type: "openExternalUrl", url })) {
+  const resolved = ensureNativeClerkHandoffOnAuthUrl(url);
+  if (postMobileBridgeMessage({ type: "openExternalUrl", url: resolved })) {
     return true;
   }
   if (typeof window === "undefined") {
     return false;
   }
-  window.open(url, options?.target ?? "_blank", options?.features ?? "noopener,noreferrer");
+  window.open(resolved, options?.target ?? "_blank", options?.features ?? "noopener,noreferrer");
   return true;
 }
 

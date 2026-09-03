@@ -4,8 +4,10 @@ import {
   buildCloudServerPushPayloads,
   cloudServerIdentity,
   diffRemovedCloudServers,
+  isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
+  removeServersByIdentity,
   serializeCloudServerTombstones,
   serverConnectionsSignature,
 } from "../src/lib/cloud/cloud-servers.ts";
@@ -129,6 +131,47 @@ describe("cloud server sync helpers", () => {
     assert.equal(
       merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
       true
+    );
+  });
+
+  test("browser machine URLs are not cloud-syncable", () => {
+    assert.equal(isCloudSyncableServerUrl("https://browser.cesium.internal"), false);
+    assert.equal(isCloudSyncableServerUrl("https://cesium.techlitnow.com"), false);
+    assert.equal(isCloudSyncableServerUrl("https://engine.example.com"), true);
+  });
+
+  test("merge never inherits the in-tab browser machine", () => {
+    const merged = mergeCloudServersIntoState(defaultState(), [
+      { name: "This browser", baseUrl: "https://browser.cesium.internal" },
+      { name: "Real engine", baseUrl: "https://engine.example.com" },
+    ]);
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl.includes("browser.cesium.internal")),
+      false
+    );
+    assert.equal(
+      merged.state.servers.some((server) => server.baseUrl === "https://engine.example.com"),
+      true
+    );
+  });
+
+  test("push payloads omit the in-tab browser machine", () => {
+    const payloads = buildCloudServerPushPayloads(
+      [
+        createServerConnection({
+          label: "This browser",
+          baseUrl: "https://browser.cesium.internal",
+        }),
+        createServerConnection({
+          label: "Real engine",
+          baseUrl: "https://engine.example.com",
+        }),
+      ],
+      () => null
+    );
+    assert.deepEqual(
+      payloads.map((payload) => payload.baseUrl),
+      ["https://engine.example.com"]
     );
   });
 
@@ -257,6 +300,60 @@ describe("cloud server sync helpers", () => {
     assert.deepEqual([...parseCloudServerTombstones(null)], []);
     assert.deepEqual([...parseCloudServerTombstones("{corrupt")], []);
     assert.deepEqual([...parseCloudServerTombstones(JSON.stringify({ nope: 1 }))], []);
+  });
+
+  test("push payloads skip servers shared to this account", () => {
+    const shared = createServerConnection({
+      label: "Friend's machine",
+      baseUrl: "https://tunnel-1.lhr.life",
+      rendezvous: LOCATOR,
+    });
+    const owned = createServerConnection({
+      label: "My engine",
+      baseUrl: "https://engine.example.com",
+    });
+    const payloads = buildCloudServerPushPayloads(
+      [shared, owned],
+      () => null,
+      new Set([`rendezvous:${LOCATOR.serverId}`])
+    );
+    assert.deepEqual(
+      payloads.map((payload) => payload.baseUrl),
+      ["https://engine.example.com"]
+    );
+  });
+
+  test("removeServersByIdentity drops targets and repairs the selection", () => {
+    const shared = createServerConnection({
+      label: "Revoked share",
+      baseUrl: "https://tunnel-1.lhr.life",
+      rendezvous: LOCATOR,
+    });
+    const owned = createServerConnection({
+      label: "My engine",
+      baseUrl: "https://engine.example.com",
+    });
+    const state: ServerConnectionsState = {
+      version: 1,
+      activeServerId: shared.id,
+      defaultServerId: shared.id,
+      servers: [shared, owned],
+    };
+    const removed = removeServersByIdentity(
+      state,
+      new Set([`rendezvous:${LOCATOR.serverId}`])
+    );
+    assert.equal(removed.changed, true);
+    assert.deepEqual(
+      removed.state.servers.map((server) => server.baseUrl),
+      ["https://engine.example.com"]
+    );
+    assert.equal(removed.state.activeServerId, owned.id);
+    assert.equal(removed.state.defaultServerId, owned.id);
+
+    const untouched = removeServersByIdentity(state, new Set(["rendezvous:unknown"]));
+    assert.equal(untouched.changed, false);
+    assert.equal(untouched.state, state);
   });
 
   test("signature ignores timestamps but tracks material changes", () => {

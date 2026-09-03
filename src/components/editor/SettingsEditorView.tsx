@@ -103,7 +103,7 @@ const SETTINGS_NAV_PARENT: Record<string, string> = {
   usage: "agents",
   extensions: "plugins",
   rulesSkills: "plugins",
-  actions: "general",
+  actions: "appearance",
   exportImport: "advanced",
   storage: "advanced",
   updates: "advanced",
@@ -444,6 +444,7 @@ function SettingsNavContent({
 export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {}) {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const sideColumnsSwapped = settings.general.sideColumnsSwapped;
   const { availability, enginePagesVisible, engineConnected } = useSettingsEngineAvailability();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { ipadBetaSettings } = useCesiumRendererFeatureFlags();
@@ -897,9 +898,10 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   if (isMobile) {
     return (
       <SettingsShellChromeContext.Provider value={shellChrome}>
-      {/* The nav drawer shares the agent shell's swipe/spring physics: swipe
-          right anywhere opens it pinned to the finger, swipe left (or a scrim
-          tap / Android back gesture) closes it. */}
+      {/* The nav drawer shares the agent shell's swipe/spring physics and the
+          same frosted `.mobile-left-drawer-surface` material: swipe right
+          anywhere opens it pinned to the finger, swipe left (or a scrim tap /
+          Android back gesture) closes it. */}
       <MobileNavDrawerShell
         open={navDrawerOpen}
         setOpen={setNavDrawerOpen}
@@ -945,57 +947,76 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     );
   }
 
+  const navPanel = (
+    <Panel
+      id={AGENT_SHELL_PANEL_IDS.rail}
+      minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
+      maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
+      onResize={(panelSize) => {
+        if (applyingSettingsLayoutFromContextRef.current) {
+          return;
+        }
+        persistSettingsRailWidth(panelSize.asPercentage);
+      }}
+      className={`min-h-0 overflow-hidden ${
+        sideColumnsSwapped ? "border-l" : "border-r"
+      } border-[var(--border-subtle)]`}
+    >
+      <aside className="flex h-full min-h-0 w-full flex-col">{navContent}</aside>
+    </Panel>
+  );
+
+  const contentPanel = (
+    <Panel
+      id={AGENT_SHELL_PANEL_IDS.center}
+      minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
+      className="min-h-0 min-w-0 overflow-hidden"
+    >
+      <main
+        ref={scrollRootRef}
+        className="aurora-settings-main hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+        onScroll={onMainScroll}
+      >
+        <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+          <DefaultServerSettingsBanner className="mb-[16px]" />
+          {serverBoundPageBlocked ? (
+            <SettingsServerRequiredState
+              navId={resolvedNav}
+              phase={availability === "checking" ? "checking" : "none"}
+            />
+          ) : SettingsPanel ? (
+            <SettingsPanelErrorBoundary panelId={resolvedNav}>
+              <SettingsPanel />
+            </SettingsPanelErrorBoundary>
+          ) : null}
+        </div>
+      </main>
+    </Panel>
+  );
+
   return (
     <SettingsShellChromeContext.Provider value={shellChrome}>
     <Group
       id="settings-shell-panels"
       groupRef={groupRef}
-      key="settings-shell-desktop"
+      key={sideColumnsSwapped ? "settings-shell-desktop-swapped" : "settings-shell-desktop"}
       orientation="horizontal"
       className="aurora-settings-shell h-full min-w-0 bg-[var(--bg-main)]"
       defaultLayout={settingsDesktopLayout}
     >
-      <Panel
-        id={AGENT_SHELL_PANEL_IDS.rail}
-        minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
-        maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
-        onResize={(panelSize) => {
-          if (applyingSettingsLayoutFromContextRef.current) {
-            return;
-          }
-          persistSettingsRailWidth(panelSize.asPercentage);
-        }}
-        className="min-h-0 overflow-hidden border-r border-[var(--border-subtle)]"
-      >
-        <aside className="flex h-full min-h-0 w-full flex-col">{navContent}</aside>
-      </Panel>
-      <SettingsShellResizeHandle />
-
-      <Panel
-        id={AGENT_SHELL_PANEL_IDS.center}
-        minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
-        className="min-h-0 min-w-0 overflow-hidden"
-      >
-        <main
-          ref={scrollRootRef}
-          className="aurora-settings-main hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
-          onScroll={onMainScroll}
-        >
-          <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
-            <DefaultServerSettingsBanner className="mb-[16px]" />
-            {serverBoundPageBlocked ? (
-              <SettingsServerRequiredState
-                navId={resolvedNav}
-                phase={availability === "checking" ? "checking" : "none"}
-              />
-            ) : SettingsPanel ? (
-              <SettingsPanelErrorBoundary panelId={resolvedNav}>
-                <SettingsPanel />
-              </SettingsPanelErrorBoundary>
-            ) : null}
-          </div>
-        </main>
-      </Panel>
+      {sideColumnsSwapped ? (
+        <>
+          {contentPanel}
+          <SettingsShellResizeHandle />
+          {navPanel}
+        </>
+      ) : (
+        <>
+          {navPanel}
+          <SettingsShellResizeHandle />
+          {contentPanel}
+        </>
+      )}
     </Group>
     </SettingsShellChromeContext.Provider>
   );

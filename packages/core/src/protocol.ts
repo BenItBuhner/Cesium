@@ -217,7 +217,20 @@ export type AgentPlanEntry = {
   status: "pending" | "in_progress" | "blocked" | "completed";
 };
 
-export type AgentStoredEvent =
+/**
+ * Client-side merge/compaction metadata shared by every stored event variant.
+ * When adjacent assistant chunk rows are merged for rendering, the merged row
+ * keeps the newest `seq`/`eventId` and records the oldest swallowed seq in
+ * `firstSeq`; the row then covers the inclusive seq range `[firstSeq, seq]`,
+ * which replay dedupe uses to recognize re-delivered events whose individual
+ * rows no longer exist locally. Never persisted server-side.
+ */
+type AgentStoredEventCompactionMeta = {
+  firstSeq?: number;
+};
+
+export type AgentStoredEvent = AgentStoredEventCompactionMeta &
+  (
   | {
       seq: number;
       eventId: string;
@@ -460,7 +473,7 @@ export type AgentStoredEvent =
   fromAgent: string;
   transcript: string;
   upToMessageId: string | null;
-};
+});
 
 /**
  * Where a conversation was triggered from. Conversations started from external
@@ -677,6 +690,12 @@ export type AgentRailConversationSummary = Pick<
   conversationKey?: string;
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;
+  /**
+   * Client-side: the owning engine is unreachable (asleep codespace, offline
+   * machine) and this row comes from the last catalog cached for it. Opening
+   * it must wake/reconnect the engine first.
+   */
+  serverOffline?: boolean;
 };
 
 export type AgentRailRepositoryInfo = {
@@ -700,6 +719,13 @@ export type AgentConversationGroup = {
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;
   serverAuthRequired?: boolean;
+  /**
+   * Client-side: the owning engine is unreachable and these conversations
+   * were restored from the last catalog cached for it (locally or on the
+   * account). `serverCachedAt` is when that catalog was captured.
+   */
+  serverOffline?: boolean;
+  serverCachedAt?: number;
 };
 
 export type AgentConversationGroupsResult = {
@@ -799,7 +825,44 @@ export type AgentSocketServerMessage =
       conversationId: string;
       workspaceId: string;
     }
-  | { type: "pong" }
+  /**
+   * Live `event_batch` frames for this conversation were dropped for this
+   * socket under backpressure. Tiny and never dropped itself, so a lossy
+   * client always learns it must `request_events_since` instead of silently
+   * rendering a transcript with a hole in it. `throughSeq` is the highest
+   * seq among the dropped frames.
+   */
+  | {
+      type: "events_dropped";
+      workspaceId: string;
+      conversationId: string;
+      throughSeq: number;
+    }
+  /**
+   * Terminates a `request_events_since` replay. Everything the server has in
+   * `(sinceSeq, throughSeq]` was sent in the preceding non-droppable
+   * `event_batch` frames; seqs still missing locally inside that range do not
+   * exist server-side (deleted events), so the client can stop waiting for
+   * them. Doubles as a delivery ack: a client that never receives this knows
+   * its recovery request (or the replay) was lost and can retry.
+   */
+  | {
+      type: "events_delta_done";
+      workspaceId: string;
+      conversationId: string;
+      sinceSeq: number;
+      throughSeq: number;
+    }
+  | {
+      type: "pong";
+      /**
+       * Latest known event seq for each conversation this socket subscribes
+       * to. Piggybacked liveness + consistency: even when every droppable
+       * frame was lost, the periodic heartbeat exposes how far behind the
+       * local log is.
+       */
+      latestSeqByConversationId?: Record<string, number>;
+    }
   | {
       type: "error";
       message: string;
@@ -855,5 +918,14 @@ export type AgentStoredEventBase = {
   eventId: string;
   conversationId: string;
   createdAt: number;
+  /**
+   * Client-side compaction metadata: when adjacent assistant chunk rows are
+   * merged for rendering, the merged row keeps the newest `seq`/`eventId` and
+   * records the oldest swallowed seq here. The row then covers the inclusive
+   * seq range `[firstSeq, seq]`, which replay dedupe uses to recognize
+   * re-delivered chunks whose individual rows no longer exist locally.
+   * Never persisted server-side.
+   */
+  firstSeq?: number;
   raw?: unknown;
 };

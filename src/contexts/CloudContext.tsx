@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
+import { ClerkNativeHandoff } from "@/components/auth/ClerkNativeHandoff";
 import {
   ConvexProvider,
   ConvexReactClient,
@@ -31,6 +32,8 @@ import {
   setStoredSessionToken,
   VOICE_CLIENT_SETTINGS_EVENT,
   writeStoredServerConnectionsState,
+  isBrowserMachineOffered,
+  isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
   type RendezvousLocator,
   type ServerConnection,
@@ -45,7 +48,12 @@ import {
   isCloudLocallyDisabled,
   type CloudMode,
 } from "@/lib/cloud/cloud-env";
-import { getClerkSignInUrl, getClerkSignUpUrl } from "@/lib/cloud/clerk-urls";
+import {
+  getClerkFallbackRedirectUrl,
+  getClerkSignInUrl,
+  getClerkSignUpUrl,
+} from "@/lib/cloud/clerk-urls";
+import { installClerkFapiTunnel } from "@/lib/cloud/clerk-fapi-tunnel";
 import {
   applyPersonalizationPayload,
   collectPersonalizationPayload,
@@ -58,13 +66,28 @@ import {
 import {
   buildCloudServerPushPayloads,
   CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+  CLOUD_SHARED_SERVER_IDS_STORAGE_KEY,
   cloudServerIdentity,
   diffRemovedCloudServers,
+  isCloudSyncableServerUrl,
   mergeCloudServersIntoState,
   parseCloudServerTombstones,
+  removeServersByIdentity,
   serializeCloudServerTombstones,
   type CloudServerRemoval,
 } from "@/lib/cloud/cloud-servers";
+import type { Id } from "@convex/_generated/dataModel";
+import {
+  mergeCloudCatalogsIntoStore,
+  readConversationCatalogStore,
+  writeConversationCatalogStore,
+  type CloudConversationCatalogRow,
+} from "@/lib/conversation-catalog";
+import { unwrapConvexActionErrors } from "@/lib/cloud/convex-errors";
+import {
+  consumeShareInviteFromLocation,
+  setPendingShareInvite,
+} from "@/lib/cloud/share-invites";
 
 /**
  * Cesium Cloud Context - the client side of the cross-device user context.
@@ -76,15 +99,77 @@ import {
  * conversation snapshots are all restored automatically.
  */
 
+/** Durable GitHub Codespace pairing metadata mirrored on a server row. */
+export type CloudCodespaceMeta = {
+  repoFullName: string;
+  repositoryId: number;
+  codespaceName: string;
+  displayName?: string;
+  machine?: string;
+  devcontainerPath: string;
+  lastKnownState?: string;
+  lastSyncedAt?: number;
+  engineUsername?: string;
+  enginePassword?: string;
+};
+
 export type CloudServer = {
   name: string;
   baseUrl: string;
-  kind: "remote" | "local";
+  kind: "remote" | "local" | "codespace";
   sessionToken: string | null;
   /** Present for tunnel-backed engines shared through public access. */
   rendezvous: RendezvousLocator | null;
+  /** Present for engines living inside a paired GitHub Codespace. */
+  codespace?: CloudCodespaceMeta | null;
   notes: string | null;
   lastConnectedAt: number | null;
+};
+
+/** A server another account shared with this user (accepted + live). */
+export type CloudSharedServer = {
+  shareId: string;
+  name: string;
+  baseUrl: string;
+  kind: "remote" | "local" | "codespace";
+  sessionToken: string | null;
+  rendezvous: RendezvousLocator | null;
+  notes: string | null;
+  lastConnectedAt: number | null;
+  ownerName: string | null;
+};
+
+/** An invite/grant addressed to this user (recipient-side view). */
+export type CloudIncomingShare = {
+  shareId: string;
+  serverName: string;
+  /** Underlying server identity - present only once the share is accepted. */
+  serverBaseUrl: string | null;
+  serverRendezvousId: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  status: "pending" | "accepted";
+  paused: boolean;
+  expiresAt: number | null;
+  expired: boolean;
+  createdAt: number;
+};
+
+/** A grant this user owns on one of their servers (owner-side view). */
+export type CloudOutgoingShare = {
+  shareId: string;
+  serverName: string;
+  serverBaseUrl: string | null;
+  serverRendezvousId: string | null;
+  granteeEmail: string | null;
+  granteeName: string | null;
+  inviteCode: string;
+  status: "pending" | "accepted" | "declined" | "revoked";
+  paused: boolean;
+  expiresAt: number | null;
+  expired: boolean;
+  createdAt: number;
+  respondedAt: number | null;
 };
 
 export type CloudSnapshotMeta = {
@@ -114,6 +199,9 @@ export type CloudBootstrap = {
     createdAt: number;
   };
   servers: CloudServer[];
+  sharedServers: CloudSharedServer[];
+  incomingShares: CloudIncomingShare[];
+  outgoingShares: CloudOutgoingShare[];
   preferencesPayload: string | null;
   secrets: Array<{ kind: string; payload: string; updatedAt: number }>;
   agentPrefs: Array<{
@@ -135,15 +223,42 @@ export type CloudActions = {
   saveServer(input: {
     name: string;
     baseUrl: string;
-    kind: "remote" | "local";
+    kind: "remote" | "local" | "codespace";
     sessionToken?: string;
     rendezvous?: RendezvousLocator;
+    codespace?: CloudCodespaceMeta;
     notes?: string;
     markConnected?: boolean;
   }): Promise<void>;
   removeServer(input: CloudServerRemoval): Promise<void>;
+  /** Owner: grant another account access to one of this user's servers. */
+  createServerShare(input: {
+    baseUrl?: string;
+    rendezvousServerId?: string;
+    granteeEmail?: string;
+    expiresAt?: number;
+  }): Promise<{ shareId: string; inviteCode: string; created: boolean }>;
+  /** Recipient: accept/decline a pending invite, or leave an accepted share. */
+  respondServerShare(input: { shareId: string; accept: boolean }): Promise<void>;
+  /** Recipient: redeem an invite link/code (accepts immediately). */
+  claimServerShareByCode(inviteCode: string): Promise<{
+    serverName: string;
+    ownerName: string | null;
+    alreadyAccepted: boolean;
+  }>;
+  /** Owner: pause/resume or adjust expiry (`expiresAt: null` clears it). */
+  updateServerShare(input: {
+    shareId: string;
+    paused?: boolean;
+    expiresAt?: number | null;
+  }): Promise<void>;
+  /** Owner: permanently revoke a grant. */
+  revokeServerShare(shareId: string): Promise<void>;
+  /** Owner: delete a finished (declined/revoked) grant row. */
+  removeServerShare(shareId: string): Promise<void>;
   savePreferences(payload: string): Promise<void>;
   saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
+  removeSecret(input: { kind: string }): Promise<void>;
   saveAgentPref(input: {
     backendId: string;
     enabled: boolean;
@@ -169,9 +284,101 @@ export type CloudActions = {
     sourceUpdatedAt: number;
   }): Promise<void>;
   getSnapshot(snapshotKey: string): Promise<CloudSnapshot | null>;
+  /**
+   * Mirror one engine's rail listing to the account so other devices can
+   * show it while the engine sleeps. Idempotent upsert keyed by `serverKey`.
+   */
+  saveConversationCatalog(input: {
+    serverKey: string;
+    serverName: string;
+    baseUrl: string;
+    payload: string;
+    conversationCount: number;
+    sourceUpdatedAt: number;
+  }): Promise<void>;
+  removeConversationCatalog(serverKey: string): Promise<void>;
 };
 
+export type CloudConversationCatalog = CloudConversationCatalogRow;
+
 export type CloudStatus = "disabled" | "signed-out" | "loading" | "ready";
+
+/**
+ * GitHub proxy actions (Codespaces device integration). Server-side only:
+ * the Convex deployment resolves the user's GitHub OAuth token through
+ * Clerk's connected-accounts API, so tokens never reach this client.
+ * Present only for Clerk-mode accounts that are signed in.
+ */
+export type CloudGithubActions = {
+  connectionStatus(): Promise<{
+    connected: boolean;
+    login: string | null;
+    error: string | null;
+  }>;
+  listRepos(): Promise<
+    Array<{
+      id: number;
+      fullName: string;
+      private: boolean;
+      defaultBranch: string;
+      pushedAt: string | null;
+      description: string | null;
+    }>
+  >;
+  listMachines(repoFullName: string): Promise<
+    Array<{
+      name: string;
+      displayName: string;
+      cpus: number;
+      memoryInBytes: number;
+      storageInBytes: number;
+      prebuildAvailability: string | null;
+    }>
+  >;
+  ensureDevcontainer(input: {
+    repoFullName: string;
+    mode: "commit" | "pr";
+  }): Promise<{
+    status: "ready" | "committed" | "pr-open";
+    prUrl: string | null;
+    devcontainerPath: string;
+    templateVersion: number;
+  }>;
+  setupCodespaceSecrets(input: {
+    repositoryId: number;
+    engineUsername: string;
+    enginePassword: string;
+    extraSecrets?: Array<{ name: string; value: string }>;
+  }): Promise<{ secretNames: string[] }>;
+  createCodespace(input: {
+    repoFullName: string;
+    machine?: string;
+    ref?: string;
+    idleTimeoutMinutes?: number;
+  }): Promise<{
+    codespace: CloudGithubCodespace;
+    engineBaseUrl: string;
+    /** True when an existing Cesium codespace was reused instead of created. */
+    adopted: boolean;
+  }>;
+  getCodespace(codespaceName: string): Promise<CloudGithubCodespace | null>;
+  startCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
+  stopCodespace(codespaceName: string): Promise<CloudGithubCodespace>;
+  deleteCodespace(codespaceName: string): Promise<void>;
+};
+
+export type CloudGithubCodespace = {
+  name: string;
+  displayName: string | null;
+  state: string;
+  repositoryFullName: string | null;
+  machine: string | null;
+  gitRef: string | null;
+  lastUsedAt: string | null;
+  webUrl: string | null;
+  idleTimeoutMinutes: number | null;
+  retentionExpiresAt: string | null;
+};
 
 export type CloudContextValue = {
   mode: CloudMode;
@@ -182,7 +389,28 @@ export type CloudContextValue = {
   userEmail: string | null;
   bootstrap: CloudBootstrap | null;
   actions: CloudActions | null;
+  github: CloudGithubActions | null;
+  /**
+   * Account-mirrored conversation catalogs (one per engine), live-updated.
+   * `null` until the first result arrives or when the cloud is off. They
+   * are also folded into the local catalog store automatically, so most
+   * consumers read that store rather than this list.
+   */
+  conversationCatalogs: CloudConversationCatalog[] | null;
 };
+
+/**
+ * Clerk's modals (reverification, UserProfile, sign-in) default to
+ * z-index 10000, which is *below* Cesium's own portalled dialogs (the
+ * Codespace wizard, settings pickers, toasts all sit in the 10100-10400
+ * band). Without this, the "additional verification" prompt renders behind
+ * the wizard that triggered it. Keep Clerk above every app overlay.
+ */
+const CLERK_APPEARANCE = {
+  elements: {
+    modalBackdrop: { zIndex: 20000 },
+  },
+} as const;
 
 const DISABLED_VALUE: CloudContextValue = {
   mode: "disabled",
@@ -192,6 +420,8 @@ const DISABLED_VALUE: CloudContextValue = {
   userEmail: null,
   bootstrap: null,
   actions: null,
+  github: null,
+  conversationCatalogs: null,
 };
 
 const CloudContext = createContext<CloudContextValue>(DISABLED_VALUE);
@@ -244,17 +474,45 @@ function reconcilePersonalization(
  * Merge cloud servers into the local connection list (additive). Tombstoned
  * identities - servers the user removed on this device - are skipped so they
  * do not resurrect on every bootstrap.
+ *
+ * Servers shared by other accounts merge the same way, but their identities
+ * are tracked in a dedicated set so the push loop never uploads them as owned
+ * rows (or tombstones them when share state removes them locally), and so
+ * grants that vanish from bootstrap (revoked / paused / expired / left) are
+ * removed from the local list instead of lingering forever.
+ *
+ * The tracked set is keyed off *accepted* incoming shares - paused/expired
+ * ones included - so a pause only removes the local entry temporarily; the
+ * identity stays protected and the server resurfaces on resume.
  */
-function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
-  const banned = servers.filter((server) => isCesiumAccountSiteUrl(server.baseUrl));
-  const usable = servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl));
+function mergeCloudServersIntoLocal(
+  servers: CloudServer[],
+  sharedServers: CloudSharedServer[],
+  incomingShares: CloudIncomingShare[]
+): CloudServer[] {
+  const banned = servers.filter((server) => !isCloudSyncableServerUrl(server.baseUrl));
+  const usable = servers.filter((server) => isCloudSyncableServerUrl(server.baseUrl));
+  const usableShared = sharedServers.filter((server) =>
+    isCloudSyncableServerUrl(server.baseUrl)
+  );
   const tombstones = parseCloudServerTombstones(
     clientKeyValueStore().getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
   );
   const state = readStoredServerConnectionsState(getConfiguredServerBaseUrl());
+  const keepLocalServer = (baseUrl: string) => {
+    if (isCesiumAccountSiteUrl(baseUrl)) {
+      return false;
+    }
+    // Native shells ignore a tab-local engine that leaked in via older sync.
+    // The website / PWA keeps its own in-tab copy.
+    if (!isBrowserMachineOffered() && isBrowserMachineUrl(baseUrl)) {
+      return false;
+    }
+    return true;
+  };
   const withoutAccountSite = {
     ...state,
-    servers: state.servers.filter((server) => !isCesiumAccountSiteUrl(server.baseUrl)),
+    servers: state.servers.filter((server) => keepLocalServer(server.baseUrl)),
   };
   if (withoutAccountSite.servers.length === 0) {
     withoutAccountSite.activeServerId = null;
@@ -277,17 +535,85 @@ function mergeCloudServersIntoLocal(servers: CloudServer[]): CloudServer[] {
   const merged = mergeCloudServersIntoState(withoutAccountSite, usable, {
     skipIdentities: tombstones,
   });
+  const store = clientKeyValueStore();
+  const ownedIdentities = new Set(usable.map((server) => cloudServerIdentity(server)));
+  const previousSharedIds = parseCloudServerTombstones(
+    store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
+  );
+  // Every accepted grant's identity stays tracked while the grant exists -
+  // even when paused/expired, when it carries no connection payload. A server
+  // the user also owns is never treated as "shared" locally.
+  const currentSharedIds = new Set<string>();
+  for (const share of incomingShares) {
+    if (share.status !== "accepted" || (!share.serverBaseUrl && !share.serverRendezvousId)) {
+      continue;
+    }
+    const identity = cloudServerIdentity({
+      baseUrl: share.serverBaseUrl ?? "",
+      rendezvous: share.serverRendezvousId ? { serverId: share.serverRendezvousId } : null,
+    });
+    if (!ownedIdentities.has(identity)) {
+      currentSharedIds.add(identity);
+    }
+  }
+  for (const server of usableShared) {
+    const identity = cloudServerIdentity(server);
+    if (!ownedIdentities.has(identity)) {
+      currentSharedIds.add(identity);
+    }
+  }
+  // Accepting a share is an explicit user action: it clears any tombstone
+  // left behind by an earlier revoke/removal of the same server, so a
+  // re-share of that server can come back.
+  let tombstonesChanged = false;
+  for (const identity of currentSharedIds) {
+    if (tombstones.delete(identity)) {
+      tombstonesChanged = true;
+    }
+  }
+  if (tombstonesChanged) {
+    store.setItem(
+      CLOUD_SERVER_TOMBSTONES_STORAGE_KEY,
+      serializeCloudServerTombstones(tombstones)
+    );
+  }
+  const sharedMerge = mergeCloudServersIntoState(merged.state, usableShared, {
+    skipIdentities: tombstones,
+  });
+  const liveSharedIdentities = new Set(
+    usableShared.map((server) => cloudServerIdentity(server))
+  );
+  // Remove locally: grants that fully ended (revoked / left / declined), and
+  // tracked grants that are currently dormant (paused / expired).
+  const removalIds = new Set<string>();
+  for (const identity of previousSharedIds) {
+    if (!currentSharedIds.has(identity) && !ownedIdentities.has(identity)) {
+      removalIds.add(identity);
+    }
+  }
+  for (const identity of currentSharedIds) {
+    if (!liveSharedIdentities.has(identity)) {
+      removalIds.add(identity);
+    }
+  }
+  const afterRemoval = removeServersByIdentity(sharedMerge.state, removalIds);
+  store.setItem(
+    CLOUD_SHARED_SERVER_IDS_STORAGE_KEY,
+    serializeCloudServerTombstones(currentSharedIds)
+  );
   const localChanged =
     merged.changed ||
+    sharedMerge.changed ||
+    afterRemoval.changed ||
     withoutAccountSite.servers.length !== state.servers.length ||
     withoutAccountSite.activeServerId !== state.activeServerId;
-  for (const entry of merged.sessionTokens) {
+  for (const entry of [...merged.sessionTokens, ...sharedMerge.sessionTokens]) {
     if (!getStoredSessionToken(entry.baseUrl)) {
       setStoredSessionToken(entry.sessionToken, null, entry.baseUrl);
     }
   }
   if (localChanged) {
-    writeStoredServerConnectionsState(merged.state);
+    writeStoredServerConnectionsState(afterRemoval.state);
   }
   return banned;
 }
@@ -327,19 +653,47 @@ function CloudBridge({
   const active = authReady && signedIn && identityReady;
 
   const convex = useConvex();
+  // Client clock captured once after mount (queries must stay deterministic,
+  // so the server never reads its own clock). Only used to filter expired
+  // shares, so boot-time precision is plenty.
+  const [bootClock, setBootClock] = useState<number | null>(null);
+  useEffect(() => {
+    setBootClock(Date.now());
+  }, []);
+  const bootstrapArgs = useMemo(
+    () => (bootClock === null ? identityArgs : { ...identityArgs, now: bootClock }),
+    [identityArgs, bootClock]
+  );
   const bootstrap = useQuery(
     api.context.bootstrap,
-    active ? identityArgs : "skip"
+    active ? bootstrapArgs : "skip"
   ) as CloudBootstrap | null | undefined;
+
+  // Separate from bootstrap: catalogs carry whole rail listings and change
+  // on every agent turn somewhere, so they must not re-fire the bootstrap
+  // restore effects below.
+  const conversationCatalogs = useQuery(
+    api.catalogs.list,
+    active ? identityArgs : "skip"
+  ) as CloudConversationCatalog[] | null | undefined;
 
   const register = useMutation(api.context.register);
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
+  const createShareMutation = useMutation(api.shares.create);
+  const respondShareMutation = useMutation(api.shares.respond);
+  const claimShareMutation = useMutation(api.shares.claimByCode);
+  const updateShareMutation = useMutation(api.shares.update);
+  const revokeShareMutation = useMutation(api.shares.revoke);
+  const removeShareMutation = useMutation(api.shares.remove);
   const savePreferencesMutation = useMutation(api.preferences.save);
   const saveSecretMutation = useMutation(api.secrets.save);
+  const removeSecretMutation = useMutation(api.secrets.remove);
   const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
+  const saveCatalogMutation = useMutation(api.catalogs.save);
+  const removeCatalogMutation = useMutation(api.catalogs.remove);
 
   const registeredRef = useRef(false);
   useEffect(() => {
@@ -360,11 +714,66 @@ function CloudBridge({
       async removeServer(input) {
         await removeServerMutation({ ...identityArgs, ...input });
       },
+      // Share failures render directly in settings and toasts, so every call
+      // unwraps Convex error envelopes into human-readable messages.
+      async createServerShare(input) {
+        const result = await unwrapConvexActionErrors(() =>
+          createShareMutation({ ...identityArgs, ...input })
+        );
+        return {
+          shareId: result.shareId as string,
+          inviteCode: result.inviteCode,
+          created: result.created,
+        };
+      },
+      async respondServerShare(input) {
+        await unwrapConvexActionErrors(() =>
+          respondShareMutation({
+            ...identityArgs,
+            shareId: input.shareId as Id<"serverShares">,
+            accept: input.accept,
+          })
+        );
+      },
+      async claimServerShareByCode(inviteCode) {
+        return await unwrapConvexActionErrors(() =>
+          claimShareMutation({ ...identityArgs, inviteCode })
+        );
+      },
+      async updateServerShare(input) {
+        await unwrapConvexActionErrors(() =>
+          updateShareMutation({
+            ...identityArgs,
+            shareId: input.shareId as Id<"serverShares">,
+            ...(input.paused !== undefined ? { paused: input.paused } : {}),
+            ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          })
+        );
+      },
+      async revokeServerShare(shareId) {
+        await unwrapConvexActionErrors(() =>
+          revokeShareMutation({
+            ...identityArgs,
+            shareId: shareId as Id<"serverShares">,
+          })
+        );
+      },
+      async removeServerShare(shareId) {
+        await unwrapConvexActionErrors(() =>
+          removeShareMutation({
+            ...identityArgs,
+            shareId: shareId as Id<"serverShares">,
+          })
+        );
+      },
       async savePreferences(payload) {
         await savePreferencesMutation({ ...identityArgs, payload });
       },
       async saveSecret(input) {
         await saveSecretMutation({ ...identityArgs, ...input });
+      },
+      async removeSecret(input) {
+        await removeSecretMutation({ ...identityArgs, ...input });
       },
       async saveAgentPref(input) {
         await saveAgentPrefMutation({ ...identityArgs, ...input });
@@ -381,18 +790,99 @@ function CloudBridge({
           snapshotKey,
         })) as CloudSnapshot | null;
       },
+      async saveConversationCatalog(input) {
+        await saveCatalogMutation({ ...identityArgs, ...input });
+      },
+      async removeConversationCatalog(serverKey) {
+        await removeCatalogMutation({ ...identityArgs, serverKey });
+      },
     }),
     [
+      claimShareMutation,
       convex,
+      createShareMutation,
       identityArgs,
       pushSnapshotMutation,
+      removeCatalogMutation,
+      removeSecretMutation,
       removeServerMutation,
+      removeShareMutation,
+      respondShareMutation,
+      revokeShareMutation,
       saveAgentPrefMutation,
+      saveCatalogMutation,
       savePreferencesMutation,
       saveSecretMutation,
       saveServerMutation,
       updateOnboardingMutation,
+      updateShareMutation,
     ]
+  );
+
+  // Account catalogs flow into the local catalog store (newest capture per
+  // engine wins) so the rail's offline fallback has one place to look.
+  useEffect(() => {
+    if (!conversationCatalogs || conversationCatalogs.length === 0) {
+      return;
+    }
+    const merged = mergeCloudCatalogsIntoStore(
+      readConversationCatalogStore(),
+      conversationCatalogs
+    );
+    if (merged.changed) {
+      writeConversationCatalogStore(merged.store);
+    }
+  }, [conversationCatalogs]);
+
+  // Device-key deployments authenticate GitHub actions with the same
+  // identity args as every other cloud call; Clerk identities ride the JWT.
+  // Every call unwraps ConvexError data so the surfaces rendering
+  // `error.message` show GitHub's real failure, not a redacted envelope.
+  const githubActions = useMemo<CloudGithubActions>(
+    () => ({
+      connectionStatus: () =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.connectionStatus, { ...identityArgs })
+        ),
+      listRepos: () =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.reposList, { ...identityArgs })
+        ),
+      listMachines: (repoFullName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.machinesList, { ...identityArgs, repoFullName })
+        ),
+      ensureDevcontainer: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.ensureDevcontainer, { ...identityArgs, ...input })
+        ),
+      setupCodespaceSecrets: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.setupCodespaceSecrets, { ...identityArgs, ...input })
+        ),
+      createCodespace: (input) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceCreate, { ...identityArgs, ...input })
+        ),
+      getCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceGet, { ...identityArgs, codespaceName })
+        ),
+      startCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceStart, { ...identityArgs, codespaceName })
+        ),
+      stopCodespace: (codespaceName) =>
+        unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceStop, { ...identityArgs, codespaceName })
+        ),
+      deleteCodespace: async (codespaceName) => {
+        await unwrapConvexActionErrors(() =>
+          convex.action(api.github.codespaceDelete, { ...identityArgs, codespaceName })
+        );
+      },
+    }),
+    [convex, identityArgs]
   );
 
   // Autonomous restore: when the cloud context arrives, fold servers and
@@ -403,7 +893,11 @@ function CloudBridge({
       return;
     }
     lastAppliedBootstrapRef.current = bootstrap;
-    const banned = mergeCloudServersIntoLocal(bootstrap.servers);
+    const banned = mergeCloudServersIntoLocal(
+      bootstrap.servers,
+      bootstrap.sharedServers ?? [],
+      bootstrap.incomingShares ?? []
+    );
     for (const server of banned) {
       void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
     }
@@ -433,6 +927,14 @@ function CloudBridge({
       const tombstones = parseCloudServerTombstones(
         store.getItem(CLOUD_SERVER_TOMBSTONES_STORAGE_KEY)
       );
+      // Servers shared *to* this account are cloud-managed, not owned: they
+      // are never pushed up as owned rows (that would clone them into this
+      // account and defeat revocation), and their share-driven local removals
+      // (pause / revoke) must not leave tombstones - a tombstone would block
+      // the server from returning when the owner resumes the share.
+      const sharedIdentities = parseCloudServerTombstones(
+        store.getItem(CLOUD_SHARED_SERVER_IDS_STORAGE_KEY)
+      );
       let tombstonesChanged = false;
       for (const server of state.servers) {
         if (tombstones.delete(cloudServerIdentity(server))) {
@@ -447,6 +949,9 @@ function CloudBridge({
             : removal.baseUrl
               ? cloudServerIdentity({ baseUrl: removal.baseUrl })
               : null;
+          if (identity && sharedIdentities.has(identity)) {
+            continue;
+          }
           if (identity) {
             tombstones.add(identity);
             tombstonesChanged = true;
@@ -463,7 +968,8 @@ function CloudBridge({
       lastPushedServersRef.current = state.servers;
       for (const payload of buildCloudServerPushPayloads(
         state.servers,
-        (baseUrl) => getStoredSessionToken(baseUrl)
+        (baseUrl) => getStoredSessionToken(baseUrl),
+        sharedIdentities
       )) {
         void actions.saveServer(payload).catch(() => undefined);
       }
@@ -502,8 +1008,24 @@ function CloudBridge({
       userEmail: bootstrap?.user.email ?? clerkEmail,
       bootstrap: bootstrap ?? null,
       actions: active ? actions : null,
+      // Clerk accounts resolve GitHub tokens via connected accounts; device
+      // deployments via the CESIUM_GITHUB_TOKEN env var. Either way the
+      // proxy is available whenever the cloud identity is.
+      github: active ? githubActions : null,
+      conversationCatalogs: conversationCatalogs ?? null,
     }),
-    [mode, status, bootstrap, deviceKey, clerkName, clerkEmail, active, actions]
+    [
+      mode,
+      status,
+      bootstrap,
+      deviceKey,
+      clerkName,
+      clerkEmail,
+      active,
+      actions,
+      githubActions,
+      conversationCatalogs,
+    ]
   );
 
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
@@ -532,6 +1054,7 @@ function ClerkCloudBridge({ children }: { children: ReactNode }) {
       clerkName={user?.fullName ?? null}
       clerkEmail={user?.primaryEmailAddress?.emailAddress ?? null}
     >
+      <ClerkNativeHandoff />
       {children}
     </CloudBridge>
   );
@@ -568,6 +1091,20 @@ function getConvexClient(): ConvexReactClient | null {
  */
 export function CloudProviders({ children }: { children: ReactNode }) {
   const configuredMode = getCloudMode();
+  // Must be installed before ClerkProvider triggers clerk-js's first request:
+  // packaged mobile WebViews cannot reach the Clerk Frontend API directly
+  // (file:// pages send `Origin: null`, which Clerk rejects), so FAPI traffic
+  // is relayed through the native shell. No-op everywhere else.
+  useState(() => installClerkFapiTunnel());
+  // Capture a server-share invite code from the URL fragment on ANY route
+  // (landing page, sign-in, workbench) before navigation can drop it. The
+  // stash is redeemed later, once the user is signed in inside the workbench.
+  useEffect(() => {
+    const inviteCode = consumeShareInviteFromLocation();
+    if (inviteCode) {
+      setPendingShareInvite(inviteCode);
+    }
+  }, []);
   const [localOnly, setLocalOnly] = useState(false);
   useEffect(() => {
     setLocalOnly(isCloudLocallyDisabled());
@@ -590,8 +1127,9 @@ export function CloudProviders({ children }: { children: ReactNode }) {
         publishableKey={getClerkPublishableKey() ?? undefined}
         signInUrl={getClerkSignInUrl()}
         signUpUrl={getClerkSignUpUrl()}
-        signInFallbackRedirectUrl="/setup?resume=1"
-        signUpFallbackRedirectUrl="/setup?resume=1"
+        signInFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
+        signUpFallbackRedirectUrl={getClerkFallbackRedirectUrl()}
+        appearance={CLERK_APPEARANCE}
       >
         <ConvexProviderWithClerk client={client} useAuth={useAuth}>
           <ClerkCloudBridge>{children}</ClerkCloudBridge>

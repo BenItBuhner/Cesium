@@ -37,6 +37,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import { reloadAppWindow } from "@/lib/desktop-environment";
@@ -73,6 +74,7 @@ import {
   type SettingsSearchEntry,
 } from "@/lib/settings-search-index";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import { useIsShellUnderlay } from "@/components/layout/ShellUnderlayContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
   BACK_INTENT_PRIORITY,
@@ -152,6 +154,10 @@ function shouldUseNativeEditableHandling(target: EventTarget | null): boolean {
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const { setShellView, openSettingsView } = useShellView();
+  // While this tree is the hidden preview layer beneath the settings view,
+  // its document-level listeners stand down entirely so the settings tree's
+  // own keyboard layer is the only one reacting to input.
+  const isShellUnderlay = useIsShellUnderlay();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -166,6 +172,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const { settings, updateSettings } = useGlobalSettings();
   const { vscodeExtensionsBeta } = useUserPreferences();
   const { pushNotification } = useWorkbenchNotifications();
+  const dialogs = useWorkbenchDialogs();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
@@ -502,6 +509,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (isShellUnderlay) {
+      return;
+    }
     const onOpenStudio = (event: Event) => {
       if (!isOpenWorkspaceStudioEvent(event)) {
         return;
@@ -512,7 +522,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
     window.addEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
     return () => window.removeEventListener(OPEN_WORKSPACE_STUDIO_EVENT, onOpenStudio);
-  }, []);
+  }, [isShellUnderlay]);
 
   const promptToRemoveWorkspace = useCallback(() => {
     setPalette("closed");
@@ -704,7 +714,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     browserPromptOpen ||
     workspaceWindowsModalOpen ||
     renameWindowOpen;
-  useBackHandler(anyIdeOverlayOpen, BACK_INTENT_PRIORITY.overlay, () => {
+  useBackHandler(anyIdeOverlayOpen && !isShellUnderlay, BACK_INTENT_PRIORITY.overlay, () => {
     if (renameWindowOpen) {
       setRenameWindowOpen(false);
     } else if (workspaceWindowsModalOpen) {
@@ -1188,39 +1198,57 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           );
           return true;
         }
-        if (action.confirm && !window.confirm(`Run "${action.label}"?`)) {
-          return true;
-        }
         const conversationId =
           action.kind === "prompt" ? agentShell?.selectedConversationId ?? null : null;
         if (action.kind === "prompt" && !conversationId) {
           flash(setToast, "Open a conversation to run this prompt action.");
           return true;
         }
-        flash(setToast, `Running ${action.label}…`);
-        void runQuickAction(action.id, {
-          ...(conversationId ? { conversationId } : {}),
-        })
-          .then(({ result }) => {
-            flash(
-              setToast,
-              result.ok
-                ? `${action.label} finished.`
-                : `${action.label} failed: ${result.error ?? "unknown error"}`
-            );
+        const run = () => {
+          flash(setToast, `Running ${action.label}…`);
+          void runQuickAction(action.id, {
+            ...(conversationId ? { conversationId } : {}),
           })
-          .catch((error) =>
-            flash(
-              setToast,
-              error instanceof Error ? `${action.label} failed: ${error.message}` : `${action.label} failed.`
+            .then(({ result }) => {
+              flash(
+                setToast,
+                result.ok
+                  ? `${action.label} finished.`
+                  : `${action.label} failed: ${result.error ?? "unknown error"}`
+              );
+            })
+            .catch((error) =>
+              flash(
+                setToast,
+                error instanceof Error ? `${action.label} failed: ${error.message}` : `${action.label} failed.`
+              )
             )
-          )
-          .finally(() => requestWorkspaceInsightsRefresh());
+            .finally(() => requestWorkspaceInsightsRefresh());
+        };
+        if (action.confirm) {
+          void dialogs
+            .confirm({
+              title: `Run “${action.label}”?`,
+              message:
+                action.kind === "prompt"
+                  ? "The prompt is sent to the open conversation."
+                  : "The command runs in the current workspace.",
+              detail: (action.kind === "command" ? action.command : action.prompt) ?? undefined,
+              confirmLabel: "Run",
+            })
+            .then((confirmed) => {
+              if (confirmed) {
+                run();
+              }
+            });
+          return true;
+        }
+        run();
         return true;
       }
       return false;
     },
-    [agentShell, runShortcutCommand, setToast, shortcutPlatform]
+    [agentShell, dialogs, runShortcutCommand, setToast, shortcutPlatform]
   );
 
   const inputSinkWorkbenchBindings = useMemo(() => {
@@ -1754,6 +1782,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    if (isShellUnderlay) {
+      return;
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       const t = e.target;
       const insidePalette =
@@ -1950,6 +1981,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   handleInputSinkWorkbenchKeyDown,
   handleWorkbenchKeyDown,
   hardwareInputEnabled,
+  isShellUnderlay,
   palette,
   routeKeyDown,
   handlePaste,

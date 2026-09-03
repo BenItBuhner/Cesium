@@ -17,6 +17,7 @@ import {
   type OrchestrationIssuePriority,
   type OrchestrationSocketServerMessage,
 } from "@/lib/orchestration-types";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 const cardClass =
@@ -93,6 +94,7 @@ function IssueCard({
   onDelete: () => void;
   onComment: (message: string) => void;
 }) {
+  const dialogs = useWorkbenchDialogs();
   const [comment, setComment] = useState("");
   const [editing, setEditing] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -195,9 +197,19 @@ function IssueCard({
               type="button"
               className={`${smallButtonClass} text-[var(--status-error)]`}
               onClick={() => {
-                if (window.confirm(`Delete issue "${issue.title}"?`)) {
-                  onDelete();
-                }
+                void dialogs
+                  .confirm({
+                    title: "Delete this issue?",
+                    message: "The issue and its comments are removed from the board.",
+                    detail: issue.title,
+                    tone: "danger",
+                    confirmLabel: "Delete",
+                  })
+                  .then((confirmed) => {
+                    if (confirmed) {
+                      onDelete();
+                    }
+                  });
               }}
             >
               Delete

@@ -414,17 +414,22 @@ export function getVoiceSecretsForCloud(): VoiceCloudSecretRecord[] {
   const wrappingKey = readLocalWrappingKey();
   const settings = readStoredRaw();
   const records: VoiceCloudSecretRecord[] = [];
+  // updatedAt must be STABLE for identical settings. A Date.now() fallback
+  // here made every push look newer than local (fresh profiles have
+  // updatedAt 0), so applyCloudVoiceSecrets rewrote local state, re-emitted
+  // VOICE_CLIENT_SETTINGS_EVENT, and re-pushed - an infinite mutation loop
+  // against the account deployment.
   if (wrappingKey) {
     records.push({
       kind: SECRET_WRAPPING_KEY_CLOUD_KIND,
       payload: wrappingKey,
-      updatedAt: settings.updatedAt || Date.now(),
+      updatedAt: settings.updatedAt || 0,
     });
   }
   records.push({
     kind: VOICE_CLIENT_SETTINGS_CLOUD_KIND,
     payload: JSON.stringify(settings),
-    updatedAt: settings.updatedAt || Date.now(),
+    updatedAt: settings.updatedAt || 0,
   });
   return records;
 }
@@ -445,7 +450,14 @@ export function applyCloudVoiceSecrets(records: VoiceCloudSecretRecord[]): void 
     return;
   }
   try {
-    writeStoredRaw(normalizeVoiceClientSettings(JSON.parse(settingsRecord.payload)));
+    const incoming = normalizeVoiceClientSettings(JSON.parse(settingsRecord.payload));
+    // No-op applications must not rewrite local state: writeStoredRaw emits
+    // VOICE_CLIENT_SETTINGS_EVENT, whose listener pushes the secrets back to
+    // the cloud, which re-triggers this apply - a save/apply ping-pong.
+    if (JSON.stringify(incoming) === JSON.stringify(local)) {
+      return;
+    }
+    writeStoredRaw(incoming);
   } catch {
     // Ignore malformed cloud payloads.
   }

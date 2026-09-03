@@ -40,9 +40,9 @@ export type BackGestureEvent = {
 
 /**
  * Optional progressive hooks for a back handler. Layers that can preview
- * their pop (drawers sliding with the finger, the settings view scaling down)
- * implement these; layers that can only close discretely (modals, palettes)
- * omit them and simply pop on commit.
+ * their pop (drawers sliding with the finger, the settings view sliding away
+ * to reveal the agent view beneath) implement these; layers that can only
+ * close discretely (modals, palettes) omit them and simply pop on commit.
  */
 export type BackGestureHooks = {
   onStart?: (event: BackGestureEvent) => void;

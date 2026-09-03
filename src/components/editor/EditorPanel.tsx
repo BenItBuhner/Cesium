@@ -7,11 +7,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type DragEvent,
   type MouseEvent,
 } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import dynamic from "next/dynamic";
+import { loadChunkWithRecovery } from "@/lib/chunk-load-recovery";
 import { EditorTabs } from "./EditorTabs";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { PlanMarkdownPreview } from "./PlanMarkdownPreview";
@@ -28,37 +30,33 @@ const PanelLoading = () => (
   </div>
 );
 
-const CodeEditor = dynamic(
-  () => import("./CodeEditor").then((m) => m.CodeEditor),
-  { ssr: false, loading: PanelLoading }
+// Every lazy surface goes through `loadChunkWithRecovery`: a tab that outlives a
+// deploy would otherwise 404 on the old chunk hash the first time the user opens
+// the Terminal (or Monaco, etc.) and crash into the route error boundary.
+function lazyPanel<P extends object>(loader: () => Promise<ComponentType<P>>) {
+  return dynamic(() => loadChunkWithRecovery(loader), {
+    ssr: false,
+    loading: PanelLoading,
+  });
+}
+
+const CodeEditor = lazyPanel(() => import("./CodeEditor").then((m) => m.CodeEditor));
+const Terminal = lazyPanel(() => import("./Terminal").then((m) => m.Terminal));
+const AgentTranscriptView = lazyPanel(() =>
+  import("./AgentTranscriptView").then((m) => m.AgentTranscriptView)
 );
-const Terminal = dynamic(
-  () => import("./Terminal").then((m) => m.Terminal),
-  { ssr: false, loading: PanelLoading }
+const BrowserTab = lazyPanel(() => import("./BrowserTab").then((m) => m.BrowserTab));
+const ExpandedComposerView = lazyPanel(() =>
+  import("./ExpandedComposerView").then((m) => m.ExpandedComposerView)
 );
-const AgentTranscriptView = dynamic(
-  () => import("./AgentTranscriptView").then((m) => m.AgentTranscriptView),
-  { ssr: false, loading: PanelLoading }
+const KanbanBoardView = lazyPanel(() =>
+  import("@/components/orchestration/KanbanBoardView").then((m) => m.KanbanBoardView)
 );
-const BrowserTab = dynamic(
-  () => import("./BrowserTab").then((m) => m.BrowserTab),
-  { ssr: false, loading: PanelLoading }
+const ExtensionSurfaceView = lazyPanel(() =>
+  import("./ExtensionSurfaceView").then((m) => m.ExtensionSurfaceView)
 );
-const ExpandedComposerView = dynamic(
-  () => import("./ExpandedComposerView").then((m) => m.ExpandedComposerView),
-  { ssr: false, loading: PanelLoading }
-);
-const KanbanBoardView = dynamic(
-  () => import("@/components/orchestration/KanbanBoardView").then((m) => m.KanbanBoardView),
-  { ssr: false, loading: PanelLoading }
-);
-const ExtensionSurfaceView = dynamic(
-  () => import("./ExtensionSurfaceView").then((m) => m.ExtensionSurfaceView),
-  { ssr: false, loading: PanelLoading }
-);
-const PullRequestView = dynamic(
-  () => import("./PullRequestView").then((m) => m.PullRequestView),
-  { ssr: false, loading: PanelLoading }
+const PullRequestView = lazyPanel(() =>
+  import("./PullRequestView").then((m) => m.PullRequestView)
 );
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
@@ -110,6 +108,7 @@ import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
   createPersistableWorkspaceSession,
@@ -343,6 +342,7 @@ export function EditorPanel({
   const { experimentalIpadWindowedTabInset, vscodeExtensionsBeta } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
   const { openAt } = useWorkbenchContextMenu();
+  const dialogs = useWorkbenchDialogs();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
   const persistedSession = sessionOverride ?? workspaceSession.editor;
   const expandedComposerDraftId =
@@ -1652,22 +1652,31 @@ export function EditorPanel({
           id: "tab-group-custom-color",
           label: "Custom color…",
           onSelect: () => {
-            queueMicrotask(() => {
-              const snap = stateRef.current;
-              const gr = snap[groupsKey][groupId];
-              if (!gr) return;
-              const c = window.prompt(
-                "Hex color (#rrggbb)",
-                resolveTabGroupColorHex(gr.color)
-              );
-              if (c == null || !/^#[0-9a-fA-F]{6}$/.test(c.trim())) return;
-              dispatch({
-                type: "UPDATE_TAB_GROUP_META",
-                pane,
-                groupId,
-                color: c.trim(),
+            const gr = stateRef.current[groupsKey][groupId];
+            if (!gr) return;
+            void dialogs
+              .prompt({
+                title: "Custom tab group color",
+                message: "Enter a hex color such as #3b82f6.",
+                defaultValue: resolveTabGroupColorHex(gr.color),
+                placeholder: "#rrggbb",
+                inputLabel: "Hex color",
+                monospace: true,
+                confirmLabel: "Apply",
+                validate: (value) =>
+                  /^#[0-9a-fA-F]{6}$/.test(value)
+                    ? null
+                    : "Use six hex digits, for example #3b82f6.",
+              })
+              .then((color) => {
+                if (color == null || !stateRef.current[groupsKey][groupId]) return;
+                dispatch({
+                  type: "UPDATE_TAB_GROUP_META",
+                  pane,
+                  groupId,
+                  color,
+                });
               });
-            });
           },
         },
         { type: "sep" },
@@ -1681,7 +1690,7 @@ export function EditorPanel({
         },
       ]);
     },
-    [dispatch, openAt]
+    [dialogs, dispatch, openAt]
   );
 
   const handleEditorTabContextMenu = useCallback(

@@ -1,6 +1,7 @@
 import {
   getMobileNotificationChip,
   isMobileAgentRunActive,
+  sanitizeMobileActivityText,
   type MobileAgentProjection,
 } from "@cesium/core";
 import type { LiveUpdateEtaMode, LiveUpdatePayload } from "./liveUpdateTypes";
@@ -35,11 +36,13 @@ export function toLiveUpdatePayload(
     // Terminal notifications state the outcome plainly. currentActivity is
     // stale once the run ends (it can even be a raw tool-call payload like
     // the last todo replace), so it never belongs in the final body; the
-    // one exception is the actual error text for failed runs.
-    const body =
-      projection.status === "failed" && projection.lastError
-        ? projection.lastError
-        : terminalLabel(projection.status);
+    // one exception is the actual error text for failed runs - collapsed to
+    // one clean line, and dropped entirely when it is a raw payload dump.
+    const failedBody =
+      projection.status === "failed"
+        ? sanitizeMobileActivityText(projection.lastError)
+        : null;
+    const body = failedBody ?? terminalLabel(projection.status);
     return {
       runKey,
       title: projection.title || "Cesium agent",
@@ -68,6 +71,15 @@ export function toLiveUpdatePayload(
       ? null
       : getMobileNotificationChip(projection.status);
 
+  // While the run is blocked on the user, currentActivity carries the actual
+  // question / permission text - that outranks routine progress headlines in
+  // the body for the same reason the chip flips to INPUT. No "~Nm left"
+  // suffix either: the clock is not running while the agent waits.
+  const interventionBody =
+    projection.pendingIntervention != null && projection.currentActivity
+      ? projection.currentActivity
+      : null;
+
   const goal = projection.goalProgress;
   if (goal) {
     // Goals are long-running; their ETA carries signal (unless disabled).
@@ -79,10 +91,12 @@ export function toLiveUpdatePayload(
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: withRemainingTime(
-        goal.headline || projection.currentActivity || "Goal is running",
-        remaining
-      ),
+      body:
+        interventionBody ??
+        withRemainingTime(
+          goal.headline || projection.currentActivity || "Goal is running",
+          remaining
+        ),
       shortText: statusChip ?? `${goal.percent}%`,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
@@ -118,11 +132,13 @@ export function toLiveUpdatePayload(
     return {
       runKey,
       title: projection.title || "Cesium agent",
-      body: withRemainingTime(
-        projection.currentActivity ||
-          `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
-        remaining
-      ),
+      body:
+        interventionBody ??
+        withRemainingTime(
+          projection.currentActivity ||
+            `Task ${todo.currentIndex ?? todo.completed + 1} of ${todo.total}`,
+          remaining
+        ),
       shortText: statusChip ?? progressLabel,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,

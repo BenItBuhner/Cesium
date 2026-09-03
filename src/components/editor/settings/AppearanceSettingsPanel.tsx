@@ -1,9 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  NEW_CHAT_WIDGET_DESCRIPTIONS,
+  NEW_CHAT_WIDGET_LABELS,
+  useNewChatWidgetVisibilityToggle,
+} from "@/components/agent/NewChatWidgets";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
+import {
+  normalizeComposerStatusBarVisibility,
+  type ComposerStatusBarVisibility,
+} from "@/lib/composer-status-bar";
+import {
+  AGENT_RAIL_VIEW_PRESETS,
+  AGENT_RAIL_VIEW_PRESET_INFO,
+  applyAgentRailViewPreset,
+  matchingAgentRailViewPreset,
+} from "@/lib/global-settings";
 import {
   TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
   type ComposerLayoutDensity,
@@ -19,6 +36,7 @@ import {
 import {
   PageIntro,
   SettingsBlock,
+  SettingsLinkRow,
   SettingsRadioList,
   SettingsRow,
   SettingsSection,
@@ -67,6 +85,10 @@ const COMPOSER_LAYOUT_OPTIONS: Array<{
 /** Shared height for Custom theme row (name input, duplicate select, Create). */
 const CUSTOM_THEME_ROW_CONTROL_MIN_H = "min-h-[38px]";
 
+function composerFooterEnabled(visibility: ComposerStatusBarVisibility): boolean {
+  return visibility.repo || visibility.branch || visibility.goal || visibility.context;
+}
+
 export function AppearanceSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const {
@@ -96,7 +118,47 @@ export function AppearanceSettingsPanel() {
   const [duplicateSourceId, setDuplicateSourceId] = useState<string>(DEFAULT_BUILTIN_THEME_ID);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CustomThemeEntry | null>(null);
-  const sideColumnsSwapped = settings.general.sideColumnsSwapped;
+
+  const { enginePagesVisible } = useSettingsEngineAvailability();
+  const { updateWorkspaceSession, workspaceSession } = useWorkspace();
+  const general = settings.general;
+  const sideColumnsSwapped = general.sideColumnsSwapped;
+  const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
+  const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
+    general.composerStatusBarVisibility ??
+      workspaceSession.chat.composerStatusBarVisibility
+  );
+
+  const patchGeneral = (patch: Partial<typeof general>) => {
+    updateSettings((current) => ({
+      ...current,
+      general: {
+        ...current.general,
+        ...patch,
+      },
+    }));
+  };
+
+  const openNav = (activeNav: string) => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        activeNav,
+      },
+    }));
+  };
+
+  const setComposerFooter = (value: boolean) => {
+    patchGeneral({
+      composerStatusBarVisibility: {
+        repo: value,
+        branch: value,
+        goal: value,
+        context: value,
+      },
+    });
+  };
 
   useEffect(() => {
     if (!editingId) {
@@ -196,19 +258,11 @@ export function AppearanceSettingsPanel() {
         <SettingsRow
           searchId="swap-columns"
           title="Swap side columns"
-          description="Move the agent/chat pane to the left and the file sidebar to the right while keeping the editor centered."
+          description="Mirror the layout: move the workbench pane to the left and the workspace sidebar to the right while keeping the chat centered. Also moves the settings navigation to the right."
           trailing={
             <ToggleSwitch
               checked={sideColumnsSwapped}
-              onChange={(value) =>
-                updateSettings((current) => ({
-                  ...current,
-                  general: {
-                    ...current.general,
-                    sideColumnsSwapped: value,
-                  },
-                }))
-              }
+              onChange={(value) => patchGeneral({ sideColumnsSwapped: value })}
               size="md"
             />
           }
@@ -226,8 +280,79 @@ export function AppearanceSettingsPanel() {
               size="md"
             />
           }
+        />
+        <SettingsRow
+          searchId="mobile-pane-toggles"
+          title="Mobile pane toggle buttons"
+          description="On phones, show the floating buttons in the top corners of the chat that reopen the workspace rail and workbench pane. Hide them if they overlap the pinned message - swiping right or left in the chat still opens either pane."
+          trailing={
+            <ToggleSwitch
+              checked={general.showMobilePaneToggles}
+              onChange={(value) => patchGeneral({ showMobilePaneToggles: value })}
+              size="md"
+            />
+          }
           border={false}
         />
+      </SettingsSection>
+      <SettingsSection title="New chat page">
+        {general.newChatWidgets.order.map((id) => {
+          const hidden = general.newChatWidgets.hidden.includes(id);
+          return (
+            <SettingsRow
+              key={id}
+              searchId={`new-chat-widget-${id}`}
+              title={NEW_CHAT_WIDGET_LABELS[id]}
+              description={NEW_CHAT_WIDGET_DESCRIPTIONS[id]}
+              trailing={
+                <ToggleSwitch
+                  checked={!hidden}
+                  onChange={() => toggleNewChatWidget(id)}
+                  size="md"
+                />
+              }
+            />
+          );
+        })}
+        {enginePagesVisible ? (
+          <SettingsLinkRow
+            searchId="new-chat-widget-actions-link"
+            title="Configure quick actions"
+            description="Add, edit, or remove the actions shown on the new chat landing."
+            onClick={() => openNav("actions")}
+            border={false}
+          />
+        ) : null}
+      </SettingsSection>
+      <SettingsSection title="Conversation list">
+        {AGENT_RAIL_VIEW_PRESETS.map((preset, index) => {
+          const info = AGENT_RAIL_VIEW_PRESET_INFO[preset];
+          const active =
+            matchingAgentRailViewPreset(general.agentRail) === preset;
+          return (
+            <SettingsRow
+              key={preset}
+              searchId={`rail-preset-${preset}`}
+              title={`${info.label} preset`}
+              description={info.description}
+              border={index < AGENT_RAIL_VIEW_PRESETS.length - 1}
+              trailing={
+                <button
+                  type="button"
+                  className={`${rowButtonClass} ${active ? "opacity-50" : ""}`}
+                  disabled={active}
+                  onClick={() =>
+                    patchGeneral({
+                      agentRail: applyAgentRailViewPreset(preset, general.agentRail),
+                    })
+                  }
+                >
+                  {active ? "Active" : "Apply"}
+                </button>
+              }
+            />
+          );
+        })}
       </SettingsSection>
       <SettingsSection title="Design">
         <SettingsRow
@@ -304,6 +429,18 @@ export function AppearanceSettingsPanel() {
             options={COMPOSER_LAYOUT_OPTIONS}
           />
         </SettingsBlock>
+        <SettingsRow
+          searchId="composer-status-bar"
+          title="Composer footer"
+          description="Show repository, branch, goal progress, and context usage under the composer in new chats."
+          trailing={
+            <ToggleSwitch
+              checked={composerFooterEnabled(composerStatusBarDefault)}
+              onChange={setComposerFooter}
+              size="md"
+            />
+          }
+        />
         <SettingsBlock searchId="tool-call-dropdown-height">
           <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
             Tool call dropdown height

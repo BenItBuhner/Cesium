@@ -121,7 +121,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "account-identity",
     "Signed-in account",
     "Your cloud account, device sync identity, or local workspace.",
-    ["profile", "avatar", "email", "clerk", "identity", "user"]
+    ["profile", "avatar", "email", "clerk", "identity", "user", "sign in", "not signed in"]
   ),
   row(
     "account",
@@ -151,7 +151,7 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "general",
     "appearance-link",
     "Appearance & themes",
-    "System, light, or dark mode; per-appearance themes; custom token presets.",
+    "Themes, layout, chat design, the new chat page, and conversation list presets.",
     ["theme", "themes"]
   ),
   row(
@@ -166,82 +166,6 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Import & export settings",
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
-  ),
-  section("general", "new-chat-widgets", "New chat widgets", "landing tiles home"),
-  row(
-    "general",
-    "new-chat-widget-shortcuts",
-    "Shortcuts",
-    "Plan-mode and editor-panel quick buttons on the new chat landing.",
-    ["new chat", "landing", "widget", "tiles", "plan"]
-  ),
-  row(
-    "general",
-    "new-chat-widget-actions",
-    "Actions",
-    "Quick actions on the new chat landing, run in the selected workspace's path.",
-    ["new chat", "landing", "widget", "tiles", "quick actions"]
-  ),
-  row(
-    "general",
-    "new-chat-widget-recent-chats",
-    "Recent chats",
-    "Recent conversation tiles on the new chat landing.",
-    ["new chat", "landing", "widget", "tiles", "conversations", "history"]
-  ),
-  row(
-    "general",
-    "new-chat-widget-recent-activity",
-    "Recent activity",
-    "Recently opened workspace tiles on the new chat landing.",
-    ["new chat", "landing", "widget", "tiles", "workspaces", "recents"]
-  ),
-  row(
-    "general",
-    "new-chat-widget-actions-link",
-    "Configure quick actions",
-    "Add, edit, or remove the actions shown on the new chat landing.",
-    ["new chat", "landing", "actions"]
-  ),
-  section(
-    "general",
-    "conversation-list",
-    "Conversation list",
-    "rail presets grouping ordering filters"
-  ),
-  row(
-    "general",
-    "rail-preset-default",
-    "Default preset",
-    "Workspace groups, newest first, detail lines only when a row needs you.",
-    ["rail", "preset", "conversation list", "view", "default"]
-  ),
-  row(
-    "general",
-    "rail-preset-inbox",
-    "Inbox preset",
-    "One flat urgency-first list across every workspace.",
-    ["rail", "preset", "conversation list", "view", "inbox", "priority"]
-  ),
-  row(
-    "general",
-    "rail-preset-compact",
-    "Compact preset",
-    "Workspace groups with strict single-line rows for maximum density.",
-    ["rail", "preset", "conversation list", "view", "compact", "dense"]
-  ),
-  section(
-    "general",
-    "composer-status-bar",
-    "Composer footer",
-    "footer repo branch goal context defaults"
-  ),
-  row(
-    "general",
-    "composer-status-bar",
-    "Composer footer",
-    "Show repository, branch, goal progress, and context usage under the composer.",
-    ["status bar", "footer", "repo", "branch", "goal", "context", "workspace", "tokens"]
   ),
   section("general", "quick-open", "Quick Open & switcher", "palette search"),
   row(
@@ -347,13 +271,84 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "appearance",
     "swap-columns",
     "Swap side columns",
-    "Move the agent/chat pane to the left and the file sidebar to the right while keeping the editor centered."
+    "Mirror the layout: move the workbench pane to the left and the workspace sidebar to the right while keeping the chat centered.",
+    ["swap", "mirror", "layout", "columns", "sidebar", "rail", "left", "right"]
   ),
   row(
     "appearance",
     "floating-sidebar",
     "Floating sidebar reveal",
     "Show the floating control over the editor when the file sidebar is collapsed."
+  ),
+  row(
+    "appearance",
+    "mobile-pane-toggles",
+    "Mobile pane toggle buttons",
+    "Show the floating buttons in the top corners of the mobile chat that reopen the workspace rail and workbench pane.",
+    ["mobile", "phone", "corner", "buttons", "arrows", "panel", "toggle", "hide", "overlap", "pinned message", "rail", "workbench"]
+  ),
+  section("appearance", "new-chat-page", "New chat page", "landing tiles home widgets"),
+  row(
+    "appearance",
+    "new-chat-widget-shortcuts",
+    "Shortcuts",
+    "Plan-mode and editor-panel quick buttons on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "plan"]
+  ),
+  row(
+    "appearance",
+    "new-chat-widget-actions",
+    "Actions",
+    "Quick actions on the new chat landing, run in the selected workspace's path.",
+    ["new chat", "landing", "widget", "tiles", "quick actions"]
+  ),
+  row(
+    "appearance",
+    "new-chat-widget-recent-chats",
+    "Recent chats",
+    "Recent conversation tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "conversations", "history"]
+  ),
+  row(
+    "appearance",
+    "new-chat-widget-recent-activity",
+    "Recent activity",
+    "Recently opened workspace tiles on the new chat landing.",
+    ["new chat", "landing", "widget", "tiles", "workspaces", "recents"]
+  ),
+  row(
+    "appearance",
+    "new-chat-widget-actions-link",
+    "Configure quick actions",
+    "Add, edit, or remove the actions shown on the new chat landing.",
+    ["new chat", "landing", "actions"]
+  ),
+  section(
+    "appearance",
+    "conversation-list",
+    "Conversation list",
+    "rail presets grouping ordering filters"
+  ),
+  row(
+    "appearance",
+    "rail-preset-default",
+    "Default preset",
+    "Workspace groups, newest first, detail lines only when a row needs you.",
+    ["rail", "preset", "conversation list", "view", "default"]
+  ),
+  row(
+    "appearance",
+    "rail-preset-inbox",
+    "Inbox preset",
+    "One flat urgency-first list across every workspace.",
+    ["rail", "preset", "conversation list", "view", "inbox", "priority"]
+  ),
+  row(
+    "appearance",
+    "rail-preset-compact",
+    "Compact preset",
+    "Workspace groups with strict single-line rows for maximum density.",
+    ["rail", "preset", "conversation list", "view", "compact", "dense"]
   ),
   section("appearance", "design", "Design"),
   row(
@@ -384,6 +379,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Composer layout",
     "Concise keeps the chat composer on one row until the text wraps; detailed always stacks controls under the text field.",
     ["composer", "concise", "detailed", "compact", "stacked", "multiline", "input"]
+  ),
+  row(
+    "appearance",
+    "composer-status-bar",
+    "Composer footer",
+    "Show repository, branch, goal progress, and context usage under the composer.",
+    ["status bar", "footer", "repo", "branch", "goal", "context", "workspace", "tokens"]
   ),
   row(
     "appearance",
@@ -705,6 +707,45 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("servers", "active-chat", "Active chat server", "New chats and workspace actions."),
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
+  row(
+    "servers",
+    "device-picker-entries",
+    "Device picker",
+    "Show, hide, and reorder servers, Codespaces, and cloud devices in the Switch device dropdown.",
+    ["device picker", "switch device", "server dropdown", "hide codespaces", "hide cloud", "reorder"]
+  ),
+  row(
+    "servers",
+    "device-picker-kind-codespace",
+    "GitHub Codespaces in device picker",
+    "Hide every Codespace from the device picker.",
+    ["codespaces", "github"]
+  ),
+  row(
+    "servers",
+    "device-picker-kind-cloud",
+    "Cloud execution in device picker",
+    "Hide every cloud execution device from the device picker.",
+    ["cursor cloud"]
+  ),
+  row(
+    "servers",
+    "device-picker-action:browser",
+    "Use this browser action",
+    "Hide the in-browser engine shortcut from the device picker."
+  ),
+  row(
+    "servers",
+    "device-picker-action:connect",
+    "Connect a device action",
+    "Hide the connect-a-device shortcut from the device picker."
+  ),
+  row(
+    "servers",
+    "device-picker-action:setup-codespace",
+    "Set up a Codespace action",
+    "Hide the Codespace setup shortcut from the device picker."
+  ),
   section("servers", "public-access-section", "Public access", "share expose tunnel remote link"),
   row(
     "servers",

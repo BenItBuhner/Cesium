@@ -1,6 +1,7 @@
 "use client";
 
-import { SignInButton, SignOutButton } from "@clerk/nextjs";
+import { SignOutButton } from "@clerk/nextjs";
+import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
 import { Check, CircleUserRound, Link2, LogOut, Settings, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -196,12 +197,12 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-[var(--border-card)] p-[4px]">
         {identity.kind === "clerk-signed-out" ? (
-          <SignInButton mode="modal">
+          <ClerkAuthTrigger mode="sign-in">
             <button type="button" role="menuitem" className={rowClass} onClick={onClose}>
               <UserRound className="size-[13px] shrink-0" strokeWidth={1.5} />
               Sign in
             </button>
-          </SignInButton>
+          </ClerkAuthTrigger>
         ) : null}
         {identity.kind === "clerk" ? (
           <SignOutButton>

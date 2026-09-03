@@ -3,7 +3,9 @@ import { describe, test } from "node:test";
 import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
   COMPLETION_RETRY_DELAYS_MS,
+  collectCompletionFailureDetails,
   completionErrorDismissKey,
+  detectCompletionSetupRequired,
   computeCompletionAutoRetryActive,
   conversationHasCompletionFailure,
   isAgentComposerBusy,
@@ -28,6 +30,55 @@ describe("agent completion error parsing", () => {
     assert.equal(view.title, "Authentication failed");
     assert.equal(view.summary, "Invalid API key");
     assert.equal(view.retryable, false);
+  });
+
+  test("classifies missing provider keys as a setup failure", () => {
+    const message =
+      "No API key configured for OpenAI. Add one in Settings → Agents → Cesium Agent, or connect an OAuth account.";
+    const view = parseAgentCompletionError(message);
+    assert.equal(view.setupRequired, "provider-auth");
+    assert.equal(view.title, "Provider not configured");
+    assert.equal(view.retryable, false);
+    assert.equal(isRetryableError(view), false);
+    assert.equal(detectCompletionSetupRequired(message), "provider-auth");
+    assert.equal(isCompletionFailureThreadContent(message), true);
+  });
+
+  test("classifies missing model selection as a setup failure", () => {
+    const view = parseAgentCompletionError("No model selected for this conversation.");
+    assert.equal(view.setupRequired, "model");
+    assert.equal(view.title, "Model not configured");
+    assert.equal(view.retryable, false);
+  });
+
+  test("leaves ordinary provider errors without a setup classification", () => {
+    const view = parseAgentCompletionError("504 Gateway Timeout upstream");
+    assert.equal(view.setupRequired, undefined);
+    assert.equal(detectCompletionSetupRequired("Rate limit exceeded"), undefined);
+  });
+
+  test("collects failed status details for thread de-duplication", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "st1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "status",
+        status: "failed",
+        detail: "  boom  ",
+      },
+      {
+        seq: 2,
+        eventId: "st2",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "status",
+        status: "idle",
+      },
+    ];
+    const details = collectCompletionFailureDetails(events);
+    assert.deepEqual([...details], ["boom"]);
   });
 
   test("marks transient provider failures as retryable", () => {

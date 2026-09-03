@@ -13,8 +13,8 @@ android {
     applicationId = "com.cesium.wear"
     minSdk = 30
     targetSdk = 36
-    versionCode = 14
-    versionName = "0.9.0"
+    versionCode = 17
+    versionName = "0.11.1"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

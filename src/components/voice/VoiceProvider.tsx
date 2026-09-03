@@ -58,7 +58,8 @@ import { createBestVad, EnergyVad, type VadEngine } from "@/lib/voice/vad";
 
 export type VoiceMode = "off" | "active" | "quiet" | "paused";
 
-function isVoiceCaptureIdle(mode: VoiceMode): boolean {
+/** Idle = no capture should run. Takes the mode as a parameter so callers get an un-narrowed comparison (refs read after an await stay narrowed and trip TS2367). */
+function isIdleVoiceMode(mode: VoiceMode): boolean {
   return mode === "off" || mode === "paused";
 }
 
@@ -605,7 +606,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       const stale =
         epoch !== captureEpochRef.current ||
         captureRef.current !== capture ||
-        isVoiceCaptureIdle(modeRef.current);
+        isIdleVoiceMode(modeRef.current);
       if (!stale) return false;
       await capture.stop().catch(() => {});
       if (captureRef.current === capture) {
@@ -632,7 +633,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const startCapture = useCallback(async () => {
     if (captureRef.current?.isRunning || captureStartingRef.current) return;
     const epoch = captureEpochRef.current;
-    if (isVoiceCaptureIdle(modeRef.current)) return;
+    if (isIdleVoiceMode(modeRef.current)) return;
     captureStartingRef.current = true;
     try {
       if (!vadRef.current) {
@@ -642,8 +643,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setVadEngineId(vad.id);
       }
       if (epoch !== captureEpochRef.current) return;
-      // Re-read after the VAD await - the user can pause/stop while it loads.
-      if (isVoiceCaptureIdle(modeRef.current)) return;
+      // The ref can be mutated during the awaited VAD init, but TS keeps the
+      // narrowing from the guard above and rejects direct comparisons as
+      // impossible (TS2367); the helper's parameter is never narrowed.
+      if (isIdleVoiceMode(modeRef.current)) return;
       const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
       endpointerRef.current = endpointer;
       const capture = new VoiceCapture({

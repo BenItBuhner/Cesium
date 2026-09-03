@@ -94,6 +94,30 @@ test("pending intervention outranks the todo fraction in the chip", () => {
   assert.equal(payload.progressLabel, "1/4");
 });
 
+test("pending question text outranks the goal headline in the body", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "awaiting_question",
+    pendingIntervention: "question",
+    currentActivity: "Which area of the Model-Proxy monorepo should this land in?",
+    goalProgress: {
+      percent: 62,
+      headline: "Goal verification",
+      runtimeMs: 120_000,
+      estimatedRemainingMs: 74_000,
+      estimatedCompletionAt: 196_000,
+    },
+  });
+
+  assert.equal(payload.progressKind, "goal");
+  assert.equal(payload.shortText, "INPUT");
+  // No "~Nm left" suffix: the clock is not running while the agent waits.
+  assert.equal(
+    payload.body,
+    "Which area of the Model-Proxy monorepo should this land in?"
+  );
+});
+
 test("prioritizes Goal percentage over todo progress", () => {
   const payload = toLiveUpdatePayload({
     ...baseProjection,
@@ -157,4 +181,29 @@ test("failed runs surface the error text in the terminal body", () => {
   });
   assert.equal(payload.shortText, "ERR");
   assert.equal(payload.body, "Provider responded with 401");
+});
+
+test("failed runs collapse multiline errors into one bounded body line", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError:
+      "Provider responded with 500.\n" +
+      `Request took too long: ${"x".repeat(200)}`,
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.ok(!payload.body.includes("\n"));
+  assert.ok(payload.body.length <= 120);
+  assert.ok(payload.body.startsWith("Provider responded with 500."));
+  assert.ok(payload.body.endsWith("…"));
+});
+
+test("failed runs never show raw JSON error payloads", () => {
+  const payload = toLiveUpdatePayload({
+    ...baseProjection,
+    status: "failed",
+    lastError: '{"error":{"message":"Compilation failed","status":500}}',
+  });
+  assert.equal(payload.shortText, "ERR");
+  assert.equal(payload.body, "Agent run failed");
 });

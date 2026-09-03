@@ -1,6 +1,10 @@
 "use client";
 
-import { attachSessionToken, syncAuthTokenFromResponse } from "@cesium/client";
+import {
+  attachSessionToken,
+  engineFetch as clientEngineFetch,
+  syncAuthTokenFromResponse,
+} from "@cesium/client";
 
 /**
  * Minimal engine API client for the setup wizard. Every call targets an
@@ -9,7 +13,26 @@ import { attachSessionToken, syncAuthTokenFromResponse } from "@cesium/client";
  * protected remote engines exactly like the main workbench does.
  */
 
-export type EngineHealth = { ok: boolean };
+/**
+ * `/health` snapshot of the engine's codespace keep-alive service. Absent
+ * entirely on engines that predate the keep-alive (pre-0.11) - the wake flow
+ * uses that absence to trigger an in-place self-update.
+ */
+export type EngineCodespaceKeepaliveHealth = {
+  enabled: boolean;
+  reason?: string;
+  codespaceName?: string | null;
+  activeReason?: string | null;
+  busyConversations?: number;
+  lastNotifiedAt?: number | null;
+  lastError?: string | null;
+  consecutiveFailures?: number;
+};
+
+export type EngineHealth = {
+  ok: boolean;
+  codespace?: EngineCodespaceKeepaliveHealth;
+};
 
 export type EngineAuthStatus = {
   enabled: boolean;
@@ -80,7 +103,9 @@ async function engineFetch(
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(`${baseUrl}${path}`, {
+  // clientEngineFetch routes the in-page Browser Machine's synthetic base
+  // URL to the local engine; every other base URL is a plain network fetch.
+  const response = await clientEngineFetch(baseUrl, path, {
     ...init,
     headers: attachSessionToken(headers, baseUrl),
     credentials: "include",
@@ -107,6 +132,97 @@ export async function checkEngineHealth(baseUrl: string): Promise<EngineHealth> 
     throw new Error(`Engine responded with status ${response.status}.`);
   }
   return (await response.json()) as EngineHealth;
+}
+
+export type EngineSelfUpdateResult = {
+  ok: boolean;
+  restartRequired: boolean;
+  error?: string;
+};
+
+/**
+ * Run the engine's self-update (`POST /api/updates/apply`) and consume the
+ * NDJSON progress stream until it finishes. Installer-provisioned engines
+ * (every codespace engine) hand off to the manager CLI, which stops the
+ * server process right after the stream closes - callers must poll `/health`
+ * until the updated engine is back before using it again.
+ *
+ * The stream can be cut mid-read when the server exits faster than the
+ * response drains; once a `restarting` or successful `done` event was seen,
+ * an abrupt end still counts as success.
+ */
+export async function applyEngineSelfUpdate(
+  baseUrl: string,
+  onLog?: (line: string) => void
+): Promise<EngineSelfUpdateResult> {
+  const response = await engineFetch(baseUrl, "/api/updates/apply", {
+    method: "POST",
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(await readError(response));
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let sawRestarting = false;
+  let result: EngineSelfUpdateResult | null = null;
+  const handleLine = (line: string) => {
+    if (!line.trim()) {
+      return;
+    }
+    try {
+      const event = JSON.parse(line) as {
+        type: string;
+        line?: string;
+        ok?: boolean;
+        restartRequired?: boolean;
+        error?: string;
+      };
+      if (event.type === "log" && event.line) {
+        onLog?.(event.line);
+      } else if (event.type === "restarting") {
+        sawRestarting = true;
+      } else if (event.type === "done") {
+        result = {
+          ok: event.ok === true,
+          restartRequired: event.restartRequired === true,
+          ...(event.error ? { error: event.error } : {}),
+        };
+      }
+    } catch {
+      // Ignore malformed stream lines.
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        handleLine(line);
+      }
+    }
+    handleLine(buffer);
+  } catch (error) {
+    if (!sawRestarting && !result) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  if (result) {
+    return result;
+  }
+  if (sawRestarting) {
+    return { ok: true, restartRequired: true };
+  }
+  return {
+    ok: false,
+    restartRequired: false,
+    error: "The update stream ended without reporting a result.",
+  };
 }
 
 export async function getEngineAuthStatus(

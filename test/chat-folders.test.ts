@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
+  PINNED_CHATS_FOLDER_SCOPE,
   STANDALONE_CHATS_FOLDER_SCOPE,
+  collectChatFolderConversationIds,
   createChatFolderState,
   getChatFoldersForScope,
   moveConversationInChatFolders,
   orderConversationsByIds,
   partitionConversationsByFolders,
   placeIdAmongIds,
+  remapChatFoldersToPinnedScope,
+  removeConversationFromChatFolders,
   reorderChatFolders,
   updateRootOrderForMove,
   upsertChatFoldersWithNewFolder,
@@ -96,11 +100,11 @@ describe("chat folders", () => {
     );
   });
 
-  test("partitions standalone chats across shared folder scope", () => {
+  test("partitions pinned chats across shared folder scope", () => {
     const folders = [
       folder({
         id: "f1",
-        workspaceId: STANDALONE_CHATS_FOLDER_SCOPE,
+        workspaceId: PINNED_CHATS_FOLDER_SCOPE,
         conversationIds: ["c2"],
         sortOrder: 0,
       }),
@@ -196,16 +200,52 @@ describe("chat folders", () => {
     assert.equal(getChatFoldersForScope(next, "ws-2")[0]?.sortOrder, 0);
   });
 
-  test("creates folders under the standalone chats scope", () => {
+  test("creates folders under the pinned chats scope", () => {
     const created = createChatFolderState({
       id: "f-new",
-      scopeId: STANDALONE_CHATS_FOLDER_SCOPE,
+      scopeId: PINNED_CHATS_FOLDER_SCOPE,
       existingFolders: [],
       conversationId: "c1",
     });
     const folders = upsertChatFoldersWithNewFolder([], created, "c1");
-    assert.equal(folders[0]?.workspaceId, STANDALONE_CHATS_FOLDER_SCOPE);
+    assert.equal(folders[0]?.workspaceId, PINNED_CHATS_FOLDER_SCOPE);
     assert.deepEqual(folders[0]?.conversationIds, ["c1"]);
+  });
+
+  test("remaps every folder onto the pinned scope", () => {
+    const remapped = remapChatFoldersToPinnedScope([
+      folder({ id: "a", workspaceId: "ws-1", sortOrder: 3 }),
+      folder({ id: "b", workspaceId: STANDALONE_CHATS_FOLDER_SCOPE, sortOrder: 1 }),
+    ]);
+    assert.deepEqual(
+      remapped.map((item) => item.workspaceId),
+      [PINNED_CHATS_FOLDER_SCOPE, PINNED_CHATS_FOLDER_SCOPE]
+    );
+    assert.deepEqual(
+      remapped.map((item) => item.sortOrder),
+      [0, 1]
+    );
+  });
+
+  test("removes a conversation from every folder", () => {
+    const next = removeConversationFromChatFolders(
+      [
+        folder({
+          id: "f1",
+          workspaceId: PINNED_CHATS_FOLDER_SCOPE,
+          conversationIds: ["a", "b"],
+        }),
+        folder({
+          id: "f2",
+          workspaceId: PINNED_CHATS_FOLDER_SCOPE,
+          conversationIds: ["a"],
+        }),
+      ],
+      "a"
+    );
+    assert.deepEqual(next[0]?.conversationIds, ["b"]);
+    assert.deepEqual(next[1]?.conversationIds, []);
+    assert.deepEqual(collectChatFolderConversationIds(next), ["b"]);
   });
 
   test("placeIdAmongIds inserts before and after targets", () => {
@@ -242,6 +282,6 @@ describe("chat folders", () => {
       [STANDALONE_CHATS_FOLDER_SCOPE]: ["c1", "c2"],
       "ws-1": ["a"],
     });
-    assert.equal(settings.general.chatFolders[0]?.workspaceId, STANDALONE_CHATS_FOLDER_SCOPE);
+    assert.equal(settings.general.chatFolders[0]?.workspaceId, PINNED_CHATS_FOLDER_SCOPE);
   });
 });

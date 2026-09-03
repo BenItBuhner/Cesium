@@ -41,6 +41,14 @@ describe("agent rail bulk select", () => {
       buildRailBulkSectionId({ inPinnedSection: true, workspaceId: "ws-1" }),
       "pinned"
     );
+    assert.equal(
+      buildRailBulkSectionId({
+        inPinnedSection: true,
+        workspaceId: "ws-1",
+        folderId: "f-1",
+      }),
+      "pinned:folder:f-1"
+    );
     assert.equal(buildRailBulkSectionId({ workspaceId: "ws-1" }), "ws:ws-1:root");
     assert.equal(
       buildRailBulkSectionId({ workspaceId: "ws-1", folderId: "f-1" }),

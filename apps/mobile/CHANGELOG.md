@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-02
+
+Patch cut so Android, Wear OS, and desktop installers pick up the native Clerk sign-in fix that landed after `v0.11.0`. Tag `v0.11.1` after this lands on `main` to publish the rebuilt APKs and desktop installers. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Fixed
+
+- Native Android/desktop Clerk sign-in: the packaged `file://` workbench no longer sends `Origin: null` to Clerk's Frontend API. Sign-in tickets from the hosted browser hand-back now create a session instead of bouncing back to the signed-out wall.
+
+## [0.11.0] - 2026-09-02
+
+Codespaces reliability and account-sync cut. Tag `v0.11.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Added
+
+- Codespace engines stay awake during agent runs, conversation catalogs persist on the signed-in account, and sleeping codespaces wake straight from the conversation rail.
+- Flat, customizable device picker: Codespaces and cloud devices sit inline with badges, and Settings can hide or reorder entries.
+- Cross-device harness auth sync through an encrypted account vault, so signing a harness in on one device carries to the others.
+- Reusable workbench dialog that replaces native browser alert/confirm/prompt across the app.
+- Settings predictive back on Android: the settings surface slides away to reveal the agent view beneath.
+
+### Changed
+
+- Codespace devices open the repo workspace on connect, surface provisioning state, and time out stuck status polls.
+- Completion failures stay out of the chat thread and land in the error dock, which gained an Open settings shortcut.
+- Agent stream recovery is deterministic on lossy connections.
+- Empty Pinned, Chat, and workspace sections are hidden in the agent rail, and new-chat landing pickers condense instead of wrapping on narrow panes.
+- The in-tab browser machine is hidden on the native apps.
+- The download page is cleaned up and no longer serves a stale GitHub release catalog.
+- Vercel deployments build faster (native TS typecheck, Turbopack FS cache) and deploy `convex/` from the build.
+
+### Fixed
+
+- Stale chunk loads after a deploy recover in place instead of crashing the workbench, and the proxy no longer 500s self-hosted `next start`.
+- GitHub account linking: Connect re-authorizes when a Clerk link already exists, half-linked accounts repair themselves instead of dead-ending on `external_account_exists`, and Codespace connect errors from Clerk step-up and Convex status are handled.
+- Native app Clerk sign-in returns to the app instead of stranding the browser tab.
+- Clerk modals render above Cesium overlays, and duplicate signed-out cards no longer stack on the Account settings page.
+- Bare Convex server errors are no longer blamed on `CLERK_SECRET_KEY`.
+- Intermittent loss of Android status-bar safe-area padding, and the mobile settings rail frost matches the agent conversation rail.
+
+## [0.10.0] - 2026-09-01
+
+Browser Machine and Codespaces cut. Tag `v0.10.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.
+
+### Added
+
+- Browser Machine: a **This browser** device that runs a full Cesium engine in the tab (`@cesium/browser-machine`) - IndexedDB VFS, client-side git, built-in shell with npm/node, and the first-party agent harness - plus a settings surface with engine-aware harness gating. Any device with a browser becomes a workspace.
+- GitHub Codespaces as a first-class device: pair a repository once, then create, wake, connect to, or recreate a codespace running the Cesium engine without a self-hosted server.
+- Account-scoped voice settings with sealed API keys.
+- Concise and detailed chat composer layouts.
+- Conversation rail customization with a Cursor-style cascading menu.
+- Unified voice transcription shortcut: tap or hold.
+- First-install sign-in prompt.
+
+### Changed
+
+- Conversation folders live in the Pinned rail section.
+- Swap side columns is wired through the agent shell and settings nav.
+- Engine-bound settings hide when no server is connected, and the composer no longer shows a phantom mock model in that state.
+- Account and Servers are grouped in the settings sidebar; Integrations is a workspace-first hub.
+- Account lives in the rail footer; devices only appear on new chat.
+- SSH workspace mode is gone; clients sign in from connect URLs.
+- Account settings no longer treat `cesium.techlitnow.com` as a connectable server. The server install command stays on one line, and URL connect is hidden on production.
+- Settings chrome: breadcrumbs, aurora backdrop with a dim tint, opaque search-shortcut hint, and a right workbench pane that matches the left rail (scrim + frost, no scene blur).
+- In-app documentation surface is removed.
+- Em-dashes are replaced with ASCII hyphens across the repo.
+
+### Fixed
+
+- Microphone is released when voice capture is cancelled mid-start.
+- Workspace 404 toast is replaced with first-server onboarding.
+- Engine password env-var hint is hidden on cloud-backed deployments.
+
 ## [0.9.0] - 2026-08-27
 
 Hosted production cut. Tag `v0.9.0` after this lands on `main` to publish Android + Wear OS APKs plus desktop installers for macOS, Windows, and Linux on both x64 and arm64.

@@ -19,10 +19,14 @@ describe("settings search index", () => {
     assert.ok(composerLayout.some((hit) => hit.rowId === "composer-layout"));
   });
 
-  test("indexes the composer footer under General", () => {
+  test("indexes the composer footer under Appearance", () => {
     const index = buildSettingsSearchIndex({});
     const hits = searchSettingsIndex(index, "composer footer");
-    assert.ok(hits.some((hit) => hit.rowId === "composer-status-bar"));
+    assert.ok(
+      hits.some(
+        (hit) => hit.rowId === "composer-status-bar" && hit.navId === "appearance"
+      )
+    );
   });
 
   test("indexes Advanced hub links", () => {
@@ -106,16 +110,43 @@ describe("settings search index", () => {
     assert.ok(hits.some((hit) => hit.kind === "model" && hit.backendId === "cesium-agent"));
   });
 
-  test("indexes new chat widget settings under General", () => {
+  test("indexes new chat page widget settings under Appearance", () => {
     const index = buildSettingsSearchIndex({});
-    const sectionHits = searchSettingsIndex(index, "new chat widgets");
+    const sectionHits = searchSettingsIndex(index, "new chat page widgets");
     assert.ok(
-      sectionHits.some((hit) => hit.id === "general::section::new-chat-widgets")
+      sectionHits.some((hit) => hit.id === "appearance::section::new-chat-page")
     );
 
     const tileHits = searchSettingsIndex(index, "landing tiles");
-    assert.ok(tileHits.some((hit) => hit.rowId === "new-chat-widget-recent-chats"));
+    assert.ok(
+      tileHits.some(
+        (hit) =>
+          hit.rowId === "new-chat-widget-recent-chats" && hit.navId === "appearance"
+      )
+    );
     assert.ok(tileHits.some((hit) => hit.rowId === "new-chat-widget-recent-activity"));
+  });
+
+  test("indexes conversation list presets under Appearance", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "conversation list preset");
+    assert.ok(
+      hits.some(
+        (hit) => hit.rowId === "rail-preset-inbox" && hit.navId === "appearance"
+      )
+    );
+  });
+
+  test("indexes the mobile pane toggle buttons under Appearance", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "mobile pane toggle");
+    assert.ok(
+      hits.some(
+        (hit) => hit.rowId === "mobile-pane-toggles" && hit.navId === "appearance"
+      )
+    );
+    const cornerHits = searchSettingsIndex(index, "corner buttons");
+    assert.ok(cornerHits.some((hit) => hit.rowId === "mobile-pane-toggles"));
   });
 
   test("indexes MCP settings under Plugins, not a top-level MCP nav", () => {
@@ -248,6 +279,12 @@ describe("settings search index", () => {
           hit.subtitle.includes("settings")
       )
     );
+  });
+
+  test("indexes unsigned-in account under the identity row", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "not signed in");
+    assert.ok(hits.some((hit) => hit.rowId === "account-identity"));
   });
 
   test("can omit iPad beta rows for desktop shells", () => {

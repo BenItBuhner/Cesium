@@ -48,6 +48,16 @@ import { startCesiumTriggerScheduler } from "./lib/agents/trigger-scheduler.js";
 import { publicAccessManager, startPublicAccessManager } from "./lib/public-access-manager.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import {
+  getCodespaceKeepaliveStatus,
+  isCodespaceUserActivityRequest,
+  noteCodespaceClientActivity,
+  notifyCodespaceOfClientActivity,
+  resolveCodespaceKeepaliveConfig,
+  startCodespaceKeepalive,
+} from "./lib/codespace-keepalive.js";
+import { subscribeAgentStoreEvents } from "./lib/agents/session-store.js";
+import { agentRuntimeManager } from "./lib/agents/runtime-manager.js";
+import {
   isPrivateLanBrowserOrigin,
   shouldRelaxPrivateLanCors,
 } from "./lib/cors-origins.js";
@@ -154,6 +164,15 @@ export function createCesiumApp(): Hono {
   });
 
   app.use("*", authMiddleware);
+  // Mutating API calls are user presence for the codespace keep-alive; GET
+  // polling (health probes, rail refreshes) deliberately is not, so an idle
+  // open tab cannot pin a codespace awake and burn the user's quota.
+  app.use("/api/*", async (c, next) => {
+    await next();
+    if (c.res.status < 400 && isCodespaceUserActivityRequest(c.req.method, c.req.path)) {
+      noteCodespaceClientActivity();
+    }
+  });
   app.onError((error, c) => {
     console.error(error);
     return c.json({ error: error.message }, 500);
@@ -164,6 +183,7 @@ export function createCesiumApp(): Hono {
       ok: true,
       instanceId: getEngineInstanceId(),
       transcription: { configured: isTranscriptionConfigured() },
+      codespace: getCodespaceKeepaliveStatus(),
     })
   );
   app.route("/", metaRoutes);
@@ -228,6 +248,21 @@ export function startCesiumBackgroundServices(): void {
   startUpdateAutoCheck();
   if (process.env.NODE_ENV !== "test") {
     startCesiumTriggerScheduler();
+  }
+  // Inside a GitHub Codespace, report presence to the host agent while agent
+  // turns run (or the user is active) so GitHub's idle timeout cannot stop
+  // the codespace mid-run. No-op everywhere else.
+  if (process.env.NODE_ENV !== "test" && !process.env.NODE_TEST_CONTEXT) {
+    const keepaliveConfig = resolveCodespaceKeepaliveConfig();
+    if (keepaliveConfig.enabled) {
+      startCodespaceKeepalive({
+        config: keepaliveConfig,
+        subscribe: subscribeAgentStoreEvents,
+        notify: notifyCodespaceOfClientActivity,
+        isConversationBusy: (conversationId) =>
+          agentRuntimeManager.hasLiveRuntime(conversationId),
+      });
+    }
   }
   // The reconciler mutates persisted conversations, so it must never run
   // inside test processes that boot the app (NODE_TEST_CONTEXT is set by the

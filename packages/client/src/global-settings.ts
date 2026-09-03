@@ -34,6 +34,11 @@ import {
   normalizeComposerStatusBarVisibility,
   type ComposerStatusBarVisibility,
 } from "./composer-status-bar";
+import {
+  createDefaultDevicePickerState,
+  normalizeDevicePickerState,
+  type DevicePickerState,
+} from "./device-picker";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 
@@ -186,6 +191,12 @@ export type GeneralSettingsState = {
    */
   showVoiceOrb: boolean;
   sideColumnsSwapped: boolean;
+  /**
+   * Show the floating rail / workbench toggle buttons in the top corners of
+   * the mobile chat. On by default; hiding them frees the corners (they can
+   * overlap the pinned user message) and edge swipes still open both panes.
+   */
+  showMobilePaneToggles: boolean;
   workspaceSortMode: WorkspaceSortMode;
   workspaceCustomOrderIds: string[];
   workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
@@ -198,13 +209,16 @@ export type GeneralSettingsState = {
   quickSwitcherScope: QuickSwitcherScopeId;
   chatFolders: ChatFolderState[];
   /**
-   * Custom root (unfoldered) conversation order keyed by folder scope id.
-   * Scope is a real workspace id, or `__agentStandaloneChats__` for the Chats section.
+   * Custom root (unfoldered) conversation order keyed by scope id.
+   * Workspace / standalone chats stay flat lists. Folders live only on
+   * `__agentPinned__`.
    */
   chatRootOrderByScope: Record<string, string[]>;
   agentRail: AgentRailSettingsState;
   /** Order + visibility of the widgets on the new-chat landing. */
   newChatWidgets: NewChatWidgetsState;
+  /** Section / entry order and hidden entries in the device (server) picker. */
+  devicePicker: DevicePickerState;
   /**
    * Defaults for the repo / branch / goal / context row beneath the composer.
    * Omitted on legacy profiles so their workspace's last-used value migrates
@@ -363,6 +377,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       batchStreamEvents: true,
       showVoiceOrb: false,
       sideColumnsSwapped: false,
+      showMobilePaneToggles: true,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
       workspaceRailAppearances: {},
@@ -389,6 +404,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         scope: { type: "all" },
       },
       newChatWidgets: createDefaultNewChatWidgetsState(),
+      devicePicker: createDefaultDevicePickerState(),
     },
     agents: {
       submitCtrlEnter: false,
@@ -546,7 +562,7 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
     const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
     folders.push({
       id,
-      workspaceId,
+      workspaceId: "__agentPinned__",
       name:
         typeof record.name === "string" && record.name.trim()
           ? record.name.trim().slice(0, 80)
@@ -560,7 +576,10 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
       conversationIds,
     });
   }
-  return folders.slice(0, 500);
+  return folders.slice(0, 500).map((folder, index) => ({
+    ...folder,
+    sortOrder: index,
+  }));
 }
 
 function normalizeChatRootOrderByScope(raw: unknown): Record<string, string[]> {
@@ -764,12 +783,19 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   if (!ordered.includes("running")) {
     ordered.splice(ordered.indexOf("attention") + 1, 0, "running");
   }
+  // Pinned is the only place folders/groups live — keep it under the inbox
+  // sections and never let a saved order bury it among workspaces.
+  const withoutPinned: AgentRailSectionId[] = ordered.filter((id) => id !== "pinned");
+  const runningIdx = withoutPinned.indexOf("running");
+  const attentionIdx = withoutPinned.indexOf("attention");
+  const pinnedInsertAt = (runningIdx >= 0 ? runningIdx : attentionIdx) + 1;
+  withoutPinned.splice(Math.max(0, pinnedInsertAt), 0, "pinned");
   const sectionOrder: AgentRailSectionId[] = [
-    ...ordered,
-    ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
+    ...withoutPinned,
+    ...AGENT_RAIL_SECTION_IDS.filter((id) => !withoutPinned.includes(id)),
   ];
   const hiddenSections = normalizeAgentRailSectionIds(record.hiddenSections).filter(
-    (id) => id !== "workspaces"
+    (id) => id !== "workspaces" && id !== "pinned"
   );
   return {
     groupBy,
@@ -918,6 +944,11 @@ export function normalizeLoadedGlobalSettings(
         typeof (r.general as Record<string, unknown> | undefined)?.showVoiceOrb === "boolean"
           ? ((r.general as Record<string, unknown>).showVoiceOrb as boolean)
           : base.general.showVoiceOrb,
+      showMobilePaneToggles:
+        typeof (r.general as Record<string, unknown> | undefined)
+          ?.showMobilePaneToggles === "boolean"
+          ? ((r.general as Record<string, unknown>).showMobilePaneToggles as boolean)
+          : base.general.showMobilePaneToggles,
       workspaceSortMode: normalizeWorkspaceSortMode(
         (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
       ),
@@ -950,6 +981,9 @@ export function normalizeLoadedGlobalSettings(
       ),
       newChatWidgets: normalizeNewChatWidgetsState(
         (r.general as Record<string, unknown> | undefined)?.newChatWidgets
+      ),
+      devicePicker: normalizeDevicePickerState(
+        (r.general as Record<string, unknown> | undefined)?.devicePicker
       ),
       composerStatusBarVisibility:
         (r.general as Record<string, unknown> | undefined)

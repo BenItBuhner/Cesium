@@ -1,4 +1,5 @@
 import { getConfiguredServerBaseUrl, getConfiguredServerPort } from "./configured-server-base-url";
+import { isBrowserMachineUrl } from "./browser-machine";
 import { isCesiumAccountSiteHostname } from "./engine-url-policy";
 import { getActiveServerBaseUrl, getServerConnectionKey } from "./server-connections";
 import { clientLocation } from "./platform";
@@ -146,6 +147,11 @@ export function resolveClientServerBaseUrlForLocation(
     | null,
   options?: ResolveServerBaseUrlOptions
 ): string {
+  // The browser machine's synthetic URL is never rewritten: it resolves to
+  // the in-page engine, not a network host.
+  if (isBrowserMachineUrl(raw)) {
+    return raw;
+  }
   if (!locationSource) {
     return raw;
   }

@@ -7,7 +7,9 @@ import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
+import { ServerSharingSettings } from "@/components/preferences/ServerSharingSettings";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { DevicePickerSettingsSection } from "@/components/editor/settings/DevicePickerSettingsSection";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   serverHealthColorClass,
@@ -264,9 +266,13 @@ export function ServerConnectionsSettingsPanel() {
           />
         </SettingsSection>
       ) : null}
+      <DevicePickerSettingsSection />
       {availability === "connected" ? (
         <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
       ) : null}
+      <SettingsSection title="Server sharing" bordered={false}>
+        <ServerSharingSettings />
+      </SettingsSection>
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {

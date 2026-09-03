@@ -26,9 +26,11 @@ import type { WebView as WebViewType } from "react-native-webview";
 import {
   buildMobileBootstrapScript,
   encodeMobileBridgeMessage,
+  isClerkFapiRelayUrl,
   MOBILE_BRIDGE_PROTOCOL_VERSION,
   mobileExternalHttpUrl,
   parseMobileBridgeMessage,
+  parseOAuthCompletedDeepLinkParams,
   shouldOpenMobileNavigationExternally,
   type MobileAgentProjection,
   type MobileNativeToWebMessage,
@@ -162,6 +164,11 @@ export default function App() {
     () => buildMobileBootstrapScript(hostServerConfig),
     [hostServerConfig]
   );
+  // Freshest config for reply paths (`webReady`) - reading through a ref
+  // instead of the message handler's closure so a reply can never re-deliver
+  // a config older than the last `nativeConfigChanged` push.
+  const hostServerConfigRef = useRef(hostServerConfig);
+  hostServerConfigRef.current = hostServerConfig;
 
   const lastPhoneControlConfigRef = useRef<string | null>(null);
   const configureNativeServices = useCallback(
@@ -290,25 +297,101 @@ export default function App() {
     sendToWeb({ type: "mobileNativeStatus", status });
   }, [sendToWeb]);
 
+  // OAuth returns (cesium://oauth/done) can land before the WebView has
+  // booted - a cold start straight from the browser hand-back, or while the
+  // page is still hydrating. The message is kept pending and re-sent on a
+  // backoff (and again on `webReady`) until the web layer acks it, so a
+  // sign-in ticket is never lost to a listener that did not exist yet.
+  const pendingOAuthRef = useRef<Extract<
+    MobileNativeToWebMessage,
+    { type: "oauthCompleted" }
+  > | null>(null);
+  const oauthRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearPendingOAuth = useCallback(() => {
+    pendingOAuthRef.current = null;
+    oauthRetryTimersRef.current.forEach(clearTimeout);
+    oauthRetryTimersRef.current = [];
+  }, []);
+
+  const deliverOAuthMessage = useCallback(
+    (message: Extract<MobileNativeToWebMessage, { type: "oauthCompleted" }>) => {
+      oauthRetryTimersRef.current.forEach(clearTimeout);
+      pendingOAuthRef.current = message;
+      sendToWeb(message);
+      oauthRetryTimersRef.current = OAUTH_REDELIVERY_DELAYS_MS.map((delay) =>
+        setTimeout(() => {
+          if (pendingOAuthRef.current === message) {
+            sendToWeb(message);
+          }
+        }, delay)
+      );
+    },
+    [sendToWeb]
+  );
+
   useEffect(() => {
     const handleOAuthUrl = (url: string | null) => {
       if (!url || !url.startsWith("cesium://oauth/")) return;
-      try {
-        const parsed = new URL(url);
-        sendToWeb({
-          type: "oauthCompleted",
-          sessionId: parsed.searchParams.get("session") ?? undefined,
-          ok: parsed.searchParams.get("ok") !== "0",
-          kind: parsed.searchParams.get("kind") ?? undefined,
-        });
-      } catch {
-        sendToWeb({ type: "oauthCompleted", ok: true });
-      }
+      deliverOAuthMessage({
+        type: "oauthCompleted",
+        ...parseOAuthCompletedDeepLinkParams(url),
+      });
     };
     const subscription = Linking.addEventListener("url", (event) => handleOAuthUrl(event.url));
     void Linking.getInitialURL().then(handleOAuthUrl);
-    return () => subscription.remove();
-  }, [sendToWeb]);
+    return () => {
+      subscription.remove();
+      oauthRetryTimersRef.current.forEach(clearTimeout);
+    };
+  }, [deliverOAuthMessage]);
+
+  // Clerk Frontend API relay: the file:// WebView cannot call Clerk itself
+  // (Chromium stamps `Origin: null` onto its POSTs and Clerk rejects that),
+  // so the page tunnels FAPI requests here. React Native's fetch carries no
+  // Origin header - which Clerk accepts, exactly like its native SDKs - and
+  // shares the device cookie jar, so Clerk sessions persist normally.
+  const handleClerkFapiRequest = useCallback(
+    async (message: {
+      id: string;
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body?: string | null;
+    }) => {
+      const respond = (payload: {
+        ok: boolean;
+        status?: number;
+        headers?: Record<string, string>;
+        body?: string;
+        error?: string;
+      }) => sendToWebRef.current?.({ type: "clerkFapiResponse", id: message.id, ...payload });
+      if (!isClerkFapiRelayUrl(message.url)) {
+        respond({ ok: false, error: "URL is not a Clerk Frontend API endpoint." });
+        return;
+      }
+      try {
+        const response = await fetch(message.url, {
+          method: message.method,
+          headers: message.headers,
+          body: message.body ?? undefined,
+          credentials: "include",
+        });
+        const body = await response.text();
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value: string, name: string) => {
+          headers[name] = value;
+        });
+        respond({ ok: true, status: response.status, headers, body });
+      } catch (error) {
+        respond({
+          ok: false,
+          error: error instanceof Error ? error.message : "Network request failed.",
+        });
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     serverUrlRef.current = serverUrl;
@@ -513,8 +596,27 @@ export default function App() {
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
         void sendNativeStatus();
+        // Re-deliver the current host config now that the web layer is
+        // definitely listening. Config pushes fired while the workbench was
+        // still hydrating (or held behind a first-run gate) reached no
+        // listener, and the safe-area inset they carried was lost - leaving
+        // the top chrome pinned under the status bar for the whole session.
+        sendToWeb({ type: "nativeConfigChanged", server: hostServerConfigRef.current });
         webReadyRef.current = true;
         flushPendingShare();
+        // Re-deliver an unacked OAuth return: the original send may have hit
+        // a page that was still booting (cold start from the browser).
+        if (pendingOAuthRef.current) {
+          sendToWeb(pendingOAuthRef.current);
+        }
+        return;
+      }
+      if (message.type === "oauthCompletedAck") {
+        clearPendingOAuth();
+        return;
+      }
+      if (message.type === "clerkFapiRequest") {
+        void handleClerkFapiRequest(message);
         return;
       }
       if (message.type === "getMobileNativeStatus") {
@@ -629,7 +731,16 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, flushPendingShare, focused, sendNativeStatus, syncBackIntercept]
+    [
+      clearPendingOAuth,
+      configureNativeServices,
+      flushPendingShare,
+      focused,
+      handleClerkFapiRequest,
+      sendNativeStatus,
+      sendToWeb,
+      syncBackIntercept,
+    ]
   );
 
   const handleNavigation = useCallback(
@@ -782,6 +893,9 @@ export default function App() {
     </View>
   );
 }
+
+/** Re-delivery backoff for unacked oauthCompleted messages. */
+const OAUTH_REDELIVERY_DELAYS_MS = [1_000, 3_000, 8_000, 15_000, 30_000, 60_000];
 
 function openSystemBrowser(url: string, documentUrl?: string) {
   const href = mobileExternalHttpUrl(url, documentUrl);

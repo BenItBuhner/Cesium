@@ -207,13 +207,25 @@ export type MobileNativeToWebMessage =
   // Progressive predictive-back stream (Android 14+ gesture navigation). The
   // gesture `progress` runs 0..1 as the finger travels from the `swipeEdge`;
   // the web layer previews the pop (drawer follows the finger, settings view
-  // scales down) and then either commits on `backRequest` or reverts on
-  // `backCancelled`. Older Androids and 3-button navigation never send these,
-  // so `backRequest` alone must stay sufficient.
+  // slides away revealing the agent view beneath) and then either commits on
+  // `backRequest` or reverts on `backCancelled`. Older Androids and 3-button
+  // navigation never send these, so `backRequest` alone must stay sufficient.
   | { type: "backStarted"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backProgressed"; progress: number; swipeEdge: "left" | "right"; touchX?: number; touchY?: number }
   | { type: "backCancelled" }
-  | { type: "oauthCompleted"; sessionId?: string; ok: boolean; kind?: string };
+  | { type: "oauthCompleted"; sessionId?: string; ok: boolean; kind?: string }
+  // Reply to `clerkFapiRequest`: the native shell performed the Clerk
+  // Frontend API request on the page's behalf and returns the raw response.
+  // `ok` covers the transport only (an HTTP error status still has ok: true).
+  | {
+      type: "clerkFapiResponse";
+      id: string;
+      ok: boolean;
+      status?: number;
+      headers?: Record<string, string>;
+      body?: string;
+      error?: string;
+    };
 
 export type MobileWebToNativeMessage =
   | {
@@ -245,6 +257,25 @@ export type MobileWebToNativeMessage =
   | { type: "requestPhoneAssistantRole" }
   | { type: "invokePhoneAssistant" }
   | { type: "openExternalUrl"; url: string }
+  // Ask the native shell to perform a Clerk Frontend API request. The page
+  // itself cannot: a file:// WebView stamps `Origin: null` (a forbidden
+  // header JS cannot remove) onto every POST, and Clerk's production API
+  // rejects any request whose Origin is not the instance domain - while
+  // requests with no Origin header at all (native clients) are accepted.
+  // React Native's fetch sends no Origin header, so the shell relays the
+  // request and returns the response via `clerkFapiResponse`.
+  | {
+      type: "clerkFapiRequest";
+      id: string;
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body?: string | null;
+    }
+  // Confirms the web layer received an `oauthCompleted` delivery, so the
+  // native shell can stop re-sending it (deep links can land before the
+  // WebView has booted; the shell retries until acked).
+  | { type: "oauthCompletedAck"; sessionId?: string }
   // Tells the native shell whether the web layer currently has an in-WebView
   // layer (overlay, drawer, settings view, …) that a back gesture should pop.
   // The native BackHandler uses this to decide between routing the gesture to
@@ -265,6 +296,49 @@ export type MobileWebToNativeMessage =
         conversationId?: string | null;
       };
     };
+
+/**
+ * Extracts the OAuth return parameters from a cesium://oauth/… deep link
+ * using pure string matching: React Native's URL implementation only
+ * understands http(s) hosts, and a sign-in ticket must survive even when a
+ * URL parser chokes on the custom scheme.
+ */
+export function parseOAuthCompletedDeepLinkParams(url: string): {
+  sessionId?: string;
+  ok: boolean;
+  kind?: string;
+} {
+  const param = (name: string): string | undefined => {
+    const match = url.match(new RegExp(`[?&]${name}=([^&#]*)`));
+    if (!match) {
+      return undefined;
+    }
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  };
+  return {
+    sessionId: param("ticket") ?? param("session"),
+    ok: param("ok") !== "0",
+    kind: param("kind"),
+  };
+}
+
+/**
+ * Whether a URL is a Clerk Frontend API endpoint the native shell may relay
+ * for the WebView (see `clerkFapiRequest`). Production instances live on
+ * `clerk.<domain>`; development instances on `<slug>.clerk.accounts.dev`.
+ */
+export function isClerkFapiRelayUrl(rawUrl: string): boolean {
+  const match = rawUrl.match(/^https:\/\/([^/:?#]+)/i);
+  if (!match) {
+    return false;
+  }
+  const hostname = match[1].toLowerCase();
+  return hostname.startsWith("clerk.") || hostname.endsWith(".clerk.accounts.dev");
+}
 
 export function encodeMobileBridgeMessage(
   message: MobileNativeToWebMessage | MobileWebToNativeMessage
@@ -390,6 +464,17 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data && typeof data.type === "string") {
+          // Host chrome (safe-area inset + native root class) is applied at
+          // the relay itself, not only by the workbench's React handler. The
+          // real inset routinely lands while the page is still hydrating or
+          // held behind a first-run gate - before any CustomEvent listener
+          // exists - and dropping that one message used to pin the top chrome
+          // under the status bar for the rest of the session.
+          if (data.type === "nativeConfigChanged" && data.server) {
+            window.__CESIUM_MOBILE_SERVER__ = data.server;
+            if (window.cesiumMobile) window.cesiumMobile.server = data.server;
+            applyHostChrome();
+          }
           window.dispatchEvent(
             new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data })
           );

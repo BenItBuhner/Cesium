@@ -19,6 +19,9 @@ import type {
   AgentImportSessionSummary,
   AgentImportSourceInfo,
   AgentRailRepositoryInfo,
+  HarnessAuthSnapshot,
+  HarnessAuthSyncEngineState,
+  HarnessAuthSyncId,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -50,6 +53,7 @@ import {
   getStoredSessionToken,
   syncAuthTokenFromResponse,
 } from "./auth-client";
+import { engineFetch } from "./browser-machine";
 import {
   resolveClientServerBaseUrl,
   resolveClientServerBaseUrlForCurrentWindow,
@@ -249,7 +253,7 @@ async function request<T>(
   const { requestBaseUrl: baseUrl, authBaseUrl: serverBaseUrl } =
     captureServerRequestTarget(options?.server);
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
-  const response = await fetch(`${baseUrl}${input}`, {
+  const response = await engineFetch(baseUrl, input, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({
@@ -314,7 +318,7 @@ async function requestWithEtag<T>(
     baseUrl: serverBaseUrl,
   });
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
-  const response = await fetch(`${baseUrl}${input}`, {
+  const response = await engineFetch(baseUrl, input, {
     headers: Object.fromEntries(
       attachSessionToken({
         "Content-Type": "application/json",
@@ -378,7 +382,7 @@ async function mutateWithEtag(
   if (cachedEtag) {
     headers["If-Match"] = cachedEtag;
   }
-  const response = await fetch(`${baseUrl}${input}`, {
+  const response = await engineFetch(baseUrl, input, {
     method: options?.method ?? "PUT",
     body,
     keepalive: options?.keepalive,
@@ -423,6 +427,19 @@ export function clearCachedRevision(revisionKey: string): void {
 
 export function getServerBaseUrl(): string {
   return resolveClientServerBaseUrl();
+}
+
+/**
+ * The active engine's true identity URL, BEFORE the window-relative collapse
+ * that {@link getServerBaseUrl} applies (same-origin on HTTPS pages, loopback
+ * rewrites for local dev). Consumers that need to reason about *where the
+ * engine actually lives* - e.g. whether it sits behind a GitHub Codespaces /
+ * dev-tunnels forwarded host - must use this, since the collapse can turn a
+ * `*.app.github.dev` engine into `localhost` when the workbench itself runs on
+ * localhost.
+ */
+export function getActiveEngineIdentityBaseUrl(): string {
+  return getActiveServerBaseUrl(getConfiguredServerBaseUrl());
 }
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
@@ -1559,7 +1576,7 @@ export async function transcribeAudioOnServer(
   if (options?.prompt) {
     form.set("prompt", options.prompt);
   }
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/audio/transcriptions`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/audio/transcriptions`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -1601,7 +1618,7 @@ export type SavedVoiceRecording = {
 export async function saveVoiceRecording(file: File): Promise<SavedVoiceRecording> {
   const form = new FormData();
   form.set("file", file);
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/audio/recordings`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/audio/recordings`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -1694,7 +1711,7 @@ export async function synthesizeVoiceSpeech(
   input: { text: string; engine?: string; voice?: string; speed?: number },
   options?: { signal?: AbortSignal }
 ): Promise<VoiceTtsAudio> {
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/voice/tts`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/voice/tts`, {
     method: "POST",
     body: JSON.stringify(input),
     headers: Object.fromEntries(
@@ -2600,6 +2617,52 @@ export async function cancelHarnessCliAuthLogin(
   );
 }
 
+/* ------------------------------------------------------------------------ */
+/* Harness auth sync (engine export/import of harness sign-ins)             */
+/* ------------------------------------------------------------------------ */
+
+/** Per-harness sync readiness reported by an engine (no secret material). */
+export async function fetchHarnessAuthSyncStates(
+  server?: ServerRequestContext
+): Promise<HarnessAuthSyncEngineState[]> {
+  const payload = await request<{ harnesses: HarnessAuthSyncEngineState[] }>(
+    "/api/settings/harness-auth-sync",
+    { method: "GET" },
+    { skipWorkspaceHeader: true, server }
+  );
+  return payload.harnesses ?? [];
+}
+
+/**
+ * Read one harness's credential snapshot from an engine. The plaintext only
+ * travels over the authenticated engine channel; callers must seal it (see
+ * `sealHarnessAuthSnapshot`) before uploading anywhere.
+ */
+export async function exportHarnessAuthSnapshotFromServer(
+  syncId: HarnessAuthSyncId,
+  server?: ServerRequestContext
+): Promise<HarnessAuthSnapshot | null> {
+  const payload = await request<{ snapshot: HarnessAuthSnapshot | null }>(
+    `/api/settings/harness-auth-sync/${encodeURIComponent(syncId)}/export`,
+    { method: "GET" },
+    { skipWorkspaceHeader: true, server, cache: "no-store" }
+  );
+  return payload.snapshot ?? null;
+}
+
+/** Apply an opened credential snapshot to an engine host. */
+export async function importHarnessAuthSnapshotToServer(
+  syncId: HarnessAuthSyncId,
+  snapshot: HarnessAuthSnapshot,
+  server?: ServerRequestContext
+): Promise<{ ok: boolean; applied: number; errors: string[] }> {
+  return request<{ ok: boolean; applied: number; errors: string[] }>(
+    `/api/settings/harness-auth-sync/${encodeURIComponent(syncId)}/import`,
+    { method: "POST", body: JSON.stringify({ snapshot }) },
+    { skipWorkspaceHeader: true, server }
+  );
+}
+
 export async function fetchTree(depth?: number): Promise<{
   root: string;
   tree: FileNode;
@@ -2672,7 +2735,7 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
   const form = new FormData();
   form.set("path", relativePath);
   form.set("file", file);
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/fs/upload`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/fs/upload`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -2721,7 +2784,7 @@ export async function uploadAttachments(
     // RN FormData typings only know Blob/File; the uri descriptor is runtime-valid.
     form.append("files", file as Blob);
   }
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/agents/attachments`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/agents/attachments`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -2887,7 +2950,7 @@ export async function runStorageMigration(
   input: StorageMigrationInput,
   callbacks: StorageMigrationCallbacks = {}
 ): Promise<void> {
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/storage/migrate`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/storage/migrate`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",
@@ -2985,8 +3048,9 @@ export async function importStorageArchive(
   if (options.driver) params.set("driver", options.driver);
   if (options.overwrite) params.set("overwrite", "1");
   const query = params.toString();
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/storage/import${query ? `?${query}` : ""}`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/storage/import${query ? `?${query}` : ""}`,
     {
       method: "POST",
       credentials: "include",
@@ -3138,7 +3202,7 @@ export async function saveUpdateSettings(
 export async function applyServerUpdate(
   callbacks: UpdateApplyCallbacks = {}
 ): Promise<void> {
-  const response = await fetch(`${resolveClientServerBaseUrl()}/api/updates/apply`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`/api/updates/apply`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",
@@ -3506,8 +3570,9 @@ export async function completeBrowserControlCommand(
 }
 
 export async function deleteBrowserDebugSession(sessionId: string): Promise<void> {
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "DELETE",
       headers: Object.fromEntries(
@@ -3537,8 +3602,9 @@ export async function deleteBrowserDebugSession(sessionId: string): Promise<void
 export async function getBrowserDebugSession(
   sessionId: string
 ): Promise<BrowserDebugSessionCreateResult | null> {
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "GET",
       headers: Object.fromEntries(
@@ -3574,8 +3640,9 @@ export async function navigateBrowserDebugSession(
   sessionId: string,
   input: BrowserDebugNavigateInput
 ): Promise<{ url: string | null } | null> {
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/navigate`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/navigate`,
     {
       method: "POST",
       headers: Object.fromEntries(
@@ -3608,8 +3675,9 @@ export async function captureBrowserDebugViewport(
     width: String(Math.max(1, Math.floor(viewport.width))),
     height: String(Math.max(1, Math.floor(viewport.height))),
   });
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/viewport?${params.toString()}`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/viewport?${params.toString()}`,
     {
       method: "GET",
       headers: Object.fromEntries(
@@ -3635,8 +3703,9 @@ export async function sendBrowserDebugInput(
   sessionId: string,
   input: BrowserDebugInputEvent
 ): Promise<boolean> {
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/input`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/input`,
     {
       method: "POST",
       headers: Object.fromEntries(
@@ -3665,8 +3734,9 @@ export async function getBrowserDebugEvents(
   after = 0
 ): Promise<{ events: BrowserDebugEvent[]; cursor: number } | null> {
   const params = new URLSearchParams({ after: String(Math.max(0, Math.floor(after))) });
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
     {
       method: "GET",
       headers: Object.fromEntries(
@@ -3696,8 +3766,9 @@ export async function getBrowserDebugEvents(
 export async function captureRenderedBrowserElementScreenshot(
   input: BrowserRenderedElementScreenshotInput
 ): Promise<string | null> {
-  const response = await fetch(
-    `${resolveClientServerBaseUrl()}/api/browser-debug/rendered-element-screenshot`,
+  const response = await engineFetch(
+    resolveClientServerBaseUrl(),
+    `/api/browser-debug/rendered-element-screenshot`,
     {
       method: "POST",
       headers: Object.fromEntries(
@@ -3727,7 +3798,7 @@ async function mcpJsonRequest<T>(
   path: string,
   init?: RequestInit & { workspaceId?: string | null }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientServerBaseUrl()}${path}`, {
+  const response = await engineFetch(resolveClientServerBaseUrl(),`${path}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({

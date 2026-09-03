@@ -10,6 +10,7 @@ import {
   FolderGit2,
   GitBranch,
   GitFork,
+  Github,
   Import,
   MessageSquare,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
 } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
+import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -42,11 +44,21 @@ import type {
   ImageAttachment,
 } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { CodespaceSetupWizard } from "@/components/preferences/CodespaceSetupWizard";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
+import { useGithubCodespaces } from "@/hooks/useGithubCodespaces";
+import {
+  CODESPACE_DEVICE_LABEL,
+  codespaceRepoWorkspaceName,
+  codespaceRepoWorkspaceRoot,
+  type CodespaceDevice,
+} from "@/lib/github-codespaces";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -68,6 +80,7 @@ import {
   NO_WORKSPACE_PICKER_LABEL,
   sortDirectoryWorkspaces,
 } from "@/lib/multi-server-workspaces";
+import { useLandingPickerCondenseTier } from "./landing-picker-overflow";
 
 type BranchPickerItem = {
   key: string;
@@ -80,6 +93,30 @@ type BranchPickerItem = {
 
 function localBranchNameForRemote(branchName: string): string {
   return branchName.replace(/^[^/]+\//, "");
+}
+
+/**
+ * Width stand-in for one picker pill inside the hidden measurement probes:
+ * 13px icon square, optional (max-width-capped) label, optional 13px chevron
+ * square, mirroring the live pills' gaps/padding. Omitting `label` measures
+ * the icon-only condensed form.
+ */
+function LandingPickerProbePill({
+  label,
+  trailingChevron = true,
+}: {
+  label?: string;
+  trailingChevron?: boolean;
+}) {
+  return (
+    <span className="inline-flex max-w-[220px] shrink-0 items-center gap-[5px] px-[6px]">
+      <span className="block size-[13px] shrink-0" />
+      {label !== undefined ? (
+        <span className="min-w-0 max-w-[260px] truncate">{label}</span>
+      ) : null}
+      {trailingChevron ? <span className="block size-[13px] shrink-0" /> : null}
+    </span>
+  );
 }
 
 
@@ -105,6 +142,7 @@ export function AgentNewChatLanding({
     workspaceInfo,
     workspaceSession,
     openWorkspaceById,
+    openFolder,
     gitStatus,
     refreshGitStatus,
     initializeGitRepo,
@@ -113,6 +151,7 @@ export function AgentNewChatLanding({
     homeWorkspaceId,
     activeWorkspaceId,
   } = useWorkspace();
+  const dialogs = useWorkbenchDialogs();
   const {
     activeWorkspaceGroup,
     expandedComposerDraftId,
@@ -152,6 +191,8 @@ export function AgentNewChatLanding({
     activeCloudDevice,
   } = useAgentDraftComposer({ onInstantSubmit });
   const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
+  const codespaces = useGithubCodespaces();
+  const { pushNotification } = useWorkbenchNotifications();
 
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
@@ -167,13 +208,38 @@ export function AgentNewChatLanding({
       ),
     [activeServer.id, serverRailAppearances, servers]
   );
-  const activeDeviceLabel = activeCloudDevice?.label ?? getServerDisplayLabel(
-    activeServer,
-    activeServerAppearance
+  // The active server is a paired GitHub Codespace when a codespace device
+  // resolves to it. Its stored label is the repo (owner/name); the pill
+  // should say what kind of machine it is and let the workspace pill carry
+  // the repository name.
+  const activeCodespaceDevice = useMemo(
+    () =>
+      codespaces.devices.find((device) => device.localServerId === activeServer.id) ??
+      null,
+    [activeServer.id, codespaces.devices]
   );
+  const activeDeviceLabel =
+    activeCloudDevice?.label ??
+    (activeCodespaceDevice
+      ? CODESPACE_DEVICE_LABEL
+      : getServerDisplayLabel(activeServer, activeServerAppearance));
+  const activeDeviceTitle = activeCodespaceDevice
+    ? `${CODESPACE_DEVICE_LABEL} · ${activeCodespaceDevice.repoFullName}`
+    : activeDeviceLabel;
 
+  /**
+   * Switch servers, then land in a workspace. Without a hint this restores
+   * the last workspace used on that server (or its first one). Codespace
+   * devices pass `workspace` so the repository checkout at
+   * `/workspaces/<repo>` is registered on that engine (idempotent - reuses
+   * an existing registration) and opened, instead of dropping the user into
+   * "No workspace".
+   */
   const handleActiveServerChange = useCallback(
-    (serverId: string) => {
+    (
+      serverId: string,
+      options?: { workspace?: { root: string; name: string } }
+    ) => {
       if (activeCloudDevice) {
         // Leaving the cloud device view: stop hiding local conversations.
         setRailFilters({
@@ -184,15 +250,37 @@ export function AgentNewChatLanding({
         });
       }
       setActiveCloudDeviceId(null);
+      setDevicePickerOpen(false);
+      const workspaceHint = options?.workspace;
+      const openHintedWorkspace = async () => {
+        if (!workspaceHint) return;
+        // Let React commit the server switch so the request targets the
+        // newly active engine.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await openFolder(workspaceHint.root, workspaceHint.name);
+        // A "No workspace" draft would otherwise keep masking the workspace
+        // we just opened.
+        setStandaloneDraftActive(false);
+      };
       if (serverId === activeServer.id) {
-        setDevicePickerOpen(false);
+        if (workspaceHint && !activeWorkspaceId) {
+          void openHintedWorkspace().catch(() => undefined);
+        }
         return;
       }
       if (activeWorkspaceId) {
         rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
       }
       setActiveServer(serverId);
-      setDevicePickerOpen(false);
+      if (workspaceHint) {
+        void openHintedWorkspace().catch(() => {
+          // Folder missing or engine refused: fall back to whatever the
+          // engine already has registered.
+          const first = (directoryByServerId.get(serverId) ?? [])[0]?.id;
+          if (first) void openWorkspaceById(first).catch(() => undefined);
+        });
+        return;
+      }
       const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
       const serverWorkspaces = directoryByServerId.get(serverId) ?? [];
       const targetWorkspaceId =
@@ -209,12 +297,24 @@ export function AgentNewChatLanding({
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      openFolder,
       openWorkspaceById,
       railFilters,
       setActiveCloudDeviceId,
       setActiveServer,
       setRailFilters,
+      setStandaloneDraftActive,
     ]
+  );
+
+  const codespaceWorkspaceHint = useCallback(
+    (repoFullName: string) => ({
+      workspace: {
+        root: codespaceRepoWorkspaceRoot(repoFullName),
+        name: codespaceRepoWorkspaceName(repoFullName),
+      },
+    }),
+    []
   );
 
   useRegisterDesignCaptureComposer(composerDraftId, 9);
@@ -223,11 +323,77 @@ export function AgentNewChatLanding({
   const workspacePickerRef = useRef<HTMLButtonElement>(null);
   const devicePickerRef = useRef<HTMLButtonElement>(null);
   const branchPopoverRef = useRef<HTMLDivElement>(null);
+  const pickerRowContainerRef = useRef<HTMLDivElement>(null);
+  const pickerProbeFullRef = useRef<HTMLDivElement>(null);
+  const pickerProbeNoImportRef = useRef<HTMLDivElement>(null);
+  const pickerProbeCondensedDeviceRef = useRef<HTMLDivElement>(null);
+  const pickerCondenseTier = useLandingPickerCondenseTier(
+    pickerRowContainerRef,
+    pickerProbeFullRef,
+    pickerProbeNoImportRef,
+    pickerProbeCondensedDeviceRef
+  );
+  const importPillHidden = pickerCondenseTier >= 1;
+  const devicePillCondensed = pickerCondenseTier >= 2;
+  const branchPillCondensed = pickerCondenseTier >= 3;
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+  const [codespaceWizardOpen, setCodespaceWizardOpen] = useState(false);
+  const [codespaceRecreateDevice, setCodespaceRecreateDevice] =
+    useState<CodespaceDevice | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  // The picker shows each codespace's cached GitHub state; re-read it lazily
+  // (throttled inside the provider) whenever the picker opens so "Asleep" vs
+  // "Stopped" vs "Deleted" reflects reality instead of the last connect.
+  const refreshCodespaceStates = codespaces.refreshDeviceStates;
+  const codespaceCount = codespaces.devices.length;
+  useEffect(() => {
+    if (!devicePickerOpen || codespaceCount === 0) {
+      return;
+    }
+    void refreshCodespaceStates();
+  }, [codespaceCount, devicePickerOpen, refreshCodespaceStates]);
+
+  // Selecting a codespace device wakes it first (start + engine health +
+  // session), with progress rendered inline in the picker; only a successful
+  // wake runs the normal server switch.
+  const handleSelectCodespaceDevice = useCallback(
+    (device: CodespaceDevice) => {
+      void codespaces.connectDevice(device).then((localServerId) => {
+        if (localServerId) {
+          const warning = codespaces.getLastWakeWarning();
+          if (warning) {
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "warning",
+              title: "Codespace Keep-Alive Warning",
+              message: warning,
+              autoDismissMs: 15_000,
+              compact: true,
+            });
+          }
+          handleActiveServerChange(
+            localServerId,
+            codespaceWorkspaceHint(device.repoFullName)
+          );
+        }
+      });
+    },
+    [codespaceWorkspaceHint, codespaces, handleActiveServerChange, pushNotification]
+  );
+
+  const handleRecreateCodespaceDevice = useCallback(
+    (device: CodespaceDevice) => {
+      codespaces.dismissFailure();
+      setCodespaceRecreateDevice(device);
+      setCodespaceWizardOpen(true);
+      setDevicePickerOpen(false);
+    },
+    [codespaces]
+  );
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
 
@@ -395,6 +561,17 @@ export function AgentNewChatLanding({
     ? gitStatus.currentBranch ?? "Detached"
     : "No git repo";
 
+  const workspacePickerLabel = noWorkspaceDraft
+    ? NO_WORKSPACE_PICKER_LABEL
+    : // The rail-derived group can lag behind a freshly created / opened
+      // workspace (cached rail payload); the active workspace's own name is
+      // always current.
+      (activeWorkspaceGroup?.workspace.name ??
+        workspaceInfo?.name ??
+        "Select workspace");
+  const showBranchPill = !noWorkspaceDraft && !isHomeWorkspace;
+  const showImportPill = !noWorkspaceDraft;
+
   const branchPickerPosition = branchPickerOpen && branchPickerRef.current
     ? branchPickerRef.current.getBoundingClientRect()
     : null;
@@ -484,19 +661,28 @@ export function AgentNewChatLanding({
   );
 
   const handleNewBranchWorktree = useCallback(async () => {
-    const name = window.prompt("New branch name");
-    if (!name?.trim()) {
+    const name = await dialogs.prompt({
+      title: "New branch worktree",
+      message: gitStatus?.currentBranch
+        ? `A new worktree is created for the branch, based on ${gitStatus.currentBranch}.`
+        : "A new worktree is created for the branch.",
+      placeholder: "feature/my-change",
+      inputLabel: "Branch name",
+      monospace: true,
+      confirmLabel: "Create",
+    });
+    if (!name) {
       return;
     }
     await runGitAction(`new:${name}`, async () => {
       await createWorktree({
-        branch: name.trim(),
+        branch: name,
         baseBranch: gitStatus?.currentBranch ?? undefined,
         newBranch: true,
       });
       setBranchPickerOpen(false);
     });
-  }, [createWorktree, gitStatus?.currentBranch, runGitAction]);
+  }, [createWorktree, dialogs, gitStatus?.currentBranch, runGitAction]);
 
   useEffect(() => {
     const onShortcut = (e: Event) => {
@@ -516,9 +702,51 @@ export function AgentNewChatLanding({
       <div
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
-        <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
+        <div
+          ref={pickerRowContainerRef}
+          className="relative mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]"
+        >
+          {/*
+            Invisible measurement rows mirroring the picker pills at full size
+            for each condensation step (full row, Import hidden, Import hidden
+            + icon-only device). The live row condenses off these probes - not
+            its own width - so condensing can never feed back into the
+            measurement and oscillate.
+          */}
+          <div
+            aria-hidden
+            className="pointer-events-none invisible absolute left-0 top-0 h-0 overflow-hidden font-sans text-[13px]"
+          >
+            <div
+              ref={pickerProbeFullRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill label={activeDeviceLabel} />
+              {showImportPill ? (
+                <LandingPickerProbePill label="Import" trailingChevron={false} />
+              ) : null}
+            </div>
+            <div
+              ref={pickerProbeNoImportRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill label={activeDeviceLabel} />
+            </div>
+            <div
+              ref={pickerProbeCondensedDeviceRef}
+              className="flex w-max items-center gap-[6px] whitespace-nowrap"
+            >
+              <LandingPickerProbePill label={workspacePickerLabel} />
+              {showBranchPill ? <LandingPickerProbePill label={activeBranchLabel} /> : null}
+              <LandingPickerProbePill />
+            </div>
+          </div>
           <div className="w-fit max-w-full self-start">
-            <div className="flex max-w-full flex-wrap items-center gap-[6px]">
+            <div className="flex max-w-full items-center gap-[6px]">
               <button
                 ref={workspacePickerRef}
                 type="button"
@@ -543,21 +771,37 @@ export function AgentNewChatLanding({
                   <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
-                  {noWorkspaceDraft
-                    ? NO_WORKSPACE_PICKER_LABEL
-                    : // The rail-derived group can lag behind a freshly created /
-                      // opened workspace (cached rail payload); the active
-                      // workspace's own name is always current.
-                      (activeWorkspaceGroup?.workspace.name ??
-                        workspaceInfo?.name ??
-                        "Select workspace")}
+                  {workspacePickerLabel}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              {showBranchPill ? (
+              <button
+                ref={branchPickerRef}
+                type="button"
+                aria-label="Open branch picker"
+                title={branchPillCondensed ? activeBranchLabel : undefined}
+                data-perf="agent-branch-picker-button"
+                onClick={() => {
+                  setWorkspacePickerOpen(false);
+                  setDevicePickerOpen(false);
+                  setBranchPickerOpen((open) => !open);
+                  void refreshGitStatus().catch(() => undefined);
+                }}
+                className="inline-flex min-w-0 max-w-[220px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
+                {!branchPillCondensed ? (
+                  <span className="truncate">{activeBranchLabel}</span>
+                ) : null}
+                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
+              </button>
+              ) : null}
               <button
                 ref={devicePickerRef}
                 type="button"
-                aria-label={`Switch device (${activeDeviceLabel})`}
+                aria-label={`Switch device (${activeDeviceTitle})`}
+                title={devicePillCondensed || activeCodespaceDevice ? activeDeviceTitle : undefined}
                 aria-expanded={devicePickerOpen}
                 aria-haspopup="menu"
                 data-perf="agent-device-picker-button"
@@ -566,10 +810,12 @@ export function AgentNewChatLanding({
                   setBranchPickerOpen(false);
                   setDevicePickerOpen((open) => !open);
                 }}
-                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                className="inline-flex min-w-0 max-w-[220px] shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
                 {activeCloudDevice ? (
                   <Cloud className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
+                ) : activeCodespaceDevice ? (
+                  <Github className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
                 ) : isLocalDeviceServer(activeServer) ? (
                   <CircleUserRound className="size-[13px] shrink-0" strokeWidth={1.5} aria-hidden />
                 ) : (
@@ -580,29 +826,12 @@ export function AgentNewChatLanding({
                     strokeWidth={1.5}
                   />
                 )}
-                <span className="max-w-[260px] min-w-0 shrink truncate">{activeDeviceLabel}</span>
+                {!devicePillCondensed ? (
+                  <span className="max-w-[260px] min-w-0 shrink truncate">{activeDeviceLabel}</span>
+                ) : null}
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
-              {!noWorkspaceDraft && !isHomeWorkspace ? (
-              <button
-                ref={branchPickerRef}
-                type="button"
-                aria-label="Open branch picker"
-                data-perf="agent-branch-picker-button"
-                onClick={() => {
-                  setWorkspacePickerOpen(false);
-                  setDevicePickerOpen(false);
-                  setBranchPickerOpen((open) => !open);
-                  void refreshGitStatus().catch(() => undefined);
-                }}
-                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              >
-                <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
-                <span className="truncate">{activeBranchLabel}</span>
-                <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
-              </button>
-              ) : null}
-              {!noWorkspaceDraft ? (
+              {showImportPill && !importPillHidden ? (
                 <button
                   type="button"
                   aria-label="Import conversation from another harness"
@@ -614,7 +843,7 @@ export function AgentNewChatLanding({
                     setDevicePickerOpen(false);
                     setImportDialogOpen(true);
                   }}
-                  className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                  className="inline-flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                 >
                   <Import className="size-[13px] shrink-0" strokeWidth={1.5} />
                   <span className="whitespace-nowrap">Import</span>
@@ -732,6 +961,37 @@ export function AgentNewChatLanding({
           });
           setDevicePickerOpen(false);
         }}
+        codespaceDevices={codespaces.available ? codespaces.devices : []}
+        codespaceWakeStatus={codespaces.wakeStatus}
+        codespaceWakeFailure={codespaces.wakeFailure}
+        onSelectCodespaceDevice={
+          codespaces.available ? handleSelectCodespaceDevice : undefined
+        }
+        onRecreateCodespaceDevice={handleRecreateCodespaceDevice}
+        onSetupCodespace={
+          codespaces.available
+            ? () => {
+                setCodespaceRecreateDevice(null);
+                setCodespaceWizardOpen(true);
+                setDevicePickerOpen(false);
+              }
+            : undefined
+        }
+      />
+      <CodespaceSetupWizard
+        open={codespaceWizardOpen}
+        onClose={() => {
+          setCodespaceWizardOpen(false);
+          setCodespaceRecreateDevice(null);
+        }}
+        onConnected={(localServerId, connected) =>
+          handleActiveServerChange(
+            localServerId,
+            codespaceWorkspaceHint(connected.repoFullName)
+          )
+        }
+        devices={codespaces.devices}
+        recreateDevice={codespaceRecreateDevice}
       />
       <WorkspacePickerMenu
         open={workspacePickerOpen}

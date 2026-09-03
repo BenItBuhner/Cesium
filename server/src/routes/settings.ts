@@ -68,6 +68,12 @@ import {
   startHarnessCliLogout,
 } from "../lib/harness-cli-auth.js";
 import {
+  exportHarnessAuthSnapshotForSync,
+  importHarnessAuthSnapshotForSync,
+  isHarnessAuthSyncId,
+  listHarnessAuthSyncStates,
+} from "../lib/harness-auth-sync.js";
+import {
   bumpRevision,
   formatEtag,
   getRevision,
@@ -704,6 +710,48 @@ settingsRoutes.post("/api/settings/harness-auth/:backendId/cancel", async (c) =>
     return c.json({ error: "This harness does not use host CLI authentication." }, 404);
   }
   return c.json(cancelHarnessCliLogin(backendId));
+});
+
+/* ---------------------------------------------------------------------- */
+/* Harness auth sync: move harness sign-ins between this engine and the    */
+/* account's encrypted secret vault. Export/import move plaintext only     */
+/* over the authenticated engine channel; sealing (AES-256-GCM envelopes)  */
+/* happens client-side before anything reaches cloud storage.              */
+/* ---------------------------------------------------------------------- */
+
+settingsRoutes.get("/api/settings/harness-auth-sync", async (c) => {
+  return c.json({ harnesses: await listHarnessAuthSyncStates() });
+});
+
+settingsRoutes.get("/api/settings/harness-auth-sync/:syncId/export", async (c) => {
+  const syncId = c.req.param("syncId");
+  if (!isHarnessAuthSyncId(syncId)) {
+    return c.json({ error: "Unknown harness auth sync id." }, 404);
+  }
+  try {
+    const snapshot = await exportHarnessAuthSnapshotForSync(syncId);
+    return c.json({ snapshot });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to export harness credentials.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.post("/api/settings/harness-auth-sync/:syncId/import", async (c) => {
+  const syncId = c.req.param("syncId");
+  if (!isHarnessAuthSyncId(syncId)) {
+    return c.json({ error: "Unknown harness auth sync id." }, 404);
+  }
+  try {
+    const body = await c.req.json<{ snapshot?: unknown }>();
+    const result = await importHarnessAuthSnapshotForSync(syncId, body?.snapshot);
+    return c.json({ ok: true, ...result });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to import harness credentials.";
+    return c.json({ error: message }, 400);
+  }
 });
 
 settingsRoutes.get("/api/settings/cesium-agent/models", async (c) => {

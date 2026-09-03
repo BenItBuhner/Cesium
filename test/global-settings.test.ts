@@ -61,6 +61,33 @@ describe("global settings", () => {
     assert.equal(settings.general.showVoiceOrb, true);
   });
 
+  test("mobile pane toggle buttons are visible by default", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.equal(settings.general.showMobilePaneToggles, true);
+  });
+
+  test("normalizes missing showMobilePaneToggles to visible default", () => {
+    const base = createDefaultGlobalSettings();
+    const { showMobilePaneToggles: _ignored, ...generalWithoutToggles } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutToggles,
+    });
+    assert.equal(settings.general.showMobilePaneToggles, true);
+  });
+
+  test("preserves explicit showMobilePaneToggles false", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        showMobilePaneToggles: false,
+      },
+    });
+    assert.equal(settings.general.showMobilePaneToggles, false);
+  });
+
   test("leaves composer status defaults unset for legacy workspace migration", () => {
     const settings = createDefaultGlobalSettings();
     assert.equal(settings.general.composerStatusBarVisibility, undefined);
@@ -337,8 +364,8 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
       "attention",
       "running",
-      "chats",
       "pinned",
+      "chats",
       "workspaces",
     ]);
   });
@@ -359,12 +386,27 @@ describe("global settings", () => {
     });
     assert.equal(settings.general.agentRail.rowDetail, "expanded");
     assert.deepEqual(settings.general.agentRail.sectionOrder, [
-      "pinned",
       "attention",
       "running",
+      "pinned",
       "chats",
       "workspaces",
     ]);
+    assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
+  });
+
+  test("drops a hidden pinned section so folders always have a home", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          hiddenSections: ["pinned", "attention"],
+        },
+      },
+    });
     assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
   });
 
@@ -437,6 +479,40 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.newChatWidgets, {
       order: ["actions", "recent-chats", "shortcuts", "recent-activity"],
       hidden: ["shortcuts"],
+    });
+  });
+
+  test("device picker defaults to everything visible in natural order", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.deepEqual(settings.general.devicePicker, { order: [], hidden: [] });
+  });
+
+  test("legacy profiles without devicePicker get the defaults", () => {
+    const base = createDefaultGlobalSettings();
+    const { devicePicker: _ignored, ...generalWithoutPicker } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutPicker,
+    });
+    assert.deepEqual(settings.general.devicePicker, base.general.devicePicker);
+  });
+
+  test("normalizes device picker ids: dedupes, drops non-strings and unknown keys", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        devicePicker: {
+          sectionOrder: ["cloud"],
+          order: ["server:a", "", "server:a", 42, "codespace:owner/repo", "cloud:cursor-sdk"],
+          hidden: ["kind:codespace", "kind:codespace", null, "action:browser"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.devicePicker, {
+      order: ["server:a", "codespace:owner/repo", "cloud:cursor-sdk"],
+      hidden: ["kind:codespace", "action:browser"],
     });
   });
 
