@@ -20,7 +20,8 @@ export type AgentBackendId =
   | "codex-acp"
   | "claude-code-sdk"
   | "pi-agent"
-  | "google-antigravity-cli";
+  | "google-antigravity-cli"
+  | "google-antigravity-acp";
 
 export type AgentConversationStatus =
   | "idle"
@@ -530,6 +531,17 @@ export type AgentConversationOrigin =
       firedAt: number;
     };
 
+/**
+ * Slash command advertised by the agent itself (ACP `available_commands_update`),
+ * e.g. Antigravity's `/plan` and `/logout`. Sent verbatim as prompt text.
+ */
+export type AgentSlashCommand = {
+  name: string;
+  description?: string;
+  /** Free-form argument hint shown after the command name, if the agent gave one. */
+  inputHint?: string;
+};
+
 export type AgentConversationRecord = {
   schemaVersion: 1;
   id: string;
@@ -547,6 +559,8 @@ export type AgentConversationRecord = {
   pendingQuestion: AgentPendingQuestion | null;
   lastError: string | null;
   experimental: boolean;
+  /** Slash commands the live agent session advertises; absent for most backends. */
+  availableCommands?: AgentSlashCommand[] | null;
   /** Server-owned archive flag; null = visible in the default rail. */
   archivedAt: number | null;
   /**

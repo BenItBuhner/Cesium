@@ -79,6 +79,7 @@ export function ExpandedComposerView({
           modeOptions={controller.modeOptions}
           sessionConfigOptions={controller.sessionConfigOptions}
           onSessionConfigOptionChange={controller.onSessionConfigOptionChange}
+          agentCommands={controller.agentCommands ?? null}
           value={content}
           onValueChange={(next) => {
             upsertComposerDraft(draftId, {

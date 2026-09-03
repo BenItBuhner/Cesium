@@ -76,6 +76,14 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     notes:
       "Antigravity reads workspace .agents/mcp_config.json. Cesium syncs plugin MCP servers there automatically.",
   },
+  "google-antigravity-acp": {
+    backendId: "google-antigravity-acp",
+    nativeMcp: true,
+    promptSkills: true,
+    attachment: "acp-mcp",
+    notes:
+      "Google Antigravity ACP sessions receive MCP servers through the ACP mcpServers array (stdio, HTTP, and SSE transports are advertised).",
+  },
   "opencode-server": {
     backendId: "opencode-server",
     nativeMcp: true,

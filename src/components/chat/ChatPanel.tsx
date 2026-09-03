@@ -1006,6 +1006,7 @@ workspaceSession.chat.model,
   const modeOptions = activeComposerState.modeOptions;
   const mode = activeComposerState.mode;
   const sessionConfigOptions = activeComposerState.sessionConfigOptions;
+  const agentCommands = activeComposerState.conversation?.availableCommands ?? null;
   const busy = activeComposerState.busy;
   const configLocked = false;
   const modeLocked = isOrchestrationModeLocked();
@@ -2476,6 +2477,7 @@ const cancelPromptForDraft = useCallback(
       models: state.models.length > 0 ? state.models : [state.model],
       modeOptions: state.modeOptions,
       sessionConfigOptions: state.sessionConfigOptions,
+      agentCommands: state.conversation?.availableCommands ?? null,
       onSessionConfigOptionChange: (configId: string, value: string) =>
         void setSessionConfigOptionForDraft(expandedComposerDraftId, configId, value),
       onSubmit: (
@@ -2558,6 +2560,7 @@ const cancelPromptForDraft = useCallback(
       models={models.length > 0 ? models : [model]}
       modeOptions={modeOptions}
       sessionConfigOptions={sessionConfigOptions}
+      agentCommands={agentCommands}
       onSessionConfigOptionChange={(configId, value) =>
         void setSessionConfigOptionForDraft(composerDraftId, configId, value)
       }

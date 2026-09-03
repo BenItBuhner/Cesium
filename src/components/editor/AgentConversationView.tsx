@@ -585,6 +585,7 @@ const showRecentChatsSection =
         models={composerState.models}
         modeOptions={composerState.modeOptions}
         sessionConfigOptions={composerState.sessionConfigOptions}
+        agentCommands={composerState.conversation?.availableCommands ?? null}
         onSessionConfigOptionChange={(configId, value) =>
           void setConversationConfigOption(conversationId, configId, value)
         }

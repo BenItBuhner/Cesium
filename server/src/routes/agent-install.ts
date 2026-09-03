@@ -10,11 +10,33 @@ import {
   buildInstallCommand,
   getInstallSpecForBackend,
   isInstallSupportedOnThisHost,
+  type BinaryArchiveInstallSpec,
+  type CliInstallSpec,
 } from "../lib/agents/install/cli-install-registry.js";
+import { installBinaryArchive } from "../lib/agents/install/binary-archive-installer.js";
 
 export const agentInstallRoutes = new Hono();
 
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
+/** Multi-hundred-MB vendor archives on slow links need far longer than npm. */
+const BINARY_ARCHIVE_INSTALL_TIMEOUT_MS = 45 * 60_000;
+
+function describeInstaller(spec: CliInstallSpec) {
+  return {
+    kind: spec.kind,
+    label: spec.label,
+    summary: spec.summary,
+    authHint: spec.authHint,
+    ...(spec.kind === "binary-archive"
+      ? {
+          approxDownloadBytes: spec.approxDownloadBytes,
+          approxInstalledBytes: spec.approxInstalledBytes,
+          pinnedVersion: spec.fallbackManifest.version,
+          manifestUrl: spec.manifestUrl,
+        }
+      : {}),
+  };
+}
 
 /** Serialize installs - a second concurrent global npm install would race. */
 let installInFlight: Promise<unknown> | null = null;
@@ -48,23 +70,86 @@ agentInstallRoutes.get("/api/agents/backends", async (c) => {
         defaultModelId === backend.defaultModelId
           ? backend.defaultModelName
           : defaultModelId,
-      installer:
-        spec && isInstallSupportedOnThisHost(spec)
-          ? {
-              label: spec.label,
-              summary: spec.summary,
-              authHint: spec.authHint,
-            }
-          : null,
+      installer: spec && isInstallSupportedOnThisHost(spec) ? describeInstaller(spec) : null,
     };
   });
   c.header("cache-control", "no-store");
-  return c.json({ backends: payload, platform: process.platform });
+  return c.json({ backends: payload, platform: process.platform, arch: process.arch });
 });
+
+function streamBinaryArchiveInstall(spec: BinaryArchiveInstallSpec): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      const emit = (payload: Record<string, unknown>) => {
+        if (closed) {
+          return;
+        }
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      const abort = new AbortController();
+      const timeout = setTimeout(() => {
+        emit({ type: "log", line: "Install timed out; aborting." });
+        abort.abort();
+      }, BINARY_ARCHIVE_INSTALL_TIMEOUT_MS);
+      const done = installBinaryArchive(spec, {
+        signal: abort.signal,
+        emit: (event) => emit(event as unknown as Record<string, unknown>),
+      })
+        .then((result) => {
+          refreshHarnessCliDetection();
+          const available = AGENT_BACKENDS[spec.backendId]?.available ?? false;
+          emit({
+            type: "done",
+            ok: true,
+            available,
+            authHint: spec.authHint,
+            executablePath: result.executablePath,
+            version: result.version,
+            manifestSource: result.manifestSource,
+          });
+        })
+        .catch((error: unknown) => {
+          refreshHarnessCliDetection();
+          const available = AGENT_BACKENDS[spec.backendId]?.available ?? false;
+          emit({
+            type: "done",
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            available,
+          });
+        })
+        .finally(() => {
+          clearTimeout(timeout);
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // already closed by the client
+          }
+        });
+      installInFlight = done.finally(() => {
+        installInFlight = null;
+      });
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
 
 /**
  * One-click install of a harness CLI. Streams NDJSON progress lines:
  *   {"type":"log","line":"..."}
+ *   {"type":"progress","phase":"download","receivedBytes":n,"totalBytes":n,"percent":n}  (binary archives)
  *   {"type":"done","ok":true,"available":true}
  */
 agentInstallRoutes.post("/api/agents/backends/:backendId/install", async (c) => {
@@ -78,12 +163,16 @@ agentInstallRoutes.post("/api/agents/backends/:backendId/install", async (c) => 
   }
   if (!isInstallSupportedOnThisHost(spec)) {
     return c.json(
-      { error: `${spec.label} cannot be auto-installed on ${process.platform}.` },
+      { error: `${spec.label} cannot be auto-installed on ${process.platform}/${process.arch}.` },
       400
     );
   }
   if (installInFlight) {
     return c.json({ error: "Another install is already running." }, 409);
+  }
+
+  if (spec.kind === "binary-archive") {
+    return streamBinaryArchiveInstall(spec);
   }
 
   const encoder = new TextEncoder();

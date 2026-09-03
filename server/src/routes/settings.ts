@@ -64,6 +64,7 @@ import {
   cancelHarnessCliLogin,
   isHarnessCliAuthBackendId,
   refreshHarnessCliAuthState,
+  relayHarnessCliOAuthCallback,
   startHarnessCliLogin,
   startHarnessCliLogout,
 } from "../lib/harness-cli-auth.js";
@@ -693,7 +694,44 @@ settingsRoutes.post("/api/settings/harness-auth/:backendId/login", async (c) => 
   if (!isHarnessCliAuthBackendId(backendId)) {
     return c.json({ error: "This harness does not use host CLI authentication." }, 404);
   }
-  return c.json(await startHarnessCliLogin(backendId));
+  // Optional body for ACP-driven auth: which `authenticate` method to use and
+  // enterprise GCP coordinates. CLI-driven harnesses ignore it.
+  let options: { methodId?: string | null; gcpProject?: string | null; gcpLocation?: string | null } = {};
+  try {
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (body && typeof body === "object") {
+      options = {
+        methodId: typeof body.methodId === "string" ? body.methodId : null,
+        gcpProject: typeof body.gcpProject === "string" ? body.gcpProject : null,
+        gcpLocation: typeof body.gcpLocation === "string" ? body.gcpLocation : null,
+      };
+    }
+  } catch {
+    options = {};
+  }
+  return c.json(await startHarnessCliLogin(backendId, options));
+});
+
+/**
+ * Remote-browser fallback for ACP-driven Google OAuth: the user pastes the
+ * `http://127.0.0.1:<port>/?code=...` URL their browser could not reach and
+ * the engine replays it against the ACP server's loopback listener locally.
+ */
+settingsRoutes.post("/api/settings/harness-auth/:backendId/oauth-callback", async (c) => {
+  const backendId = c.req.param("backendId");
+  if (!isHarnessCliAuthBackendId(backendId)) {
+    return c.json({ error: "This harness does not use host CLI authentication." }, 404);
+  }
+  const body = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+  const url = typeof body?.url === "string" ? body.url.trim() : "";
+  if (!url) {
+    return c.json({ error: "Provide the redirected callback URL as `url`." }, 400);
+  }
+  try {
+    return c.json(await relayHarnessCliOAuthCallback(backendId, url));
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+  }
 });
 
 settingsRoutes.post("/api/settings/harness-auth/:backendId/logout", async (c) => {

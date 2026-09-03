@@ -796,6 +796,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
   "pi-agent": isStrictAcpSubagentTaskToolEvent,
   "google-antigravity-cli": isGoogleAntigravitySubagentTaskToolEvent,
+  "google-antigravity-acp": isGoogleAntigravitySubagentTaskToolEvent,
 };
 
 export function classifyToolCallAsSubagentCard(

@@ -12,6 +12,7 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "grok-build",
   "claude-code-sdk",
   "pi-agent",
+  "google-antigravity-acp",
   "google-antigravity-cli",
 ] as const satisfies readonly AgentBackendId[];
 

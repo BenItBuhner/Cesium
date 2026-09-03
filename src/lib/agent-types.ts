@@ -37,6 +37,7 @@ export type {
   AgentProviderCapabilities,
   AgentRailConversationSummary,
   AgentRailRepositoryInfo,
+  AgentSlashCommand,
   AgentSocketClientMessage,
   AgentSocketServerMessage,
   AgentStoredEvent,

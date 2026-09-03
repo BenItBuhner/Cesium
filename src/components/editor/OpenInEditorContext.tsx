@@ -187,6 +187,8 @@ export type ExpandedComposerController = {
   modeOptions?: AgentModeOption[];
   sessionConfigOptions?: AgentConfigOption[];
   onSessionConfigOptionChange?: (configId: string, value: string) => void;
+  /** Slash commands the live agent session advertises (ACP `available_commands_update`). */
+  agentCommands?: import("@/lib/agent-types").AgentSlashCommand[] | null;
   onSubmit: (
     text: string,
     attachments?: ImageAttachment[],

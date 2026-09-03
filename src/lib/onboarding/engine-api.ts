@@ -48,7 +48,35 @@ export type EngineBackendInfo = {
   commandPreview: string | null;
   defaultModelId: string;
   defaultModelName: string;
-  installer: { label: string; summary: string; authHint: string } | null;
+  installer: EngineBackendInstaller | null;
+};
+
+export type EngineBackendInstaller = {
+  /** `npm` installs a package into the engine's tools dir; `binary-archive` downloads a vendor zip. */
+  kind?: "npm" | "binary-archive";
+  label: string;
+  summary: string;
+  authHint: string;
+  approxDownloadBytes?: number;
+  approxInstalledBytes?: number;
+  pinnedVersion?: string;
+  manifestUrl?: string;
+};
+
+export type EngineBackendInstallProgress = {
+  phase: "manifest" | "download" | "extract" | "finalize";
+  receivedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+};
+
+export type EngineBackendInstallResult = {
+  ok: boolean;
+  available: boolean;
+  error?: string;
+  authHint?: string;
+  executablePath?: string;
+  version?: string;
 };
 
 export type EngineImportSource = {
@@ -274,12 +302,16 @@ export async function listEngineBackends(
   };
 }
 
-/** Stream a one-click CLI install; yields log lines, resolves on done. */
+/**
+ * Stream a one-click install; yields log lines (and byte-level progress for
+ * binary-archive installers), resolves on done.
+ */
 export async function installEngineBackendCli(
   baseUrl: string,
   backendId: string,
-  onLog: (line: string) => void
-): Promise<{ ok: boolean; available: boolean; error?: string; authHint?: string }> {
+  onLog: (line: string) => void,
+  onProgress?: (progress: EngineBackendInstallProgress) => void
+): Promise<EngineBackendInstallResult> {
   const response = await engineFetch(
     baseUrl,
     `/api/agents/backends/${encodeURIComponent(backendId)}/install`,
@@ -291,10 +323,52 @@ export async function installEngineBackendCli(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let result: { ok: boolean; available: boolean; error?: string; authHint?: string } = {
+  let result: EngineBackendInstallResult = {
     ok: false,
     available: false,
     error: "Install stream ended unexpectedly.",
+  };
+  const handleLine = (line: string) => {
+    if (!line.trim()) {
+      return;
+    }
+    try {
+      const event = JSON.parse(line) as {
+        type: string;
+        line?: string;
+        ok?: boolean;
+        available?: boolean;
+        error?: string;
+        authHint?: string;
+        executablePath?: string;
+        version?: string;
+        phase?: EngineBackendInstallProgress["phase"];
+        receivedBytes?: number;
+        totalBytes?: number | null;
+        percent?: number | null;
+      };
+      if (event.type === "log" && event.line) {
+        onLog(event.line);
+      } else if (event.type === "progress" && event.phase) {
+        onProgress?.({
+          phase: event.phase,
+          receivedBytes: typeof event.receivedBytes === "number" ? event.receivedBytes : 0,
+          totalBytes: typeof event.totalBytes === "number" ? event.totalBytes : null,
+          percent: typeof event.percent === "number" ? event.percent : null,
+        });
+      } else if (event.type === "done") {
+        result = {
+          ok: event.ok === true,
+          available: event.available === true,
+          ...(event.error ? { error: event.error } : {}),
+          ...(event.authHint ? { authHint: event.authHint } : {}),
+          ...(event.executablePath ? { executablePath: event.executablePath } : {}),
+          ...(event.version ? { version: event.version } : {}),
+        };
+      }
+    } catch {
+      // Ignore malformed stream lines.
+    }
   };
   for (;;) {
     const { done, value } = await reader.read();
@@ -305,33 +379,10 @@ export async function installEngineBackendCli(
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-      try {
-        const event = JSON.parse(line) as {
-          type: string;
-          line?: string;
-          ok?: boolean;
-          available?: boolean;
-          error?: string;
-          authHint?: string;
-        };
-        if (event.type === "log" && event.line) {
-          onLog(event.line);
-        } else if (event.type === "done") {
-          result = {
-            ok: event.ok === true,
-            available: event.available === true,
-            ...(event.error ? { error: event.error } : {}),
-            ...(event.authHint ? { authHint: event.authHint } : {}),
-          };
-        }
-      } catch {
-        // Ignore malformed stream lines.
-      }
+      handleLine(line);
     }
   }
+  handleLine(buffer);
   return result;
 }
 

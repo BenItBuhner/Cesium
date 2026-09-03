@@ -19,7 +19,8 @@ In practice: start the backend, start the frontend, open the app, add a workspac
   - **Cursor SDK** via `@cursor/sdk` plus a Cursor API key configured in Settings or environment.
   - **OpenCode** ACP binary or install under `~/.opencode/bin` (see `OPENCURSOR_OPENCODE_ACP_BIN`, `OPENCURSOR_REAL_HOME`).
   - **Devin CLI** in ACP mode (`devin acp`; install from https://cli.devin.ai, or set `OPENCURSOR_DEVIN_CLI_BIN`). Authenticate with `devin auth login` or `WINDSURF_API_KEY`.
-  - **Google Antigravity CLI** (`agy`; Google's successor to Gemini CLI). Authenticate with ambient Google OAuth via the CLI on the host (`OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN`).
+  - **Google Antigravity** via Google's official **Antigravity ACP server** (`agy_acp_server`, published to the [ACP Registry](https://github.com/agentclientprotocol/registry/tree/main/antigravity-acp) as `antigravity-acp`). Install it one-click from Settings → Agents → Google Antigravity (~700 MB download from `dl.google.com`, ~2 GB on disk), point `OPENCURSOR_ANTIGRAVITY_ACP_BIN` at a downloaded copy, or let Cesium reuse a Zed registry install. Sign in with Google (any Antigravity plan incl. free tier), Gemini Enterprise, or a Gemini API key (`GEMINI_API_KEY`) - the server owns the OAuth flow; Cesium never brokers tokens. Credentials live under `$GEMINI_HOME/antigravity-acp/` (`OPENCURSOR_ANTIGRAVITY_ACP_HOME` overrides the home).
+  - **Google Antigravity CLI (Legacy)** (`agy`; the terminal/hook bridge that predates the official ACP server). Authenticate with ambient Google OAuth via the CLI on the host (`OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN`). Slated for removal once the ACP transport has bedded in.
   - **Codex** / **Claude** CLIs if you use those adapter backends (`OPENCURSOR_CODEX_BIN`, `OPENCURSOR_CLAUDE_BIN`).
 
 ## Quick Start
@@ -175,7 +176,7 @@ preferences, and conversation snapshots sync across devices through Convex.
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.
-- **Agent view:** Create conversations, choose a **backend** (Cursor SDK, Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex / Claude Code adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
+- **Agent view:** Create conversations, choose a **backend** (Cesium Agent, Cursor SDK / ACP, Codex, OpenCode, Devin, Grok Build, Claude Code, Pi, Google Antigravity over the official ACP server, plus the legacy `agy` CLI bridge when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
 - **IDE view:** Edit files, use integrated **xterm** terminals (**`/ws/terminal`**), file watcher (**`/ws/fs`**).
 - **Voice input (optional):** If transcription is configured, the composer can send audio to **`POST /api/audio/transcriptions`** (OpenAI-compatible multipart API).
 
@@ -268,7 +269,11 @@ Driver resolution (first match wins):
 | `OPENCURSOR_DEVIN_CLI_BIN` | Absolute path to **Devin CLI** for the `devin-acp` backend; otherwise `devin` on `PATH` / `~/.local/bin/devin`. |
 | `OPENCURSOR_DEVIN_CLI_ARGS` | JSON array of argv after the Devin binary for ACP (default `["acp"]`). |
 | `WINDSURF_API_KEY` | Optional Devin/Windsurf API key used by `devin acp` when ambient `devin auth login` credentials are unavailable. |
-| `OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN` | Absolute path to **Antigravity CLI** (`agy`) for `google-antigravity-cli`; otherwise `agy` on `PATH`. |
+| `OPENCURSOR_ANTIGRAVITY_ACP_BIN` | Absolute path to Google's **Antigravity ACP server** (`agy_acp_server.par` / `.exe`) for `google-antigravity-acp`. Otherwise Cesium checks its own tools dir (one-click install), Zed's `external_agents/registry/antigravity-acp/` install, then `PATH`. |
+| `OPENCURSOR_ANTIGRAVITY_ACP_ARGS` | JSON array replacing the server's default argv (the registry manifest passes `["--uid="]` on Linux). |
+| `OPENCURSOR_ANTIGRAVITY_ACP_HOME` | Overrides the `GEMINI_HOME` the ACP server stores credentials and sessions under (default `~/.gemini`, shared with Zed/JetBrains sign-ins). Sessions are pinned to this directory. |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables the headless `gemini-api-key` auth method for the Antigravity ACP server (also read from the Google provider key saved under Cesium Agent). |
+| `OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN` | Absolute path to the legacy **Antigravity CLI** (`agy`) for `google-antigravity-cli`; otherwise `agy` on `PATH`. |
 | `OPENCURSOR_CODEX_BIN` | **Codex** CLI path for the `codex-adapter` backend. |
 | `OPENCURSOR_CLAUDE_BIN` | **Claude** CLI path for the `claude-adapter` backend. |
 | `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` | JSON merged into ACP `initialize.clientCapabilities` (e.g. `{"terminal":true}` if the CLI requires it). |

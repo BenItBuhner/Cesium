@@ -32,6 +32,7 @@ const HARNESS_AUTH_SYNC_IDS = new Set([
   "grok",
   "devin",
   "google-antigravity",
+  "google-antigravity-acp",
   "cesium-agent",
 ]);
 const HARNESS_AUTH_MAX_PAYLOAD_CHARS = 200_000;

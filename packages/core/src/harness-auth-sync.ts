@@ -20,6 +20,7 @@ export const HARNESS_AUTH_SYNC_IDS = [
   "grok",
   "devin",
   "google-antigravity",
+  "google-antigravity-acp",
   "cesium-agent",
 ] as const;
 
@@ -32,7 +33,8 @@ export const HARNESS_AUTH_SYNC_LABELS: Record<HarnessAuthSyncId, string> = {
   opencode: "OpenCode",
   grok: "Grok",
   devin: "Devin",
-  "google-antigravity": "Google Antigravity",
+  "google-antigravity": "Google Antigravity CLI (Legacy)",
+  "google-antigravity-acp": "Google Antigravity",
   "cesium-agent": "Cesium Agent API keys",
 };
 
@@ -77,6 +79,7 @@ const BACKEND_SYNC_IDS: Record<string, HarnessAuthSyncId> = {
   "grok-build": "grok",
   "devin-acp": "devin",
   "google-antigravity-cli": "google-antigravity",
+  "google-antigravity-acp": "google-antigravity-acp",
   "cesium-agent": "cesium-agent",
 };
 

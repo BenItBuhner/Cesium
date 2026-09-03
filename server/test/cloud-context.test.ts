@@ -271,6 +271,18 @@ test("install registry only exposes vetted argv installers", () => {
   for (const spec of CLI_INSTALL_SPECS) {
     assert.ok(spec.backendId in AGENT_BACKENDS, `unknown backend ${spec.backendId}`);
     assert.ok(spec.platforms.length > 0);
+    if (spec.kind === "binary-archive") {
+      // Vendor archives: pinned HTTPS manifest, allowlisted hosts only, and
+      // every pinned target must resolve inside the install dir.
+      assert.ok(spec.manifestUrl.startsWith("https://"));
+      assert.ok(spec.allowedArchiveHosts.length > 0);
+      for (const target of Object.values(spec.fallbackManifest.distribution.binary ?? {})) {
+        const archiveHost = new URL(target.archive).hostname;
+        assert.ok(spec.allowedArchiveHosts.includes(archiveHost), `unexpected host ${archiveHost}`);
+        assert.ok(!target.cmd.includes(".."));
+      }
+      continue;
+    }
     // No shell strings - plain argv with a known package manager, and never
     // the ambient global prefix (bun/desktop servers have no reliable one).
     const invocation = buildInstallCommand(spec);
@@ -283,6 +295,7 @@ test("install registry only exposes vetted argv installers", () => {
     assert.ok(!invocation.args.includes("-g"));
   }
   assert.equal(getInstallSpecForBackend("codex-app-server")?.binName, "codex");
+  assert.equal(getInstallSpecForBackend("google-antigravity-acp")?.kind, "binary-archive");
   assert.equal(getInstallSpecForBackend("cesium-agent"), null);
   // Claude Code SDK authenticates with an API key - no CLI installer.
   assert.equal(getInstallSpecForBackend("claude-code-sdk"), null);

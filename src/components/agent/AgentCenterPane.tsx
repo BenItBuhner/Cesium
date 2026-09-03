@@ -1542,6 +1542,7 @@ export function AgentCenterPane() {
                     models={composerState?.models ?? draftModels}
                     modeOptions={composerState?.modeOptions ?? draftModeOptions}
                     sessionConfigOptions={composerState?.sessionConfigOptions ?? []}
+                    agentCommands={composerState?.conversation?.availableCommands ?? null}
                     onSessionConfigOptionChange={(configId, value) => {
                       if (!selectedConversationId) {
                         return;

@@ -13,8 +13,12 @@ test("gemini-acp is retired from the active harness menu and remapped to Antigra
   assert.ok(ids.includes("google-antigravity-cli"));
   assert.ok(LEGACY_AGENT_BACKEND_IDS.includes("gemini-acp"));
   assert.equal(isActiveAgentBackendId("gemini-acp"), false);
-  assert.equal(AGENT_BACKENDS["google-antigravity-cli"].label, "Google Antigravity CLI");
+  assert.equal(AGENT_BACKENDS["google-antigravity-cli"].label, "Google Antigravity CLI (Legacy)");
   assert.match(AGENT_BACKENDS["google-antigravity-cli"].description, /successor to Gemini CLI/i);
+  // The official ACP server is the default Antigravity transport now.
+  assert.ok(ids.includes("google-antigravity-acp"));
+  assert.equal(AGENT_BACKENDS["google-antigravity-acp"].label, "Google Antigravity");
+  assert.match(AGENT_BACKENDS["google-antigravity-acp"].description, /official Antigravity ACP server/i);
 });
 
 test("stored gemini-acp conversations migrate to google-antigravity-cli", async () => {
