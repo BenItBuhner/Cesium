@@ -1073,7 +1073,16 @@ export class AcpSessionHandle implements AgentSessionHandle {
           ? `ACP JSON-RPC request failed: ${error.method} (${error.code})`
           : "ACP session initialization failed.";
 
+      // Bootstrap notes (auth outcome, hints) normally follow a successful
+      // open; on failure they are the context that explains the error.
       await input.callbacks.appendEvents([
+        ...bootstrapSystemMessages.map((text) => ({
+          eventId: randomUUID(),
+          conversationId: input.callbacks.conversation.id,
+          kind: "system" as const,
+          level: "info" as const,
+          text,
+        })),
         {
           eventId: randomUUID(),
           conversationId: input.callbacks.conversation.id,

@@ -22,12 +22,13 @@ describe("Cesium Agent frontend integration", () => {
       "grok-build",
       "claude-code-sdk",
       "pi-agent",
-      "google-antigravity-cli",
+      "google-antigravity-acp",
     ]);
     assert.equal(HARNESS_LABELS["cesium-agent"], "Cesium Agent (Beta)");
     assert.equal(HARNESS_LABELS["opencode-server"], "OpenCode");
     assert.equal(HARNESS_LABELS["devin-acp"], "Devin");
-    assert.equal(HARNESS_LABELS["google-antigravity-cli"], "Google Antigravity");
+    assert.equal(HARNESS_LABELS["google-antigravity-acp"], "Google Antigravity");
+    assert.equal(HARNESS_LABELS["google-antigravity-cli"], "Google Antigravity (CLI, Legacy)");
   });
 
   test("composer busy helpers treat pause drain and paused as active turn", () => {

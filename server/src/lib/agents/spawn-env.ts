@@ -54,6 +54,7 @@ function mustRetainEnvKey(key: string): boolean {
     upper.startsWith("ANTHROPIC_") ||
     upper.startsWith("CLAUDE_") ||
     upper.startsWith("GOOGLE_") ||
+    upper.startsWith("GEMINI_") ||
     upper.startsWith("AWS_") ||
     upper.startsWith("AZURE_") ||
     upper.startsWith("NODE_") ||
