@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
   MOBILE_BRIDGE_MESSAGE_EVENT,
   type MobileNativeToWebMessage,
@@ -17,9 +18,21 @@ import {
  */
 const PENDING_ROUTE_TTL_MS = 60_000;
 
+/**
+ * Grace period for the rail index to produce the tapped conversation's full
+ * summary before routing falls back to a synthetic one. The real summary is
+ * preferred because it carries server identity (multi-engine rails); the
+ * fallback guarantees a tap still lands even when the rail request is slow
+ * or failing - the notification itself already carries the two ids that
+ * matter.
+ */
+const RAIL_SUMMARY_GRACE_MS = 4_000;
+
 type PendingRoute = {
   conversationId: string;
+  workspaceId: string | null;
   requestedAt: number;
+  allowFallback: boolean;
 };
 
 /**
@@ -56,7 +69,9 @@ export function MobileNotificationRouting() {
       }
       setPendingRoute({
         conversationId: message.conversationId,
+        workspaceId: message.workspaceId ?? null,
         requestedAt: Date.now(),
+        allowFallback: false,
       });
     };
     window.addEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onNativeMessage);
@@ -73,24 +88,64 @@ export function MobileNotificationRouting() {
       setPendingRoute(null);
       return;
     }
+
+    const route = (summary: AgentRailConversationSummary) => {
+      setPendingRoute(null);
+      // A tap must always land on the conversation, even when the app was
+      // left inside Settings.
+      if (shellView === "settings") {
+        setShellView("agent");
+      }
+      void openConversationSummary(summary).then(() => {
+        flushAgentSubscription([summary.id]);
+        void syncConversationSnapshot(summary.id, {
+          hydrateRuntime: true,
+        }).catch(() => undefined);
+      });
+    };
+
     const summary = findConversationSummaryById(pendingRoute.conversationId);
-    if (!summary) {
-      // Rail still loading (cold start) - this effect re-runs when the groups
-      // behind findConversationSummaryById change, so just keep waiting.
+    if (summary) {
+      route(summary);
       return;
     }
-    setPendingRoute(null);
-    // A tap must always land on the conversation, even when the app was left
-    // inside Settings.
-    if (shellView === "settings") {
-      setShellView("agent");
+
+    if (pendingRoute.allowFallback && pendingRoute.workspaceId) {
+      // The rail index does not (yet) know this conversation - a fresh run,
+      // a slow or failing rail request, a cold start. The notification's own
+      // ids are authoritative, so route with a minimal summary; the rail
+      // catches up on its own and the selection logic already honors ids it
+      // has not indexed yet.
+      route({
+        id: pendingRoute.conversationId,
+        workspaceId: pendingRoute.workspaceId,
+        title: "",
+        createdAt: pendingRoute.requestedAt,
+        updatedAt: pendingRoute.requestedAt,
+        lastEventSeq: 0,
+        status: "running",
+        archivedAt: null,
+        backendId: "cesium-agent",
+        mode: "agent",
+        experimental: false,
+        hasPendingPermission: false,
+      });
+      return;
     }
-    void openConversationSummary(summary).then(() => {
-      flushAgentSubscription([summary.id]);
-      void syncConversationSnapshot(summary.id, { hydrateRuntime: true }).catch(
-        () => undefined
+
+    // Rail still loading - re-check when the groups behind
+    // findConversationSummaryById change, and arm the fallback in case they
+    // never produce the summary.
+    const fallbackTimer = setTimeout(() => {
+      setPendingRoute((current) =>
+        current && current.requestedAt === pendingRoute.requestedAt
+          ? { ...current, allowFallback: true }
+          : current
       );
-    });
+    }, RAIL_SUMMARY_GRACE_MS);
+    return () => {
+      clearTimeout(fallbackTimer);
+    };
   }, [
     findConversationSummaryById,
     flushAgentSubscription,

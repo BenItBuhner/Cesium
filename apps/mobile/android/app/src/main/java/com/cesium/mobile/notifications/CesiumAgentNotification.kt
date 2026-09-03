@@ -355,11 +355,15 @@ object CesiumAgentNotification {
       putExtras(extras)
       putExtra("quickAction", quickAction)
     }
+    // RemoteInput needs a mutable PendingIntent on EVERY API level: the
+    // system appends the typed reply to the intent. FLAG_MUTABLE only exists
+    // since 31; before that "no flag" is mutable, and passing FLAG_IMMUTABLE
+    // (added in 23) silently prevents the reply from ever being attached.
     val mutabilityFlag =
-      if (mutable && Build.VERSION.SDK_INT >= 31) {
-        PendingIntent.FLAG_MUTABLE
-      } else {
-        PendingIntent.FLAG_IMMUTABLE
+      when {
+        !mutable -> PendingIntent.FLAG_IMMUTABLE
+        Build.VERSION.SDK_INT >= 31 -> PendingIntent.FLAG_MUTABLE
+        else -> 0
       }
     return PendingIntent.getBroadcast(
       context,
