@@ -18,6 +18,19 @@ import {
 } from "./agents/harness-runtime.js";
 import { spawnSafeEnv } from "./agents/spawn-env.js";
 import type { AgentBackendId } from "./agents/types.js";
+import {
+  ANTIGRAVITY_ACP_AUTH_METHODS,
+  antigravityAcpCredentialRelPaths,
+} from "./agents/google-antigravity-acp.js";
+import {
+  cancelAntigravityAcpLogin,
+  describeAntigravityAcpSignIn,
+  getAntigravityAcpLoginState,
+  logoutAntigravityAcp,
+  relayAntigravityAcpOAuthCallback,
+  startAntigravityAcpLogin,
+  type StartAntigravityAcpLoginInput,
+} from "./agents/google-antigravity-acp-auth.js";
 
 export type HarnessCliAuthBackendId =
   | "cursor-acp"
@@ -27,7 +40,8 @@ export type HarnessCliAuthBackendId =
   | "codex-app-server"
   | "codex-acp"
   | "claude-code-sdk"
-  | "google-antigravity-cli";
+  | "google-antigravity-cli"
+  | "google-antigravity-acp";
 
 export type HarnessCliAuthStatus =
   | "idle"
@@ -35,6 +49,15 @@ export type HarnessCliAuthStatus =
   | "awaiting-confirmation"
   | "success"
   | "failed";
+
+export type HarnessCliAuthMethodInfo = {
+  id: string;
+  name: string;
+  description: string;
+  requiresGcp: boolean;
+  browserLogin: boolean;
+  apiKeyEnvVar: string | null;
+};
 
 export type HarnessCliAuthState = {
   backendId: HarnessCliAuthBackendId;
@@ -50,11 +73,25 @@ export type HarnessCliAuthState = {
   finishedAt?: number;
   loginCommand: string;
   logoutCommand: string;
+  /** ACP-driven auth (Antigravity): the selectable `authenticate` methods. */
+  authMethods?: HarnessCliAuthMethodInfo[];
+  /** ACP-driven auth: method in flight or recorded in the server's settings. */
+  authMethodId?: string | null;
+  /** ACP-driven auth: loopback port Google's redirect targets (for the relay). */
+  callbackPort?: number;
+  callbackRelayed?: boolean;
+  /** ACP-driven auth: a Gemini API key is resolvable for `gemini-api-key`. */
+  apiKeyAvailable?: boolean;
+  gcpConfigured?: boolean;
+  /** ACP-driven auth: the `$GEMINI_HOME` the server stores credentials under. */
+  stateHome?: string;
 };
 
 type AuthSpec = {
   backendId: HarnessCliAuthBackendId;
   harnessCliId: HarnessCliId;
+  /** `cli` (default) spawns the vendor login command; `acp` drives `authenticate` over ACP. */
+  mode?: "cli" | "acp";
   loginArgs: string[];
   logoutArgs: string[];
   statusArgs?: string[];
@@ -62,6 +99,8 @@ type AuthSpec = {
   loginCommand: string;
   logoutCommand: string;
 };
+
+export type HarnessCliLoginOptions = StartAntigravityAcpLoginInput;
 
 const AUTH_SPECS: Record<HarnessCliAuthBackendId, AuthSpec> = {
   "cursor-acp": {
@@ -150,6 +189,16 @@ const AUTH_SPECS: Record<HarnessCliAuthBackendId, AuthSpec> = {
     ],
     loginCommand: "agy auth login",
     logoutCommand: "agy auth logout",
+  },
+  "google-antigravity-acp": {
+    backendId: "google-antigravity-acp",
+    harnessCliId: "google-antigravity-acp",
+    mode: "acp",
+    loginArgs: [],
+    logoutArgs: [],
+    credentialRelPaths: antigravityAcpCredentialRelPaths(),
+    loginCommand: "agy_acp_server -> authenticate (Log in with Google)",
+    logoutCommand: "agy_acp_server -> logout",
   },
 };
 
@@ -262,10 +311,63 @@ function isInstalled(spec: AuthSpec): boolean {
   return detectHarnessCli(spec.harnessCliId) != null;
 }
 
+function acpAuthMethodInfos(): HarnessCliAuthMethodInfo[] {
+  return ANTIGRAVITY_ACP_AUTH_METHODS.map((method) => ({
+    id: method.id,
+    name: method.name,
+    description: method.description,
+    requiresGcp: method.requiresGcp,
+    browserLogin: method.browserLogin,
+    apiKeyEnvVar: method.apiKeyEnvVar,
+  }));
+}
+
+/**
+ * State for the ACP-driven spec: login progress comes from the in-memory
+ * auth flow, the sign-in verdict from the server's settings/credential dir.
+ */
+function acpAuthState(
+  spec: AuthSpec,
+  signIn: Awaited<ReturnType<typeof describeAntigravityAcpSignIn>> | null
+): HarnessCliAuthState {
+  const login = getAntigravityAcpLoginState();
+  const installed = isInstalled(spec);
+  const status: HarnessCliAuthStatus = login.status;
+  return {
+    backendId: spec.backendId,
+    installed,
+    signedIn: installed
+      ? signIn
+        ? signIn.signedIn
+        : login.status === "success"
+          ? true
+          : detectCredentialFiles(spec)
+      : false,
+    status,
+    verificationUrl: login.verificationUrl,
+    outputTail: login.outputTail,
+    error: login.error,
+    startedAt: login.startedAt,
+    finishedAt: login.finishedAt,
+    loginCommand: spec.loginCommand,
+    logoutCommand: spec.logoutCommand,
+    authMethods: acpAuthMethodInfos(),
+    authMethodId: login.methodId ?? signIn?.configuredAuthType ?? null,
+    callbackPort: login.callbackPort,
+    callbackRelayed: login.callbackRelayed,
+    apiKeyAvailable: signIn?.apiKeyAvailable,
+    gcpConfigured: signIn?.gcpConfigured,
+    stateHome: signIn?.geminiHome,
+  };
+}
+
 export function getHarnessCliAuthState(
   backendId: HarnessCliAuthBackendId
 ): HarnessCliAuthState {
   const spec = AUTH_SPECS[backendId];
+  if (spec.mode === "acp") {
+    return acpAuthState(spec, null);
+  }
   const current = stateByBackend.get(backendId);
   const installed = isInstalled(spec);
   if (!current) {
@@ -320,6 +422,10 @@ export async function refreshHarnessCliAuthState(
   backendId: HarnessCliAuthBackendId
 ): Promise<HarnessCliAuthState> {
   const spec = AUTH_SPECS[backendId];
+  if (spec.mode === "acp") {
+    const signIn = isInstalled(spec) ? await describeAntigravityAcpSignIn() : null;
+    return acpAuthState(spec, signIn);
+  }
   const current = getHarnessCliAuthState(backendId);
   if (current.status === "pending" || current.status === "awaiting-confirmation") {
     return current;
@@ -337,9 +443,14 @@ export async function refreshHarnessCliAuthState(
 }
 
 export async function startHarnessCliLogin(
-  backendId: HarnessCliAuthBackendId
+  backendId: HarnessCliAuthBackendId,
+  options: HarnessCliLoginOptions = {}
 ): Promise<HarnessCliAuthState> {
   const spec = AUTH_SPECS[backendId];
+  if (spec.mode === "acp") {
+    await startAntigravityAcpLogin(options);
+    return refreshHarnessCliAuthState(backendId);
+  }
   if (activeByBackend.get(backendId)) {
     return getHarnessCliAuthState(backendId);
   }
@@ -440,6 +551,11 @@ export async function startHarnessCliLogin(
 export function cancelHarnessCliLogin(
   backendId: HarnessCliAuthBackendId
 ): HarnessCliAuthState {
+  const spec = AUTH_SPECS[backendId];
+  if (spec.mode === "acp") {
+    cancelAntigravityAcpLogin();
+    return getHarnessCliAuthState(backendId);
+  }
   const child = activeByBackend.get(backendId);
   if (child) {
     child.kill("SIGTERM");
@@ -457,10 +573,30 @@ export function cancelHarnessCliLogin(
   return getHarnessCliAuthState(backendId);
 }
 
+/**
+ * ACP-driven auth only: forward a pasted OAuth redirect URL to the server's
+ * loopback listener on this host (remote-browser fallback).
+ */
+export async function relayHarnessCliOAuthCallback(
+  backendId: HarnessCliAuthBackendId,
+  pastedUrl: string
+): Promise<HarnessCliAuthState> {
+  const spec = AUTH_SPECS[backendId];
+  if (spec.mode !== "acp") {
+    throw new Error(`${spec.loginCommand} does not use a loopback OAuth callback.`);
+  }
+  await relayAntigravityAcpOAuthCallback(pastedUrl);
+  return refreshHarnessCliAuthState(backendId);
+}
+
 export async function startHarnessCliLogout(
   backendId: HarnessCliAuthBackendId
 ): Promise<HarnessCliAuthState> {
   const spec = AUTH_SPECS[backendId];
+  if (spec.mode === "acp") {
+    await logoutAntigravityAcp();
+    return refreshHarnessCliAuthState(backendId);
+  }
   cancelHarnessCliLogin(backendId);
   const invocation = buildHarnessInvocation(spec.harnessCliId, spec.logoutArgs);
   if (!invocation) {

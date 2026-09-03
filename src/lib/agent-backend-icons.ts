@@ -29,6 +29,10 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
     light: "Antigravity-Light.svg",
     dark: "Antigravity-Dark.svg",
   },
+  "google-antigravity-acp": {
+    light: "Antigravity-Light.svg",
+    dark: "Antigravity-Dark.svg",
+  },
 };
 
 const ICON_BASE = "/agent-backend-icons";

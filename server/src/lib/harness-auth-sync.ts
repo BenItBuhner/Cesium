@@ -57,6 +57,7 @@ const CLI_SYNC_IDS: Record<CliSyncId, HarnessCliId> = {
   grok: "grok",
   devin: "devin",
   "google-antigravity": "google-antigravity",
+  "google-antigravity-acp": "google-antigravity-acp",
 };
 
 function isCliSyncId(syncId: HarnessAuthSyncId): syncId is CliSyncId {

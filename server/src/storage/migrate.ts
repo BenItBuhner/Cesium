@@ -16,6 +16,7 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
+  "google-antigravity-acp",
 ];
 
 /**

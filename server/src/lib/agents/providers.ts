@@ -52,6 +52,12 @@ import {
   openCodeHarnessAvailable,
   openCodeHarnessCommandPreview,
 } from "./opencode-generation.js";
+import {
+  ANTIGRAVITY_ACP_DEFAULT_MODEL_ID,
+  ANTIGRAVITY_ACP_MODEL_CATALOG,
+  buildAntigravityAcpSpawnEnv,
+  createGoogleAntigravityAcpConfigOptions,
+} from "./google-antigravity-acp.js";
 
 /**
  * Maps CLI-backed agent backends onto the harness runtime descriptor that
@@ -65,6 +71,7 @@ const BACKEND_HARNESS_CLI: Partial<Record<AgentBackendId, HarnessCliId>> = {
   "codex-app-server": "codex",
   "codex-acp": "codex",
   "google-antigravity-cli": "google-antigravity",
+  "google-antigravity-acp": "google-antigravity-acp",
   "claude-code-sdk": "claude",
   "cursor-acp": "cursor",
 };
@@ -339,9 +346,9 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
       const runtime = resolveHarnessRuntimeSpec("google-antigravity");
       return createBackendInfo({
         id: "google-antigravity-cli",
-        label: "Google Antigravity CLI",
+        label: "Google Antigravity CLI (Legacy)",
         description:
-          "Google Antigravity CLI (`agy`) - successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
+          "Legacy Google Antigravity CLI (`agy`) terminal bridge - successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens. Prefer the official ACP transport.",
         experimental: true,
         commandPreview: runtime
           ? `${runtime.commandPreview} interactive`
@@ -351,6 +358,25 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultMode: "agent",
         defaultModelId: "auto",
         defaultModelName: "Auto",
+      });
+    }
+    case "google-antigravity-acp": {
+      const runtime = resolveHarnessRuntimeSpec("google-antigravity-acp");
+      const defaultModel = ANTIGRAVITY_ACP_MODEL_CATALOG.find(
+        (entry) => entry.value === ANTIGRAVITY_ACP_DEFAULT_MODEL_ID
+      );
+      return createBackendInfo({
+        id: "google-antigravity-acp",
+        label: "Google Antigravity",
+        description:
+          "Google's official Antigravity ACP server (`agy_acp_server` from the ACP Registry). Log in with Google (or Gemini Enterprise / API key) directly through the server; Cesium never brokers tokens.",
+        experimental: true,
+        commandPreview: runtime?.commandPreview ?? "Antigravity ACP server not installed",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["google-antigravity-acp"],
+        defaultMode: "default",
+        defaultModelId: ANTIGRAVITY_ACP_DEFAULT_MODEL_ID,
+        defaultModelName: defaultModel?.name ?? ANTIGRAVITY_ACP_DEFAULT_MODEL_ID,
       });
     }
   }
@@ -467,6 +493,8 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             ? "Codex ACP requires the Codex CLI on the server host. Install it or set OPENCURSOR_CODEX_BIN, then sign in with `codex login`."
             : backend.id === "pi-agent" && !piAgentStatus
             ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
+            : backend.id === "google-antigravity-acp" && !backend.available
+            ? "Google Antigravity requires the official ACP server (`agy_acp_server`). Install it from Settings -> Agents -> Google Antigravity (or set OPENCURSOR_ANTIGRAVITY_ACP_BIN), then log in with Google."
             : backend.description,
         runtime,
         cachedConfigOptions,
@@ -637,6 +665,27 @@ export async function createAgentProvider(
       runtime,
       configOptions: await readAgentBackendConfigCache(backendId),
     });
+  }
+
+  if (backendId === "google-antigravity-acp") {
+    const detected = resolveHarnessRuntimeSpec("google-antigravity-acp");
+    if (!detected) {
+      throw new Error(
+        `${backend.label} requires Google's Antigravity ACP server (agy_acp_server). Install it from Settings -> Agents -> Google Antigravity or set OPENCURSOR_ANTIGRAVITY_ACP_BIN.`
+      );
+    }
+    // Same binary/args as detection, plus the Gemini home / API key env the
+    // server reads at startup (`GEMINI_HOME`, `GEMINI_API_KEY`).
+    const runtime: CliRuntimeSpec = {
+      ...detected,
+      env: await buildAntigravityAcpSpawnEnv({ ...process.env, ...(detected.env ?? {}) }),
+    };
+    const cachedConfigOptions = await readAgentBackendConfigCache(backendId);
+    const seedConfigOptions =
+      cachedConfigOptions.length > 0
+        ? cachedConfigOptions
+        : createGoogleAntigravityAcpConfigOptions();
+    return createAcpProvider({ backend, runtime, seedConfigOptions });
   }
 
   throw new Error(`${backend.label} is not implemented yet.`);

@@ -32,6 +32,14 @@ import {
   resolveRememberedPermissionDecision,
 } from "../remembered-permissions.js";
 import { extractInlineReasoning } from "../parse-inline-reasoning.js";
+import {
+  GOOGLE_ANTIGRAVITY_ACP_BACKEND_ID,
+  detectAntigravityAcpCredentialState,
+  extractAcpAgentExecutionError,
+  isAntigravityAcpAuthRequiredError,
+  isAntigravityAcpSessionNotFoundError,
+  resolveGeminiApiKeyFromEnv,
+} from "../google-antigravity-acp.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -42,6 +50,7 @@ import type {
   AgentProviderCapabilities,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
+  AgentSlashCommand,
   AgentToolCallStatus,
 } from "../types.js";
 import {
@@ -397,9 +406,65 @@ async function authenticateGrokBuild(
   return methodId;
 }
 
+/**
+ * Google's Antigravity ACP server owns authentication. Browser OAuth
+ * (`oauth-personal` / `oauth-business`) is driven from Settings, never from a
+ * chat turn (it would block on a loopback callback). The one headless method
+ * is `gemini-api-key`: when the spawn env carries a key and nothing is
+ * configured yet, select it here so the first turn just works.
+ */
+async function bootstrapAntigravityAcpAuth(
+  transport: AcpStdioClient,
+  init: Record<string, unknown> | undefined,
+  env: NodeJS.ProcessEnv
+): Promise<string[]> {
+  const messages: string[] = [];
+  const offered = new Set(acpAuthMethodIds(init));
+  const state = await detectAntigravityAcpCredentialState(env);
+  if (state.configuredAuthType) {
+    return messages;
+  }
+  if (offered.has("gemini-api-key") && resolveGeminiApiKeyFromEnv(env)) {
+    try {
+      await transport.request("authenticate", { methodId: "gemini-api-key" });
+      messages.push(
+        "Google Antigravity authenticated with the Gemini API key from the environment (GEMINI_API_KEY)."
+      );
+      return messages;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      messages.push(`Google Antigravity API-key authentication failed: ${detail}`);
+    }
+  }
+  messages.push(
+    "Google Antigravity is not signed in yet. Open Settings -> Agents -> Google Antigravity and choose Log in with Google (or another method); the ACP server completes the login itself."
+  );
+  return messages;
+}
+
+/** Actionable text for the server's `-32000 Authentication required` on session open. */
+export function describeAntigravityAcpAuthRequired(): string {
+  return "Google Antigravity is not signed in. Open Settings -> Agents -> Google Antigravity and click Log in with Google (or pick Gemini API key / Gemini Enterprise), then send the message again.";
+}
+
+/**
+ * Backends whose server advertises `sessionCapabilities.resume`. Cesium keeps
+ * its own durable transcript, so re-attaching without a `session/load` replay
+ * avoids streaming the whole history back only to discard it.
+ */
+function backendPrefersAcpSessionResume(backendId: AgentBackendId): boolean {
+  return backendId === GOOGLE_ANTIGRAVITY_ACP_BACKEND_ID;
+}
+
+/** Google's tool sandbox realpath()s roots before the prefix check. */
+function backendRequiresRealpathCwd(backendId: AgentBackendId): boolean {
+  return backendId === GOOGLE_ANTIGRAVITY_ACP_BACKEND_ID;
+}
+
 async function runAcpTransportBootstrap(
   transport: AcpStdioClient,
-  backendId: AgentBackendId
+  backendId: AgentBackendId,
+  env: NodeJS.ProcessEnv
 ): Promise<string[]> {
   const messages: string[] = [];
   const init = (await transport.request("initialize", {
@@ -429,6 +494,10 @@ async function runAcpTransportBootstrap(
     const methodId = await authenticateGrokBuild(transport, init);
     messages.push(`Grok Build authenticated for ACP using ${methodId}.`);
     return messages;
+  }
+
+  if (backendId === GOOGLE_ANTIGRAVITY_ACP_BACKEND_ID) {
+    return bootstrapAntigravityAcpAuth(transport, init, env);
   }
 
   for (const id of acpAuthMethodIds(init)) {
@@ -479,13 +548,66 @@ function backendUsesAcpPromptHints(_backendId: AgentBackendId): boolean {
   return false;
 }
 
-function pluginMcpServersForAcp(
+function recordToNameValuePairs(value: unknown): Array<{ name: string; value: string }> {
+  if (Array.isArray(value)) {
+    return value.filter(
+      (entry): entry is { name: string; value: string } =>
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        typeof (entry as Record<string, unknown>).name === "string" &&
+        typeof (entry as Record<string, unknown>).value === "string"
+    );
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => typeof v === "string")
+    .map(([name, v]) => ({ name, value: v as string }));
+}
+
+/**
+ * Converts Cesium's exported MCP configs into the ACP `McpServer` schema:
+ * stdio entries are `{name, command, args, env: EnvVariable[]}` (no `type`),
+ * HTTP/SSE entries are `{type, name, url, headers: HttpHeader[]}`. Strict
+ * servers (pydantic/zod validated) reject the dict-shaped `env`/`headers`
+ * Cesium stores internally, so the conversion is not optional.
+ */
+export function pluginMcpServersForAcp(
   servers: Record<string, unknown>
 ): Array<Record<string, unknown>> {
-  return Object.entries(servers).map(([name, config]) => ({
-    name,
-    ...(config && typeof config === "object" ? config : {}),
-  }));
+  const out: Array<Record<string, unknown>> = [];
+  for (const [name, raw] of Object.entries(servers)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      continue;
+    }
+    const config = raw as Record<string, unknown>;
+    const type = typeof config.type === "string" ? config.type : "stdio";
+    if (type === "http" || type === "sse") {
+      if (typeof config.url !== "string" || !config.url.trim()) {
+        continue;
+      }
+      out.push({
+        type,
+        name,
+        url: config.url,
+        headers: recordToNameValuePairs(config.headers),
+      });
+      continue;
+    }
+    if (typeof config.command !== "string" || !config.command.trim()) {
+      continue;
+    }
+    out.push({
+      name,
+      command: config.command,
+      args: Array.isArray(config.args)
+        ? config.args.filter((item): item is string => typeof item === "string")
+        : [],
+      env: recordToNameValuePairs(config.env),
+    });
+  }
+  return out;
 }
 
 export class AcpSessionHandle implements AgentSessionHandle {
@@ -503,6 +625,11 @@ export class AcpSessionHandle implements AgentSessionHandle {
     }
   >();
   private currentAssistantMessageId: string | null = null;
+  /**
+   * Set when the agent reports a turn failure as prose (`Agent execution
+   * error: ...`) instead of a JSON-RPC error; the turn then ends `failed`.
+   */
+  private lastAgentExecutionError: string | null = null;
   private disposed = false;
   private readonly bridge: AcpSharedBridge;
   private readonly releaseBridge: () => Promise<void>;
@@ -737,7 +864,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
           processName: `Cesium Agent - ${input.backend.label}`,
         }),
       afterSpawn: (transport) =>
-        runAcpTransportBootstrap(transport, input.backend.id),
+        runAcpTransportBootstrap(transport, input.backend.id, env),
     });
 
     const isInvalidParamsError = (error: unknown): boolean => {
@@ -748,6 +875,8 @@ export class AcpSessionHandle implements AgentSessionHandle {
       const message = error instanceof Error ? error.message : String(error ?? "");
       return /invalid params?/i.test(message);
     };
+    const isMethodNotFoundError = (error: unknown): boolean =>
+      error instanceof AcpJsonRpcError && error.code === -32601;
     const pluginAttachments = await resolveAgentPluginAttachments({
       workspaceId: input.callbacks.workspace.id,
       workspaceRoot: input.callbacks.workspace.root,
@@ -756,11 +885,43 @@ export class AcpSessionHandle implements AgentSessionHandle {
     const acpMcpServers = pluginMcpServersForAcp(pluginAttachments.sdkMcp.servers);
 
     const tryOpenSession = async (): Promise<Record<string, unknown> | null | undefined> => {
+      const workspaceRoot = input.callbacks.workspace.root;
+      let workspaceRootReal = workspaceRoot;
+      try {
+        workspaceRootReal = await fs.realpath(workspaceRoot);
+      } catch {
+        // best-effort; keep logical root
+      }
+      const newSessionCwd = backendRequiresRealpathCwd(input.backend.id)
+        ? workspaceRootReal
+        : workspaceRoot;
+
       if (!input.loadSessionId) {
         return (await bridge.request("session/new", {
-          cwd: input.callbacks.workspace.root,
+          cwd: newSessionCwd,
           mcpServers: acpMcpServers,
         })) as Record<string, unknown> | null | undefined;
+      }
+
+      // Re-attach without replay when the server supports it; Cesium already
+      // holds the durable transcript. A stale id (e.g. a different GEMINI_HOME)
+      // must surface as an error so the runtime falls back to a fresh session.
+      if (backendPrefersAcpSessionResume(input.backend.id)) {
+        try {
+          return (await bridge.request("session/resume", {
+            sessionId: input.loadSessionId,
+            cwd: newSessionCwd,
+            mcpServers: acpMcpServers,
+          })) as Record<string, unknown> | null | undefined;
+        } catch (error) {
+          if (isAntigravityAcpSessionNotFoundError(error)) {
+            throw error;
+          }
+          if (!isMethodNotFoundError(error) && !isInvalidParamsError(error)) {
+            throw error;
+          }
+          // Older server without `session/resume` - fall through to `session/load`.
+        }
       }
 
       // IMPORTANT: Cursor's `session/load` param schema is strict. In practice:
@@ -769,13 +930,6 @@ export class AcpSessionHandle implements AgentSessionHandle {
       //
       // Do NOT "compat" by dropping keys - that produces unrelated -32603 schema errors
       // and makes retries look like random failures.
-      const workspaceRoot = input.callbacks.workspace.root;
-      let workspaceRootReal = workspaceRoot;
-      try {
-        workspaceRootReal = await fs.realpath(workspaceRoot);
-      } catch {
-        // best-effort; keep logical root
-      }
 
       const loadAttempts: Array<Record<string, unknown>> = [
         {
@@ -910,8 +1064,12 @@ export class AcpSessionHandle implements AgentSessionHandle {
               kind: "unknown_error" as const,
               message: error instanceof Error ? error.message : String(error),
             };
-      const headline =
-        error instanceof AcpJsonRpcError
+      const authRequired =
+        input.backend.id === GOOGLE_ANTIGRAVITY_ACP_BACKEND_ID &&
+        isAntigravityAcpAuthRequiredError(error);
+      const headline = authRequired
+        ? describeAntigravityAcpAuthRequired()
+        : error instanceof AcpJsonRpcError
           ? `ACP JSON-RPC request failed: ${error.method} (${error.code})`
           : "ACP session initialization failed.";
 
@@ -927,6 +1085,9 @@ export class AcpSessionHandle implements AgentSessionHandle {
       ]);
       bridge.cancelCreationCapture();
       await release();
+      if (authRequired) {
+        throw new Error(headline, { cause: error });
+      }
       throw error;
     }
   }
@@ -938,6 +1099,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
   }): Promise<void> {
     const assistantMessageId = randomUUID();
     this.currentAssistantMessageId = assistantMessageId;
+    this.lastAgentExecutionError = null;
     await this.callbacks.updateConversation((current) => ({
       ...current,
       status: "running",
@@ -977,6 +1139,39 @@ export class AcpSessionHandle implements AgentSessionHandle {
         messageId: input.userMessageId,
         prompt: promptContent,
       })) as Record<string, unknown> | undefined;
+
+      const executionError = this.lastAgentExecutionError;
+      this.lastAgentExecutionError = null;
+      if (executionError) {
+        // The server ended the turn normally (`end_turn`) but the only content
+        // was an execution failure; surface it as a failed turn, not an answer.
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "assistant_message_end",
+            messageId: assistantMessageId,
+            stopReason: "error",
+            raw: result,
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "failed",
+            detail: executionError,
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: "failed",
+          pendingPermission: null,
+          lastError: executionError,
+        }));
+        this.endCursorPromptInference();
+        this.currentAssistantMessageId = null;
+        return;
+      }
 
       await this.callbacks.appendEvents([
         {
@@ -1400,6 +1595,63 @@ export class AcpSessionHandle implements AgentSessionHandle {
         : undefined;
 
     switch (sessionUpdate) {
+      case "agent_thought_chunk": {
+        const text =
+          record.content &&
+          typeof record.content === "object" &&
+          typeof (record.content as Record<string, unknown>).text === "string"
+            ? ((record.content as Record<string, unknown>).text as string)
+            : null;
+        if (!text || !this.currentAssistantMessageId) {
+          return;
+        }
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "reasoning",
+            messageId: this.currentAssistantMessageId,
+            text,
+            raw: params,
+          },
+        ]);
+        return;
+      }
+      case "available_commands_update": {
+        const rawCommands = Array.isArray(record.availableCommands)
+          ? record.availableCommands
+          : Array.isArray(record.available_commands)
+            ? record.available_commands
+            : [];
+        const commands: AgentSlashCommand[] = [];
+        for (const entry of rawCommands) {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            continue;
+          }
+          const command = entry as Record<string, unknown>;
+          const name = typeof command.name === "string" ? command.name.trim().replace(/^\//, "") : "";
+          if (!name) {
+            continue;
+          }
+          const inputRecord =
+            command.input && typeof command.input === "object" && !Array.isArray(command.input)
+              ? (command.input as Record<string, unknown>)
+              : null;
+          const inputHint = typeof inputRecord?.hint === "string" ? inputRecord.hint.trim() : "";
+          commands.push({
+            name,
+            ...(typeof command.description === "string" && command.description.trim()
+              ? { description: command.description.trim() }
+              : {}),
+            ...(inputHint ? { inputHint } : {}),
+          });
+        }
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          availableCommands: commands,
+        }));
+        return;
+      }
  case "agent_message_chunk": {
  const text =
  record.content &&
@@ -1415,6 +1667,21 @@ export class AcpSessionHandle implements AgentSessionHandle {
  return;
  }
  if (!this.currentAssistantMessageId) {
+ return;
+ }
+ const executionError = extractAcpAgentExecutionError(text);
+ if (executionError) {
+ this.lastAgentExecutionError = executionError;
+ await this.callbacks.appendEvents([
+ {
+ eventId: randomUUID(),
+ conversationId: this.callbacks.conversation.id,
+ kind: "system",
+ level: "error",
+ text: `Agent execution error: ${executionError}`,
+ raw: params,
+ },
+ ]);
  return;
  }
  if (this.capabilities.supportsInlineReasoning) {

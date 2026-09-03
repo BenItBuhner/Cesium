@@ -38,6 +38,8 @@ export function getAgentLabel(agentId: string): string {
     case "pi-agent":
       return "Pi Agent";
     case "google-antigravity-cli":
+      return "Google Antigravity (CLI)";
+    case "google-antigravity-acp":
       return "Google Antigravity";
     default:
       return agentId;
@@ -60,6 +62,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "claude-code-sdk":
     case "pi-agent":
     case "google-antigravity-cli":
+    case "google-antigravity-acp":
       return raw;
     case "opencode-acp":
     case "opencode-v2-beta":

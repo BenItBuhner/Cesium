@@ -95,6 +95,7 @@ import {
   HarnessAuthSyncDetailSection,
   HarnessAuthSyncSummaryCard,
 } from "@/components/editor/settings/HarnessAuthSyncSection";
+import { AntigravityAcpHarnessSettings } from "@/components/editor/settings/AntigravityAcpSettings";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
 import { useEngineSupportedHarnessFamilies } from "@/hooks/useEngineSupportedHarnessFamilies";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
@@ -131,7 +132,8 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "codex-acp": "Codex (ACP)",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
-  "google-antigravity-cli": "Google Antigravity",
+  "google-antigravity-cli": "Google Antigravity (CLI, Legacy)",
+  "google-antigravity-acp": "Google Antigravity",
 };
 
 export function harnessDisplayName(backendId: AgentBackendId | string): string {
@@ -162,7 +164,9 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "pi-agent":
     "Native Pi coding agent. Uses ~/.pi/agent by default so packages, extensions, skills, and settings match the CLI.",
   "google-antigravity-cli":
-    "Google Antigravity CLI (`agy`) - Google's successor to Gemini CLI. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed yet. Native ACP is not available upstream.",
+    "Legacy Google Antigravity CLI (`agy`) terminal bridge. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed. Superseded by the official ACP transport and slated for removal.",
+  "google-antigravity-acp":
+    "Google's official Antigravity ACP server (`agy_acp_server`, ACP Registry). Log in with Google, Gemini Enterprise, or an API key directly through the server; Cesium never brokers tokens. MCP servers, images, permissions, plans, and reasoning all flow over the Agent Client Protocol.",
 };
 
 /** Custom endpoints support the same four inference APIs as model discovery. */
@@ -249,7 +253,8 @@ const HARNESS_BLURBS: Record<AgentBackendId, string> = {
   "codex-acp": "Codex CLI · ACP",
   "claude-code-sdk": "Claude Agent SDK · API key or CLI login",
   "pi-agent": "Pi coding agent · OAuth or API keys",
-  "google-antigravity-cli": "agy CLI · Google OAuth",
+  "google-antigravity-cli": "agy CLI (legacy) · Google OAuth",
+  "google-antigravity-acp": "Official ACP server · Log in with Google",
 };
 
 const FAMILY_BLURBS: Record<string, string> = {
@@ -261,7 +266,7 @@ const FAMILY_BLURBS: Record<string, string> = {
   grok: "Grok CLI · device auth",
   claude: "Claude Agent SDK · API key or CLI login",
   pi: "Pi coding agent · OAuth or API keys",
-  antigravity: "agy CLI · Google OAuth",
+  antigravity: "Official ACP server or legacy CLI · Log in with Google",
 };
 
 const modelsLinkClass =
@@ -3593,6 +3598,13 @@ function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
       return (
         <>
           <HarnessCliAuthSettings backendId={backendId} />
+          <HarnessGenericSettings />
+        </>
+      );
+    case "google-antigravity-acp":
+      return (
+        <>
+          <AntigravityAcpHarnessSettings />
           <HarnessGenericSettings />
         </>
       );

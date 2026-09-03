@@ -159,7 +159,13 @@ import {
   resolveDesktopTaskbarGoalProgress,
 } from "@/lib/desktop-taskbar-progress";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
-import type { AgentBackendId, AgentBackendInfo, AgentConfigOption, AgentConversationStatus } from "@/lib/agent-types";
+import type {
+  AgentBackendId,
+  AgentBackendInfo,
+  AgentConfigOption,
+  AgentConversationStatus,
+  AgentSlashCommand,
+} from "@/lib/agent-types";
 import {
   isAgentCesiumTurnActive,
   isAgentCesiumPauseDraining,
@@ -534,6 +540,8 @@ interface ChatComposerProps {
   /** Extra ACP selectors: reasoning effort, speed, context window, etc. */
   sessionConfigOptions?: AgentConfigOption[];
   onSessionConfigOptionChange?: (configId: string, value: string) => void;
+  /** Slash commands the live agent session advertises (e.g. Antigravity `/plan`). */
+  agentCommands?: AgentSlashCommand[] | null;
   value?: string;
   onValueChange?: (value: string) => void;
   selection?: TextSelection;
@@ -1065,6 +1073,7 @@ export function ChatComposer({
   modeOptions,
   sessionConfigOptions,
   onSessionConfigOptionChange,
+  agentCommands,
   value: controlledValue,
   onValueChange,
   selection: controlledSelection,
@@ -1380,12 +1389,14 @@ export function ChatComposer({
           harnessTransports: settings.agents.harnessTransports,
         }),
         sessionConfigOptions,
+        agentCommands,
         gitSlashCommands,
         configLocked,
         modeLocked,
       }),
     [
       activeBackend,
+      agentCommands,
       backendId,
       backends,
       configLocked,

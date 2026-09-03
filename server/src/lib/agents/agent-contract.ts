@@ -209,6 +209,22 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
   },
+  "google-antigravity-acp": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: true,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: true,
+    supportsTodos: true,
+    supportsSessionResume: true,
+    // The official ACP server advertises promptCapabilities.image/audio/embeddedContext.
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+    supportsCloudExecution: false,
+  },
 };
 
 export const AGENT_STORED_EVENT_KINDS = [
@@ -422,5 +438,17 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
     ],
     notes:
       "Plan/todo events are mirrored from manage_task; MCP and prompt attachments are limited by Antigravity workspace config and CLI support.",
+  },
+  "google-antigravity-acp": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "plan",
+      ...permissionEvents,
+      "system",
+    ],
+    notes:
+      "Google's official `agy_acp_server` over ACP stdio. Reasoning arrives as agent_thought_chunk, permissions as session/request_permission (mode `default`), plans via ACP plan updates; auth is Google OAuth handled inside the server.",
   },
 };

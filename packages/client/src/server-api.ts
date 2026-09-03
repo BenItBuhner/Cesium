@@ -2537,7 +2537,18 @@ export type HarnessCliAuthBackendId =
   | "codex-app-server"
   | "codex-acp"
   | "claude-code-sdk"
-  | "google-antigravity-cli";
+  | "google-antigravity-cli"
+  | "google-antigravity-acp";
+
+/** One `authenticate` method an ACP-driven harness (Google Antigravity) offers. */
+export type HarnessCliAuthMethodInfo = {
+  id: string;
+  name: string;
+  description: string;
+  requiresGcp: boolean;
+  browserLogin: boolean;
+  apiKeyEnvVar: string | null;
+};
 
 export type HarnessCliAuthState = {
   backendId: HarnessCliAuthBackendId;
@@ -2553,6 +2564,20 @@ export type HarnessCliAuthState = {
   finishedAt?: number;
   loginCommand: string;
   logoutCommand: string;
+  /** ACP-driven auth only (see server `harness-cli-auth.ts`). */
+  authMethods?: HarnessCliAuthMethodInfo[];
+  authMethodId?: string | null;
+  callbackPort?: number;
+  callbackRelayed?: boolean;
+  apiKeyAvailable?: boolean;
+  gcpConfigured?: boolean;
+  stateHome?: string;
+};
+
+export type HarnessCliAuthLoginOptions = {
+  methodId?: string | null;
+  gcpProject?: string | null;
+  gcpLocation?: string | null;
 };
 
 export function isHarnessCliAuthBackendId(
@@ -2566,7 +2591,8 @@ export function isHarnessCliAuthBackendId(
     backendId === "codex-app-server" ||
     backendId === "codex-acp" ||
     backendId === "claude-code-sdk" ||
-    backendId === "google-antigravity-cli"
+    backendId === "google-antigravity-cli" ||
+    backendId === "google-antigravity-acp"
   );
 }
 
@@ -2580,11 +2606,37 @@ export async function fetchHarnessCliAuth(
 }
 
 export async function startHarnessCliAuthLogin(
-  backendId: HarnessCliAuthBackendId
+  backendId: HarnessCliAuthBackendId,
+  options?: HarnessCliAuthLoginOptions
 ): Promise<HarnessCliAuthState> {
   return request<HarnessCliAuthState>(
     `/api/settings/harness-auth/${encodeURIComponent(backendId)}/login`,
-    { method: "POST" }
+    options
+      ? {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(options),
+        }
+      : { method: "POST" }
+  );
+}
+
+/**
+ * ACP-driven Google OAuth fallback for remote engines: forward the
+ * `http://127.0.0.1:<port>/?code=...` URL the browser landed on so the engine
+ * replays it against the ACP server's loopback listener.
+ */
+export async function relayHarnessCliAuthOAuthCallback(
+  backendId: HarnessCliAuthBackendId,
+  url: string
+): Promise<HarnessCliAuthState> {
+  return request<HarnessCliAuthState>(
+    `/api/settings/harness-auth/${encodeURIComponent(backendId)}/oauth-callback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    }
   );
 }
 

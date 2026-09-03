@@ -53,6 +53,7 @@ export const HARNESS_PROBE_BACKENDS: AgentBackendId[] = [
   "devin-acp",
   "grok-build",
   "pi-agent",
+  "google-antigravity-acp",
   "google-antigravity-cli",
 ];
 

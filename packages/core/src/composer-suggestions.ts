@@ -1,4 +1,9 @@
-import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "./protocol";
+import type {
+  AgentBackendId,
+  AgentBackendInfo,
+  AgentConfigOption,
+  AgentSlashCommand,
+} from "./protocol";
 import type { AgentModeOption, EditorMode, FileNode, ModelInfo } from "./types";
 import { makeComposerConversationReferenceToken } from "./conversation-reference";
 
@@ -153,6 +158,8 @@ export function getSlashMenuSections(input: {
   models?: ModelInfo[];
   backends?: AgentBackendInfo[];
   sessionConfigOptions?: AgentConfigOption[];
+  /** Commands the live agent session advertises (ACP `available_commands_update`). */
+  agentCommands?: AgentSlashCommand[] | null;
   gitSlashCommands?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;
@@ -234,6 +241,25 @@ export function getSlashMenuSections(input: {
   }
 
   const commandItems: SlashMenuItem[] = [];
+
+  for (const command of input.agentCommands ?? []) {
+    const name = command.name.trim().replace(/^\//, "");
+    if (!name) {
+      continue;
+    }
+    const label = `/${name}`;
+    const description =
+      command.description?.trim() || `Send /${name} to ${backend?.label ?? "the agent"}.`;
+    const searchText = `${name} ${description} agent command`;
+    commandItems.push({
+      id: `agent-command:${name}`,
+      label,
+      description: command.inputHint ? `${description} (${command.inputHint})` : description,
+      searchText,
+      searchKey: slashSearchKey(label, searchText),
+      action: { kind: "insert", insert: `/${name} ` },
+    });
+  }
 
   if (!locked) {
     for (const option of input.sessionConfigOptions ?? []) {

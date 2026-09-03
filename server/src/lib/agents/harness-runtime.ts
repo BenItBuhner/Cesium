@@ -1,9 +1,12 @@
-import { accessSync, constants as fsConstants, statSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, readdirSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { harnessLog } from "./harness-diagnostics.js";
-import { getCesiumToolsDir } from "./install/cli-install-registry.js";
+import {
+  binaryArchiveCurrentDir,
+  getCesiumToolsDir,
+} from "./install/cli-install-registry.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import type { CliRuntimeSpec } from "./cli-adapter.js";
 
@@ -32,6 +35,7 @@ export type HarnessCliId =
   | "devin"
   | "grok"
   | "google-antigravity"
+  | "google-antigravity-acp"
   | "claude"
   | "cursor";
 
@@ -58,9 +62,111 @@ type HarnessCliDescriptor = {
   defaultArgs?: string[];
   /** Home-relative segments of harness-specific install dirs. */
   wellKnownHomeSubdirs?: string[][];
+  /**
+   * Absolute install dirs computed at detection time (e.g. versioned ACP
+   * Registry installs). Searched before `wellKnownHomeSubdirs`.
+   */
+  wellKnownDirs?: () => string[];
   /** Args used to probe the CLI version. Defaults to `["--version"]`. */
   versionArgs?: string[];
+  /** Custom version extractor when the generic `\d+.\d+` probe is ambiguous. */
+  parseVersion?: (raw: string) => string | null;
+  /** Override for slow-starting binaries (default 5 s). */
+  versionProbeTimeoutMs?: number;
 };
+
+/**
+ * Where Zed keeps ACP Registry installs (`<data>/external_agents/registry/<id>/<version>/`).
+ * Treating an existing Zed install as well-known means a user never downloads
+ * the same multi-hundred-MB agent archive twice on one machine.
+ */
+export function zedExternalAgentRegistryDirs(agentId: string): string[] {
+  const roots: string[] = [];
+  const push = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && !roots.includes(trimmed)) {
+      roots.push(trimmed);
+    }
+  };
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) {
+      push(path.join(localAppData, "Zed", "external_agents", "registry", agentId));
+    }
+  } else if (process.platform === "darwin") {
+    for (const home of harnessHomeDirCandidates()) {
+      push(
+        path.join(home, "Library", "Application Support", "Zed", "external_agents", "registry", agentId)
+      );
+    }
+  } else {
+    const xdgData = process.env.XDG_DATA_HOME?.trim();
+    if (xdgData) {
+      push(path.join(xdgData, "zed", "external_agents", "registry", agentId));
+    }
+    for (const home of harnessHomeDirCandidates()) {
+      push(path.join(home, ".local", "share", "zed", "external_agents", "registry", agentId));
+    }
+  }
+  return roots;
+}
+
+/**
+ * Expands install roots into their version subdirectories (newest mtime
+ * first) followed by the root itself, so `<root>/<version>/<binary>` resolves
+ * without knowing the version string.
+ */
+export function expandVersionedInstallDirs(roots: string[]): string[] {
+  const out: string[] = [];
+  for (const root of roots) {
+    if (!existsSync(root)) {
+      continue;
+    }
+    let entries: Array<{ dir: string; mtimeMs: number }> = [];
+    try {
+      entries = readdirSync(root)
+        .map((name) => path.join(root, name))
+        .filter((candidate) => {
+          try {
+            return statSync(candidate).isDirectory();
+          } catch {
+            return false;
+          }
+        })
+        .map((dir) => {
+          let mtimeMs = 0;
+          try {
+            mtimeMs = statSync(dir).mtimeMs;
+          } catch {
+            // keep 0
+          }
+          return { dir, mtimeMs };
+        });
+    } catch {
+      entries = [];
+    }
+    entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (const entry of entries) {
+      if (!out.includes(entry.dir)) {
+        out.push(entry.dir);
+      }
+    }
+    if (!out.includes(root)) {
+      out.push(root);
+    }
+  }
+  return out;
+}
+
+/** Version from Google's `agy_acp_server_<version>` build label / agentInfo. */
+function parseAntigravityAcpVersionLabel(raw: string): string | null {
+  const semver = /agy_acp_server[_-]v?(\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*)/.exec(raw);
+  if (semver?.[1]) {
+    return semver[1];
+  }
+  const rc = /agy_acp_server[_-](\d{8}_\d+_RC\d+)/.exec(raw);
+  return rc?.[1] ?? null;
+}
 
 export const HARNESS_CLI_DESCRIPTORS: Record<HarnessCliId, HarnessCliDescriptor> = {
   opencode: {
@@ -103,6 +209,24 @@ export const HARNESS_CLI_DESCRIPTORS: Record<HarnessCliId, HarnessCliDescriptor>
     id: "google-antigravity",
     binaryNames: ["agy"],
     envBinVars: ["OPENCURSOR_ANTIGRAVITY_CLI_BIN", "OPENCURSOR_AGY_BIN"],
+  },
+  "google-antigravity-acp": {
+    id: "google-antigravity-acp",
+    // Google ships `agy_acp_server.par` (macOS/Linux) and `agy_acp_server.exe`
+    // (Windows); the bare name lets `.exe` expansion find the Windows build.
+    binaryNames: ["agy_acp_server.par", "agy_acp_server"],
+    envBinVars: ["OPENCURSOR_ANTIGRAVITY_ACP_BIN"],
+    envArgsVars: ["OPENCURSOR_ANTIGRAVITY_ACP_ARGS"],
+    // The ACP Registry manifest passes `--uid=` on Linux only.
+    defaultArgs: process.platform === "linux" ? ["--uid="] : [],
+    wellKnownDirs: () => [
+      binaryArchiveCurrentDir("antigravity-acp"),
+      ...expandVersionedInstallDirs(zedExternalAgentRegistryDirs("antigravity-acp")),
+    ],
+    versionArgs: ["--version"],
+    parseVersion: parseAntigravityAcpVersionLabel,
+    // The 1.9 GB `.par` needs a moment to map before it prints its banner.
+    versionProbeTimeoutMs: 15_000,
   },
   claude: {
     id: "claude",
@@ -330,7 +454,11 @@ function computeDetection(descriptor: HarnessCliDescriptor): HarnessCliDetection
   }
 
   const wellKnown = findExecutableInDirectories(
-    [...wellKnownDirectories(descriptor), ...commonBinDirectories()],
+    [
+      ...(descriptor.wellKnownDirs?.() ?? []),
+      ...wellKnownDirectories(descriptor),
+      ...commonBinDirectories(),
+    ],
     descriptor.binaryNames
   );
   if (wellKnown) {
@@ -538,7 +666,7 @@ export function probeHarnessCliVersion(id: HarnessCliId): Promise<string | null>
       invocation.args,
       {
         env: spawnSafeEnv(),
-        timeout: VERSION_PROBE_TIMEOUT_MS,
+        timeout: descriptor.versionProbeTimeoutMs ?? VERSION_PROBE_TIMEOUT_MS,
         windowsHide: true,
         maxBuffer: 256 * 1024,
       },
@@ -553,7 +681,12 @@ export function probeHarnessCliVersion(id: HarnessCliId): Promise<string | null>
           resolve(null);
           return;
         }
-        resolve(parseVersionOutput(`${stdout}\n${stderr}`));
+        const combined = `${stdout}\n${stderr}`;
+        resolve(
+          descriptor.parseVersion
+            ? descriptor.parseVersion(combined)
+            : parseVersionOutput(combined)
+        );
       }
     );
   });
