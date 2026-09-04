@@ -65,6 +65,18 @@ export type GlobalSettings = {
    * Stored in the profile blob so system/light/dark and presets sync across clients.
    */
   themeConfig?: unknown;
+  /**
+   * Animated aurora backdrop settings (client `AuroraSettingsState`). Opaque to
+   * the engine: the client owns the schema and normalization.
+   */
+  aurora?: unknown;
+  /**
+   * Account-wide composer defaults for new chats (client
+   * `ComposerDefaultsState`): last-used harness / mode / model per harness,
+   * Cesium capability profile, and the composer status-bar / pill visibility
+   * defaults. Opaque to the engine; the client owns normalization.
+   */
+  composer?: unknown;
   general: {
     doNotDisturb: boolean;
     batchStreamEvents: boolean;
@@ -942,6 +954,44 @@ export async function replaceRememberedAgentPermissionRules(
   });
 }
 
+/**
+ * Top-level slices the engine normalizes itself. Every other top-level key in
+ * a persisted row is a client-owned slice (`aurora`, `composer`, future UI
+ * preferences) and is preserved verbatim - see {@link migrateGlobalSettings}.
+ */
+const ENGINE_OWNED_TOP_LEVEL_KEYS = new Set<string>([
+  "schemaVersion",
+  "general",
+  "agents",
+  "models",
+  "tools",
+  "features",
+  "keyboardShortcuts",
+]);
+
+/**
+ * Client-owned top-level slices ride through the engine untouched. Historically
+ * this function rebuilt a fixed shape, so any slice the client added
+ * (`aurora` was the first casualty) was silently dropped on the next read and
+ * the user's choices reverted on every refetch. Only plain JSON objects are
+ * kept; scalars/arrays at the top level have never been part of the schema.
+ */
+function pickClientOwnedTopLevelSlices(
+  raw: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (ENGINE_OWNED_TOP_LEVEL_KEYS.has(key)) {
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
   const defaults = createDefaultSettings();
   const r = raw as Partial<GlobalSettings> & {
@@ -974,10 +1024,8 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
   }
 
   return {
+    ...pickClientOwnedTopLevelSlices(raw),
     schemaVersion: 1,
-    ...(r.themeConfig !== undefined && r.themeConfig !== null
-      ? { themeConfig: r.themeConfig }
-      : {}),
     general: {
       ...defaults.general,
       ...(r.general ?? {}),
