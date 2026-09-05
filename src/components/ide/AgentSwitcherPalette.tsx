@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { formatAgentRailRelativeTime } from "@/lib/agent-rail-status";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
 
 /** Row shown in the hold-to-cycle quick switcher (agent conversations and/or editor tabs). */
@@ -24,20 +25,6 @@ const rowBase =
 
 const kbdCls =
   "rounded border border-[var(--palette-kbd-border)] bg-[var(--palette-kbd-bg)] px-[5px] py-[1px] font-mono text-[10px] text-[var(--palette-kbd-text)]";
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return "just now";
-}
 
 export function AgentSwitcherPalette({
   open,
@@ -136,7 +123,7 @@ export function AgentSwitcherPalette({
                 <span
                   className={`shrink-0 whitespace-nowrap font-sans text-[11px] ${secondaryCls}`}
                 >
-                  {item.updatedAt != null ? formatRelativeTime(item.updatedAt) : ""}
+                  {item.updatedAt != null ? formatAgentRailRelativeTime(item.updatedAt) : ""}
                 </span>
               </div>
             );

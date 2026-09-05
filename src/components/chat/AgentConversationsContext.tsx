@@ -22,6 +22,7 @@ import {
   resolveConversationModel,
 } from "@/lib/agent-chat";
 import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { pickAvailableBackend } from "@cesium/core";
 import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
@@ -131,19 +132,6 @@ function agentSocketMessageWorkspaceScope(
     default:
       return null;
   }
-}
-
-function pickAvailableBackend(
-  backends: AgentBackendInfo[],
-  preferredBackendId?: AgentBackendId
-): AgentBackendInfo | null {
-  return (
-    backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
-    backends.find((backend) => backend.available && backend.enabled !== false) ??
-    backends.find((backend) => backend.available) ??
-    backends[0] ??
-    null
-  );
 }
 
 /**

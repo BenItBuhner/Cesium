@@ -4,6 +4,7 @@ import type {
   CesiumHarnessSettings,
   CesiumSubagentsVersion,
 } from "./types.js";
+import { asNumber, asRecord } from "../../../coerce.js";
 
 /** Timed `wait` tool hard cap (24 hours) - mirrors Cesium prompt defaults. */
 export const DEFAULT_WAIT_MAX_SECONDS = 24 * 60 * 60;
@@ -68,16 +69,6 @@ export function defaultHarnessSettings(): CesiumHarnessSettings {
     },
     limits: defaultHarnessLimits(),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function asVersion(value: unknown): number | undefined {

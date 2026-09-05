@@ -10,7 +10,6 @@ import {
   useId,
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
 import {
@@ -93,6 +92,7 @@ import {
   replaceSelection,
   type TextSelection,
 } from "@/components/input/text-buffer";
+import { resolvePointerSelection } from "@/components/input/HardwareAwareTextField";
 import { ModeDropdown } from "./ModeDropdown";
 import { ModelDropdown } from "./ModelDropdown";
 import { BackendDropdown } from "./BackendDropdown";
@@ -653,28 +653,6 @@ interface ChatComposerProps {
    * row yields to them instead of wedging into the gap.
    */
   dockedCardVisible?: boolean;
-}
-
-function resolvePointerSelection(
-  event: ReactPointerEvent<HTMLElement>,
-  valueLength: number
-): TextSelection {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return { start: valueLength, end: valueLength };
-  }
-
-  const char = target.closest("[data-faux-offset-start]") as HTMLElement | null;
-  if (!char) {
-    return { start: valueLength, end: valueLength };
-  }
-
-  const start = Number(char.dataset.fauxOffsetStart ?? valueLength);
-  const end = Number(char.dataset.fauxOffsetEnd ?? start);
-  const rect = char.getBoundingClientRect();
-  const midpoint = rect.left + rect.width / 2;
-  const next = event.clientX < midpoint ? start : end;
-  return { start: next, end: next };
 }
 
 /**

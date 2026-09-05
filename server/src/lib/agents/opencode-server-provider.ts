@@ -49,6 +49,7 @@ import {
   appendAgentPluginPrompt,
   resolveAgentPluginAttachments,
 } from "../plugins/attachments.js";
+import { asRecord } from "../coerce.js";
 
 function optionValue(options: AgentConfigOption[], id: string, fallback = ""): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
@@ -81,12 +82,6 @@ function withConversationConfig(
     }
     return option;
   });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function optionName(options: AgentConfigOption[], id: string, value: string): string {

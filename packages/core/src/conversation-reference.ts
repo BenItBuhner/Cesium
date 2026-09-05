@@ -1,4 +1,5 @@
 import type { UserMessageSegment } from "./types";
+import { escapeXmlAttr, parseXmlAttrs } from "./xml-attrs";
 
 /**
  * Composer-taggable reference to another saved conversation. Tagging inserts a
@@ -39,39 +40,13 @@ export function findComposerConversationReferenceTokens(
   return out;
 }
 
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
-}
-
-function parseAttrs(attrString: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:][\w:.\-]*)\s*=\s*"([^"]*)"/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(attrString))) {
-    attrs[match[1]!] = decodeHtmlEntities(match[2]!);
-  }
-  return attrs;
-}
-
 export function buildConversationReferenceBlock(reference: ConversationReference): string {
   const workspaceAttrs =
-    (reference.workspaceId ? ` workspace-id="${escapeAttr(reference.workspaceId)}"` : "") +
-    (reference.workspaceName ? ` workspace-name="${escapeAttr(reference.workspaceName)}"` : "");
+    (reference.workspaceId ? ` workspace-id="${escapeXmlAttr(reference.workspaceId)}"` : "") +
+    (reference.workspaceName ? ` workspace-name="${escapeXmlAttr(reference.workspaceName)}"` : "");
   return (
-    `<conversation-reference id="${escapeAttr(reference.id)}" ` +
-    `title="${escapeAttr(reference.title)}"${workspaceAttrs}>` +
+    `<conversation-reference id="${escapeXmlAttr(reference.id)}" ` +
+    `title="${escapeXmlAttr(reference.title)}"${workspaceAttrs}>` +
     "The user tagged this saved conversation as context. Use read_conversation with this id " +
     "(or search_conversations / list_conversations) to pull the relevant parts of its transcript; " +
     "related conversations may hold useful context too." +
@@ -97,7 +72,7 @@ export function splitContentByConversationReferenceBlocks(
     if (start > lastIndex) {
       out.push({ type: "text", text: content.slice(lastIndex, start) });
     }
-    const attrs = parseAttrs(match[1] ?? "");
+    const attrs = parseXmlAttrs(match[1] ?? "");
     out.push({
       type: "conversation",
       text: attrs.title || "Conversation",

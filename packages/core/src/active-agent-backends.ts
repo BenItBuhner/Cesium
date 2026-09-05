@@ -1,4 +1,4 @@
-import type { AgentBackendId } from "./protocol";
+import type { AgentBackendId, AgentBackendInfo } from "./protocol";
 
 /** Harness backends exposed in composer, agents settings, and model toggles. */
 export const ACTIVE_AGENT_BACKEND_IDS = [
@@ -83,5 +83,23 @@ export function composerVisibleBackends<T extends { id: string; enabled?: boolea
 ): T[] {
   return backends.filter(
     (backend) => backend.enabled !== false || backend.id === currentBackendId
+  );
+}
+
+/**
+ * Best backend to start a conversation on: the preferred one when it is
+ * available, otherwise the first available enabled harness, then any available
+ * harness, then whatever is listed first.
+ */
+export function pickAvailableBackend(
+  backends: AgentBackendInfo[],
+  preferredBackendId?: AgentBackendId
+): AgentBackendInfo | null {
+  return (
+    backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
+    backends.find((backend) => backend.available && backend.enabled !== false) ??
+    backends.find((backend) => backend.available) ??
+    backends[0] ??
+    null
   );
 }

@@ -63,7 +63,6 @@ import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { selectKeyedDeferredValue } from "@/lib/stream-event-batcher";
 import type {
   AgentBackendId,
-  AgentBackendInfo,
   AgentConversationCreateInput,
   AgentStoredEvent,
 } from "@/lib/agent-types";
@@ -88,19 +87,7 @@ import { CesiumProfileToggle } from "./CesiumProfileToggle";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useAuroraMood } from "@/hooks/useAuroraMood";
 import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
-
-function pickAvailableBackend(
-  backends: AgentBackendInfo[],
-  preferredBackendId?: AgentBackendId
-): AgentBackendInfo | null {
-  return (
-    backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
-    backends.find((backend) => backend.available && backend.enabled !== false) ??
-    backends.find((backend) => backend.available) ??
-    backends[0] ??
-    null
-  );
-}
+import { pickAvailableBackend } from "@cesium/core";
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
 const EMPTY_THREAD_EVENTS: never[] = [];

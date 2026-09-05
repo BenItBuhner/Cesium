@@ -81,7 +81,7 @@ function getLegacyDataDirs(): string[] {
   ].filter((value, index, all) => all.indexOf(value) === index && value !== DATA_DIR);
 }
 
-async function pathExists(targetPath: string): Promise<boolean> {
+export async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.access(targetPath);
     return true;

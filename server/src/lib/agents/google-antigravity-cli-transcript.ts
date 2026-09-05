@@ -1,5 +1,6 @@
 import { open, stat } from "node:fs/promises";
 import type { GoogleAntigravityEvent } from "./google-antigravity-cli-session.js";
+import { isRecord } from "../coerce.js";
 
 export type GoogleAntigravityTranscriptRecord = {
   step_index?: number;
@@ -135,8 +136,4 @@ function isToolResultType(type: string): boolean {
     "WEB_SEARCH",
     "READ_URL_CONTENT",
   ].includes(type);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
