@@ -16,6 +16,7 @@ export * from "./design-capture";
 export * from "./text-reference";
 export * from "./link-reference";
 export * from "./conversation-reference";
+export * from "./side-chat";
 export * from "./agent-config-option-utils";
 export * from "./agent-subagent-routing";
 export * from "./workspace-tool-path-display";

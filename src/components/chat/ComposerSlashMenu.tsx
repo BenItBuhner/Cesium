@@ -9,6 +9,7 @@ import {
   Layers,
   ListChecks,
   MessageSquare,
+  MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect } from "react";
@@ -186,6 +187,12 @@ export function ComposerSlashMenu({
                             />
                           ) : ModeIcon ? (
                             <ModeIcon className="size-[15px] shrink-0" strokeWidth={1.6} aria-hidden />
+                          ) : item.action.kind === "side-chat" ? (
+                            <MessagesSquare
+                              className="size-[15px] shrink-0"
+                              strokeWidth={1.6}
+                              aria-hidden
+                            />
                           ) : null}
                         </span>
                         <span className="min-w-0 flex-1">

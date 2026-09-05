@@ -55,6 +55,7 @@ import {
   updateComposerDraftProfile,
 } from "@/lib/chat-draft-defaults";
 import { useComposerDefaults } from "@/hooks/useComposerDefaults";
+import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
@@ -81,6 +82,7 @@ import { useCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
+import { SideChatStrip } from "@/components/chat/SideChatStrip";
 import { VoiceSessionDock } from "@/components/voice/VoiceSessionDock";
 import { AuroraBackdrop } from "./AuroraBackdrop";
 import { useAuroraScene } from "./AuroraSceneContext";
@@ -175,6 +177,7 @@ export function AgentCenterPane() {
     stableConversationView,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
+  const { openSideChat } = useOpenSideChat(selectedConversationId);
 
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
@@ -1340,6 +1343,13 @@ export function AgentCenterPane() {
       </div>
       </>
       ) : (
+      <>
+      {selectedConversationId ? (
+        <SideChatStrip
+          conversationId={selectedConversationId}
+          className={`relative z-20 shrink-0 ${AGENT_CENTER_CONTENT_CLASS} pt-[10px]`}
+        />
+      ) : null}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
@@ -1550,6 +1560,7 @@ export function AgentCenterPane() {
                     configLocked={false}
                     modeLocked={modeLocked}
                     onSubmit={handleSubmit}
+                    onRequestSideChat={openSideChat}
                     onCancel={() =>
                       selectedConversationId
                         ? cancelConversation(selectedConversationId)
@@ -1614,6 +1625,7 @@ export function AgentCenterPane() {
           </div>
         ) : null}
       </div>
+      </>
       )}
     </div>
   );

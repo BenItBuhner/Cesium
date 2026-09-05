@@ -123,6 +123,9 @@ import {
   getSlashMenuSections,
   filterSlashMenuSectionsForDisplay,
   flattenSlashMenuSections,
+  parseSideChatDirective,
+  SIDE_CHAT_SLASH_COMMANDS,
+  SIDE_CHAT_SLASH_INSERT,
   type AtSuggestion,
   type SlashMenuItem,
 } from "@/lib/composer-suggestions";
@@ -584,6 +587,16 @@ interface ChatComposerProps {
   onRequestHandoff?: (targetBackendId: AgentBackendId) => void;
   /** When true, expose git worktree slash commands wired by the host submit handler. */
   gitSlashCommands?: boolean;
+  /**
+   * Host handler for `/side [question]`: open a side chat attached to this
+   * conversation, sending `text` as its first prompt when non-empty. Providing
+   * it also lists "Side chat" in the slash menu; omit it where side chats are
+   * unavailable (drafts, non-Cesium harnesses, side chats themselves).
+   */
+  onRequestSideChat?: (
+    text: string,
+    attachments?: ImageAttachment[]
+  ) => Promise<boolean | void> | boolean | void;
   /**
    * When the OpenInEditor draft gains new image attachments (e.g. browser design mode),
    * entries beyond the last consumed index are merged into the local attachment strip.
@@ -1098,6 +1111,7 @@ export function ChatComposer({
   agentShellDockHeightExpand = false,
   onRequestHandoff,
   gitSlashCommands = false,
+  onRequestSideChat,
   draftAttachments,
   onDraftAttachmentsChange,
   draftCaptures,
@@ -1394,6 +1408,7 @@ export function ChatComposer({
         sessionConfigOptions,
         agentCommands,
         gitSlashCommands,
+        sideChatAvailable: Boolean(onRequestSideChat),
         configLocked,
         modeLocked,
       }),
@@ -1404,6 +1419,7 @@ export function ChatComposer({
       backends,
       configLocked,
       gitSlashCommands,
+      onRequestSideChat,
       modeLocked,
       modeOptions,
       models,
@@ -2356,6 +2372,7 @@ export function ChatComposer({
             "mode",
             "worktree",
             "delete-worktree",
+            ...SIDE_CHAT_SLASH_COMMANDS,
           ]);
           if (!reservedSlashCommands.has(token)) {
             const match = modeOptions?.find(
@@ -2635,7 +2652,12 @@ export function ChatComposer({
     if (!trimmed && attachedImages.length === 0) {
       return;
     }
-    const directed = applyComposerDirectives(trimmed);
+    // `/side [question]` never reaches the model of this conversation: the host
+    // opens a side chat and forwards the remaining text as its first prompt.
+    const sideChatDirective = onRequestSideChat ? parseSideChatDirective(trimmed) : null;
+    const directed = sideChatDirective
+      ? sideChatDirective.text
+      : applyComposerDirectives(trimmed);
     const promptText = expandComposerReferenceTokens(directed);
     // Images need their inline base64 (`data`); a "pending" entry's data stays
     // "" until its FileReader completes and would submit a zero-byte image.
@@ -2657,6 +2679,7 @@ export function ChatComposer({
     const promptKey = JSON.stringify({
       text: promptText,
       delivery,
+      ...(sideChatDirective ? { sideChat: true } : {}),
       attachments: imagesToSubmit.map((image) => ({
         mimeType: image.mimeType,
         name: image.name,
@@ -2703,7 +2726,15 @@ export function ChatComposer({
     valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
-    if (promptText || imagesToSubmit.length > 0) {
+    if (sideChatDirective && onRequestSideChat) {
+      void Promise.resolve(onRequestSideChat(promptText, imagesToSubmit))
+        .catch(() => undefined)
+        .finally(() => {
+          if (submittingPromptKeyRef.current === promptKey) {
+            submittingPromptKeyRef.current = null;
+          }
+        });
+    } else if (promptText || imagesToSubmit.length > 0) {
       void Promise.resolve(onSubmit(promptText, imagesToSubmit, { delivery }))
         .catch(() => undefined)
         .finally(() => {
@@ -2717,6 +2748,7 @@ export function ChatComposer({
   }, [
     applyComposerDirectives,
     attachedImages,
+    onRequestSideChat,
     expandComposerReferenceTokens,
     hardwareInputEnabled,
     onDraftAttachmentsChange,
@@ -2979,6 +3011,7 @@ export function ChatComposer({
       if (configLocked || modeLocked || item.disabled) return;
 
       const action = item.action;
+      let insertText: string;
       switch (action.kind) {
         case "mode":
           onModeChange(action.modeId);
@@ -3001,6 +3034,12 @@ export function ChatComposer({
           clearSlashTrigger();
           return;
         case "insert":
+          insertText = action.insert;
+          break;
+        case "side-chat":
+          // Leave `/side ` in the draft so the user can add a question; submit
+          // then routes through `onRequestSideChat` instead of the model.
+          insertText = SIDE_CHAT_SLASH_INSERT;
           break;
         default: {
           const exhaustive: never = action;
@@ -3009,12 +3048,7 @@ export function ChatComposer({
       }
 
       if (!hardwareInputEnabled && editorRef.current) {
-        replaceTextRange(
-          editorRef.current,
-          currentMenu.start,
-          currentMenu.end,
-          `${action.insert}`
-        );
+        replaceTextRange(editorRef.current, currentMenu.start, currentMenu.end, insertText);
         syncNativeState();
         setMenu(null);
         return;
@@ -3022,7 +3056,7 @@ export function ChatComposer({
       const next = replaceSelection(
         valueRef.current,
         { start: currentMenu.start, end: currentMenu.end },
-        `${action.insert}`
+        insertText
       );
       setComposerValue(next.value);
       setComposerSelection(next.selection);

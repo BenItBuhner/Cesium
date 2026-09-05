@@ -89,6 +89,10 @@ const PLACEHOLDER_CONVERSATION_TITLES = new Set([
 ]);
 
 function isRenderableRailConversation(conversation: AgentConversationRecord): boolean {
+  // Side chats belong to their parent chat's header, never to the rail.
+  if (conversation.origin?.kind === "side-chat") {
+    return false;
+  }
   return !(
     conversation.lastEventSeq === 0 &&
     conversation.status === "idle" &&
