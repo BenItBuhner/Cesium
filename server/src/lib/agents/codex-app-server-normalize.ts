@@ -160,16 +160,6 @@ function changeRecords(changes: unknown): CodexAppServerRecord[] {
   return changes.map((change) => asRecord(change)).filter((change): change is CodexAppServerRecord => Boolean(change));
 }
 
-function firstChangePath(changes: unknown): string | undefined {
-  for (const change of changeRecords(changes)) {
-    const path = asString(change.path);
-    if (path) {
-      return path;
-    }
-  }
-  return undefined;
-}
-
 /**
  * Unwraps `/bin/bash -lc '<script>'`, `zsh -c ...`, `powershell -Command ...`
  * wrappers so the title shows the command the model actually wrote.
@@ -571,6 +561,10 @@ function itemDetail(item: CodexAppServerRecord): string | undefined {
       const failure = asRecord(item.failure);
       return asString(failure?.message) ?? asString(item.revisedPrompt) ?? asString(item.savedPath);
     }
+    case "imageView":
+      return asString(item.path);
+    case "contextCompaction":
+      return "Conversation history was compacted to free up context.";
     case "sleep": {
       const ms = asNumber(item.durationMs);
       return ms != null ? `Slept for ${formatDuration(ms)}.` : undefined;

@@ -610,6 +610,19 @@ test("codex app server e2e: cancel interrupts the turn and keeps the cancelled s
   assert.deepEqual(statuses, ["cancelled"], "interrupted completion does not override the cancel");
 });
 
+test("codex app server e2e: cancelling an already-settled turn leaves the recorded state alone", async (t) => {
+  const harness = await createHarness();
+  const handle = await harness.provider.startSession(harness.callbacks);
+  t.after(() => handle.dispose());
+  await handle.prompt({ text: "pong", userMessageId: "user-settled" });
+  assert.equal(harness.conversation().status, "idle");
+  await handle.cancel();
+  assert.equal(harness.conversation().status, "idle");
+  assert.deepEqual(eventsOfKind(harness.events, "status").map((event) => event.status), ["idle"]);
+  const interrupt = await findClientMessage(harness, (message) => message.method === "turn/interrupt");
+  assert.equal(interrupt, undefined, "no interrupt is sent when nothing is in flight");
+});
+
 test("codex app server e2e: currentTime/read is answered with unix seconds", async (t) => {
   const harness = await createHarness();
   const handle = await harness.provider.startSession(harness.callbacks);

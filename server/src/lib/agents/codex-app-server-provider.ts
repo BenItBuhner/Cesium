@@ -545,6 +545,11 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
   }
 
   async cancel(): Promise<void> {
+    if (!this.pendingTurn && this.pendingServerRequests.size === 0) {
+      // Nothing in flight (the turn already settled); leave the recorded
+      // terminal state alone instead of overwriting it with "cancelled".
+      return;
+    }
     this.cancelRequested = true;
     const transport = this.transport;
     const turnId = this.pendingTurn?.turnId;
@@ -830,6 +835,11 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
 
   private async handleStderrLine(line: string): Promise<void> {
     if (/codex_core::(?:exec|tools::router):/i.test(line)) {
+      return;
+    }
+    // MCP transport teardown chatter; the structured
+    // `mcpServer/startupStatus/updated` notification already reports failures.
+    if (/worker quit with fatal: Transport channel closed/i.test(line) || /codex_rmcp_client/i.test(line)) {
       return;
     }
     // tracing prefix: `2026-09-05T04:57:54.540597Z ERROR codex_app_server: message`
