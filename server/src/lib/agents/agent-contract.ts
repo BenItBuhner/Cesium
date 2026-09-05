@@ -17,7 +17,8 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
-  "supportsResumeAfterCancel",
+  "supportsSideChats",
+  "supportsCancelResume",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 /**
@@ -41,7 +42,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: true,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: true,
+    supportsCancelResume: false,
   },
   "cursor-sdk": {
     supportsLoadSession: true,
@@ -59,7 +61,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     // The @cursor/sdk Agent API runs the same conversation contract on
     // Cursor-hosted cloud VMs (`Agent.create({ cloud })`).
     supportsCloudExecution: true,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "cursor-acp": {
     supportsLoadSession: true,
@@ -76,7 +79,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     // Cursor CLI over ACP runs locally; cloud execution is the SDK path.
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "opencode-server": {
     supportsLoadSession: true,
@@ -92,7 +96,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "opencode-v2-beta": {
     supportsLoadSession: true,
@@ -108,7 +113,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "devin-acp": {
     supportsLoadSession: true,
@@ -124,7 +130,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "grok-build": {
     supportsLoadSession: true,
@@ -140,7 +147,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "codex-app-server": {
     supportsLoadSession: true,
@@ -156,7 +164,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: true,
+    supportsSideChats: false,
+    supportsCancelResume: true,
   },
   "codex-acp": {
     supportsLoadSession: true,
@@ -172,7 +181,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "claude-code-sdk": {
     supportsLoadSession: true,
@@ -188,14 +198,17 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "pi-agent": {
     supportsLoadSession: true,
     supportsModeSelection: false,
     supportsModelSelection: true,
     supportsSlashCommands: true,
-    supportsPermissions: false,
+    // Extension `ctx.ui.confirm()` dialogs and the optional Cesium tool
+    // approval gate both surface as permission cards.
+    supportsPermissions: true,
     supportsToolCalls: true,
     supportsStructuredPlans: false,
     supportsTodos: false,
@@ -204,7 +217,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: true,
   },
   "google-antigravity-cli": {
     supportsLoadSession: true,
@@ -220,7 +234,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
   "google-antigravity-acp": {
     supportsLoadSession: true,
@@ -237,7 +252,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
-    supportsResumeAfterCancel: false,
+    supportsSideChats: false,
+    supportsCancelResume: false,
   },
 };
 
@@ -432,10 +448,10 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...textTurnEvents,
       "reasoning",
       ...toolEvents,
-      "plan",
       "question",
       ...permissionEvents,
       "system",
+      "compression_summary",
     ],
   },
   "google-antigravity-cli": {

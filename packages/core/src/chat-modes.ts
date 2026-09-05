@@ -12,11 +12,6 @@ export function isOrchestrationMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "orchestration";
 }
 
-/** @deprecated Use `isGoalMode`. Kept for callers that still check the legacy Burn alias. */
-export function isBurnMode(mode: string): boolean {
-  return isGoalMode(mode);
-}
-
 export function isWorkflowMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "workflow";
 }
@@ -30,10 +25,7 @@ export function isGoalMode(mode: string): boolean {
  * Normalize legacy Burn mode option ids to Goal, and drop duplicate Burn entries
  * when Goal is already present in the catalog.
  */
-export function filterGoalModeOptions(
-  options: AgentModeOption[],
-  _goalModeBetaEnabled = false
-): AgentModeOption[] {
+export function filterGoalModeOptions(options: AgentModeOption[]): AgentModeOption[] {
   const hasGoal = options.some((option) => String(option.id).trim().toLowerCase() === "goal");
   const seen = new Set<string>();
   const next: AgentModeOption[] = [];

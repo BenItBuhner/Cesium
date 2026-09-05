@@ -54,18 +54,3 @@ export function detectInstallKind(
   }
   return "unknown";
 }
-
-export function installKindLabel(kind: CesiumInstallKind): string {
-  switch (kind) {
-    case "isolated-server":
-      return "Isolated server (installer)";
-    case "termux-server":
-      return "Termux on-device server";
-    case "desktop-electron":
-      return "Desktop app (Electron)";
-    case "source":
-      return "Source checkout (git)";
-    default:
-      return "Unknown";
-  }
-}

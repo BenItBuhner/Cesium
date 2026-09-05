@@ -527,7 +527,8 @@ function rawToolNameImpliesSubagent(rawName: string): boolean {
   return n === "task" || n.includes("subagent") || n.includes("delegate");
 }
 
-function humanizeToolCallName(value: string): string {
+/** `readFileToolCall` / `read_file` -> `read file`: a display-friendly tool name. */
+export function humanizeToolCallName(value: string): string {
   return value
     .replace(/ToolCall$/i, "")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

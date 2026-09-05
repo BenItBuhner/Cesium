@@ -8,7 +8,7 @@ import {
   sealCredential,
   SECRET_WRAPPING_KEY_CLOUD_KIND,
 } from "./secret-wrapping-key";
-import type { VoiceSpeechFieldSource, VoiceSpeechSettingsPayload, VoiceSpeechSettingsPatch } from "./voice-speech-types";
+import type { VoiceSpeechSettingsPayload, VoiceSpeechSettingsPatch } from "./voice-speech-types";
 
 export const VOICE_CLIENT_SETTINGS_STORAGE_KEY = "cesium.voice.client-settings";
 export const VOICE_CLIENT_SETTINGS_CLOUD_KIND = "voice.settings";

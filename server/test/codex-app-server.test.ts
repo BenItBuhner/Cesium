@@ -56,6 +56,9 @@ test("codex app server backend is registered in the harness menu", () => {
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsPermissions, true);
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsStructuredPlans, true);
+  // Codex records `<turn_aborted>` and `thread/resume` restores the context, so
+  // Stop must keep the thread instead of restarting a blank session.
+  assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsCancelResume, true);
 });
 
 test("codex app server treats old gpt-5.1-only catalogs as stale", () => {

@@ -1270,7 +1270,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       );
       await loadWorkspaceState(result.workspace);
     },
-    [applyWorkspaceListingUpdate, cloneWorkspaceFromGit, flushWorkspaceSessionNow, loadWorkspaceState]
+    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
   );
 
   const deleteWorkspace = useCallback(

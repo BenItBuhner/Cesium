@@ -9,6 +9,7 @@ import {
   type GoogleAntigravityHookRecord,
 } from "./google-antigravity-cli-hooks.js";
 import { GoogleAntigravityTranscriptTailer } from "./google-antigravity-cli-transcript.js";
+import { asError, asString, isRecord } from "../coerce.js";
 
 export type GoogleAntigravityPermissionMode =
   | "request-review"
@@ -621,9 +622,9 @@ function hookRecordToGoogleAntigravityEvents(
       events.push({
         type: "permission.requested",
         sessionId,
-        action: stringValue(args.Action ?? args.action),
-        target: stringValue(args.Target ?? args.target),
-        reason: stringValue(args.Reason ?? args.reason),
+        action: asString(args.Action ?? args.action),
+        target: asString(args.Target ?? args.target),
+        reason: asString(args.Reason ?? args.reason),
         conversationId,
         at,
       });
@@ -656,7 +657,7 @@ function hookRecordToGoogleAntigravityEvents(
         type: "session.stopped",
         sessionId,
         conversationId,
-        reason: stringValue(input.terminationReason) ?? "unknown",
+        reason: asString(input.terminationReason) ?? "unknown",
         fullyIdle: Boolean(input.fullyIdle),
         at,
       },
@@ -668,16 +669,4 @@ function hookRecordToGoogleAntigravityEvents(
 
 function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

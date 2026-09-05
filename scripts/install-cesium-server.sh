@@ -314,6 +314,9 @@ export npm_config_audit=false
   # The server imports @cesium/contracts, whose package exports point at
   # dist/ - build it or the server fails to resolve the module at runtime.
   "$BUN_BIN" run --cwd packages/contracts build
+  # Checkouts installed before the server dropped its `"cesium": "file:.."`
+  # self-dependency still carry a root-pointing symlink here; bun does not
+  # prune it on upgrade, and it recurses into the whole repo.
   rm -f server/node_modules/cesium
   # bun materializes the server's file:../packages/* dependencies as nested
   # copies taken at install time - before the packages were built - so a

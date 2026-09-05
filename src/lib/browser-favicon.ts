@@ -1,6 +1,7 @@
 import { buildBrowserProxyUrl, normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 
-function isLikelyImageResponse(contentType: string, url: string): boolean {
+/** Accept image content types, plus `.ico` files that servers mislabel as octet-stream. */
+export function isLikelyImageResponse(contentType: string, url: string): boolean {
   const ct = contentType.toLowerCase();
   if (ct.includes("image/")) return true;
   if (ct.includes("octet-stream") && /\.ico$/i.test(url)) return true;

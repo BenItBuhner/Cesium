@@ -1,27 +1,18 @@
 "use client";
 
-import {
-  Bug,
-  Check,
-  Flame,
-  GitBranch,
-  Infinity,
-  Layers,
-  ListChecks,
-  MessageSquare,
-  type LucideIcon,
-} from "lucide-react";
+import { Check, MessagesSquare } from "lucide-react";
 import { useEffect } from "react";
 import type { RefObject } from "react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
 import { ModelBrandIcon } from "@/components/chat/ModelBrandIcon";
 import { ComposerCommandPanel } from "@/components/chat/ComposerCommandPanel";
+import { iconForModeTone } from "@/components/chat/mode-tone-icon";
 import { getModeTone } from "@/lib/chat-modes";
 import type { ComposerCommandPanelPosition } from "@/lib/composer-command-panel";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { SlashMenuItem, SlashMenuSection } from "@/lib/composer-suggestions";
-import type { EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
+import type { EditorMode, ModelInfo } from "@/lib/types";
 
 type Props = {
   sections: SlashMenuSection[];
@@ -42,25 +33,6 @@ type Props = {
 
 function modelValueKey(model: ModelInfo): string {
   return model.modelValue ?? model.id;
-}
-
-function iconForModeTone(tone: KnownEditorMode): LucideIcon {
-  switch (tone) {
-    case "plan":
-      return ListChecks;
-    case "debug":
-      return Bug;
-    case "ask":
-      return MessageSquare;
-    case "goal":
-      return Flame;
-    case "workflow":
-      return GitBranch;
-    case "orchestration":
-      return Layers;
-    default:
-      return Infinity;
-  }
 }
 
 function rowClass(selected: boolean, disabled?: boolean): string {
@@ -186,6 +158,12 @@ export function ComposerSlashMenu({
                             />
                           ) : ModeIcon ? (
                             <ModeIcon className="size-[15px] shrink-0" strokeWidth={1.6} aria-hidden />
+                          ) : item.action.kind === "side-chat" ? (
+                            <MessagesSquare
+                              className="size-[15px] shrink-0"
+                              strokeWidth={1.6}
+                              aria-hidden
+                            />
                           ) : null}
                         </span>
                         <span className="min-w-0 flex-1">

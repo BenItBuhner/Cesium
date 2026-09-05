@@ -38,6 +38,7 @@ import {
   createAgentProvider,
   listAgentBackendsWithCache,
 } from "./providers.js";
+import { readAgentBackendConfigCache } from "./provider-cache-store.js";
 import { AGENT_CAPABILITY_KEYS } from "./agent-contract.js";
 import {
   computeCesiumAgentContextUsage,
@@ -60,6 +61,13 @@ import { harnessLog } from "./harness-diagnostics.js";
 import { buildAttachmentsReminderText } from "./attachment-reminders.js";
 import { getImportSourceForBackend } from "./import/registry.js";
 import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
+import {
+  isSideChatAwaitingFirstPrompt,
+  listSideChatsForParent,
+  prepareSideChatCreation,
+  seedSideChatFromParent,
+  type SideChatLimits,
+} from "./side-chat/side-chat-store.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -504,6 +512,21 @@ export class AgentRuntimeManager {
         // Settings are best-effort here; fall back to the registry default.
       }
     }
+    if (backendId === "pi-agent") {
+      // Pi's default comes from its ModelRegistry (settings.json default, then
+      // models.json providers) - the same catalog the composer shows.
+      try {
+        const cached = await readAgentBackendConfigCache("pi-agent");
+        const modelOption = findPrimaryModelConfigOption(cached);
+        const value = modelOption?.currentValue?.trim();
+        if (value && value !== "auto" && value !== "__default__") {
+          const name = modelOption?.options.find((option) => option.value === value)?.name ?? value;
+          return { modelId: value, modelName: name };
+        }
+      } catch {
+        // Cache unavailable; Pi picks its own default at session start.
+      }
+    }
     return { modelId: backend.defaultModelId, modelName: backend.defaultModelName };
   }
 
@@ -900,6 +923,51 @@ export class AgentRuntimeManager {
     return { conversation: newConversation };
   }
 
+  /** Side-chat limits come from the Cesium harness settings (env overrides included). */
+  async resolveSideChatLimits(): Promise<SideChatLimits> {
+    const settings = await getCesiumAgentSettings();
+    const { maxSideChatsPerParent, sideChatSeedMaxChars, sideChatDeltaMaxChars } =
+      settings.harness.limits;
+    return { maxSideChatsPerParent, sideChatSeedMaxChars, sideChatDeltaMaxChars };
+  }
+
+  /**
+   * Open a side chat: a durable child conversation attached to `parentConversationId`
+   * that inherits the parent's backend/mode/model/profile and is seeded with the
+   * parent's recent transcript as hidden reference context. Unlike `forkConversation`
+   * this works while the parent is still running - the seed is a snapshot and later
+   * parent activity reaches the child as deltas.
+   */
+  async createSideChat(
+    workspace: WorkspaceRecord,
+    parentConversationId: string
+  ): Promise<{ conversation: AgentConversationRecord; parent: AgentConversationRecord }> {
+    const parentRecord = await readConversationRecord(workspace.id, parentConversationId);
+    if (!parentRecord) {
+      throw new Error(`Unknown parent conversation: ${parentConversationId}`);
+    }
+    const parent = this.withBackendDefaults(parentRecord);
+    const limits = await this.resolveSideChatLimits();
+    const prepared = await prepareSideChatCreation({
+      workspace,
+      parent,
+      limits,
+      supportsSideChats: parent.capabilities.supportsSideChats === true,
+    });
+    const created = await this.createConversation(workspace, prepared.createInput);
+    await seedSideChatFromParent({ workspace, sideChat: created, parent, limits });
+    const seeded = await readConversationRecord(workspace.id, created.id);
+    return { conversation: this.withBackendDefaults(seeded ?? created), parent };
+  }
+
+  async listSideChats(
+    workspace: WorkspaceRecord,
+    parentConversationId: string
+  ): Promise<AgentConversationRecord[]> {
+    const records = await listSideChatsForParent(workspace.id, parentConversationId);
+    return records.map((record) => this.withBackendDefaults(record));
+  }
+
   async prepareRedoConversation(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -977,6 +1045,10 @@ export class AgentRuntimeManager {
       return null;
     }
     const conversation = this.withBackendDefaults(record);
+    if (conversation.config.backendId === "pi-agent") {
+      const { computePiAgentContextUsage } = await import("./pi-agent-context-usage.js");
+      return computePiAgentContextUsage(conversation).catch(() => unsupportedContextUsageSnapshot());
+    }
     if (conversation.config.backendId !== "cesium-agent") {
       // Harnesses that stream authoritative token accounting (Codex App Server)
       // persist a snapshot on the record; everything else is unsupported.
@@ -1436,7 +1508,11 @@ export class AgentRuntimeManager {
       }
     }
 
-    if (record.title === "New chat" || record.lastEventSeq === 0) {
+    if (
+      record.title === "New chat" ||
+      record.lastEventSeq === 0 ||
+      isSideChatAwaitingFirstPrompt(record)
+    ) {
       void generateConversationTitle(workspace.id, conversationId, trimmed, {
         attachmentCount: attachments?.length ?? 0,
         expectedTitle: record.title,
@@ -1728,18 +1804,19 @@ export class AgentRuntimeManager {
 
       if (isConversationTurnInProgress(record.status)) {
         const runtime = await this.resolveActiveRuntime(workspace, conversationId);
-        const keepProviderSession = this.providerSessionSurvivesCancel(record);
+        let keepSession = false;
         if (runtime) {
           await runtime.handle.cancel();
+          keepSession = this.retainsSessionAfterCancel(runtime);
           await this.disposeRuntime(conversationId);
-          if (!keepProviderSession) {
+          if (!keepSession) {
             this.skipRecoverySeedOnce.add(conversationId);
           }
         }
         await updateConversationRecord(workspace.id, conversationId, (current) => ({
           ...current,
           status: "idle",
-          providerSessionId: keepProviderSession ? current.providerSessionId : null,
+          providerSessionId: keepSession ? current.providerSessionId : null,
           pendingPermission: null,
           pendingQuestion: null,
           queuedPrompts: remaining,
@@ -1848,37 +1925,29 @@ export class AgentRuntimeManager {
       }));
     }
     await runtime.handle.cancel();
+    const keepSession = this.retainsSessionAfterCancel(runtime);
     await this.disposeRuntime(conversationId);
+    if (!keepSession) {
+      this.skipRecoverySeedOnce.add(conversationId);
+    }
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    const keepProviderSession = this.providerSessionSurvivesCancel(record);
-    if (!keepProviderSession) {
-      this.skipRecoverySeedOnce.add(conversationId);
-    }
     return updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
-      providerSessionId: keepProviderSession ? current.providerSessionId : null,
+      // Harnesses whose native session survives an abort (Pi records the
+      // aborted turn in its session file; Codex records `<turn_aborted>`)
+      // resume it on the next prompt instead of losing the conversation context.
+      providerSessionId: keepSession ? current.providerSessionId : null,
       queuedPrompts: [],
       pendingPermission: null,
       pendingQuestion: null,
     }));
   }
 
-  /**
-   * Backends whose native session records the interruption and resumes with
-   * full context (Codex threads) keep `providerSessionId` across a cancel;
-   * everything else restarts a fresh session on the next prompt.
-   */
-  private providerSessionSurvivesCancel(record: AgentConversationRecord): boolean {
-    if (!record.providerSessionId) {
-      return false;
-    }
-    const backend = this.backends[this.resolveBackendId(record.config.backendId)];
-    return Boolean(
-      backend?.capabilities.supportsResumeAfterCancel && backend.capabilities.supportsLoadSession
-    );
+  private retainsSessionAfterCancel(runtime: ActiveRuntime): boolean {
+    return runtime.provider.backend.capabilities.supportsCancelResume === true;
   }
 
   async pauseConversation(

@@ -1,8 +1,4 @@
-import {
-  createDefaultThemeConfig,
-  type ThemeConfig,
-} from "@/lib/theme-config";
-import type { ThemePreference } from "@/lib/theme";
+import type { ThemeConfig } from "@/lib/theme-config";
 import {
   resolveColorSchemeDark,
   resolveMergedTokens,
@@ -21,15 +17,4 @@ export function applyThemeConfigToDom(config: ThemeConfig): void {
   for (const key of Object.keys(tokens) as (keyof typeof tokens)[]) {
     el.style.setProperty(key, tokens[key]);
   }
-}
-
-/**
- * Legacy: appearance only, default built-in themes for both branches.
- * Prefer `applyThemeConfigToDom` when full config is available.
- */
-export function applyDomTheme(pref: ThemePreference): void {
-  applyThemeConfigToDom({
-    ...createDefaultThemeConfig(),
-    appearance: pref,
-  });
 }

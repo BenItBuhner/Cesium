@@ -8,6 +8,7 @@ import type {
   ExtensionStaticContributionCapability,
   ExtensionUnsupportedContributionCapability,
 } from "./types.js";
+import { asString } from "../coerce.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -17,10 +18,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function labelFallback(value: string | undefined, fallback: string): string {

@@ -85,6 +85,47 @@ test("custom agent plugins contribute skills without MCP", async () => {
   assert.equal(attachments.mcpServers.length, 0);
 });
 
+test("per-plugin nativeMcp override drops that plugin's MCP servers for the harness", async () => {
+  const { installAgentPlugin } = await import("../src/lib/plugins/store.js");
+  const { resolveAgentPluginAttachments } = await import(
+    "../src/lib/plugins/attachments.js"
+  );
+  const { standardHarnessSupport } = await import("../src/lib/plugins/harness-support.js");
+
+  const workspaceId = "workspace-native-mcp-override";
+  const harnesses = standardHarnessSupport();
+  harnesses["cursor-sdk"] = {
+    backendId: "cursor-sdk",
+    nativeMcp: false,
+    promptSkills: true,
+    notes: "Prompt-only on Cursor SDK for this test.",
+  };
+  await installAgentPlugin(workspaceId, "context7-prompt-only", {
+    schemaVersion: 1,
+    pluginId: "context7-prompt-only",
+    displayName: "Context7 (prompt only)",
+    description: "Context7 with native MCP disabled on one harness",
+    mcp: [{ id: "context7", presetId: "context7" }],
+    skills: [],
+    harnesses,
+  });
+
+  const cursorAttachments = await resolveAgentPluginAttachments({
+    workspaceId,
+    workspaceRoot: process.cwd(),
+    backendId: "cursor-sdk",
+  });
+  assert.equal(cursorAttachments.plugins.length, 1);
+  assert.equal(cursorAttachments.mcpServers.length, 0);
+
+  const claudeAttachments = await resolveAgentPluginAttachments({
+    workspaceId,
+    workspaceRoot: process.cwd(),
+    backendId: "claude-code-sdk",
+  });
+  assert.equal(claudeAttachments.mcpServers[0]?.pluginId, "context7-prompt-only");
+});
+
 test("first-party catalog stays aligned with MCP presets", async () => {
   const { listBuiltInAgentPlugins } = await import("../src/lib/plugins/catalog.js");
   const { MCP_PRESETS } = await import("../src/lib/mcp/presets.js");

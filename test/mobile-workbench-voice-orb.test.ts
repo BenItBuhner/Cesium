@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 
@@ -11,16 +11,17 @@ import { describe, test } from "node:test";
  */
 describe("mobile workbench voice orb gate", () => {
   test("bundled workbench defaults showVoiceOrb off and reads the setting", () => {
-    const assetsDir = join(
-      process.cwd(),
-      "apps/mobile/android/app/src/main/assets/workbench/assets"
+    const workbenchDir = join(process.cwd(), "apps/mobile/android/app/src/main/assets/workbench");
+    // Resolve the entry bundle through index.html: Vite also emits lazily
+    // loaded chunks named index-<hash>.js for dynamically imported index.ts
+    // modules, so picking the first index-*.js in the directory is not enough.
+    const indexHtml = readFileSync(join(workbenchDir, "index.html"), "utf8");
+    const entryMatch = indexHtml.match(
+      /<script[^>]*type="module"[^>]*src="\.\/(assets\/index-[^"]+\.js)"/
     );
-    const indexBundle = readdirSync(assetsDir).find(
-      (name) => name.startsWith("index-") && name.endsWith(".js")
-    );
-    assert.ok(indexBundle, "expected a Vite index-*.js workbench bundle");
+    assert.ok(entryMatch, "expected index.html to reference a Vite index-*.js entry bundle");
 
-    const source = readFileSync(join(assetsDir, indexBundle), "utf8");
+    const source = readFileSync(join(workbenchDir, entryMatch[1]), "utf8");
     assert.match(
       source,
       /showVoiceOrb:!1/,

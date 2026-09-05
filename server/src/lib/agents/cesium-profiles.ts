@@ -6,6 +6,7 @@ import {
   normalizeCesiumToolName,
 } from "./cesium-mode-policy.js";
 import type { CesiumToolDefinition } from "./cesium/features/types.js";
+import { asRecord } from "../coerce.js";
 
 /**
  * Cesium agent capability profiles ("Code", "Work", custom presets).
@@ -267,12 +268,6 @@ export const CESIUM_DEFAULT_ENABLED_PROFILES: Readonly<Record<string, boolean>> 
 
 export function defaultEnabledFlagForProfileId(profileId: string): boolean {
   return CESIUM_DEFAULT_ENABLED_PROFILES[profileId] ?? true;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function asTrimmedString(value: unknown): string | undefined {

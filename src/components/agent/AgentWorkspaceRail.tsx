@@ -339,7 +339,6 @@ export function AgentWorkspaceRail() {
   const accountIdentity = useAccountIdentity();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const workspaceSortMode = settings.general.workspaceSortMode;
-  const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const agentRailSettings = settings.general.agentRail;
   const railRowDetail = agentRailSettings.rowDetail ?? "balanced";
   const scopedDirectoryWorkspace = useMemo(() => {
@@ -3074,7 +3073,8 @@ export function AgentWorkspaceRail() {
     updateConversationRenameDraft,
   ]);
 
-  const workspaceGroupsSection: ReactNode = (
+  const workspaceGroupsSection = useMemo<ReactNode>(
+    () => (
       <>
         {visibleGroups.map((group) => {
                 const groupKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
@@ -3323,6 +3323,57 @@ export function AgentWorkspaceRail() {
               );
             })}
       </>
+    ),
+    [
+      activeServer.id,
+      activeWorkspaceId,
+      agentRailSettings.groupBy,
+      agentRailSettings.showBranch,
+      agentRailSettings.showEnvironment,
+      agentRailSettings.showMachine,
+      beginConversationRename,
+      bulkSelectMode,
+      bulkSelectedKeys,
+      cancelConversationRename,
+      collapsedWorkspaceIds,
+      commitConversationRename,
+      draggingWorkspaceId,
+      editingWorkspaceKey,
+      experimentalIpadCustomButtons,
+      gitStatus?.currentBranch,
+      gitStatus?.isGitRepo,
+      handleBulkRowClick,
+      handleConversationContextMenu,
+      handleConversationDragEnd,
+      handleConversationDragStart,
+      handleConversationDrop,
+      handleConversationOverflowMenu,
+      handleConversationSelect,
+      handleFolderDropTargetDragOver,
+      handleNewChatForWorkspace,
+      handleNewOrchestrationWorktree,
+      handleWorkspaceDragEnd,
+      handleWorkspaceDragOver,
+      handleWorkspaceDragStart,
+      handleWorkspaceDrop,
+      homeWorkspaceId,
+      isConversationAcknowledgedFailed,
+      isConversationChatSelected,
+      isConversationUnread,
+      machineOptions,
+      offlineBadgeForGroup,
+      railRowDetail,
+      renameState?.conversationId,
+      renameState?.draft,
+      settings.general.chatRootOrderByScope,
+      showWorkspaceGroupHeaders,
+      toggleWorkspaceCollapsed,
+      updateConversationRenameDraft,
+      updateWorkspaceAppearance,
+      visibleGroups,
+      workspaceBranchLabel,
+      workspaceRailAppearances,
+    ]
   );
 
   const orderedRailSections = useMemo(() => {
@@ -3563,7 +3614,6 @@ export function AgentWorkspaceRail() {
                   title={accountIdentity.title}
                 >
                   {accountIdentity.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={accountIdentity.imageUrl}
                       alt=""

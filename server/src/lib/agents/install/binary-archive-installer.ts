@@ -14,6 +14,7 @@ import {
   type BinaryArchiveInstallSpec,
 } from "./cli-install-registry.js";
 import { extractStreamZip } from "./zip-stream.js";
+import { isRecord } from "../../coerce.js";
 
 /**
  * Installer for vendor binary archives published through the ACP Registry
@@ -61,10 +62,6 @@ const ZIP_LIMITS = {
   // Generous ceiling: the largest known payload is ~2 GB extracted.
   maxUncompressedBytes: 8 * 1024 * 1024 * 1024,
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Structural validation of an ACP Registry `agent.json`. */
 export function parseAcpRegistryManifest(raw: unknown): AcpRegistryAgentManifest | null {

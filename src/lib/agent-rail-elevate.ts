@@ -126,12 +126,6 @@ export function collectRunningConversations(
   return collectElevatedConversations(groups, extra, ctx, conversationHasRunningHome);
 }
 
-export function attentionConversationIdSet(
-  conversations: AgentRailConversationSummary[]
-): Set<string> {
-  return new Set(conversations.map((conversation) => conversation.id));
-}
-
 /** Strip elevated (attention/running) rows from the pinned list so each row has one home. */
 export function stripAttentionFromPinned(
   pinned: AgentRailConversationSummary[],

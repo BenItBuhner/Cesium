@@ -1632,7 +1632,7 @@ function CesiumAgentHarnessSettings() {
         setOauthBusyId(null);
       }
     },
-    []
+    [refresh]
   );
 
   const disconnectOAuthAccount = useCallback(
@@ -3211,8 +3211,11 @@ function PiAgentHarnessSettings() {
           Connect an official subscription (ChatGPT/Codex or SpaceXAI SuperGrok) or paste API keys.
           Credentials write into the active agent home{" "}
           <span className="font-mono text-[11px] text-[var(--text-primary)]">auth.json</span>
-          {agentHome === "native" ? " (shared with the Pi CLI)" : ""}. Cesium-stored keys also apply
-          as runtime overlays. Unofficial Claude / Copilot / Google CLI logins are not offered.
+          {agentHome === "native" ? " (shared with the Pi CLI)" : ""}. Cesium-stored keys and
+          provider env vars apply as runtime overlays, and custom providers from the agent home{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">models.json</span>{" "}
+          (proxies, Ollama, vLLM) are picked up automatically. Unofficial Claude / Copilot / Google
+          CLI logins are not offered.
         </p>
         <ul className="divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
           {providers.map((provider) => {
@@ -3256,7 +3259,9 @@ function PiAgentHarnessSettings() {
                         Connect
                       </button>
                     ) : null}
-                    {provider.configured ? (
+                    {provider.configured &&
+                    provider.authMethod !== "env" &&
+                    !provider.authLabel?.startsWith("models.json") ? (
                       <button
                         type="button"
                         className={rowButtonClass}

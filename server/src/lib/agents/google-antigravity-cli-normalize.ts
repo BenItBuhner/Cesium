@@ -13,6 +13,7 @@ import type {
   AgentToolCallStatus,
 } from "./types.js";
 import type { GoogleAntigravityEvent } from "./google-antigravity-cli-session.js";
+import { asString } from "../coerce.js";
 
 export type GoogleAntigravityToolSnapshot = {
   toolCallId: string;
@@ -306,17 +307,17 @@ export function antigravityPlanArtifactFromTool(
     return null;
   }
   const title =
-    stringValue(args.title) ??
-    stringValue(args.name) ??
-    stringValue(args.planTitle) ??
+    asString(args.title) ??
+    asString(args.name) ??
+    asString(args.planTitle) ??
     "Antigravity Plan";
-  const overview = stringValue(args.overview) ?? stringValue(args.description);
+  const overview = asString(args.overview) ?? asString(args.description);
   const markdown =
     markdownValue(args.markdown) ??
     markdownValue(args.plan) ??
     markdownValue(args.planner_output) ??
     markdownValue(args.output);
-  const path = stringValue(args.path) ?? stringValue(args.file_path) ?? null;
+  const path = asString(args.path) ?? asString(args.file_path) ?? null;
   const entries =
     entriesFromArray(args.tasks) ??
     entriesFromArray(args.entries) ??
@@ -350,18 +351,18 @@ function entriesFromArray(value: unknown): AgentPlanEntry[] | undefined {
     }
     const record = item as Record<string, unknown>;
     const content =
-      stringValue(record.content) ??
-      stringValue(record.title) ??
-      stringValue(record.description) ??
-      stringValue(record.task);
+      asString(record.content) ??
+      asString(record.title) ??
+      asString(record.description) ??
+      asString(record.task);
     if (!content) {
       return;
     }
     entries.push({
-      id: stringValue(record.id) ?? `task-${index + 1}`,
+      id: asString(record.id) ?? `task-${index + 1}`,
       content,
       status: planStatus(record.status),
-      priority: stringValue(record.priority),
+      priority: asString(record.priority),
     });
   });
   return entries.length > 0 ? entries : undefined;
@@ -393,24 +394,20 @@ function markdownValue(value: unknown): string | undefined {
     : undefined;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function subagentTitle(payload: Record<string, unknown>): string {
   return (
-    stringValue(payload.name) ??
-    stringValue(payload.title) ??
-    stringValue(payload.description) ??
-    stringValue(payload.subagent_type) ??
+    asString(payload.name) ??
+    asString(payload.title) ??
+    asString(payload.description) ??
+    asString(payload.subagent_type) ??
     "Antigravity subagent"
   );
 }
 
 function antigravitySubagentId(event: Extract<GoogleAntigravityEvent, { type: "subagent.spawned" | "subagent.updated" | "subagent.completed" }>): string {
   const payloadId =
-    stringValue(event.payload.id) ??
-    stringValue(event.payload.sessionId) ??
-    stringValue(event.payload.conversationId);
+    asString(event.payload.id) ??
+    asString(event.payload.sessionId) ??
+    asString(event.payload.conversationId);
   return payloadId ?? `antigravity-subagent-${event.sessionId ?? "session"}`;
 }

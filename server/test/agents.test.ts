@@ -38,6 +38,7 @@ const [
   { ensureWorkspaceRegistered },
   { AgentRuntimeManager },
   {
+    appendConversationEvents,
     readConversationSnapshot,
     readConversationRecord,
     readConversationEventsSince,
@@ -45,12 +46,18 @@ const [
   },
   { AGENT_BACKENDS },
   { agentRoutes },
+  { prepareSideChatCreation, SIDE_CHAT_INITIAL_TITLE },
+  { readSideChatReminderRaw },
+  { buildAgentConversationsAllPayload },
 ] = await Promise.all([
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/runtime-manager.js"),
   import("../src/lib/agents/session-store.js"),
   import("../src/lib/agents/providers.js"),
   import("../src/routes/agents.js"),
+  import("../src/lib/agents/side-chat/side-chat-store.js"),
+  import("../src/lib/agents/side-chat/side-chat-context.js"),
+  import("../src/lib/agents/rail-payload.js"),
 ]);
 
 const testCapabilities: AgentProviderCapabilities = {
@@ -73,7 +80,7 @@ const testBackends: Record<AgentBackendId, AgentBackendInfo> = {
   "cesium-agent": {
     ...AGENT_BACKENDS["cesium-agent"],
     available: true,
-    capabilities: testCapabilities,
+    capabilities: { ...testCapabilities, supportsSideChats: true },
     defaultMode: "agent",
     defaultModelId: "test-fast",
     defaultModelName: "Test Fast",
@@ -90,14 +97,6 @@ const testBackends: Record<AgentBackendId, AgentBackendInfo> = {
     ...AGENT_BACKENDS["opencode-server"],
     available: true,
     capabilities: testCapabilities,
-    defaultMode: "agent",
-    defaultModelId: "test-fast",
-    defaultModelName: "Test Fast",
-  },
-  "codex-app-server": {
-    ...AGENT_BACKENDS["codex-app-server"],
-    available: true,
-    capabilities: { ...testCapabilities, supportsLoadSession: true, supportsResumeAfterCancel: true },
     defaultMode: "agent",
     defaultModelId: "test-fast",
     defaultModelName: "Test Fast",
@@ -752,31 +751,46 @@ test("prompt after cancellation starts a fresh runtime turn", async () => {
   assert.equal(completed.conversation.pendingPermission, null);
 });
 
-test("cancel keeps the provider session for backends whose sessions survive interruption", async () => {
+test("cancellation keeps the provider session for harnesses that resume after abort", async () => {
+  const resumableBackends: Record<AgentBackendId, AgentBackendInfo> = {
+    ...testBackends,
+    "opencode-server": {
+      ...testBackends["opencode-server"],
+      capabilities: { ...testCapabilities, supportsCancelResume: true },
+    },
+  };
+  const resumableRuntimeManager = new AgentRuntimeManager({
+    backends: resumableBackends,
+    createProvider: async (backendId) => {
+      const provider = await createFakeProvider(backendId);
+      return { ...provider, backend: resumableBackends[backendId] };
+    },
+    listBackends: () => Object.values(resumableBackends),
+  });
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
-  const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "codex-app-server",
+  const conversation = await resumableRuntimeManager.createConversation(workspace, {
+    backendId: "opencode-server",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
   });
 
-  await testRuntimeManager.promptConversation(workspace, conversation.id, "permission then stop");
+  await resumableRuntimeManager.promptConversation(workspace, conversation.id, "permission then stop");
   const awaiting = await waitFor(
-    "permission before stop",
+    "permission before resumable stop",
     () => readConversationSnapshot(workspace.id, conversation.id),
     (value) => value.conversation.pendingPermission !== null
   );
   const sessionId = awaiting.conversation.providerSessionId;
   assert.ok(sessionId, "expected active provider session before stop");
 
-  const stopped = await testRuntimeManager.cancelConversation(workspace, conversation.id);
-  assert.equal(stopped.providerSessionId, sessionId, "Codex threads resume after an interrupt");
+  const stopped = await resumableRuntimeManager.cancelConversation(workspace, conversation.id);
+  assert.equal(stopped.providerSessionId, sessionId, "resumable harness keeps its session id");
   assert.equal(stopped.pendingPermission, null);
 
-  await testRuntimeManager.promptConversation(workspace, conversation.id, "continue after stop");
+  await resumableRuntimeManager.promptConversation(workspace, conversation.id, "continue after stop");
   const completed = await waitFor(
-    "resumed prompt after stop",
+    "prompt after resumable stop",
     () => readConversationSnapshot(workspace.id, conversation.id),
     (value) =>
       value.conversation.status === "idle" &&
@@ -786,7 +800,11 @@ test("cancel keeps the provider session for backends whose sessions survive inte
           event.text.includes("Handling: continue after stop")
       )
   );
-  assert.equal(completed.conversation.providerSessionId, sessionId, "same provider session resumed");
+  assert.equal(
+    completed.conversation.providerSessionId,
+    sessionId,
+    "next prompt resumed the same provider session"
+  );
 });
 
 test("sendQueuedPromptNow interrupts the current turn and starts that item", async () => {
@@ -1772,4 +1790,195 @@ test("archived createConversationWithPrompt does not fail with unknown conversat
     snapshot.events.some((event) => event.kind === "user_message"),
     "expected child prompt to be stored"
   );
+});
+
+test("side chat: seeded child inherits config, is capped, cannot nest, and stays off the rail", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const parent = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    mode: "plan",
+    modelId: "test-deep",
+    modelName: "Test Deep",
+    title: "Primary investigation",
+  });
+
+  // Cursor parity: the primary needs at least one message first.
+  await assert.rejects(
+    () => testRuntimeManager.createSideChat(workspace, parent.id),
+    /at least one message/i
+  );
+
+  await testRuntimeManager.promptConversation(workspace, parent.id, "dig into the transcript");
+  const parentSnapshot = await waitFor(
+    "parent prompt completion",
+    () => readConversationSnapshot(workspace.id, parent.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some((event) => event.kind === "assistant_message_end")
+  );
+
+  const { conversation: sideChat } = await testRuntimeManager.createSideChat(workspace, parent.id);
+  assert.equal(sideChat.origin?.kind, "side-chat");
+  assert.ok(sideChat.origin?.kind === "side-chat");
+  assert.equal(sideChat.origin.parentConversationId, parent.id);
+  assert.equal(
+    sideChat.origin.parentTitle,
+    parentSnapshot.conversation.title,
+    "origin captures the parent's title at creation"
+  );
+  assert.equal(sideChat.title, SIDE_CHAT_INITIAL_TITLE);
+  assert.equal(sideChat.config.backendId, "cesium-agent");
+  assert.equal(sideChat.config.mode, "plan");
+  assert.equal(sideChat.config.modelId, "test-deep");
+  assert.equal(sideChat.lastEventSeq, 1, "only the hidden seed reminder exists");
+
+  const seeded = await readConversationSnapshot(workspace.id, sideChat.id);
+  assert.ok(seeded);
+  const seed = seeded.events[0];
+  assert.ok(seed && seed.kind === "system_reminder");
+  assert.equal(seed.reason, "linked_conversation");
+  assert.equal(seed.placement, "inline");
+  assert.match(seed.text, /<primary-chat-context kind="seed"/);
+  assert.match(seed.text, /dig into the transcript/, "seed carries the parent transcript");
+  const seedRaw = readSideChatReminderRaw(seed.raw);
+  assert.ok(seedRaw);
+  assert.equal(seedRaw.kind, "seed");
+  assert.equal(seedRaw.parentConversationId, parent.id);
+  assert.equal(
+    seedRaw.throughSeq,
+    parentSnapshot.conversation.lastEventSeq,
+    "cursor starts at the parent's latest seq"
+  );
+
+  // No nesting.
+  await assert.rejects(
+    () => testRuntimeManager.createSideChat(workspace, sideChat.id),
+    /cannot open their own side chats/i
+  );
+  // Per-parent cap (checked with an explicit limit so the test is env-independent).
+  const parentRecord = await readConversationRecord(workspace.id, parent.id);
+  assert.ok(parentRecord);
+  await assert.rejects(
+    () =>
+      prepareSideChatCreation({
+        workspace,
+        parent: parentRecord,
+        limits: { maxSideChatsPerParent: 1 },
+        supportsSideChats: true,
+      }),
+    /limit 1/
+  );
+  // Backends without the capability are refused.
+  await assert.rejects(
+    () =>
+      prepareSideChatCreation({
+        workspace,
+        parent: parentRecord,
+        supportsSideChats: false,
+      }),
+    /does not support side chats/
+  );
+
+  const listed = await testRuntimeManager.listSideChats(workspace, parent.id);
+  assert.deepEqual(
+    listed.map((record) => record.id),
+    [sideChat.id]
+  );
+
+  // The first prompt still earns a generated title, like a brand-new chat.
+  await testRuntimeManager.promptConversation(workspace, sideChat.id, "what is the primary doing?");
+  await waitFor(
+    "side chat title generation",
+    () => readConversationRecord(workspace.id, sideChat.id),
+    (record) => record.title !== SIDE_CHAT_INITIAL_TITLE
+  );
+
+  // Hidden from the rail payload; the parent still shows.
+  const payload = await buildAgentConversationsAllPayload({ limit: 200, offset: 0 });
+  const railIds = payload.groups.flatMap((group) => group.conversations.map((entry) => entry.id));
+  assert.ok(railIds.includes(parent.id), "parent is listed on the rail");
+  assert.ok(!railIds.includes(sideChat.id), "side chat never takes a rail row");
+});
+
+test("side chat routes create, list, and map policy errors", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const headers = { "x-opencursor-workspace-id": workspace.id, "content-type": "application/json" };
+
+  const missing = await agentRoutes.request(
+    "http://test.local/api/agents/conversations/does-not-exist/side-chats",
+    { method: "POST", headers, body: "{}" }
+  );
+  assert.equal(missing.status, 404);
+
+  const createResponse = await agentRoutes.request("http://test.local/api/agents/conversations", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ backendId: "cesium-agent", title: "Route parent" }),
+  });
+  assert.equal(createResponse.status, 201);
+  const { conversation: parent } = (await createResponse.json()) as {
+    conversation: { id: string; lastEventSeq: number };
+  };
+
+  const empty = await agentRoutes.request(
+    `http://test.local/api/agents/conversations/${parent.id}/side-chats`,
+    { method: "POST", headers, body: "{}" }
+  );
+  assert.equal(empty.status, 400);
+  assert.match(((await empty.json()) as { error: string }).error, /at least one message/i);
+
+  await appendConversationEvents(workspace.id, parent.id, [
+    {
+      eventId: randomUUID(),
+      conversationId: parent.id,
+      kind: "user_message",
+      messageId: randomUUID(),
+      content: "route parent first message",
+    },
+  ]);
+
+  const created = await agentRoutes.request(
+    `http://test.local/api/agents/conversations/${parent.id}/side-chats`,
+    { method: "POST", headers, body: "{}" }
+  );
+  assert.equal(created.status, 201);
+  const createdBody = (await created.json()) as {
+    snapshot: {
+      conversation: { id: string; origin?: { kind: string; parentConversationId?: string } };
+      events: Array<{ kind: string; reason?: string; placement?: string }>;
+    };
+  };
+  assert.equal(createdBody.snapshot.conversation.origin?.kind, "side-chat");
+  assert.equal(createdBody.snapshot.conversation.origin?.parentConversationId, parent.id);
+  assert.deepEqual(
+    createdBody.snapshot.events.map((event) => `${event.kind}:${event.reason}:${event.placement}`),
+    ["system_reminder:linked_conversation:inline"]
+  );
+
+  const listResponse = await agentRoutes.request(
+    `http://test.local/api/agents/conversations/${parent.id}/side-chats`,
+    { headers }
+  );
+  assert.equal(listResponse.status, 200);
+  const listBody = (await listResponse.json()) as { conversations: Array<{ id: string }> };
+  assert.deepEqual(
+    listBody.conversations.map((entry) => entry.id),
+    [createdBody.snapshot.conversation.id]
+  );
+
+  const nested = await agentRoutes.request(
+    `http://test.local/api/agents/conversations/${createdBody.snapshot.conversation.id}/side-chats`,
+    { method: "POST", headers, body: "{}" }
+  );
+  assert.equal(nested.status, 400);
+
+  // Conversations created through the routes warm their runtime asynchronously
+  // on the global manager; let that settle so the data-dir cleanup cannot race it.
+  for (const id of [parent.id, createdBody.snapshot.conversation.id]) {
+    await waitFor(
+      `runtime warm for ${id}`,
+      () => readConversationRecord(workspace.id, id),
+      (record) => record.providerSessionId !== null
+    );
+  }
 });

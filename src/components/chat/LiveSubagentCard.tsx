@@ -1,18 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
+import { firstNonEmptyLine } from "@cesium/core";
 import type { ChatMessage } from "@/lib/types";
 import { SubagentCard } from "./SubagentCard";
-
-function firstNonEmptyLine(text: string | undefined): string | undefined {
-  if (!text) {
-    return undefined;
-  }
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-}
 
 function inferRecentActivity(messages: ChatMessage[], fallback: string | undefined): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {

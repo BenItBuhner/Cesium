@@ -18,6 +18,7 @@
  */
 
 import type { UserMessageSegment } from "./types";
+import { escapeXmlAttr, parseXmlAttrs } from "./xml-attrs";
 
 export type DesignCaptureKind = "select" | "stroke";
 
@@ -63,14 +64,6 @@ export function findComposerCaptureTokens(text: string): Array<{ start: number; 
 // Submitted / historical XML block
 // ---------------------------------------------------------------------------
 
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 /**
  * Build the `<design-capture>…</design-capture>` block that gets sent to the
  * agent and saved in the conversation transcript. The snippet body is embedded
@@ -86,9 +79,9 @@ export function buildDesignCaptureBlock(capture: DesignCapture): string {
   }
   const body = bodyParts.length > 0 ? `\n${bodyParts.join("\n\n")}\n` : "\n";
   return (
-    `<design-capture id="${escapeAttr(capture.id)}" ` +
-    `kind="${escapeAttr(capture.kind)}" ` +
-    `label="${escapeAttr(capture.label)}">` +
+    `<design-capture id="${escapeXmlAttr(capture.id)}" ` +
+    `kind="${escapeXmlAttr(capture.kind)}" ` +
+    `label="${escapeXmlAttr(capture.label)}">` +
     body +
     `</design-capture>`
   );
@@ -100,24 +93,6 @@ export function buildDesignCaptureBlock(capture: DesignCapture): string {
  */
 export const DESIGN_CAPTURE_BLOCK_REGEX =
   /<design-capture\s+([^>]*)>([\s\S]*?)<\/design-capture>/g;
-
-function parseAttrs(attrString: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:][\w:.\-]*)\s*=\s*"([^"]*)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(attrString))) {
-    attrs[m[1]!] = decodeHtmlEntities(m[2]!);
-  }
-  return attrs;
-}
-
-function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
-}
 
 /** Stripped snippet body for tooltip display - drops the surrounding fence. */
 export function extractSnippetFromBlockBody(body: string): string | undefined {
@@ -144,7 +119,7 @@ export function splitContentByDesignBlocks(content: string): UserMessageSegment[
     if (start > lastIndex) {
       out.push({ type: "text", text: content.slice(lastIndex, start) });
     }
-    const attrs = parseAttrs(m[1] ?? "");
+    const attrs = parseXmlAttrs(m[1] ?? "");
     const snippet = extractSnippetFromBlockBody(m[2] ?? "");
     const captureId = attrs.id || "";
     const kindRaw = attrs.kind;

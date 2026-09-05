@@ -465,14 +465,18 @@ export default function App() {
         () => undefined
       );
     }
+    // Both controllers are created once per app instance (never reassigned),
+    // so the cleanup can stop the same instances captured here.
+    const liveUpdates = liveUpdatesRef.current;
+    const agentStatus = agentStatusRef.current;
     // Seed the controller with the real app state and the persisted alert
     // preferences (refreshStatus absorbs them) before any projection lands.
-    liveUpdatesRef.current.setAppActive(AppState.currentState === "active");
-    void liveUpdatesRef.current.refreshStatus().catch(() => undefined);
+    liveUpdates.setAppActive(AppState.currentState === "active");
+    void liveUpdates.refreshStatus().catch(() => undefined);
     const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       appStateRef.current = nextState;
       backgroundCoordinatorRef.current.setAppState(nextState);
-      liveUpdatesRef.current.setAppActive(nextState === "active");
+      liveUpdates.setAppActive(nextState === "active");
       sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
         refreshSafeAreaWithRetries();
@@ -488,8 +492,8 @@ export default function App() {
     return () => {
       appState.remove();
       network();
-      agentStatusRef.current.close();
-      void liveUpdatesRef.current.stop();
+      agentStatus.close();
+      void liveUpdates.stop();
     };
   }, [consumeNotificationAction, consumeSharePayload, refreshSafeAreaWithRetries, sendToWeb]);
 

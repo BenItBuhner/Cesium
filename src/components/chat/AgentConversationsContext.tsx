@@ -22,6 +22,7 @@ import {
   resolveConversationModel,
 } from "@/lib/agent-chat";
 import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { pickAvailableBackend } from "@cesium/core";
 import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
@@ -82,6 +83,7 @@ import {
   answerAgentQuestion,
   buildAgentWebSocketUrl,
   cancelAgentConversation,
+  createAgentSideChat,
   createAndPromptAgentConversation,
   createAndPromptStandaloneAgentConversation,
   createAgentConversation,
@@ -131,19 +133,6 @@ function agentSocketMessageWorkspaceScope(
     default:
       return null;
   }
-}
-
-function pickAvailableBackend(
-  backends: AgentBackendInfo[],
-  preferredBackendId?: AgentBackendId
-): AgentBackendInfo | null {
-  return (
-    backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
-    backends.find((backend) => backend.available && backend.enabled !== false) ??
-    backends.find((backend) => backend.available) ??
-    backends[0] ??
-    null
-  );
 }
 
 /**
@@ -429,6 +418,16 @@ type AgentConversationsContextValue = {
   forkConversation: (
     conversationId: string,
     options?: { upToMessageId?: string; beforeMessageId?: string }
+  ) => Promise<AgentConversationRecord>;
+  /**
+   * Open a side chat attached to `parentConversationId` (Cesium harness).
+   * Non-empty `text`/attachments are sent as the child's first prompt. Throws
+   * with the server's policy message (cap, nesting, empty parent) on refusal.
+   */
+  createSideChat: (
+    parentConversationId: string,
+    text?: string,
+    attachments?: ImageAttachment[]
   ) => Promise<AgentConversationRecord>;
   getConversationHistoryCursor: (conversationId: string) => ConversationHistoryCursor;
   loadOlderConversationHistory: (conversationId: string) => void;
@@ -2203,6 +2202,7 @@ const executePrompt = useCallback(
     },
     [
       clearEditingQueuedPromptForConversation,
+      eventsStore,
       markWorkspaceActivity,
       mergeConversationSnapshot,
     ]
@@ -2536,6 +2536,44 @@ busy,
       return result.conversation;
     },
     [mergeConversationSnapshot, syncConversationSnapshot, upsertConversation]
+  );
+
+  const createSideChat = useCallback(
+    async (
+      parentConversationId: string,
+      text?: string,
+      attachments?: ImageAttachment[]
+    ): Promise<AgentConversationRecord> => {
+      const startedAt = performance.now();
+      const hasPrompt = Boolean(text?.trim()) || (attachments?.length ?? 0) > 0;
+      const result = await createAgentSideChat(parentConversationId, {
+        ...(hasPrompt
+          ? {
+              text: text ?? "",
+              attachments,
+              clientEventId:
+                globalThis.crypto?.randomUUID?.() ?? `local-user-event-${Date.now()}`,
+              clientMessageId:
+                globalThis.crypto?.randomUUID?.() ?? `local-user-message-${Date.now()}`,
+              clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }
+          : {}),
+      });
+      mergeConversationSnapshot(result.snapshot);
+      dispatchAgentConversationUpserted(result.snapshot.conversation);
+      // Subscribe right away so the child's first turn streams into its tab
+      // without waiting for the debounced subscription sweep.
+      flushAgentSubscriptionRef.current([result.snapshot.conversation.id]);
+      scheduleConversationCatchUpRef.current(result.snapshot.conversation.id);
+      recordPerfSample("conversation.create_side_chat.ack", startedAt, {
+        conversationId: result.snapshot.conversation.id,
+      });
+      void markWorkspaceActivity(result.snapshot.conversation.workspaceId).catch(
+        () => undefined
+      );
+      return result.snapshot.conversation;
+    },
+    [markWorkspaceActivity, mergeConversationSnapshot]
   );
 
   useEffect(() => {
@@ -2881,6 +2919,13 @@ busy,
       buildAgentWebSocketUrl(activeWorkspaceId)
     );
     socketRef.current = socket;
+    // These maps live for the provider's lifetime (never reassigned), so the
+    // cleanup below can safely drain the same instances it captured here.
+    const pendingSocketUpserts = pendingSocketUpsertsRef.current;
+    const pendingForeignUpserts = pendingForeignUpsertsRef.current;
+    const consistencyCheckTimers = consistencyCheckTimersRef.current;
+    const deltaRequestCooldownUntil = deltaRequestCooldownUntilRef.current;
+    const deltaRecovery = deltaRecoveryRef.current;
 
     // App-level heartbeat: protocol-level pings keep middleboxes happy but a
     // half-open TCP session (flaky Wi-Fi, mobile network handoff) leaves the
@@ -3102,19 +3147,19 @@ busy,
         clearTimeout(socketUpsertFlushTimerRef.current);
         socketUpsertFlushTimerRef.current = null;
       }
-      pendingSocketUpsertsRef.current.clear();
-      pendingForeignUpsertsRef.current.clear();
-      for (const timer of consistencyCheckTimersRef.current.values()) {
+      pendingSocketUpserts.clear();
+      pendingForeignUpserts.clear();
+      for (const timer of consistencyCheckTimers.values()) {
         clearTimeout(timer);
       }
-      consistencyCheckTimersRef.current.clear();
-      deltaRequestCooldownUntilRef.current.clear();
-      for (const recovery of deltaRecoveryRef.current.values()) {
+      consistencyCheckTimers.clear();
+      deltaRequestCooldownUntil.clear();
+      for (const recovery of deltaRecovery.values()) {
         if (recovery.timer != null) {
           clearTimeout(recovery.timer);
         }
       }
-      deltaRecoveryRef.current.clear();
+      deltaRecovery.clear();
     };
   }, [
     activeWorkspaceId,
@@ -3183,6 +3228,7 @@ flushAgentSubscription,
 mergeConversationSnapshot,
 refreshConversations,
 forkConversation,
+createSideChat,
 getConversationHistoryCursor,
 loadOlderConversationHistory,
 pendingConfigByConversationId,
@@ -3196,6 +3242,7 @@ cancelConversation,
 cancelPermissionForConversation,
 answerQuestionForConversation,
 clearPendingConfigForConversation,
+createSideChat,
 createConversation,
 createAndPromptConversation,
 createAndPromptStandaloneConversation,

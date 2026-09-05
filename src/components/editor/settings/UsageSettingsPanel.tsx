@@ -1101,7 +1101,7 @@ export function UsageSettingsPanel() {
       clearInterval(poll);
       clearInterval(tick);
     };
-  }, [load]);
+  }, [engineConnected, load]);
 
   const active = useMemo(
     () =>

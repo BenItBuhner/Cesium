@@ -64,10 +64,6 @@ export async function measureServerPerf<T>(
   }
 }
 
-export function getServerPerfSpans(): PerfSpan[] {
-  return [...perfSpans];
-}
-
 export async function flushServerPerfReport(reason: string): Promise<void> {
   if (!serverPerfEnabled() || perfSpans.length === 0) {
     return;

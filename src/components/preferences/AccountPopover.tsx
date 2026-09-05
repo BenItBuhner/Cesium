@@ -164,7 +164,6 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
     >
       <div className="flex min-w-0 items-center gap-[10px] px-[10px] py-[10px]">
         {identity.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={identity.imageUrl}
             alt=""

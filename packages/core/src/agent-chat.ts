@@ -304,6 +304,7 @@ import {
   getSubagentPromptText,
   getSubagentTaskInput,
   getToolRawUpdate,
+  humanizeToolCallName,
 } from "./agent-subagent-routing";
 import type { ProjectAgentEventsOptions } from "./agent-subagent-routing";
 import { formatToolFileLabel, toolPathBasename } from "./workspace-tool-path-display";
@@ -1288,14 +1289,6 @@ function withConciseToolDetail<T extends Extract<WorkedSessionEntry, { kind: "to
     return row;
   }
   return { ...row, detail: nextDetail, rawDetail };
-}
-
-function humanizeToolCallName(value: string): string {
-  return value
-    .replace(/ToolCall$/i, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]/g, " ")
-    .trim();
 }
 
 function inferUserSegmentKind(token: string): UserMessageSegment["type"] | null {
@@ -2331,7 +2324,7 @@ function finalizeOpenToolsInTurn(
   }
 }
 
-function firstNonEmptyLine(text: string | undefined): string | undefined {
+export function firstNonEmptyLine(text: string | undefined): string | undefined {
   if (!text) {
     return undefined;
   }
@@ -4912,7 +4905,10 @@ const toolEntryByIdAcrossTurns = new Map<
         if (
           event.status === "running" ||
           event.status === "idle" ||
-          event.status === "awaiting_permission"
+          event.status === "awaiting_permission" ||
+          // The question card itself is the visible state; a bare
+          // "Awaiting_question" activity row would only duplicate it.
+          event.status === "awaiting_question"
         ) {
           if (event.status === "running" && isTakingLongerStatusDetail(event.detail)) {
             ensureTurn().takingLonger = true;
