@@ -1,6 +1,6 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { Check, MessagesSquare } from "lucide-react";
 import { useEffect } from "react";
 import type { RefObject } from "react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
@@ -158,6 +158,12 @@ export function ComposerSlashMenu({
                             />
                           ) : ModeIcon ? (
                             <ModeIcon className="size-[15px] shrink-0" strokeWidth={1.6} aria-hidden />
+                          ) : item.action.kind === "side-chat" ? (
+                            <MessagesSquare
+                              className="size-[15px] shrink-0"
+                              strokeWidth={1.6}
+                              aria-hidden
+                            />
                           ) : null}
                         </span>
                         <span className="min-w-0 flex-1">
