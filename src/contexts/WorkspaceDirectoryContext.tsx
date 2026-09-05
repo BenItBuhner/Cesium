@@ -65,11 +65,15 @@ function sameWorkspaceDirectory(
 }
 
 export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }) {
-  const { ready: serversReady, onlineServers, serverStatusById } = useServerConnections();
+  const { ready: serversReady, onlineServers } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [workspaces, setWorkspaces] = useState<DirectoryWorkspaceRecord[]>([]);
 
+  // Depends on the (identity-stable) online server list only. `onlineServers`
+  // already excludes offline engines, and pulling `serverStatusById` in here
+  // re-created this callback - and refetched every server's workspace list -
+  // on every 30s health probe.
   const refreshWorkspaceDirectory = useCallback(async () => {
     if (!serversReady) {
       return;
@@ -78,10 +82,6 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
     try {
       const results = await Promise.all(
         onlineServers.map(async (server) => {
-          const status = serverStatusById[server.id]?.health ?? "unknown";
-          if (status === "offline") {
-            return [];
-          }
           try {
             const payload = await fetchWorkspacesForServer({
               serverId: server.id,
@@ -110,7 +110,7 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
     } finally {
       setRefreshing(false);
     }
-  }, [onlineServers, serverStatusById, serversReady]);
+  }, [onlineServers, serversReady]);
 
   useEffect(() => {
     void refreshWorkspaceDirectory();

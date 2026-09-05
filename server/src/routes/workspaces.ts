@@ -10,6 +10,8 @@ import {
   switchWorkspaceBranch,
 } from "../lib/git-worktrees.js";
 import { getWorkspaceInsights } from "../lib/workspace-insights.js";
+import type { WorkspaceInsights } from "@cesium/core/quick-actions";
+import type { WorkspaceRecord } from "../lib/workspace-registry.js";
 import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
 import {
   createWorkspace,
@@ -350,13 +352,43 @@ workspaceRoutes.get("/api/workspaces/:workspaceId/git/status", async (c) => {
   return c.json({ workspace, status });
 });
 
+/**
+ * Insights spawn several git processes per call. Every connected client (web,
+ * desktop, mobile) asks for the same workspace, so share one computation
+ * across concurrent callers and serve it for a couple of seconds.
+ */
+const INSIGHTS_SHARE_TTL_MS = 2_500;
+const insightsMemo = new Map<string, { at: number; value: WorkspaceInsights }>();
+const insightsInFlight = new Map<string, Promise<WorkspaceInsights>>();
+
+function getSharedWorkspaceInsights(workspace: WorkspaceRecord): Promise<WorkspaceInsights> {
+  const memo = insightsMemo.get(workspace.id);
+  if (memo && Date.now() - memo.at < INSIGHTS_SHARE_TTL_MS) {
+    return Promise.resolve(memo.value);
+  }
+  const inFlight = insightsInFlight.get(workspace.id);
+  if (inFlight) {
+    return inFlight;
+  }
+  const pending = getWorkspaceInsights(workspace)
+    .then((value) => {
+      insightsMemo.set(workspace.id, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => {
+      insightsInFlight.delete(workspace.id);
+    });
+  insightsInFlight.set(workspace.id, pending);
+  return pending;
+}
+
 workspaceRoutes.get("/api/workspaces/:workspaceId/insights", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const workspace = await getWorkspaceById(workspaceId);
   if (!workspace) {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
   }
-  const insights = await getWorkspaceInsights(workspace);
+  const insights = await getSharedWorkspaceInsights(workspace);
   return c.json({ insights });
 });
 

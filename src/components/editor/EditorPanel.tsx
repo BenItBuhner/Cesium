@@ -69,6 +69,11 @@ import {
   type OpenTranscriptPayload,
 } from "./OpenInEditorContext";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
+import {
+  BROWSER_CONTROL_TABS_CHANGED_EVENT,
+  type BrowserControlTabsChangedDetail,
+} from "@/lib/browser-control-events";
+import { DeferUntilVisible } from "@/components/ui/DeferUntilVisible";
 import type { ExplorerOpenRequest } from "@/lib/types";
 import type { AgentTabIndicatorByConversationId, EditorTab } from "@/lib/types";
 import {
@@ -778,30 +783,47 @@ export function EditorPanel({
         }
       }
     };
+    // The server pushes `browser_tabs_changed` over the agent socket whenever
+    // a tab is opened/closed/navigated/locked, so the timer below is only a
+    // consistency backstop (socket down, older engine). It used to fire every
+    // 2s for the lifetime of the app - the single largest source of idle
+    // network and CPU in the workbench.
+    const backstopDelayMs = () => {
+      const snapshot = stateRef.current;
+      const hasBrowserTabs = [...snapshot.leftTabs, ...snapshot.rightTabs].some((tab) =>
+        Boolean(tab.browser)
+      );
+      return hasBrowserTabs ? 30_000 : 60_000;
+    };
     const schedule = (delayMs: number) => {
+      if (timer != null) window.clearTimeout(timer);
       timer = window.setTimeout(async () => {
+        timer = null;
         await syncBrowserControlTabs();
         if (cancelled) return;
-        const snapshot = stateRef.current;
-        const localBrowserTabs = [...snapshot.leftTabs, ...snapshot.rightTabs].filter((tab) =>
-          Boolean(tab.browser)
-        );
-        schedule(localBrowserTabs.length > 0 ? 2_500 : 2_000);
+        schedule(backstopDelayMs());
       }, delayMs);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
-      if (timer != null) window.clearTimeout(timer);
       void syncBrowserControlTabs();
-      schedule(2_500);
+      schedule(backstopDelayMs());
+    };
+    const onTabsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserControlTabsChangedDetail>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== activeWorkspaceId) return;
+      void syncBrowserControlTabs();
+      schedule(backstopDelayMs());
     };
     void syncBrowserControlTabs();
-    schedule(2_500);
+    schedule(backstopDelayMs());
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(BROWSER_CONTROL_TABS_CHANGED_EVENT, onTabsChanged);
     return () => {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener(BROWSER_CONTROL_TABS_CHANGED_EVENT, onTabsChanged);
     };
   }, [activeWorkspaceId]);
 
@@ -1967,7 +1989,9 @@ export function EditorPanel({
     }
     if (tab.browser) {
       return (
-        <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} editorGroup={group} />
+        <DeferUntilVisible key={tab.id} placeholder={<PanelLoading />}>
+          <BrowserTab tab={tab} dispatch={dispatch} editorGroup={group} />
+        </DeferUntilVisible>
       );
     }
     if (tab.orchestrationBoard) {
@@ -2047,15 +2071,16 @@ export function EditorPanel({
         );
       }
       return (
-        <Terminal
-          key={tab.id}
-          terminalId={tab.terminalId}
-          onAutoCloseAfterCleanExit={() => {
-            const current = findTab(tab.id);
-            if (!current) return;
-            void closeTabs([current], { type: "CLOSE_TAB", group, id: tab.id });
-          }}
-        />
+        <DeferUntilVisible key={tab.id} placeholder={<PanelLoading />}>
+          <Terminal
+            terminalId={tab.terminalId}
+            onAutoCloseAfterCleanExit={() => {
+              const current = findTab(tab.id);
+              if (!current) return;
+              void closeTabs([current], { type: "CLOSE_TAB", group, id: tab.id });
+            }}
+          />
+        </DeferUntilVisible>
       );
     }
     if (
@@ -2113,6 +2138,7 @@ export function EditorPanel({
             </button>
           </div>
         ) : null}
+        <DeferUntilVisible placeholder={<PanelLoading />}>
         <CodeEditor
           key={tab.id}
           content={tab.content}
@@ -2160,6 +2186,7 @@ export function EditorPanel({
               : (content: string) => saveTab(tab.id, content)
           }
         />
+        </DeferUntilVisible>
       </div>
     );
   }

@@ -77,6 +77,7 @@ import {
   dispatchAgentConversationsUpsertedBatch,
 } from "@/lib/agent-conversation-events";
 import { AGENT_BACKENDS_CHANGED_EVENT } from "@/lib/agent-backend-events";
+import { notifyBrowserControlTabsChanged } from "@/lib/browser-control-events";
 import {
   answerAgentPermission,
   answerAgentQuestion,
@@ -127,6 +128,7 @@ function agentSocketMessageWorkspaceScope(
     case "events_dropped":
     case "events_delta_done":
     case "conversation_deleted":
+    case "browser_tabs_changed":
       return message.workspaceId;
     default:
       return null;
@@ -3083,6 +3085,9 @@ busy,
           setLoadingOlderById({});
           return;
         }
+        case "browser_tabs_changed":
+          notifyBrowserControlTabsChanged(message.workspaceId);
+          return;
         default:
           return;
       }

@@ -845,6 +845,15 @@ export type AgentSocketServerMessage =
       workspaceId: string;
     }
   /**
+   * The workspace's browser-control tab set changed (open / close / navigate /
+   * focus / lock / viewport / group). Payload-free on purpose: the editor
+   * re-syncs with one GET, which replaces polling the tab list every 2s.
+   */
+  | {
+      type: "browser_tabs_changed";
+      workspaceId: string;
+    }
+  /**
    * Live `event_batch` frames for this conversation were dropped for this
    * socket under backpressure. Tiny and never dropped itself, so a lossy
    * client always learns it must `request_events_since` instead of silently

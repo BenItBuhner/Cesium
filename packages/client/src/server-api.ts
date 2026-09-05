@@ -257,7 +257,12 @@ async function request<T>(
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({
-        "Content-Type": "application/json",
+        // Only body-carrying requests declare a JSON body. A non-safelisted
+        // Content-Type on a body-less GET turns it into a CORS "non-simple"
+        // request, i.e. an extra OPTIONS round trip - and Chromium skips its
+        // preflight cache entirely for `cache: "no-store"` fetches, so the
+        // rail/settings refreshes were paying that preflight every time.
+        ...(init?.body != null ? { "Content-Type": "application/json" } : {}),
         ...getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId),
         ...(init?.headers ?? {}),
       }, serverBaseUrl).entries()
@@ -318,12 +323,13 @@ async function requestWithEtag<T>(
     baseUrl: serverBaseUrl,
   });
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
+  // GET-only helper: no body, so no Content-Type (see `request`).
   const response = await engineFetch(baseUrl, input, {
     headers: Object.fromEntries(
-      attachSessionToken({
-        "Content-Type": "application/json",
-        ...getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId),
-      }, serverBaseUrl).entries()
+      attachSessionToken(
+        getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId),
+        serverBaseUrl
+      ).entries()
     ),
     credentials: "include",
     cache: "no-store",
