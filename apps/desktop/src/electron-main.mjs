@@ -655,7 +655,16 @@ function createRendererBrowserWindow(options = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
-      backgroundThrottling: false,
+      // Chromium's default background throttling stays ON. Disabling it also
+      // disables the Page Visibility API, so a minimized/hidden window kept
+      // reporting `visible`: the aurora canvas animated at full rate, the
+      // insights/health backstops kept firing, and React kept committing
+      // streamed tokens into a window nobody could see. The client already
+      // tolerates throttled timers (heartbeat drift handling, server-side WS
+      // pings keep sockets alive), and audio/voice sessions are exempt from
+      // Chromium's throttling by design. Escape hatch for debugging only.
+      backgroundThrottling:
+        process.env.OPENCURSOR_DESKTOP_NO_BACKGROUND_THROTTLING === "1" ? false : true,
     },
   });
 }
