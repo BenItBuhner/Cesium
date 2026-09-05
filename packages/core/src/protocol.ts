@@ -143,6 +143,8 @@ export type AgentProviderCapabilities = {
    * that receive the parent transcript as hidden reference context).
    */
   supportsSideChats?: boolean;
+  /** True when a cancelled turn leaves the provider session resumable (Pi). */
+  supportsCancelResume?: boolean;
 };
 
 /**
@@ -933,6 +935,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsCompletionRetry",
   "supportsCloudExecution",
   "supportsSideChats",
+  "supportsCancelResume",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 export const AGENT_STORED_EVENT_KINDS = [

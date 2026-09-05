@@ -751,6 +751,62 @@ test("prompt after cancellation starts a fresh runtime turn", async () => {
   assert.equal(completed.conversation.pendingPermission, null);
 });
 
+test("cancellation keeps the provider session for harnesses that resume after abort", async () => {
+  const resumableBackends: Record<AgentBackendId, AgentBackendInfo> = {
+    ...testBackends,
+    "opencode-server": {
+      ...testBackends["opencode-server"],
+      capabilities: { ...testCapabilities, supportsCancelResume: true },
+    },
+  };
+  const resumableRuntimeManager = new AgentRuntimeManager({
+    backends: resumableBackends,
+    createProvider: async (backendId) => {
+      const provider = await createFakeProvider(backendId);
+      return { ...provider, backend: resumableBackends[backendId] };
+    },
+    listBackends: () => Object.values(resumableBackends),
+  });
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await resumableRuntimeManager.createConversation(workspace, {
+    backendId: "opencode-server",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await resumableRuntimeManager.promptConversation(workspace, conversation.id, "permission then stop");
+  const awaiting = await waitFor(
+    "permission before resumable stop",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => value.conversation.pendingPermission !== null
+  );
+  const sessionId = awaiting.conversation.providerSessionId;
+  assert.ok(sessionId, "expected active provider session before stop");
+
+  const stopped = await resumableRuntimeManager.cancelConversation(workspace, conversation.id);
+  assert.equal(stopped.providerSessionId, sessionId, "resumable harness keeps its session id");
+  assert.equal(stopped.pendingPermission, null);
+
+  await resumableRuntimeManager.promptConversation(workspace, conversation.id, "continue after stop");
+  const completed = await waitFor(
+    "prompt after resumable stop",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.text.includes("Handling: continue after stop")
+      )
+  );
+  assert.equal(
+    completed.conversation.providerSessionId,
+    sessionId,
+    "next prompt resumed the same provider session"
+  );
+});
+
 test("sendQueuedPromptNow interrupts the current turn and starts that item", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {

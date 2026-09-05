@@ -156,6 +156,13 @@ export type AgentProviderCapabilities = {
    * append-only reference context. Absent means unsupported.
    */
   supportsSideChats?: boolean;
+  /**
+   * True when a user cancel leaves the provider session resumable: the next
+   * prompt continues the same native session instead of starting a fresh one
+   * (Pi records the aborted turn in its session file). Optional for stored-record
+   * compatibility; absent means the runtime restarts the session after cancel.
+   */
+  supportsCancelResume?: boolean;
 };
 
 /**

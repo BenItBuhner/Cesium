@@ -333,10 +333,14 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         id: "pi-agent",
         label: "Pi Agent",
         description:
-          "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, settings) plus project .pi/ customization.",
+          "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, prompts, models.json, settings) plus project .pi/ customization; extension dialogs surface as Cesium permission and question cards.",
         experimental: true,
         commandPreview: `@earendil-works/pi-coding-agent · API key via settings`,
-        available: false,
+        // Statically runnable like cesium-agent / cursor-sdk: the runtime
+        // manager's assertRunnableBackend reads this value, while the real
+        // credential gate lives in createAgentProvider and the cached listing
+        // (listAgentBackendsWithCache) reports live availability to the UI.
+        available: true,
         capabilities: AGENT_CAPABILITIES["pi-agent"],
         defaultMode: "agent",
         defaultModelId: "auto",
@@ -492,7 +496,7 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             : backend.id === "codex-acp" && !backend.available
             ? "Codex ACP requires the Codex CLI on the server host. Install it or set OPENCURSOR_CODEX_BIN, then sign in with `codex login`."
             : backend.id === "pi-agent" && !piAgentStatus
-            ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
+            ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, native ~/.pi/agent auth.json, or a models.json provider). Open Settings -> Agents to configure it."
             : backend.id === "google-antigravity-acp" && !backend.available
             ? "Google Antigravity requires the official ACP server (`agy_acp_server`). Install it from Settings -> Agents -> Google Antigravity (or set OPENCURSOR_ANTIGRAVITY_ACP_BIN), then log in with Google."
             : backend.description,

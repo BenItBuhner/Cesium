@@ -4900,7 +4900,10 @@ const toolEntryByIdAcrossTurns = new Map<
         if (
           event.status === "running" ||
           event.status === "idle" ||
-          event.status === "awaiting_permission"
+          event.status === "awaiting_permission" ||
+          // The question card itself is the visible state; a bare
+          // "Awaiting_question" activity row would only duplicate it.
+          event.status === "awaiting_question"
         ) {
           if (event.status === "running" && isTakingLongerStatusDetail(event.detail)) {
             ensureTurn().takingLonger = true;

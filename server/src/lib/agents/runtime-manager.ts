@@ -38,6 +38,7 @@ import {
   createAgentProvider,
   listAgentBackendsWithCache,
 } from "./providers.js";
+import { readAgentBackendConfigCache } from "./provider-cache-store.js";
 import { AGENT_CAPABILITY_KEYS } from "./agent-contract.js";
 import {
   computeCesiumAgentContextUsage,
@@ -509,6 +510,21 @@ export class AgentRuntimeManager {
         }
       } catch {
         // Settings are best-effort here; fall back to the registry default.
+      }
+    }
+    if (backendId === "pi-agent") {
+      // Pi's default comes from its ModelRegistry (settings.json default, then
+      // models.json providers) - the same catalog the composer shows.
+      try {
+        const cached = await readAgentBackendConfigCache("pi-agent");
+        const modelOption = findPrimaryModelConfigOption(cached);
+        const value = modelOption?.currentValue?.trim();
+        if (value && value !== "auto" && value !== "__default__") {
+          const name = modelOption?.options.find((option) => option.value === value)?.name ?? value;
+          return { modelId: value, modelName: name };
+        }
+      } catch {
+        // Cache unavailable; Pi picks its own default at session start.
       }
     }
     return { modelId: backend.defaultModelId, modelName: backend.defaultModelName };
@@ -1029,6 +1045,10 @@ export class AgentRuntimeManager {
       return null;
     }
     const conversation = this.withBackendDefaults(record);
+    if (conversation.config.backendId === "pi-agent") {
+      const { computePiAgentContextUsage } = await import("./pi-agent-context-usage.js");
+      return computePiAgentContextUsage(conversation).catch(() => unsupportedContextUsageSnapshot());
+    }
     if (conversation.config.backendId !== "cesium-agent") {
       return unsupportedContextUsageSnapshot();
     }
@@ -1780,15 +1800,19 @@ export class AgentRuntimeManager {
 
       if (isConversationTurnInProgress(record.status)) {
         const runtime = await this.resolveActiveRuntime(workspace, conversationId);
+        let keepSession = false;
         if (runtime) {
           await runtime.handle.cancel();
+          keepSession = this.retainsSessionAfterCancel(runtime);
           await this.disposeRuntime(conversationId);
-          this.skipRecoverySeedOnce.add(conversationId);
+          if (!keepSession) {
+            this.skipRecoverySeedOnce.add(conversationId);
+          }
         }
         await updateConversationRecord(workspace.id, conversationId, (current) => ({
           ...current,
           status: "idle",
-          providerSessionId: null,
+          providerSessionId: keepSession ? current.providerSessionId : null,
           pendingPermission: null,
           pendingQuestion: null,
           queuedPrompts: remaining,
@@ -1897,19 +1921,29 @@ export class AgentRuntimeManager {
       }));
     }
     await runtime.handle.cancel();
+    const keepSession = this.retainsSessionAfterCancel(runtime);
     await this.disposeRuntime(conversationId);
-    this.skipRecoverySeedOnce.add(conversationId);
+    if (!keepSession) {
+      this.skipRecoverySeedOnce.add(conversationId);
+    }
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
     return updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
-      providerSessionId: null,
+      // Harnesses whose native session survives an abort (Pi records the
+      // aborted turn in its session file) resume it on the next prompt instead
+      // of losing the whole conversation context.
+      providerSessionId: keepSession ? current.providerSessionId : null,
       queuedPrompts: [],
       pendingPermission: null,
       pendingQuestion: null,
     }));
+  }
+
+  private retainsSessionAfterCancel(runtime: ActiveRuntime): boolean {
+    return runtime.provider.backend.capabilities.supportsCancelResume === true;
   }
 
   async pauseConversation(
