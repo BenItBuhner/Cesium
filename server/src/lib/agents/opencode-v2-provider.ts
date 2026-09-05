@@ -1143,6 +1143,10 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     });
     if (this.reportedStreamErrors.has(error.message)) return;
     this.reportedStreamErrors.add(error.message);
+    if (/durable session log is not available/.test(error.message)) {
+      // Informational: the volatile stream carries everything; nothing to reconnect.
+      return;
+    }
     void this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
