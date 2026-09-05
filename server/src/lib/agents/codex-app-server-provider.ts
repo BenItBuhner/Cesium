@@ -1198,7 +1198,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       // resolution notices must reach the parent bookkeeping.
       method !== "serverRequest/resolved"
     ) {
-      await this.handleChildThreadNotification(notificationThreadId, method, params, message);
+      await this.handleChildThreadNotification(notificationThreadId, method, params);
       return;
     }
     switch (method) {
@@ -1444,8 +1444,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
   private async handleChildThreadNotification(
     threadId: string,
     method: string,
-    params: CodexAppServerJsonObject,
-    raw: CodexAppServerJsonObject
+    params: CodexAppServerJsonObject
   ): Promise<void> {
     if (method === "thread/started") {
       const thread = asRecord(params.thread);
@@ -1644,7 +1643,6 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       }
       default:
         // Token usage, status flags, plan updates etc. for children are not surfaced.
-        void raw;
         return;
     }
   }
