@@ -56,6 +56,9 @@ export async function consumeOpenCodeSse(input: {
           ...input.client.headers(),
         },
         signal: input.signal,
+        // Bun aborts sockets idle for 5 minutes; heartbeats normally keep this
+        // alive, but never let the runtime cut a quiet stream.
+        ...({ timeout: false } as unknown as RequestInit),
       });
       if (!response.ok || !response.body) {
         throw new Error(`OpenCode SSE ${input.route} failed with ${response.status}`);

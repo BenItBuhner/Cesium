@@ -288,6 +288,48 @@ test("write tool calls render an all-added preview and permission asks summarize
   assert.equal(permission.toolCallId, `opencode-v2:${root}:call_write`);
 });
 
+test("real beta question tool (form.created) surfaces the actual question text and its options", () => {
+  // Verbatim shape from opencode2 beta-19135 for the `question` tool.
+  const payload = {
+    id: "evt_form",
+    type: "form.created",
+    location: { directory: "/ws" },
+    data: {
+      form: {
+        id: "frm_07066fa96001d4Q158X42MuDkQ",
+        sessionID: "ses_q",
+        title: "Questions",
+        metadata: { kind: "question", tool: { messageID: "msg_q", id: "call_q" } },
+        fields: [
+          {
+            key: "q0",
+            title: "Color Preference",
+            description: "Which color do you prefer?",
+            type: "string",
+            options: [
+              { value: "Red", label: "Red", description: "Choose the color red" },
+              { value: "Blue", label: "Blue", description: "Choose the color blue" },
+            ],
+            custom: true,
+          },
+        ],
+      },
+    },
+  };
+  const [event] = new OpenCodeV2EventNormalizer().normalize({
+    conversationId: "conv",
+    rootSessionId: "ses_q",
+    payload,
+    rootMessageId: "msg_root",
+  });
+  assert.ok(event && event.kind === "question");
+  assert.equal(event.questionId, "frm_07066fa96001d4Q158X42MuDkQ");
+  assert.equal(event.prompt, "Which color do you prefer?");
+  assert.deepEqual(event.options.map((option) => option.label), ["Red", "Blue"]);
+  assert.equal(event.questions?.[0]?.prompt, "Which color do you prefer?");
+  assert.equal(event.status, "pending");
+});
+
 test("reconcileMessages emits completion for a tool whose result event was missed", () => {
   const fixture = loadFixture("shell-turn");
   const normalizer = new OpenCodeV2EventNormalizer();

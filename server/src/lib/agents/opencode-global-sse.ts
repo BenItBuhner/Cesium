@@ -463,6 +463,7 @@ async function* iterateSseDataLines(
       // offers br/zstd by default); event streams must stay uncompressed.
       "Accept-Encoding": "identity",
     },
+    ...({ timeout: false } as unknown as RequestInit),
   });
   if (!res.ok || !res.body) {
     throw new Error(`OpenCode SSE ${res.status}`);

@@ -145,6 +145,10 @@ export class OpenCodeV2Client {
         ...init,
         headers: this.headers(init?.headers),
         ...(controller ? { signal: controller.signal } : {}),
+        // `timeoutMs: 0` means "no deadline" (long polls such as /wait). Bun's
+        // fetch would still abort the idle socket after 5 minutes, so disable
+        // its idle timer for those requests (Node ignores the option).
+        ...(timeoutMs === 0 ? ({ timeout: false } as unknown as RequestInit) : {}),
       });
       const text = await response.text();
       if (!response.ok) {

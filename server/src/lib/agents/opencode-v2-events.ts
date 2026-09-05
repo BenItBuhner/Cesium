@@ -38,6 +38,9 @@ function parseBlock(block: string): unknown[] {
  */
 const SSE_BACKLOG_SOFT_LIMIT = 10_000;
 
+/** Bun-only fetch extension (ignored by Node): keep long-lived streams open. */
+const bunNoIdleTimeout = { timeout: false } as unknown as RequestInit;
+
 async function consumeSse(input: {
   client: OpenCodeV2Client;
   path: string;
@@ -56,6 +59,9 @@ async function consumeSse(input: {
       "Accept-Encoding": "identity",
     },
     signal: input.signal,
+    // Bun's fetch aborts a socket idle for 5 minutes ("The operation timed
+    // out."); the durable log has no heartbeat, so disable the idle timer.
+    ...bunNoIdleTimeout,
   });
   if (!response.ok || !response.body) {
     const error = new Error(`OpenCode v2 SSE ${input.path} failed with ${response.status}.`) as Error & {

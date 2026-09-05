@@ -316,7 +316,29 @@ export type OpenCodeV2FormRequest = {
   title: string;
   fields: OpenCodeV2FormField[];
   location?: { directory?: string; workspaceID?: string };
+  /** `metadata.kind` ("question" for the question tool). */
+  kind?: string;
 };
+
+/**
+ * Human prompt for a form field. The question tool publishes its questions as
+ * a form whose field `title` is a short header ("Color Preference") and whose
+ * `description` holds the actual question ("Which color do you prefer?").
+ */
+export function openCodeV2FormFieldPrompt(field: OpenCodeV2FormField, formKind?: string): string {
+  if (formKind === "question" && field.description) {
+    return field.description;
+  }
+  return field.title ?? field.description ?? field.key;
+}
+
+/** Top-level prompt for a form: a single question reads as the question itself. */
+export function openCodeV2FormPrompt(form: OpenCodeV2FormRequest): string {
+  if (form.fields.length === 1) {
+    return openCodeV2FormFieldPrompt(form.fields[0]!, form.kind);
+  }
+  return form.title;
+}
 
 export function readOpenCodeV2FormRequest(payload: RecordValue): OpenCodeV2FormRequest | null {
   if (payload.type !== "form.created") {
@@ -353,12 +375,14 @@ export function readOpenCodeV2FormRequest(payload: RecordValue): OpenCodeV2FormR
     ];
   });
   const location = asRecord(payload.location);
+  const kind = asString(asRecord(form.metadata)?.kind);
   return fields.length > 0
     ? {
         id,
         sessionId,
         title: asString(form.title) ?? "OpenCode form",
         fields,
+        ...(kind ? { kind } : {}),
         ...(location
           ? {
               location: {
@@ -716,7 +740,7 @@ export class OpenCodeV2EventNormalizer {
     if (form) {
       const questions = form.fields.map((field) => ({
         id: field.key,
-        prompt: field.title ?? field.description ?? field.key,
+        prompt: openCodeV2FormFieldPrompt(field, form.kind),
         options: formFieldOptions({
           type: field.type,
           options: field.options,
@@ -729,7 +753,7 @@ export class OpenCodeV2EventNormalizer {
           conversationId: input.conversationId,
           kind: "question",
           questionId: form.id,
-          prompt: form.title,
+          prompt: openCodeV2FormPrompt(form),
           options: questions[0]?.options ?? [],
           questions,
           allowMultiple: questions.length === 1 && questions[0]?.allowMultiple,

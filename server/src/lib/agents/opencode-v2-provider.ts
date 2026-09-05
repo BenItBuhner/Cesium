@@ -34,6 +34,8 @@ import {
   OpenCodeV2EventNormalizer,
   openCodeV2ChildSessionId,
   openCodeV2EventSessionId,
+  openCodeV2FormFieldPrompt,
+  openCodeV2FormPrompt,
   openCodeV2PermissionReply,
   openCodeV2PermissionRequestEvent,
   readOpenCodeV2FormRequest,
@@ -268,7 +270,7 @@ function formAnswers(
 ): Record<string, string | number | boolean | string[]> {
   const lines = answerLines(
     answer,
-    request.fields.map((field) => field.title ?? field.description ?? field.key)
+    request.fields.map((field) => openCodeV2FormFieldPrompt(field, request.kind))
   );
   return Object.fromEntries(
     request.fields.map((field, index) => [
@@ -314,7 +316,7 @@ function questionEventForInteraction(
   }
   const questions = interaction.request.fields.map((field) => ({
     id: field.key,
-    prompt: field.title ?? field.description ?? field.key,
+    prompt: openCodeV2FormFieldPrompt(field, interaction.request.kind),
     options:
       field.type === "boolean"
         ? [
@@ -329,7 +331,7 @@ function questionEventForInteraction(
     conversationId,
     kind: "question",
     questionId: interaction.request.id,
-    prompt: interaction.request.title,
+    prompt: openCodeV2FormPrompt(interaction.request),
     options: questions[0]?.options ?? [],
     questions,
     allowMultiple: questions.length === 1 && questions[0]?.allowMultiple,
@@ -556,8 +558,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       const waitController = new AbortController();
       this.waitController?.abort();
       this.waitController = waitController;
-      const wait = client
-        .waitForSession(this.sessionId, waitController.signal)
+      const wait = this.waitForTurn(client, active, waitController.signal)
         .then(() => this.reconcileActivePrompt(active))
         .catch((error) => {
           if (!waitController.signal.aborted) {
@@ -913,6 +914,47 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
           },
         ]);
       });
+  }
+
+  /**
+   * `POST /api/session/:id/wait` blocks until the execution settles. A long
+   * turn can outlive proxies, runtime idle timers or a server hiccup; while the
+   * turn is still running, re-issue the wait instead of losing the completion
+   * signal that reconciliation depends on.
+   */
+  private async waitForTurn(
+    client: OpenCodeV2Client,
+    active: ActivePrompt,
+    signal: AbortSignal
+  ): Promise<void> {
+    let failures = 0;
+    while (!signal.aborted && !active.completed && !active.cancelled) {
+      try {
+        await client.waitForSession(this.sessionId, signal);
+        return;
+      } catch (error) {
+        if (signal.aborted || active.completed || active.cancelled) return;
+        failures += 1;
+        if (error instanceof OpenCodeV2Error && error.status === 404) {
+          throw error;
+        }
+        if (failures >= 5) {
+          throw error;
+        }
+        harnessLog({
+          level: "warning",
+          backendId: this.backend.id,
+          conversationId: this.callbacks.conversation.id,
+          event: "wait.retry",
+          detail: `Session wait failed (${error instanceof Error ? error.message : String(error)}); retrying (${failures}).`,
+        });
+        await new Promise((resolve) => setTimeout(resolve, Math.min(500 * failures, 3_000)));
+        // The server may have finished in the gap; do not block on a wait
+        // that will never return for an already-idle session.
+        const active_ = await client.listActiveSessionIds().catch(() => null);
+        if (active_ && !active_.includes(this.sessionId)) return;
+      }
+    }
   }
 
   private async reconcileActivePrompt(active: ActivePrompt): Promise<void> {
