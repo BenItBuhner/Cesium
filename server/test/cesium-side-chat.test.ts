@@ -253,6 +253,13 @@ test("delivery state derives from persisted reminders", () => {
   });
   assert.equal(readSideChatReminderRaw({ sideChat: { kind: "nope" } }), null);
   assert.equal(readSideChatReminderRaw(null), null);
+  assert.equal(
+    readSideChatReminderRaw({
+      sideChat: { kind: "delta", parentConversationId: PARENT_ID, fromSeq: 0, throughSeq: Number.NaN },
+    }),
+    null,
+    "non-finite seqs are rejected so a corrupt raw can never poison the cursor"
+  );
 });
 
 const STORE_CHANNEL = "opencursor:agent:store-events";

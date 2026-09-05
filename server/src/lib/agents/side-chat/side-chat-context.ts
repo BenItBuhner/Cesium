@@ -98,7 +98,9 @@ export function readSideChatReminderRaw(raw: unknown): SideChatReminderRaw["side
     (kind !== "seed" && kind !== "delta" && kind !== "unavailable") ||
     typeof parentConversationId !== "string" ||
     typeof fromSeq !== "number" ||
-    typeof throughSeq !== "number"
+    !Number.isFinite(fromSeq) ||
+    typeof throughSeq !== "number" ||
+    !Number.isFinite(throughSeq)
   ) {
     return null;
   }
