@@ -39,7 +39,8 @@ const [
     selectPiAgentDefaultModel,
   },
   { isPiExtensionCommand, parsePiModelValue, piNativeSessionDirForCwd, withCurrentConfig },
-  { AuthStorage },
+  { AuthStorage, SessionManager, calculateContextTokens },
+  { computePiAgentContextUsage },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/pi-agent-normalize.js"),
@@ -48,6 +49,7 @@ const [
   import("../src/lib/pi-agent-model-catalog.js"),
   import("../src/lib/agents/pi-agent-provider.js"),
   import("@earendil-works/pi-coding-agent"),
+  import("../src/lib/agents/pi-agent-context-usage.js"),
 ]);
 
 type AnyEvent = Record<string, unknown> & { type: string };
@@ -235,6 +237,73 @@ test("pi agent counts models.json custom providers as configured", async () => {
       await fs.rm(agentDir, { recursive: true, force: true });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Context usage
+// ---------------------------------------------------------------------------
+
+test("pi context usage reads the native session file", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-pi-ctx-"));
+  try {
+    const cwd = path.join(root, "ws");
+    await fs.mkdir(cwd, { recursive: true });
+    const sessionManager = SessionManager.create(cwd, path.join(root, "sessions"));
+    const usage = {
+      input: 900,
+      output: 40,
+      cacheRead: 300,
+      cacheWrite: 0,
+      totalTokens: 1240,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+      timestamp: Date.now(),
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "hi there" }],
+      api: "openai-completions",
+      provider: "techlit",
+      model: "kimi-k3",
+      usage,
+      stopReason: "stop",
+      timestamp: Date.now(),
+    } as never);
+    const conversation = {
+      id: "conv-ctx",
+      lastEventSeq: 1,
+      providerSessionId: sessionManager.getSessionFile(),
+      config: { backendId: "pi-agent", mode: "agent", modelId: "nope/unknown", modelName: "x" },
+    } as unknown as Parameters<typeof computePiAgentContextUsage>[0];
+
+    const exact = await computePiAgentContextUsage(conversation);
+    assert.equal(exact.supported, true);
+    assert.equal(exact.approximate, false);
+    assert.equal(exact.usedTokens, calculateContextTokens(usage));
+    assert.equal(exact.limitTokens, 128_000, "unknown model falls back to a conservative window");
+    assert.deepEqual(exact.categories.map((category) => category.id), ["conversation"]);
+
+    // A trailing user turn is estimated on top of the last billed usage.
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "x".repeat(400) }],
+      timestamp: Date.now(),
+    });
+    const estimated = await computePiAgentContextUsage({ ...conversation, lastEventSeq: 2 });
+    assert.equal(estimated.approximate, true);
+    assert.ok(estimated.usedTokens > exact.usedTokens);
+
+    const missing = await computePiAgentContextUsage({
+      ...conversation,
+      providerSessionId: path.join(root, "missing.jsonl"),
+    });
+    assert.equal(missing.supported, false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

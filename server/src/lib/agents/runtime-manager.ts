@@ -993,6 +993,10 @@ export class AgentRuntimeManager {
       return null;
     }
     const conversation = this.withBackendDefaults(record);
+    if (conversation.config.backendId === "pi-agent") {
+      const { computePiAgentContextUsage } = await import("./pi-agent-context-usage.js");
+      return computePiAgentContextUsage(conversation).catch(() => unsupportedContextUsageSnapshot());
+    }
     if (conversation.config.backendId !== "cesium-agent") {
       return unsupportedContextUsageSnapshot();
     }
