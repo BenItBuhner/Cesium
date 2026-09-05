@@ -1,0 +1,598 @@
+{
+  "server": "opencode2 v0.0.0-beta-19135 (opencode-ai beta channel)",
+  "captured": "2026-09-05",
+  "rootSessionId": "ses_f9009e3ecffef3RZUL76IU0d1D",
+  "note": "Single shell tool call then final text. Real /api/event stream.",
+  "events": [
+    {
+      "id": "evt_06ff61a1f001IOtc0I4MWP9VKg",
+      "type": "server.connected",
+      "data": {}
+    },
+    {
+      "id": "evt_06ff61c15001141v1MkdiCbAZR",
+      "created": 1788584795157,
+      "type": "session.created",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "slug": "cosmic-moon",
+        "version": "0.0.0-beta-19135",
+        "projectID": "5488b2fc1130caeb176c1a0c4232b61386e41cb3",
+        "location": {
+          "directory": "/tmp/oc/ws-v2"
+        },
+        "subpath": "",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 0,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff61e12001S42WoZ0UUQuO67",
+      "created": 1788584795666,
+      "type": "session.inbox.enqueued",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "inboxID": "msg_06ff61e11001nDoj9Fjw452Uy1",
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "Use the bash tool to run: echo hello-from-v2 && date +%s. Then reply with just the output."
+          },
+          "delivery": "steer"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 1,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff61e15001SJvh2g8x5zASFM",
+      "created": 1788584795669,
+      "type": "session.execution.started",
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 2,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff61e1d001rVkFgC5uxx7oIe",
+      "created": 1788584795677,
+      "metadata": {
+        "instructions": {
+          "initial": true
+        }
+      },
+      "type": "session.instructions.updated",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "delta": {
+          "core/environment": "4a8c71c899e548ef0db4d135070c332230a7d2d69a0edd9f0ced7652bdfa5e86",
+          "core/date": "e3e09389f07f5952421ea2083cd4b4e433c0af332b1dbdc2812e8c292fdb69f0",
+          "core/codemode": "52fec1fed10a0c4981959a9f2daefecd7512c06ef53869dd912637d7abedc47e",
+          "core/skill-guidance": "8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 3,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_06ff61e1f001KBMrKbMsOxxuoX",
+      "created": 1788584795679,
+      "type": "session.inbox.delivered",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "inboxID": "msg_06ff61e11001nDoj9Fjw452Uy1"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 4,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff6297b001O4H6wcMQ0hcB5R",
+      "created": 1788584798587,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "agent": "build",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 5,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff6297e001ofAiM8q7PQDsU9",
+      "created": 1788584798590,
+      "type": "session.reasoning.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "ordinal": 0,
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 6,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629840014STvE71TeOtzUC",
+      "created": 1788584798596,
+      "type": "session.tool.input.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "id": "call_82b35d9a2622410caba657ed",
+        "name": "shell"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 7,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629de001FnfO6FEvTSBMp9",
+      "created": 1788584798686,
+      "type": "session.reasoning.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "ordinal": 0,
+        "delta": "The user wants me to run a simple bash command: `echo hello-from-v2 && date +%s`. Then reply with just the output.\n\nThis is a simple request. Let me run it."
+      }
+    },
+    {
+      "id": "evt_06ff629df001ag2X44urTK2Ho1",
+      "created": 1788584798687,
+      "type": "session.reasoning.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "ordinal": 0,
+        "text": "The user wants me to run a simple bash command: `echo hello-from-v2 && date +%s`. Then reply with just the output.\n\nThis is a simple request. Let me run it.",
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 8,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629e1001mCRPK42Ywy2BPH",
+      "created": 1788584798689,
+      "type": "session.tool.input.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "id": "call_82b35d9a2622410caba657ed",
+        "text": "{\"command\":\"echo hello-from-v2 && date +%s\"}"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 9,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629e2001jzUwd9XJeTty5U",
+      "created": 1788584798690,
+      "type": "session.tool.called",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "id": "call_82b35d9a2622410caba657ed",
+        "input": {
+          "command": "echo hello-from-v2 && date +%s"
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 10,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629e50016nSzXfHPt9KSjt",
+      "created": 1788584798693,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 11,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff629fd001PlXfwFkAEz1byL",
+      "created": 1788584798717,
+      "type": "shell.created",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "info": {
+          "id": "sh_06ff629f9001mFZAHD54LQCpdc",
+          "status": "running",
+          "command": "echo hello-from-v2 && date +%s",
+          "cwd": "/tmp/oc/ws-v2",
+          "shell": "/bin/bash",
+          "file": "/home/ubuntu/.local/share/opencode/shell/5488b2fc1130caeb176c1a0c4232b61386e41cb3/sh_06ff629f9001mFZAHD54LQCpdc.out",
+          "metadata": {
+            "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D"
+          },
+          "time": {
+            "started": 1788584798714
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_06ff62a03001hoDYbhgCmwpxvs",
+      "created": 1788584798723,
+      "type": "session.tool.progress",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "id": "call_82b35d9a2622410caba657ed",
+        "metadata": {
+          "shellID": "sh_06ff629f9001mFZAHD54LQCpdc"
+        }
+      }
+    },
+    {
+      "id": "evt_06ff62a05001nwnBan4ulx5sOw",
+      "created": 1788584798725,
+      "type": "shell.exited",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "id": "sh_06ff629f9001mFZAHD54LQCpdc",
+        "exit": 0,
+        "status": "exited"
+      }
+    },
+    {
+      "id": "evt_06ff62a06001s3OCiGWl1UJ82h",
+      "created": 1788584798726,
+      "type": "session.tool.success",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "id": "call_82b35d9a2622410caba657ed",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello-from-v2\n1788584798\n"
+          },
+          {
+            "type": "text",
+            "text": "Command exited with code 0."
+          }
+        ],
+        "metadata": {
+          "status": "completed",
+          "truncated": false,
+          "exit": 0
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 12,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_06ff62a090012vlIDIblez5rEz",
+      "created": 1788584798729,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff61e2d001NBuSP3Ldkmo8f4",
+        "finish": "tool-calls",
+        "rawFinish": "tool_calls",
+        "cost": 0,
+        "tokens": {
+          "input": 5506,
+          "output": 62,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 13,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff62a0b001XkAkuqbvb7Whua",
+      "created": 1788584798731,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "cost": 0,
+        "tokens": {
+          "input": 5506,
+          "output": 62,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_06ff62fc4001Uc62ataoQA1387",
+      "created": 1788584800196,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "cost": 0,
+        "tokens": {
+          "input": 6096,
+          "output": 362,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_06ff62fc5001XTCvgrFo2AnyEe",
+      "created": 1788584800197,
+      "type": "session.renamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "title": "Running echo hello-from-v2 command"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 15,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff631bf001p6B4d3llrtpjFA",
+      "created": 1788584800703,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "agent": "build",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 16,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff631c10016SFrQBjXcSxhKf",
+      "created": 1788584800705,
+      "type": "session.text.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2",
+        "ordinal": 0
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 17,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff6320e001tReDLbGQLC30sN",
+      "created": 1788584800782,
+      "type": "session.text.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2",
+        "ordinal": 0,
+        "delta": "hello-from-v2\n1788584798"
+      }
+    },
+    {
+      "id": "evt_06ff6320e002Ue3uo5p66KSkyn",
+      "created": 1788584800782,
+      "type": "session.text.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2",
+        "ordinal": 0,
+        "text": "hello-from-v2\n1788584798"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 18,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff63210001q1Z4NkIA5dFf8p",
+      "created": 1788584800784,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 19,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff63212001Dt3hXQu6BLqwB2",
+      "created": 1788584800786,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "assistantMessageID": "msg_06ff62a120012WTc3qclo7vJL2",
+        "finish": "stop",
+        "rawFinish": "stop",
+        "cost": 0,
+        "tokens": {
+          "input": 107,
+          "output": 14,
+          "reasoning": 0,
+          "cache": {
+            "read": 5458,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 20,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_06ff63213001p5vE2sC4FKyiDa",
+      "created": 1788584800787,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "cost": 0,
+        "tokens": {
+          "input": 6203,
+          "output": 376,
+          "reasoning": 0,
+          "cache": {
+            "read": 5458,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_06ff63214001UnHTY3iI6wd8dU",
+      "created": 1788584800788,
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_f9009e3ecffef3RZUL76IU0d1D"
+      },
+      "durable": {
+        "aggregateID": "ses_f9009e3ecffef3RZUL76IU0d1D",
+        "seq": 21,
+        "version": 1
+      }
+    }
+  ]
+}

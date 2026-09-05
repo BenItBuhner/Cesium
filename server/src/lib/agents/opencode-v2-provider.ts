@@ -35,7 +35,9 @@ import {
   openCodeV2ChildSessionId,
   openCodeV2EventSessionId,
   openCodeV2PermissionReply,
+  openCodeV2PermissionRequestEvent,
   readOpenCodeV2FormRequest,
+  readOpenCodeV2PermissionRequest,
   readOpenCodeV2QuestionRequest,
   type OpenCodeV2FormField,
   type OpenCodeV2FormRequest,
@@ -131,6 +133,11 @@ function modelValue(model: unknown): string | undefined {
   const id = asString(record?.id) ?? asString(record?.modelID);
   const variant = asString(record?.variant);
   return providerId && id ? `${providerId}/${id}${variant ? `#${variant}` : ""}` : undefined;
+}
+
+function openCodeV2PermissionPollIntervalMs(): number {
+  const raw = Number(process.env.OPENCURSOR_OPENCODE_V2_PERMISSION_POLL_MS);
+  return Number.isFinite(raw) && raw >= 50 ? raw : 1_500;
 }
 
 function eventMatchesWorkspace(payload: OpenCodeV2Json, workspaceRoot: string): boolean {
@@ -331,10 +338,24 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   >();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly reportedStreamErrors = new Set<string>();
+  /** Permissions Cesium is currently replying to (so the echoed `permission.replied` is not treated as external). */
+  private readonly answeringPermissionIds = new Set<string>();
+  /** Recently resolved permission ids (guards the polling fallback against re-surfacing them). */
+  private readonly resolvedPermissionIds = new Set<string>();
+  private permissionPollTimer: ReturnType<typeof setInterval> | null = null;
+  private permissionPollDisabled = false;
+  private permissionPollBusy = false;
+  private permissionPollFailures = 0;
   private seededContext = false;
   private disposed = false;
   private activePrompt: ActivePrompt | null = null;
   private waitController: AbortController | null = null;
+  /**
+   * Root-session execution OpenCode started on its own (a background subagent
+   * finishing injects a synthetic message and wakes the parent). There is no
+   * Cesium prompt in flight, so the assistant output needs its own message.
+   */
+  private autonomousTurn: ActivePrompt | null = null;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -415,6 +436,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       client,
       onEvent: (event) => this.handleEvent(event),
       onError: (error) => this.reportStreamError(error),
+      onReconnect: () => this.reconcileAfterReconnect(),
     });
     const rootLog = startOpenCodeV2SessionLog({
       client,
@@ -440,12 +462,13 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       clearTimeout(readyTimer);
     }
     await this.discoverActiveChildren();
+    this.startPermissionPolling();
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: id,
       configOptions: this.configOptions,
       capabilities: this.capabilities,
-      status: "idle",
+      status: this.autonomousTurn && !this.autonomousTurn.completed ? "running" : "idle",
       pendingPermission: null,
       pendingQuestion: null,
       lastError: null,
@@ -586,6 +609,26 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       active.reject(new Error("OpenCode v2 Beta session interrupted."));
     }
     this.activePrompt = null;
+    const autonomous = this.autonomousTurn;
+    if (autonomous && !autonomous.completed) {
+      // The server-side interrupt below settles it; close our message now so
+      // the cancelled status written here is not overwritten by a late event.
+      autonomous.completed = true;
+      autonomous.cancelled = true;
+      autonomous.resolve();
+      if (autonomous.emittedText) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "assistant_message_end",
+            messageId: autonomous.messageId,
+            stopReason: "cancelled",
+          },
+        ]);
+      }
+    }
+    this.autonomousTurn = null;
     await this.connection?.client.interruptSession(this.sessionId).catch(() => undefined);
     await this.callbacks.appendEvents([
       {
@@ -663,6 +706,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
         optionKind: input.optionId,
       });
     }
+    this.answeringPermissionIds.add(input.requestId);
     try {
       await client.answerPermission(
         sessionId,
@@ -670,15 +714,28 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
         openCodeV2PermissionReply(input.optionId, input.cancelled)
       );
     } catch (error) {
-      harnessLog({
-        level: "error",
-        backendId: this.backend.id,
-        conversationId: this.callbacks.conversation.id,
-        event: "permission.answer_failed",
-        detail: error instanceof Error ? error.message : String(error),
-        data: { requestId: input.requestId, sessionId },
-      });
-      throw error;
+      this.answeringPermissionIds.delete(input.requestId);
+      if (error instanceof OpenCodeV2Error && (error.status === 404 || error.status === 410)) {
+        // Already resolved server-side (another client answered, or the tool
+        // was interrupted). Treat as settled rather than leaving the prompt up.
+        harnessLog({
+          level: "warning",
+          backendId: this.backend.id,
+          conversationId: this.callbacks.conversation.id,
+          event: "permission.answer_stale",
+          detail: `Permission ${input.requestId} was no longer pending on the server (${error.status}).`,
+        });
+      } else {
+        harnessLog({
+          level: "error",
+          backendId: this.backend.id,
+          conversationId: this.callbacks.conversation.id,
+          event: "permission.answer_failed",
+          detail: error instanceof Error ? error.message : String(error),
+          data: { requestId: input.requestId, sessionId },
+        });
+        throw error;
+      }
     }
     harnessLog({
       backendId: this.backend.id,
@@ -687,7 +744,9 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       detail: `Permission ${input.requestId} resolved on session ${sessionId}.`,
       data: { optionId: input.optionId ?? null, cancelled: Boolean(input.cancelled) },
     });
-    this.permissionSessions.delete(input.requestId);
+    this.forgetPermission(input.requestId);
+    // Keep the "answering" marker briefly so the echoed permission.replied is ignored.
+    setTimeout(() => this.answeringPermissionIds.delete(input.requestId), 30_000).unref?.();
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -757,6 +816,11 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       active.reject(new Error("OpenCode v2 Beta session disposed."));
     }
     this.activePrompt = null;
+    if (this.autonomousTurn && !this.autonomousTurn.completed) {
+      this.autonomousTurn.completed = true;
+      this.autonomousTurn.resolve();
+    }
+    this.autonomousTurn = null;
     await this.closeStreamsAndConnection();
   }
 
@@ -881,7 +945,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   private async discoverActiveChildren(): Promise<void> {
     const client = this.connection?.client;
     if (!client) return;
-    const activeSessionIds = await client.listActiveSessionIds().catch(() => []);
+    const activeSessionIds = await client.listActiveSessionIds().catch((): string[] => []);
     await Promise.all(
       activeSessionIds
         .filter((sessionId) => sessionId !== this.sessionId)
@@ -891,6 +955,12 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
           }
         })
     );
+    if (activeSessionIds.includes(this.sessionId)) {
+      // Resumed into a root session that is already executing (e.g. a background
+      // subagent woke it while Cesium was away): its `session.execution.started`
+      // predates our stream, so open the autonomous turn from the active list.
+      await this.noteRootExecutionStarted({ type: "session.active", data: { sessionID: this.sessionId } });
+    }
   }
 
   private cleanupChildSession(sessionId: string): void {
@@ -909,6 +979,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   }
 
   private async closeStreamsAndConnection(): Promise<void> {
+    this.stopPermissionPolling();
     this.globalEvents?.close();
     this.globalEvents = null;
     for (const stream of this.sessionLogs.values()) stream.close();
@@ -931,6 +1002,50 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       },
     ]);
     active.resolve();
+  }
+
+  /**
+   * The volatile `/api/event` feed dropped everything published while we were
+   * disconnected. Recover what matters: permissions still blocking the agent,
+   * tool results (so no card is stuck "running"), and whether the root session
+   * is executing (a background subagent may have woken it meanwhile).
+   */
+  private async reconcileAfterReconnect(): Promise<void> {
+    const client = this.connection?.client;
+    if (!client || this.disposed) return;
+    harnessLog({
+      backendId: this.backend.id,
+      conversationId: this.callbacks.conversation.id,
+      event: "sse.reconnected",
+      detail: "OpenCode v2 event stream reconnected; reconciling missed state.",
+    });
+    this.reportedStreamErrors.clear();
+    await this.pollPermissionsOnce().catch(() => undefined);
+    const sessions = [this.sessionId, ...[...this.sessionLogs.keys()].filter((id) => id !== this.sessionId)];
+    for (const sessionId of sessions) {
+      if (this.disposed) return;
+      const messages = await client.listMessages(sessionId, 50).catch(() => null);
+      if (!messages) continue;
+      const events = this.normalizer.reconcileMessages({
+        conversationId: this.callbacks.conversation.id,
+        sessionId,
+        messages: [...messages].reverse(),
+        ...(sessionId !== this.sessionId ? { childSessionId: sessionId } : {}),
+      });
+      if (events.length > 0) {
+        harnessLog({
+          backendId: this.backend.id,
+          conversationId: this.callbacks.conversation.id,
+          event: "sse.reconciled_tools",
+          detail: `Reconciled ${events.length} tool state update(s) for ${sessionId} after reconnect.`,
+        });
+        await this.callbacks.appendEvents(events);
+      }
+    }
+    const active = await client.listActiveSessionIds().catch(() => null);
+    if (active?.includes(this.sessionId)) {
+      await this.noteRootExecutionStarted({ type: "session.active", data: { sessionID: this.sessionId } });
+    }
   }
 
   private reportStreamError(error: Error): void {
@@ -1007,6 +1122,234 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     this.sessionLogs.set(sessionId, stream);
   }
 
+  /**
+   * Apply remembered/auto-accept rules or park the request as the pending
+   * permission. Shared by the SSE path and the polling fallback.
+   */
+  private async surfacePermissionRequest(
+    permission: Extract<AgentEventInput, { kind: "permission_request" }>
+  ): Promise<"auto_resolved" | "pending"> {
+    const toolKey = buildRememberedPermissionToolKey(
+      "opencode-v2",
+      permission.title,
+      permission.detail
+    );
+    const toolLabel = permission.title ?? "OpenCode permission";
+    const resolved = await resolveRememberedPermissionDecision({
+      workspaceId: this.callbacks.workspace.id,
+      backendId: this.backend.id,
+      toolKey,
+      options: permission.options,
+    });
+    if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+      const ownerSessionId = this.permissionSessions.get(permission.requestId);
+      const optionId =
+        resolved.kind === "remembered"
+          ? resolved.providerOptionId ??
+            (resolved.decision === "allow" ? "allow" : "deny")
+          : resolved.providerOptionId ?? "allow";
+      if (ownerSessionId && this.connection?.client) {
+        await this.connection.client
+          .answerPermission(
+            ownerSessionId,
+            permission.requestId,
+            openCodeV2PermissionReply(optionId, false)
+          )
+          .catch(() => undefined);
+      }
+      this.forgetPermission(permission.requestId);
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId: permission.requestId,
+          outcome: "selected",
+          optionId:
+            resolved.kind === "remembered" ? resolved.rule.optionId : optionId,
+          raw:
+            resolved.kind === "remembered"
+              ? {
+                  rememberedPermission: {
+                    id: resolved.rule.id,
+                    decision: resolved.rule.decision,
+                    toolLabel: resolved.rule.toolLabel,
+                  },
+                }
+              : { autoAcceptedAll: true },
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail:
+            resolved.kind === "remembered"
+              ? `Used remembered permission for ${resolved.rule.toolLabel}.`
+              : "Auto-accepted (Agents → auto-approve all).",
+        },
+      ]);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "running",
+        pendingPermission: null,
+      }));
+      return "auto_resolved";
+    }
+    this.pendingPermissionContext.set(permission.requestId, { toolKey, toolLabel });
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "awaiting_permission",
+      pendingPermission: {
+        requestId: permission.requestId,
+        requestedAt: Date.now(),
+        title: permission.title,
+        detail: permission.detail,
+        toolCallId: permission.toolCallId,
+        options: permission.options,
+      },
+    }));
+    return "pending";
+  }
+
+  /** Drop all bookkeeping for a permission that is no longer pending. */
+  private forgetPermission(requestId: string): void {
+    this.permissionSessions.delete(requestId);
+    this.pendingPermissionContext.delete(requestId);
+    this.resolvedPermissionIds.add(requestId);
+    if (this.resolvedPermissionIds.size > 1_000) {
+      const oldest = this.resolvedPermissionIds.values().next().value as string | undefined;
+      if (oldest) this.resolvedPermissionIds.delete(oldest);
+    }
+  }
+
+  /**
+   * `permission.replied` for a request we did not answer ourselves: another
+   * client (TUI, desktop, ...) sharing the server resolved it. Clear the prompt
+   * so Cesium does not sit in `awaiting_permission` for a decision already made.
+   */
+  private async handleExternalPermissionReply(payload: OpenCodeV2Json): Promise<void> {
+    const data = asRecord(payload.data);
+    const requestId = asString(data?.requestID) ?? asString(data?.id);
+    if (!requestId || !this.permissionSessions.has(requestId)) return;
+    if (this.answeringPermissionIds.has(requestId)) return;
+    const reply = asString(data?.reply);
+    this.forgetPermission(requestId);
+    harnessLog({
+      backendId: this.backend.id,
+      conversationId: this.callbacks.conversation.id,
+      event: "permission.replied_externally",
+      detail: `Permission ${requestId} was resolved outside Cesium (reply: ${reply ?? "unknown"}).`,
+    });
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "permission_resolved",
+        requestId,
+        outcome: reply === "reject" ? "cancelled" : "selected",
+        ...(reply ? { optionId: reply === "always" ? "allow_always" : reply === "reject" ? "deny" : "allow" } : {}),
+        raw: payload,
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => {
+      if (current.pendingPermission && current.pendingPermission.requestId !== requestId) {
+        return current;
+      }
+      return {
+        ...current,
+        status:
+          this.permissionSessions.size > 0
+            ? "awaiting_permission"
+            : this.activePrompt && !this.activePrompt.completed
+              ? "running"
+              : current.status === "awaiting_permission"
+                ? "running"
+                : current.status,
+        pendingPermission: null,
+      };
+    });
+  }
+
+  /**
+   * `/api/event` is volatile by contract (a slow consumer or a reconnect drops
+   * events), so a `permission.asked` can be missed while OpenCode blocks on
+   * it forever. `GET /api/permission/request` lists what is still pending for
+   * this workspace; poll it while a turn is running or a prompt is pending.
+   */
+  private startPermissionPolling(): void {
+    if (this.permissionPollTimer || this.permissionPollDisabled) return;
+    this.permissionPollTimer = setInterval(() => {
+      void this.pollPermissionsOnce();
+    }, openCodeV2PermissionPollIntervalMs());
+    this.permissionPollTimer.unref?.();
+  }
+
+  private stopPermissionPolling(): void {
+    if (this.permissionPollTimer) {
+      clearInterval(this.permissionPollTimer);
+      this.permissionPollTimer = null;
+    }
+    this.permissionPollBusy = false;
+  }
+
+  private async pollPermissionsOnce(): Promise<void> {
+    const client = this.connection?.client;
+    if (this.disposed || !client || this.permissionPollDisabled || this.permissionPollBusy) return;
+    const turnActive = Boolean(this.activePrompt && !this.activePrompt.completed);
+    if (!turnActive && this.permissionSessions.size === 0 && this.sessionLogs.size <= 1) return;
+    this.permissionPollBusy = true;
+    try {
+      let entries: OpenCodeV2Json[];
+      try {
+        entries = await client.listPendingPermissions(this.callbacks.workspace.root);
+      } catch (error) {
+        if (error instanceof OpenCodeV2Error && error.status === 404) {
+          this.permissionPollDisabled = true;
+          this.stopPermissionPolling();
+          return;
+        }
+        this.permissionPollFailures += 1;
+        if (this.permissionPollFailures === 1 || this.permissionPollFailures % 20 === 0) {
+          harnessLog({
+            level: "warning",
+            backendId: this.backend.id,
+            conversationId: this.callbacks.conversation.id,
+            event: "permission.poll_failed",
+            detail: `${error instanceof Error ? error.message : String(error)} (attempt ${this.permissionPollFailures})`,
+          });
+        }
+        return;
+      }
+      this.permissionPollFailures = 0;
+      for (const entry of entries) {
+        const requestId = asString(entry.id);
+        const ownerSessionId = asString(entry.sessionID);
+        if (!requestId || !ownerSessionId) continue;
+        if (this.permissionSessions.has(requestId) || this.resolvedPermissionIds.has(requestId)) continue;
+        const childSessionId = await this.eventChildSession(ownerSessionId);
+        if (ownerSessionId !== this.sessionId && !childSessionId) continue;
+        if (this.disposed) return;
+        this.permissionSessions.set(requestId, ownerSessionId);
+        harnessLog({
+          backendId: this.backend.id,
+          conversationId: this.callbacks.conversation.id,
+          event: "permission.requested",
+          detail: `OpenCode v2 permission ${requestId} discovered by polling.`,
+          data: { sessionId: ownerSessionId },
+        });
+        const event = openCodeV2PermissionRequestEvent({
+          conversationId: this.callbacks.conversation.id,
+          request: entry,
+        });
+        await this.callbacks.appendEvents([event]);
+        await this.surfacePermissionRequest(event);
+      }
+    } finally {
+      this.permissionPollBusy = false;
+    }
+  }
+
   private async handleEvent(payload: OpenCodeV2Json): Promise<void> {
     if (this.disposed) return;
     const type = asString(payload.type);
@@ -1024,6 +1367,16 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       return;
     }
     const sessionId = openCodeV2EventSessionId(payload);
+    const data = asRecord(payload.data);
+    if (type === "session.created" && sessionId && sessionId !== this.sessionId) {
+      // A child announces its parent in `session.created`; trusting it avoids a
+      // GET /api/session round-trip per subagent (and any race with the tool
+      // progress event that also names the child).
+      const parentId = asString(data?.parentID);
+      if (parentId && this.sessionBelongsToRoot.get(parentId) === true) {
+        this.sessionBelongsToRoot.set(sessionId, true);
+      }
+    }
     const form = readOpenCodeV2FormRequest(payload);
     const globalForm =
       form?.sessionId === "global" &&
@@ -1046,12 +1399,21 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
 
     const spawnedChild = openCodeV2ChildSessionId(payload);
     if (spawnedChild && sessionId === this.sessionId) {
+      this.sessionBelongsToRoot.set(spawnedChild, true);
       this.startChildLog(spawnedChild);
     }
 
-    const permissionRequest =
-      type === "permission.v2.asked" ? asString(asRecord(payload.data)?.id) : undefined;
+    if (type === "permission.replied") {
+      await this.handleExternalPermissionReply(payload);
+      return;
+    }
+    const permissionData = readOpenCodeV2PermissionRequest(payload);
+    const permissionRequest = permissionData ? asString(permissionData.id) : undefined;
     if (permissionRequest && sessionId) {
+      if (this.permissionSessions.has(permissionRequest)) {
+        // Already surfaced (e.g. discovered by polling before the event landed).
+        return;
+      }
       this.permissionSessions.set(permissionRequest, sessionId);
       harnessLog({
         backendId: this.backend.id,
@@ -1069,109 +1431,37 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       this.pendingInteractions.set(form.id, { kind: "form", request: form, raw: payload });
     }
 
+    if (sessionId === this.sessionId && type === "session.execution.started") {
+      await this.noteRootExecutionStarted(payload);
+    }
+    const rootTurn = this.currentRootTurn();
     const events = this.normalizer.normalize({
       conversationId: this.callbacks.conversation.id,
       rootSessionId: this.sessionId,
       payload,
-      rootMessageId: this.activePrompt?.messageId,
+      rootMessageId: rootTurn?.messageId,
       childSessionId,
     });
+    const subagentNotice =
+      sessionId === this.sessionId ? backgroundSubagentNotice(payload, this.callbacks.conversation.id) : undefined;
+    if (subagentNotice) events.push(subagentNotice);
     if (events.length > 0) {
       await this.callbacks.appendEvents(events);
-      const active = this.activePrompt;
-      if (active) {
+      if (rootTurn) {
         for (const event of events) {
           if (
             event.kind === "assistant_message_chunk" &&
-            event.messageId === active.messageId
+            event.messageId === rootTurn.messageId
           ) {
-            active.emittedText += event.text;
+            rootTurn.emittedText += event.text;
           }
         }
       }
     }
     const permission = events.find((event) => event.kind === "permission_request");
     if (permission?.kind === "permission_request") {
-      const toolKey = buildRememberedPermissionToolKey(
-        "opencode-v2",
-        permission.title,
-        permission.detail
-      );
-      const toolLabel = permission.title ?? "OpenCode permission";
-      const resolved = await resolveRememberedPermissionDecision({
-        workspaceId: this.callbacks.workspace.id,
-        backendId: this.backend.id,
-        toolKey,
-        options: permission.options,
-      });
-      if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
-        const ownerSessionId = this.permissionSessions.get(permission.requestId);
-        const optionId =
-          resolved.kind === "remembered"
-            ? resolved.providerOptionId ??
-              (resolved.decision === "allow" ? "allow" : "deny")
-            : resolved.providerOptionId ?? "allow";
-        if (ownerSessionId && this.connection?.client) {
-          await this.connection.client
-            .answerPermission(
-              ownerSessionId,
-              permission.requestId,
-              openCodeV2PermissionReply(optionId, false)
-            )
-            .catch(() => undefined);
-        }
-        this.permissionSessions.delete(permission.requestId);
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "permission_resolved",
-            requestId: permission.requestId,
-            outcome: "selected",
-            optionId:
-              resolved.kind === "remembered" ? resolved.rule.optionId : optionId,
-            raw:
-              resolved.kind === "remembered"
-                ? {
-                    rememberedPermission: {
-                      id: resolved.rule.id,
-                      decision: resolved.rule.decision,
-                      toolLabel: resolved.rule.toolLabel,
-                    },
-                  }
-                : { autoAcceptedAll: true },
-          },
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "status",
-            status: "running",
-            detail:
-              resolved.kind === "remembered"
-                ? `Used remembered permission for ${resolved.rule.toolLabel}.`
-                : "Auto-accepted (Agents → auto-approve all).",
-          },
-        ]);
-        await this.callbacks.updateConversation((current) => ({
-          ...current,
-          status: "running",
-          pendingPermission: null,
-        }));
-        return;
-      }
-      this.pendingPermissionContext.set(permission.requestId, { toolKey, toolLabel });
-      await this.callbacks.updateConversation((current) => ({
-        ...current,
-        status: "awaiting_permission",
-        pendingPermission: {
-          requestId: permission.requestId,
-          requestedAt: Date.now(),
-          title: permission.title,
-          detail: permission.detail,
-          toolCallId: permission.toolCallId,
-          options: permission.options,
-        },
-      }));
+      const handled = await this.surfacePermissionRequest(permission);
+      if (handled === "auto_resolved") return;
     }
     const questionEvent = events.find((event) => event.kind === "question" && event.status === "pending");
     if (questionEvent?.kind === "question") {
@@ -1196,6 +1486,17 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       return;
     }
     if (sessionId !== this.sessionId) return;
+    const autonomous = this.autonomousTurn;
+    if (autonomous && !autonomous.completed) {
+      if (
+        type === "session.execution.succeeded" ||
+        type === "session.execution.failed" ||
+        type === "session.execution.interrupted"
+      ) {
+        await this.finishAutonomousTurn(autonomous, type, payload);
+      }
+      return;
+    }
     const active = this.activePrompt;
     if (!active || active.completed || active.cancelled) return;
     if (type === "session.execution.succeeded") {
@@ -1209,6 +1510,146 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       active.reject(new Error("OpenCode v2 execution was interrupted."));
     }
   }
+
+  /** The turn that root-session assistant output should be attributed to right now. */
+  private currentRootTurn(): ActivePrompt | null {
+    const active = this.activePrompt;
+    if (active && !active.completed && !active.cancelled) return active;
+    const autonomous = this.autonomousTurn;
+    return autonomous && !autonomous.completed ? autonomous : null;
+  }
+
+  /**
+   * OpenCode started executing the root session without a Cesium prompt in
+   * flight: a background subagent finished and its synthetic completion
+   * message woke the parent. Open an assistant message for that output and
+   * mark the conversation running until the execution settles.
+   */
+  private async noteRootExecutionStarted(payload: OpenCodeV2Json): Promise<void> {
+    const active = this.activePrompt;
+    if (active && !active.completed && !active.cancelled) return;
+    if (this.autonomousTurn && !this.autonomousTurn.completed) return;
+    const turn = createActivePrompt(`opencode-v2-autonomous-${randomUUID()}`);
+    // Nothing awaits an autonomous turn; keep its promise from becoming an
+    // unhandled rejection if the execution fails.
+    turn.promise.catch(() => undefined);
+    this.autonomousTurn = turn;
+    harnessLog({
+      backendId: this.backend.id,
+      conversationId: this.callbacks.conversation.id,
+      event: "session.autonomous_execution",
+      detail: "OpenCode v2 resumed the root session without a Cesium prompt (background work completed).",
+    });
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "running",
+        detail: "OpenCode resumed after background work completed.",
+        raw: payload,
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "running",
+      lastError: null,
+    }));
+  }
+
+  private async finishAutonomousTurn(
+    turn: ActivePrompt,
+    type: string,
+    payload: OpenCodeV2Json
+  ): Promise<void> {
+    if (turn.completed) return;
+    turn.completed = true;
+    if (this.autonomousTurn === turn) this.autonomousTurn = null;
+    const failed = type === "session.execution.failed";
+    const interrupted = type === "session.execution.interrupted";
+    const errorMessage = failed
+      ? eventErrorMessage(asRecord(payload.data)?.error)
+      : interrupted
+        ? "OpenCode v2 execution was interrupted."
+        : undefined;
+    const events: AgentEventInput[] = [];
+    if (turn.emittedText) {
+      events.push({
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "assistant_message_end",
+        messageId: turn.messageId,
+        stopReason: failed ? "error" : interrupted ? "cancelled" : "completed",
+        raw: payload,
+      });
+    }
+    if (errorMessage) {
+      events.push({
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "system",
+        level: "error",
+        text: errorMessage,
+        raw: payload,
+      });
+    }
+    events.push({
+      eventId: randomUUID(),
+      conversationId: this.callbacks.conversation.id,
+      kind: "status",
+      status: failed ? "failed" : interrupted ? "cancelled" : "idle",
+      detail: failed
+        ? errorMessage
+        : interrupted
+          ? "OpenCode v2 background turn interrupted."
+          : "OpenCode v2 background turn complete.",
+      raw: payload,
+    });
+    await this.callbacks.appendEvents(events);
+    if (failed) {
+      turn.reject(new Error(errorMessage));
+    } else {
+      turn.resolve();
+    }
+    await this.callbacks.updateConversation((current) => {
+      // A user prompt may have started meanwhile; never clobber its status.
+      if (this.activePrompt && !this.activePrompt.completed) return current;
+      return {
+        ...current,
+        status: failed ? "failed" : interrupted ? "cancelled" : "idle",
+        pendingPermission: this.permissionSessions.size > 0 ? current.pendingPermission : null,
+        lastError: failed ? errorMessage ?? null : current.lastError,
+      };
+    });
+  }
+}
+
+/**
+ * A background subagent finishing shows up as a synthetic inbox item on the
+ * parent (`item.type === "synthetic"`, `metadata.source === "subagent"`).
+ * Surface it so the user can see why the agent woke up.
+ */
+function backgroundSubagentNotice(
+  payload: OpenCodeV2Json,
+  conversationId: string
+): AgentEventInput | undefined {
+  if (payload.type !== "session.inbox.enqueued") return undefined;
+  const item = asRecord(asRecord(payload.data)?.item);
+  if (item?.type !== "synthetic") return undefined;
+  const itemPayload = asRecord(item.payload);
+  const metadata = asRecord(itemPayload?.metadata);
+  if (metadata?.source !== "subagent") return undefined;
+  const description = asString(itemPayload?.description) ?? "subagent";
+  const state = asString(metadata.state) ?? "completed";
+  const agent = asString(metadata.agent);
+  return {
+    eventId: randomUUID(),
+    conversationId,
+    kind: "system",
+    level: state === "completed" ? "info" : "warning",
+    text: `Background subagent "${description}"${agent ? ` (${agent})` : ""} ${state}.`,
+    raw: payload,
+  };
 }
 
 export function createOpenCodeV2Provider(input: {

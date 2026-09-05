@@ -53,6 +53,13 @@ function parseToolInput(text: unknown): RecordValue {
 
 function mergeRawOutput(data: RecordValue): RecordValue {
   const output: RecordValue = {};
+  // Beta servers carry tool UI metadata (`exit`, `truncated`, subagent
+  // `sessionID`/`status`, shell `shellID`, ...) in `metadata`; keep it on the
+  // event like the v1 adapter does so the UI can link subagent cards etc.
+  const metadata = asRecord(data.metadata);
+  if (metadata) {
+    Object.assign(output, { metadata });
+  }
   const structured = asRecord(data.structured);
   if (structured) {
     Object.assign(output, structured);
@@ -132,10 +139,97 @@ export function openCodeV2PermissionReply(
   return optionId === "allow_always" || optionId === "always" ? "always" : "once";
 }
 
+/**
+ * Tool call identifier on `session.tool.*` events. The shipped v2 beta
+ * (`ToolBase = { sessionID, assistantMessageID, id }`) uses `id`; `callID`
+ * is kept for the pre-release dialect so older servers keep working.
+ */
+export function openCodeV2ToolCallId(data: RecordValue | undefined): string | undefined {
+  return asString(data?.id) ?? asString(data?.callID);
+}
+
+/**
+ * Child session spawned by a `subagent`/`task` tool call. The beta server
+ * reports it via `session.tool.progress` / `session.tool.success` as
+ * `metadata: { sessionID, status }`; the pre-release dialect used
+ * `structured.sessionID` / `structured.childID`.
+ */
 export function openCodeV2ChildSessionId(payload: RecordValue): string | undefined {
   const data = asRecord(payload.data);
   const structured = asRecord(data?.structured);
-  return asString(structured?.sessionID) ?? asString(structured?.childID);
+  const fromStructured = asString(structured?.sessionID) ?? asString(structured?.childID);
+  if (fromStructured) return fromStructured;
+  const type = asString(payload.type);
+  if (!type?.startsWith("session.tool.")) return undefined;
+  const metadata = asRecord(data?.metadata);
+  const candidate = asString(metadata?.sessionID) ?? asString(metadata?.childID);
+  // Shell tools report `metadata.shellID`; only subagent progress/results carry a
+  // child *session* id, which always differs from the emitting session.
+  return candidate && candidate !== asString(data?.sessionID) ? candidate : undefined;
+}
+
+/**
+ * Permission request payload from `permission.asked` (beta) or the
+ * pre-release `permission.v2.asked` alias.
+ */
+export function readOpenCodeV2PermissionRequest(payload: RecordValue): RecordValue | null {
+  if (payload.type !== "permission.asked" && payload.type !== "permission.v2.asked") {
+    return null;
+  }
+  const data = asRecord(payload.data);
+  return data && asString(data.id) ? data : null;
+}
+
+/**
+ * Normalized `permission_request` for a v2 permission request, whether it
+ * arrived as a `permission.asked` event or was discovered by polling
+ * `GET /api/permission/request` (same `Permission.Request` shape).
+ */
+export function openCodeV2PermissionRequestEvent(input: {
+  conversationId: string;
+  request: RecordValue;
+  raw?: unknown;
+}): Extract<AgentEventInput, { kind: "permission_request" }> {
+  const data = input.request;
+  const action = asString(data.action) ?? "permission";
+  const resources = Array.isArray(data.resources)
+    ? data.resources.filter((value): value is string => typeof value === "string")
+    : [];
+  const save = Array.isArray(data.save)
+    ? data.save.filter((value): value is string => typeof value === "string")
+    : [];
+  const message = asString(data.message);
+  const detailLines = [
+    ...(message ? [message] : []),
+    ...resources,
+    ...(save.length > 0 ? [`Allow Always remembers: ${save.join(", ")}`] : []),
+  ];
+  return {
+    eventId: randomUUID(),
+    conversationId: input.conversationId,
+    kind: "permission_request",
+    requestId: asString(data.id)!,
+    title: `OpenCode requests ${action}`,
+    detail: detailLines.length > 0 ? detailLines.join("\n") : undefined,
+    toolCallId: openCodeV2PermissionToolCallId(data),
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "allow_always", name: "Allow Always", kind: "allow_always" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ],
+    raw: input.raw ?? input.request,
+  };
+}
+
+/**
+ * Tool call that raised a permission. The beta uses `source: { type: "tool",
+ * messageID, id }`; the pre-release dialect used `source.callID`.
+ */
+export function openCodeV2PermissionToolCallId(data: RecordValue): string | undefined {
+  const source = asRecord(data.source);
+  const callId = asString(source?.callID) ?? asString(source?.id);
+  const sessionId = asString(data.sessionID);
+  return callId ? `opencode-v2:${sessionId ?? "global"}:${callId}` : undefined;
 }
 
 export type OpenCodeV2QuestionRequest = {
@@ -152,7 +246,7 @@ export type OpenCodeV2QuestionRequest = {
 export function readOpenCodeV2QuestionRequest(
   payload: RecordValue
 ): OpenCodeV2QuestionRequest | null {
-  if (payload.type !== "question.v2.asked") {
+  if (payload.type !== "question.asked" && payload.type !== "question.v2.asked") {
     return null;
   }
   const data = asRecord(payload.data);
@@ -260,6 +354,96 @@ export class OpenCodeV2EventNormalizer {
   private readonly toolInputs = new Map<string, RecordValue>();
   private readonly emittedText = new Map<string, string>();
   private readonly emittedReasoning = new Map<string, string>();
+  /** Shell processes spawned on behalf of a `session.tool.*` call (see `shell.*` handling). */
+  private readonly toolOwnedShells = new Set<string>();
+  /** Last status emitted per tool call (`${sessionId}:${callId}`), for reconciliation. */
+  private readonly toolStatuses = new Map<string, AgentToolCallStatus>();
+
+  /**
+   * Re-derive tool state from `GET /api/session/:id/message` after the volatile
+   * event stream dropped events (reconnect). Emits a `tool_call`/`tool_call_update`
+   * for every tool part whose status differs from what was last streamed, so no
+   * card stays stuck in "running" and no completed call goes unreported.
+   */
+  reconcileMessages(input: {
+    conversationId: string;
+    sessionId: string;
+    messages: RecordValue[];
+    childSessionId?: string;
+  }): AgentEventInput[] {
+    const events: AgentEventInput[] = [];
+    for (const message of input.messages) {
+      if (message.type !== "assistant" || !Array.isArray(message.content)) continue;
+      const assistantMessageId = asString(message.id);
+      for (const entry of message.content) {
+        const part = asRecord(entry);
+        if (part?.type !== "tool") continue;
+        const callId = asString(part.id) ?? asString(part.callID);
+        const state = asRecord(part.state);
+        const status = asString(state?.status);
+        if (!callId || !state || !status) continue;
+        const key = `${input.sessionId}:${callId}`;
+        const known = this.toolStatuses.get(key);
+        const target: AgentToolCallStatus =
+          status === "completed"
+            ? "completed"
+            : status === "error"
+              ? "failed"
+              : status === "pending"
+                ? "pending"
+                : "in_progress";
+        if (known === target) continue;
+        if (known === "completed" || known === "failed") continue;
+        const type =
+          target === "completed"
+            ? "session.tool.success"
+            : target === "failed"
+              ? "session.tool.failed"
+              : target === "pending"
+                ? "session.tool.input.started"
+                : "session.tool.called";
+        const name = asString(part.name) ?? this.toolNames.get(key);
+        if (name && !this.toolNames.has(key)) this.toolNames.set(key, name);
+        const data: RecordValue = {
+          sessionID: input.sessionId,
+          ...(assistantMessageId ? { assistantMessageID: assistantMessageId } : {}),
+          id: callId,
+          ...(name ? { name } : {}),
+          ...(asRecord(state.input) ? { input: state.input } : {}),
+          ...(state.content !== undefined ? { content: state.content } : {}),
+          ...(asRecord(state.metadata) ? { metadata: state.metadata } : {}),
+          ...(state.error !== undefined ? { error: state.error } : {}),
+        };
+        const payload: RecordValue = {
+          type,
+          data,
+          reconciled: true,
+        };
+        if (known === undefined && target !== "pending") {
+          // Never streamed at all: open the card before completing it.
+          events.push(
+            ...this.normalizeTool({
+              conversationId: input.conversationId,
+              payload: { ...payload, type: "session.tool.input.started" },
+              type: "session.tool.input.started",
+              data,
+              childSessionId: input.childSessionId,
+            })
+          );
+        }
+        events.push(
+          ...this.normalizeTool({
+            conversationId: input.conversationId,
+            payload,
+            type,
+            data,
+            childSessionId: input.childSessionId,
+          })
+        );
+      }
+    }
+    return events;
+  }
 
   normalize(input: {
     conversationId: string;
@@ -406,6 +590,26 @@ export class OpenCodeV2EventNormalizer {
       const info = asRecord(data.info) ?? data;
       const ptyId = asString(info.id) ?? asString(data.id);
       if (!ptyId) return [];
+      if (type.startsWith("shell.")) {
+        // The beta wraps every `shell` tool call in a shell process and emits
+        // `shell.created` / `shell.exited` for it (`info.metadata.sessionID`).
+        // The `session.tool.*` card already shows that command and its output,
+        // so a second terminal card per command is noise. Standalone shells
+        // (no owning session) still get their own card.
+        if (type === "shell.created") {
+          if (asString(asRecord(info.metadata)?.sessionID)) {
+            if (this.toolOwnedShells.size >= 2_000) {
+              const oldest = this.toolOwnedShells.values().next().value;
+              if (oldest) this.toolOwnedShells.delete(oldest);
+            }
+            this.toolOwnedShells.add(ptyId);
+            return [];
+          }
+        } else if (this.toolOwnedShells.has(ptyId)) {
+          if (type !== "shell.exited") this.toolOwnedShells.delete(ptyId);
+          return [];
+        }
+      }
       const ended = type.endsWith(".exited") || type.endsWith(".deleted");
       const command = asString(info.command) ?? asString(info.title) ?? type.split(".")[0] ?? "pty";
       return [
@@ -423,29 +627,32 @@ export class OpenCodeV2EventNormalizer {
       ];
     }
 
-    if (type === "permission.v2.asked") {
-      const requestId = asString(data.id);
-      if (!requestId) return [];
-      const action = asString(data.action) ?? "permission";
-      const resources = Array.isArray(data.resources)
-        ? data.resources.filter((value): value is string => typeof value === "string")
-        : [];
+    const permission = readOpenCodeV2PermissionRequest(input.payload);
+    if (permission) {
+      return [
+        openCodeV2PermissionRequestEvent({
+          conversationId: input.conversationId,
+          request: permission,
+          raw: input.payload,
+        }),
+      ];
+    }
+
+    if (type === "session.retry.scheduled" || type === "session.step.failed") {
+      // OpenCode retries transient provider failures itself; surface them as
+      // warnings instead of silently stalling (the turn is still running).
+      const attempt = typeof data.attempt === "number" ? ` (attempt ${data.attempt})` : "";
+      const message = errorText(data.error);
       return [
         {
           eventId: randomUUID(),
           conversationId: input.conversationId,
-          kind: "permission_request",
-          requestId,
-          title: `OpenCode requests ${action}`,
-          detail: resources.length > 0 ? resources.join("\n") : undefined,
-          toolCallId: asString(asRecord(data.source)?.callID)
-            ? `opencode-v2:${asString(data.sessionID) ?? "global"}:${asString(asRecord(data.source)?.callID)}`
-            : undefined,
-          options: [
-            { optionId: "allow", name: "Allow", kind: "allow_once" },
-            { optionId: "allow_always", name: "Allow Always", kind: "allow_always" },
-            { optionId: "deny", name: "Deny", kind: "reject_once" },
-          ],
+          kind: "system",
+          level: "warning",
+          text:
+            type === "session.retry.scheduled"
+              ? `OpenCode hit a transient provider error and is retrying${attempt}: ${message}`
+              : `OpenCode step failed: ${message}`,
           raw: input.payload,
         },
       ];
@@ -512,7 +719,7 @@ export class OpenCodeV2EventNormalizer {
     data: RecordValue;
     childSessionId?: string;
   }): AgentEventInput[] {
-    const callId = asString(input.data.callID);
+    const callId = openCodeV2ToolCallId(input.data);
     const sessionId = asString(input.data.sessionID);
     if (!callId || !sessionId) {
       return [];
@@ -528,9 +735,14 @@ export class OpenCodeV2EventNormalizer {
     if (input.type === "session.tool.input.delta" || input.type === "session.tool.input.ended") {
       return [];
     }
-    const name = this.toolNames.get(cacheKey) ?? "tool";
+    const name = this.toolNames.get(cacheKey) ?? asString(input.data.name) ?? "tool";
     const rawInput = this.toolInputs.get(cacheKey) ?? asRecord(input.data.input) ?? {};
     const status = toolStatus(input.type);
+    this.toolStatuses.set(cacheKey, status);
+    if (this.toolStatuses.size > 5_000) {
+      const oldest = this.toolStatuses.keys().next().value;
+      if (oldest) this.toolStatuses.delete(oldest);
+    }
     const kind = mapOpenCodeToolNameToAcpKind(name);
     const locations = mapOpenCodeToolLocations(name, rawInput);
     const rawOutput = mergeRawOutput(input.data);
@@ -538,7 +750,7 @@ export class OpenCodeV2EventNormalizer {
       contentText(input.data.content) ??
       (input.type === "session.tool.failed" ? errorText(input.data.error) : undefined);
     const title =
-      name === "subagent" && typeof rawInput.description === "string"
+      (name === "subagent" || name === "task") && typeof rawInput.description === "string"
         ? rawInput.description
         : name;
     const editPreview =

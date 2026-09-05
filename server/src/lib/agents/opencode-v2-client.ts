@@ -299,6 +299,21 @@ export class OpenCodeV2Client {
     );
   }
 
+  /**
+   * Permission requests still waiting for a reply in this workspace
+   * (`GET /api/permission/request`, same `Permission.Request` rows that
+   * `permission.asked` carries). Used as the fallback when the volatile
+   * `/api/event` stream dropped the ask.
+   */
+  async listPendingPermissions(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(
+      await this.request(`/api/permission/request?${query.toString()}`, undefined, {
+        timeoutMs: 10_000,
+      })
+    );
+  }
+
   async listActiveSessionIds(): Promise<string[]> {
     const response = await this.request("/api/session/active");
     const active = dataRecord(response);
