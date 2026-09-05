@@ -35,14 +35,17 @@ import {
   describeClaudeResultFailure,
   describeClaudeSystemEvent,
   formatClaudeUsageDetail,
+  isClaudePlaceholderText,
   isClaudeSubagentToolName,
   isClaudeTaskListToolName,
+  isSyntheticClaudeAssistantMessage,
   parentToolUseIdFromClaudeMessage,
   parseClaudeAskUserQuestion,
   parseClaudeElicitationForm,
   parseClaudeTaskEvent,
   permissionCategoryForClaudeTool,
   permissionTitleForClaudeTool,
+  textFromClaudeAssistantMessage,
   textFromClaudeToolResult,
   textFromClaudeUserMessage,
   toolResultFromClaudeUserMessage,
@@ -190,6 +193,8 @@ type ActiveTurn = {
   emittedAssistantText: boolean;
   lastApiError: string | null;
   lastAssistantError: string | null;
+  /** Most recent CLI note appended this turn, so echoed local-command output is not shown twice. */
+  lastSystemText: string | null;
   settled: boolean;
   settle: (outcome: TurnOutcome) => void;
   done: Promise<TurnOutcome>;
@@ -917,6 +922,7 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       emittedAssistantText: false,
       lastApiError: null,
       lastAssistantError: null,
+      lastSystemText: null,
       settled: false,
       settle: (outcome) => {
         if (turn.settled) {
@@ -1810,6 +1816,15 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     if (usage && !subagent) {
       this.lastAssistantUsage = usage;
     }
+    if (!subagent && !errorCode && isSyntheticClaudeAssistantMessage(record)) {
+      // Echo of a local slash command (`/clear` -> "(no content)", `/compact`
+      // -> "Not enough messages to compact."): CLI output, never a reply.
+      const text = textFromClaudeAssistantMessage(record).trim();
+      if (text && !isClaudePlaceholderText(text)) {
+        await this.appendSystemOnce("info", text, record);
+      }
+      return;
+    }
     if (apiMessageId ? scope.openApiMessageId !== apiMessageId : !scope.openMessageId) {
       await this.openMessage(scope, apiMessageId, subagent);
     }
@@ -2051,16 +2066,21 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     const success = subtype === "success" && record.is_error !== true;
     // A tools-only turn (e.g. plan approval) legitimately has no text; only
     // fall back to `result` when nothing was rendered and it carries content.
-    // Local slash commands (/clear, /compact) settle with a "(no content)"
-    // placeholder that must not become a reply.
+    // Local slash commands (/clear, /compact) never ran the model
+    // (`num_turns: 0`): their result text is CLI output, shown as a note, and
+    // "(no content)" placeholders are dropped.
     const resultText = typeof record.result === "string" ? record.result.trim() : "";
-    const placeholderResult = /^\(?no (?:content|output|response)\)?\.?$/i.test(resultText);
-    if (success && !turn.emittedAssistantText && resultText && !placeholderResult) {
-      const scope = turn.scope;
-      if (!scope.openMessageId) {
-        await this.openMessage(scope, null, null);
+    const localCommand = record.num_turns === 0;
+    if (success && !turn.emittedAssistantText && resultText && !isClaudePlaceholderText(resultText)) {
+      if (localCommand) {
+        await this.appendSystemOnce("info", resultText, record);
+      } else {
+        const scope = turn.scope;
+        if (!scope.openMessageId) {
+          await this.openMessage(scope, null, null);
+        }
+        await this.emitAssistantChunk(scope, resultText, null, record);
       }
-      await this.emitAssistantChunk(scope, resultText, null, record);
     }
     if (turn.cancelRequested) {
       turn.settle({ kind: "cancelled", result: record });
@@ -3056,6 +3076,24 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
   // Helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Appends a CLI note unless the current turn already carries the same text
+   * (the CLI echoes local-command output as a status, a synthetic assistant
+   * message, and the result text; one note is enough).
+   */
+  private async appendSystemOnce(
+    level: "info" | "warning" | "error",
+    text: string,
+    raw?: unknown
+  ): Promise<void> {
+    const trimmed = text.trim();
+    const last = this.turn?.lastSystemText;
+    if (!trimmed || (last && (last === trimmed || last.includes(trimmed)))) {
+      return;
+    }
+    await this.appendSystem(level, trimmed, raw);
+  }
+
   private async appendSystem(
     level: "info" | "warning" | "error",
     text: string,
@@ -3063,6 +3101,9 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
   ): Promise<void> {
     if (!text.trim()) {
       return;
+    }
+    if (this.turn) {
+      this.turn.lastSystemText = text.trim();
     }
     await this.callbacks.appendEvents([
       {

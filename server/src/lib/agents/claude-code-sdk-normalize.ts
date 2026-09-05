@@ -141,6 +141,21 @@ export function toolUsesFromClaudeAssistantMessage(message: unknown): ToolPayloa
   );
 }
 
+/**
+ * Local slash commands (`/clear`, `/compact`, ...) and CLI notices are echoed
+ * as `assistant` messages with `model: "<synthetic>"`; they are CLI output,
+ * not model replies.
+ */
+export function isSyntheticClaudeAssistantMessage(message: unknown): boolean {
+  const inner = asRecord(asRecord(message)?.message);
+  return inner?.model === "<synthetic>";
+}
+
+/** `(no content)`-style placeholders the CLI emits when a local command produced nothing to show. */
+export function isClaudePlaceholderText(text: string): boolean {
+  return /^\(?no (?:content|output|response)\)?\.?$/i.test(text.trim());
+}
+
 /** Anthropic API message id carried by both partial stream events and full assistant messages. */
 export function apiMessageIdFromClaudeMessage(message: unknown): string | null {
   const record = asRecord(message);
