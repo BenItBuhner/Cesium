@@ -78,6 +78,46 @@ async function homeWorkspaceIdPayload(): Promise<{ homeWorkspaceId: string | nul
   return { homeWorkspaceId: home?.id ?? null };
 }
 
+/**
+ * Repository info runs ~8 git subprocesses per workspace (status, branches,
+ * worktrees, ahead/behind...). The web, desktop and mobile clients all ask for
+ * the same list on load, so share one computation for a few seconds.
+ */
+const REPOSITORY_INFO_SHARE_TTL_MS = 3_000;
+let repositoryInfoMemo: {
+  key: string;
+  at: number;
+  value: Awaited<ReturnType<typeof buildRepositoryInfoByWorkspace>>;
+} | null = null;
+let repositoryInfoInFlight: {
+  key: string;
+  promise: ReturnType<typeof buildRepositoryInfoByWorkspace>;
+} | null = null;
+
+function getSharedRepositoryInfo(
+  workspaces: WorkspaceRecord[]
+): ReturnType<typeof buildRepositoryInfoByWorkspace> {
+  const key = workspaces.map((workspace) => `${workspace.id}:${workspace.root}`).join("\n");
+  if (repositoryInfoMemo?.key === key && Date.now() - repositoryInfoMemo.at < REPOSITORY_INFO_SHARE_TTL_MS) {
+    return Promise.resolve(repositoryInfoMemo.value);
+  }
+  if (repositoryInfoInFlight?.key === key) {
+    return repositoryInfoInFlight.promise;
+  }
+  const promise = buildRepositoryInfoByWorkspace(workspaces)
+    .then((value) => {
+      repositoryInfoMemo = { key, at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      if (repositoryInfoInFlight?.promise === promise) {
+        repositoryInfoInFlight = null;
+      }
+    });
+  repositoryInfoInFlight = { key, promise };
+  return promise;
+}
+
 // Fresh installs boot with an empty registry on purpose: the workbench runs
 // without a workspace (standalone chats) until the user explicitly creates,
 // opens, or clones one. Never auto-seed "default"/Home entries here.
@@ -87,7 +127,7 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
     getWorkspaceProfile(),
     resolveStartupWorkspace(),
     homeWorkspaceIdPayload(),
-    buildRepositoryInfoByWorkspace(workspaces),
+    getSharedRepositoryInfo(workspaces),
   ]);
 
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
@@ -106,7 +146,7 @@ workspaceRoutes.get("/api/workspaces", async (c) => {
   const [profile, homePayload, repositoryInfoByWorkspaceId] = await Promise.all([
     getWorkspaceProfile(),
     homeWorkspaceIdPayload(),
-    buildRepositoryInfoByWorkspace(workspaces),
+    getSharedRepositoryInfo(workspaces),
   ]);
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
