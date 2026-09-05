@@ -29,7 +29,7 @@ test("a managed OpenCode server that exits on startup fails fast with its output
     (error: Error) => {
       assert.match(error.message, /exited before becoming healthy \(code 1/);
       assert.match(error.message, /initialized by the OpenCode v2 beta/);
-      assert.match(error.message, /OPENCODE_DB/);
+      assert.match(error.message, /OPENCURSOR_OPENCODE_DB/);
       assert.match(error.message, /Database is not empty and has no session table/);
       assert.ok(!error.message.includes("\u001b["), "ANSI escapes stripped");
       return true;

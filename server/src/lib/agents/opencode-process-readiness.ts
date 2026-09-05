@@ -40,9 +40,10 @@ export function describeOpenCodeStartupFailure(output: string[]): string | undef
   if (/Database is not empty and has no session table/i.test(text)) {
     return [
       "OpenCode's database (~/.local/share/opencode/opencode.db) was initialized by the OpenCode v2 beta,",
-      "which the current release cannot open. Give one generation its own database with OPENCODE_DB",
-      "(for example OPENCODE_DB=opencode-current.db for `opencode`, or an absolute path), or start",
-      "the current release once before the beta on a fresh data directory.",
+      "which the current release cannot open. Give one generation its own database: set",
+      "OPENCURSOR_OPENCODE_DB=opencode-current.db (current release) or OPENCURSOR_OPENCODE_V2_DB=opencode-beta.db",
+      "(v2 beta) in Cesium's environment - relative to OpenCode's data dir or absolute - or start the current",
+      "release once before the beta on a fresh data directory.",
     ].join(" ");
   }
   if (/EADDRINUSE|address already in use|already in use by another process/i.test(text)) {

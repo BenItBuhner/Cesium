@@ -158,6 +158,9 @@ export async function connectOpenCodeV2(input: {
         OPENCODE_PASSWORD: password,
         OPENCODE_CLIENT: "cesium-opencode-v2-beta",
         ...(configuredDirectory ? { OPENCODE_CONFIG_DIR: path.resolve(configuredDirectory) } : {}),
+        ...(process.env.OPENCURSOR_OPENCODE_V2_DB?.trim()
+          ? { OPENCODE_DB: process.env.OPENCURSOR_OPENCODE_V2_DB.trim() }
+          : {}),
         OPENCURSOR_PROCESS_NAME: `Cesium Agent - OpenCode v2 Beta :${port}`,
       }),
       stdio: ["pipe", "pipe", "pipe"],

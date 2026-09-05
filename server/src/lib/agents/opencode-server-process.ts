@@ -176,6 +176,11 @@ export async function connectOpenCodeServer(input: {
       cwd: input.workspaceRoot,
       env: spawnSafeEnv({
         OPENCURSOR_PROCESS_NAME: `Cesium Agent - OpenCode Server :${port}`,
+        // Per-generation database override: both OpenCode generations default to
+        // the same ~/.local/share/opencode/opencode.db (see opencode-process-readiness).
+        ...(process.env.OPENCURSOR_OPENCODE_DB?.trim()
+          ? { OPENCODE_DB: process.env.OPENCURSOR_OPENCODE_DB.trim() }
+          : {}),
       }),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
