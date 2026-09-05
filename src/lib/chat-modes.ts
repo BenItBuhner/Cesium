@@ -6,7 +6,6 @@ export {
   filterGoalModeOptions,
   formatModeLabel,
   getModeTone,
-  isBurnMode,
   isGoalMode,
   isOrchestrationMode,
   isOrchestrationModeLocked,

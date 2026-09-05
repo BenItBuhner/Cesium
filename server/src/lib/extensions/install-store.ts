@@ -19,6 +19,7 @@ import type {
   ExtensionMarketplaceSearchResponse,
   ExtensionPermissionGrant,
 } from "./types.js";
+import { asString, asStringArray } from "../coerce.js";
 
 const OPEN_VSX_BASE_URL = "https://open-vsx.org";
 const MARKETPLACE_SEARCH_LIMIT_MAX = 50;
@@ -53,16 +54,6 @@ async function cached<T>(key: string, loader: () => Promise<T>): Promise<T> {
     }
   }
   return value;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 function countContribution(raw: Record<string, unknown>, key: string): number {

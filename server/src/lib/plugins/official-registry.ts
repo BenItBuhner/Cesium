@@ -1,6 +1,7 @@
 import { slugifyMcpServerId } from "../mcp/paths.js";
 import { standardHarnessSupport } from "./harness-support.js";
 import type { AgentPluginDefinition } from "./types.js";
+import { asRecord } from "../coerce.js";
 
 const DEFAULT_OFFICIAL_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0/servers";
 
@@ -25,12 +26,6 @@ type OfficialServer = {
   packages?: OfficialPackage[];
   icons?: Array<{ src?: string }>;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function unwrapServer(entry: unknown): OfficialServer | null {
   const record = asRecord(entry);

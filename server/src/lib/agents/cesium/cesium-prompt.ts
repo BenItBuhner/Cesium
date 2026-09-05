@@ -1,9 +1,5 @@
 import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
 import type { OrchestrationAssignmentStatus } from "../../orchestration/types.js";
-export {
-  PERMISSION_OPTIONS,
-  STANDARD_PERMISSION_OPTIONS,
-} from "../permission-options.js";
 
 export const CESIUM_SYSTEM_PROMPT = buildCesiumBaseSystemPrompt();
 

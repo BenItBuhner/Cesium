@@ -505,6 +505,7 @@ export function ModelDropdown({
   const useVirtualList =
     listContentReady && filteredBase.length >= MODEL_LIST_VIRTUALIZE_THRESHOLD;
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual returns non-memoizable helpers by design; the compiler skipping this hook is expected.
   const virtualizer = useVirtualizer({
     count: useVirtualList ? filteredBase.length : 0,
     getScrollElement: () => listRef.current,
@@ -1031,11 +1032,11 @@ export function ModelDropdown({
                 return (
                   <div
                     key={backend.id}
-                    role="menuitem"
+                    role="menuitemradio"
                     className={`my-[1px] items-center ${pickerOptionRowClass(harnessActive, false)} ${
                       available ? "" : "opacity-55"
                     }`}
-                    aria-pressed={harnessActive}
+                    aria-checked={harnessActive}
                     title={backend.description}
                   >
                     <button

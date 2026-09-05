@@ -1,9 +1,14 @@
+import {
+  DEFAULT_SIDE_CHAT_DELTA_MAX_CHARS,
+  DEFAULT_SIDE_CHAT_SEED_MAX_CHARS,
+} from "../../side-chat/side-chat-context.js";
 import type {
   CesiumHarnessFeatureSelection,
   CesiumHarnessLimits,
   CesiumHarnessSettings,
   CesiumSubagentsVersion,
 } from "./types.js";
+import { asNumber, asRecord } from "../../../coerce.js";
 
 /** Timed `wait` tool hard cap (24 hours) - mirrors Cesium prompt defaults. */
 export const DEFAULT_WAIT_MAX_SECONDS = 24 * 60 * 60;
@@ -32,6 +37,13 @@ export const HARD_MAX_SUBAGENTS_SPAWN_DEPTH = 4;
 
 export const DEFAULT_SUBAGENTS_VERSION: CesiumSubagentsVersion = 1;
 
+/** Side chats: durable child conversations fed the parent transcript as hidden context. */
+export const DEFAULT_MAX_SIDE_CHATS_PER_PARENT = 4;
+export const HARD_MAX_SIDE_CHATS_PER_PARENT = 16;
+export const MIN_SIDE_CHAT_CONTEXT_CHARS = 1_000;
+export const HARD_MAX_SIDE_CHAT_CONTEXT_CHARS = 200_000;
+export { DEFAULT_SIDE_CHAT_DELTA_MAX_CHARS, DEFAULT_SIDE_CHAT_SEED_MAX_CHARS };
+
 function envInt(name: string): number | undefined {
   const raw = process.env[name]?.trim();
   if (!raw) return undefined;
@@ -58,6 +70,21 @@ export function defaultHarnessLimits(): CesiumHarnessLimits {
       1,
       HARD_MAX_SUBAGENTS_SPAWN_DEPTH
     ),
+    maxSideChatsPerParent: clampInt(
+      envInt("OPENCURSOR_SIDE_CHAT_MAX_PER_PARENT") ?? DEFAULT_MAX_SIDE_CHATS_PER_PARENT,
+      1,
+      HARD_MAX_SIDE_CHATS_PER_PARENT
+    ),
+    sideChatSeedMaxChars: clampInt(
+      envInt("OPENCURSOR_SIDE_CHAT_SEED_MAX_CHARS") ?? DEFAULT_SIDE_CHAT_SEED_MAX_CHARS,
+      MIN_SIDE_CHAT_CONTEXT_CHARS,
+      HARD_MAX_SIDE_CHAT_CONTEXT_CHARS
+    ),
+    sideChatDeltaMaxChars: clampInt(
+      envInt("OPENCURSOR_SIDE_CHAT_DELTA_MAX_CHARS") ?? DEFAULT_SIDE_CHAT_DELTA_MAX_CHARS,
+      MIN_SIDE_CHAT_CONTEXT_CHARS,
+      HARD_MAX_SIDE_CHAT_CONTEXT_CHARS
+    ),
   };
 }
 
@@ -68,16 +95,6 @@ export function defaultHarnessSettings(): CesiumHarnessSettings {
     },
     limits: defaultHarnessLimits(),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function asVersion(value: unknown): number | undefined {
@@ -152,6 +169,21 @@ export function normalizeHarnessLimits(raw: unknown): CesiumHarnessLimits {
       asNumber(record.maxSpawnDepth) ?? defaults.maxSpawnDepth,
       1,
       HARD_MAX_SUBAGENTS_SPAWN_DEPTH
+    ),
+    maxSideChatsPerParent: clampInt(
+      asNumber(record.maxSideChatsPerParent) ?? defaults.maxSideChatsPerParent,
+      1,
+      HARD_MAX_SIDE_CHATS_PER_PARENT
+    ),
+    sideChatSeedMaxChars: clampInt(
+      asNumber(record.sideChatSeedMaxChars) ?? defaults.sideChatSeedMaxChars,
+      MIN_SIDE_CHAT_CONTEXT_CHARS,
+      HARD_MAX_SIDE_CHAT_CONTEXT_CHARS
+    ),
+    sideChatDeltaMaxChars: clampInt(
+      asNumber(record.sideChatDeltaMaxChars) ?? defaults.sideChatDeltaMaxChars,
+      MIN_SIDE_CHAT_CONTEXT_CHARS,
+      HARD_MAX_SIDE_CHAT_CONTEXT_CHARS
     ),
   };
 }

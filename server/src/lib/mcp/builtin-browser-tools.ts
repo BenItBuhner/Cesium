@@ -22,6 +22,7 @@ import {
   saveBrowserScreenshotArtifact,
 } from "../browser-control/artifacts.js";
 import type { BrowserControlViewport } from "../browser-control/types.js";
+import { asString } from "../coerce.js";
 
 export const BROWSER_MCP_SERVER_ID = "browser";
 
@@ -213,10 +214,6 @@ export const BROWSER_MCP_TOOLS: Tool[] = [
     },
   },
 ];
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 /** Map legacy/alternate browser tool names to the canonical built-in MCP surface. */
 export function normalizeBrowserMcpToolInvocation(input: {

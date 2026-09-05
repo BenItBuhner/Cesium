@@ -367,6 +367,7 @@ export function BrowserTab({
     setUrlBar(u);
     setIframeKey((k) => k + 1);
     forceNavUi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the tab identity only; re-running on every targetUrl change would wipe in-tab history on each navigation.
   }, [defaultHome, forceNavUi, tab.id]);
 
   useEffect(() => {
@@ -551,6 +552,7 @@ export function BrowserTab({
         void bridge.destroySession(sid).catch(() => undefined);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tab.browser.engine is written by this effect's own UPDATE_BROWSER_TAB_META dispatch; depending on it would tear down the session it just created.
   }, [dispatch, forceNavUi, nativeSessionRestartKey, newBrowserEnabled, tab.id]);
 
   useEffect(() => {
@@ -1637,7 +1639,7 @@ export function BrowserTab({
     return () => {
       cancelled = true;
     };
-  }, [dispatch, tab.id, tab.browser?.targetUrl]);
+  }, [defaultHome, dispatch, tab.id, tab.browser?.targetUrl]);
 
   const browserLockState = tab.browser?.lockState;
   const browserLocked = Boolean(browserLockState?.locked);

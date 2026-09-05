@@ -140,7 +140,6 @@ export function EditorTab({
             />
           ) : faviconSrc && !faviconFailed ? (
             // Proxied arbitrary URLs; next/image is not appropriate here.
-            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={faviconSrc}
               alt=""

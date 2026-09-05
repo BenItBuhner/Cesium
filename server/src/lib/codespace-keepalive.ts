@@ -739,11 +739,6 @@ export function startCodespaceKeepalive(
   return singleton;
 }
 
-export function stopCodespaceKeepalive(): void {
-  singleton?.stop();
-  singleton = null;
-}
-
 /** Cheap hook for request/socket paths; no-op when the service is not running. */
 export function noteCodespaceClientActivity(): void {
   singleton?.noteClientActivity();

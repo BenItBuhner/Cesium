@@ -41,6 +41,7 @@ export const CESIUM_AGENT_CAPABILITIES: AgentProviderCapabilities = {
   supportsInlineReasoning: true,
   supportsCompletionRetry: true,
   supportsCloudExecution: false,
+  supportsSideChats: false,
 };
 
 export type ModelChoice = {

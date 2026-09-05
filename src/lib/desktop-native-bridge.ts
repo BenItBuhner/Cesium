@@ -77,10 +77,3 @@ export function getDesktopNativeEventsBridge(): DesktopNativeEventsBridge | null
 export function isDesktopNativeAvailable(): boolean {
   return getDesktopNotificationsBridge() != null;
 }
-
-export function getDesktopPlatform(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return (window as CesiumDesktopNativeGlobal).cesiumDesktop?.platform ?? null;
-}

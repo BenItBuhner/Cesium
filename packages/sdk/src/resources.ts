@@ -15,7 +15,6 @@ import {
   CloudAgentSettingsSchema,
   CloudAgentTaskSchema,
   CloudAgentTasksResponseSchema,
-  WorkspaceRecordSchema,
   WorkspacesResponseSchema,
   type AgentBackendId,
   type AgentConversationConfigPatch,

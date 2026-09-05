@@ -188,7 +188,6 @@ function SettingsServerPicker({
 export function ServerConnectionsSettingsPanel() {
   const {
     activeServer,
-    hasServer,
     settingsServer,
     servers,
     onlineServers,
