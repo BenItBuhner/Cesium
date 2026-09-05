@@ -56,6 +56,14 @@ android {
       signingConfig System.getenv("ANDROID_KEYSTORE_PATH")
         ? signingConfigs.release
         : signingConfigs.debug
+      // R8 code + resource shrinking (React Native's template leaves both
+      // off). Smaller APK, fewer classes to load on cold start. Native modules
+      // survive via react-android's consumer rules (NativeModule implementors
+      // and @ReactMethod members are kept), manifest-declared services and
+      // receivers via AGP, kotlinx.serialization via proguard-rules.pro.
+      minifyEnabled true
+      shrinkResources true
+      proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
     }
   }
 }

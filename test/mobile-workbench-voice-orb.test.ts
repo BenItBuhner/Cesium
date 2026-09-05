@@ -15,12 +15,15 @@ describe("mobile workbench voice orb gate", () => {
       process.cwd(),
       "apps/mobile/android/app/src/main/assets/workbench/assets"
     );
-    const indexBundle = readdirSync(assetsDir).find(
-      (name) => name.startsWith("index-") && name.endsWith(".js")
+    const chunks = readdirSync(assetsDir).filter((name) => name.endsWith(".js"));
+    assert.ok(
+      chunks.some((name) => name.startsWith("index-")),
+      "expected a Vite index-*.js workbench bundle"
     );
-    assert.ok(indexBundle, "expected a Vite index-*.js workbench bundle");
 
-    const source = readFileSync(join(assetsDir, indexBundle), "utf8");
+    // The workbench is code-split (the settings surface, editor and terminal
+    // load on demand), so the gate's pieces can live in different chunks.
+    const source = chunks.map((name) => readFileSync(join(assetsDir, name), "utf8")).join("\n");
     assert.match(
       source,
       /showVoiceOrb:!1/,
