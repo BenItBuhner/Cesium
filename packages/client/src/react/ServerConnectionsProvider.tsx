@@ -557,14 +557,27 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     [state.servers]
   );
 
-  const onlineServers = useMemo(
-    () =>
-      dedupedServers.filter((server) => {
-        const health = serverStatusById[server.id]?.health ?? "unknown";
-        return health === "online" || health === "auth_required";
-      }),
-    [dedupedServers, serverStatusById]
-  );
+  // Every health probe rewrites `serverStatusById` (fresh lastCheckedAt), so a
+  // plain useMemo here would hand consumers a new array every 30s and re-run
+  // every effect keyed on it (the workspace directory used to refetch
+  // `/api/workspaces` on each probe). Keep the previous array while the set
+  // of online servers is unchanged.
+  const onlineServersRef = useRef<ServerConnection[]>([]);
+  const onlineServers = useMemo(() => {
+    const next = dedupedServers.filter((server) => {
+      const health = serverStatusById[server.id]?.health ?? "unknown";
+      return health === "online" || health === "auth_required";
+    });
+    const previous = onlineServersRef.current;
+    const unchanged =
+      previous.length === next.length &&
+      previous.every((server, index) => server === next[index]);
+    if (unchanged) {
+      return previous;
+    }
+    onlineServersRef.current = next;
+    return next;
+  }, [dedupedServers, serverStatusById]);
 
   const value = useMemo<ServerConnectionsContextValue>(() => {
     const selected =

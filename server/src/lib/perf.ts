@@ -17,11 +17,20 @@ function perfFlagEnabled(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+let perfEnabledMemo: boolean | null = null;
+
+/**
+ * Memoized: this is consulted on every HTTP request and inside every
+ * `measureServerPerf` span, and `process.env` lookups are not free. The flags
+ * are process-lifetime configuration, so the first answer is the answer.
+ */
 export function serverPerfEnabled(): boolean {
-  return (
-    perfFlagEnabled(process.env.OPENCURSOR_PERF) ||
-    perfFlagEnabled(process.env.OPENCURSOR_PERF_REPORT)
-  );
+  if (perfEnabledMemo === null) {
+    perfEnabledMemo =
+      perfFlagEnabled(process.env.OPENCURSOR_PERF) ||
+      perfFlagEnabled(process.env.OPENCURSOR_PERF_REPORT);
+  }
+  return perfEnabledMemo;
 }
 
 export function startServerPerfSpan(): number {
@@ -56,6 +65,9 @@ export async function measureServerPerf<T>(
   fn: () => Promise<T>,
   fields?: PerfSpan["fields"]
 ): Promise<T> {
+  if (!serverPerfEnabled()) {
+    return fn();
+  }
   const startedAt = startServerPerfSpan();
   try {
     return await fn();

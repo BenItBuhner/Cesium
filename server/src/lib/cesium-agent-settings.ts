@@ -1669,19 +1669,81 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
   ];
 }
 
+/**
+ * Provider ids `resolveCesiumApiKey` can satisfy right now: stored keys (by
+ * id, by `custom-` alias, or by unambiguous key prefix), built-in env keys,
+ * the env bootstrap provider, user-defined custom providers, and connected
+ * OAuth subscriptions. Mirrors the resolver's lookup rules so callers can
+ * cheaply decide which catalog rows are actually runnable.
+ */
+export async function listCredentialedCesiumProviderIds(
+  settings?: CesiumAgentSettings
+): Promise<Set<string>> {
+  const resolved = settings ?? (await getCesiumAgentSettings());
+  const ids = new Set<string>();
+  for (const key of resolved.providerKeys) {
+    if (!key.apiKey?.trim()) {
+      continue;
+    }
+    const normalized = normalizeProviderId(key.providerId);
+    if (!normalized) {
+      continue;
+    }
+    ids.add(normalized);
+    // A key stored for `foo` also satisfies lookups for `custom-foo`
+    // (see providerKeyLookupIds).
+    ids.add(`custom-${normalized}`);
+    const inferred = inferProviderIdFromApiKey(key.apiKey);
+    if (inferred) {
+      ids.add(inferred);
+    }
+  }
+  for (const entry of BUILTIN_ENV_KEYS) {
+    if (process.env[entry.env]?.trim()) {
+      ids.add(normalizeProviderId(entry.providerId));
+    }
+  }
+  const bootstrap = readCesiumEnvBootstrap();
+  if (bootstrap) {
+    ids.add(normalizeProviderId(bootstrap.providerId));
+  }
+  for (const provider of resolved.customProviders) {
+    ids.add(normalizeProviderId(provider.id));
+  }
+  try {
+    const { getCesiumOAuthConnectedProviderIds } = await import("./cesium-oauth.js");
+    for (const providerId of await getCesiumOAuthConnectedProviderIds()) {
+      ids.add(normalizeProviderId(providerId));
+    }
+  } catch {
+    // OAuth module unavailable: stored/env keys still decide.
+  }
+  return ids;
+}
+
 export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOption[]> {
   const [settings, catalog] = await Promise.all([
     getCesiumAgentSettings(),
     getCesiumModelCatalog(),
   ]);
+  const credentialedProviders = await listCredentialedCesiumProviderIds(settings);
   // Custom provider models are already merged into the catalog. Models the
   // user disabled under Model access are hidden from the picker, except the
   // active default (existing conversations keep working until it changes).
+  //
+  // The picker also only lists providers that have a usable credential. The
+  // full models.dev catalog is thousands of rows across ~100 providers; every
+  // row from a provider without a key is a guaranteed "No API key configured"
+  // failure at send time, yet it used to be persisted in the provider cache,
+  // mirrored into global settings toggles, and shipped on every conversation
+  // list response (~2 MB per request). Settings -> Model access still browses
+  // the complete catalog through `/api/settings/cesium-agent/models`.
   const modelEntries = catalog.filter(
     (model) =>
       model.supportsTools &&
       (model.modelId === settings.defaultModelId ||
-        isCesiumModelEnabled(model.modelId, settings.modelAccess))
+        (credentialedProviders.has(normalizeProviderId(model.providerId)) &&
+          isCesiumModelEnabled(model.modelId, settings.modelAccess)))
   );
   const modelOptions = modelEntries.map((model) => ({
     value: model.modelId,

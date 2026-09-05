@@ -110,6 +110,8 @@ import type { QuickActionDefinition } from "@cesium/core";
 
 type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
 
+const EMPTY_SETTINGS_SEARCH: SettingsSearchEntry[] = [];
+
 /**
  * While focus is inside `[data-ide-input-sink]` (chat composer, dropdowns, etc.),
  * only shortcuts listed here are evaluated - all others are suppressed so keys like
@@ -2008,9 +2010,13 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [inferEditorIcon, openExplorerFile]
   );
 
+  // Only materialize the settings search index while Quick Open is showing;
+  // it walks every settings section plus every model toggle and used to be
+  // rebuilt on every toggle-state sync for a palette that was closed.
+  const quickOpenVisible = palette === "quickopen";
   const settingsSearchEntries = useMemo(
-    () => buildSettingsSearchIndex(settings.models.byBackend),
-    [settings.models.byBackend]
+    () => (quickOpenVisible ? buildSettingsSearchIndex(settings.models.byBackend) : EMPTY_SETTINGS_SEARCH),
+    [quickOpenVisible, settings.models.byBackend]
   );
 
   const onQuickPickConversation = useCallback(

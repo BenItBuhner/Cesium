@@ -71,12 +71,12 @@ async function copyOrtRuntime() {
   }
   const entries = await fs.readdir(distDir);
   // Only the wasm execution-provider files the browser actually loads -
-  // keeps the payload small enough to bundle into the Android APK.
+  // keeps the payload small enough to bundle into the Android APK. The VAD
+  // imports the wasm-only runtime (`onnxruntime-web/wasm`, executionProviders
+  // ["wasm"]), so the 26 MB WebGPU/JSEP variants are never requested.
   const needed = new Set([
     "ort-wasm-simd-threaded.wasm",
     "ort-wasm-simd-threaded.mjs",
-    "ort-wasm-simd-threaded.jsep.wasm",
-    "ort-wasm-simd-threaded.jsep.mjs",
   ]);
   const wanted = entries.filter((entry) => needed.has(entry));
   let copied = 0;

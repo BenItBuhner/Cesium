@@ -108,13 +108,34 @@ export async function legacyFsListWorkspaceConversationRecords(
     .sort((a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title));
 }
 
+export type LegacyFsAppendResult = {
+  appended: AgentStoredEvent[];
+  /** The conversation record as written to meta.json by this append. */
+  conversation: AgentConversationRecord;
+};
+
 export async function legacyFsAppendConversationEvents(
   workspaceId: string,
   conversationId: string,
-  events: AgentEventInput[]
-): Promise<AgentStoredEvent[]> {
+  events: AgentEventInput[],
+  options?: {
+    /**
+     * Produces the record to persist from the freshest on-disk record and the
+     * appended rows. Lets the storage driver fold its conversation patch into
+     * this write instead of rewriting meta.json a second time right after.
+     */
+    finalize?: (
+      base: AgentConversationRecord,
+      appended: AgentStoredEvent[]
+    ) => AgentConversationRecord;
+  }
+): Promise<LegacyFsAppendResult> {
   if (events.length === 0) {
-    return [];
+    const record = await legacyFsReadConversationRecord(workspaceId, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    return { appended: [], conversation: record };
   }
 
   return withConversationQueue(workspaceId, conversationId, async () => {
@@ -151,19 +172,21 @@ export async function legacyFsAppendConversationEvents(
     const lastUser = bumpListRank
       ? appended.filter((e) => e.kind === "user_message").at(-1)
       : undefined;
-    const updatedRecord: AgentConversationRecord = {
-      ...base,
-      updatedAt: bumpListRank
-        ? Math.max(base.updatedAt, lastUser?.createdAt ?? now)
-        : base.updatedAt,
-      lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
-    };
+    const updatedRecord: AgentConversationRecord = options?.finalize
+      ? options.finalize(base, appended)
+      : {
+          ...base,
+          updatedAt: bumpListRank
+            ? Math.max(base.updatedAt, lastUser?.createdAt ?? now)
+            : base.updatedAt,
+          lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
+        };
     await writeJsonFile(
       getConversationMetaFile(workspaceId, conversationId),
       updatedRecord
     );
 
-    return appended;
+    return { appended, conversation: updatedRecord };
   });
 }
 

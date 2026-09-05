@@ -4,12 +4,13 @@ import chokidar, { type FSWatcher } from "chokidar";
 import { WebSocketServer } from "ws";
 import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 import { publish, subscribeSync } from "../cache/pubsub.js";
-import {
-  isDimmed,
-  shouldIgnorePath,
-  toRelativePath,
-} from "../lib/workspace.js";
+import { isDimmed, toRelativePath } from "../lib/workspace.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
+
+/** True when any path segment is a dimmed folder (node_modules, dist, .gradle, ...). */
+function isInsideDimmedDirectory(relativePath: string): boolean {
+  return relativePath.split("/").some((segment) => isDimmed(segment));
+}
 
 type SequencedFsEvent =
   | { type: "add"; seq: number; path: string; isDir: false }
@@ -139,12 +140,7 @@ function handleFsEvent(
   }
 
   const relativePath = toRelativePath(room.root, absolutePath);
-  if (!relativePath || shouldIgnorePath(relativePath)) {
-    return;
-  }
-
-  const topLevelName = relativePath.split("/")[0] ?? "";
-  if (isDimmed(topLevelName)) {
+  if (!relativePath || isInsideDimmedDirectory(relativePath)) {
     return;
   }
 
@@ -169,12 +165,17 @@ async function createWatcherRoom(workspaceId: string): Promise<WorkspaceWatcherR
     root: workspace.root,
     name: workspace.name,
     watcher: chokidar.watch(workspace.root, {
+      // chokidar asks about the root itself (relative path ""). The previous
+      // predicate returned `shouldIgnorePath("") === true` for it, so the
+      // watcher ignored its own root and watched nothing at all - no live
+      // explorer updates, no external-change detection, ever. It also only
+      // skipped dimmed names at the top level, so once the root is watched,
+      // nested node_modules / dist / .gradle trees (6.7k directories in this
+      // repo vs ~800 real ones) would be tracked for folders the explorer and
+      // search already treat as leaves.
       ignored: (watchedPath) => {
         const relativePath = toRelativePath(workspace.root, watchedPath);
-        return (
-          shouldIgnorePath(relativePath) ||
-          isDimmed(relativePath.split("/")[0] ?? "")
-        );
+        return relativePath !== "" && isInsideDimmedDirectory(relativePath);
       },
       ignoreInitial: true,
       persistent: true,

@@ -1,7 +1,3 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpServerConfig } from "@cesium/core/mcp";
 import { refreshMcpOAuthAccessToken } from "./oauth.js";
 import {
@@ -37,6 +33,34 @@ export type McpClientSession = {
   protocol: McpProtocolNegotiation;
 };
 
+/**
+ * The MCP SDK (client + three transports) costs ~30 MB RSS and ~50 ms to
+ * load, and this module sits on the boot path via the connection manager
+ * and the Cesium provider. Session-protocol connections are the only thing
+ * that needs it, so load it on first use.
+ */
+let sdkPromise: Promise<{
+  Client: typeof import("@modelcontextprotocol/sdk/client/index.js").Client;
+  SSEClientTransport: typeof import("@modelcontextprotocol/sdk/client/sse.js").SSEClientTransport;
+  StdioClientTransport: typeof import("@modelcontextprotocol/sdk/client/stdio.js").StdioClientTransport;
+  StreamableHTTPClientTransport: typeof import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
+}> | null = null;
+
+function loadMcpSdk() {
+  sdkPromise ??= Promise.all([
+    import("@modelcontextprotocol/sdk/client/index.js"),
+    import("@modelcontextprotocol/sdk/client/sse.js"),
+    import("@modelcontextprotocol/sdk/client/stdio.js"),
+    import("@modelcontextprotocol/sdk/client/streamableHttp.js"),
+  ]).then(([client, sse, stdio, http]) => ({
+    Client: client.Client,
+    SSEClientTransport: sse.SSEClientTransport,
+    StdioClientTransport: stdio.StdioClientTransport,
+    StreamableHTTPClientTransport: http.StreamableHTTPClientTransport,
+  }));
+  return sdkPromise;
+}
+
 export async function resolveMcpRequestHeaders(
   workspaceId: string,
   config: McpServerConfig
@@ -70,6 +94,8 @@ async function connectSessionSdkClient(input: {
   headers: Record<string, string>;
   remoteUrl?: URL;
 }): Promise<Omit<McpClientSession, "protocol">> {
+  const { Client, SSEClientTransport, StdioClientTransport, StreamableHTTPClientTransport } =
+    await loadMcpSdk();
   const client = new Client(
     { name: "opencursor-cesium", version: "0.1.0" },
     { capabilities: {} }

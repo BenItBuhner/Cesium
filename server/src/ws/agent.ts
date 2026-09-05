@@ -16,6 +16,7 @@ import type {
 } from "../lib/agents/types.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { subscribeBrowserControlTabsChanged } from "../lib/browser-control/service.js";
 import { noteCodespaceClientActivity } from "../lib/codespace-keepalive.js";
 import { measureServerPerf } from "../lib/perf.js";
 
@@ -334,6 +335,24 @@ subscribeAgentStoreEvents((event) => {
         sendSerialized(client.socket, serialized, { droppable: false });
       }
     }
+  }
+});
+
+// Browser-control tab mutations (agent opened/navigated a tab, user closed
+// one from another client, lock/viewport changes) are pushed as a tiny
+// payload-free frame so editors re-sync once instead of polling the tab list
+// every 2s for the lifetime of the app.
+subscribeBrowserControlTabsChanged((workspaceId) => {
+  const clients = workspaceClients.get(workspaceId);
+  if (!clients || clients.size === 0) {
+    return;
+  }
+  const serialized = JSON.stringify({
+    type: "browser_tabs_changed",
+    workspaceId,
+  } satisfies AgentSocketServerMessage);
+  for (const client of clients) {
+    sendSerialized(client.socket, serialized, { droppable: false });
   }
 });
 

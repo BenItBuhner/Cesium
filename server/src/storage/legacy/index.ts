@@ -278,6 +278,21 @@ async function writeRegistry(next: WorkspaceRegistryFile): Promise<void> {
   await writeJsonFile(WORKSPACES_INDEX_FILE, next);
 }
 
+/**
+ * conversationId -> workspaceId, learned from every list/read/upsert.
+ * Conversation lookups by id used to read the workspace registry and then
+ * probe `<workspace>/conversations/<id>/meta.json` for every registered
+ * workspace until one hit - on the streaming append path that ran several
+ * times per event batch. A stale hint (conversation moved or deleted) just
+ * falls back to the scan and is corrected. Module-level (not per instance):
+ * it mirrors on-disk layout, and callers may invoke driver methods unbound.
+ */
+const conversationWorkspaceById = new Map<string, string>();
+
+function rememberConversationWorkspace(record: AgentConversationRecord): void {
+  conversationWorkspaceById.set(record.id, record.workspaceId);
+}
+
 export class LegacyJsonStorageDriver implements StorageDriver {
   readonly kind = "legacy-json" as const;
 
@@ -521,6 +536,9 @@ export class LegacyJsonStorageDriver implements StorageDriver {
       pool = perWorkspace.flat();
     }
 
+    for (const record of pool) {
+      rememberConversationWorkspace(record);
+    }
     const filtered = input.includeArchived
       ? pool
       : pool.filter((record) => !record.archivedAt);
@@ -540,58 +558,78 @@ export class LegacyJsonStorageDriver implements StorageDriver {
   async getAgentConversation(
     id: string
   ): Promise<AgentConversationRecord | null> {
+    const hintedWorkspaceId = conversationWorkspaceById.get(id);
+    if (hintedWorkspaceId) {
+      const record = await legacyFs.legacyFsReadConversationRecord(hintedWorkspaceId, id);
+      if (record) return record;
+      conversationWorkspaceById.delete(id);
+    }
     const { workspaces } = await readRegistry();
     for (const workspace of workspaces) {
       const record = await legacyFs.legacyFsReadConversationRecord(
         workspace.id,
         id
       );
-      if (record) return record;
+      if (record) {
+        rememberConversationWorkspace(record);
+        return record;
+      }
     }
     return null;
   }
 
   async upsertAgentConversation(record: AgentConversationRecord): Promise<void> {
+    rememberConversationWorkspace(record);
     await legacyFs.legacyFsSaveConversationMeta(record);
   }
 
   async deleteAgentConversation(id: string): Promise<void> {
     const existing = await this.getAgentConversation(id);
+    conversationWorkspaceById.delete(id);
     if (!existing) return;
     await legacyFs.legacyFsDeleteConversationDir(existing.workspaceId, id);
   }
 
   async appendAgentEvents(
     input: AppendAgentEventsInput
-  ): Promise<{ events: AgentStoredEvent[]; newLastSeq: number }> {
-    if (input.events.length === 0) {
-      return { events: [], newLastSeq: 0 };
-    }
+  ): Promise<{
+    events: AgentStoredEvent[];
+    newLastSeq: number;
+    conversation: AgentConversationRecord;
+  }> {
     const conversationId = input.conversationId;
     const existing = await this.getAgentConversation(conversationId);
     if (!existing) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    const appended = await legacyFs.legacyFsAppendConversationEvents(
+    if (input.events.length === 0) {
+      return { events: [], newLastSeq: 0, conversation: existing };
+    }
+    const patch = input.conversationPatch;
+    // With a patch, fold it into the append's own meta.json write instead of
+    // rewriting the file a second time (each write is a tmp file + rename).
+    const { appended, conversation } = await legacyFs.legacyFsAppendConversationEvents(
       existing.workspaceId,
       conversationId,
-      input.events as AgentEventInput[]
+      input.events as AgentEventInput[],
+      patch
+        ? {
+            finalize: (base, rows) => ({
+              ...base,
+              ...patch,
+              lastEventSeq: rows[rows.length - 1]?.seq ?? base.lastEventSeq,
+              updatedAt: rows.some((event) => event.kind === "user_message")
+                ? Math.max(base.updatedAt + 1, Date.now())
+                : base.updatedAt,
+            }),
+          }
+        : undefined
     );
     const last = appended[appended.length - 1];
-    if (input.conversationPatch) {
-      await this.upsertAgentConversation({
-        ...existing,
-        ...input.conversationPatch,
-        lastEventSeq: last?.seq ?? existing.lastEventSeq,
-        updatedAt:
-          appended.some((event) => event.kind === "user_message")
-            ? Math.max(existing.updatedAt + 1, Date.now())
-            : existing.updatedAt,
-      });
-    }
     return {
       events: appended,
       newLastSeq: last?.seq ?? existing.lastEventSeq,
+      conversation,
     };
   }
 

@@ -15,6 +15,11 @@ export default defineConfig({
     strictPort: true,
   },
   resolve: {
+    // onnxruntime-web exposes an "extern wasm" build under this condition. The
+    // voice VAD loads the wasm from `/voice/ort/` at runtime (wasmPaths), so the
+    // default bundle's `new URL(*.wasm, import.meta.url)` only made Vite emit a
+    // dead 26 MB wasm into the desktop package and the Android APK assets.
+    conditions: ["onnxruntime-web-use-extern-wasm"],
     alias: {
       "@": r("../../src"),
       "@convex": r("../../convex"),

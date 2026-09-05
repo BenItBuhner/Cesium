@@ -50,6 +50,52 @@ const commandWaiters = new Map<number, (result: BrowserControlCommandResult) => 
 const COMMAND_RESULT_TTL_MS = 30_000;
 const VISIBLE_TAB_OBSERVATION_TIMEOUT_MS = 12_000;
 const VISIBLE_TAB_INPUT_TIMEOUT_MS = 6_000;
+/** Coalesce a burst of tab mutations (open -> patch -> patch) into one notification. */
+const TABS_CHANGED_FLUSH_MS = 50;
+
+type BrowserControlTabsChangedListener = (workspaceId: string) => void;
+const tabsChangedListeners = new Set<BrowserControlTabsChangedListener>();
+const pendingTabsChangedWorkspaceIds = new Set<string>();
+let tabsChangedFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Subscribe to "this workspace's tab set changed" signals. The agent socket
+ * fans these out to connected editors so they can re-sync on demand instead of
+ * polling the tab list every couple of seconds for the lifetime of the app.
+ */
+export function subscribeBrowserControlTabsChanged(
+  listener: BrowserControlTabsChangedListener
+): () => void {
+  tabsChangedListeners.add(listener);
+  return () => {
+    tabsChangedListeners.delete(listener);
+  };
+}
+
+function notifyTabsChanged(workspaceId: string): void {
+  if (tabsChangedListeners.size === 0) {
+    return;
+  }
+  pendingTabsChangedWorkspaceIds.add(workspaceId);
+  if (tabsChangedFlushTimer) {
+    return;
+  }
+  tabsChangedFlushTimer = setTimeout(() => {
+    tabsChangedFlushTimer = null;
+    const workspaceIds = [...pendingTabsChangedWorkspaceIds];
+    pendingTabsChangedWorkspaceIds.clear();
+    for (const id of workspaceIds) {
+      for (const listener of tabsChangedListeners) {
+        try {
+          listener(id);
+        } catch (error) {
+          console.warn("[browser-control] tabs-changed listener failed:", error);
+        }
+      }
+    }
+  }, TABS_CHANGED_FLUSH_MS);
+  tabsChangedFlushTimer.unref?.();
+}
 
 function pruneCommandResults(now = Date.now()): void {
   for (const [seq, result] of commandResults) {
@@ -172,6 +218,7 @@ function patchTab(tabId: string, patch: Partial<BrowserControlTab>): BrowserCont
   if (!current) throw new Error("Unknown browser tab.");
   const next = { ...current, ...patch, updatedAt: Date.now() };
   tabs.set(tabId, next);
+  notifyTabsChanged(current.workspaceId);
   return next;
 }
 
@@ -252,6 +299,7 @@ export async function openBrowserControlTab(input: {
     updatedAt: now,
   };
   tabs.set(tab.tabId, tab);
+  notifyTabsChanged(tab.workspaceId);
   if (tab.engine === "server-chromium") {
     try {
       await ensureServerChromiumSession(tab);
@@ -286,6 +334,7 @@ export async function closeBrowserControlTab(workspaceId: string, tabId: string)
   if (session) sessions.delete(session.controlSessionId);
   cleanupCommandsForTab(tab.tabId);
   tabs.delete(tab.tabId);
+  notifyTabsChanged(tab.workspaceId);
   pushEvent({ type: "agent_action", tabId, detail: "Closed tab" });
 }
 

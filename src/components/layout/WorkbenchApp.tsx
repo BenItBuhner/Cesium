@@ -37,7 +37,20 @@ import {
   type SettingsBackDirection,
   type SettingsBackGestureSample,
 } from "@/lib/settings-back-motion";
-import { SettingsShellView } from "@/components/layout/SettingsShellView";
+import dynamic from "next/dynamic";
+import { loadChunkWithRecovery } from "@/lib/chunk-load-recovery";
+
+// The settings surface (editor view, every settings panel, harness settings,
+// usage charts - ~20k lines) only renders while settings is open, yet a
+// static import put all of it in the workbench's initial chunk. Load it on
+// first open; the wrapper div and its motion refs mount immediately.
+const SettingsShellView = dynamic(
+  () =>
+    loadChunkWithRecovery(() =>
+      import("@/components/layout/SettingsShellView").then((m) => m.SettingsShellView)
+    ),
+  { ssr: false }
+);
 import { ShellUnderlayProvider } from "@/components/layout/ShellUnderlayContext";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
 

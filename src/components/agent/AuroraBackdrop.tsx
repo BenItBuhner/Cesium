@@ -110,6 +110,21 @@ const SOFTWARE_GL_CALM_FRAME_INTERVAL_MS = 1000 / 8;
  */
 const CONGESTED_FRAME_INTERVAL_MS = 1000 / 6;
 const SEVERELY_CONGESTED_FRAME_INTERVAL_MS = 1000 / 3;
+/**
+ * A calm scene (idle / paused / completed) with nobody at the keyboard for
+ * this long parks the drift entirely - the same treatment hidden, unfocused
+ * and offscreen already get. Any pointer/keyboard input or a mood change
+ * (an agent starting to work) resumes it on the next frame. Ambient motion
+ * nobody is watching was the last standing idle cost of an open workbench.
+ */
+const IDLE_PARK_AFTER_MS = 60_000;
+/**
+ * Software rasterizers and low-power devices pay per sprite blit; under the
+ * heavy blur a wider column spacing is visually indistinguishable and blits
+ * roughly 40% fewer sprites per frame.
+ */
+const DEFAULT_SPRITE_COLUMNS = 22;
+const LOW_COST_SPRITE_COLUMNS = 13;
 /** The canvas renders tiny and the element upscales + blurs it via CSS. */
 const INTERNAL_SCALE = 1 / 6;
 const MIN_INTERNAL_WIDTH = 96;
@@ -207,6 +222,8 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
   const rendererRef = useRef<AuroraRenderer | null>(null);
   const moodRef = useRef<AuroraMood>(mood);
   moodRef.current = mood;
+  /** Set by the animation-loop effect; resumes a loop parked for inactivity. */
+  const wakeLoopRef = useRef<(() => void) | null>(null);
 
   const colors = useMemo(() => resolveAuroraColors(aurora), [aurora]);
   const colorsKey = colors.join(",");
@@ -280,9 +297,20 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
     }
     const renderer = getRenderer();
     renderer.setPalette(colorsKey.split(","));
-    renderer.setOptions({ intensity: aurora.intensity, speed: aurora.speed, isDark });
+    renderer.setOptions({
+      intensity: aurora.intensity,
+      speed: aurora.speed,
+      isDark,
+      columns:
+        isSoftwareRenderer() || isLowPowerDisplay()
+          ? LOW_COST_SPRITE_COLUMNS
+          : DEFAULT_SPRITE_COLUMNS,
+    });
     renderer.setMood(mood);
     renderer.setPlacement(placement);
+    // A parked (idle) loop must wake for a mood change - an agent starting to
+    // work is exactly what the aurora is supposed to show.
+    wakeLoopRef.current?.();
     if (reducedMotion) {
       renderer.snapToMood();
       paintFrame(0);
@@ -383,25 +411,80 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
       return baseInterval;
     };
 
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      const dt = now - last;
-      if (dt < frameIntervalMs()) {
+    // Pace with a timer and only then ask for a frame. A bare rAF loop that
+    // early-returns still wakes the main thread 60x/s (measured: ~600 rAF
+    // callbacks per 10s idle) and keeps the renderer out of its idle states;
+    // at the 8-15fps the drift actually paints, that is 4-7x more wakeups
+    // than frames. Now the thread sleeps between paints.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let running = false;
+    let parkedForIdle = false;
+    let lastInteractionAt = performance.now();
+    // Agent activity (working / waiting / typing / error) keeps drifting even
+    // without input - the user may be watching. Everything else parks.
+    const isParkableScene = () =>
+      moodRef.current === "idle" ||
+      moodRef.current === "paused" ||
+      moodRef.current === "completed" ||
+      moodRef.current === "new-chat";
+    const scheduleNext = (elapsedSincePaint: number) => {
+      if (!running) {
         return;
       }
+      const wait = Math.max(0, frameIntervalMs() - elapsedSincePaint);
+      timer = setTimeout(() => {
+        timer = null;
+        raf = requestAnimationFrame(tick);
+      }, wait);
+    };
+    const tick = (now: number) => {
+      raf = 0;
+      if (!running) {
+        return;
+      }
+      if (isParkableScene() && now - lastInteractionAt > IDLE_PARK_AFTER_MS) {
+        parkedForIdle = true;
+        stop();
+        return;
+      }
+      const dt = now - last;
       last = now;
       paintFrame(dt);
+      scheduleNext(performance.now() - now);
     };
 
+    const stop = () => {
+      running = false;
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
     const start = () => {
-      cancelAnimationFrame(raf);
+      stop();
+      parkedForIdle = false;
       if (document.hidden || offscreen) {
         return;
       }
+      running = true;
       last = performance.now();
       raf = requestAnimationFrame(tick);
     };
-    const stop = () => cancelAnimationFrame(raf);
+    const wake = () => {
+      lastInteractionAt = performance.now();
+      if (parkedForIdle) {
+        start();
+      }
+    };
+    wakeLoopRef.current = wake;
+    const interactionEvents = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const;
+    for (const type of interactionEvents) {
+      window.addEventListener(type, wake, { passive: true });
+    }
     const onVisibility = () => {
       if (document.hidden) {
         stop();
@@ -444,6 +527,12 @@ export const AuroraBackdrop = memo(function AuroraBackdrop({
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
+      for (const type of interactionEvents) {
+        window.removeEventListener(type, wake);
+      }
+      if (wakeLoopRef.current === wake) {
+        wakeLoopRef.current = null;
+      }
       stop();
     };
   }, [enabled, reducedMotion, paintFrame]);

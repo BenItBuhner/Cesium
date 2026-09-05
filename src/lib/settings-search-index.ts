@@ -1,4 +1,4 @@
-import { HARNESS_LABELS } from "@/components/editor/agent-harness-settings";
+import { HARNESS_LABELS } from "@/lib/harness-labels";
 import { HARNESS_FAMILIES } from "@cesium/core";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";

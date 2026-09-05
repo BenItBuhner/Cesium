@@ -60,6 +60,7 @@ import {
   type IpadResumeSnapshot,
 } from "@/lib/ipad-resume-cache";
 import { normalizeWorkspaceScopedRoute } from "@/lib/workspace-windows";
+import { notifyWorkspaceFsChanged } from "@/lib/workspace-fs-events";
 import {
   WORKBENCH_VIEW_SEARCH_PARAM,
   workbenchViewFromSearchParam,
@@ -731,6 +732,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         at: Date.now(),
       });
     }
+    notifyWorkspaceFsChanged();
   }, []);
   const flushPendingFsEventsRef = useRef(flushPendingFsEvents);
   useEffect(() => {

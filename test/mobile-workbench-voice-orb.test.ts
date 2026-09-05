@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 
@@ -21,19 +21,29 @@ describe("mobile workbench voice orb gate", () => {
     );
     assert.ok(entryMatch, "expected index.html to reference a Vite index-*.js entry bundle");
 
-    const source = readFileSync(join(workbenchDir, entryMatch[1]), "utf8");
+    // The gate itself must ship in the entry bundle: the orb decision is made
+    // at startup, before any lazily loaded surface is fetched.
+    const entrySource = readFileSync(join(workbenchDir, entryMatch[1]), "utf8");
     assert.match(
-      source,
+      entrySource,
       /showVoiceOrb:!1/,
       "bundle must default showVoiceOrb to false"
     );
     assert.match(
-      source,
+      entrySource,
       /general\.showVoiceOrb/,
       "bundle must gate the orb on settings.general.showVoiceOrb"
     );
+
+    // The settings surface is code-split (loaded on first open), so the
+    // toggle's row can live in any shipped chunk.
+    const assetsDir = join(workbenchDir, "assets");
+    const allChunks = readdirSync(assetsDir)
+      .filter((name) => name.endsWith(".js"))
+      .map((name) => readFileSync(join(assetsDir, name), "utf8"))
+      .join("\n");
     assert.match(
-      source,
+      allChunks,
       /searchId:"show-voice-orb"/,
       "bundle must expose the Settings → General → Voice orb toggle"
     );

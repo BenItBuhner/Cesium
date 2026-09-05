@@ -132,7 +132,15 @@ export type AuroraRendererOptions = {
   speed: number;
   /** Dark appearance draws brighter (screen-blended); light stays pastel. */
   isDark: boolean;
+  /**
+   * Sprite columns across the canvas width (default 22). Fewer, wider
+   * columns blit fewer sprites per frame; under the blur the difference is
+   * invisible, so hosts lower it on software rasterizers / low-power devices.
+   */
+  columns?: number;
 };
+
+const DEFAULT_COLUMNS = 22;
 
 /** Resolved vertical placement of the aurora within the pane. */
 export type AuroraPlacement = "top" | "center" | "full" | "bottom";
@@ -269,6 +277,8 @@ export function createAuroraRenderer(): AuroraRenderer {
   let clockMs = 0;
 
   const spriteCache = new Map<string, HTMLCanvasElement>();
+  let fadeGradient: CanvasGradient | null = null;
+  let fadeGradientKey = "";
   const spriteFor = (rgb: Rgb): HTMLCanvasElement => {
     // Quantize so tint interpolation doesn't mint a sprite per frame.
     const key = rgb.map((v) => Math.round(v / 8) * 8).join(",");
@@ -324,7 +334,8 @@ export function createAuroraRenderer(): AuroraRenderer {
     }
 
     const t = flowTime;
-    const stepX = Math.max(8, w / 22);
+    const columns = Math.max(4, options.columns ?? DEFAULT_COLUMNS);
+    const stepX = Math.max(8, w / columns);
     const margin = stepX * 2;
 
     for (const [index, band] of bands.entries()) {
@@ -373,15 +384,23 @@ export function createAuroraRenderer(): AuroraRenderer {
     // before the composer glow.
     ctx.globalCompositeOperation = "destination-in";
     ctx.globalAlpha = 1;
-    const fade = ctx.createLinearGradient(0, 0, 0, h);
-    const twoSigmaSq = 2 * place.sigma * place.sigma;
-    for (let stop = 0; stop <= 8; stop += 1) {
-      const y01 = stop / 8;
-      const gauss = Math.exp(-((y01 - place.centerY) ** 2) / twoSigmaSq);
-      const alpha = Math.min(1, place.floor + (1 - place.floor) * gauss);
-      fade.addColorStop(y01, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+    // The mask only depends on the canvas height and the (slowly easing)
+    // placement; rebuilding a 9-stop gradient every frame was pure churn
+    // during the long stretches where placement is static.
+    const fadeKey = `${h}|${place.centerY.toFixed(4)}|${place.sigma.toFixed(4)}|${place.floor.toFixed(4)}`;
+    if (!fadeGradient || fadeGradientKey !== fadeKey) {
+      const fade = ctx.createLinearGradient(0, 0, 0, h);
+      const twoSigmaSq = 2 * place.sigma * place.sigma;
+      for (let stop = 0; stop <= 8; stop += 1) {
+        const y01 = stop / 8;
+        const gauss = Math.exp(-((y01 - place.centerY) ** 2) / twoSigmaSq);
+        const alpha = Math.min(1, place.floor + (1 - place.floor) * gauss);
+        fade.addColorStop(y01, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+      }
+      fadeGradient = fade;
+      fadeGradientKey = fadeKey;
     }
-    ctx.fillStyle = fade;
+    ctx.fillStyle = fadeGradient;
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = "lighter";
 
