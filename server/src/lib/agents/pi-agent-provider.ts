@@ -228,6 +228,22 @@ function resolveModel(
   return { requested: null, model: undefined };
 }
 
+/** Whether `text` invokes an extension-registered slash command (not a prompt template or skill). */
+export function isPiExtensionCommand(
+  session: Pick<AgentSession, "extensionRunner">,
+  text: string
+): boolean {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) {
+    return false;
+  }
+  const name = trimmed.slice(1).split(/\s+/, 1)[0];
+  if (!name) {
+    return false;
+  }
+  return Boolean(session.extensionRunner.getCommand(name));
+}
+
 function permissionCategoryForTool(toolName: string): AgentPermissionCategory | undefined {
   switch (toolName) {
     case "bash":
@@ -800,7 +816,15 @@ class PiAgentSessionHandle implements AgentSessionHandle {
       }));
 
     const quiet = await this.awaitQuiescence(session);
-    this.normalizer.beginPrompt();
+    // Make sure the previous run has been fully projected before this prompt
+    // claims the next user message echo as its own.
+    await this.drain();
+    // Extension slash commands run their handler and never echo a user
+    // message, so any user turn that follows (pi.sendUserMessage) is injected.
+    const isExtensionCommand = isPiExtensionCommand(session, promptText);
+    if (!isExtensionCommand) {
+      this.normalizer.beginPrompt();
+    }
     try {
       await session.prompt(promptText, {
         ...(images.length > 0 ? { images } : {}),
@@ -841,6 +865,11 @@ class PiAgentSessionHandle implements AgentSessionHandle {
     }
 
     await this.drain();
+    // A prompt swallowed by an extension `input` handler never echoes a user
+    // message; drop the marker so a later injected turn is not mistaken for it.
+    if (this.normalizer.hasPendingOwnedPrompt) {
+      this.normalizer.abandonPrompt();
+    }
     // Extension commands (`/mycommand`) and `input` handlers that swallow the
     // prompt never start an agent loop, so nothing else will flip us back.
     if (!this.normalizer.isRunActive && !this.ui.hasPendingDialog) {

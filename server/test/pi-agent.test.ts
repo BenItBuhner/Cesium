@@ -38,7 +38,7 @@ const [
     normalizePiAgentToolApprovalMode,
     selectPiAgentDefaultModel,
   },
-  { parsePiModelValue, piNativeSessionDirForCwd },
+  { isPiExtensionCommand, parsePiModelValue, piNativeSessionDirForCwd },
   { AuthStorage },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
@@ -168,6 +168,17 @@ test("pi native session directory mirrors Pi's cwd encoding", () => {
   assert.deepEqual(parsePiModelValue("OpenAI/gpt-5"), { provider: "openai", modelId: "gpt-5" });
   assert.equal(parsePiModelValue("auto"), null);
   assert.equal(parsePiModelValue("nope"), null);
+
+  const session = {
+    extensionRunner: {
+      getCommand: (name: string) => (name === "hello" ? { invocationName: "hello" } : undefined),
+    },
+  } as unknown as Parameters<typeof isPiExtensionCommand>[0];
+  assert.equal(isPiExtensionCommand(session, "/hello there"), true);
+  assert.equal(isPiExtensionCommand(session, "  /hello"), true);
+  assert.equal(isPiExtensionCommand(session, "/shout loud"), false, "prompt templates echo a user turn");
+  assert.equal(isPiExtensionCommand(session, "hello"), false);
+  assert.equal(isPiExtensionCommand(session, "/"), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -234,7 +245,7 @@ test("pi agent placeholder model catalog is detected", () => {
   const fallback = createPiAgentFallbackConfigOptions();
   assert.equal(isPiAgentPlaceholderModelCatalog(fallback), true);
   assert.equal(hasPiAgentRichModelCatalog(fallback), false);
-  assert.ok(fallback.some((option) => option.id === "tool_approval" && option.category === "permission"));
+  assert.ok(fallback.some((option) => option.id === "tool_approval" && option.category === "other"));
 
   const rich = fallback.map((option) =>
     option.id === "model"
@@ -618,16 +629,24 @@ test("pi normalizer segments assistant text per Pi message and surfaces injected
   assert.equal(end.status, "idle");
 });
 
-test("pi normalizer drops stale prompt markers when a run ends", () => {
+test("pi normalizer prompt markers are owned by the caller, not by run boundaries", () => {
   const normalizer = new PiAgentEventNormalizer({ conversationId: "conv", eventId: counter() });
   normalizer.beginPrompt();
   assert.equal(normalizer.hasPendingOwnedPrompt, true);
   normalizer.abandonPrompt();
   assert.equal(normalizer.hasPendingOwnedPrompt, false);
+  assert.equal(normalizer.hasPendingOwnedPrompt, false);
+  normalizer.abandonPrompt();
+  assert.equal(normalizer.hasPendingOwnedPrompt, false, "abandon never goes negative");
+
+  // A run ending must not clear a marker the next prompt() already placed:
+  // the provider drains the previous run first and clears leftovers itself.
   normalizer.beginPrompt();
   normalizer.handle({ type: "agent_start" });
   normalizer.handle({ type: "agent_end", messages: [], willRetry: false });
-  assert.equal(normalizer.hasPendingOwnedPrompt, false);
+  assert.equal(normalizer.hasPendingOwnedPrompt, true);
+  const owned = normalizer.handle({ type: "message_start", message: { role: "user", content: "mine" } });
+  assert.deepEqual(owned.events, []);
   const injected = normalizer.handle({ type: "message_start", message: { role: "user", content: "later" } });
   assert.equal(injected.events[0]?.kind, "user_message");
 });

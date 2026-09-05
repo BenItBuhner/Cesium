@@ -405,9 +405,6 @@ export class PiAgentEventNormalizer {
     this.runActive = false;
     this.pendingError = null;
     this.aborted = false;
-    // Any prompt marker not consumed by a user `message_start` is stale once
-    // the run is over; carrying it forward would swallow a later injected turn.
-    this.ownedUserMessagesPending = 0;
     this.toolCalls.clear();
     this.lastOutcome = outcome;
     return {

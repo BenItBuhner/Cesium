@@ -25,7 +25,10 @@ export function createPiAgentToolApprovalConfigOption(
   return {
     id: PI_AGENT_TOOL_APPROVAL_OPTION_ID,
     name: "Tool approval",
-    category: "permission",
+    // "other" (not "permission") so the composer renders it as a session
+    // dropdown and `/set tool_approval …` resolves it; permission-category
+    // options are hidden from the composer for every harness.
+    category: "other",
     description:
       "Cesium-side approval gate for Pi tool calls. Pi itself has no permission system - extensions decide - so the default matches the Pi CLI.",
     currentValue,
