@@ -1190,7 +1190,14 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     }
     const notificationThreadId =
       asString(params.threadId) ?? asString(asRecord(params.thread)?.id) ?? null;
-    if (notificationThreadId && this.threadId && notificationThreadId !== this.threadId) {
+    if (
+      notificationThreadId &&
+      this.threadId &&
+      notificationThreadId !== this.threadId &&
+      // Approvals raised by child threads are answered here, so their
+      // resolution notices must reach the parent bookkeeping.
+      method !== "serverRequest/resolved"
+    ) {
       await this.handleChildThreadNotification(notificationThreadId, method, params, message);
       return;
     }
