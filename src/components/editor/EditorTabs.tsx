@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useState,
   useCallback,
   useEffect,
@@ -11,7 +12,19 @@ import {
   type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Columns2, Globe, MoreVertical, Plus, Rows2, Terminal } from "lucide-react";
+import {
+  Blocks,
+  ChevronDown,
+  ChevronRight,
+  Columns2,
+  GitPullRequest,
+  Globe,
+  MoreVertical,
+  Plus,
+  Rows2,
+  Table,
+  Terminal,
+} from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import {
   useHorizontalScrollFade,
@@ -42,6 +55,11 @@ import {
   popoverMenuPanelClass,
   popoverMenuSeparatorClass,
 } from "@/components/ui/popover-menu-ui";
+import {
+  editorAddTabMenuNeedsSeparatorBefore,
+  listEditorAddTabMenuItems,
+  type EditorAddTabMenuId,
+} from "@/lib/editor-add-tab-menu";
 
 interface EditorTabsProps {
   group: EditorGroup;
@@ -85,10 +103,24 @@ interface EditorTabsProps {
   onOpenFilePalette?: () => void;
   onOpenTerminal?: () => void;
   onOpenBrowser?: () => void;
+  onOpenPullRequest?: () => void;
+  onOpenOrchestrationBoard?: () => void;
+  onOpenMarketplace?: () => void;
 }
 
 const MENU_W = 240;
-const ADD_MENU_W = 200;
+const ADD_MENU_W = 240;
+
+const ADD_TAB_ICONS: Record<
+  EditorAddTabMenuId,
+  typeof Terminal
+> = {
+  terminal: Terminal,
+  browser: Globe,
+  pullRequest: GitPullRequest,
+  orchestrationBoard: Table,
+  marketplace: Blocks,
+};
 
 function escapeAttributeSelectorValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -145,6 +177,9 @@ export function EditorTabs({
   onOpenFilePalette,
   onOpenTerminal,
   onOpenBrowser,
+  onOpenPullRequest,
+  onOpenOrchestrationBoard,
+  onOpenMarketplace,
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -284,6 +319,55 @@ export function EditorTabs({
   }, [addMenuOpen]);
 
   useClickOutside(addTriggerRef, closeAddMenu, addMenuOpen, [addMenuPopoverRef]);
+
+  const addMenuItems = useMemo(
+    () =>
+      listEditorAddTabMenuItems({
+        terminal: Boolean(onOpenTerminal),
+        browser: Boolean(onOpenBrowser),
+        pullRequest: Boolean(onOpenPullRequest),
+        orchestrationBoard: Boolean(onOpenOrchestrationBoard),
+        marketplace: Boolean(onOpenMarketplace),
+      }),
+    [
+      onOpenBrowser,
+      onOpenMarketplace,
+      onOpenOrchestrationBoard,
+      onOpenPullRequest,
+      onOpenTerminal,
+    ]
+  );
+
+  const runAddMenuAction = useCallback(
+    (id: EditorAddTabMenuId) => {
+      switch (id) {
+        case "terminal":
+          onOpenTerminal?.();
+          break;
+        case "browser":
+          onOpenBrowser?.();
+          break;
+        case "pullRequest":
+          onOpenPullRequest?.();
+          break;
+        case "orchestrationBoard":
+          onOpenOrchestrationBoard?.();
+          break;
+        case "marketplace":
+          onOpenMarketplace?.();
+          break;
+      }
+      closeAddMenu();
+    },
+    [
+      closeAddMenu,
+      onOpenBrowser,
+      onOpenMarketplace,
+      onOpenOrchestrationBoard,
+      onOpenPullRequest,
+      onOpenTerminal,
+    ]
+  );
 
   const hasTabs = tabs.length > 0;
   const canCloseOthers = tabs.length > 1;
@@ -567,7 +651,7 @@ export function EditorTabs({
             >
               <Plus className="size-[18px]" strokeWidth={1.5} aria-hidden />
             </button>
-            {(onOpenTerminal || onOpenBrowser) && (
+            {addMenuItems.length > 0 && (
               <button
                 type="button"
                 onClick={() => setAddMenuOpen((o) => !o)}
@@ -575,6 +659,7 @@ export function EditorTabs({
                 aria-label="More new tab options"
                 aria-expanded={addMenuOpen}
                 aria-haspopup="menu"
+                data-editor-add-tab-trigger
               >
                 <ChevronDown className="size-[14px]" strokeWidth={1.5} aria-hidden />
               </button>
@@ -625,39 +710,35 @@ export function EditorTabs({
           <div
             ref={addMenuPopoverRef}
             role="menu"
-            className={`fixed z-[9999] w-[200px] ${popoverMenuPanelClass}`}
+            className={`fixed z-[9999] w-[240px] ${popoverMenuPanelClass}`}
             style={{ top: addMenuPos.top, left: addMenuPos.left }}
             onPointerDown={(e) => e.stopPropagation()}
+            data-editor-add-tab-menu
           >
             <div className={popoverMenuListClass}>
-            {onOpenTerminal && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onOpenTerminal();
-                  closeAddMenu();
-                }}
-                className={popoverMenuIconItemClass}
-              >
-                <Terminal className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
-                <span className="flex-1">New Terminal</span>
-              </button>
-            )}
-            {onOpenBrowser && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onOpenBrowser();
-                  closeAddMenu();
-                }}
-                className={popoverMenuIconItemClass}
-              >
-                <Globe className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
-                <span className="flex-1">New Browser Tab</span>
-              </button>
-            )}
+            {addMenuItems.map((item, index) => {
+              const Icon = ADD_TAB_ICONS[item.id];
+              return (
+                <Fragment key={item.id}>
+                  {editorAddTabMenuNeedsSeparatorBefore(addMenuItems, index) ? (
+                    <div className={popoverMenuSeparatorClass} aria-hidden />
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-editor-add-tab={item.id}
+                    onClick={() => runAddMenuAction(item.id)}
+                    className={popoverMenuIconItemClass}
+                  >
+                    <Icon
+                      className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                    />
+                    <span className="flex-1">{item.label}</span>
+                  </button>
+                </Fragment>
+              );
+            })}
             </div>
           </div>,
           document.body

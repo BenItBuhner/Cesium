@@ -813,6 +813,18 @@ export function EditorPanel({
     runCommand?.("workbench.action.newBrowser");
   }, [runCommand]);
 
+  const openPullRequestTabFromMenu = useCallback(() => {
+    runCommand?.("workbench.action.openPullRequest");
+  }, [runCommand]);
+
+  const openOrchestrationBoardFromMenu = useCallback(() => {
+    runCommand?.("workbench.action.newOrchestrationBoard");
+  }, [runCommand]);
+
+  const openMarketplaceFromMenu = useCallback(() => {
+    runCommand?.("extensions.openMarketplace");
+  }, [runCommand]);
+
   const closeTabs = useCallback(
     async (tabsToClose: EditorTab[], action: EditorPanelAction) => {
       const browserControlIds = [
@@ -2263,6 +2275,9 @@ export function EditorPanel({
           onOpenFilePalette={openFilePalette}
           onOpenTerminal={openTerminalTab}
           onOpenBrowser={openBrowserUrlPrompt}
+          onOpenPullRequest={openPullRequestTabFromMenu}
+          onOpenOrchestrationBoard={openOrchestrationBoardFromMenu}
+          onOpenMarketplace={openMarketplaceFromMenu}
         />
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
