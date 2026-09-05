@@ -4,10 +4,13 @@ import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
 import {
+  getClaudeCodeSdkProxyApiKey,
+  getClaudeCodeSdkProxyBaseUrl,
   getClaudeCodeSdkProxyModel,
   getClaudeCodeSdkProxyModelName,
-  hasClaudeCodeSdkAuthConfig,
   hasClaudeCodeSdkProxyConfig,
+  hasClaudeCodeSdkUsableAuth,
+  isThirdPartyClaudeCodeSdkProxy,
 } from "../claude-code-sdk-credentials.js";
 import { createCesiumAgentConfigOptions } from "../cesium-agent-settings.js";
 import {
@@ -1214,47 +1217,127 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   }
 }
 
+/**
+ * Claude model aliases always resolve to the current generation on Anthropic's
+ * side, so they stay valid across CLI upgrades; versioned ids are only added
+ * when the CLI reports them via `supportedModels()`.
+ */
 const CLAUDE_CODE_SDK_FALLBACK_MODELS: AgentConfigOption["options"] = [
   {
-    value: "claude-sonnet-4-5",
-    name: "Claude Sonnet 4.5",
-    description: "Balanced Claude Code SDK default.",
-    metadata: { reasoningLevels: ["low", "medium", "high"] },
-  },
-  {
-    value: "claude-opus-4-7",
-    name: "Claude Opus 4.7",
-    description: "Highest capability model with xhigh/max effort support.",
+    value: "default",
+    name: "Default (recommended)",
+    description: "Claude Code's current default model.",
     metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
   },
   {
-    value: "claude-opus-4-6",
-    name: "Claude Opus 4.6",
-    description: "High capability model with max effort support.",
-    metadata: { reasoningLevels: ["low", "medium", "high", "max"] },
+    value: "opus",
+    name: "Opus",
+    description: "Highest capability Claude model; supports xhigh/max effort.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
   },
   {
-    value: "claude-haiku-4-5",
-    name: "Claude Haiku 4.5",
-    description: "Fast Claude model for lighter tasks.",
+    value: "sonnet",
+    name: "Sonnet",
+    description: "Balanced Claude model for everyday coding.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+  },
+  {
+    value: "haiku",
+    name: "Haiku",
+    description: "Fastest Claude model for lighter tasks.",
     metadata: { reasoningLevels: ["low", "medium"] },
   },
 ];
 
-function claudeCodeSdkModelOptions(): AgentConfigOption["options"] {
+const CLAUDE_PROXY_NON_CHAT_MODEL_PATTERN =
+  /whisper|tts|embed|embedding|rerank|moderation|speech|audio|image|dall-e|sora|transcri/i;
+
+function humanizeProxyModelId(id: string): string {
+  return id
+    .split("/")
+    .pop()!
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/**
+ * Third-party proxies expose their own catalog on the OpenAI-compatible
+ * `/v1/models` route; that is the list a user can actually pick from, since the
+ * Claude aliases the CLI reports all remap to the configured proxy model.
+ */
+async function fetchClaudeProxyModelCatalog(): Promise<AgentConfigOption["options"]> {
+  const baseUrl = getClaudeCodeSdkProxyBaseUrl();
+  const apiKey = getClaudeCodeSdkProxyApiKey();
+  if (!baseUrl || !apiKey) {
+    return [];
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetch(`${baseUrl}/v1/models`, {
+      signal: controller.signal,
+      headers: { authorization: `Bearer ${apiKey}`, "x-api-key": apiKey, accept: "application/json" },
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const payload = (await response.json()) as unknown;
+    const list = Array.isArray(payload)
+      ? payload
+      : payload && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)
+        ? ((payload as { data: unknown[] }).data)
+        : [];
+    const options: AgentConfigOption["options"] = [];
+    const seen = new Set<string>();
+    for (const entry of list) {
+      const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+      const id = typeof record?.id === "string" ? record.id.trim() : typeof entry === "string" ? entry.trim() : "";
+      if (!id || seen.has(id) || CLAUDE_PROXY_NON_CHAT_MODEL_PATTERN.test(id)) {
+        continue;
+      }
+      seen.add(id);
+      options.push({
+        value: id,
+        name: typeof record?.name === "string" && record.name.trim() ? record.name.trim() : humanizeProxyModelId(id),
+        description: "Available on the configured model proxy.",
+        metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+      });
+    }
+    return options.sort((left, right) => left.value.localeCompare(right.value));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function claudeCodeSdkModelOptions(
+  discovered: AgentConfigOption["options"] = [],
+  proxyCatalog: AgentConfigOption["options"] = []
+): AgentConfigOption["options"] {
   if (!hasClaudeCodeSdkProxyConfig()) {
-    return CLAUDE_CODE_SDK_FALLBACK_MODELS;
+    return discovered.length > 0 ? discovered : CLAUDE_CODE_SDK_FALLBACK_MODELS;
   }
   const proxyModel = getClaudeCodeSdkProxyModel();
-  return [
-    {
-      value: proxyModel,
-      name: getClaudeCodeSdkProxyModelName(),
-      description: "Claude Code SDK routed through the configured model proxy.",
-      metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
-    },
-    ...CLAUDE_CODE_SDK_FALLBACK_MODELS.filter((model) => model.value !== proxyModel),
-  ];
+  const proxyRow = {
+    value: proxyModel,
+    name: getClaudeCodeSdkProxyModelName(),
+    description: "Claude Code routed through the configured model proxy.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+  };
+  if (isThirdPartyClaudeCodeSdkProxy()) {
+    // Alias rows the CLI reports (`opus`, `sonnet`, ...) are remapped to the
+    // proxied model by env and would all be duplicates of the proxy row.
+    const remapped = discovered.filter(
+      (model) =>
+        model.name.trim().toLowerCase() !== proxyModel.toLowerCase() &&
+        !/^Custom .* model$/i.test(model.description ?? "") &&
+        model.value !== "default"
+    );
+    return [proxyRow, ...proxyCatalog.filter((model) => model.value !== proxyModel), ...remapped];
+  }
+  const base = discovered.length > 0 ? discovered : CLAUDE_CODE_SDK_FALLBACK_MODELS;
+  return [proxyRow, ...base.filter((model) => model.value !== proxyModel)];
 }
 
 function createClaudeCodeSdkFallbackConfigOptions(
@@ -1267,17 +1350,17 @@ function createClaudeCodeSdkFallbackConfigOptions(
       category: "mode",
       currentValue: "agent",
       options: [
-        { value: "agent", name: "Agent", description: "Run Claude Code SDK with normal tool permissions." },
-        { value: "plan", name: "Plan", description: "Use native Claude plan mode without executing tools." },
-        { value: "ask", name: "Ask", description: "Answer and inspect with restrictive permissions." },
-        { value: "debug", name: "Debug", description: "Debug with the standard Claude Code tool profile." },
+        { value: "agent", name: "Agent", description: "Run Claude Code with the standard tool set and permission prompts." },
+        { value: "plan", name: "Plan", description: "Native Claude plan mode: research read-only, then present a plan for approval." },
+        { value: "ask", name: "Ask", description: "Answer questions with read-only tools; no file changes." },
+        { value: "debug", name: "Debug", description: "Hypothesis-driven debugging guidance with the standard tool set." },
       ],
     },
     {
       id: "model",
       name: "Model",
       category: "model",
-      currentValue: modelOptions[0]?.value ?? "claude-sonnet-4-5",
+      currentValue: modelOptions[0]?.value ?? "default",
       options: modelOptions,
     },
     {
@@ -1286,11 +1369,11 @@ function createClaudeCodeSdkFallbackConfigOptions(
       category: "permission",
       currentValue: "default",
       options: [
-        { value: "default", name: "Default" },
-        { value: "acceptEdits", name: "Accept Edits" },
-        { value: "plan", name: "Plan" },
-        { value: "dontAsk", name: "Don't Ask" },
-        { value: "auto", name: "Auto" },
+        { value: "default", name: "Default", description: "Prompt before edits, commands, and other side effects." },
+        { value: "acceptEdits", name: "Accept Edits", description: "Auto-approve file edits; still prompt for commands." },
+        { value: "plan", name: "Plan", description: "Read-only research; execution requires plan approval." },
+        { value: "dontAsk", name: "Don't Ask", description: "Never prompt; deny anything not pre-approved." },
+        { value: "auto", name: "Auto", description: "Let Claude's classifier approve routine actions." },
         {
           value: "bypassPermissions",
           name: "Bypass Permissions",
@@ -1317,8 +1400,11 @@ function createClaudeCodeSdkFallbackConfigOptions(
       category: "thought_level",
       currentValue: "adaptive",
       options: [
-        { value: "adaptive", name: "Adaptive" },
+        { value: "adaptive", name: "Adaptive", description: "Claude decides when and how much to think." },
         { value: "disabled", name: "Disabled" },
+        { value: "8000", name: "Budget 8k", description: "Fixed thinking budget for older models." },
+        { value: "16000", name: "Budget 16k", description: "Fixed thinking budget for older models." },
+        { value: "32000", name: "Budget 32k", description: "Fixed thinking budget for older models." },
       ],
     },
     {
@@ -1327,10 +1413,29 @@ function createClaudeCodeSdkFallbackConfigOptions(
       category: "other",
       currentValue: "standard",
       options: [
-        { value: "standard", name: "Standard", description: "Read, edit, search, bash, todos, and Agent." },
-        { value: "safe-readonly", name: "Safe Readonly", description: "Read/search/web tools only." },
-        { value: "full", name: "Full Claude Code", description: "All stock Claude Code tools, permission gated." },
-        { value: "plan", name: "Plan Only", description: "No built-in tool execution." },
+        {
+          value: "standard",
+          name: "Standard",
+          description: "Read, edit, search, bash, web, task list, subagents, questions, and plan mode.",
+        },
+        { value: "safe-readonly", name: "Safe Readonly", description: "Read/search/web tools and questions only." },
+        {
+          value: "full",
+          name: "Full Claude Code",
+          description: "Every stock Claude Code tool (cron, worktrees, workflows, ...), permission gated.",
+        },
+        { value: "plan", name: "Plan Only", description: "Read-only research plus the task list and plan approval." },
+      ],
+    },
+    {
+      id: "setting_sources",
+      name: "Settings & CLAUDE.md",
+      category: "other",
+      currentValue: "all",
+      options: [
+        { value: "all", name: "User + project", description: "Load ~/.claude and project settings, hooks, skills, and CLAUDE.md." },
+        { value: "project", name: "Project only", description: "Load .claude/settings and CLAUDE.md from the workspace only." },
+        { value: "none", name: "Isolated", description: "Ignore filesystem settings; Cesium MCP and plugins only." },
       ],
     },
     {
@@ -1347,13 +1452,30 @@ function createClaudeCodeSdkFallbackConfigOptions(
       ],
     },
     {
+      id: "max_budget_usd",
+      name: "Max Budget (USD)",
+      category: "other",
+      currentValue: "unlimited",
+      options: [
+        { value: "unlimited", name: "Unlimited" },
+        { value: "1", name: "$1" },
+        { value: "5", name: "$5" },
+        { value: "20", name: "$20" },
+        { value: "50", name: "$50" },
+      ],
+    },
+    {
       id: "session_persistence",
       name: "Session Persistence",
       category: "other",
       currentValue: "enabled",
       options: [
-        { value: "enabled", name: "Enabled" },
-        { value: "disabled", name: "Ephemeral" },
+        { value: "enabled", name: "Enabled", description: "Claude keeps a resumable transcript under ~/.claude." },
+        {
+          value: "disabled",
+          name: "Ephemeral",
+          description: "No transcript on disk; context is lost once the process idles out.",
+        },
       ],
     },
   ];
@@ -1365,31 +1487,37 @@ function claudeSdkOptionsFromModels(
     displayName?: string;
     description?: string;
     supportedEffortLevels?: string[];
-  }>
+  }>,
+  proxyCatalog: AgentConfigOption["options"] = []
 ): AgentConfigOption[] {
   const options = models
     .filter((model) => model.value?.trim())
     .map((model) => ({
       value: model.value,
       name: model.displayName?.trim() || model.value,
-      description: model.description,
+      description: model.description?.replace(/\s+·\s+\$[^·]+$/, "").trim() || undefined,
       metadata:
         Array.isArray(model.supportedEffortLevels) && model.supportedEffortLevels.length > 0
           ? { reasoningLevels: model.supportedEffortLevels }
           : undefined,
     }));
-  return createClaudeCodeSdkFallbackConfigOptions(
-    options.length > 0 ? options : claudeCodeSdkModelOptions()
-  );
+  return createClaudeCodeSdkFallbackConfigOptions(claudeCodeSdkModelOptions(options, proxyCatalog));
 }
 
 export async function createClaudeCodeSdkConfigOptions(): Promise<AgentConfigOption[]> {
-  if (!hasClaudeCodeSdkAuthConfig()) {
+  if (!hasClaudeCodeSdkUsableAuth()) {
+    return createClaudeCodeSdkFallbackConfigOptions();
+  }
+  if (process.env.OPENCURSOR_CLAUDE_CODE_SDK_SKIP_PROBE === "1") {
     return createClaudeCodeSdkFallbackConfigOptions();
   }
   try {
-    await import("@anthropic-ai/claude-agent-sdk");
-    return claudeSdkOptionsFromModels([]);
+    const { probeClaudeCodeSdkCapabilities } = await import("./claude-code-sdk-provider.js");
+    const [probe, proxyCatalog] = await Promise.all([
+      probeClaudeCodeSdkCapabilities({ timeoutMs: 20_000 }),
+      isThirdPartyClaudeCodeSdkProxy() ? fetchClaudeProxyModelCatalog() : Promise.resolve([]),
+    ]);
+    return claudeSdkOptionsFromModels(probe?.models ?? [], proxyCatalog);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.warn("[agents] Claude Code SDK model list failed (fallback catalog):", detail);
