@@ -5351,31 +5351,53 @@ export function buildConversationModelOptions(
     conversation.config.modelId || modelOption?.currentValue || backend?.defaultModelId;
   const selectedName = conversation.config.modelName || backend?.defaultModelName;
 
+  function sortByToggleOrder<T extends ModelInfo>(rows: T[]): T[] {
+    if (!backendToggles || backendToggles.length === 0) {
+      return rows;
+    }
+    const index = new Map(backendToggles.map((toggle, i) => [toggle.id, i]));
+    return rows
+      .map((row, originalIndex) => ({ row, originalIndex }))
+      .sort((a, b) => {
+        const ai = index.get(a.row.modelValue ?? a.row.id) ?? Number.MAX_SAFE_INTEGER;
+        const bi = index.get(b.row.modelValue ?? b.row.id) ?? Number.MAX_SAFE_INTEGER;
+        if (ai !== bi) {
+          return ai - bi;
+        }
+        return a.originalIndex - b.originalIndex;
+      })
+      .map((entry) => entry.row);
+  }
+
   function filterVisible<T extends ModelInfo>(rows: T[]): T[] {
     if (hasAuthoritativeToggleList && toggleById) {
-      return rows.filter((m) => {
+      return sortByToggleOrder(
+        rows.filter((m) => {
+          const mv = m.modelValue ?? m.id;
+          if (mv === selectedModelValue) {
+            return true;
+          }
+          const t = toggleById.get(mv);
+          if (t) {
+            return t.on;
+          }
+          /** Catalog has an id that is not in the server toggle list (e.g. stale options); do not show it. */
+          return false;
+        })
+      );
+    }
+    if (hiddenModelIds.size === 0) {
+      return sortByToggleOrder(rows);
+    }
+    return sortByToggleOrder(
+      rows.filter((m) => {
         const mv = m.modelValue ?? m.id;
         if (mv === selectedModelValue) {
           return true;
         }
-        const t = toggleById.get(mv);
-        if (t) {
-          return t.on;
-        }
-        /** Catalog has an id that is not in the server toggle list (e.g. stale options); do not show it. */
-        return false;
-      });
-    }
-    if (hiddenModelIds.size === 0) {
-      return rows;
-    }
-    return rows.filter((m) => {
-      const mv = m.modelValue ?? m.id;
-      if (mv === selectedModelValue) {
-        return true;
-      }
-      return !hiddenModelIds.has(mv);
-    });
+        return !hiddenModelIds.has(mv);
+      })
+    );
   }
 
   if (!modelOption || modelOption.options.length === 0) {

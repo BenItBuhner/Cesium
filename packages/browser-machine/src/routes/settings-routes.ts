@@ -20,6 +20,7 @@ import type {
   BrowserAgentPrefs,
   BrowserModeId,
   BrowserToolPermissionDecision,
+  ModelOrderUpdate,
   ModelToggleUpdate,
   SettingsStore,
   StoredProvider,
@@ -491,32 +492,46 @@ export function registerSettingsRoutes(
   // server contract: toggles persist per backend + catalog model id, and
   // toggled-off models leave the composer picker on the next state sync.
   async function modelToggleState(): Promise<Record<string, unknown>> {
-    const [models, toggles] = await Promise.all([
+    const [models, toggles, order] = await Promise.all([
       settings.listModels(),
       settings.getModelToggles(),
+      settings.getModelOrder(),
     ]);
+    const entries = models.map((model) => {
+      const id = `${model.providerId}/${model.modelId}`;
+      return {
+        id,
+        name: model.modelName,
+        on: settings.isModelToggledOn(toggles, CESIUM_BACKEND_ID, id),
+        backendId: CESIUM_BACKEND_ID,
+      };
+    });
     return {
       byBackend: {
-        [CESIUM_BACKEND_ID]: models.map((model) => {
-          const id = `${model.providerId}/${model.modelId}`;
-          return {
-            id,
-            name: model.modelName,
-            on: settings.isModelToggledOn(toggles, CESIUM_BACKEND_ID, id),
-            backendId: CESIUM_BACKEND_ID,
-          };
-        }),
+        [CESIUM_BACKEND_ID]: settings.orderModelEntries(
+          CESIUM_BACKEND_ID,
+          entries,
+          order
+        ),
       },
     };
   }
 
   async function applyModelToggleRequest(body: {
     toggles?: ModelToggleUpdate[];
+    orders?: ModelOrderUpdate[];
   }): Promise<Response> {
-    if (!Array.isArray(body.toggles) || body.toggles.length === 0) {
-      return errorResponse("Expected toggles array");
+    const toggles = Array.isArray(body.toggles) ? body.toggles : [];
+    const orders = Array.isArray(body.orders) ? body.orders : [];
+    if (toggles.length === 0 && orders.length === 0) {
+      return errorResponse("Expected toggles or orders array");
     }
-    await settings.applyModelToggles(body.toggles);
+    if (toggles.length > 0) {
+      await settings.applyModelToggles(toggles);
+    }
+    if (orders.length > 0) {
+      await settings.applyModelOrders(orders);
+    }
     return jsonResponse(await modelToggleState());
   }
 
@@ -538,13 +553,15 @@ export function registerSettingsRoutes(
   // The client saves with PUT (server parity); POST stays as a compatibility
   // alias for older clients that reached this engine.
   router.put("/api/settings/models/toggles", async (request) =>
-    applyModelToggleRequest(await request.json<{ toggles?: ModelToggleUpdate[] }>())
+    applyModelToggleRequest(
+      await request.json<{ toggles?: ModelToggleUpdate[]; orders?: ModelOrderUpdate[] }>()
+    )
   );
   router.post("/api/settings/models/toggles", async (request) =>
     applyModelToggleRequest(
       await request
-        .json<{ toggles?: ModelToggleUpdate[] }>()
-        .catch(() => ({}) as { toggles?: ModelToggleUpdate[] })
+        .json<{ toggles?: ModelToggleUpdate[]; orders?: ModelOrderUpdate[] }>()
+        .catch(() => ({}) as { toggles?: ModelToggleUpdate[]; orders?: ModelOrderUpdate[] })
     )
   );
 

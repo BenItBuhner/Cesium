@@ -9,6 +9,7 @@ import {
   replaceRememberedAgentPermissionRules,
   saveGlobalSettingsPreservingRememberedPermissions,
   type GlobalSettings,
+  type ModelOrderUpdate,
   type ModelToggleUpdate,
 } from "../lib/global-settings-store.js";
 import { WriteCoalescer } from "../storage/coalesce.js";
@@ -832,14 +833,19 @@ settingsRoutes.post("/api/settings/models/refresh", async (c) => {
 });
 
 settingsRoutes.put("/api/settings/models/toggles", async (c) => {
-  const body = await c.req.json<{ toggles?: ModelToggleUpdate[] }>();
-  if (!Array.isArray(body.toggles) || body.toggles.length === 0) {
-    return c.json({ error: "Expected toggles array" }, 400);
+  const body = await c.req.json<{
+    toggles?: ModelToggleUpdate[];
+    orders?: ModelOrderUpdate[];
+  }>();
+  const toggles = Array.isArray(body.toggles) ? body.toggles : [];
+  const orders = Array.isArray(body.orders) ? body.orders : [];
+  if (toggles.length === 0 && orders.length === 0) {
+    return c.json({ error: "Expected toggles or orders array" }, 400);
   }
   const result = await measureServerPerf(
     "http.settings.modelsToggles",
-    () => setModelToggles(body.toggles!),
-    { updates: body.toggles.length }
+    () => setModelToggles(toggles, orders),
+    { updates: toggles.length, orders: orders.length }
   );
   return c.json(result);
 });

@@ -100,6 +100,14 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes add and reorder model settings", () => {
+    const index = buildSettingsSearchIndex({});
+    const addHits = searchSettingsIndex(index, "add models");
+    assert.ok(addHits.some((hit) => hit.rowId === "add-models" && hit.navId === "models"));
+    const reorderHits = searchSettingsIndex(index, "drag enabled models");
+    assert.ok(reorderHits.some((hit) => hit.rowId === "reorder-models"));
+  });
+
   test("indexes model names from the catalog", () => {
     const index = buildSettingsSearchIndex({
       "cesium-agent": [

@@ -600,7 +600,26 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
 
   // -- Models (panel chrome; model rows are dynamic) --
-  section("models", "catalog", "Model catalog", "visibility toggle refresh"),
+  section(
+    "models",
+    "catalog",
+    "Model catalog",
+    "visibility toggle refresh add models reorder drag"
+  ),
+  row(
+    "models",
+    "add-models",
+    "Add models",
+    "Open the full catalog to enable more models in the composer picker.",
+    ["catalog", "enable", "plus"]
+  ),
+  row(
+    "models",
+    "reorder-models",
+    "Reorder enabled models",
+    "Drag enabled models up and down to set the composer picker order.",
+    ["sort", "drag", "order", "picker"]
+  ),
 
   // -- Usage --
   section(
