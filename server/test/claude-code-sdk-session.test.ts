@@ -899,6 +899,95 @@ test("Agent tool calls become subagent cards with nested transcripts", async () 
   await handle.dispose();
 });
 
+test("Claude Code workflow and background task lifecycles render as task cards", async () => {
+  const fake = createFakeClaudeQuery(async ({ sessionId, emit }) => {
+    // A native Claude Code workflow (no originating tool_use we know about).
+    emit({
+      type: "system",
+      subtype: "task_started",
+      session_id: sessionId,
+      uuid: uuid(),
+      task_id: "wf-1",
+      description: "Run spec workflow",
+      task_type: "local_workflow",
+      workflow_name: "spec",
+    });
+    emit({
+      type: "system",
+      subtype: "task_progress",
+      session_id: sessionId,
+      uuid: uuid(),
+      task_id: "wf-1",
+      description: "Run spec workflow",
+      summary: "Phase 2/3: verifying",
+      usage: { total_tokens: 1200, tool_uses: 4, duration_ms: 3000 },
+    });
+    emit({
+      type: "system",
+      subtype: "task_updated",
+      session_id: sessionId,
+      uuid: uuid(),
+      task_id: "wf-1",
+      patch: { status: "completed", end_time: Date.now() },
+    });
+    // A backgrounded Bash command whose tool_use we did see.
+    emit(
+      assistantMessage(sessionId, "m1", [
+        { type: "tool_use", id: "toolu_bg", name: "Bash", input: { command: "npm test", run_in_background: true } },
+      ])
+    );
+    emit({
+      type: "system",
+      subtype: "task_started",
+      session_id: sessionId,
+      uuid: uuid(),
+      task_id: "bg-1",
+      tool_use_id: "toolu_bg",
+      description: "npm test",
+      task_type: "local_bash",
+    });
+    emit(toolResultMessage(sessionId, "toolu_bg", "Command running in background with ID: bg-1"));
+    emit({
+      type: "system",
+      subtype: "task_notification",
+      session_id: sessionId,
+      uuid: uuid(),
+      task_id: "bg-1",
+      tool_use_id: "toolu_bg",
+      status: "failed",
+      output_file: "/tmp/bg.out",
+      summary: "npm test exited with code 1",
+    });
+    emit(assistantMessage(sessionId, "m2", [{ type: "text", text: "Workflow done; tests failed." }]));
+    emit(resultMessage(sessionId));
+  });
+  const { callbacks, appended, conversation } = createCallbacks({ root: workspaceRoot("workflows") });
+  const handle = await providerWith(fake.queryFn).startSession(callbacks);
+  await handle.prompt({ text: "run the spec workflow", userMessageId: "u1" });
+  const calls = eventsOfKind(appended, "tool_call");
+  const workflow = calls.find((call) => call.toolCallId === "claude-task-wf-1");
+  assert.ok(workflow, "workflow task renders its own card");
+  assert.equal(workflow!.toolKind, "task");
+  assert.equal(workflow!.title, "Workflow · spec");
+  const workflowUpdates = eventsOfKind(appended, "tool_call_update").filter(
+    (event) => event.toolCallId === "claude-task-wf-1"
+  );
+  assert.ok(
+    workflowUpdates.some((event) => event.status === "in_progress" && event.detail === "Phase 2/3: verifying"),
+    "progress summaries land on the workflow card"
+  );
+  assert.equal(workflowUpdates[workflowUpdates.length - 1]!.status, "completed");
+  const bash = calls.find((call) => call.toolCallId === "toolu_bg");
+  assert.ok(bash, "the background Bash call keeps its tool card");
+  assert.equal(bash!.toolKind, "terminal");
+  const bashUpdates = eventsOfKind(appended, "tool_call_update").filter((event) => event.toolCallId === "toolu_bg");
+  assert.equal(bashUpdates[bashUpdates.length - 1]!.status, "failed", "the task notification settles the original card");
+  assert.match(bashUpdates[bashUpdates.length - 1]!.detail ?? "", /exited with code 1/);
+  assert.equal(eventsOfKind(appended, "subagent").length, 0, "non-agent tasks never become subagent cards");
+  assert.equal(conversation().status, "idle");
+  await handle.dispose();
+});
+
 test("compaction, auto-denials, and informational system events map to Cesium events", async () => {
   const fake = createFakeClaudeQuery(async ({ sessionId, emit }) => {
     emit({
