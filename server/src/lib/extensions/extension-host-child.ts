@@ -3391,8 +3391,6 @@ const authSessionsEmitter = new EventEmitter<unknown>();
 /* ------------------------------------------------------------------ */
 
 function createVscodeShim(extensionId: string) {
-  const runtimeContext = extensionRuntimeContexts.get(extensionId);
-  const extensionRoot = runtimeContext?.extensionPath ?? process.cwd();
   const workspaceFolder = {
     uri: Uri.file(workspaceRoot),
     name: path.basename(workspaceRoot),

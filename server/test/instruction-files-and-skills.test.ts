@@ -212,7 +212,6 @@ Secret body content for read_file.
     assert.doesNotMatch(skills.skillsList, /Secret body content for read_file/);
     assert.doesNotMatch(skills.skillsList, /Always call the docs tool first/);
 
-    const gitignore = await fs.readFile(path.join(dir, ".gitignore"), "utf8").catch(() => "");
     // ensureAgentSkillsGitignore no-ops when no .gitignore exists; create one and refresh again
     await fs.writeFile(path.join(dir, ".gitignore"), "node_modules/\n", "utf8");
     await refreshWorkspaceSkillsMirror({ workspaceRoot: dir });

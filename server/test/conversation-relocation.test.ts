@@ -33,7 +33,6 @@ const [
     readConversationEvents,
     readConversationRecord,
     relocateConversationStorage,
-    saveConversationRecord,
   },
   { getConversationDir },
   { AGENT_BACKENDS },

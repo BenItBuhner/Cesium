@@ -255,7 +255,6 @@ export function harnessCliAuthBackendIdsForCli(
 
 /** Strip ANSI escapes so URL/code extraction works on styled CLI output. */
 export function stripHarnessAuthAnsi(value: string): string {
-  // eslint-disable-next-line no-control-regex
   return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 

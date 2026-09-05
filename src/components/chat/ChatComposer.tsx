@@ -1198,6 +1198,13 @@ export function ChatComposer({
   const linkPreviewAbortRef = useRef<Map<string, AbortController>>(new Map());
   const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Latest submit handler for the global shortcut listener below. That effect
+  // is declared before `submitComposer` exists, and re-subscribing on every
+  // composer change would thrash the window listener, so it reads through
+  // this ref instead of closing over a (possibly stale) callback.
+  const submitComposerRef = useRef<((delivery?: "normal" | "steer") => Promise<void>) | null>(
+    null
+  );
   const anyFileInputRef = useRef<HTMLInputElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
   /** Docked main row (measures available width) + hidden full-size controls probe. */
@@ -1833,11 +1840,13 @@ export function ChatComposer({
   }, [effectiveLinkReferences, updateLinkReferences, value]);
 
   useEffect(() => {
+    // The map is created once per composer instance and never reassigned.
+    const controllers = linkPreviewAbortRef.current;
     return () => {
-      for (const controller of linkPreviewAbortRef.current.values()) {
+      for (const controller of controllers.values()) {
         controller.abort();
       }
-      linkPreviewAbortRef.current.clear();
+      controllers.clear();
     };
   }, []);
 
@@ -2293,7 +2302,7 @@ export function ChatComposer({
             if (!busy && !configLocked) fileInputRef.current?.click();
             break;
           case "steerMessage":
-            void submitComposer("steer");
+            void submitComposerRef.current?.("steer");
             break;
           default:
             break;
@@ -2727,6 +2736,10 @@ export function ChatComposer({
     setComposerSelection,
     setComposerValue,
   ]);
+
+  useEffect(() => {
+    submitComposerRef.current = submitComposer;
+  }, [submitComposer]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled || reconcilingRef.current) return;

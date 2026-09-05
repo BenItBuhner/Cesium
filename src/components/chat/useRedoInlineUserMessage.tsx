@@ -332,7 +332,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       promptConversationForActive,
       pushNotification,
       redoMessageDraft,
-      refreshConversations,
       upsertConversation,
     ]
   );
