@@ -186,13 +186,3 @@ export function nextCronRunAfter(schedule: CronSchedule, afterMs: number): numbe
   }
   return null;
 }
-
-/** Human-oriented one-line summary for tool output and the settings UI. */
-export function describeCronExpression(expression: string): string {
-  try {
-    parseCronExpression(expression);
-    return `cron "${expression}"`;
-  } catch {
-    return `invalid cron "${expression}"`;
-  }
-}

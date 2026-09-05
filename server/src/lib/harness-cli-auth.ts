@@ -17,7 +17,6 @@ import {
   type HarnessCliId,
 } from "./agents/harness-runtime.js";
 import { spawnSafeEnv } from "./agents/spawn-env.js";
-import type { AgentBackendId } from "./agents/types.js";
 import {
   ANTIGRAVITY_ACP_AUTH_METHODS,
   antigravityAcpCredentialRelPaths,
@@ -214,10 +213,6 @@ export function isHarnessCliAuthBackendId(
   value: string
 ): value is HarnessCliAuthBackendId {
   return value in AUTH_SPECS;
-}
-
-export function harnessCliAuthBackendIds(): HarnessCliAuthBackendId[] {
-  return Object.keys(AUTH_SPECS) as HarnessCliAuthBackendId[];
 }
 
 /**
@@ -666,8 +661,4 @@ export async function startHarnessCliLogout(
       resolve({ ...next });
     });
   });
-}
-
-export function isHarnessCliAuthSupported(backendId: AgentBackendId): boolean {
-  return isHarnessCliAuthBackendId(backendId);
 }

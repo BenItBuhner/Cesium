@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { DATA_DIR } from "./persistence.js";
@@ -12,10 +12,6 @@ function envWrappingKey(): string | undefined {
     process.env.CESIUM_SECRETS_KEY?.trim() ||
     process.env.OPENCURSOR_SECRETS_KEY?.trim();
   return configured || undefined;
-}
-
-export function secretWrappingKeyPath(): string {
-  return WRAPPING_KEY_FILE;
 }
 
 export function getSecretWrappingKeySync(): string {
@@ -41,12 +37,4 @@ export function getSecretWrappingKeySync(): string {
   writeFileSync(WRAPPING_KEY_FILE, `${generated}\n`, { encoding: "utf8", mode: 0o600 });
   cachedKey = generated;
   return generated;
-}
-
-export function resetSecretWrappingKeyCacheForTests(): void {
-  cachedKey = undefined;
-}
-
-export function wrappingKeyFileExists(): boolean {
-  return existsSync(WRAPPING_KEY_FILE);
 }

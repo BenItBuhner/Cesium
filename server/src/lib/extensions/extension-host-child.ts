@@ -4266,7 +4266,7 @@ function createVscodeShim(extensionId: string) {
       onDidChangeWorkspaceFolders: noopEvent,
     },
     env: {
-      appName: "OpenCursor",
+      appName: "Cesium",
       appRoot: workspaceRoot,
       appHost: "desktop",
       language: "en",

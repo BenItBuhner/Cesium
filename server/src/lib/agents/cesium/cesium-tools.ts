@@ -1148,21 +1148,6 @@ export function cesiumPermissionToolKey(
     }
   }
 }
-
-/** Category-level key used when a remembered rule applies to every call in that category. */
-export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory): string {
-  switch (permission) {
-    case "editFile":
-      return "cesium:edit_file";
-    case "terminal":
-      return "cesium:terminal";
-    case "mcpCall":
-      return "cesium:mcp";
-    case "switchMode":
-      return "cesium:switch_mode";
-  }
-}
-
 export function toolTitle(
   name: string,
   args: Record<string, unknown>,

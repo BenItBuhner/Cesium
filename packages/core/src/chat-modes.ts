@@ -12,11 +12,6 @@ export function isOrchestrationMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "orchestration";
 }
 
-/** @deprecated Use `isGoalMode`. Kept for callers that still check the legacy Burn alias. */
-export function isBurnMode(mode: string): boolean {
-  return isGoalMode(mode);
-}
-
 export function isWorkflowMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "workflow";
 }
