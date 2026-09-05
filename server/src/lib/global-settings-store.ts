@@ -1193,7 +1193,29 @@ export async function getModelToggleState(
           }
         }
 
-        return { byBackend: pruneModelToggleByBackend(merged) };
+        const result = pruneModelToggleByBackend(merged);
+        // The persisted toggle list mirrors the catalog, so when a catalog
+        // shrinks (Cesium Agent now lists only credentialed providers) the
+        // settings document keeps thousands of dead rows that every
+        // `/api/settings/global` response and every settings write would
+        // carry. Persist the pruned view once so the file self-heals.
+        const hasStaleRows = Object.keys(catalog).some((backendId) => {
+          const persisted = existing[backendId];
+          const pruned = result[backendId];
+          return Array.isArray(persisted) && Array.isArray(pruned) && persisted.length > pruned.length;
+        });
+        if (hasStaleRows) {
+          // Awaited (not fire-and-forget) so a caller that saves right after
+          // us - setModelToggles - cannot be overwritten by a late write.
+          await saveGlobalSettings({
+            ...settings,
+            models: { byBackend: { ...existing, ...result } },
+          }).catch((error) => {
+            console.warn("[settings] failed to prune stale model toggles:", error);
+          });
+        }
+
+        return { byBackend: result };
       },
       { backends: backendIds.length }
     )

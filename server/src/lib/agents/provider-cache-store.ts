@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
+import type { AgentProviderCacheRecord } from "../../storage/driver.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
 import {
   getClaudeCodeSdkProxyModel,
@@ -1604,8 +1605,19 @@ function startSeedRefresh(
     try {
       const seeded = await createSeedConfigOptions(backendId);
       if (seeded.length > 0) {
-        const existing = await readStoredConfigOptions(backendId).catch(() => []);
-        if (hasRichModelCatalog(seeded, backendId) || !hasRichModelCatalog(existing, backendId)) {
+        // The rich-catalog guard protects CLI-probed backends from a flaky
+        // probe clobbering a good cache. Cesium Agent's options are computed
+        // locally from settings + catalog, so the fresh result is always the
+        // truth - including "no runnable models" after a key was removed.
+        const existing =
+          backendId === "cesium-agent"
+            ? []
+            : await readStoredConfigOptions(backendId).catch(() => []);
+        if (
+          backendId === "cesium-agent" ||
+          hasRichModelCatalog(seeded, backendId) ||
+          !hasRichModelCatalog(existing, backendId)
+        ) {
           await writeAgentBackendConfigCache(backendId, seeded);
         }
       }
@@ -1803,10 +1815,36 @@ function maybeInPlaceMigrate(
   return null;
 }
 
+/**
+ * In-process memo of the persisted provider cache records. The backend
+ * descriptor list (and therefore every conversation-list / rail response)
+ * reads every backend's options, and the legacy driver re-read and re-parsed
+ * the JSON file on each call. Local writes invalidate immediately; the short
+ * TTL bounds staleness for another process writing the same store.
+ */
+const PROVIDER_CACHE_MEMO_TTL_MS = 15_000;
+const providerCacheMemo = new Map<
+  AgentBackendId,
+  { loadedAt: number; record: AgentProviderCacheRecord | null }
+>();
+
+async function readProviderCacheMemoized(
+  backendId: AgentBackendId
+): Promise<AgentProviderCacheRecord | null> {
+  const now = Date.now();
+  const memo = providerCacheMemo.get(backendId);
+  if (memo && now - memo.loadedAt <= PROVIDER_CACHE_MEMO_TTL_MS) {
+    return memo.record;
+  }
+  const record = await (await getStorage()).readProviderCache(backendId);
+  providerCacheMemo.set(backendId, { loadedAt: now, record });
+  return record;
+}
+
 export async function readAgentBackendConfigCache(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
-  const driverRecord = await (await getStorage()).readProviderCache(backendId);
+  const driverRecord = await readProviderCacheMemoized(backendId);
   const record: AgentBackendCacheRecord | null = driverRecord
     ? {
         schemaVersion: 1,
@@ -1858,10 +1896,15 @@ export async function readAgentBackendConfigCache(
 
     return startSeedRefresh(backendId)
       .then((refreshed) => {
+        if (refreshed.length === 0) {
+          return cachedOptions;
+        }
+        // Locally computed Cesium Agent options are authoritative even when
+        // they list no runnable model (see startSeedRefresh).
         if (
-          refreshed.length === 0 ||
-          (!hasRichModelCatalog(refreshed, backendId) &&
-            hasRichModelCatalog(cachedOptions, backendId))
+          backendId !== "cesium-agent" &&
+          !hasRichModelCatalog(refreshed, backendId) &&
+          hasRichModelCatalog(cachedOptions, backendId)
         ) {
           return cachedOptions;
         }
@@ -1882,10 +1925,16 @@ export async function writeAgentBackendConfigCache(
   if (configOptions.length === 0) {
     return;
   }
-  await (await getStorage()).writeProviderCache(backendId, {
-    schemaVersion: 1,
-    backendId,
-    updatedAt: Date.now(),
-    configOptions,
-  });
+  providerCacheMemo.delete(backendId);
+  try {
+    await (await getStorage()).writeProviderCache(backendId, {
+      schemaVersion: 1,
+      backendId,
+      updatedAt: Date.now(),
+      configOptions,
+    });
+  } finally {
+    // A read that raced the write above may have memoized the previous record.
+    providerCacheMemo.delete(backendId);
+  }
 }

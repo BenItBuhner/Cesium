@@ -11,13 +11,16 @@ process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 const {
   CESIUM_MODEL_DESCRIPTION_MAX_LENGTH,
+  createCesiumAgentConfigOptions,
   formatCesiumModelRoster,
   isCesiumModelEnabled,
   listCesiumAgentModelRoster,
+  listCredentialedCesiumProviderIds,
   mergeCesiumModelAccess,
   normalizeCesiumModelAccess,
   patchCesiumAgentSettings,
   resolveCesiumSpawnModelId,
+  upsertCesiumProviderKey,
 } = await import("../src/lib/cesium-agent-settings.js");
 
 // Seed a fresh models.dev cache so catalog lookups never hit the network.
@@ -299,4 +302,59 @@ test("resolveCesiumSpawnModelId flags ambiguous bare names", async () => {
     }),
     /ambiguous/
   );
+});
+
+test("composer catalog lists only providers with a usable credential", async () => {
+  // No stored/env/OAuth credential yet: nothing from models.dev is runnable,
+  // so the picker must not advertise it (the roster/settings catalog still can).
+  for (const env of ["OPENAI_API_KEY", "CESIUM_BASE_URL", "CESIUM_API_KEY"]) {
+    delete process.env[env];
+  }
+  await patchCesiumAgentSettings({
+    defaultModelId: "techlit/unit-kimi-x9",
+    customProviders: [
+      {
+        id: "local-box",
+        name: "Local Box",
+        apiKind: "openai-compatible",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        models: [{ id: "tiny", name: "Tiny" }],
+      },
+    ],
+  });
+
+  const before = await listCredentialedCesiumProviderIds();
+  assert.ok(before.has("local-box"), "custom providers are always considered configured");
+  assert.ok(!before.has("openai"));
+  assert.ok(!before.has("acme"));
+
+  const modelIds = (options: Awaited<ReturnType<typeof createCesiumAgentConfigOptions>>) =>
+    options.find((option) => option.id === "model")?.options.map((option) => option.value) ?? [];
+
+  const initial = modelIds(await createCesiumAgentConfigOptions());
+  assert.ok(initial.includes("local-box/tiny"), "custom provider models stay listed");
+  assert.ok(initial.includes("techlit/unit-kimi-x9"), "the active default always stays listed");
+  assert.ok(!initial.includes("openai/gpt-5.1"), "no key for openai -> hidden from the picker");
+  assert.ok(!initial.includes("acme/shared-model"), "no key for acme -> hidden from the picker");
+
+  await upsertCesiumProviderKey({
+    providerId: "openai",
+    apiKind: "openai-responses",
+    apiKey: "sk-test-composer-catalog-key",
+  });
+  const after = await listCredentialedCesiumProviderIds();
+  assert.ok(after.has("openai"));
+  assert.ok(after.has("custom-openai"), "stored keys also satisfy the custom- alias lookup");
+
+  const withKey = modelIds(await createCesiumAgentConfigOptions());
+  assert.ok(withKey.includes("openai/gpt-5.1"));
+  assert.ok(!withKey.includes("acme/shared-model"), "unrelated providers stay hidden");
+
+  // Env keys count too, without any stored key.
+  process.env.OPENROUTER_API_KEY = "sk-or-v1-unit";
+  try {
+    assert.ok((await listCredentialedCesiumProviderIds()).has("openrouter"));
+  } finally {
+    delete process.env.OPENROUTER_API_KEY;
+  }
 });
