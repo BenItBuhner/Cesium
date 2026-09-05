@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 import { FirstRunAccountGate } from "@/components/auth/FirstRunAccountGate";
+import { AccountSettingsSync } from "@/components/cloud/AccountSettingsSync";
 import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
@@ -21,6 +22,7 @@ function ThemedAuthBoundary({ children }: { children: ReactNode }) {
 
   return (
     <GlobalSettingsProvider serverSettingsEnabled={serverSettingsEnabled}>
+      <AccountSettingsSync />
       <ThemeProvider>
         <UserPreferencesProvider>{children}</UserPreferencesProvider>
       </ThemeProvider>

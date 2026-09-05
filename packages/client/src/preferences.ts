@@ -1,5 +1,11 @@
-export const USER_PREFERENCES_STORAGE_KEY = "opencursor-preferences" as const;
+import { clientKeyValueStore } from "./platform";
 
+/**
+ * Feature / experiment flags. Persisted account-wide as
+ * `GlobalSettingsState.features`; this module only owns the shape, parsing,
+ * and the tiny pre-hydration boot cache the inline `<head>` script reads to
+ * avoid a layout flash before React mounts.
+ */
 export type UserPreferences = {
   experimentalIpadMode: boolean;
   experimentalIpadCustomButtons: boolean;
@@ -18,6 +24,23 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   experimentalIpadResumeCache: false,
   vscodeExtensionsBeta: false,
 };
+
+/**
+ * Pre-account storage key. Read exactly once (to fold a device's flags into
+ * the account) and then removed; nothing writes it anymore.
+ */
+export const LEGACY_USER_PREFERENCES_STORAGE_KEY = "opencursor-preferences" as const;
+
+/**
+ * Write-only mirror of the *effective* feature flags for the inline boot
+ * script and the service-worker registrar, which run before (or outside) the
+ * settings providers. Never a source of truth: the provider rewrites it from
+ * account settings on every change.
+ */
+export const FEATURES_BOOT_CACHE_STORAGE_KEY = "cesium.boot.features" as const;
+
+/** Broadcast after the effective feature flags change (detail: `UserPreferences`). */
+export const USER_PREFERENCES_CHANGED_EVENT = "opencursor:user-preferences-changed" as const;
 
 export function parseUserPreferences(raw: string | null): UserPreferences {
   if (!raw) return DEFAULT_USER_PREFERENCES;
@@ -66,4 +89,81 @@ export function serializeUserPreferences(preferences: UserPreferences): string {
     experimentalIpadResumeCache: preferences.experimentalIpadResumeCache,
     vscodeExtensionsBeta: preferences.vscodeExtensionsBeta,
   });
+}
+
+export function userPreferencesEqual(a: UserPreferences, b: UserPreferences): boolean {
+  return (
+    a.experimentalIpadMode === b.experimentalIpadMode &&
+    a.experimentalIpadCustomButtons === b.experimentalIpadCustomButtons &&
+    a.experimentalIpadWindowedTabInset === b.experimentalIpadWindowedTabInset &&
+    a.experimentalIpadResumeCache === b.experimentalIpadResumeCache &&
+    a.vscodeExtensionsBeta === b.vscodeExtensionsBeta
+  );
+}
+
+/**
+ * Flags a device enabled before they were account-wide, or `null` when the
+ * legacy document was never written (so callers can tell "never set" from
+ * "explicitly all off").
+ */
+export function readLegacyUserPreferences(): UserPreferences | null {
+  try {
+    const raw = clientKeyValueStore().getItem(LEGACY_USER_PREFERENCES_STORAGE_KEY);
+    return raw ? parseUserPreferences(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearLegacyUserPreferences(): void {
+  try {
+    clientKeyValueStore().removeItem(LEGACY_USER_PREFERENCES_STORAGE_KEY);
+  } catch {
+    // Storage may be unavailable; the legacy key is only ever read once anyway.
+  }
+}
+
+/**
+ * Fold a device's legacy flags into the account flags. Experiments are opt-in
+ * switches, so a flag enabled on this device turns on for the account; the
+ * account never loses a flag that is already on.
+ */
+export function mergeLegacyUserPreferences(
+  account: UserPreferences,
+  legacy: UserPreferences | null
+): UserPreferences {
+  if (!legacy) {
+    return account;
+  }
+  const merged: UserPreferences = {
+    experimentalIpadMode: account.experimentalIpadMode || legacy.experimentalIpadMode,
+    experimentalIpadCustomButtons:
+      account.experimentalIpadCustomButtons || legacy.experimentalIpadCustomButtons,
+    experimentalIpadWindowedTabInset:
+      account.experimentalIpadWindowedTabInset || legacy.experimentalIpadWindowedTabInset,
+    experimentalIpadResumeCache:
+      account.experimentalIpadResumeCache || legacy.experimentalIpadResumeCache,
+    vscodeExtensionsBeta: account.vscodeExtensionsBeta || legacy.vscodeExtensionsBeta,
+  };
+  return userPreferencesEqual(merged, account) ? account : merged;
+}
+
+export function readFeaturesBootCache(): UserPreferences {
+  try {
+    return parseUserPreferences(clientKeyValueStore().getItem(FEATURES_BOOT_CACHE_STORAGE_KEY));
+  } catch {
+    return DEFAULT_USER_PREFERENCES;
+  }
+}
+
+export function writeFeaturesBootCache(preferences: UserPreferences): void {
+  try {
+    const store = clientKeyValueStore();
+    const serialized = serializeUserPreferences(preferences);
+    if (store.getItem(FEATURES_BOOT_CACHE_STORAGE_KEY) !== serialized) {
+      store.setItem(FEATURES_BOOT_CACHE_STORAGE_KEY, serialized);
+    }
+  } catch {
+    // Quota / private mode: the next boot simply paints without the hint.
+  }
 }

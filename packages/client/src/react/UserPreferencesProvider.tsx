@@ -6,23 +6,23 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useRef,
   type ReactNode,
 } from "react";
 import {
-  DEFAULT_USER_PREFERENCES,
-  parseUserPreferences,
-  serializeUserPreferences,
-  USER_PREFERENCES_STORAGE_KEY,
+  clearLegacyUserPreferences,
+  mergeLegacyUserPreferences,
+  readLegacyUserPreferences,
+  USER_PREFERENCES_CHANGED_EVENT,
+  userPreferencesEqual,
+  writeFeaturesBootCache,
   type UserPreferences,
 } from "../preferences";
 import { applyDomUserPreferences } from "../preferences-dom";
 import { useCesiumRendererFeatureFlags } from "../desktop-environment";
 import { resolveEffectiveUserPreferences } from "../platform-feature-flags";
 import { useGlobalSettings } from "./GlobalSettingsProvider";
-import { clientKeyValueStore, getClientPlatform } from "../platform";
-
-const USER_PREFERENCES_CHANGED_EVENT = "opencursor:user-preferences-changed";
+import { getClientPlatform } from "../platform";
 
 type UserPreferencesContextValue = {
   preferences: UserPreferences;
@@ -43,145 +43,104 @@ type UserPreferencesContextValue = {
 const UserPreferencesContext =
   createContext<UserPreferencesContextValue | null>(null);
 
+/**
+ * View over `GlobalSettingsState.features`: the feature / experiment flags
+ * are account settings like everything else, so they follow the user to every
+ * device. This provider only adds renderer gating (a desktop build ignores
+ * iPad experiments), DOM application, the pre-hydration boot cache, and a
+ * one-time fold of the pre-account per-device document.
+ */
 export function UserPreferencesProvider({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [preferences, setPreferencesState] = useState<UserPreferences>(
-    DEFAULT_USER_PREFERENCES
-  );
   const featureFlags = useCesiumRendererFeatureFlags();
-  const {
-    settings: globalSettings,
-    ready: globalSettingsReady,
-    updateSettings,
-  } = useGlobalSettings();
+  const { settings, hydrated, updateSettings } = useGlobalSettings();
+  const features = settings.features;
 
+  const setFeatures = useCallback(
+    (updater: (current: UserPreferences) => UserPreferences) => {
+      updateSettings((current) => {
+        const next = updater(current.features);
+        return userPreferencesEqual(next, current.features)
+          ? current
+          : { ...current, features: next };
+      });
+    },
+    [updateSettings]
+  );
+
+  // Fold the legacy per-device document into the account exactly once, after
+  // the account's real flags are known. Folding before hydration would OR the
+  // device's flags into factory defaults that never get saved, and clearing
+  // the legacy key at that point would lose them.
+  const migratedLegacyRef = useRef(false);
   useEffect(() => {
-    const stored = parseUserPreferences(
-      clientKeyValueStore().getItem(USER_PREFERENCES_STORAGE_KEY)
-    );
-    setPreferencesState(stored);
-    applyDomUserPreferences(stored);
-  }, []);
+    if (!hydrated || migratedLegacyRef.current) {
+      return;
+    }
+    migratedLegacyRef.current = true;
+    const legacy = readLegacyUserPreferences();
+    if (legacy) {
+      setFeatures((current) => mergeLegacyUserPreferences(current, legacy));
+    }
+    clearLegacyUserPreferences();
+  }, [hydrated, setFeatures]);
 
-  const persistPreferences = useCallback((next: UserPreferences) => {
-    clientKeyValueStore().setItem(
-      USER_PREFERENCES_STORAGE_KEY,
-      serializeUserPreferences(next)
-    );
-    applyDomUserPreferences(next);
+  const effective = useMemo(() => resolveEffectiveUserPreferences(features), [features]);
+
+  const lastAppliedRef = useRef<UserPreferences | null>(null);
+  useEffect(() => {
+    if (lastAppliedRef.current && userPreferencesEqual(lastAppliedRef.current, effective)) {
+      return;
+    }
+    lastAppliedRef.current = effective;
+    applyDomUserPreferences(effective);
+    writeFeaturesBootCache(effective);
     if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
       window.dispatchEvent(
-        new CustomEvent(USER_PREFERENCES_CHANGED_EVENT, { detail: next })
+        new CustomEvent(USER_PREFERENCES_CHANGED_EVENT, { detail: effective })
       );
     } else {
       getClientPlatform().emitEvent(USER_PREFERENCES_CHANGED_EVENT);
     }
-  }, []);
+  }, [effective]);
 
   const setExperimentalIpadMode = useCallback((enabled: boolean) => {
     if (!featureFlags.ipadExperimentalUi) return;
-    setPreferencesState((prev) => {
-      const next: UserPreferences = {
-        ...prev,
-        experimentalIpadMode: enabled,
-      };
-      persistPreferences(next);
-      return next;
-    });
-  }, [featureFlags.ipadExperimentalUi, persistPreferences]);
+    setFeatures((prev) => ({ ...prev, experimentalIpadMode: enabled }));
+  }, [featureFlags.ipadExperimentalUi, setFeatures]);
 
   const setExperimentalIpadCustomButtons = useCallback((enabled: boolean) => {
     if (!featureFlags.ipadExperimentalUi) return;
-    setPreferencesState((prev) => {
-      const next: UserPreferences = {
-        ...prev,
-        experimentalIpadCustomButtons: enabled,
-      };
-      persistPreferences(next);
-      return next;
-    });
-  }, [featureFlags.ipadExperimentalUi, persistPreferences]);
+    setFeatures((prev) => ({ ...prev, experimentalIpadCustomButtons: enabled }));
+  }, [featureFlags.ipadExperimentalUi, setFeatures]);
 
   const setExperimentalIpadWindowedTabInset = useCallback((enabled: boolean) => {
     if (!featureFlags.ipadExperimentalUi) return;
-    setPreferencesState((prev) => {
-      const next: UserPreferences = {
-        ...prev,
-        experimentalIpadWindowedTabInset: enabled,
-      };
-      persistPreferences(next);
-      return next;
-    });
-  }, [featureFlags.ipadExperimentalUi, persistPreferences]);
+    setFeatures((prev) => ({ ...prev, experimentalIpadWindowedTabInset: enabled }));
+  }, [featureFlags.ipadExperimentalUi, setFeatures]);
 
   const setExperimentalIpadResumeCache = useCallback((enabled: boolean) => {
     if (!featureFlags.ipadResumeCache) return;
-    setPreferencesState((prev) => {
-      const next: UserPreferences = {
-        ...prev,
-        experimentalIpadResumeCache: enabled,
-      };
-      persistPreferences(next);
-      return next;
-    });
-  }, [featureFlags.ipadResumeCache, persistPreferences]);
+    setFeatures((prev) => ({ ...prev, experimentalIpadResumeCache: enabled }));
+  }, [featureFlags.ipadResumeCache, setFeatures]);
 
   const setVscodeExtensionsBeta = useCallback((enabled: boolean) => {
     if (!featureFlags.vscodeExtensionsBetaSettings) return;
-    updateSettings((current) => ({
-      ...current,
-      features: {
-        ...current.features,
-        vscodeExtensionsBeta: enabled,
-      },
-    }));
-    setPreferencesState((prev) => {
-      const next: UserPreferences = {
-        ...prev,
-        vscodeExtensionsBeta: enabled,
-      };
-      persistPreferences(next);
-      return next;
-    });
-  }, [featureFlags.vscodeExtensionsBetaSettings, persistPreferences, updateSettings]);
+    setFeatures((prev) => ({ ...prev, vscodeExtensionsBeta: enabled }));
+  }, [featureFlags.vscodeExtensionsBetaSettings, setFeatures]);
 
   const importUserPreferences = useCallback(
     (next: UserPreferences) => {
-      setPreferencesState(next);
-      persistPreferences(next);
+      setFeatures(() => next);
     },
-    [persistPreferences]
+    [setFeatures]
   );
 
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
-      return;
-    }
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== USER_PREFERENCES_STORAGE_KEY) return;
-      const next = parseUserPreferences(event.newValue);
-      setPreferencesState(next);
-      applyDomUserPreferences(next);
-      window.dispatchEvent(
-        new CustomEvent(USER_PREFERENCES_CHANGED_EVENT, { detail: next })
-      );
-    };
-
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  const value = useMemo(() => {
-    const effective = resolveEffectiveUserPreferences({
-      ...preferences,
-      vscodeExtensionsBeta: globalSettingsReady
-        ? globalSettings.features.vscodeExtensionsBeta
-        : preferences.vscodeExtensionsBeta,
-    });
-    return {
+  const value = useMemo(
+    () => ({
       preferences: effective,
       experimentalIpadMode: effective.experimentalIpadMode,
       experimentalIpadCustomButtons: effective.experimentalIpadCustomButtons,
@@ -194,18 +153,17 @@ export function UserPreferencesProvider({
       setExperimentalIpadResumeCache,
       setVscodeExtensionsBeta,
       importUserPreferences,
-    };
-  }, [
-    globalSettings.features.vscodeExtensionsBeta,
-    globalSettingsReady,
-    preferences,
-    setExperimentalIpadMode,
-    setExperimentalIpadCustomButtons,
-    setExperimentalIpadWindowedTabInset,
-    setExperimentalIpadResumeCache,
-    setVscodeExtensionsBeta,
-    importUserPreferences,
-  ]);
+    }),
+    [
+      effective,
+      setExperimentalIpadMode,
+      setExperimentalIpadCustomButtons,
+      setExperimentalIpadWindowedTabInset,
+      setExperimentalIpadResumeCache,
+      setVscodeExtensionsBeta,
+      importUserPreferences,
+    ]
+  );
 
   return (
     <UserPreferencesContext.Provider value={value}>

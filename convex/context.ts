@@ -153,6 +153,11 @@ async function collectShareViews(
  * One-round-trip boot for a Cesium client: everything needed to restore the
  * user's world on a fresh device. Returns `null` when not authenticated (the
  * client then runs purely local-first).
+ *
+ * The account settings document is deliberately NOT part of this query: it
+ * changes on every model pick / rail tweak on any device, and re-firing the
+ * bootstrap would re-run the server / onboarding restore effects each time.
+ * Clients subscribe to `preferences.get` for it instead.
  */
 export const bootstrap = query({
   args: {
@@ -165,18 +170,10 @@ export const bootstrap = query({
     if (!user) {
       return null;
     }
-    const [servers, preferences, agentPrefs, onboarding, snapshots, secrets, shareViews] =
+    const [servers, onboarding, snapshots, secrets, shareViews] =
       await Promise.all([
         ctx.db
           .query("servers")
-          .withIndex("by_user", (q) => q.eq("userId", user._id))
-          .collect(),
-        ctx.db
-          .query("preferences")
-          .withIndex("by_user", (q) => q.eq("userId", user._id))
-          .unique(),
-        ctx.db
-          .query("agentPrefs")
           .withIndex("by_user", (q) => q.eq("userId", user._id))
           .collect(),
         ctx.db
@@ -218,18 +215,10 @@ export const bootstrap = query({
       incomingShares: shareViews.incomingShares,
       /** Grants this user owns across their servers, for the owner-side UI. */
       outgoingShares: shareViews.outgoingShares,
-      preferencesPayload: preferences?.payload ?? null,
       secrets: secrets.map((secret) => ({
         kind: secret.kind,
         payload: secret.payload,
         updatedAt: secret.updatedAt,
-      })),
-      agentPrefs: agentPrefs.map((pref) => ({
-        backendId: pref.backendId,
-        enabled: pref.enabled,
-        defaultModelId: pref.defaultModelId ?? null,
-        defaultModelName: pref.defaultModelName ?? null,
-        configuredAt: pref.configuredAt,
       })),
       onboarding: onboarding
         ? {

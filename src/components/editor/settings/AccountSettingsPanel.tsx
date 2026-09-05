@@ -146,7 +146,7 @@ function CloudSyncToggleRow({
       description={
         localOnly
           ? "Off - this device runs local-only. Nothing leaves this device or your engine servers."
-          : "On - servers, personalization, and snapshots can sync through Cesium Cloud."
+          : "On - servers, settings, and snapshots sync through Cesium Cloud."
       }
       trailing={
         <ToggleSwitch
