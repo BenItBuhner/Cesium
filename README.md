@@ -274,7 +274,10 @@ Driver resolution (first match wins):
 | `OPENCURSOR_ANTIGRAVITY_ACP_HOME` | Overrides the `GEMINI_HOME` the ACP server stores credentials and sessions under (default `~/.gemini`, shared with Zed/JetBrains sign-ins). Sessions are pinned to this directory. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables the headless `gemini-api-key` auth method for the Antigravity ACP server (also read from the Google provider key saved under Cesium Agent). |
 | `OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN` | Absolute path to the legacy **Antigravity CLI** (`agy`) for `google-antigravity-cli`; otherwise `agy` on `PATH`. |
-| `OPENCURSOR_CODEX_BIN` | **Codex** CLI path for the `codex-adapter` backend. |
+| `OPENCURSOR_CODEX_BIN` | **Codex** CLI path for the `codex-app-server` / `codex-acp` backends; otherwise `codex` on `PATH` or common tool dirs. Model, provider and MCP servers come from `~/.codex/config.toml` (custom `model_provider` entries are honoured and surfaced in the catalog). |
+| `OPENCURSOR_CODEX_APP_SERVER_ALLOW_BYPASS` | `1` lets the Codex "Bypass Permissions" execution mode map to `approvalPolicy: never` + `dangerFullAccess`; without it that mode behaves like Workspace Write. |
+| `OPENCURSOR_CODEX_APP_SERVER_ASK_IN_AGENT_MODE` | `1` enables Codex's `default_mode_request_user_input` feature so the `request_user_input` question tool is available in Agent mode too (it is always available in Plan mode). |
+| `OPENCURSOR_CODEX_APP_SERVER_SETTLE_GRACE_MS` | How long to wait for `turn/completed` after Codex reports the thread idle/errored before settling the turn anyway (default `8000`). |
 | `OPENCURSOR_CLAUDE_BIN` | **Claude** CLI path for the `claude-adapter` backend. |
 | `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` | JSON merged into ACP `initialize.clientCapabilities` (e.g. `{"terminal":true}` if the CLI requires it). |
 | `OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT` | Recent message pairs to include when handing off to another agent (default `25`). |

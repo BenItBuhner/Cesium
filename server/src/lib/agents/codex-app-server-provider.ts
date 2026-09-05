@@ -9,6 +9,7 @@ import type {
   AgentProviderCapabilities,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
+  AgentStoredEvent,
 } from "./types.js";
 import type { CliRuntimeSpec } from "./cli-adapter.js";
 import {
@@ -99,6 +100,28 @@ type AsyncQuestion = {
   prompt: string;
   steps: CodexAppServerQuestionStep[];
 };
+
+/**
+ * A Codex sub-agent (collab `spawn_agent` / Multi-Agent V2 child). The app
+ * server streams child-thread items over the parent's connection; they are
+ * folded into a `subagent` card instead of the parent transcript.
+ */
+type ChildThread = {
+  threadId: string;
+  title: string;
+  /** Codex agent nickname/role, shown as card metadata. */
+  meta: string | undefined;
+  status: "running" | "completed" | "failed";
+  transcript: AgentStoredEvent[];
+  seq: number;
+  assistantTextByItemId: Map<string, string>;
+  reasoningTextByItemId: Map<string, string>;
+  lastActivity: string | undefined;
+  flushTimer: NodeJS.Timeout | null;
+  dirty: boolean;
+};
+
+const CHILD_THREAD_FLUSH_MS = 600;
 
 /** How long to wait for `turn/completed` after a terminal signal before settling anyway. */
 const TURN_SETTLE_GRACE_MS = (() => {
@@ -404,6 +427,9 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
   private readonly pendingServerRequests = new Map<string, PendingServerRequest>();
   private readonly pendingQuestionRequestIds = new Map<string, string>();
   private readonly asyncQuestions = new Map<string, AsyncQuestion>();
+  private readonly childThreads = new Map<string, ChildThread>();
+  /** Latest title/detail per tool item so approval cards can describe the pending action. */
+  private readonly toolItemSummaries = new Map<string, { title: string; detail?: string }>();
   private readonly emittedWarnings = new Set<string>();
   private lastTurnErrorText: string | null = null;
   private lastCodexEventError: string | null = null;
@@ -796,6 +822,12 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.clearTurnSettleTimer();
+    for (const child of this.childThreads.values()) {
+      if (child.flushTimer) {
+        clearTimeout(child.flushTimer);
+        child.flushTimer = null;
+      }
+    }
     if (this.transport && this.threadId && !this.transport.isDisposed) {
       await this.transport
         .request("thread/unsubscribe", { threadId: this.threadId }, { timeoutMs: 3_000 })
@@ -1156,6 +1188,12 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     if (!method) {
       return;
     }
+    const notificationThreadId =
+      asString(params.threadId) ?? asString(asRecord(params.thread)?.id) ?? null;
+    if (notificationThreadId && this.threadId && notificationThreadId !== this.threadId) {
+      await this.handleChildThreadNotification(notificationThreadId, method, params, message);
+      return;
+    }
     switch (method) {
       case "turn/started":
         this.handleTurnStarted(params);
@@ -1299,6 +1337,307 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
           await this.handleLegacyCodexEvent(method, params, message);
           return;
         }
+        return;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sub-agent (child thread) routing
+  // ---------------------------------------------------------------------------
+
+  private childThread(threadId: string, hint?: { title?: string; meta?: string }): ChildThread {
+    const existing = this.childThreads.get(threadId);
+    if (existing) {
+      if (hint?.title && (existing.title === "Subagent" || !existing.title)) {
+        existing.title = hint.title;
+      }
+      if (hint?.meta && !existing.meta) {
+        existing.meta = hint.meta;
+      }
+      return existing;
+    }
+    const created: ChildThread = {
+      threadId,
+      title: hint?.title ?? "Subagent",
+      meta: hint?.meta,
+      status: "running",
+      transcript: [],
+      seq: 0,
+      assistantTextByItemId: new Map(),
+      reasoningTextByItemId: new Map(),
+      lastActivity: undefined,
+      flushTimer: null,
+      dirty: false,
+    };
+    this.childThreads.set(threadId, created);
+    return created;
+  }
+
+  private pushChildRow(child: ChildThread, row: AgentEventInput): void {
+    child.seq += 1;
+    child.transcript.push({ ...row, seq: child.seq, createdAt: Date.now() } as AgentStoredEvent);
+    child.dirty = true;
+  }
+
+  private scheduleChildFlush(child: ChildThread, immediate = false): void {
+    if (immediate) {
+      if (child.flushTimer) {
+        clearTimeout(child.flushTimer);
+        child.flushTimer = null;
+      }
+      void this.flushChild(child);
+      return;
+    }
+    if (child.flushTimer) {
+      return;
+    }
+    child.flushTimer = setTimeout(() => {
+      child.flushTimer = null;
+      void this.flushChild(child);
+    }, CHILD_THREAD_FLUSH_MS);
+  }
+
+  private async flushChild(child: ChildThread): Promise<void> {
+    if (!child.dirty || this.disposed) {
+      return;
+    }
+    child.dirty = false;
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "subagent",
+        subagentId: child.threadId,
+        title: child.title,
+        meta: child.meta,
+        status: child.status,
+        transcript: [...child.transcript],
+        recentActivity: child.lastActivity,
+        raw: { codexThreadId: child.threadId, parentThreadId: this.threadId },
+      },
+    ]);
+  }
+
+  /** Registers children announced by the parent's collab tool calls (title from the prompt). */
+  private noteCollabSpawn(item: CodexAppServerJsonObject): void {
+    const tool = asString(item.tool);
+    if (tool !== "spawnAgent" && tool !== "spawn_agent" && tool !== "resumeAgent" && tool !== "resume_agent") {
+      return;
+    }
+    const prompt = asString(item.prompt)?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    const title = prompt ? prompt.slice(0, 120) : undefined;
+    const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : [];
+    for (const receiver of receivers) {
+      if (typeof receiver === "string" && receiver.trim()) {
+        this.childThread(receiver, { title });
+      }
+    }
+  }
+
+  private async handleChildThreadNotification(
+    threadId: string,
+    method: string,
+    params: CodexAppServerJsonObject,
+    raw: CodexAppServerJsonObject
+  ): Promise<void> {
+    if (method === "thread/started") {
+      const thread = asRecord(params.thread);
+      const nickname = asString(thread?.agentNickname);
+      const role = asString(thread?.agentRole);
+      const meta = nickname && role ? `${nickname} (${role})` : nickname ?? role ?? undefined;
+      // The spawn prompt (if already seen) is the better title; the nickname
+      // is metadata. Fall back to the nickname as the title when no prompt is known.
+      this.childThread(threadId, { title: meta, meta });
+      return;
+    }
+    const child = this.childThread(threadId);
+    switch (method) {
+      case "turn/started":
+        child.status = "running";
+        this.scheduleChildFlush(child, true);
+        return;
+      case "turn/completed": {
+        const status = codexAppServerStatusFromTurn(params);
+        child.status = status?.status === "failed" ? "failed" : "completed";
+        for (const [itemId] of child.assistantTextByItemId) {
+          this.pushChildRow(child, {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "assistant_message_end",
+            messageId: `codex-app-server-${itemId}`,
+            stopReason: status?.status ?? "idle",
+          });
+        }
+        child.assistantTextByItemId.clear();
+        if (status?.status === "failed" && status.detail) {
+          child.lastActivity = status.detail;
+          this.pushChildRow(child, {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "error",
+            text: status.detail,
+          });
+        }
+        child.dirty = true;
+        this.scheduleChildFlush(child, true);
+        return;
+      }
+      case "item/agentMessage/delta": {
+        const delta = codexAppServerTextDelta(params);
+        if (!delta) {
+          return;
+        }
+        child.assistantTextByItemId.set(
+          delta.itemId,
+          `${child.assistantTextByItemId.get(delta.itemId) ?? ""}${delta.text}`
+        );
+        this.pushChildRow(child, {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_chunk",
+          messageId: `codex-app-server-${delta.itemId}`,
+          text: delta.text,
+        });
+        child.lastActivity = child.assistantTextByItemId.get(delta.itemId)?.slice(-240);
+        this.scheduleChildFlush(child);
+        return;
+      }
+      case "item/reasoning/summaryTextDelta":
+      case "item/reasoning/textDelta": {
+        const text = codexAppServerReasoningDelta(params);
+        const itemId = asString(params.itemId) ?? "turn";
+        if (!text) {
+          return;
+        }
+        child.reasoningTextByItemId.set(itemId, `${child.reasoningTextByItemId.get(itemId) ?? ""}${text}`);
+        this.pushChildRow(child, {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "reasoning",
+          messageId: `codex-app-server-reasoning-${itemId}`,
+          text,
+        });
+        this.scheduleChildFlush(child);
+        return;
+      }
+      case "item/commandExecution/outputDelta": {
+        const itemId = asString(params.itemId);
+        const text = asString(params.delta);
+        if (!itemId || !text) {
+          return;
+        }
+        this.pushChildRow(child, {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "tool_call_update",
+          toolCallId: itemId,
+          toolKind: "terminal",
+          status: "in_progress",
+          detail: text,
+        });
+        this.scheduleChildFlush(child);
+        return;
+      }
+      case "item/started":
+      case "item/completed": {
+        const item = asRecord(params.item);
+        const itemId = asString(item?.id);
+        const type = asString(item?.type);
+        if (!item || !itemId || !type || type === "userMessage") {
+          return;
+        }
+        if (type === "agentMessage") {
+          if (method !== "item/completed") {
+            return;
+          }
+          const finalText = codexAppServerAssistantTextFromItem(item) ?? "";
+          const emitted = child.assistantTextByItemId.get(itemId) ?? "";
+          const remainder = finalText.startsWith(emitted) ? finalText.slice(emitted.length) : emitted ? "" : finalText;
+          if (remainder) {
+            child.assistantTextByItemId.set(itemId, `${emitted}${remainder}`);
+            this.pushChildRow(child, {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "assistant_message_chunk",
+              messageId: `codex-app-server-${itemId}`,
+              text: remainder,
+            });
+          }
+          child.lastActivity = (finalText || emitted).slice(-240) || child.lastActivity;
+          this.scheduleChildFlush(child, true);
+          return;
+        }
+        if (type === "reasoning") {
+          if (method !== "item/completed") {
+            return;
+          }
+          const finalText = codexAppServerReasoningTextFromItem(item);
+          if (finalText && !(child.reasoningTextByItemId.get(itemId) ?? "").trim()) {
+            child.reasoningTextByItemId.set(itemId, finalText);
+            this.pushChildRow(child, {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "reasoning",
+              messageId: `codex-app-server-reasoning-${itemId}`,
+              text: finalText,
+            });
+            this.scheduleChildFlush(child);
+          }
+          return;
+        }
+        if (type === "plan") {
+          if (method === "item/completed") {
+            const text = codexAppServerPlanTextFromItem(item);
+            if (text) {
+              this.pushChildRow(child, {
+                eventId: randomUUID(),
+                conversationId: this.callbacks.conversation.id,
+                kind: "assistant_message_chunk",
+                messageId: `codex-app-server-plan-${itemId}`,
+                text,
+              });
+              this.scheduleChildFlush(child, true);
+            }
+          }
+          return;
+        }
+        const hasOwnStatus = item.status != null || (type === "subAgentActivity" && item.kind != null);
+        const event = codexAppServerToolEventFromItem({
+          item,
+          conversationId: this.callbacks.conversation.id,
+          eventId: randomUUID(),
+          emitAsUpdate: method !== "item/started",
+          status: method === "item/completed" && !hasOwnStatus ? "completed" : undefined,
+        });
+        if (event) {
+          this.pushChildRow(child, event);
+          if ("title" in event && event.title) {
+            child.lastActivity = event.title;
+          }
+          this.scheduleChildFlush(child, method === "item/completed");
+        }
+        return;
+      }
+      case "error": {
+        const error = asRecord(params.error) ?? params;
+        const text = codexAppServerErrorSummary(error);
+        if (text && params.willRetry !== true) {
+          this.pushChildRow(child, {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "error",
+            text,
+          });
+          child.lastActivity = text;
+          this.scheduleChildFlush(child, true);
+        }
+        return;
+      }
+      default:
+        // Token usage, status flags, plan updates etc. for children are not surfaced.
+        void raw;
         return;
     }
   }
@@ -1468,6 +1807,9 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       }
       return;
     }
+    if (type === "collabAgentToolCall" || type === "collabToolCall") {
+      this.noteCollabSpawn(item);
+    }
     const hasOwnStatus = item.status != null || (type === "subAgentActivity" && item.kind != null);
     const event = codexAppServerToolEventFromItem({
       item,
@@ -1482,6 +1824,15 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
             : undefined,
     });
     if (event) {
+      if (itemId && (event.kind === "tool_call" || event.kind === "tool_call_update") && event.title) {
+        this.toolItemSummaries.set(itemId, { title: event.title, detail: event.detail });
+        if (this.toolItemSummaries.size > 200) {
+          const oldest = this.toolItemSummaries.keys().next().value;
+          if (oldest) {
+            this.toolItemSummaries.delete(oldest);
+          }
+        }
+      }
       await this.callbacks.appendEvents([event]);
     }
     if (type === "contextCompaction" && method === "item/completed") {
@@ -2093,6 +2444,14 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
         message
       );
       return;
+    }
+    // File-change approvals only reference the item id; borrow the pending
+    // item's summary so the card says which files are about to change.
+    if (event.toolCallId && !event.detail?.trim()) {
+      const summary = this.toolItemSummaries.get(event.toolCallId);
+      if (summary) {
+        event.detail = [summary.title, summary.detail].filter(Boolean).join("\n");
+      }
     }
     const supportsRemembered =
       message.method === "item/commandExecution/requestApproval" ||

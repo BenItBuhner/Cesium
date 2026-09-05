@@ -437,7 +437,23 @@ async function runCollabScenario(ctx) {
     reasoningEffort: null,
   };
   notify("item/started", { item: { ...base, status: "inProgress", agentsStates: { child_thread_1: { status: "pendingInit", message: null } } }, threadId: ctx.threadId, turnId: ctx.turnId, startedAtMs: Date.now() });
-  notify("item/completed", { item: { ...base, status: "completed", agentsStates: { child_thread_1: { status: "completed", message: "Found 3 packages." } } }, threadId: ctx.threadId, turnId: ctx.turnId, completedAtMs: Date.now() });
+  // The child thread streams over the same connection, tagged with its own threadId.
+  const childThreadId = "child_thread_1";
+  const childTurnId = "child_turn_1";
+  notify("thread/started", { thread: { ...threadRecord(childThreadId, "/tmp/fake-workspace"), parentThreadId: ctx.threadId, agentNickname: "explorer", agentRole: "worker" } });
+  notify("thread/status/changed", { threadId: childThreadId, status: { type: "active", activeFlags: [] } });
+  notify("turn/started", { threadId: childThreadId, turn: { id: childTurnId, items: [], itemsView: "notLoaded", status: "inProgress", error: null, startedAt: nowSeconds(), completedAt: null, durationMs: null } });
+  notify("item/started", { item: { type: "reasoning", id: "child_rsn_1", summary: [], content: [] }, threadId: childThreadId, turnId: childTurnId, startedAtMs: Date.now() });
+  notify("item/completed", { item: { type: "reasoning", id: "child_rsn_1", summary: [], content: ["I should list the packages."] }, threadId: childThreadId, turnId: childTurnId, completedAtMs: Date.now() });
+  notify("item/started", { item: commandItem("child_cmd_1", "ls packages", "inProgress"), threadId: childThreadId, turnId: childTurnId, startedAtMs: Date.now() });
+  notify("item/completed", { item: commandItem("child_cmd_1", "ls packages", "completed", { aggregatedOutput: "core\nclient\nsdk\n", exitCode: 0, durationMs: 2 }), threadId: childThreadId, turnId: childTurnId, completedAtMs: Date.now() });
+  notify("item/started", { item: agentMessageItem("child_msg_1", ""), threadId: childThreadId, turnId: childTurnId, startedAtMs: Date.now() });
+  notify("item/agentMessage/delta", { threadId: childThreadId, turnId: childTurnId, itemId: "child_msg_1", delta: "Found 3 " });
+  notify("item/agentMessage/delta", { threadId: childThreadId, turnId: childTurnId, itemId: "child_msg_1", delta: "packages." });
+  notify("item/completed", { item: agentMessageItem("child_msg_1", "Found 3 packages."), threadId: childThreadId, turnId: childTurnId, completedAtMs: Date.now() });
+  notify("thread/status/changed", { threadId: childThreadId, status: { type: "idle" } });
+  notify("turn/completed", { threadId: childThreadId, turn: { id: childTurnId, items: [], itemsView: "summary", status: "completed", error: null, startedAt: nowSeconds(), completedAt: nowSeconds(), durationMs: 50 } });
+  notify("item/completed", { item: { ...base, status: "completed", agentsStates: { child_thread_1: { status: "completed", message: "Found 3 packages." }, child_thread_x: { status: "errored", message: "boom" } } }, threadId: ctx.threadId, turnId: ctx.turnId, completedAtMs: Date.now() });
   const activityId = newId("act");
   notify("item/started", { item: { type: "subAgentActivity", id: activityId, kind: "started", agentThreadId: "child_thread_2", agentPath: "root/explorer" }, threadId: ctx.threadId, turnId: ctx.turnId, startedAtMs: Date.now() });
   notify("item/completed", { item: { type: "subAgentActivity", id: activityId, kind: "completed", agentThreadId: "child_thread_2", agentPath: "root/explorer" }, threadId: ctx.threadId, turnId: ctx.turnId, completedAtMs: Date.now() });

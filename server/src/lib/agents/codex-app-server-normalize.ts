@@ -198,6 +198,46 @@ export function codexAppServerCommandLabel(command: unknown, commandActions?: un
   return body;
 }
 
+const COLLAB_TOOL_SNAKE_CASE: Record<string, string> = {
+  spawnAgent: "spawn_agent",
+  sendInput: "send_input",
+  resumeAgent: "resume_agent",
+  wait: "wait",
+  closeAgent: "close_agent",
+  sendMessage: "send_message",
+  followupTask: "followup_task",
+  interruptAgent: "interrupt_agent",
+  listAgents: "list_agents",
+};
+
+/** v2 `CollabAgentStatus` → the status vocabulary the frontend's subagent cards understand. */
+const COLLAB_AGENT_STATUS_CANONICAL: Record<string, string> = {
+  pendingInit: "running",
+  running: "running",
+  interrupted: "cancelled",
+  completed: "completed",
+  errored: "failed",
+  shutdown: "completed",
+  notFound: "failed",
+};
+
+function canonicalizeCollabAgentStates(states: CodexAppServerRecord): CodexAppServerRecord {
+  const out: CodexAppServerRecord = {};
+  for (const [threadId, value] of Object.entries(states)) {
+    const record = asRecord(value);
+    if (!record) {
+      out[threadId] = value;
+      continue;
+    }
+    const status = asString(record.status);
+    out[threadId] = {
+      ...record,
+      ...(status ? { status: COLLAB_AGENT_STATUS_CANONICAL[status] ?? status } : {}),
+    };
+  }
+  return out;
+}
+
 export function canonicalizeCodexAppServerItem(
   item: CodexAppServerRecord
 ): CodexAppServerRecord {
@@ -205,6 +245,10 @@ export function canonicalizeCodexAppServerItem(
   const out: CodexAppServerRecord = { ...item };
   if (type === "collabToolCall" || type === "collabAgentToolCall") {
     out.type = "collab_tool_call";
+    const tool = asString(item.tool);
+    if (tool) {
+      out.tool = COLLAB_TOOL_SNAKE_CASE[tool] ?? tool.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+    }
     const receiverIds = Array.isArray(item.receiverThreadIds)
       ? item.receiverThreadIds
       : Array.isArray(item.receiver_thread_ids)
@@ -234,7 +278,7 @@ export function canonicalizeCodexAppServerItem(
     }
     const agentsStates = asRecord(item.agentsStates) ?? asRecord(item.agents_states);
     if (agentsStates) {
-      out.agents_states = agentsStates;
+      out.agents_states = canonicalizeCollabAgentStates(agentsStates);
     }
     const agentStatus = asString(item.agentStatus) ?? asString(item.agent_status);
     if (agentStatus) {

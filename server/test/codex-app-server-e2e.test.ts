@@ -356,6 +356,8 @@ test("codex app server e2e: file change approval renders multi-file edits with o
   assert.ok((tool?.editPreview?.addedLines ?? 0) >= 1);
   const request = eventsOfKind(harness.events, "permission_request")[0]!;
   assert.equal(request.title, "Approve file change");
+  assert.match(request.detail ?? "", /Edit 2 files/, "approval card borrows the pending item's summary");
+  assert.match(request.detail ?? "", /created\.txt/);
   await handle.answerPermission({ requestId: request.requestId, optionId: "acceptForSession" });
   await turn;
   const response = await findClientMessage(harness, (message) => message.method === undefined && message.id === 0);
@@ -548,6 +550,7 @@ test("codex app server e2e: collab and sub-agent items keep frontend routing met
   assert.equal(collab.toolKind, "task");
   const raw = collab.raw as Record<string, unknown>;
   assert.equal(raw.type, "collab_tool_call");
+  assert.equal(raw.tool, "spawn_agent", "frontend classifier expects snake_case collab tool names");
   assert.deepEqual(raw.receiver_thread_ids, ["child_thread_1"]);
   assert.equal(raw.receiver_thread_id, "child_thread_1");
   const collabUpdate = eventsOfKind(harness.events, "tool_call_update").find(
@@ -557,7 +560,32 @@ test("codex app server e2e: collab and sub-agent items keep frontend routing met
   assert.match(collabUpdate?.detail ?? "", /Inspect the repo layout/);
   assert.deepEqual((collabUpdate?.raw as Record<string, unknown>).agents_states, {
     child_thread_1: { status: "completed", message: "Found 3 packages." },
+    child_thread_x: { status: "failed", message: "boom" },
   });
+
+  // Child-thread output never leaks into the parent transcript...
+  assert.equal(assistantText(harness.events), "Subagents finished.");
+  assert.equal(
+    eventsOfKind(harness.events, "reasoning").some((event) => /list the packages/.test(event.text)),
+    false
+  );
+  // ...it becomes a subagent card keyed by the child thread id instead.
+  const subagentEvents = eventsOfKind(harness.events, "subagent").filter((event) => event.subagentId === "child_thread_1");
+  assert.ok(subagentEvents.length >= 1, "child thread produced a subagent card");
+  const finalCard = subagentEvents.at(-1)!;
+  assert.equal(finalCard.status, "completed");
+  assert.equal(finalCard.title, "Inspect the repo layout", "spawn prompt names the card");
+  assert.equal(finalCard.meta, "explorer (worker)", "agent nickname/role is card metadata");
+  const childText = finalCard.transcript
+    .filter((row): row is Extract<AgentStoredEvent, { kind: "assistant_message_chunk" }> => row.kind === "assistant_message_chunk")
+    .map((row) => row.text)
+    .join("");
+  assert.equal(childText, "Found 3 packages.");
+  assert.ok(finalCard.transcript.some((row) => row.kind === "tool_call" && /ls packages/.test((row as { title: string }).title)));
+  assert.ok(finalCard.transcript.some((row) => row.kind === "reasoning"));
+  assert.ok(finalCard.transcript.some((row) => row.kind === "assistant_message_end"));
+  assert.equal(finalCard.recentActivity, "Found 3 packages.");
+  assert.equal(harness.conversation().status, "idle", "child status changes never settle the parent turn");
   const activity = tools.find((event) => event.title === "explorer started");
   assert.ok(activity);
   assert.equal(activity.status, "in_progress");
