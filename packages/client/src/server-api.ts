@@ -1867,15 +1867,24 @@ export type ModelToggleUpdate = {
   on: boolean;
 };
 
+export type ModelOrderUpdate = {
+  backendId: string;
+  modelIds: string[];
+};
+
 export async function saveModelToggles(
   toggles: ModelToggleUpdate[],
-  options?: { server?: ServerRequestContext }
+  options?: { server?: ServerRequestContext; orders?: ModelOrderUpdate[] }
 ): Promise<ModelToggleStateResponse> {
+  const orders = options?.orders ?? [];
   return request<ModelToggleStateResponse>(
     "/api/settings/models/toggles",
     {
       method: "PUT",
-      body: JSON.stringify({ toggles }),
+      body: JSON.stringify({
+        ...(toggles.length > 0 ? { toggles } : {}),
+        ...(orders.length > 0 ? { orders } : {}),
+      }),
     },
     { server: options?.server }
   );

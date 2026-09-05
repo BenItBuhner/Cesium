@@ -27,6 +27,7 @@ const GLOBAL_SETTINGS_REVISION_KEY = "settings:global-revision";
 const CESIUM_AGENT_SETTINGS_KEY = "settings:cesium-agent";
 const AGENT_PREFS_KEY = "settings:cesium-agent-prefs";
 const MODEL_TOGGLES_KEY = "settings:model-toggles";
+const MODEL_ORDER_KEY = "settings:model-order";
 
 export type StoredProvider = {
   id: string;
@@ -252,8 +253,36 @@ export type ModelToggleUpdate = {
   on: boolean;
 };
 
+export type ModelOrderUpdate = {
+  backendId: string;
+  modelIds: string[];
+};
+
 /** backendId → catalog model id (`provider/model`) → on. Missing keys mean on. */
 export type StoredModelToggles = Record<string, Record<string, boolean>>;
+
+/** backendId → catalog model ids in picker order. */
+export type StoredModelOrder = Record<string, string[]>;
+
+function applyIdOrder<T extends { id: string }>(items: T[], orderedIds: string[]): T[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const next: T[] = [];
+  for (const id of orderedIds) {
+    const item = byId.get(id);
+    if (!item || seen.has(id)) {
+      continue;
+    }
+    next.push(item);
+    seen.add(id);
+  }
+  for (const item of items) {
+    if (!seen.has(item.id)) {
+      next.push(item);
+    }
+  }
+  return next;
+}
 
 export class SettingsStore {
   private bootstrapPromise: Promise<void> | null = null;
@@ -367,6 +396,37 @@ export class SettingsStore {
     }
     await writeDoc(MODEL_TOGGLES_KEY, toggles);
     return toggles;
+  }
+
+  async getModelOrder(): Promise<StoredModelOrder> {
+    const stored = await readDoc<StoredModelOrder>(MODEL_ORDER_KEY);
+    return stored && typeof stored === "object" ? stored : {};
+  }
+
+  async applyModelOrders(orders: ModelOrderUpdate[]): Promise<StoredModelOrder> {
+    const stored = await this.getModelOrder();
+    for (const order of orders) {
+      if (!order?.backendId || !Array.isArray(order.modelIds)) {
+        continue;
+      }
+      stored[order.backendId] = order.modelIds.filter(
+        (id): id is string => typeof id === "string" && id.length > 0
+      );
+    }
+    await writeDoc(MODEL_ORDER_KEY, stored);
+    return stored;
+  }
+
+  orderModelEntries<T extends { id: string }>(
+    backendId: string,
+    entries: T[],
+    order: StoredModelOrder
+  ): T[] {
+    const orderedIds = order[backendId];
+    if (!orderedIds || orderedIds.length === 0) {
+      return entries;
+    }
+    return applyIdOrder(entries, orderedIds);
   }
 
   isModelToggledOn(

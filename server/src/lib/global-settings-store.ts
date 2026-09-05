@@ -20,6 +20,7 @@ import {
 } from "./active-agent-backends.js";
 import { normalizeHarnessTransports, type HarnessTransportsState } from "@cesium/core";
 import { refreshCesiumModelCatalog } from "./cesium-agent-settings.js";
+import { applyIdOrder, mergeCatalogPreservingOrder } from "./model-toggle-order.js";
 import { measureServerPerf } from "./perf.js";
 
 const GLOBAL_SETTINGS_CACHE_TTL_SECONDS = 120;
@@ -1105,6 +1106,11 @@ export type ModelToggleUpdate = {
   on: boolean;
 };
 
+export type ModelOrderUpdate = {
+  backendId: string;
+  modelIds: string[];
+};
+
 function isKnownPlaceholderModelToggle(
   backendId: string,
   entry: ModelToggleEntry
@@ -1171,14 +1177,11 @@ export async function getModelToggleState(
         const merged: Record<string, ModelToggleEntry[]> = {};
 
         for (const [backendId, models] of Object.entries(catalog)) {
-          const existingForBackend = existing[backendId] ?? [];
-          const existingMap = new Map(existingForBackend.map((m) => [m.id, m]));
-          merged[backendId] = models.map((model) => {
-            const existingEntry = existingMap.get(model.id);
-            return existingEntry
-              ? { ...existingEntry, name: model.name, backendId }
-              : { id: model.id, name: model.name, on: true, backendId };
-          });
+          merged[backendId] = mergeCatalogPreservingOrder(
+            models,
+            existing[backendId] ?? [],
+            backendId
+          );
         }
 
         for (const [backendId, existingList] of Object.entries(existing)) {
@@ -1198,7 +1201,8 @@ export async function getModelToggleState(
 }
 
 export async function setModelToggles(
-  updates: ModelToggleUpdate[]
+  updates: ModelToggleUpdate[],
+  orders: ModelOrderUpdate[] = []
 ): Promise<ModelToggleStateResponse> {
   return measureServerPerf(
     "settings.setModelToggles",
@@ -1212,12 +1216,14 @@ export async function setModelToggles(
        * `getModelToggleState` before applying diffs.
        */
       const touchedBackendIds = [
-        ...new Set(updates.map((u) => u.backendId as AgentBackendId)),
+        ...new Set([
+          ...updates.map((u) => u.backendId as AgentBackendId),
+          ...orders.map((o) => o.backendId as AgentBackendId),
+        ]),
       ];
       const byBackend = { ...(settings.models.byBackend ?? {}) };
-      const missingBackendIds = touchedBackendIds.filter((backendId) => !byBackend[backendId]);
-      if (missingBackendIds.length > 0) {
-        const base = await getModelToggleState(missingBackendIds);
+      if (touchedBackendIds.length > 0) {
+        const base = await getModelToggleState(touchedBackendIds);
         Object.assign(byBackend, base.byBackend);
       }
 
@@ -1231,6 +1237,14 @@ export async function setModelToggles(
         );
       }
 
+      for (const order of orders) {
+        const list = byBackend[order.backendId];
+        if (!list || !Array.isArray(order.modelIds)) {
+          continue;
+        }
+        byBackend[order.backendId] = applyIdOrder(list, order.modelIds);
+      }
+
       const next: GlobalSettings = {
         ...settings,
         models: { byBackend },
@@ -1239,7 +1253,7 @@ export async function setModelToggles(
 
       return { byBackend: next.models.byBackend };
     },
-    { updates: updates.length }
+    { updates: updates.length, orders: orders.length }
   );
 }
 
@@ -1274,14 +1288,11 @@ export async function refreshAndGetModelToggleState(
       ? modelOption.options.map((opt) => ({ id: opt.value, name: opt.name }))
       : [];
     if (models.length > 0) {
-      const existingForBackend = existing[backendId] ?? [];
-      const existingMap = new Map(existingForBackend.map((m) => [m.id, m]));
-      merged[backendId] = models.map((model) => {
-        const existingEntry = existingMap.get(model.id);
-        return existingEntry
-          ? { ...existingEntry, name: model.name, backendId }
-          : { id: model.id, name: model.name, on: true, backendId };
-      });
+      merged[backendId] = mergeCatalogPreservingOrder(
+        models,
+        existing[backendId] ?? [],
+        backendId
+      );
     }
     allBackendIds.delete(backendId as AgentBackendId);
   }
@@ -1290,14 +1301,11 @@ export async function refreshAndGetModelToggleState(
     const catalog = await extractModelCatalogFromBackends([backendId]);
     const models = catalog[backendId] ?? [];
     if (models.length > 0) {
-      const existingForBackend = existing[backendId] ?? [];
-      const existingMap = new Map(existingForBackend.map((m) => [m.id, m]));
-      merged[backendId] = models.map((model) => {
-        const existingEntry = existingMap.get(model.id);
-        return existingEntry
-          ? { ...existingEntry, name: model.name, backendId }
-          : { id: model.id, name: model.name, on: true, backendId };
-      });
+      merged[backendId] = mergeCatalogPreservingOrder(
+        models,
+        existing[backendId] ?? [],
+        backendId
+      );
     } else if (existing[backendId]) {
       const pruned = prunePlaceholderModelToggles(backendId, existing[backendId]);
       if (pruned.length > 0) {

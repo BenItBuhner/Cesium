@@ -358,6 +358,7 @@ export type {
   ModelToggleEntry,
   ModelToggleStateResponse,
   ModelToggleUpdate,
+  ModelOrderUpdate,
   ModelsByBackendResponse,
   PiAgentOAuthStartResponse,
   PiAgentProviderAuthMethod,

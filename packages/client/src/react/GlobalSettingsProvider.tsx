@@ -27,6 +27,7 @@ import {
   refreshModelToggleState,
   saveModelToggles,
   toServerRequestContext,
+  type ModelOrderUpdate,
   type ModelToggleUpdate,
   type ServerRequestContext,
 } from "../server-api";
@@ -81,6 +82,7 @@ type GlobalSettingsContextValue = {
   modelsRefreshing: boolean;
   modelToggleSaveState: { pending: number; error: string | null };
   saveModelToggleUpdates: (updates: ModelToggleUpdate[]) => Promise<void>;
+  saveModelOrder: (backendId: string, modelIds: string[]) => Promise<void>;
 };
 
 const GlobalSettingsContext =
@@ -161,6 +163,7 @@ export function GlobalSettingsProvider({
   const seededCacheServerIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const modelToggleQueueRef = useRef<Map<string, ModelToggleUpdate>>(new Map());
+  const modelOrderQueueRef = useRef<Map<string, string[]>>(new Map());
   const modelToggleTimerRef = useRef<number | null>(null);
   const modelToggleEpochRef = useRef(0);
 
@@ -206,7 +209,11 @@ export function GlobalSettingsProvider({
     }
     const updates = [...modelToggleQueueRef.current.values()];
     modelToggleQueueRef.current.clear();
-    if (updates.length === 0) {
+    const orders: ModelOrderUpdate[] = [...modelOrderQueueRef.current.entries()].map(
+      ([backendId, modelIds]) => ({ backendId, modelIds })
+    );
+    modelOrderQueueRef.current.clear();
+    if (updates.length === 0 && orders.length === 0) {
       setModelToggleSaveState((current) =>
         current.pending === 0 ? current : { ...current, pending: 0 }
       );
@@ -214,16 +221,17 @@ export function GlobalSettingsProvider({
     }
     const epoch = ++modelToggleEpochRef.current;
     const startedAt = performance.now();
-    setModelToggleSaveState({ pending: updates.length, error: null });
+    setModelToggleSaveState({ pending: updates.length + orders.length, error: null });
     try {
       const server = settingsServerRef.current;
       if (!server) {
         setModelToggleSaveState({ pending: 0, error: "Choose a default server for shared settings." });
         return;
       }
-      const result = await saveModelToggles(updates, { server });
+      const result = await saveModelToggles(updates, { server, orders });
       recordPerfSample("settings.models.toggle_save_ack", startedAt, {
         updates: updates.length,
+        orders: orders.length,
       });
       if (epoch === modelToggleEpochRef.current) {
         setSettings((current) => ({
@@ -395,7 +403,20 @@ export function GlobalSettingsProvider({
         modelToggleQueueRef.current.set(`${update.backendId}:${update.modelId}`, update);
       }
       setModelToggleSaveState({
-        pending: modelToggleQueueRef.current.size,
+        pending: modelToggleQueueRef.current.size + modelOrderQueueRef.current.size,
+        error: null,
+      });
+      scheduleModelToggleFlush();
+    },
+    [scheduleModelToggleFlush]
+  );
+
+  const saveModelOrder = useCallback(
+    async (backendId: string, modelIds: string[]) => {
+      if (!backendId || modelIds.length === 0) return;
+      modelOrderQueueRef.current.set(backendId, modelIds);
+      setModelToggleSaveState({
+        pending: modelToggleQueueRef.current.size + modelOrderQueueRef.current.size,
         error: null,
       });
       scheduleModelToggleFlush();
@@ -557,6 +578,7 @@ export function GlobalSettingsProvider({
       modelsRefreshing,
       modelToggleSaveState,
       saveModelToggleUpdates,
+      saveModelOrder,
     }),
     [
       applyAccountSettings,
@@ -574,6 +596,7 @@ export function GlobalSettingsProvider({
       modelsRefreshing,
       modelToggleSaveState,
       saveModelToggleUpdates,
+      saveModelOrder,
     ]
   );
 

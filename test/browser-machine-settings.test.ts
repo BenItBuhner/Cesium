@@ -229,6 +229,33 @@ describe("browser machine settings surface", () => {
     assert.equal(invalid.status, 400);
   });
 
+  test("model order persists independently of on/off toggles", async () => {
+    const { router } = await makeEngine();
+    const orderResponse = await router.dispatch("/api/settings/models/toggles", {
+      method: "PUT",
+      body: JSON.stringify({
+        orders: [
+          {
+            backendId: "cesium-agent",
+            modelIds: ["acme/model-b", "acme/model-a"],
+          },
+        ],
+      }),
+    });
+    assert.equal(orderResponse.status, 200);
+    const state = await json<{
+      byBackend: Record<string, Array<{ id: string; on: boolean }>>;
+    }>(await router.dispatch("/api/settings/models"));
+    assert.deepEqual(
+      state.byBackend["cesium-agent"]?.map((entry) => entry.id),
+      ["acme/model-b", "acme/model-a"]
+    );
+    assert.equal(
+      state.byBackend["cesium-agent"]?.every((entry) => entry.on),
+      true
+    );
+  });
+
   test("global settings revision persists monotonically", async () => {
     const { router } = await makeEngine();
     const first = await json<{ revision: number }>(

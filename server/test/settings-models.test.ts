@@ -82,3 +82,58 @@ test("model toggle saves survive later stale full global settings PUT", async ()
   const modelA = toggles.byBackend["cursor-sdk"]?.find((model) => model.id === "model-a");
   assert.equal(modelA?.on, false);
 });
+
+test("model order persists and survives catalog merge", async () => {
+  await writeAgentBackendConfigCache("cursor-sdk", [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "model-a",
+      options: [
+        { value: "model-a", name: "Model A" },
+        { value: "model-b", name: "Model B" },
+        { value: "model-c", name: "Model C" },
+      ],
+    },
+  ]);
+  await store.saveGlobalSettings(await store.getGlobalSettings());
+
+  const catalog = await store.getModelToggleState(["cursor-sdk"]);
+  assert.deepEqual(
+    catalog.byBackend["cursor-sdk"]?.map((model) => model.id).sort(),
+    ["model-a", "model-b", "model-c"]
+  );
+
+  await store.setModelToggles(
+    [],
+    [
+      {
+        backendId: "cursor-sdk",
+        modelIds: ["model-c", "model-a", "model-b"],
+      },
+    ]
+  );
+
+  const ordered = await store.getModelToggleState(["cursor-sdk"]);
+  assert.deepEqual(
+    ordered.byBackend["cursor-sdk"]?.map((model) => model.id),
+    ["model-c", "model-a", "model-b"]
+  );
+
+  const response = await settingsRoutes.request("/api/settings/models/toggles", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      orders: [{ backendId: "cursor-sdk", modelIds: ["model-b", "model-c", "model-a"] }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    byBackend: Record<string, Array<{ id: string }>>;
+  };
+  assert.deepEqual(
+    body.byBackend["cursor-sdk"]?.map((model) => model.id),
+    ["model-b", "model-c", "model-a"]
+  );
+});

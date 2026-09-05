@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronRight, GripVertical, Plus, RefreshCw } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -12,8 +12,10 @@ import {
 import {
   SettingsEmptyState,
   SettingsNestedBreadcrumbs,
+  SettingsBreadcrumbs,
   SettingsRow,
   SettingsSection,
+  useSettingsShellChrome,
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
@@ -21,38 +23,24 @@ import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";
 import { recordPerfSample } from "@/lib/dev-perf";
 import {
-  compactModelName,
-  stripCursorSdkModelParams,
-} from "@/lib/settings-model-compaction";
+  appendEnabledModelIds,
+  applyEnabledCompactOrder,
+  compactModelRowsForBackend,
+  moveItem,
+  type CompactModelToggleRow,
+} from "@/lib/settings-model-order";
 import { panelSearchInputClass } from "./shared";
 
-type CompactModelToggleRow = {
-  id: string;
-  name: string;
-  on: boolean;
-  modelIds: string[];
-};
-
-function compactModelRowsForBackend(models: ModelToggleState[]): CompactModelToggleRow[] {
-  const groups = new Map<string, CompactModelToggleRow>();
-  for (const model of models) {
-    const baseId = stripCursorSdkModelParams(model.id);
-    const baseName = compactModelName(model.name, baseId);
-    const key = baseName.toLowerCase();
-    const existing = groups.get(key);
-    if (existing) {
-      existing.on = existing.on || model.on;
-      existing.modelIds.push(model.id);
-      continue;
+function backendsWithEnabledModels(
+  byBackend: Record<string, ModelToggleState[]>
+): Set<string> {
+  const next = new Set<string>();
+  for (const [backendId, models] of Object.entries(byBackend)) {
+    if (models.some((model) => model.on)) {
+      next.add(backendId);
     }
-    groups.set(key, {
-      id: key,
-      name: baseName,
-      on: model.on,
-      modelIds: [model.id],
-    });
   }
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return next;
 }
 
 export function ModelsSettingsPanel() {
@@ -62,10 +50,17 @@ export function ModelsSettingsPanel() {
     refreshModels,
     modelsRefreshing,
     saveModelToggleUpdates,
+    saveModelOrder,
   } = useGlobalSettings();
+  const chrome = useSettingsShellChrome();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const [modelQuery, setModelQuery] = useState("");
-  const [expandedBackends, setExpandedBackends] = useState<Set<string>>(new Set());
+  const [addingModels, setAddingModels] = useState(false);
+  const [expandedBackends, setExpandedBackends] = useState<Set<string>>(() =>
+    backendsWithEnabledModels(settings.models.byBackend ?? {})
+  );
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     const focus = workspaceSession.settingsView.panelSearchFocus;
@@ -73,6 +68,9 @@ export function ModelsSettingsPanel() {
       return;
     }
     setModelQuery(focus.query);
+    if (focus.query.trim()) {
+      setAddingModels(true);
+    }
     if (focus.backendId) {
       setExpandedBackends((prev) => {
         const next = new Set(prev);
@@ -101,6 +99,24 @@ export function ModelsSettingsPanel() {
     return activeOnly;
   }, [settings.models.byBackend]);
 
+  useEffect(() => {
+    const ids = Object.keys(byBackend);
+    if (ids.length === 0) {
+      return;
+    }
+    setExpandedBackends((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [byBackend]);
+
   const compactByBackend = useMemo(() => {
     const result: Record<string, CompactModelToggleRow[]> = {};
     for (const [backendId, models] of Object.entries(byBackend)) {
@@ -109,29 +125,44 @@ export function ModelsSettingsPanel() {
     return result;
   }, [byBackend]);
 
+  const persistBackendOrder = useCallback(
+    (backendId: string, rows: ModelToggleState[]) => {
+      void saveModelOrder(
+        backendId,
+        rows.map((row) => row.id)
+      );
+    },
+    [saveModelOrder]
+  );
+
   const setModelsForBackend = useCallback(
     (backendId: string, updater: (current: ModelToggleState[]) => ModelToggleState[]) => {
+      const nextRows = updater(settings.models.byBackend[backendId] ?? []);
       updateSettings((current) => ({
         ...current,
         models: {
           ...current.models,
           byBackend: {
             ...current.models.byBackend,
-            [backendId]: updater(current.models.byBackend[backendId] ?? []),
+            [backendId]: nextRows,
           },
         },
       }));
+      return nextRows;
     },
-    [updateSettings]
+    [settings.models.byBackend, updateSettings]
   );
 
   const toggleModelGroup = useCallback(
     (backendId: string, row: CompactModelToggleRow, on: boolean) => {
       const startedAt = performance.now();
-      const modelIds = new Set(row.modelIds);
-      setModelsForBackend(backendId, (rows) =>
-        rows.map((model) => (modelIds.has(model.id) ? { ...model, on } : model))
-      );
+      const nextRows = setModelsForBackend(backendId, (rows) => {
+        if (on) {
+          return appendEnabledModelIds(rows, row.modelIds);
+        }
+        const modelIds = new Set(row.modelIds);
+        return rows.map((model) => (modelIds.has(model.id) ? { ...model, on } : model));
+      });
       recordPerfSample("settings.models.toggle_visible", startedAt, {
         backendId,
         modelId: row.id,
@@ -140,8 +171,31 @@ export function ModelsSettingsPanel() {
       void saveModelToggleUpdates(
         row.modelIds.map((modelId) => ({ backendId, modelId, on }))
       );
+      persistBackendOrder(backendId, nextRows);
     },
-    [setModelsForBackend, saveModelToggleUpdates]
+    [persistBackendOrder, setModelsForBackend, saveModelToggleUpdates]
+  );
+
+  const reorderEnabledGroup = useCallback(
+    (backendId: string, fromIndex: number, toIndex: number) => {
+      const compact = compactByBackend[backendId] ?? [];
+      const enabled = compact.filter((row) => row.on);
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= enabled.length ||
+        toIndex >= enabled.length ||
+        fromIndex === toIndex
+      ) {
+        return;
+      }
+      const nextEnabled = moveItem(enabled, fromIndex, toIndex);
+      const nextRows = setModelsForBackend(backendId, (rows) =>
+        applyEnabledCompactOrder(rows, nextEnabled)
+      );
+      persistBackendOrder(backendId, nextRows);
+    },
+    [compactByBackend, persistBackendOrder, setModelsForBackend]
   );
 
   const selectAllForBackend = useCallback(
@@ -151,16 +205,19 @@ export function ModelsSettingsPanel() {
       const updates = currentModels
         .filter((m) => !m.on)
         .map((m) => ({ backendId, modelId: m.id, on: true }));
-      setModelsForBackend(backendId, (rows) => rows.map((r) => ({ ...r, on: true })));
+      const nextRows = setModelsForBackend(backendId, (rows) =>
+        rows.map((r) => ({ ...r, on: true }))
+      );
       if (updates.length > 0) {
         void saveModelToggleUpdates(updates);
       }
+      persistBackendOrder(backendId, nextRows);
       recordPerfSample("settings.models.select_all_visible", startedAt, {
         backendId,
         updates: updates.length,
       });
     },
-    [byBackend, setModelsForBackend, saveModelToggleUpdates]
+    [byBackend, persistBackendOrder, setModelsForBackend, saveModelToggleUpdates]
   );
 
   const deselectAllForBackend = useCallback(
@@ -219,18 +276,56 @@ export function ModelsSettingsPanel() {
     return HARNESS_BACKEND_IDS.filter((id) => present.has(id));
   }, [filteredByBackend]);
 
+  const allBackendIds = useMemo(() => {
+    const present = new Set(Object.keys(compactByBackend));
+    return HARNESS_BACKEND_IDS.filter((id) => present.has(id));
+  }, [compactByBackend]);
+
+  const openAddModels = useCallback((backendId?: string) => {
+    setAddingModels(true);
+    setModelQuery("");
+    if (backendId) {
+      setExpandedBackends((prev) => {
+        const next = new Set(prev);
+        next.add(backendId);
+        return next;
+      });
+    }
+  }, []);
+
+  const searching = modelQuery.trim().length > 0;
+
   return (
     <>
-      <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Models" />
+      {addingModels ? (
+        <SettingsBreadcrumbs
+          segments={[
+            {
+              label: "Agents",
+              onClick: chrome?.navigate ? () => chrome.navigate?.("agents") : undefined,
+            },
+            {
+              label: "Models",
+              onClick: () => {
+                setAddingModels(false);
+                setModelQuery("");
+              },
+            },
+            { label: "Add models" },
+          ]}
+        />
+      ) : (
+        <SettingsNestedBreadcrumbs parentNav="agents" parentLabel="Agents" label="Models" />
+      )}
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">
           <HardwareAwareTextInput
             type="search"
             value={modelQuery}
             onChange={setModelQuery}
-            placeholder="Search models"
+            placeholder={addingModels ? "Search models" : "Search enabled models"}
             className={panelSearchInputClass}
-            ariaLabel="Search models"
+            ariaLabel={addingModels ? "Search models" : "Search enabled models"}
           />
         </div>
         <button
@@ -246,78 +341,230 @@ export function ModelsSettingsPanel() {
           />
         </button>
       </div>
-      {sortedBackendIds.length === 0 ? (
-        <SettingsEmptyState>
-          {modelQuery ? "No models match your search" : "No models loaded yet. Click refresh to load from servers."}
-        </SettingsEmptyState>
-      ) : null}
-      {sortedBackendIds.map((backendId) => {
-        const models = filteredByBackend[backendId] ?? [];
-        const allOn = models.length > 0 && models.every((m) => m.on);
-        const onCountForBackend = models.filter((m) => m.on).length;
-        const collapsed = !expandedBackends.has(backendId);
-        return (
-          <SettingsSection key={backendId}>
-            <div
-              className="flex min-h-[48px] cursor-pointer select-none items-center justify-between gap-[12px] px-[16px] py-[10px]"
-              onClick={() => toggleCollapse(backendId)}
-            >
-              <div className="flex min-w-0 items-center gap-[10px]">
-                <AgentBackendIcon
-                  backendId={backendId as AgentBackendId}
-                  className="size-[18px] shrink-0"
-                  strokeWidth={1.5}
-                />
-                <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                  {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
-                </span>
-                <span className="inline-flex items-center rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
-                  {onCountForBackend}/{models.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-[8px]">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (allOn) {
-                      deselectAllForBackend(backendId);
-                    } else {
-                      selectAllForBackend(backendId);
-                    }
-                  }}
-                  className="inline-flex shrink-0 items-center gap-[4px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[8px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+      {addingModels ? (
+        <>
+          {sortedBackendIds.length === 0 ? (
+            <SettingsEmptyState>
+              {modelQuery
+                ? "No models match your search"
+                : "No models loaded yet. Click refresh to load from servers."}
+            </SettingsEmptyState>
+          ) : null}
+          {sortedBackendIds.map((backendId) => {
+            const models = filteredByBackend[backendId] ?? [];
+            const allOn = models.length > 0 && models.every((m) => m.on);
+            const onCountForBackend = models.filter((m) => m.on).length;
+            const collapsed = !expandedBackends.has(backendId);
+            return (
+              <SettingsSection key={backendId}>
+                <div
+                  className="flex min-h-[48px] cursor-pointer select-none items-center justify-between gap-[12px] px-[16px] py-[10px]"
+                  onClick={() => toggleCollapse(backendId)}
                 >
-                  {allOn ? "Deselect all" : "Select all"}
-                </button>
-                <ChevronRight
-                  className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${collapsed ? "" : "rotate-90"}`}
-                  strokeWidth={1.5}
-                />
-              </div>
-            </div>
-            {collapsed ? null : (
-              <div className="max-h-[min(480px,50vh)] overflow-y-auto overscroll-contain border-t border-[var(--border-subtle)]">
-                {models.map((m, i) => (
-                  <SettingsRow
-                    key={`${backendId}::${m.id}`}
-                    title={m.name}
-                    trailing={
-                      <ToggleSwitch
-                        checked={m.on}
-                        onChange={(v) => toggleModelGroup(backendId, m, v)}
-                        size="sm"
-                        variant="green"
+                  <div className="flex min-w-0 items-center gap-[10px]">
+                    <AgentBackendIcon
+                      backendId={backendId as AgentBackendId}
+                      className="size-[18px] shrink-0"
+                      strokeWidth={1.5}
+                    />
+                    <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
+                    </span>
+                    <span className="inline-flex items-center rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                      {onCountForBackend}/{models.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (allOn) {
+                          deselectAllForBackend(backendId);
+                        } else {
+                          selectAllForBackend(backendId);
+                        }
+                      }}
+                      className="inline-flex shrink-0 items-center gap-[4px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[8px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                    >
+                      {allOn ? "Deselect all" : "Select all"}
+                    </button>
+                    <ChevronRight
+                      className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${collapsed ? "" : "rotate-90"}`}
+                      strokeWidth={1.5}
+                    />
+                  </div>
+                </div>
+                {collapsed ? null : (
+                  <div className="max-h-[min(480px,50vh)] overflow-y-auto overscroll-contain border-t border-[var(--border-subtle)]">
+                    {models.map((m, i) => (
+                      <SettingsRow
+                        key={`${backendId}::${m.id}`}
+                        title={m.name}
+                        trailing={
+                          <ToggleSwitch
+                            checked={m.on}
+                            onChange={(v) => toggleModelGroup(backendId, m, v)}
+                            size="sm"
+                            variant="green"
+                          />
+                        }
+                        border={i < models.length - 1}
                       />
-                    }
-                    border={i < models.length - 1}
+                    ))}
+                  </div>
+                )}
+              </SettingsSection>
+            );
+          })}
+        </>
+      ) : (
+        <>
+          {allBackendIds.length === 0 ? (
+            <SettingsEmptyState>
+              No models loaded yet. Click refresh to load from servers.
+            </SettingsEmptyState>
+          ) : null}
+          {allBackendIds.map((backendId) => {
+            const compact = compactByBackend[backendId] ?? [];
+            const enabled = compact.filter((row) => row.on);
+            const visibleEnabled = searching
+              ? enabled.filter((row) => row.name.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+              : enabled;
+            const collapsed = !expandedBackends.has(backendId);
+            const canDrag = !searching && enabled.length > 1;
+            return (
+              <SettingsSection key={backendId}>
+                <div
+                  data-settings-search-id="reorder-models"
+                  className="flex min-h-[48px] cursor-pointer select-none items-center justify-between gap-[12px] px-[16px] py-[10px]"
+                  onClick={() => toggleCollapse(backendId)}
+                >
+                  <div className="flex min-w-0 items-center gap-[10px]">
+                    <AgentBackendIcon
+                      backendId={backendId as AgentBackendId}
+                      className="size-[18px] shrink-0"
+                      strokeWidth={1.5}
+                    />
+                    <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
+                    </span>
+                    <span className="inline-flex items-center rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                      {enabled.length} enabled
+                    </span>
+                  </div>
+                  <ChevronRight
+                    className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${collapsed ? "" : "rotate-90"}`}
+                    strokeWidth={1.5}
                   />
-                ))}
-              </div>
-            )}
-          </SettingsSection>
-        );
-      })}
+                </div>
+                {collapsed ? null : (
+                  <div className="border-t border-[var(--border-subtle)]">
+                    {visibleEnabled.length === 0 ? (
+                      <SettingsEmptyState>
+                        {searching
+                          ? "No enabled models match your search"
+                          : "No models enabled for this harness."}
+                      </SettingsEmptyState>
+                    ) : (
+                      visibleEnabled.map((row) => {
+                        const sourceIndex = enabled.findIndex((entry) => entry.id === row.id);
+                        return (
+                          <div
+                            key={`${backendId}::${row.id}`}
+                            draggable={canDrag}
+                            onDragStart={(event) => {
+                              if (!canDrag) {
+                                event.preventDefault();
+                                return;
+                              }
+                              event.dataTransfer.setData(
+                                "text/plain",
+                                `${backendId}::${row.id}`
+                              );
+                              event.dataTransfer.effectAllowed = "move";
+                              setDraggingId(`${backendId}::${row.id}`);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingId(null);
+                              setDropTargetId(null);
+                            }}
+                            onDragOver={(event) => {
+                              if (!canDrag) {
+                                return;
+                              }
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                              setDropTargetId(`${backendId}::${row.id}`);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const payload = event.dataTransfer.getData("text/plain");
+                              const prefix = `${backendId}::`;
+                              if (!payload.startsWith(prefix)) {
+                                setDraggingId(null);
+                                setDropTargetId(null);
+                                return;
+                              }
+                              const fromId = payload.slice(prefix.length);
+                              const fromIndex = enabled.findIndex((entry) => entry.id === fromId);
+                              reorderEnabledGroup(backendId, fromIndex, sourceIndex);
+                              setDraggingId(null);
+                              setDropTargetId(null);
+                            }}
+                            className={`flex min-h-[48px] items-center gap-[10px] border-b border-[var(--border-subtle)] px-[16px] py-[10px] ${
+                              dropTargetId === `${backendId}::${row.id}`
+                                ? "bg-[var(--accent-bg)]"
+                                : ""
+                            } ${
+                              draggingId === `${backendId}::${row.id}` ? "opacity-50" : ""
+                            } ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
+                          >
+                            <span
+                              className={`flex size-[18px] shrink-0 items-center justify-center ${
+                                canDrag
+                                  ? "text-[var(--text-secondary)]"
+                                  : "text-[var(--text-disabled)]"
+                              }`}
+                              aria-hidden
+                            >
+                              <GripVertical className="size-[14px]" strokeWidth={1.75} />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                              {row.name}
+                            </span>
+                            <ToggleSwitch
+                              checked
+                              onChange={(v) => toggleModelGroup(backendId, row, v)}
+                              size="sm"
+                              variant="green"
+                            />
+                          </div>
+                        );
+                      })
+                    )}
+                    <button
+                      type="button"
+                      data-settings-search-id="add-models"
+                      onClick={() => openAddModels(backendId)}
+                      className="flex min-h-[48px] w-full items-center gap-[10px] px-[16px] py-[10px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+                    >
+                      <Plus
+                        className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                        strokeWidth={1.75}
+                        aria-hidden
+                      />
+                      <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                        Add models
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </SettingsSection>
+            );
+          })}
+        </>
+      )}
     </>
   );
 }
