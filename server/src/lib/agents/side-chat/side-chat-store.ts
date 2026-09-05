@@ -198,66 +198,45 @@ export type SideChatReminderPayload = {
   kind: "delta" | "unavailable";
 };
 
-/**
- * Compute what the side chat should learn about its parent right now: the
- * parent events after the delivered cursor, formatted into one block. Returns
- * `null` when nothing needs saying (no new events, or only noise).
- *
- * `sideChatEvents` is the side chat's own full log (the cursor is derived from
- * it); pass `parentEvents` to skip the store read when the caller already has
- * them (the live tail does).
- */
-export async function resolveSideChatDelta(input: {
-  workspaceId: string;
-  sideChat: AgentConversationRecord;
-  sideChatEvents?: AgentStoredEvent[];
-  parentEvents?: AgentStoredEvent[];
-  parentRecord?: AgentConversationRecord | null;
-  limits?: Partial<SideChatLimits>;
-}): Promise<SideChatReminderPayload | null> {
-  const origin = sideChatOriginOf(input.sideChat);
-  if (!origin) {
+/** One-shot "parent is gone" payload, or `null` if it was already delivered. */
+export function unavailablePayloadFor(input: {
+  origin: SideChatOrigin;
+  cursor: number;
+  alreadyNoticed: boolean;
+}): SideChatReminderPayload | null {
+  if (input.alreadyNoticed) {
     return null;
   }
-  const sideChatEvents =
-    input.sideChatEvents ??
-    (await readConversationEvents(input.workspaceId, input.sideChat.id));
-  const state = sideChatDeliveryStateFromEvents(sideChatEvents);
-  const parent =
-    input.parentRecord === undefined
-      ? await readConversationRecord(input.workspaceId, origin.parentConversationId)
-      : input.parentRecord;
-  if (!parent) {
-    if (state.parentUnavailableNoticed) {
-      return null;
-    }
-    const primary: PrimaryChatDescriptor = {
-      conversationId: origin.parentConversationId,
-      title: origin.parentTitle ?? "Primary chat",
-      status: null,
-    };
-    return {
+  const primary: PrimaryChatDescriptor = {
+    conversationId: input.origin.parentConversationId,
+    title: input.origin.parentTitle ?? "Primary chat",
+    status: null,
+  };
+  return {
+    kind: "unavailable",
+    text: formatPrimaryChatUnavailable(primary),
+    fromSeq: input.cursor,
+    throughSeq: input.cursor,
+    raw: buildSideChatReminderRaw({
       kind: "unavailable",
-      text: formatPrimaryChatUnavailable(primary),
-      fromSeq: state.cursor,
-      throughSeq: state.cursor,
-      raw: buildSideChatReminderRaw({
-        kind: "unavailable",
-        parentConversationId: origin.parentConversationId,
-        fromSeq: state.cursor,
-        throughSeq: state.cursor,
-      }),
-    };
-  }
-  const parentEvents =
-    input.parentEvents ??
-    (parent.lastEventSeq > state.cursor
-      ? await readConversationEventsSince(input.workspaceId, parent.id, state.cursor)
-      : []);
+      parentConversationId: input.origin.parentConversationId,
+      fromSeq: input.cursor,
+      throughSeq: input.cursor,
+    }),
+  };
+}
+
+/** Format already-fetched parent events into a delta payload (or `null` for noise). */
+export function deltaPayloadFor(input: {
+  parent: AgentConversationRecord;
+  parentEvents: AgentStoredEvent[];
+  fromSeq: number;
+  limits?: Partial<SideChatLimits>;
+}): SideChatReminderPayload | null {
   const delta = formatPrimaryChatDelta({
-    primary: describePrimary(parent),
-    events: parentEvents,
-    fromSeq: state.cursor,
+    primary: describePrimary(input.parent),
+    events: input.parentEvents,
+    fromSeq: input.fromSeq,
     maxChars: input.limits?.sideChatDeltaMaxChars ?? DEFAULT_SIDE_CHAT_DELTA_MAX_CHARS,
   });
   if (!delta) {
@@ -270,10 +249,71 @@ export async function resolveSideChatDelta(input: {
     throughSeq: delta.throughSeq,
     raw: buildSideChatReminderRaw({
       kind: "delta",
-      parentConversationId: parent.id,
+      parentConversationId: input.parent.id,
       fromSeq: delta.fromSeq,
       throughSeq: delta.throughSeq,
     }),
+  };
+}
+
+export type SideChatDeltaResolution = {
+  /** Block to deliver, or `null` when nothing new needs saying. */
+  payload: SideChatReminderPayload | null;
+  /** Cursor the side chat stands at before this resolution (from its own log). */
+  cursor: number;
+  /** Highest parent seq the resolution accounted for (>= cursor). */
+  throughSeq: number;
+  parent: AgentConversationRecord | null;
+};
+
+/**
+ * Compute what the side chat should learn about its parent right now: the
+ * parent events after the delivered cursor, formatted into one block. The
+ * cursor is derived from the side chat's own persisted reminders, so nothing
+ * else needs to be stored.
+ */
+export async function resolveSideChatDelta(input: {
+  workspaceId: string;
+  sideChat: AgentConversationRecord;
+  sideChatEvents?: AgentStoredEvent[];
+  limits?: Partial<SideChatLimits>;
+}): Promise<SideChatDeltaResolution | null> {
+  const origin = sideChatOriginOf(input.sideChat);
+  if (!origin) {
+    return null;
+  }
+  const sideChatEvents =
+    input.sideChatEvents ??
+    (await readConversationEvents(input.workspaceId, input.sideChat.id));
+  const state = sideChatDeliveryStateFromEvents(sideChatEvents);
+  const parent = await readConversationRecord(input.workspaceId, origin.parentConversationId);
+  if (!parent) {
+    return {
+      payload: unavailablePayloadFor({
+        origin,
+        cursor: state.cursor,
+        alreadyNoticed: state.parentUnavailableNoticed,
+      }),
+      cursor: state.cursor,
+      throughSeq: state.cursor,
+      parent: null,
+    };
+  }
+  const parentEvents =
+    parent.lastEventSeq > state.cursor
+      ? await readConversationEventsSince(input.workspaceId, parent.id, state.cursor)
+      : [];
+  const payload = deltaPayloadFor({
+    parent,
+    parentEvents,
+    fromSeq: state.cursor,
+    limits: input.limits,
+  });
+  return {
+    payload,
+    cursor: state.cursor,
+    throughSeq: Math.max(state.cursor, maxEventSeq(parentEvents, state.cursor)),
+    parent,
   };
 }
 
