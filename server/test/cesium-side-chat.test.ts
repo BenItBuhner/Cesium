@@ -13,6 +13,10 @@ import {
   sideChatDeliveryStateFromEvents,
 } from "../src/lib/agents/side-chat/side-chat-context.js";
 import { SideChatTail } from "../src/lib/agents/side-chat/side-chat-tail.js";
+import {
+  normalizeEventsToHistory,
+  summarizeForCompression,
+} from "../src/lib/agents/cesium/cesium-history.js";
 import { publish } from "../src/cache/pubsub.js";
 import type { AgentManagerEvent, AgentStoredEvent } from "../src/lib/agents/types.js";
 
@@ -302,6 +306,137 @@ test("SideChatTail buffers only newer parent events, dedupes, and honors discard
   }
   await publishParentEvent(ev({ seq: 11, kind: "status", status: "idle" }));
   assert.equal(tail.hasPending(), false, "detached tails stop buffering");
+});
+
+function sideEv(input: EventInput): AgentStoredEvent {
+  return { ...ev(input), conversationId: "side" } as AgentStoredEvent;
+}
+
+test("history rebuild replays inline reminders as their own user message after tool results", () => {
+  const seedRaw = buildSideChatReminderRaw({
+    kind: "seed",
+    parentConversationId: PARENT_ID,
+    fromSeq: 0,
+    throughSeq: 40,
+  });
+  const events: AgentStoredEvent[] = [
+    sideEv({
+      seq: 1,
+      kind: "system_reminder",
+      reminderId: "side-chat-seed",
+      reason: SIDE_CHAT_REMINDER_REASON,
+      placement: "inline",
+      text: "<primary-chat-context kind=\"seed\">SEED</primary-chat-context>",
+      raw: seedRaw,
+    }),
+    sideEv({ seq: 2, kind: "user_message", messageId: "u1", content: "What is the primary doing?" }),
+    sideEv({
+      seq: 3,
+      kind: "system_reminder",
+      reminderId: "mode-u1",
+      targetMessageId: "u1",
+      reason: "mode",
+      text: "<system-reminder>MODE-1</system-reminder>",
+    }),
+    sideEv({
+      seq: 4,
+      kind: "tool_call",
+      toolCallId: "t1",
+      title: "Read file",
+      toolKind: "read",
+      status: "in_progress",
+      raw: { request: { name: "read_file", arguments: { path: "a.ts" } } },
+    }),
+    sideEv({ seq: 5, kind: "tool_call_update", toolCallId: "t1", status: "completed", detail: "contents" }),
+    sideEv({
+      seq: 6,
+      kind: "system_reminder",
+      reminderId: "side-chat-delta-inline-57",
+      reason: SIDE_CHAT_REMINDER_REASON,
+      placement: "inline",
+      text: "<primary-chat-context kind=\"delta\">DELTA-INLINE</primary-chat-context>",
+      raw: buildSideChatReminderRaw({ kind: "delta", parentConversationId: PARENT_ID, fromSeq: 40, throughSeq: 57 }),
+    }),
+    sideEv({ seq: 7, kind: "assistant_message_chunk", messageId: "a1", text: "It is reading files." }),
+    sideEv({ seq: 8, kind: "assistant_message_end", messageId: "a1" }),
+    sideEv({ seq: 9, kind: "user_message", messageId: "u2", content: "And now?" }),
+    sideEv({
+      seq: 10,
+      kind: "system_reminder",
+      reminderId: "side-chat-delta-u2",
+      targetMessageId: "u2",
+      reason: SIDE_CHAT_REMINDER_REASON,
+      text: "<primary-chat-context kind=\"delta\">DELTA-U2</primary-chat-context>",
+      raw: buildSideChatReminderRaw({ kind: "delta", parentConversationId: PARENT_ID, fromSeq: 57, throughSeq: 70 }),
+    }),
+    sideEv({
+      seq: 11,
+      kind: "system_reminder",
+      reminderId: "mode-u2",
+      targetMessageId: "u2",
+      reason: "mode",
+      text: "<system-reminder>MODE-2</system-reminder>",
+    }),
+  ];
+
+  const history = normalizeEventsToHistory(events, "SYSTEM");
+  const shape = history.map((message) =>
+    message.toolCalls ? `${message.role}:tools` : `${message.role}:${message.content}`
+  );
+  assert.deepEqual(shape, [
+    "system:SYSTEM",
+    "user:<primary-chat-context kind=\"seed\">SEED</primary-chat-context>",
+    // The floating mode reminder only survives on its newest target (MODE-2).
+    "user:What is the primary doing?",
+    "assistant:tools",
+    "tool:contents",
+    "user:<primary-chat-context kind=\"delta\">DELTA-INLINE</primary-chat-context>",
+    "assistant:It is reading files.",
+    // The turn-start delta rides on its user message, together with the mode reminder.
+    "user:<primary-chat-context kind=\"delta\">DELTA-U2</primary-chat-context>\n\n<system-reminder>MODE-2</system-reminder>\n\nAnd now?",
+  ]);
+
+  // Rebuilding after more events never rewrites earlier messages.
+  const extended = normalizeEventsToHistory(
+    [
+      ...events,
+      sideEv({ seq: 12, kind: "assistant_message_chunk", messageId: "a2", text: "Still reading." }),
+      sideEv({ seq: 13, kind: "assistant_message_end", messageId: "a2" }),
+      sideEv({ seq: 14, kind: "user_message", messageId: "u3", content: "Third" }),
+      sideEv({
+        seq: 15,
+        kind: "system_reminder",
+        reminderId: "mode-u3",
+        targetMessageId: "u3",
+        reason: "mode",
+        text: "<system-reminder>MODE-3</system-reminder>",
+      }),
+    ],
+    "SYSTEM"
+  );
+  // Everything before the previous user message is byte-identical to the earlier rebuild.
+  assert.deepEqual(extended.slice(0, history.length - 1), history.slice(0, history.length - 1));
+  assert.equal(
+    extended[history.length - 1]!.content,
+    "<primary-chat-context kind=\"delta\">DELTA-U2</primary-chat-context>\n\nAnd now?",
+    "linked_conversation reminders stay pinned to their message; only the mode reminder floats"
+  );
+});
+
+test("compression summaries skip primary-chat context blocks", () => {
+  const summary = summarizeForCompression([
+    sideEv({
+      seq: 1,
+      kind: "system_reminder",
+      reminderId: "side-chat-seed",
+      reason: SIDE_CHAT_REMINDER_REASON,
+      placement: "inline",
+      text: "<primary-chat-context kind=\"seed\">GIANT SEED</primary-chat-context>",
+    }),
+    sideEv({ seq: 2, kind: "user_message", messageId: "u1", content: "hello" }),
+  ]);
+  assert.ok(!summary.includes("GIANT SEED"));
+  assert.ok(summary.includes("User: hello"));
 });
 
 test("unavailable notice is a one-shot block", () => {
