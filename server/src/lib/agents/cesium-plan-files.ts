@@ -64,12 +64,16 @@ export function parsePlanEntriesFromMarkdown(content: string): AgentPlanEntry[] 
     if (!text) {
       continue;
     }
+    // Mirrors `checkboxForStatus` in plan-artifacts.ts: `[~]` is in progress,
+    // `[!]` (and the legacy `[-]`) is blocked.
     const status: AgentPlanEntry["status"] =
       marker === "x" || marker === "X"
         ? "completed"
-        : marker === "!" || marker === "~" || marker === "-"
-          ? "blocked"
-          : "pending";
+        : marker === "~"
+          ? "in_progress"
+          : marker === "!" || marker === "-"
+            ? "blocked"
+            : "pending";
     entries.push({
       id: `plan-item-${index + 1}`,
       content: text,

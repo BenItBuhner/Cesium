@@ -566,6 +566,12 @@ export type AgentConversationRecord = {
   experimental: boolean;
   /** Slash commands the live agent session advertises; absent for most backends. */
   availableCommands?: AgentSlashCommand[] | null;
+  /**
+   * Provider-reported context usage for harnesses that stream authoritative
+   * token accounting (e.g. Codex `thread/tokenUsage/updated`). Absent when the
+   * backend computes usage on demand instead.
+   */
+  contextUsage?: AgentContextUsageSnapshot | null;
   /** Server-owned archive flag; null = visible in the default rail. */
   archivedAt: number | null;
   /**

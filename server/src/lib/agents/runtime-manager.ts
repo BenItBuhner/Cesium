@@ -978,7 +978,11 @@ export class AgentRuntimeManager {
     }
     const conversation = this.withBackendDefaults(record);
     if (conversation.config.backendId !== "cesium-agent") {
-      return unsupportedContextUsageSnapshot();
+      // Harnesses that stream authoritative token accounting (Codex App Server)
+      // persist a snapshot on the record; everything else is unsupported.
+      return conversation.contextUsage?.supported
+        ? conversation.contextUsage
+        : unsupportedContextUsageSnapshot();
     }
     return computeCesiumAgentContextUsage({ workspace, conversation });
   }

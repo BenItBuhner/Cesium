@@ -320,7 +320,9 @@ async function runScenario(input: {
   cwd: string;
   model?: string;
 }): Promise<void> {
-  const approvalPolicy = input.name === "approval" ? "on-request" : "on-failure";
+  // Codex >= 0.153 only accepts `untrusted | on-request | never | granular`;
+  // `on-failure` was removed. `never` keeps non-approval scenarios unattended.
+  const approvalPolicy = input.name === "approval" ? "untrusted" : "never";
   await appendJsonLine(input.out, { type: "scenario_start", name: input.name });
   await input.client.request("turn/start", {
     threadId: input.threadId,
@@ -331,13 +333,8 @@ async function runScenario(input: {
     approvalPolicy,
     sandboxPolicy: {
       type: "workspaceWrite",
-      mode: "workspaceWrite",
       writableRoots: [input.cwd],
       networkAccess: true,
-      writable_roots: [input.cwd],
-      network_access: true,
-      exclude_tmpdir_env_var: false,
-      exclude_slash_tmp: false,
     },
   });
   await waitForTurnCompleted(input.client, input.out, input.name);
@@ -387,7 +384,12 @@ async function main(): Promise<void> {
       }
       await appendJsonLine(args.out, { type: "rpc_result", method, result });
     }
-    const selectedModel = args.model ?? discoveredModel;
+    // `model/list` reports Codex's built-in OpenAI catalog even when
+    // config.toml routes to a custom `model_provider`; forcing that default
+    // onto a third-party provider fails every turn. Only pin a model when the
+    // caller asked for one and otherwise let the server default apply.
+    const selectedModel = args.model;
+    await appendJsonLine(args.out, { type: "model_selection", discoveredModel, selectedModel: selectedModel ?? null });
 
     const started = (await client.request("thread/start", {
       cwd: args.cwd,
