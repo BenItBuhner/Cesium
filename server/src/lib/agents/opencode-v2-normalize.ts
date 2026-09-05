@@ -408,6 +408,36 @@ export class OpenCodeV2EventNormalizer {
   private readonly toolStatuses = new Map<string, AgentToolCallStatus>();
 
   /**
+   * Close every tool call that is still pending/running as `cancelled`. Cesium
+   * tears the runtime down right after interrupting the session, so the
+   * server's trailing `session.tool.failed (aborted)` is never processed and
+   * the card would otherwise spin forever in the transcript.
+   */
+  cancelOpenToolCalls(conversationId: string, reason = "Interrupted"): AgentEventInput[] {
+    const events: AgentEventInput[] = [];
+    for (const [key, status] of this.toolStatuses) {
+      if (status !== "pending" && status !== "in_progress") continue;
+      const separator = key.indexOf(":");
+      const sessionId = key.slice(0, separator);
+      const callId = key.slice(separator + 1);
+      const name = this.toolNames.get(key) ?? "tool";
+      this.toolStatuses.set(key, "cancelled");
+      events.push({
+        eventId: randomUUID(),
+        conversationId,
+        kind: "tool_call_update",
+        toolCallId: `opencode-v2:${sessionId}:${callId}`,
+        title: name,
+        toolKind: mapOpenCodeToolNameToAcpKind(name),
+        status: "cancelled",
+        detail: reason,
+        raw: { type: "cesium.cancelled", tool: name, sessionID: sessionId, id: callId },
+      });
+    }
+    return events;
+  }
+
+  /**
    * Re-derive tool state from `GET /api/session/:id/message` after the volatile
    * event stream dropped events (reconnect). Emits a `tool_call`/`tool_call_update`
    * for every tool part whose status differs from what was last streamed, so no

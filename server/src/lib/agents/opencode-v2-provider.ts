@@ -659,6 +659,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     this.autonomousTurn = null;
     await this.connection?.client.interruptSession(this.sessionId).catch(() => undefined);
     await this.callbacks.appendEvents([
+      ...this.normalizer.cancelOpenToolCalls(this.callbacks.conversation.id),
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,

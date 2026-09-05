@@ -818,6 +818,35 @@ test("provider: background subagent completion resumes the root as an autonomous
   });
 });
 
+test("provider: cancel closes the running tool card as cancelled and interrupts the server session", async () => {
+  const fixture = loadFixture("shell-turn");
+  const dummy = await startDummyServer({
+    fixture,
+    // Stop right after the tool started running: the user cancels mid-command.
+    pauseAfter: (event) => event.type === "session.tool.called",
+  });
+  await withProvider(dummy, async ({ handle, appended, conversation, waitFor }) => {
+    const prompt = handle.prompt({ text: "run it", userMessageId: "user-1" });
+    prompt.catch(() => undefined);
+    await waitFor(
+      () => appended.some((e) => e.kind === "tool_call_update" && e.status === "in_progress"),
+      "tool running"
+    );
+    await handle.cancel();
+    await prompt.catch(() => undefined);
+    assert.equal(conversation().status, "cancelled");
+    assert.ok(dummy.requests.some((r) => r.path.endsWith("/interrupt")), "server session interrupted");
+    const cancelled = appended.filter((e) => e.kind === "tool_call_update" && e.status === "cancelled");
+    assert.equal(cancelled.length, 1, "the one running tool card is closed as cancelled");
+    assert.equal(cancelled[0]!.kind === "tool_call_update" && cancelled[0]!.title, "shell");
+    // The status event follows the tool update so the transcript never ends on a spinner.
+    const lastTool = appended.map((e) => e.kind).lastIndexOf("tool_call_update");
+    const lastStatus = appended.findIndex((e) => e.kind === "status" && e.status === "cancelled");
+    assert.ok(lastTool < lastStatus);
+    dummy.resumeReplay();
+  });
+});
+
 test("provider: a volatile-stream disconnect mid-turn is reconciled from the message list", async () => {
   const fixture = loadFixture("shell-turn");
   const success = fixture.events.find((e) => e.type === "session.tool.success")!;

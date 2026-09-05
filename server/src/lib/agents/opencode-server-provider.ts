@@ -167,6 +167,8 @@ type ActiveOpenCodePrompt = {
   autonomous?: boolean;
   /** Autonomous turn closed early because the user sent a new prompt. */
   settledByPrompt?: boolean;
+  /** Set by cancel()/dispose(): the rejection is expected and must not be recorded as a failure. */
+  cancelled?: boolean;
 };
 
 /** Text/reasoning part bookkeeping for streaming `message.part.delta` frames. */
@@ -260,6 +262,11 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private readonly partInfo = new Map<string, OpenCodePartInfo>();
   /** Child-session text emitted so far per part id (child text streams into subagent messages). */
   private readonly childEmittedTextByPartId = new Map<string, string>();
+  /** Tool cards opened and not yet settled, so cancel() can close them out. */
+  private readonly openToolCalls = new Map<
+    string,
+    { title?: string; toolKind?: string; childSessionId?: string }
+  >();
   /** requestId → remembered-permission bookkeeping for persisting "always" choices. */
   private readonly pendingPermissionContext = new Map<
     string,
@@ -487,7 +494,15 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     } catch (error) {
       this.acceptingPromptSse = false;
       this.clearActivePromptCompletion(activePrompt);
-      this.activePrompt = null;
+      if (this.activePrompt === activePrompt) {
+        this.activePrompt = null;
+      }
+      if (activePrompt.cancelled) {
+        // cancel()/dispose() already recorded the cancelled status; surfacing
+        // the abort as a failure here (or to the runtime) would overwrite it
+        // with lastError + a runtime-failure message.
+        return;
+      }
       await this.connection.client.abortSession(this.sessionId).catch(() => undefined);
       const message = error instanceof Error ? error.message : "OpenCode Server prompt failed.";
       this.log.error("prompt.failed", message, { messageId });
@@ -522,6 +537,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.pendingPermissions.clear();
     if (this.activePrompt) {
       this.clearActivePromptCompletion(this.activePrompt);
+      this.activePrompt.cancelled = true;
       if (this.activePrompt.autonomous) {
         // cancel() writes the cancelled status itself; keep the autonomous
         // turn's completion hook from overwriting it with a failure.
@@ -534,6 +550,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.log.info("session.cancel", `Aborting OpenCode session ${this.sessionId}.`);
     await this.connection?.client.abortSession(this.sessionId).catch(() => undefined);
     await this.callbacks.appendEvents([
+      ...this.cancelledToolCallEvents(),
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
@@ -742,6 +759,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
     if (this.activePrompt) {
       this.clearActivePromptCompletion(this.activePrompt);
+      this.activePrompt.cancelled = true;
     }
     this.activePrompt?.reject(new Error("OpenCode Server session disposed."));
     this.activePrompt = null;
@@ -1425,10 +1443,62 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     if (this.disposed || (!this.acceptingPromptSse && !isPermissionLifecycle)) {
       return;
     }
+    this.trackOpenToolCalls(events);
     await this.callbacks.appendEvents(events);
     if (permission?.kind === "permission_request") {
       await this.handleSurfacedPermission(permission);
     }
+  }
+
+  private trackOpenToolCalls(events: AgentEventInput[]): void {
+    for (const event of events) {
+      if (event.kind === "tool_call") {
+        this.openToolCalls.set(event.toolCallId, {
+          title: event.title,
+          toolKind: event.toolKind,
+          childSessionId: event.openCodeSubagentSessionId,
+        });
+      } else if (event.kind === "tool_call_update") {
+        if (event.status === "completed" || event.status === "failed" || event.status === "cancelled") {
+          this.openToolCalls.delete(event.toolCallId);
+        } else if (!this.openToolCalls.has(event.toolCallId)) {
+          this.openToolCalls.set(event.toolCallId, {
+            title: event.title,
+            toolKind: event.toolKind,
+            childSessionId: event.openCodeSubagentSessionId,
+          });
+        }
+      }
+    }
+    if (this.openToolCalls.size > 500) {
+      const oldest = this.openToolCalls.keys().next().value as string | undefined;
+      if (oldest) this.openToolCalls.delete(oldest);
+    }
+  }
+
+  /**
+   * Close every still-running tool card as cancelled. The runtime disposes the
+   * session right after cancel(), so OpenCode's own trailing tool error for the
+   * aborted call is never processed.
+   */
+  private cancelledToolCallEvents(): AgentEventInput[] {
+    const events: AgentEventInput[] = [];
+    for (const [toolCallId, info] of this.openToolCalls) {
+      events.push({
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "tool_call_update",
+        toolCallId,
+        title: info.title,
+        toolKind: info.toolKind,
+        status: "cancelled",
+        detail: "Interrupted",
+        ...(info.childSessionId ? { openCodeSubagentSessionId: info.childSessionId } : {}),
+        raw: { type: "cesium.cancelled", toolCallId },
+      });
+    }
+    this.openToolCalls.clear();
+    return events;
   }
 
   /**

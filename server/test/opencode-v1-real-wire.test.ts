@@ -344,6 +344,30 @@ test("real 1.18.29 task subagent on both streams: no duplicate cards, child tool
   await prompt.catch(() => undefined);
 });
 
+test("cancel mid-turn closes the running bash card as cancelled", async () => {
+  const fixture = loadFixture("bash-turn");
+  const rig = createRig({ fixture });
+  const handle = await rig.startSession();
+  const prompt = handle.prompt({ text: "run it", userMessageId: "user-1" });
+  prompt.catch(() => undefined);
+  await rig.promptSent();
+  for (const event of fixture.events) {
+    await rig.emitEvent(event);
+    const part = (properties(event).part as Json | undefined);
+    if (event.type === "message.part.updated" && part?.type === "tool" && (part.state as Json)?.status === "running") {
+      break;
+    }
+  }
+  await handle.cancel();
+  await prompt.catch(() => undefined);
+  assert.equal(rig.conversation().status, "cancelled");
+  const traces = rig.toolTraces();
+  assert.equal(traces.size, 1);
+  const [trace] = [...traces.values()];
+  assert.equal(trace!.statuses.at(-1), "cancelled", trace!.statuses.join(">"));
+  assert.equal(trace!.detail, "Interrupted");
+});
+
 test("synthetic background-task completion resumes the root as an autonomous turn", async () => {
   const fixture = loadFixture("bash-turn");
   const root = fixture.rootSessionId;
