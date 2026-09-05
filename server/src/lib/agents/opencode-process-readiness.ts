@@ -1,5 +1,39 @@
 import type { ChildProcess } from "node:child_process";
 
+const shutdownHooks = new Set<() => void>();
+let shutdownHooksRegistered = false;
+
+function runShutdownHooks(): void {
+  for (const hook of [...shutdownHooks]) {
+    try {
+      hook();
+    } catch {
+      // Shutdown must never throw.
+    }
+  }
+}
+
+/**
+ * Managed OpenCode servers now linger after their last session detaches, so
+ * they must be stopped when Cesium itself goes away: `opencode serve` (1.x)
+ * does not watch its parent and would otherwise run orphaned. Signals are
+ * re-raised after the hooks so the default termination behavior is unchanged.
+ */
+export function registerManagedServerShutdownHook(hook: () => void): void {
+  shutdownHooks.add(hook);
+  if (shutdownHooksRegistered) return;
+  shutdownHooksRegistered = true;
+  process.once("exit", runShutdownHooks);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.once(signal, () => {
+      runShutdownHooks();
+      if (process.listenerCount(signal) === 0) {
+        process.kill(process.pid, signal);
+      }
+    });
+  }
+}
+
 /** Keeps the most recent process output lines for startup diagnostics. */
 export class RecentOutput {
   private readonly lines: string[] = [];

@@ -271,6 +271,7 @@ Driver resolution (first match wins):
 | `OPENCURSOR_OPENCODE_PROTOCOL` | Force `current` or `v2-beta` for new OpenCode chats; otherwise the chat's **Generation** option decides (switching it mid-chat starts a fresh session on the other server). |
 | `OPENCURSOR_OPENCODE_DB` / `OPENCURSOR_OPENCODE_V2_DB` | Per-generation `OPENCODE_DB` for the servers Cesium spawns. Both generations default to the same `~/.local/share/opencode/opencode.db`; a database first created by the v2 beta cannot be opened by the current release, so give one of them its own file. |
 | `OPENCURSOR_OPENCODE_STARTUP_TIMEOUT_MS` | How long a spawned OpenCode server may take to become healthy (default `60000`; first start can migrate the database and fetch catalogs). Startup crashes fail immediately with the process output. |
+| `OPENCURSOR_OPENCODE_SERVER_LINGER_MS` | How long a managed OpenCode server stays warm after its last chat detaches (default 10 minutes, `0` = stop immediately), so the next prompt does not pay a server boot. Managed servers are always stopped when Cesium exits. |
 | `OPENCURSOR_REAL_HOME` | When the server runs with a different `$HOME` (Docker/systemd), set to the real user home so `~/.opencode` resolution matches your install. |
 | `OPENCURSOR_DEVIN_CLI_BIN` | Absolute path to **Devin CLI** for the `devin-acp` backend; otherwise `devin` on `PATH` / `~/.local/bin/devin`. |
 | `OPENCURSOR_DEVIN_CLI_ARGS` | JSON array of argv after the Devin binary for ACP (default `["acp"]`). |

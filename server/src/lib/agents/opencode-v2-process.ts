@@ -8,7 +8,11 @@ import {
   OpenCodeV2Client,
   openCodeV2AuthFromEnv,
 } from "./opencode-v2-client.js";
-import { RecentOutput, waitForManagedServerReady } from "./opencode-process-readiness.js";
+import {
+  RecentOutput,
+  registerManagedServerShutdownHook,
+  waitForManagedServerReady,
+} from "./opencode-process-readiness.js";
 
 export type OpenCodeV2Connection = {
   client: OpenCodeV2Client;
@@ -22,9 +26,11 @@ type ManagedServerPoolRow = {
   child: ChildProcess;
   ready: Promise<void>;
   refs: number;
+  lingerTimer?: ReturnType<typeof setTimeout>;
 };
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
+registerManagedServerShutdownHook(() => stopAllManagedOpenCodeV2Servers());
 
 /**
  * One v2 server hosts every workspace: the beta resolves the location of each
@@ -83,15 +89,45 @@ function stopManagedChild(child: ChildProcess): void {
   forceTimer.unref?.();
 }
 
+function stopManagedServer(poolKey: string, row: ManagedServerPoolRow): void {
+  if (managedServerPool.get(poolKey) === row) {
+    managedServerPool.delete(poolKey);
+  }
+  stopManagedChild(row.child);
+}
+
+/** See the current-generation counterpart: keep the shared server warm between prompts. */
+function managedServerLingerMs(): number {
+  const raw = Number.parseInt(process.env.OPENCURSOR_OPENCODE_SERVER_LINGER_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 10 * 60_000;
+}
+
 function releaseManagedServer(poolKey: string, row: ManagedServerPoolRow): void {
   row.refs = Math.max(0, row.refs - 1);
   if (row.refs > 0) {
     return;
   }
-  if (managedServerPool.get(poolKey) === row) {
-    managedServerPool.delete(poolKey);
+  const linger = managedServerLingerMs();
+  if (linger === 0) {
+    stopManagedServer(poolKey, row);
+    return;
   }
-  stopManagedChild(row.child);
+  clearTimeout(row.lingerTimer);
+  row.lingerTimer = setTimeout(() => {
+    row.lingerTimer = undefined;
+    if (row.refs === 0) {
+      stopManagedServer(poolKey, row);
+    }
+  }, linger);
+  row.lingerTimer.unref?.();
+}
+
+/** Stop every lingering managed v2 server (used by tests and shutdown). */
+export function stopAllManagedOpenCodeV2Servers(): void {
+  for (const [poolKey, row] of [...managedServerPool.entries()]) {
+    clearTimeout(row.lingerTimer);
+    stopManagedServer(poolKey, row);
+  }
 }
 
 export async function connectOpenCodeV2(input: {
@@ -115,8 +151,10 @@ export async function connectOpenCodeV2(input: {
 
   const poolKey = SHARED_POOL_KEY;
   const existing = managedServerPool.get(poolKey);
-  if (existing) {
+  if (existing && existing.child.exitCode == null && !existing.child.killed) {
     existing.refs += 1;
+    clearTimeout(existing.lingerTimer);
+    existing.lingerTimer = undefined;
     try {
       await existing.ready;
     } catch (error) {
