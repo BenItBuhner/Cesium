@@ -71,10 +71,19 @@ const QUIESCENCE_TIMEOUT_MS = 30_000;
 
 const MUTATING_BUILTIN_TOOLS = new Set(["bash", "edit", "write"]);
 
-function withCurrentConfig(
+/**
+ * Seed a fresh handle's options from the cached catalog while carrying over
+ * every value the conversation already chose (model, mode, thinking level,
+ * tool approval). Runtimes are disposed when idle, so a value picked in the
+ * composer must survive the next `ensureRuntime`.
+ */
+export function withCurrentConfig(
   configOptions: AgentConfigOption[],
   conversation: AgentConversationRecord
 ): AgentConfigOption[] {
+  const persisted = new Map(
+    (conversation.configOptions ?? []).map((option) => [option.id, option.currentValue] as const)
+  );
   return configOptions.map((option) => {
     if (option.category === "model") {
       return {
@@ -87,6 +96,10 @@ function withCurrentConfig(
         ...option,
         currentValue: conversation.config.mode || option.currentValue,
       };
+    }
+    const saved = persisted.get(option.id)?.trim();
+    if (saved && option.options.some((entry) => entry.value === saved)) {
+      return { ...option, currentValue: saved };
     }
     return option;
   });

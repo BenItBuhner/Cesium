@@ -38,6 +38,7 @@ import {
   createAgentProvider,
   listAgentBackendsWithCache,
 } from "./providers.js";
+import { readAgentBackendConfigCache } from "./provider-cache-store.js";
 import { AGENT_CAPABILITY_KEYS } from "./agent-contract.js";
 import {
   computeCesiumAgentContextUsage,
@@ -502,6 +503,21 @@ export class AgentRuntimeManager {
         }
       } catch {
         // Settings are best-effort here; fall back to the registry default.
+      }
+    }
+    if (backendId === "pi-agent") {
+      // Pi's default comes from its ModelRegistry (settings.json default, then
+      // models.json providers) - the same catalog the composer shows.
+      try {
+        const cached = await readAgentBackendConfigCache("pi-agent");
+        const modelOption = findPrimaryModelConfigOption(cached);
+        const value = modelOption?.currentValue?.trim();
+        if (value && value !== "auto" && value !== "__default__") {
+          const name = modelOption?.options.find((option) => option.value === value)?.name ?? value;
+          return { modelId: value, modelName: name };
+        }
+      } catch {
+        // Cache unavailable; Pi picks its own default at session start.
       }
     }
     return { modelId: backend.defaultModelId, modelName: backend.defaultModelName };

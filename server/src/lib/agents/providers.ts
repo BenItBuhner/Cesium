@@ -336,7 +336,11 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
           "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, prompts, models.json, settings) plus project .pi/ customization; extension dialogs surface as Cesium permission and question cards.",
         experimental: true,
         commandPreview: `@earendil-works/pi-coding-agent · API key via settings`,
-        available: false,
+        // Statically runnable like cesium-agent / cursor-sdk: the runtime
+        // manager's assertRunnableBackend reads this value, while the real
+        // credential gate lives in createAgentProvider and the cached listing
+        // (listAgentBackendsWithCache) reports live availability to the UI.
+        available: true,
         capabilities: AGENT_CAPABILITIES["pi-agent"],
         defaultMode: "agent",
         defaultModelId: "auto",

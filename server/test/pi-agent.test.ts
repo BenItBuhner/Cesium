@@ -38,7 +38,7 @@ const [
     normalizePiAgentToolApprovalMode,
     selectPiAgentDefaultModel,
   },
-  { isPiExtensionCommand, parsePiModelValue, piNativeSessionDirForCwd },
+  { isPiExtensionCommand, parsePiModelValue, piNativeSessionDirForCwd, withCurrentConfig },
   { AuthStorage },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
@@ -240,6 +240,35 @@ test("pi agent counts models.json custom providers as configured", async () => {
 // ---------------------------------------------------------------------------
 // Model catalog
 // ---------------------------------------------------------------------------
+
+test("pi agent seeds a fresh handle with every persisted conversation option", () => {
+  const seed = createPiAgentFallbackConfigOptions().map((option) =>
+    option.id === "model"
+      ? { ...option, options: [{ value: "techlit/kimi-k3", name: "Kimi" }, { value: "openai/gpt-5", name: "GPT-5" }] }
+      : option
+  );
+  const conversation = {
+    config: { backendId: "pi-agent", mode: "agent", modelId: "openai/gpt-5", modelName: "GPT-5" },
+    configOptions: [
+      { id: "thinking_level", name: "Thinking", category: "thought_level", currentValue: "high", options: [] },
+      { id: "tool_approval", name: "Tool approval", category: "other", currentValue: "mutations", options: [] },
+      { id: "bogus", name: "Bogus", category: "other", currentValue: "x", options: [] },
+    ],
+  } as unknown as Parameters<typeof withCurrentConfig>[1];
+  const seeded = withCurrentConfig(seed, conversation);
+  const byId = new Map(seeded.map((option) => [option.id, option.currentValue]));
+  assert.equal(byId.get("model"), "openai/gpt-5");
+  assert.equal(byId.get("thinking_level"), "high");
+  assert.equal(byId.get("tool_approval"), "mutations");
+  assert.equal(byId.has("bogus"), false);
+
+  // Values that are not in the catalog fall back to the seed default.
+  const invalid = withCurrentConfig(seed, {
+    ...conversation,
+    configOptions: [{ id: "tool_approval", name: "x", category: "other", currentValue: "nonsense", options: [] }],
+  } as unknown as Parameters<typeof withCurrentConfig>[1]);
+  assert.equal(invalid.find((option) => option.id === "tool_approval")?.currentValue, "pi");
+});
 
 test("pi agent placeholder model catalog is detected", () => {
   const fallback = createPiAgentFallbackConfigOptions();
