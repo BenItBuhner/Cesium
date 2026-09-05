@@ -3256,7 +3256,9 @@ function PiAgentHarnessSettings() {
                         Connect
                       </button>
                     ) : null}
-                    {provider.configured ? (
+                    {provider.configured &&
+                    provider.authMethod !== "env" &&
+                    !provider.authLabel?.startsWith("models.json") ? (
                       <button
                         type="button"
                         className={rowButtonClass}

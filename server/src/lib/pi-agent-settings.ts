@@ -56,11 +56,33 @@ export type PiAgentHomeInfo = {
 const ISOLATED_PI_AGENT_DIR = path.join(DATA_DIR, "profile", "pi-agent");
 const SETTINGS_FILE = path.join(DATA_DIR, "profile", "pi-agent-settings.json");
 
-const BUILTIN_ENV_KEYS: Array<{ providerId: string; env: string }> = [
+/**
+ * Environment variables Pi's `AuthStorage` resolves natively (mirrors
+ * `@earendil-works/pi-ai` `getEnvApiKey`). Entries flagged `alias` are Cesium
+ * conventions Pi does not know about; they are injected as runtime keys so a
+ * host configured for the Cesium agent also unlocks the matching Pi provider.
+ */
+export const PI_AGENT_ENV_KEYS: ReadonlyArray<{ providerId: string; env: string; alias?: boolean }> = [
   { providerId: "anthropic", env: "ANTHROPIC_API_KEY" },
   { providerId: "openai", env: "OPENAI_API_KEY" },
-  { providerId: "google", env: "GOOGLE_API_KEY" },
+  { providerId: "google", env: "GEMINI_API_KEY" },
+  { providerId: "google", env: "GOOGLE_API_KEY", alias: true },
   { providerId: "openrouter", env: "OPENROUTER_API_KEY" },
+  { providerId: "groq", env: "GROQ_API_KEY" },
+  { providerId: "xai", env: "XAI_API_KEY" },
+  { providerId: "deepseek", env: "DEEPSEEK_API_KEY" },
+  { providerId: "mistral", env: "MISTRAL_API_KEY" },
+  { providerId: "cerebras", env: "CEREBRAS_API_KEY" },
+  { providerId: "zai", env: "ZAI_API_KEY" },
+  { providerId: "fireworks", env: "FIREWORKS_API_KEY" },
+  { providerId: "together", env: "TOGETHER_API_KEY" },
+  { providerId: "minimax", env: "MINIMAX_API_KEY" },
+  { providerId: "moonshotai", env: "MOONSHOT_API_KEY" },
+  { providerId: "kimi-coding", env: "KIMI_API_KEY" },
+  { providerId: "huggingface", env: "HF_TOKEN" },
+  { providerId: "opencode", env: "OPENCODE_API_KEY" },
+  { providerId: "vercel-ai-gateway", env: "AI_GATEWAY_API_KEY" },
+  { providerId: "azure-openai-responses", env: "AZURE_OPENAI_API_KEY" },
 ];
 
 function defaultSettings(): PiAgentSettings {
@@ -147,11 +169,13 @@ function redactedKey(key: PiAgentProviderKey): PiAgentProviderKeyStatus {
 
 function envProviderKeys(): PiAgentProviderKeyStatus[] {
   const now = Date.now();
-  return BUILTIN_ENV_KEYS.flatMap((entry): PiAgentProviderKeyStatus[] => {
+  const seenProviders = new Set<string>();
+  return PI_AGENT_ENV_KEYS.flatMap((entry): PiAgentProviderKeyStatus[] => {
     const value = process.env[entry.env]?.trim();
-    if (!value) {
+    if (!value || seenProviders.has(entry.providerId)) {
       return [];
     }
+    seenProviders.add(entry.providerId);
     return [
       {
         id: `env:${entry.env}`,
@@ -163,6 +187,25 @@ function envProviderKeys(): PiAgentProviderKeyStatus[] {
         lastFour: value.slice(-4),
       },
     ];
+  });
+}
+
+/**
+ * Cesium-only env aliases (e.g. `GOOGLE_API_KEY`) that Pi would not resolve on
+ * its own, for providers where no Pi-native env var is set.
+ */
+function envAliasRuntimeKeys(): Array<{ providerId: string; apiKey: string }> {
+  const nativeProviders = new Set(
+    PI_AGENT_ENV_KEYS.filter((entry) => !entry.alias && process.env[entry.env]?.trim()).map(
+      (entry) => entry.providerId
+    )
+  );
+  return PI_AGENT_ENV_KEYS.flatMap((entry) => {
+    const value = process.env[entry.env]?.trim();
+    if (!entry.alias || !value || nativeProviders.has(entry.providerId)) {
+      return [];
+    }
+    return [{ providerId: entry.providerId, apiKey: value }];
   });
 }
 
@@ -182,18 +225,15 @@ export function getPiAgentDirEnvOverride(): string | null {
   return value ? path.resolve(expandHomePrefix(value)) : null;
 }
 
-/** Pi's native agent home (~/.pi/agent, or PI_CODING_AGENT_DIR). */
+/**
+ * Pi's native agent home: `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`.
+ * Mirrors `getAgentDir()` from `@earendil-works/pi-coding-agent` without
+ * importing the (heavy) package at module load.
+ */
 export function getNativePiAgentDir(): string {
-  // Prefer Pi's resolver so PI_CODING_AGENT_DIR / renamed builds stay correct.
-  try {
-    // Synchronous require-style via dynamic import is async; use the same path
-    // formula Pi documents when the package is unavailable at module load.
-    const envDir = process.env.PI_CODING_AGENT_DIR?.trim();
-    if (envDir) {
-      return path.resolve(expandHomePrefix(envDir));
-    }
-  } catch {
-    // Fall through.
+  const envDir = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (envDir) {
+    return path.resolve(expandHomePrefix(envDir));
   }
   return path.join(os.homedir(), ".pi", "agent");
 }
@@ -232,11 +272,6 @@ export async function refreshPiAgentDirCache(): Promise<string> {
 
 export function getPiAgentAuthPath(): string {
   return path.join(getPiAgentDir(), "auth.json");
-}
-
-/** @deprecated Use getPiAgentAuthPath - kept for older probe scripts. */
-export function getPiAgentAuthDir(): string {
-  return getPiAgentAuthPath();
 }
 
 export function getPiAgentModelsPath(): string {
@@ -377,12 +412,24 @@ export async function createPiAuthStorage(): Promise<import("@earendil-works/pi-
   return AuthStorage.create(getPiAgentAuthPath());
 }
 
+/**
+ * Layer Cesium-managed credentials on top of Pi's own auth resolution as
+ * runtime (non-persisted) keys: Settings-stored provider keys, Cesium env
+ * aliases Pi does not recognise, and the brokered SuperGrok OAuth token.
+ */
 export async function applyPiRuntimeApiKeys(
   authStorage: import("@earendil-works/pi-coding-agent").AuthStorage
 ): Promise<void> {
   const settings = await getPiAgentSettings();
+  const stored = new Set<string>();
   for (const key of settings.providerKeys) {
     authStorage.setRuntimeApiKey(key.providerId, key.apiKey);
+    stored.add(key.providerId);
+  }
+  for (const alias of envAliasRuntimeKeys()) {
+    if (!stored.has(alias.providerId) && !authStorage.hasAuth(alias.providerId)) {
+      authStorage.setRuntimeApiKey(alias.providerId, alias.apiKey);
+    }
   }
   try {
     const { getValidXaiAccessToken, XAI_OAUTH_PROVIDER_ID } = await import("./xai-oauth.js");
@@ -395,6 +442,31 @@ export async function applyPiRuntimeApiKeys(
   }
 }
 
+/**
+ * Build a Pi `ModelRegistry` for the active agent home with every Cesium
+ * credential layer applied. This is the single source of truth for "which
+ * models can actually be used": it accounts for `auth.json` (API keys and
+ * OAuth), Pi-native env vars, Cesium-stored keys, Cesium env aliases and
+ * `models.json` custom providers with inline/env/command API keys.
+ */
+export async function createPiModelRegistry(): Promise<{
+  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
+  modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
+}> {
+  const authStorage = await createPiAuthStorage();
+  await applyPiRuntimeApiKeys(authStorage);
+  const { ModelRegistry } = await import("@earendil-works/pi-coding-agent");
+  const modelRegistry = ModelRegistry.create(authStorage, getPiAgentModelsPath());
+  modelRegistry.refresh();
+  return { authStorage, modelRegistry };
+}
+
+/**
+ * Whether Pi has at least one usable credential. Cheap checks first (Cesium
+ * stored keys, env vars), then Pi's own registry so `models.json`-only setups
+ * (local proxies, Ollama, vLLM) count as configured - the same rule Pi's CLI
+ * applies before it accepts a prompt.
+ */
 export async function hasPiAgentStoredAuthConfig(): Promise<boolean> {
   const settings = await getPiAgentSettings();
   if (settings.providerKeys.length > 0 || envProviderKeys().length > 0) {
@@ -406,28 +478,47 @@ export async function hasPiAgentStoredAuthConfig(): Promise<boolean> {
       return true;
     }
   } catch {
-    // Ignore auth storage read failures; treat as unconfigured.
+    // Ignore auth storage read failures; fall through to the registry check.
   }
-  return false;
+  try {
+    const { modelRegistry } = await createPiModelRegistry();
+    return modelRegistry.getAvailable().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function describePiAgentAuthStatus(): Promise<string> {
   try {
-    const authStorage = await createPiAuthStorage();
-    await applyPiRuntimeApiKeys(authStorage);
+    const { authStorage, modelRegistry } = await createPiModelRegistry();
     const oauthCount = authStorage
       .list()
       .filter((providerId) => authStorage.get(providerId)?.type === "oauth").length;
     const apiKeyCount =
       (await getPiAgentSettings()).providerKeys.length + envProviderKeys().length;
-    if (oauthCount > 0 && apiKeyCount > 0) {
-      return `${oauthCount} OAuth · ${apiKeyCount} API key${apiKeyCount === 1 ? "" : "s"}`;
-    }
+    const authProviders = new Set([
+      ...authStorage.list().filter((providerId) => authStorage.hasAuth(providerId)),
+      ...(await getPiAgentSettings()).providerKeys.map((key) => key.providerId),
+      ...envProviderKeys().map((key) => key.providerId),
+    ]);
+    const customProviderCount = new Set(
+      modelRegistry
+        .getAvailable()
+        .map((model) => model.provider)
+        .filter((providerId) => !authProviders.has(providerId))
+    ).size;
+    const parts: string[] = [];
     if (oauthCount > 0) {
-      return `${oauthCount} OAuth provider${oauthCount === 1 ? "" : "s"} configured`;
+      parts.push(`${oauthCount} OAuth`);
     }
     if (apiKeyCount > 0) {
-      return `${apiKeyCount} API key${apiKeyCount === 1 ? "" : "s"} configured`;
+      parts.push(`${apiKeyCount} API key${apiKeyCount === 1 ? "" : "s"}`);
+    }
+    if (customProviderCount > 0) {
+      parts.push(`${customProviderCount} models.json provider${customProviderCount === 1 ? "" : "s"}`);
+    }
+    if (parts.length > 0) {
+      return parts.join(" · ");
     }
   } catch {
     // Fall through to legacy status text.

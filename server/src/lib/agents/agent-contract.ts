@@ -184,7 +184,9 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsModeSelection: false,
     supportsModelSelection: true,
     supportsSlashCommands: true,
-    supportsPermissions: false,
+    // Extension `ctx.ui.confirm()` dialogs and the optional Cesium tool
+    // approval gate both surface as permission cards.
+    supportsPermissions: true,
     supportsToolCalls: true,
     supportsStructuredPlans: false,
     supportsTodos: false,
@@ -418,10 +420,10 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...textTurnEvents,
       "reasoning",
       ...toolEvents,
-      "plan",
       "question",
       ...permissionEvents,
       "system",
+      "compression_summary",
     ],
   },
   "google-antigravity-cli": {
