@@ -100,6 +100,7 @@ import {
 } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { AntigravityAcpHarnessSettings } from "@/components/editor/settings/AntigravityAcpSettings";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
+import { HARNESS_LABELS } from "@/lib/harness-labels";
 import { useEngineSupportedHarnessFamilies } from "@/hooks/useEngineSupportedHarnessFamilies";
 import { invalidateCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
 import {
@@ -123,21 +124,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [...HARNESS_FAMILY_SETTINGS_IDS];
 /** All runtime backend ids, including sibling transports. */
 export const HARNESS_BACKEND_IDS: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
 
-export const HARNESS_LABELS: Record<AgentBackendId, string> = {
-  "cesium-agent": "Cesium Agent (Beta)",
-  "cursor-sdk": "Cursor (SDK)",
-  "cursor-acp": "Cursor (ACP)",
-  "opencode-server": "OpenCode",
-  "opencode-v2-beta": "OpenCode",
-  "devin-acp": "Devin",
-  "grok-build": "Grok Build",
-  "codex-app-server": "Codex (Server)",
-  "codex-acp": "Codex (ACP)",
-  "claude-code-sdk": "Claude Code",
-  "pi-agent": "Pi Agent",
-  "google-antigravity-cli": "Google Antigravity (CLI, Legacy)",
-  "google-antigravity-acp": "Google Antigravity",
-};
+export { HARNESS_LABELS };
 
 export function harnessDisplayName(backendId: AgentBackendId | string): string {
   return harnessFamilyForBackend(backendId)?.label ?? HARNESS_LABELS[backendId as AgentBackendId] ?? backendId;
