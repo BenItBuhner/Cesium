@@ -52,8 +52,6 @@ const [
   import("../src/lib/agents/pi-agent-context-usage.js"),
 ]);
 
-type AnyEvent = Record<string, unknown> & { type: string };
-
 function counter(prefix = "evt"): () => string {
   let index = 0;
   return () => `${prefix}-${(index += 1)}`;

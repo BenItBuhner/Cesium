@@ -111,15 +111,14 @@ export class PiAgentUiBridge {
   }
 
   createUiContext(fallback: ExtensionUIContext): ExtensionUIContext {
-    const bridge = this;
     return {
-      select: (title, options, opts) => bridge.select(title, options, opts),
-      confirm: (title, message, opts) => bridge.confirm(title, message, opts),
-      input: (title, placeholder, opts) => bridge.input(title, placeholder, opts),
+      select: (title, options, opts) => this.select(title, options, opts),
+      confirm: (title, message, opts) => this.confirm(title, message, opts),
+      input: (title, placeholder, opts) => this.input(title, placeholder, opts),
       notify: (message, type) => {
-        void bridge.notify(message, type);
+        void this.notify(message, type);
       },
-      editor: (title, prefill) => bridge.editor(title, prefill),
+      editor: (title, prefill) => this.editor(title, prefill),
       onTerminalInput: () => () => undefined,
       setStatus: () => undefined,
       setWorkingMessage: () => undefined,

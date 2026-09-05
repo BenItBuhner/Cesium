@@ -223,7 +223,9 @@ async function main(): Promise<void> {
         const row = { ...event, seq, createdAt: event.createdAt ?? Date.now() } as AgentStoredEvent;
         stored.push(row);
         rows.push(row);
-        const { raw: _raw, ...rest } = row as Record<string, unknown>;
+        const rest = Object.fromEntries(
+          Object.entries(row as Record<string, unknown>).filter(([key]) => key !== "raw")
+        );
         await appendJsonLine(args.out, { type: "event", event: rest });
         if (row.kind !== "reasoning") {
           console.log(`  ${summarizeEvent(row)}`);
