@@ -27,12 +27,28 @@ function resolveStoredOrEnv(
   return "";
 }
 
+/**
+ * Claude Code appends `/v1/messages` to `ANTHROPIC_BASE_URL` itself, so a
+ * base URL copied from an OpenAI-compatible proxy (`https://host/v1`) would
+ * hit `/v1/v1/messages` and 404. Strip trailing slashes and a trailing `/v1`
+ * segment so both spellings work.
+ */
+export function normalizeClaudeCodeSdkBaseUrl(raw: string | undefined | null): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+}
+
 export function getClaudeCodeSdkProxyBaseUrl(): string {
   const stored = getStoredClaudeCodeSdkSettingsSync();
-  return resolveStoredOrEnv(stored?.baseUrl, [
-    "OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL",
-    "ANTHROPIC_BASE_URL",
-  ]);
+  return normalizeClaudeCodeSdkBaseUrl(
+    resolveStoredOrEnv(stored?.baseUrl, [
+      "OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL",
+      "ANTHROPIC_BASE_URL",
+    ])
+  );
 }
 
 export function getClaudeCodeSdkProxyApiKey(): string {
@@ -43,10 +59,13 @@ export function getClaudeCodeSdkProxyApiKey(): string {
   ]);
 }
 
+export const CLAUDE_CODE_SDK_DEFAULT_PROXY_MODEL = "glm-5.1-precision";
+
 export function getClaudeCodeSdkProxyModel(): string {
   const stored = getStoredClaudeCodeSdkSettingsSync();
   return (
-    resolveStoredOrEnv(stored?.model, ["OPENCURSOR_CLAUDE_CODE_SDK_MODEL"]) || "glm-5.1-precision"
+    resolveStoredOrEnv(stored?.model, ["OPENCURSOR_CLAUDE_CODE_SDK_MODEL"]) ||
+    CLAUDE_CODE_SDK_DEFAULT_PROXY_MODEL
   );
 }
 
@@ -71,6 +90,53 @@ export function getClaudeCodeSdkProxyModelName(): string {
 
 export function hasClaudeCodeSdkProxyConfig(): boolean {
   return Boolean(getClaudeCodeSdkProxyBaseUrl() && getClaudeCodeSdkProxyApiKey());
+}
+
+/**
+ * True when the proxy base URL points somewhere other than Anthropic's own
+ * API. Third-party hosts do not know Claude's model aliases (`sonnet`,
+ * `haiku`, ...), which matters for subagents that default to those aliases.
+ */
+export function isThirdPartyClaudeCodeSdkProxy(): boolean {
+  const baseUrl = getClaudeCodeSdkProxyBaseUrl();
+  if (!baseUrl) {
+    return false;
+  }
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return !(host === "api.anthropic.com" || host.endsWith(".anthropic.com"));
+  } catch {
+    return true;
+  }
+}
+
+const CLAUDE_MODEL_ALIAS_ENV_VARS = [
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+] as const;
+
+/**
+ * Env overrides that pin every Claude model alias (used by built-in subagents
+ * such as `Explore`, which defaults to `haiku`, and by `general-purpose`, which
+ * inherits the CLI default `opus`) to the proxied model. Without this, every
+ * subagent spawned through a third-party proxy fails with "model not found in
+ * routing configuration". Explicit user-set aliases are left alone.
+ */
+export function claudeCodeSdkModelAliasEnv(model: string | undefined): Record<string, string> {
+  const target = model?.trim();
+  if (!target || !isThirdPartyClaudeCodeSdkProxy()) {
+    return {};
+  }
+  const env: Record<string, string> = {};
+  for (const name of CLAUDE_MODEL_ALIAS_ENV_VARS) {
+    if (!readEnvValue(name)) {
+      env[name] = target;
+    }
+  }
+  return env;
 }
 
 export function hasClaudeCodeSdkAuthConfig(): boolean {
@@ -107,6 +173,14 @@ export function hasClaudeCodeAmbientCliAuth(): boolean {
     }
   }
   return detectHarnessCli("claude") !== null;
+}
+
+/**
+ * Single availability gate shared by backend listing and session creation so
+ * a backend that lists as available can never fail `startSession` on auth.
+ */
+export function hasClaudeCodeSdkUsableAuth(): boolean {
+  return hasClaudeCodeSdkAuthConfig() || hasClaudeCodeAmbientCliAuth();
 }
 
 export function describeClaudeCodeSdkAuthStatus(): string {
