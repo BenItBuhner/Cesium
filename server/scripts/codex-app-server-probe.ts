@@ -82,6 +82,13 @@ const SCENARIOS: Record<string, Scenario> = {
       "Use the request_user_input tool right now to ask me which database I prefer, offering the options Postgres and SQLite. Wait for my answer, then reply with one sentence acknowledging it.",
     mode: "plan",
   },
+  // Only works with OPENCURSOR_CODEX_APP_SERVER_ASK_IN_AGENT_MODE=1 (Codex keeps
+  // request_user_input plan-only by default).
+  "question-agent": {
+    prompt:
+      "If you have a request_user_input tool, use it right now to ask me which database I prefer (options Postgres and SQLite), wait for my answer, then acknowledge it in one sentence. If you do not have that tool, reply with exactly: NO_QUESTION_TOOL.",
+    mode: "agent",
+  },
   image: {
     prompt: "Describe the attached image in one short sentence (it is a tiny solid-colour square).",
     attachImage: true,

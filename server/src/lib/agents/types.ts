@@ -150,6 +150,14 @@ export type AgentProviderCapabilities = {
    * Optional for stored-record compatibility; absent means unsupported.
    */
   supportsCloudExecution?: boolean;
+  /**
+   * True when the provider's native session survives an interrupted turn and
+   * can be resumed afterwards (e.g. Codex records a `<turn_aborted>` marker and
+   * `thread/resume` keeps the context). The runtime then keeps
+   * `providerSessionId` on cancel instead of restarting a blank session.
+   * Optional for stored-record compatibility; absent means unsupported.
+   */
+  supportsResumeAfterCancel?: boolean;
 };
 
 /**

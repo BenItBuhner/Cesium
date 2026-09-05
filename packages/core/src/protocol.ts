@@ -138,6 +138,12 @@ export type AgentProviderCapabilities = {
    * Optional for stored-record compatibility; absent means unsupported.
    */
   supportsCloudExecution?: boolean;
+  /**
+   * True when the provider's native session survives an interrupted turn and
+   * can be resumed afterwards; the runtime keeps `providerSessionId` on cancel.
+   * Optional for stored-record compatibility; absent means unsupported.
+   */
+  supportsResumeAfterCancel?: boolean;
 };
 
 /**
@@ -913,6 +919,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
+  "supportsResumeAfterCancel",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 export const AGENT_STORED_EVENT_KINDS = [

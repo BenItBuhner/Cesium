@@ -1728,15 +1728,18 @@ export class AgentRuntimeManager {
 
       if (isConversationTurnInProgress(record.status)) {
         const runtime = await this.resolveActiveRuntime(workspace, conversationId);
+        const keepProviderSession = this.providerSessionSurvivesCancel(record);
         if (runtime) {
           await runtime.handle.cancel();
           await this.disposeRuntime(conversationId);
-          this.skipRecoverySeedOnce.add(conversationId);
+          if (!keepProviderSession) {
+            this.skipRecoverySeedOnce.add(conversationId);
+          }
         }
         await updateConversationRecord(workspace.id, conversationId, (current) => ({
           ...current,
           status: "idle",
-          providerSessionId: null,
+          providerSessionId: keepProviderSession ? current.providerSessionId : null,
           pendingPermission: null,
           pendingQuestion: null,
           queuedPrompts: remaining,
@@ -1846,18 +1849,36 @@ export class AgentRuntimeManager {
     }
     await runtime.handle.cancel();
     await this.disposeRuntime(conversationId);
-    this.skipRecoverySeedOnce.add(conversationId);
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
+    const keepProviderSession = this.providerSessionSurvivesCancel(record);
+    if (!keepProviderSession) {
+      this.skipRecoverySeedOnce.add(conversationId);
+    }
     return updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
-      providerSessionId: null,
+      providerSessionId: keepProviderSession ? current.providerSessionId : null,
       queuedPrompts: [],
       pendingPermission: null,
       pendingQuestion: null,
     }));
+  }
+
+  /**
+   * Backends whose native session records the interruption and resumes with
+   * full context (Codex threads) keep `providerSessionId` across a cancel;
+   * everything else restarts a fresh session on the next prompt.
+   */
+  private providerSessionSurvivesCancel(record: AgentConversationRecord): boolean {
+    if (!record.providerSessionId) {
+      return false;
+    }
+    const backend = this.backends[this.resolveBackendId(record.config.backendId)];
+    return Boolean(
+      backend?.capabilities.supportsResumeAfterCancel && backend.capabilities.supportsLoadSession
+    );
   }
 
   async pauseConversation(

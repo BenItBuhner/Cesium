@@ -17,6 +17,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
+  "supportsResumeAfterCancel",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 /**
@@ -40,6 +41,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: true,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "cursor-sdk": {
     supportsLoadSession: true,
@@ -57,6 +59,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     // The @cursor/sdk Agent API runs the same conversation contract on
     // Cursor-hosted cloud VMs (`Agent.create({ cloud })`).
     supportsCloudExecution: true,
+    supportsResumeAfterCancel: false,
   },
   "cursor-acp": {
     supportsLoadSession: true,
@@ -73,6 +76,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     // Cursor CLI over ACP runs locally; cloud execution is the SDK path.
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "opencode-server": {
     supportsLoadSession: true,
@@ -88,6 +92,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "opencode-v2-beta": {
     supportsLoadSession: true,
@@ -103,6 +108,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "devin-acp": {
     supportsLoadSession: true,
@@ -118,6 +124,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "grok-build": {
     supportsLoadSession: true,
@@ -133,6 +140,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "codex-app-server": {
     supportsLoadSession: true,
@@ -148,6 +156,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: true,
   },
   "codex-acp": {
     supportsLoadSession: true,
@@ -163,6 +172,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "claude-code-sdk": {
     supportsLoadSession: true,
@@ -178,6 +188,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "pi-agent": {
     supportsLoadSession: true,
@@ -193,6 +204,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "google-antigravity-cli": {
     supportsLoadSession: true,
@@ -208,6 +220,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
   "google-antigravity-acp": {
     supportsLoadSession: true,
@@ -224,6 +237,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsResumeAfterCancel: false,
   },
 };
 

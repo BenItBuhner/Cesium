@@ -52,6 +52,7 @@ export class CodexAppServerRpcError extends Error {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const GRACEFUL_EXIT_MS = 2_500;
 
 function asJsonObject(value: unknown): CodexAppServerJsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -225,6 +226,11 @@ export class CodexAppServerTransport {
     return this.tryWrite({ id, error: { code, message } });
   }
 
+  /**
+   * Closes the connection. The app server exits on stdin EOF after flushing
+   * its rollout, so give it a moment before falling back to SIGTERM; killing
+   * immediately can drop the tail of an interrupted turn from Codex's history.
+   */
   dispose(): void {
     if (this.disposed) {
       return;
@@ -236,9 +242,16 @@ export class CodexAppServerTransport {
     } catch {
       // ignore
     }
-    if (!this.child.killed) {
-      this.child.kill();
+    if (this.exitInfo || this.child.exitCode !== null || this.child.killed) {
+      return;
     }
+    const killTimer = setTimeout(() => {
+      if (this.child.exitCode === null && !this.child.killed) {
+        this.child.kill();
+      }
+    }, GRACEFUL_EXIT_MS);
+    killTimer.unref?.();
+    this.child.once("exit", () => clearTimeout(killTimer));
   }
 
   private closedError(): Error {
