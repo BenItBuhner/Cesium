@@ -71,10 +71,7 @@ import {
   getServerRailAppearance,
   isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
+import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
   NO_WORKSPACE_PICKER_LABEL,
@@ -161,6 +158,7 @@ export function AgentNewChatLanding({
     setRailFilters,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
+  const { rememberLastWorkspaceForServer, getLastWorkspaceForServer } = useLastWorkspaceMemory();
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces, byServerId: directoryByServerId } =
     useWorkspaceDirectory();
@@ -297,9 +295,11 @@ export function AgentNewChatLanding({
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      getLastWorkspaceForServer,
       openFolder,
       openWorkspaceById,
       railFilters,
+      rememberLastWorkspaceForServer,
       setActiveCloudDeviceId,
       setActiveServer,
       setRailFilters,

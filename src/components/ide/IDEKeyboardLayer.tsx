@@ -1132,6 +1132,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       setPalette,
       setShellView,
       setToast,
+      updateSettings,
       updateWorkspaceSession,
       workbench,
       agentShell,

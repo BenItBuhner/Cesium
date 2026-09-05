@@ -33,9 +33,14 @@ export type CloudAccountSettingsRecord = {
 };
 
 export function pickAccountSyncedSettings(settings: GlobalSettingsState): AccountSyncedSettings {
-  const { models: _models, agents, ...rest } = settings;
-  const { rememberedPermissions: _rules, ...syncedAgents } = agents;
-  return { ...rest, agents: syncedAgents };
+  const rest: Partial<GlobalSettingsState> = { ...settings };
+  delete rest.models;
+  const syncedAgents: Partial<GlobalSettingsState["agents"]> = { ...settings.agents };
+  delete syncedAgents.rememberedPermissions;
+  return {
+    ...(rest as Omit<GlobalSettingsState, "models" | "agents">),
+    agents: syncedAgents as AccountSyncedSettings["agents"],
+  };
 }
 
 /** Deterministic JSON (sorted keys) so equal settings hash equal on every device. */

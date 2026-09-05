@@ -9,7 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
@@ -60,10 +59,8 @@ import {
 } from "@/lib/agent-rail";
 import { agentRailConversationNeedsAttention } from "@/lib/agent-rail-status";
 import {
-  getGlobalPinnedAgentConversationIdsSnapshot,
-  migrateGlobalPinnedAgentConversationIdsIfNeeded,
-  subscribeGlobalPinnedAgentConversationIds,
-  writeGlobalPinnedAgentConversationIds,
+  pinAgentConversationId,
+  unpinAgentConversationId,
 } from "@/lib/agent-rail-pins";
 import {
   resolveAgentRightPaneOpen,
@@ -160,27 +157,6 @@ import {
 const CATALOG_CLOUD_PUSH_DELAY_MS = 4_000;
 
 const AGENT_RAIL_CYCLE_PINNED_SECTION_ID = "__agentPinned__";
-const AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY =
-  "opencursor.agent-rail-collapsed-workspaces";
-
-function readAgentRailCollapsedWorkspaceIdsForCycle(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
-  try {
-    const raw = window.localStorage.getItem(AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY);
-    if (!raw) {
-      return new Set();
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return new Set();
-  }
-}
 
 function buildAgentRailCycleOrder(input: {
   activeWorkspaceId: string | null;
@@ -2427,39 +2403,35 @@ export function AgentShellStateProvider({
     [setConversationSettled]
   );
 
+  // Pins are account settings: one list for every workspace, server and device.
   const pinConversation = useCallback(
     (conversationId: string) => {
-      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
-      const next = [conversationId, ...prev.filter((id) => id !== conversationId)];
-      writeGlobalPinnedAgentConversationIds(next);
-      updateWorkspaceSession((current) => ({
-        ...current,
-        agentView: {
-          ...current.agentView,
-          pinnedAgentConversationIds: next,
-        },
-      }));
+      updateSettings((current) => {
+        const next = pinAgentConversationId(
+          current.general.pinnedAgentConversationIds,
+          conversationId
+        );
+        return next === current.general.pinnedAgentConversationIds
+          ? current
+          : { ...current, general: { ...current.general, pinnedAgentConversationIds: next } };
+      });
     },
-    [updateWorkspaceSession]
+    [updateSettings]
   );
 
   const unpinConversation = useCallback(
     (conversationId: string) => {
-      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
-      if (!prev.includes(conversationId)) {
-        return;
-      }
-      const next = prev.filter((id) => id !== conversationId);
-      writeGlobalPinnedAgentConversationIds(next);
-      updateWorkspaceSession((current) => ({
-        ...current,
-        agentView: {
-          ...current.agentView,
-          pinnedAgentConversationIds: next,
-        },
-      }));
+      updateSettings((current) => {
+        const next = unpinAgentConversationId(
+          current.general.pinnedAgentConversationIds,
+          conversationId
+        );
+        return next === current.general.pinnedAgentConversationIds
+          ? current
+          : { ...current, general: { ...current.general, pinnedAgentConversationIds: next } };
+      });
     },
-    [updateWorkspaceSession]
+    [updateSettings]
   );
 
   const railFilters = useMemo(
@@ -2522,20 +2494,7 @@ export function AgentShellStateProvider({
     });
   }, [updateWorkspaceSession]);
 
-  const pinnedAgentConversationIds = useSyncExternalStore(
-    subscribeGlobalPinnedAgentConversationIds,
-    getGlobalPinnedAgentConversationIdsSnapshot,
-    () => []
-  );
-
-  useLayoutEffect(() => {
-    if (!sessionReady || typeof window === "undefined") {
-      return;
-    }
-    migrateGlobalPinnedAgentConversationIdsIfNeeded(
-      workspaceSession.agentView.pinnedAgentConversationIds
-    );
-  }, [sessionReady, workspaceSession.agentView.pinnedAgentConversationIds]);
+  const pinnedAgentConversationIds = settings.general.pinnedAgentConversationIds;
 
   const pinnedConversationIdSet = useMemo(
     () => new Set(pinnedAgentConversationIds),
@@ -2850,9 +2809,10 @@ export function AgentShellStateProvider({
     [orderedGroups]
   );
 
+  const collapsedRailWorkspaceKeys = settings.general.collapsedRailWorkspaceKeys;
   const cycleAgentConversation = useCallback(
     (delta: 1 | -1) => {
-      const collapsed = readAgentRailCollapsedWorkspaceIdsForCycle();
+      const collapsed = new Set(collapsedRailWorkspaceKeys);
       const flat = buildAgentRailCycleOrder({
         activeWorkspaceId,
         groups: groupsForRail,
@@ -2870,6 +2830,7 @@ export function AgentShellStateProvider({
     },
     [
       activeWorkspaceId,
+      collapsedRailWorkspaceKeys,
       groupsForRail,
       isDraftConversationSelected,
       openConversationSummary,

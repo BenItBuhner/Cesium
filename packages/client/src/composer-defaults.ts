@@ -347,8 +347,13 @@ export function updateComposerDraftProfile(
   if ((current.profileId ?? undefined) === next) {
     return current;
   }
-  const { profileId: _dropped, ...rest } = current;
-  return { ...rest, ...(next ? { profileId: next } : {}), updatedAt: now };
+  const rest: ComposerDefaultsState = { ...current, updatedAt: now };
+  if (next) {
+    rest.profileId = next;
+  } else {
+    delete rest.profileId;
+  }
+  return rest;
 }
 
 /**

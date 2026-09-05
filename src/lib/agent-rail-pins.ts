@@ -1,20 +1,14 @@
-/** Global pin list: agent rail pins are cross-workspace; session-per-workspace storage would drop them on workspace switch. */
+/**
+ * Agent rail pins are account-wide: `GlobalSettingsState.general.pinnedAgentConversationIds`
+ * is the single home, synced to every device. This module keeps the pure list
+ * helpers plus the one-time read of the pre-account per-device stores (a
+ * global localStorage list, and before that per-workspace session backups).
+ */
 
-export const AGENT_RAIL_PINNED_IDS_STORAGE_KEY = "opencursor.agent-rail.pinned-conversation-ids";
+export const LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY =
+  "opencursor.agent-rail.pinned-conversation-ids";
 
-const WORKSPACE_SESSION_PREFIX = "opencursor.workspace-session.";
-
-let pinnedIdsSnapshot: string[] = [];
-let pinnedIdsSnapshotKey = "";
-
-const listeners = new Set<() => void>();
-
-function emitPinnedIdsChanged() {
-  pinnedIdsSnapshotKey = "";
-  for (const listener of listeners) {
-    listener();
-  }
-}
+const LEGACY_WORKSPACE_SESSION_PREFIX = "opencursor.workspace-session.";
 
 export function normalizePinnedAgentConversationIds(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
@@ -32,6 +26,18 @@ export function normalizePinnedAgentConversationIds(raw: unknown): string[] {
   return next;
 }
 
+/** Pin `conversationId` to the top (most recent first); unchanged list when already first. */
+export function pinAgentConversationId(pinned: string[], conversationId: string): string[] {
+  if (pinned[0] === conversationId) {
+    return pinned;
+  }
+  return [conversationId, ...pinned.filter((id) => id !== conversationId)];
+}
+
+export function unpinAgentConversationId(pinned: string[], conversationId: string): string[] {
+  return pinned.includes(conversationId) ? pinned.filter((id) => id !== conversationId) : pinned;
+}
+
 function parseStoredPinnedIds(raw: string | null): string[] {
   if (!raw) {
     return [];
@@ -43,108 +49,82 @@ function parseStoredPinnedIds(raw: string | null): string[] {
   }
 }
 
-export function getGlobalPinnedAgentConversationIdsSnapshot(): string[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  const parsed = parseStoredPinnedIds(
-    window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY)
-  );
-  const key = JSON.stringify(parsed);
-  if (key !== pinnedIdsSnapshotKey) {
-    pinnedIdsSnapshotKey = key;
-    pinnedIdsSnapshot = parsed;
-  }
-  return pinnedIdsSnapshot;
-}
-
-export function subscribeGlobalPinnedAgentConversationIds(onStoreChange: () => void): () => void {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-  listeners.add(onStoreChange);
-  return () => {
-    listeners.delete(onStoreChange);
-  };
-}
-
-export function writeGlobalPinnedAgentConversationIds(ids: string[]): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const normalized = normalizePinnedAgentConversationIds(ids);
-  try {
-    window.localStorage.setItem(
-      AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
-      JSON.stringify(normalized)
-    );
-  } catch {
-    return;
-  }
-  emitPinnedIdsChanged();
-}
-
 /**
- * Seed global pins from legacy per-workspace session keys (and optional React session fallback)
- * when the global key is missing or empty.
+ * Pins this device remembered before they were account-wide: the global
+ * localStorage list first, then any per-workspace session backups (the store
+ * before that). Returns `null` when neither ever existed.
  */
-export function migrateGlobalPinnedAgentConversationIdsIfNeeded(
+export function readLegacyPinnedAgentConversationIds(
   workspaceSessionPinnedFallback?: string[] | null
-): void {
+): string[] | null {
   if (typeof window === "undefined") {
-    return;
+    return null;
   }
-  // Seed only when the global key has never been written. An existing empty
-  // list is a deliberate state (user unpinned everything) - re-seeding from
-  // legacy session backups would resurrect just-unpinned conversations.
-  if (window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY) !== null) {
-    return;
+  let found = false;
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const push = (id: unknown) => {
+    if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      ordered.push(id);
+    }
+  };
+
+  const globalRaw = window.localStorage.getItem(LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY);
+  if (globalRaw !== null) {
+    found = true;
+    for (const id of parseStoredPinnedIds(globalRaw)) {
+      push(id);
+    }
   }
 
   const keys: string[] = [];
   for (let i = 0; i < window.localStorage.length; i += 1) {
     const k = window.localStorage.key(i);
-    if (k?.startsWith(WORKSPACE_SESSION_PREFIX)) {
+    if (k?.startsWith(LEGACY_WORKSPACE_SESSION_PREFIX)) {
       keys.push(k);
     }
   }
   keys.sort();
-
-  const ordered: string[] = [];
-  const seen = new Set<string>();
   for (const storageKey of keys) {
     const raw = window.localStorage.getItem(storageKey);
     if (!raw) {
       continue;
     }
     try {
-      const doc = JSON.parse(raw) as { session?: { agentView?: { pinnedAgentConversationIds?: unknown } } };
+      const doc = JSON.parse(raw) as {
+        session?: { agentView?: { pinnedAgentConversationIds?: unknown } };
+      };
       const pinned = doc?.session?.agentView?.pinnedAgentConversationIds;
       if (!Array.isArray(pinned)) {
         continue;
       }
+      found = true;
       for (const id of pinned) {
-        if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
-          seen.add(id);
-          ordered.push(id);
-        }
+        push(id);
       }
     } catch {
       continue;
     }
   }
 
-  if (workspaceSessionPinnedFallback) {
+  if (workspaceSessionPinnedFallback && workspaceSessionPinnedFallback.length > 0) {
+    found = true;
     for (const id of workspaceSessionPinnedFallback) {
-      if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
-        seen.add(id);
-        ordered.push(id);
-      }
+      push(id);
     }
   }
 
-  if (ordered.length === 0) {
+  return found ? ordered : null;
+}
+
+export function clearLegacyPinnedAgentConversationIds(): void {
+  if (typeof window === "undefined") {
     return;
   }
-  writeGlobalPinnedAgentConversationIds(ordered);
+  try {
+    window.localStorage.removeItem(LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY);
+  } catch {
+    // Nothing to do; the legacy key is only ever consulted once.
+  }
 }

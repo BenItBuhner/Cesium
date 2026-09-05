@@ -43,10 +43,7 @@ import { useServerConnections } from "@/components/preferences/ServerConnections
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
+import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
@@ -506,6 +503,7 @@ function ActiveServerSection() {
   const { activeServer, hasServer, servers, serverStatusById, setActiveServer } =
     useServerConnections();
   const { settings } = useGlobalSettings();
+  const { rememberLastWorkspaceForServer, getLastWorkspaceForServer } = useLastWorkspaceMemory();
   const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
   const { byServerId: directoryByServerId } = useWorkspaceDirectory();
   const pickerAnchorRef = useRef<HTMLButtonElement>(null);
@@ -557,8 +555,10 @@ function ActiveServerSection() {
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      getLastWorkspaceForServer,
       hasServer,
       openWorkspaceById,
+      rememberLastWorkspaceForServer,
       setActiveServer,
     ]
   );
