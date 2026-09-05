@@ -112,6 +112,31 @@ const HANDSHAKE_TIMEOUT_MS = 45_000;
 
 export const CODEX_APP_SERVER_DEFAULT_MODEL_ID = "__default__";
 
+/**
+ * Config-level Codex warnings (missing bubblewrap, unknown model metadata, ...)
+ * are re-emitted by every `codex app-server` process. Cesium restarts the
+ * process whenever a conversation's runtime is rehydrated, so dedupe per
+ * conversation for the lifetime of this server rather than per session.
+ */
+const MAX_REMEMBERED_WARNING_CONVERSATIONS = 500;
+const rememberedWarningsByConversation = new Map<string, Set<string>>();
+
+function rememberedWarningsFor(conversationId: string): Set<string> {
+  const existing = rememberedWarningsByConversation.get(conversationId);
+  if (existing) {
+    return existing;
+  }
+  if (rememberedWarningsByConversation.size >= MAX_REMEMBERED_WARNING_CONVERSATIONS) {
+    const oldest = rememberedWarningsByConversation.keys().next().value;
+    if (oldest) {
+      rememberedWarningsByConversation.delete(oldest);
+    }
+  }
+  const created = new Set<string>();
+  rememberedWarningsByConversation.set(conversationId, created);
+  return created;
+}
+
 function currentValueFor(options: AgentConfigOption[], id: string): string | undefined {
   return options.find((option) => option.id === id)?.currentValue;
 }
@@ -428,6 +453,11 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     );
     transport.notify("initialized");
 
+    if (this.threadId && !(await this.storedThreadHasTurns())) {
+      // Nothing was ever sent on the stored thread; Codex has no rollout to
+      // resume, so start over quietly.
+      this.threadId = null;
+    }
     if (this.threadId) {
       const previousThreadId = this.threadId;
       try {
@@ -855,20 +885,44 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     await this.appendSystem("warning", `[${this.backend.label}] ${stripped}`);
   }
 
-  /** Dedupes identical warning text within a session (Codex mirrors many warnings on stderr). */
+  /**
+   * Dedupes identical warning text for this conversation (Codex mirrors many
+   * warnings on stderr and repeats config warnings on every process start).
+   */
   private rememberWarning(text: string): boolean {
     const key = text.trim().toLowerCase();
     if (!key || this.emittedWarnings.has(key)) {
       return false;
     }
+    const perConversation = rememberedWarningsFor(this.callbacks.conversation.id);
+    if (perConversation.has(key)) {
+      return false;
+    }
     this.emittedWarnings.add(key);
-    if (this.emittedWarnings.size > 200) {
-      const first = this.emittedWarnings.values().next().value;
+    perConversation.add(key);
+    if (perConversation.size > 200) {
+      const first = perConversation.values().next().value;
       if (first) {
-        this.emittedWarnings.delete(first);
+        perConversation.delete(first);
       }
     }
     return true;
+  }
+
+  /**
+   * Codex only writes a rollout after the first turn, so a thread that never
+   * ran cannot be resumed; starting fresh loses nothing in that case.
+   */
+  private async storedThreadHasTurns(): Promise<boolean> {
+    try {
+      const snapshot = await this.callbacks.readSnapshot();
+      if (!snapshot) {
+        return true;
+      }
+      return snapshot.events.some((event) => event.kind === "user_message");
+    } catch {
+      return true;
+    }
   }
 
   private async appendSystem(level: "info" | "warning" | "error", text: string, raw?: unknown): Promise<void> {

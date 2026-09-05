@@ -46,6 +46,9 @@ async function createHarness(options: {
   permission?: string;
   env?: Record<string, string>;
   configOptions?: AgentConversationRecord["configOptions"];
+  /** Stored events returned by `readSnapshot`; omit to simulate an unavailable snapshot. */
+  snapshotEvents?: AgentStoredEvent[];
+  conversationId?: string;
 } = {}): Promise<Harness> {
   harnessCounter += 1;
   const workspaceRoot = path.join(TEST_ROOT, `workspace-${harnessCounter}`);
@@ -55,7 +58,7 @@ async function createHarness(options: {
   let seq = 0;
   let conversation: AgentConversationRecord = {
     schemaVersion: 1,
-    id: `codex-conversation-${harnessCounter}`,
+    id: options.conversationId ?? `codex-conversation-${harnessCounter}`,
     workspaceId: "codex-workspace",
     title: "Codex e2e",
     createdAt: Date.now(),
@@ -109,7 +112,10 @@ async function createHarness(options: {
       events.push(...stored);
       return stored;
     },
-    readSnapshot: async () => null,
+    readSnapshot: async () =>
+      options.snapshotEvents === undefined
+        ? null
+        : { conversation, events: options.snapshotEvents },
     updateConversation: async (patch) => {
       conversation =
         typeof patch === "function"
@@ -693,6 +699,49 @@ test("codex app server e2e: resume uses excludeTurns and falls back to a fresh t
   const warning = eventsOfKind(broken.events, "system").find((event) => /no longer has thread/.test(event.text));
   assert.ok(warning, "user is told the old thread could not be resumed");
   assert.equal(broken.conversation().providerSessionId, fallback.sessionId);
+});
+
+test("codex app server e2e: a stored thread that never ran a turn is replaced without a resume attempt", async (t) => {
+  const harness = await createHarness({
+    snapshotEvents: [
+      {
+        seq: 1,
+        eventId: "e1",
+        conversationId: "c",
+        createdAt: Date.now(),
+        kind: "system",
+        level: "warning",
+        text: "[Codex] Codex could not find bubblewrap on PATH.",
+      },
+    ],
+  });
+  const handle = await harness.provider.loadSession(harness.callbacks, "01a0never-fake-thread");
+  t.after(() => handle.dispose());
+  assert.notEqual(handle.sessionId, "01a0never-fake-thread");
+  const resume = await findClientMessage(harness, (message) => message.method === "thread/resume");
+  assert.equal(resume, undefined, "no resume RPC for a thread without turns");
+  assert.equal(
+    eventsOfKind(harness.events, "system").some((event) => /fresh thread/.test(event.text)),
+    false,
+    "no scary notice when nothing was lost"
+  );
+});
+
+test("codex app server e2e: config warnings are not repeated when a conversation's process restarts", async (t) => {
+  const conversationId = `codex-conversation-shared-${Date.now()}`;
+  const first = await createHarness({ conversationId });
+  const firstHandle = await first.provider.startSession(first.callbacks);
+  await firstHandle.dispose();
+  assert.equal(eventsOfKind(first.events, "system").filter((event) => /bubblewrap/.test(event.text)).length, 1);
+
+  const second = await createHarness({ conversationId });
+  const secondHandle = await second.provider.startSession(second.callbacks);
+  t.after(() => secondHandle.dispose());
+  assert.equal(
+    eventsOfKind(second.events, "system").filter((event) => /bubblewrap/.test(event.text)).length,
+    0,
+    "the same conversation does not get the identical warning again"
+  );
 });
 
 test("codex app server e2e: ask-every-time maps to the untrusted approval policy and read-only sandbox", async (t) => {
