@@ -10,6 +10,7 @@ import {
   type ArtifactSummary,
 } from "../artifacts/store.js";
 import { openBrowserControlTab } from "../browser-control/service.js";
+import { asString } from "../coerce.js";
 
 export const ARTIFACTS_MCP_SERVER_ID = "artifacts";
 
@@ -149,10 +150,6 @@ export const ARTIFACTS_MCP_TOOLS: Tool[] = [
 
 function json(value: unknown): string {
   return JSON.stringify(value, null, 2);
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function asFileMap(value: unknown): Record<string, string> | undefined {

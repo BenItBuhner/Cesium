@@ -5,6 +5,7 @@ import type {
   CloudAgentMediaRef,
   CloudAgentProviderId,
 } from "./types.js";
+import { asRecord } from "../coerce.js";
 
 export type CloudAgentWebhookResult =
   | { kind: "assignment"; assignment: CloudAgentInboundAssignment }
@@ -65,12 +66,6 @@ export function verifySlackSignature(
     .update(`v0:${timestampHeader}:${rawBody}`)
     .digest("hex")}`;
   return safeEqualHex(signatureHeader, expected);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function parseGithubPayload(

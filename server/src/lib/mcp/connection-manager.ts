@@ -414,16 +414,3 @@ export async function disconnectMcpServer(
     sessionsByKey.delete(key);
   }
 }
-
-export async function disconnectWorkspaceMcp(workspaceId: string): Promise<void> {
-  for (const key of [...sessionsByKey.keys()]) {
-    if (!key.startsWith(`${workspaceId}:`)) {
-      continue;
-    }
-    const active = sessionsByKey.get(key);
-    if (active) {
-      await active.session.close().catch(() => undefined);
-    }
-    sessionsByKey.delete(key);
-  }
-}

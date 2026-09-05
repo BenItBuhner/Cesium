@@ -5,6 +5,7 @@ import {
   mcpProtocolMeta,
   type McpProtocolProbeResult,
 } from "./protocol.js";
+import { isRecord } from "../coerce.js";
 
 type JsonRpcResponse = {
   jsonrpc?: string;
@@ -12,10 +13,6 @@ type JsonRpcResponse = {
   result?: unknown;
   error?: { code?: number; message?: string };
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function jsonRpcErrorMessage(payload: JsonRpcResponse, fallback: string): string {
   if (payload.error?.message?.trim()) {

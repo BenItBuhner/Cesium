@@ -15,6 +15,7 @@ import {
   type CloudAgentSettings,
   type CloudAgentSettingsPublic,
 } from "./types.js";
+import { asNumber, asRecord, asString } from "../coerce.js";
 
 const SETTINGS_FILE = path.join(DATA_DIR, "profile", "cloud-agents-settings.json");
 
@@ -24,20 +25,6 @@ function isAgentBackendId(value: unknown): value is AgentBackendId {
 
 function isExecutionMode(value: unknown): value is CloudAgentExecutionMode {
   return value === "isolated" || value === "local";
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function defaultSettings(): CloudAgentSettings {

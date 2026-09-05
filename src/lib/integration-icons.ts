@@ -30,8 +30,6 @@ export const INTEGRATION_ICON_LABELS: Record<IntegrationIconId, string> = {
   manual: "Cloud Agents",
 };
 
-const ICON_BASE = "/integration-icons";
-
 export function normalizeIntegrationIconId(
   providerId: string | null | undefined
 ): IntegrationIconId | null {
@@ -42,19 +40,6 @@ export function normalizeIntegrationIconId(
     return id;
   }
   return null;
-}
-
-export function integrationIconUrl(
-  providerId: string,
-  appearance: "light" | "dark"
-): string | null {
-  const id = normalizeIntegrationIconId(providerId);
-  if (!id) {
-    return null;
-  }
-  const entry = INTEGRATION_ICON_FILES[id];
-  const file = appearance === "dark" ? entry.dark : entry.light;
-  return `${ICON_BASE}/${encodeURIComponent(file)}`;
 }
 
 export function hasIntegrationIconAsset(providerId: string): boolean {

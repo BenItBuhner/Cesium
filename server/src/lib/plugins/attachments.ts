@@ -207,14 +207,22 @@ export async function resolveAgentPluginAttachments(input: {
     }
   }
 
-  const disabledPluginIds = new Set(
+  // Servers owned by a plugin are dropped when that plugin is disabled for
+  // this harness, or when its manifest opts the harness out of native MCP
+  // (the per-plugin counterpart of the promptSkills override above).
+  const excludedPluginIds = new Set(
     installs
       .filter((install) => !harnessEnabled(install, input.backendId))
       .map((install) => install.pluginId)
   );
+  for (const plugin of plugins) {
+    if (!supportsNativeMcp(plugin.definition, input.backendId)) {
+      excludedPluginIds.add(plugin.definition.pluginId);
+    }
+  }
   const mcpServers = getHarnessPluginCapability(input.backendId).nativeMcp
     ? enabledMcpServers.filter(
-        (server) => !server.pluginId || !disabledPluginIds.has(server.pluginId)
+        (server) => !server.pluginId || !excludedPluginIds.has(server.pluginId)
       )
     : [];
   const skillsList = renderPluginSkills(plugins, input.backendId);

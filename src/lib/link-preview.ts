@@ -3,6 +3,7 @@ import {
   decodeBrowserProxyHref,
   normalizeBrowserTargetUrl,
 } from "@/lib/browser-proxy-url";
+import { isLikelyImageResponse } from "@/lib/browser-favicon";
 import { fallbackTitleFromUrl } from "@/lib/link-reference";
 
 function decodeBasicEntities(value: string): string {
@@ -53,13 +54,6 @@ function extractDocumentTitle(html: string): string | null {
   const twitter = extractMetaContent(html, "twitter:title");
   if (twitter) return twitter;
   return null;
-}
-
-function isLikelyImageResponse(contentType: string, url: string): boolean {
-  const ct = contentType.toLowerCase();
-  if (ct.includes("image/")) return true;
-  if (ct.includes("octet-stream") && /\.ico$/i.test(url)) return true;
-  return false;
 }
 
 function parseFaviconCandidates(html: string, pageUrl: URL, serverBase: string): string[] {

@@ -352,7 +352,6 @@ class GoogleAntigravityCliSessionHandle implements AgentSessionHandle {
         event.target,
         event.reason
       );
-      const toolLabel = title;
       const resolved = await resolveRememberedPermissionDecision({
         workspaceId: this.callbacks.workspace.id,
         backendId: this.backend.id,

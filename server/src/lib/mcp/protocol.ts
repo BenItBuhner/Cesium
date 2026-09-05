@@ -1,10 +1,5 @@
 export const MCP_STATELESS_PROTOCOL_VERSION = "2026-07-28";
 export const MCP_SESSION_PROTOCOL_VERSION = "2025-11-25";
-export const MCP_SESSION_PROTOCOL_FALLBACKS = [
-  "2025-11-25",
-  "2025-03-26",
-  "2024-11-05",
-] as const;
 
 export const MCP_CLIENT_INFO = {
   name: "opencursor-cesium",

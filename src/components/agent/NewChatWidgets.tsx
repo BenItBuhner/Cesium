@@ -685,32 +685,3 @@ export function useNewChatWidgetVisibilityToggle(): (id: NewChatWidgetId) => voi
     [updateSettings]
   );
 }
-
-/**
- * Move a widget within `settings.general.newChatWidgets.order`.
- * Used by Settings → General → New chat widgets.
- */
-export function useNewChatWidgetMove(): (id: NewChatWidgetId, delta: -1 | 1) => void {
-  const { updateSettings } = useGlobalSettings();
-  return useCallback(
-    (id: NewChatWidgetId, delta: -1 | 1) => {
-      updateSettings((current) => {
-        const order = [...current.general.newChatWidgets.order];
-        const index = order.indexOf(id);
-        const target = index + delta;
-        if (index < 0 || target < 0 || target >= order.length) {
-          return current;
-        }
-        [order[index], order[target]] = [order[target]!, order[index]!];
-        return {
-          ...current,
-          general: {
-            ...current.general,
-            newChatWidgets: { ...current.general.newChatWidgets, order },
-          },
-        };
-      });
-    },
-    [updateSettings]
-  );
-}

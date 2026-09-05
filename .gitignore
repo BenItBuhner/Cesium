@@ -20,19 +20,23 @@ coverage/
 .next/
 out/
 
-# PWA - generated on production build (@ducanh2912/next-pwa)
-/public/sw.js
-/public/sw.js.map
-/public/workbox-*.js
-/public/workbox-*.js.map
-/public/swe-worker-*.js
-/public/swe-worker-*.js.map
-/public/fallback-*.js
-/public/fallback-*.js.map
+# PWA - generated on production build (@ducanh2912/next-pwa). Every Next
+# workspace (root, apps/web) emits these into its own public/ directory.
+**/public/sw.js
+**/public/sw.js.map
+**/public/workbox-*.js
+**/public/workbox-*.js.map
+**/public/swe-worker-*.js
+**/public/swe-worker-*.js.map
+**/public/fallback-*.js
+**/public/fallback-*.js.map
 
 # production
 build/
 dist/
+# tsc output that escaped its outDir must never land next to package sources
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts.map
 
 # misc
 .vendor/

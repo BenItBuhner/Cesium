@@ -1,4 +1,5 @@
 import type { UserMessageSegment } from "./types";
+import { escapeXmlAttr, parseXmlAttrs } from "./xml-attrs";
 
 export interface TextReference {
   id: string;
@@ -35,36 +36,10 @@ export function findComposerTextReferenceTokens(
   return out;
 }
 
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
-}
-
-function parseAttrs(attrString: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:][\w:.\-]*)\s*=\s*"([^"]*)"/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(attrString))) {
-    attrs[match[1]!] = decodeHtmlEntities(match[2]!);
-  }
-  return attrs;
-}
-
 export function buildTextReferenceBlock(reference: TextReference): string {
   return (
-    `<text-reference id="${escapeAttr(reference.id)}" ` +
-    `label="${escapeAttr(reference.label)}" ` +
+    `<text-reference id="${escapeXmlAttr(reference.id)}" ` +
+    `label="${escapeXmlAttr(reference.label)}" ` +
     `chars="${reference.charCount}">\n` +
     "```text\n" +
     reference.text +
@@ -96,7 +71,7 @@ export function splitContentByTextReferenceBlocks(
     if (start > lastIndex) {
       out.push({ type: "text", text: content.slice(lastIndex, start) });
     }
-    const attrs = parseAttrs(match[1] ?? "");
+    const attrs = parseXmlAttrs(match[1] ?? "");
     const fullText = extractTextFromBlockBody(match[2] ?? "");
     out.push({
       type: "text-reference",

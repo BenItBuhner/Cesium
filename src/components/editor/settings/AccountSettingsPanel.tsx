@@ -74,7 +74,6 @@ function AccountIdentityCard() {
       ) : null}
       <div className="flex items-center gap-[14px]">
         {identity.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={identity.imageUrl}
             alt=""

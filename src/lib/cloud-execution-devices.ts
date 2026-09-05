@@ -40,16 +40,6 @@ export function isCloudExecutionDeviceId(id: string | null | undefined): boolean
   return typeof id === "string" && id.startsWith(CLOUD_EXECUTION_DEVICE_ID_PREFIX);
 }
 
-export function parseCloudExecutionDeviceBackendId(
-  id: string | null | undefined
-): string | null {
-  if (!isCloudExecutionDeviceId(id)) {
-    return null;
-  }
-  const backendId = (id as string).slice(CLOUD_EXECUTION_DEVICE_ID_PREFIX.length);
-  return backendId.length > 0 ? backendId : null;
-}
-
 export function backendSupportsCloudExecution(backend: AgentBackendInfo): boolean {
   return backend.capabilities.supportsCloudExecution === true;
 }

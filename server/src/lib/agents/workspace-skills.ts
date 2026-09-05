@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathExists } from "../persistence.js";
 
 /**
  * Workspace Agent Skills discovery (agentskills.io / SKILL.md open standard).
@@ -103,15 +104,6 @@ export function parseSkillFrontmatter(raw: string): {
       parseBoolean(fields["disable-model-invocation"]) ||
       parseBoolean(fields.disableModelInvocation),
   };
-}
-
-async function pathExists(absolutePath: string): Promise<boolean> {
-  try {
-    await fs.access(absolutePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function walkForSkillMd(

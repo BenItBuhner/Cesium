@@ -15,7 +15,6 @@
     "packages/core",
     "packages/design",
     "packages/sdk",
-    "packages/server",
     "packages/ui-web",
     "server"
   ],

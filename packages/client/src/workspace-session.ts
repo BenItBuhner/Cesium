@@ -270,28 +270,6 @@ export function resolvePersistedChatScroll(
   return { mode: "bottom" };
 }
 
-/** @deprecated Prefer {@link resolvePersistedChatScroll} for anchor-aware restore. */
-export function resolvePersistedChatScrollTop(
-  sessionMap: Record<string, number>,
-  conversationId: string | null | undefined,
-  workspaceId: string | null | undefined,
-  windowId: string | null | undefined,
-  serverStorageKey: string
-): number | undefined {
-  const r = resolvePersistedChatScroll(
-    sessionMap,
-    {},
-    conversationId,
-    workspaceId,
-    windowId,
-    serverStorageKey
-  );
-  if (r.mode === "bottom") {
-    return undefined;
-  }
-  return r.scrollTop;
-}
-
 export function persistChatScrollOverlay(
   workspaceId: string,
   windowId: string | null | undefined,
