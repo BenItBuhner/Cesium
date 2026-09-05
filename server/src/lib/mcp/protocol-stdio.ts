@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import {
   MCP_CLIENT_INFO,
   MCP_SESSION_PROTOCOL_VERSION,
@@ -16,6 +15,45 @@ type JsonRpcResponse = {
   result?: unknown;
   error?: { message?: string };
 };
+
+/**
+ * Newline-delimited JSON-RPC framing for stdio transports. Mirrors the MCP
+ * SDK's `ReadBuffer` / `serializeMessage`, minus the zod schema validation
+ * (callers already inspect `result` / `error` themselves). Importing those
+ * helpers from the SDK pulled its entire `types.js` (every zod schema,
+ * ~30 MB RSS) onto the server boot path via this module.
+ */
+class ReadBuffer {
+  private buffer: Buffer | undefined;
+
+  append(chunk: Buffer): void {
+    this.buffer = this.buffer ? Buffer.concat([this.buffer, chunk]) : chunk;
+  }
+
+  readMessage(): Record<string, unknown> | null {
+    if (!this.buffer) {
+      return null;
+    }
+    const index = this.buffer.indexOf("\n");
+    if (index === -1) {
+      return null;
+    }
+    const line = this.buffer.toString("utf8", 0, index).replace(/\r$/, "");
+    this.buffer = this.buffer.subarray(index + 1);
+    if (!line.trim()) {
+      return this.readMessage();
+    }
+    const parsed: unknown = JSON.parse(line);
+    if (!isRecord(parsed)) {
+      throw new Error("Invalid JSON-RPC message: expected an object.");
+    }
+    return parsed;
+  }
+}
+
+function serializeMessage(message: unknown): string {
+  return `${JSON.stringify(message)}\n`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

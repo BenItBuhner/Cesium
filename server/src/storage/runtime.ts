@@ -54,7 +54,7 @@ export async function getStorage(): Promise<StorageDriver> {
     initPromise = (async () => {
       const kind = resolveConfiguredDriverKind();
       const { instantiateDriver } = await import("./bootstrap-drivers.js");
-      const driver = instantiateDriver(kind);
+      const driver = await instantiateDriver(kind);
       try {
         await driver.init();
         activeDriver = driver;
@@ -72,7 +72,7 @@ export async function getStorage(): Promise<StorageDriver> {
         await import("../db/client.js")
           .then(({ closeDb }) => closeDb())
           .catch(() => undefined);
-        const fallback = instantiateDriver("legacy-json");
+        const fallback = await instantiateDriver("legacy-json");
         await fallback.init();
         activeDriver = fallback;
         return fallback;

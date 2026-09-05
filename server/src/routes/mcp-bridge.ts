@@ -1,10 +1,5 @@
 import { Hono } from "hono";
-import { StreamableHTTPTransport } from "@hono/mcp";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   BROWSER_MCP_SERVER_ID,
   BROWSER_MCP_TOOLS,
@@ -28,11 +23,38 @@ type ToolCallContent = Array<
   | { type: "image"; data: string; mimeType: string }
 >;
 
-function buildBridgeServer(input: {
+/**
+ * The MCP server SDK + @hono/mcp transport (~30 MB RSS with their zod
+ * schemas) only matter once an external harness actually attaches to the
+ * built-in bridge, so they load on the first request instead of at boot.
+ */
+let bridgeSdkPromise: Promise<{
+  Server: typeof import("@modelcontextprotocol/sdk/server/index.js").Server;
+  CallToolRequestSchema: typeof import("@modelcontextprotocol/sdk/types.js").CallToolRequestSchema;
+  ListToolsRequestSchema: typeof import("@modelcontextprotocol/sdk/types.js").ListToolsRequestSchema;
+  StreamableHTTPTransport: typeof import("@hono/mcp").StreamableHTTPTransport;
+}> | null = null;
+
+function loadBridgeSdk() {
+  bridgeSdkPromise ??= Promise.all([
+    import("@modelcontextprotocol/sdk/server/index.js"),
+    import("@modelcontextprotocol/sdk/types.js"),
+    import("@hono/mcp"),
+  ]).then(([server, types, honoMcp]) => ({
+    Server: server.Server,
+    CallToolRequestSchema: types.CallToolRequestSchema,
+    ListToolsRequestSchema: types.ListToolsRequestSchema,
+    StreamableHTTPTransport: honoMcp.StreamableHTTPTransport,
+  }));
+  return bridgeSdkPromise;
+}
+
+async function buildBridgeServer(input: {
   workspaceId: string;
   workspaceRoot: string;
   serverId: typeof BROWSER_MCP_SERVER_ID | typeof PHONE_MCP_SERVER_ID;
-}): Server {
+}): Promise<Server> {
+  const { Server, CallToolRequestSchema, ListToolsRequestSchema } = await loadBridgeSdk();
   const isBrowser = input.serverId === BROWSER_MCP_SERVER_ID;
   const server = new Server(
     {
@@ -101,11 +123,12 @@ mcpBridgeRoutes.all("/api/workspaces/:workspaceId/mcp/servers/:serverId/http", a
   if (!enabled) {
     return c.json({ error: `Built-in MCP server is disabled: ${serverIdRaw}` }, 403);
   }
-  const server = buildBridgeServer({
+  const server = await buildBridgeServer({
     workspaceId: workspace.id,
     workspaceRoot: workspace.root,
     serverId: serverIdRaw,
   });
+  const { StreamableHTTPTransport } = await loadBridgeSdk();
   const transport = new StreamableHTTPTransport();
   await server.connect(transport);
   return transport.handleRequest(c);
