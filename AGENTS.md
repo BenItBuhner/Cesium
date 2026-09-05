@@ -39,6 +39,18 @@ handles the first two, but you must repeat them by hand if you re-run installs):
  unavailable; sending a chat without a configured backend surfaces a
  "Compilation failed / Provider responded" toast. This is expected, not an
  environment break.
+- **Claude Code (`claude-code-sdk`) needs no separate install**: the
+ `@anthropic-ai/claude-agent-sdk` dependency ships the native `claude` binary
+ (`server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude`). To
+ test it against the model proxy set `OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL=https://infer.techlitnow.com`
+ (a trailing `/v1` is stripped - the CLI appends `/v1/messages` itself),
+ `OPENCURSOR_CLAUDE_CODE_SDK_API_KEY`, and `OPENCURSOR_CLAUDE_CODE_SDK_MODEL=kimi-k3`;
+ use `CLAUDE_CONFIG_DIR` to isolate session transcripts. Known proxy limits:
+ its Anthropic endpoint returns OpenAI-format chunks when streaming (the CLI
+ falls back to non-streamed replies, so no token deltas) and times out
+ (Cloudflare 524) on image blocks, while the same image works on its OpenAI
+ endpoint. Turns take 10-40s on `kimi-k3`. Lifecycle unit tests live in
+ `server/test/claude-code-sdk-session.test.ts` (scripted fake CLI, no network).
 - **Google Antigravity (`google-antigravity-acp`) uses Google's official ACP
  server**, not the `agy` CLI. To test it live: download the Linux build from the
  ACP Registry manifest (`agentclientprotocol/registry/antigravity-acp/agent.json`,

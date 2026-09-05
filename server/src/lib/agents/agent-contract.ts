@@ -194,7 +194,8 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsStructuredPlans: true,
     supportsTodos: true,
     supportsSessionResume: true,
-    supportsPromptImages: false,
+    // Streaming-input sessions accept Anthropic image blocks inline.
+    supportsPromptImages: true,
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
@@ -437,11 +438,15 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...toolEvents,
       "plan",
       "plan_file",
+      "subagent",
       "question",
+      "compression_summary",
+      "system_reminder",
       ...permissionEvents,
       "system",
     ],
-    notes: "plan_file/question events require the shared plan and AskUserQuestion bridge.",
+    notes:
+      "Task list tools mirror into plan/plan_file; Agent tool calls render as subagent cards; AskUserQuestion bridges to question cards; compact_boundary maps to compression_summary.",
   },
   "pi-agent": {
     expectedEventKinds: [

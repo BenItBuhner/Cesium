@@ -141,13 +141,18 @@ export async function getClaudeCodeSdkSettingsPublic(): Promise<ClaudeCodeSdkSet
   const apiKey = resolveField("apiKey", stored, envApiKey());
   const model = resolveField("model", stored, envModel());
   const pathToExecutable = resolveField("pathToExecutable", stored, envPathToExecutable());
+  // Mirrors the runtime auth gate (`hasClaudeCodeSdkUsableAuth`) so Settings
+  // never reports "not configured" for a backend that can actually start.
+  const { hasClaudeCodeAmbientCliAuth } = await import("./claude-code-sdk-credentials.js");
   const configured = Boolean(
     (baseUrl.value && apiKey.value) ||
       apiKey.value ||
       readEnvValue("ANTHROPIC_AUTH_TOKEN") ||
+      readEnvValue("CLAUDE_CODE_OAUTH_TOKEN") ||
       readEnvValue("CLAUDE_CODE_USE_BEDROCK") === "1" ||
       readEnvValue("CLAUDE_CODE_USE_VERTEX") === "1" ||
-      readEnvValue("CLAUDE_CODE_USE_FOUNDRY") === "1"
+      readEnvValue("CLAUDE_CODE_USE_FOUNDRY") === "1" ||
+      hasClaudeCodeAmbientCliAuth()
   );
   const primarySource =
     stored && (stored.baseUrl || stored.apiKey || stored.model || stored.pathToExecutable)
@@ -232,14 +237,17 @@ export async function verifyClaudeCodeSdkSettings(input: {
 }): Promise<void> {
   const baseUrl = input.baseUrl?.trim();
   const apiKey = input.apiKey?.trim();
-  const model = input.model?.trim() || "claude-sonnet-4-5";
+  const explicitModel = input.model?.trim() || "";
+  const model = explicitModel || DEFAULT_MODEL;
   if (!baseUrl || !apiKey) {
     return;
   }
 
-  const normalized = baseUrl.replace(/\/+$/, "");
+  // Claude Code itself appends `/v1/messages`, so a `/v1`-suffixed proxy URL
+  // must be normalized here exactly like the runtime does.
+  const normalized = baseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const response = await fetch(`${normalized}/v1/messages`, {
       method: "POST",
@@ -247,6 +255,7 @@ export async function verifyClaudeCodeSdkSettings(input: {
       headers: {
         "content-type": "application/json",
         "x-api-key": apiKey,
+        authorization: `Bearer ${apiKey}`,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -255,8 +264,37 @@ export async function verifyClaudeCodeSdkSettings(input: {
         messages: [{ role: "user", content: "ping" }],
       }),
     });
+    if (response.ok || response.status === 429) {
+      return;
+    }
+    const bodyText = await response.text().catch(() => "");
+    const apiMessage = extractApiErrorMessage(bodyText);
     if (response.status === 401 || response.status === 403) {
-      throw new Error("Claude Code SDK credentials were rejected by the configured base URL.");
+      throw new Error(
+        `Claude Code SDK credentials were rejected by ${normalized}${apiMessage ? ` (${apiMessage})` : ""}.`
+      );
+    }
+    if (response.status === 404 || response.status === 405) {
+      throw new Error(
+        `${normalized} does not expose the Anthropic Messages API at /v1/messages. Point the base URL at a host that speaks the Anthropic API (without a trailing /v1).`
+      );
+    }
+    if (response.status === 400 || response.status === 422) {
+      // A model-routing rejection only matters when the user pinned that
+      // model; the probe default is just a guess at the host's catalog.
+      if (explicitModel && /model/i.test(apiMessage)) {
+        throw new Error(
+          `Credentials were accepted but the model "${model}" is not available at ${normalized}: ${apiMessage}`
+        );
+      }
+      // Any other 400 still proves the endpoint speaks the Anthropic API and
+      // the credentials were accepted.
+      return;
+    }
+    if (response.status >= 500) {
+      throw new Error(
+        `${normalized} returned HTTP ${response.status} while verifying Claude Code SDK credentials${apiMessage ? ` (${apiMessage})` : ""}.`
+      );
     }
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -266,6 +304,30 @@ export async function verifyClaudeCodeSdkSettings(input: {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function extractApiErrorMessage(bodyText: string): string {
+  if (!bodyText.trim()) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(bodyText) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      const error =
+        record.error && typeof record.error === "object"
+          ? (record.error as Record<string, unknown>)
+          : null;
+      const message =
+        (typeof error?.message === "string" && error.message) ||
+        (typeof record.message === "string" && record.message) ||
+        "";
+      return message.slice(0, 300);
+    }
+  } catch {
+    // Not JSON - fall through to the raw body.
+  }
+  return bodyText.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
 export async function saveClaudeCodeSdkSettings(

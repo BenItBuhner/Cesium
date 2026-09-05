@@ -1049,6 +1049,15 @@ export class AgentRuntimeManager {
       const { computePiAgentContextUsage } = await import("./pi-agent-context-usage.js");
       return computePiAgentContextUsage(conversation).catch(() => unsupportedContextUsageSnapshot());
     }
+    if (conversation.config.backendId === "claude-code-sdk") {
+      const { readClaudeCodeSdkConversationState, claudeCodeSdkContextUsageSnapshot } = await import(
+        "./claude-code-sdk-session-state.js"
+      );
+      const state = await readClaudeCodeSdkConversationState(workspace.id, conversationId).catch(
+        () => null
+      );
+      return claudeCodeSdkContextUsageSnapshot(state?.contextUsage);
+    }
     if (conversation.config.backendId !== "cesium-agent") {
       // Harnesses that stream authoritative token accounting (Codex App Server)
       // persist a snapshot on the record; everything else is unsupported.
