@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+import { asNumber, asRecord, asString } from "./coerce.js";
 
 export type PiAgentHomeMode = "native" | "isolated";
 
@@ -93,20 +94,6 @@ function defaultSettings(): PiAgentSettings {
     providerKeys: [],
     agentHome: "native",
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function normalizeAgentHome(value: unknown): PiAgentHomeMode {

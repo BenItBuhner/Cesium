@@ -78,10 +78,3 @@ export function getConfigDiffFromPrevious(
   const current = resolveEffectiveConfig(conversationConfig, item.configOverride);
   return getConfigDiff(baseline, current);
 }
-
-export function mergeConfigOverride(
-  existing: QueuedPromptConfigOverride | undefined,
-  update: Partial<QueuedPromptConfigOverride>,
-): QueuedPromptConfigOverride {
-  return { ...existing, ...update };
-}

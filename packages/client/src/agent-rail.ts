@@ -296,10 +296,23 @@ export function isPlaceholderAgentRailConversation(
   );
 }
 
+/**
+ * Side chats live inside their parent chat (opened from its composer, reopened
+ * from its header), so they never take a row of their own in the rail.
+ */
+export function isSideChatAgentRailConversation(
+  conversation: Pick<AgentRailConversationSummary, "origin">
+): boolean {
+  return conversation.origin?.kind === "side-chat";
+}
+
 export function isRenderableAgentRailConversation(
   conversation: AgentRailConversationSummary
 ): boolean {
-  return !isPlaceholderAgentRailConversation(conversation);
+  return (
+    !isPlaceholderAgentRailConversation(conversation) &&
+    !isSideChatAgentRailConversation(conversation)
+  );
 }
 
 export type AgentRailFilterMatchContext = {

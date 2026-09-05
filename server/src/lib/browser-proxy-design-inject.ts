@@ -1291,15 +1291,7 @@ function buildGuestScriptSource(postNavigation: boolean): string {
     var captureId = makeCaptureId();
     var pathIndices = elementPathIndices(el);
     var rect = elementRectPayload(el);
-    try { console.log('[cesium-design] capture start', { captureId: captureId, label: label, tag: el.tagName, x: ev.clientX, y: ev.clientY }); } catch (e) {}
     snapshotElement(el, function(img) {
-      try {
-        console.log('[cesium-design] capture done', {
-          captureId: captureId,
-          hasImage: !!img,
-          imageBytes: img ? img.length : 0
-        });
-      } catch (e) {}
       postToParent({
         kind: 'select',
         captureId: captureId,

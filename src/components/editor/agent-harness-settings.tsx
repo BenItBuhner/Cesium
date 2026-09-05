@@ -1632,7 +1632,7 @@ function CesiumAgentHarnessSettings() {
         setOauthBusyId(null);
       }
     },
-    []
+    [refresh]
   );
 
   const disconnectOAuthAccount = useCallback(

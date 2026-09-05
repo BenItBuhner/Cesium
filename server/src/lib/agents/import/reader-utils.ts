@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { asRecord } from "../../coerce.js";
 
 /** Parse a JSONL file tolerantly: blank/garbled lines are skipped. */
 export async function readJsonLines(filePath: string): Promise<unknown[]> {
@@ -19,18 +20,11 @@ export async function readJsonLines(filePath: string): Promise<unknown[]> {
   return out;
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
+export { asNumber, asRecord } from "../../coerce.js";
 
+/** Any string, including empty ones (transcript readers preserve blank fields). */
 export function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-export function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /** Parse ISO timestamps (or epoch ms) into epoch ms; null when unparsable. */
@@ -55,14 +49,7 @@ export function truncateTitle(text: string, max = 72): string {
   return `${collapsed.slice(0, max - 1)}…`;
 }
 
-export async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { pathExists } from "../../persistence.js";
 
 export async function listFilesRecursive(root: string): Promise<string[]> {
   const out: string[] = [];
@@ -122,22 +109,6 @@ export function inferToolKind(toolName: string): string {
   if (/^(todowrite|update_plan|plan)/.test(name)) return "think";
   return "other";
 }
-
-/** Compact single-line preview of structured tool input for event details. */
-export function summarizeToolInput(input: unknown): string | undefined {
-  if (input == null) {
-    return undefined;
-  }
-  if (typeof input === "string") {
-    return input;
-  }
-  try {
-    return JSON.stringify(input, null, 2);
-  } catch {
-    return String(input);
-  }
-}
-
 /** Extract readable text out of a tool result/output payload. */
 export function extractToolOutputText(output: unknown): string | undefined {
   if (output == null) {

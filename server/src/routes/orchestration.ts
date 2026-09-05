@@ -27,20 +27,11 @@ import type {
   OrchestrationIssuePriority,
 } from "../lib/orchestration/types.js";
 import type { WorkspaceRecord } from "../lib/workspace-registry.js";
+import { asString, asStringArray } from "../lib/coerce.js";
 
 export const orchestrationRoutes = new Hono();
 
 const NON_NOTIFYABLE_ASSIGNMENT_STATUSES = new Set(["cancelled"]);
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
 
 function asColumnId(value: unknown): OrchestrationColumnId | undefined {
   return value === "backlog" ||

@@ -15,6 +15,7 @@ import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionError
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
+import { SideChatStrip } from "@/components/chat/SideChatStrip";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -22,6 +23,7 @@ import {
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import {
   extractComposerUserMessageHistory,
   latestGoalProgressStatus,
@@ -149,6 +151,7 @@ loadOlderConversationHistory,
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const rawThreadEvents = useConversationEvents(conversationId);
+  const { openSideChat } = useOpenSideChat(conversationId);
   // Defer the events together with the conversation id they belong to so a
   // conversation switch can never project the previous conversation's stale
   // events under the new id (deferred values lag by design on slow devices).
@@ -185,7 +188,7 @@ loadOlderConversationHistory,
         backendId: conversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
+    [conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
   );
   const dockedAsk = useMemo(
     () =>
@@ -613,6 +616,7 @@ const showRecentChatsSection =
         busy={composerState.busy}
         configLocked={false}
         modeLocked={isOrchestrationModeLocked()}
+        onRequestSideChat={openSideChat}
         draftAttachments={composerDraftAttachments}
         onDraftAttachmentsChange={(next) =>
           upsertComposerDraft(composerDraftId, {
@@ -712,6 +716,10 @@ const showRecentChatsSection =
 
   return (
     <div className="aurora-editor-surface flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
+      <SideChatStrip
+        conversationId={conversationId}
+        className={`relative z-20 shrink-0 ${EDITOR_CHAT_INSET_X_CLASS} pt-[10px]`}
+      />
       {isEmptyThread ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { QuickOpenEntry } from "@/lib/quick-open-files";
 import type { AgentSwitcherCandidate } from "@/lib/agent-conversation-mru";
+import { formatAgentRailRelativeTime } from "@/lib/agent-rail-status";
 import type { SettingsSearchEntry } from "@/lib/settings-search-index";
 import {
   QUICK_OPEN_SCOPE_IDS,
@@ -132,17 +133,6 @@ function score(query: string, path: string): number {
     s += j;
   }
   return s;
-}
-
-function formatRelativeTime(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return "just now";
 }
 
 /** Unified row shown in the list regardless of scope. */
@@ -274,7 +264,7 @@ export function QuickOpen({
         inlineDetail:
           [c.workspaceName, c.badge?.toUpperCase()].filter(Boolean).join(" · ") ||
           undefined,
-        trailing: c.updatedAt ? formatRelativeTime(c.updatedAt) : undefined,
+        trailing: c.updatedAt ? formatAgentRailRelativeTime(c.updatedAt) : undefined,
         pick: () => onPickConversation(c.id),
       }));
     }

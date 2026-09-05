@@ -137,14 +137,3 @@ export function readLastIpadResumeSnapshotKey(): string | null {
     return null;
   }
 }
-
-export function clearLastIpadResumeSnapshotKey(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(IPAD_RESUME_CACHE_LAST_KEY);
-  } catch {
-    // ignore
-  }
-}

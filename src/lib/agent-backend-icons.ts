@@ -35,20 +35,6 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   },
 };
 
-const ICON_BASE = "/agent-backend-icons";
-
-export function agentBackendIconUrl(
-  backendId: AgentBackendId,
-  appearance: "light" | "dark"
-): string | null {
-  const entry = AGENT_BACKEND_ICON_FILES[backendId];
-  if (!entry) {
-    return null;
-  }
-  const file = appearance === "dark" ? entry.dark : entry.light;
-  return `${ICON_BASE}/${encodeURIComponent(file)}`;
-}
-
 export function hasAgentBackendIconAsset(backendId: AgentBackendId): boolean {
   return Boolean(AGENT_BACKEND_ICON_FILES[backendId]);
 }

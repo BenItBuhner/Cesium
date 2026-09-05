@@ -13,7 +13,6 @@ export {
   normalizeSettingsViewSession,
   persistChatScrollOverlay,
   resolvePersistedChatScroll,
-  resolvePersistedChatScrollTop,
   writeChatScrollOverlayEntry,
 } from "@cesium/client";
 export type {

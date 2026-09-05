@@ -28,7 +28,33 @@ export type SlashMenuAction =
   | { kind: "model"; model: ModelInfo }
   | { kind: "backend"; backendId: AgentBackendId }
   | { kind: "config"; configId: string; value: string }
-  | { kind: "insert"; insert: string };
+  | { kind: "insert"; insert: string }
+  /** Open a side chat attached to the current conversation (`/side [question]`). */
+  | { kind: "side-chat" };
+
+/** Slash spellings that open a side chat; Cursor parity is `/side`, `/btw` is its old alias. */
+export const SIDE_CHAT_SLASH_COMMANDS = ["side", "side-chat", "btw"] as const;
+/** What the menu inserts so the user can keep typing a question. */
+export const SIDE_CHAT_SLASH_INSERT = "/side ";
+
+const SIDE_CHAT_DIRECTIVE_REGEX = /^\/(side-chat|side|btw)(?=\s|$)\s*([\s\S]*)$/i;
+
+/**
+ * Detect a leading `/side`, `/side-chat`, or `/btw` directive. Returns the
+ * remaining text (the question to send into the new side chat; empty means
+ * "open it and let me type") or `null` when the draft is not a side-chat command.
+ */
+export function parseSideChatDirective(input: string): { text: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+  const match = trimmed.match(SIDE_CHAT_DIRECTIVE_REGEX);
+  if (!match) {
+    return null;
+  }
+  return { text: (match[2] ?? "").trim() };
+}
 
 export type SlashMenuItem = {
   id: string;
@@ -161,6 +187,11 @@ export function getSlashMenuSections(input: {
   /** Commands the live agent session advertises (ACP `available_commands_update`). */
   agentCommands?: AgentSlashCommand[] | null;
   gitSlashCommands?: boolean;
+  /**
+   * When true, offer `/side`: the host conversation can spawn a side chat
+   * (cesium-agent backend, at least one message, not itself a side chat).
+   */
+  sideChatAvailable?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;
 }): SlashMenuSection[] {
@@ -242,6 +273,21 @@ export function getSlashMenuSections(input: {
 
   const commandItems: SlashMenuItem[] = [];
 
+  if (input.sideChatAvailable) {
+    const label = "Side chat";
+    const searchText =
+      "side chat /side side-chat btw aside parallel secondary chat primary context";
+    commandItems.push({
+      id: "side-chat",
+      label,
+      description:
+        "Open a side chat next to this one. It sees this chat as context; type a question after /side to send it right away.",
+      searchText,
+      searchKey: slashSearchKey(label, searchText),
+      action: { kind: "side-chat" },
+    });
+  }
+
   for (const command of input.agentCommands ?? []) {
     const name = command.name.trim().replace(/^\//, "");
     if (!name) {
@@ -313,6 +359,14 @@ export function flattenSlashMenuSections(sections: SlashMenuSection[]): SlashMen
   return sections.flatMap((section) => section.items);
 }
 
+/**
+ * Sections at or below this many matching rows always show every row. Only
+ * larger sections (in practice the multi-thousand-entry model catalog) absorb
+ * the visible-row cap, so modes, harnesses, and commands such as `/side` or
+ * `/worktree` stay reachable instead of being pushed past the cutoff.
+ */
+const SLASH_MENU_PROTECTED_SECTION_MAX_ITEMS = 12;
+
 export function filterSlashMenuSectionsForDisplay(
   sections: SlashMenuSection[],
   query: string,
@@ -320,46 +374,43 @@ export function filterSlashMenuSectionsForDisplay(
 ): SlashMenuFilterResult {
   const q = query.toLowerCase().trim();
   const visibleLimit = Math.max(0, maxVisibleItems);
-  const nextSections: SlashMenuSection[] = [];
-  let totalCount = 0;
-  let visibleCount = 0;
 
-  if (!q) {
-    for (const section of sections) {
-      totalCount += section.items.length;
-      if (visibleCount >= visibleLimit) {
+  const matched = sections.map((section) => ({
+    section,
+    items: q
+      ? section.items.filter((item) =>
+          (item.searchKey ?? slashSearchKey(item.label, item.searchText)).includes(q)
+        )
+      : section.items,
+  }));
+  const totalCount = matched.reduce((count, entry) => count + entry.items.length, 0);
+
+  // Budget: small sections first (all of their rows), then the large ones
+  // split whatever is left, all in display order.
+  let budget = visibleLimit;
+  const allocation = new Map<SlashMenuSection, number>();
+  for (const pass of ["small", "large"] as const) {
+    for (const entry of matched) {
+      const isSmall = entry.items.length <= SLASH_MENU_PROTECTED_SECTION_MAX_ITEMS;
+      if ((pass === "small") !== isSmall) {
         continue;
       }
-      const remaining = visibleLimit - visibleCount;
-      const visibleItems = section.items.slice(0, remaining);
-      visibleCount += visibleItems.length;
-      if (visibleItems.length > 0) {
-        nextSections.push({ ...section, items: visibleItems });
-      }
+      const take = Math.min(entry.items.length, budget);
+      allocation.set(entry.section, take);
+      budget -= take;
     }
-    return {
-      sections: nextSections,
-      totalCount,
-      visibleCount,
-      truncated: totalCount > visibleCount,
-    };
   }
 
-  for (const section of sections) {
-    const visibleItems: SlashMenuItem[] = [];
-    for (const item of section.items) {
-      if (!(item.searchKey ?? slashSearchKey(item.label, item.searchText)).includes(q)) {
-        continue;
-      }
-      totalCount += 1;
-      if (visibleCount < visibleLimit) {
-        visibleItems.push(item);
-        visibleCount += 1;
-      }
+  const nextSections: SlashMenuSection[] = [];
+  let visibleCount = 0;
+  for (const entry of matched) {
+    const take = allocation.get(entry.section) ?? 0;
+    if (take <= 0) {
+      continue;
     }
-    if (visibleItems.length > 0) {
-      nextSections.push({ ...section, items: visibleItems });
-    }
+    const visibleItems = entry.items.slice(0, take);
+    visibleCount += visibleItems.length;
+    nextSections.push({ ...entry.section, items: visibleItems });
   }
 
   return {
@@ -465,6 +516,7 @@ export function applyComposerDirectives(
         "mode",
         "worktree",
         "delete-worktree",
+        ...SIDE_CHAT_SLASH_COMMANDS,
       ]);
       if (!reservedSlashCommands.has(token)) {
         const match = handlers.modeOptions?.find(

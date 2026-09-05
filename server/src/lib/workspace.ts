@@ -231,10 +231,6 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-export function getWorkspaceName(workspaceRoot: string): string {
-  return path.basename(workspaceRoot);
-}
-
 export function resolveSafePath(workspaceRoot: string, relativePath: string): string {
   const normalizedRelative = relativePath.replace(/\\/g, "/");
   const resolved = path.resolve(workspaceRoot, normalizedRelative);

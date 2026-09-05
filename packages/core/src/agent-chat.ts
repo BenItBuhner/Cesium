@@ -304,6 +304,7 @@ import {
   getSubagentPromptText,
   getSubagentTaskInput,
   getToolRawUpdate,
+  humanizeToolCallName,
 } from "./agent-subagent-routing";
 import type { ProjectAgentEventsOptions } from "./agent-subagent-routing";
 import { formatToolFileLabel, toolPathBasename } from "./workspace-tool-path-display";
@@ -1283,14 +1284,6 @@ function withConciseToolDetail<T extends Extract<WorkedSessionEntry, { kind: "to
     return row;
   }
   return { ...row, detail: nextDetail, rawDetail };
-}
-
-function humanizeToolCallName(value: string): string {
-  return value
-    .replace(/ToolCall$/i, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]/g, " ")
-    .trim();
 }
 
 function inferUserSegmentKind(token: string): UserMessageSegment["type"] | null {
@@ -2326,7 +2319,7 @@ function finalizeOpenToolsInTurn(
   }
 }
 
-function firstNonEmptyLine(text: string | undefined): string | undefined {
+export function firstNonEmptyLine(text: string | undefined): string | undefined {
   if (!text) {
     return undefined;
   }

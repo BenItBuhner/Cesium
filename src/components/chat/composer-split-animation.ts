@@ -18,6 +18,8 @@
  * remounted away mid-flight.
  */
 
+import { prefersReducedMotion } from "@/components/mobile/drawer-motion";
+
 type SplitSource = {
   shellRect: DOMRect;
   capturedAt: number;
@@ -79,13 +81,6 @@ export function waitForComposerSplitStart(): Promise<void> {
 /** Resolves once the split animations have finished/cancelled (or never ran). */
 export function waitForComposerSplitSettled(): Promise<void> {
   return withDeadline(settledPromise, SOURCE_TTL_MS + 2 * SPLIT_DURATION_MS);
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)
-  );
 }
 
 export function captureComposerSplitSource(scope?: HTMLElement | null): void {

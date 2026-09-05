@@ -250,14 +250,6 @@ export async function listCesiumOAuthProviders(): Promise<CesiumOAuthProviderSta
   }
 }
 
-export async function getCesiumOAuthConnectedProviderIds(): Promise<string[]> {
-  try {
-    return (await getSnapshot()).connectedIds;
-  } catch {
-    return [];
-  }
-}
-
 /** Catalog rows for connected OAuth-only providers (ChatGPT/Codex). */
 export async function getCesiumOAuthCatalogEntries(): Promise<CesiumModelCatalogEntry[]> {
   try {

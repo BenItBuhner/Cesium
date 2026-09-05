@@ -234,7 +234,6 @@ export type EditorPanelAction =
     };
 
 function stripActive(tab: EditorTab): EditorTab {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- omit `active` from stored tab shape
   const { active, ...rest } = tab;
   if (rest.transcriptMessages?.length && !rest.transcriptSessionId) {
     return {

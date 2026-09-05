@@ -10,6 +10,7 @@ import type {
   CesiumHarnessTurnInput,
   CesiumHarnessTurnOutcome,
 } from "./types.js";
+import { asError } from "../../../coerce.js";
 
 export type CesiumHarnessPluginDiagnostic = {
   pluginId: string;
@@ -33,10 +34,6 @@ export type CesiumHarnessPluginRuntimeOptions = {
 
 const DEFAULT_PLUGIN_HOOK_TIMEOUT_MS = 5_000;
 const MAX_DIAGNOSTICS = 100;
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -75,10 +75,6 @@ function setSyncCache(settings: ClaudeCodeSdkSettings | null): void {
   syncCache = settings;
 }
 
-export function invalidateClaudeCodeSdkSettingsCache(): void {
-  syncCache = undefined;
-}
-
 function readStoredSync(): ClaudeCodeSdkSettings | null {
   if (syncCache !== undefined) {
     return syncCache;

@@ -17,7 +17,6 @@ import {
   type HarnessCliId,
 } from "./agents/harness-runtime.js";
 import { spawnSafeEnv } from "./agents/spawn-env.js";
-import type { AgentBackendId } from "./agents/types.js";
 import {
   ANTIGRAVITY_ACP_AUTH_METHODS,
   antigravityAcpCredentialRelPaths,
@@ -216,10 +215,6 @@ export function isHarnessCliAuthBackendId(
   return value in AUTH_SPECS;
 }
 
-export function harnessCliAuthBackendIds(): HarnessCliAuthBackendId[] {
-  return Object.keys(AUTH_SPECS) as HarnessCliAuthBackendId[];
-}
-
 /**
  * Deduped union of home-relative credential paths for every backend that
  * authenticates through the given harness CLI (e.g. `codex-app-server` and
@@ -255,7 +250,6 @@ export function harnessCliAuthBackendIdsForCli(
 
 /** Strip ANSI escapes so URL/code extraction works on styled CLI output. */
 export function stripHarnessAuthAnsi(value: string): string {
-  // eslint-disable-next-line no-control-regex
   return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
@@ -667,8 +661,4 @@ export async function startHarnessCliLogout(
       resolve({ ...next });
     });
   });
-}
-
-export function isHarnessCliAuthSupported(backendId: AgentBackendId): boolean {
-  return isHarnessCliAuthBackendId(backendId);
 }

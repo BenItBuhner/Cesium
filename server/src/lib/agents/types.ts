@@ -151,6 +151,12 @@ export type AgentProviderCapabilities = {
    */
   supportsCloudExecution?: boolean;
   /**
+   * True when the backend can host side chats: durable child conversations
+   * attached to a parent that receive the parent's transcript as hidden,
+   * append-only reference context. Absent means unsupported.
+   */
+  supportsSideChats?: boolean;
+  /**
    * True when a user cancel leaves the provider session resumable: the next
    * prompt continues the same native session instead of starting a fresh one
    * (Pi records the aborted turn in its session file). Optional for stored-record
@@ -271,7 +277,24 @@ export type AgentStoredEvent =
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "attachments" | "other";
+      reason:
+        | "mode"
+        | "plan_handoff"
+        | "compaction"
+        | "goal"
+        | "burn"
+        | "attachments"
+        | "linked_conversation"
+        | "other";
+      /**
+       * `inline` reminders are rebuilt into model history as their own
+       * user-role message at their seq position (after any tool results that
+       * precede them) instead of being merged onto a `targetMessageId` user
+       * message. Used for context that arrives mid-turn, between tool
+       * iterations, so the persisted log reproduces the exact tail the model
+       * already saw and the prompt-cache prefix stays byte-stable.
+       */
+      placement?: "inline";
       text: string;
       raw?: unknown;
     }
@@ -571,6 +594,19 @@ export type AgentConversationOrigin =
       triggerName?: string;
       /** When the trigger fired. */
       firedAt: number;
+    }
+  | {
+      /**
+       * Side chat: a durable child conversation attached to a parent. The
+       * parent's transcript is fed to the child's model as hidden reference
+       * context (a seed at creation plus append-only deltas), never shown in
+       * the child's own transcript. Cesium harness only.
+       */
+      kind: "side-chat";
+      parentConversationId: string;
+      /** Parent title at creation time, for chrome when the parent is unavailable. */
+      parentTitle?: string;
+      createdAt: number;
     };
 
 /**

@@ -1,6 +1,4 @@
 export const AGENT_LEFT_RAIL_EXPANDED_WIDTH = 290;
-/** @deprecated Historic constant; collapsed rail uses 0% width - see `AgentWorkspaceRailCollapsedOverlay`. */
-export const AGENT_LEFT_RAIL_COLLAPSED_WIDTH = 0;
 /** Collapsed rail takes no flex space; quick actions use `AgentWorkspaceRailCollapsedOverlay`. */
 export const AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT = 0;
 /** @deprecated Fixed width removed - side pane is resizable; kept for approximate defaults. */

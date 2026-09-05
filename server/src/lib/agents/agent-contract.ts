@@ -17,6 +17,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
+  "supportsSideChats",
   "supportsCancelResume",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
@@ -41,6 +42,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: true,
     supportsCloudExecution: false,
+    supportsSideChats: true,
     supportsCancelResume: false,
   },
   "cursor-sdk": {
@@ -59,6 +61,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     // The @cursor/sdk Agent API runs the same conversation contract on
     // Cursor-hosted cloud VMs (`Agent.create({ cloud })`).
     supportsCloudExecution: true,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "cursor-acp": {
@@ -76,6 +79,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     // Cursor CLI over ACP runs locally; cloud execution is the SDK path.
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "opencode-server": {
@@ -92,6 +96,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "opencode-v2-beta": {
@@ -108,6 +113,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "devin-acp": {
@@ -124,6 +130,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "grok-build": {
@@ -140,6 +147,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "codex-app-server": {
@@ -156,6 +164,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "codex-acp": {
@@ -172,6 +181,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "claude-code-sdk": {
@@ -188,6 +198,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "pi-agent": {
@@ -206,6 +217,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: true,
   },
   "google-antigravity-cli": {
@@ -222,6 +234,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
   "google-antigravity-acp": {
@@ -239,6 +252,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
+    supportsSideChats: false,
     supportsCancelResume: false,
   },
 };

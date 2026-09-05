@@ -49,7 +49,6 @@ export function LinkAttachmentPill({
       }
     >
       {faviconSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element -- proxied remote favicon
         <img
           src={faviconSrc}
           alt=""

@@ -138,6 +138,11 @@ export type AgentProviderCapabilities = {
    * Optional for stored-record compatibility; absent means unsupported.
    */
   supportsCloudExecution?: boolean;
+  /**
+   * True when the backend can host side chats (durable child conversations
+   * that receive the parent transcript as hidden reference context).
+   */
+  supportsSideChats?: boolean;
   /** True when a cancelled turn leaves the provider session resumable (Pi). */
   supportsCancelResume?: boolean;
 };
@@ -267,7 +272,17 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "attachments" | "other";
+      reason:
+        | "mode"
+        | "plan_handoff"
+        | "compaction"
+        | "goal"
+        | "burn"
+        | "attachments"
+        | "linked_conversation"
+        | "other";
+      /** `inline` reminders become their own user-role history message at their seq position. */
+      placement?: "inline";
       text: string;
       raw?: unknown;
     }
@@ -536,6 +551,16 @@ export type AgentConversationOrigin =
       triggerName?: string;
       /** When the trigger fired. */
       firedAt: number;
+    }
+  | {
+      /**
+       * Side chat: a durable child conversation attached to a parent whose
+       * transcript is fed to the child's model as hidden reference context.
+       */
+      kind: "side-chat";
+      parentConversationId: string;
+      parentTitle?: string;
+      createdAt: number;
     };
 
 /**
@@ -909,6 +934,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
+  "supportsSideChats",
   "supportsCancelResume",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
