@@ -816,6 +816,45 @@ test("codex app server e2e: config warnings are not repeated when a conversation
   );
 });
 
+test("codex app server e2e: auto-approve-all covers MCP tool approvals and permission grants", async (t) => {
+  const { getGlobalSettings, saveGlobalSettings } = await import("../src/lib/global-settings-store.js");
+  const before = await getGlobalSettings();
+  await saveGlobalSettings({
+    ...before,
+    agents: { ...before.agents, autoAcceptAllAgentPermissions: true },
+  });
+  t.after(async () => {
+    const current = await getGlobalSettings();
+    await saveGlobalSettings({
+      ...current,
+      agents: { ...current.agents, autoAcceptAllAgentPermissions: false },
+    });
+  });
+
+  const harness = await createHarness();
+  const handle = await harness.provider.startSession(harness.callbacks);
+  t.after(() => handle.dispose());
+  await handle.prompt({ text: "scenario:elicitation", userMessageId: "user-auto-elicit" });
+  assert.equal(eventsOfKind(harness.events, "permission_request").length, 0, "no prompt shown");
+  const resolved = eventsOfKind(harness.events, "permission_resolved");
+  assert.equal(resolved.length, 1);
+  assert.deepEqual(resolved[0]?.raw, { autoAcceptedAll: true });
+  const response = await findClientMessage(harness, (message) => message.method === undefined && message.id === 0);
+  assert.deepEqual(response?.result, { action: "accept", content: null });
+  assert.match(assistantText(harness.events), /Elicitation accept null null/);
+
+  const harness2 = await createHarness();
+  const handle2 = await harness2.provider.startSession(harness2.callbacks);
+  t.after(() => handle2.dispose());
+  await handle2.prompt({ text: "scenario:permissions", userMessageId: "user-auto-perm" });
+  assert.equal(eventsOfKind(harness2.events, "permission_request").length, 0);
+  const response2 = await findClientMessage(harness2, (message) => message.method === undefined && message.id === 0);
+  assert.deepEqual(response2?.result, {
+    permissions: { fileSystem: { write: ["/tmp/fake-shared"] }, network: { enabled: true } },
+    scope: "turn",
+  });
+});
+
 test("codex app server e2e: ask-every-time maps to the untrusted approval policy and read-only sandbox", async (t) => {
   const harness = await createHarness({ permission: "on-request" });
   const handle = await harness.provider.startSession(harness.callbacks);

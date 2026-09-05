@@ -2463,20 +2463,29 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       event.detail
     );
     const toolLabel = event.title ?? message.method;
-    if (supportsRemembered) {
+    {
       const resolved = await resolveRememberedPermissionDecision({
         workspaceId: this.callbacks.workspace.id,
         backendId: this.backend.id,
         toolKey,
         options: event.options,
       });
-      if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+      // Remembered per-tool rules only exist for command/file approvals; the
+      // global "auto-approve all" switch covers every approval kind (MCP tool
+      // approvals, permission grants, ...).
+      const applies =
+        (resolved.kind === "remembered" && supportsRemembered) || resolved.kind === "auto_accept";
+      if (applies && (resolved.kind === "remembered" || resolved.kind === "auto_accept")) {
+        const allowOptionId =
+          event.options.find((option) => option.kind === "allow_once")?.optionId ?? "accept";
+        const declineOptionId =
+          event.options.find((option) => option.kind === "reject_once")?.optionId ?? "decline";
         const optionId =
           resolved.kind === "remembered"
             ? resolved.decision === "allow"
-              ? "accept"
-              : "decline"
-            : "accept";
+              ? allowOptionId
+              : declineOptionId
+            : allowOptionId;
         this.transport?.respond(
           message.id,
           codexAppServerApprovalResponse({
