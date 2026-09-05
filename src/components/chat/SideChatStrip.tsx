@@ -84,8 +84,9 @@ function StatusGlyph({ status }: { status: AgentConversationStatus | undefined }
  * - On a side chat: which primary it belongs to, that primary's live status,
  *   and a control to jump back to it.
  * - On a primary with side chats: one pill per open side chat, each reopening
- *   the child as a full chat in the right editor group. Side chats never take
- *   a rail row, so this is how they stay discoverable.
+ *   the child as a full chat tab in the editor panel (focused group, no forced
+ *   split). Side chats never take a rail row, so this is how they stay
+ *   discoverable.
  */
 export function SideChatStrip({
   conversationId,
@@ -120,7 +121,7 @@ export function SideChatStrip({
         shell.setSelectedConversationId(parentId);
         return;
       }
-      openAgentConversation({ conversationId: parentId, title: parentTitle, group: "left" });
+      openAgentConversation({ conversationId: parentId, title: parentTitle });
     };
     return (
       <div className={className}>
@@ -172,11 +173,7 @@ export function SideChatStrip({
               key={child.id}
               type="button"
               onClick={() =>
-                openAgentConversation({
-                  conversationId: child.id,
-                  title: child.title,
-                  group: "right",
-                })
+                openAgentConversation({ conversationId: child.id, title: child.title })
               }
               className="inline-flex max-w-[220px] shrink-0 items-center gap-[5px] rounded-full border border-[var(--border-subtle)] px-[8px] py-[2px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
               title={`Open side chat "${child.title}" (${statusLabel(child.status)})`}
