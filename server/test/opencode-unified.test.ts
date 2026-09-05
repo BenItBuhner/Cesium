@@ -300,6 +300,130 @@ test("createOpenCodeProvider drives a current-dialect dummy server through a ful
   }
 });
 
+test("changing the generation option switches the live session to the other dialect's server", async () => {
+  process.env.OPENCODE_SERVER_FINISH_QUIET_MS = "20";
+  const currentStreams = new Set<ServerResponse>();
+  const currentRequests: string[] = [];
+  const current = await listen(async (request, response) => {
+    const parsed = new URL(request.url ?? "/", "http://127.0.0.1");
+    currentRequests.push(`${request.method} ${parsed.pathname}`);
+    if (parsed.pathname === "/global/health") return void response.end(JSON.stringify({ healthy: true, version: "1.18.29" }));
+    if (parsed.pathname === "/permission") return void response.end("[]");
+    if (request.method === "POST" && parsed.pathname === "/session") return void response.end(JSON.stringify({ id: "ses_current" }));
+    if (parsed.pathname === "/session/ses_current/abort") return void response.end("true");
+    if (parsed.pathname === "/event" || parsed.pathname === "/global/event") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      sseWrite(response, { type: "server.connected", properties: {} });
+      currentStreams.add(response);
+      response.on("close", () => currentStreams.delete(response));
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  const v2Streams = new Set<ServerResponse>();
+  const v2Requests: string[] = [];
+  const v2PromptBodies: Array<Record<string, unknown>> = [];
+  const v2 = await listen(async (request, response) => {
+    const parsed = new URL(request.url ?? "/", "http://127.0.0.1");
+    v2Requests.push(`${request.method} ${parsed.pathname}`);
+    const json = (value: unknown) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(value));
+    };
+    if (parsed.pathname === "/api/health") return json({ healthy: true, version: "0.0.0-beta-19135", pid: 1 });
+    if (parsed.pathname === "/api/agent" || parsed.pathname === "/api/model") return json({ data: [] });
+    if (parsed.pathname === "/api/session/active") return json({ data: {} });
+    if (parsed.pathname === "/api/permission/request") return json({ data: [] });
+    if (request.method === "POST" && parsed.pathname === "/api/session") return json({ data: { id: "ses_v2" } });
+    if (parsed.pathname === "/api/session/ses_v2/rename") return void response.writeHead(204).end();
+    if (parsed.pathname === "/api/event") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      sseWrite(response, { id: "evt_connected", type: "server.connected", data: {} });
+      v2Streams.add(response);
+      response.on("close", () => v2Streams.delete(response));
+      return;
+    }
+    if (parsed.pathname.endsWith("/log")) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      sseWrite(response, { type: "log.synced", aggregateID: "ses_v2", seq: 0 });
+      return;
+    }
+    if (request.method === "POST" && parsed.pathname === "/api/session/ses_v2/prompt") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      v2PromptBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+      json({ data: { id: "msg_user", sessionID: "ses_v2", type: "user" } });
+      setTimeout(() => {
+        for (const stream of v2Streams) {
+          sseWrite(stream, { id: "evt_text", type: "session.text.ended", data: { sessionID: "ses_v2", assistantMessageID: "msg_a", ordinal: 0, text: "hello from v2" } });
+          sseWrite(stream, { id: "evt_done", type: "session.execution.succeeded", data: { sessionID: "ses_v2" } });
+        }
+      }, 10);
+      return;
+    }
+    if (parsed.pathname === "/api/session/ses_v2/wait") return void setTimeout(() => response.writeHead(204).end(), 30);
+    if (parsed.pathname === "/api/session/ses_v2/message") return json({ data: [], cursor: {} });
+    if (parsed.pathname === "/api/session/ses_v2/interrupt") return void response.writeHead(204).end();
+    response.writeHead(404).end();
+  });
+  const previousCurrent = process.env.OPENCURSOR_OPENCODE_SERVER_URL;
+  const previousV2 = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL;
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-opencode-switch-"));
+  process.env.OPENCURSOR_OPENCODE_SERVER_URL = current.url;
+  process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL = v2.url;
+  const conversation = baseConversation("conv-switch", {
+    configOptions: withOpenCodeGenerationOption([], "current"),
+  });
+  const { callbacks, appended } = await withCallbacks(workspaceRoot, conversation);
+  try {
+    const provider = createOpenCodeProvider({
+      backend: AGENT_BACKENDS["opencode-server"],
+      configOptions: withOpenCodeGenerationOption([], "current"),
+    });
+    const handle = await provider.startSession(callbacks);
+    assert.equal(handle.sessionId, "ses_current");
+    assert.equal(callbacks.conversation.providerSessionId, "ses_current");
+    assert.equal(v2Requests.length, 0, "v2 server untouched while on current");
+
+    await handle.setConfigOption("generation", "v2-beta");
+    assert.equal(handle.sessionId, "ses_v2", "handle now fronts the v2 session");
+    assert.equal(callbacks.conversation.providerSessionId, "ses_v2");
+    assert.equal(
+      callbacks.conversation.configOptions.find((option) => option.id === "generation")?.currentValue,
+      "v2-beta"
+    );
+    assert.ok(v2Requests.includes("POST /api/session"), "a fresh v2 session was created");
+    assert.equal(currentStreams.size, 0, "current-dialect streams were closed");
+
+    await handle.prompt({ text: "Say hello", userMessageId: "user-1" });
+    assert.equal(v2PromptBodies.length, 1, "prompt went to the v2 server");
+    assert.ok(!currentRequests.some((line) => line.includes("prompt_async")), "current server received no prompt");
+    assert.ok(appended.some((event) => event.kind === "assistant_message_chunk" && event.text === "hello from v2"));
+    assert.equal(callbacks.conversation.status, "idle");
+
+    // Selecting the generation that is already active is a no-op.
+    const requestsBefore = v2Requests.length;
+    await handle.setConfigOption("generation", "v2-beta");
+    assert.equal(handle.sessionId, "ses_v2");
+    assert.equal(v2Requests.filter((line) => line === "POST /api/session").length, 1);
+    assert.ok(v2Requests.length >= requestsBefore);
+    await handle.dispose();
+  } finally {
+    if (previousCurrent == null) delete process.env.OPENCURSOR_OPENCODE_SERVER_URL;
+    else process.env.OPENCURSOR_OPENCODE_SERVER_URL = previousCurrent;
+    if (previousV2 == null) delete process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL;
+    else process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL = previousV2;
+    for (const stream of [...currentStreams, ...v2Streams]) stream.end();
+    current.server.closeAllConnections();
+    v2.server.closeAllConnections();
+    await Promise.all([
+      new Promise<void>((resolve) => current.server.close(() => resolve())),
+      new Promise<void>((resolve) => v2.server.close(() => resolve())),
+    ]);
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("createOpenCodeProvider drives a v2-beta dummy through tools, background PTY, and forms", async () => {
   const eventStreams = new Set<ServerResponse>();
   const promptBodies: Array<Record<string, unknown>> = [];

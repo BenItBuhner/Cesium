@@ -31,6 +31,16 @@ function parseBlock(block: string): unknown[] {
   }
 }
 
+/**
+ * Above this many unprocessed events the reader waits for the handler chain to
+ * catch up. Normal turns stay far below it; the cap only bounds memory if a
+ * handler stalls for a long time.
+ */
+const SSE_BACKLOG_SOFT_LIMIT = 10_000;
+
+/** Bun-only fetch extension (ignored by Node): keep long-lived streams open. */
+const bunNoIdleTimeout = { timeout: false } as unknown as RequestInit;
+
 async function consumeSse(input: {
   client: OpenCodeV2Client;
   path: string;
@@ -42,8 +52,16 @@ async function consumeSse(input: {
       ...input.client.headers(),
       Accept: "text/event-stream",
       "Cache-Control": "no-store",
+      // Bun's fetch advertises `gzip, deflate, br, zstd`; the beta server then
+      // Brotli-compresses the durable session log stream, and the encoder
+      // buffers the tiny `log.synced` frame indefinitely - the stream never
+      // becomes ready. SSE must always be delivered uncompressed.
+      "Accept-Encoding": "identity",
     },
     signal: input.signal,
+    // Bun's fetch aborts a socket idle for 5 minutes ("The operation timed
+    // out."); the durable log has no heartbeat, so disable the idle timer.
+    ...bunNoIdleTimeout,
   });
   if (!response.ok || !response.body) {
     const error = new Error(`OpenCode v2 SSE ${input.path} failed with ${response.status}.`) as Error & {
@@ -55,19 +73,49 @@ async function consumeSse(input: {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (!input.signal.aborted) {
-    const { done, value } = await reader.read();
-    if (done) {
-      return;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const parsed = eventBlocks(buffer);
-    buffer = parsed.rest;
-    for (const block of parsed.blocks) {
-      for (const data of parseBlock(block)) {
-        await input.onData(data);
+  // The server's `/api/event` feed is volatile by contract: a subscriber that
+  // does not keep up overflows its queue and the server *terminates the
+  // stream*, dropping every event until the client reconnects. Handlers here
+  // persist events to storage, so processing must never block the socket read.
+  // Events are read as fast as they arrive and handled in order on a chain.
+  let chain: Promise<void> = Promise.resolve();
+  let backlog = 0;
+  let failure: unknown;
+  const enqueue = (data: unknown) => {
+    backlog += 1;
+    chain = chain
+      .then(() => input.onData(data))
+      .catch((error: unknown) => {
+        failure ??= error;
+      })
+      .finally(() => {
+        backlog -= 1;
+      });
+  };
+  try {
+    while (!input.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = eventBlocks(buffer);
+      buffer = parsed.rest;
+      for (const block of parsed.blocks) {
+        for (const data of parseBlock(block)) {
+          enqueue(data);
+        }
+      }
+      if (failure) throw failure;
+      if (backlog > SSE_BACKLOG_SOFT_LIMIT) {
+        await chain;
       }
     }
+  } finally {
+    // Preserve ordering guarantees for callers: everything read from this
+    // connection is handled before the caller reconnects or returns.
+    await chain;
+    if (failure) throw failure;
   }
 }
 
@@ -75,14 +123,26 @@ export function startOpenCodeV2Events(input: {
   client: OpenCodeV2Client;
   onEvent: (event: OpenCodeV2Json) => void | Promise<void>;
   onError?: (error: Error) => void | Promise<void>;
+  /**
+   * Invoked when the stream re-establishes after having been connected before.
+   * Anything the server published in between is gone (volatile feed), so the
+   * caller should reconcile state (pending permissions, tool results, ...).
+   */
+  onReconnect?: () => void | Promise<void>;
 }): OpenCodeV2EventStream {
   const controller = new AbortController();
   let readyResolve: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => {
     readyResolve = resolve;
   });
+  let attempt = 0;
   void (async () => {
     while (!controller.signal.aborted) {
+      // Keyed on connection attempts, not on counting `server.connected`
+      // frames: the marker is per connection, and treating a stray duplicate
+      // as a reconnect would trigger needless reconciliation.
+      const reconnecting = attempt > 0;
+      let reconnectHandled = false;
       try {
         await consumeSse({
           client: input.client,
@@ -95,6 +155,10 @@ export function startOpenCodeV2Events(input: {
             const event = data as OpenCodeV2Json;
             if (event.type === "server.connected") {
               readyResolve();
+              if (reconnecting && !reconnectHandled) {
+                reconnectHandled = true;
+                await input.onReconnect?.();
+              }
               return;
             }
             await input.onEvent(event);
@@ -106,6 +170,7 @@ export function startOpenCodeV2Events(input: {
         }
         await input.onError?.(error instanceof Error ? error : new Error(String(error)));
       }
+      attempt += 1;
       if (!controller.signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
@@ -184,6 +249,16 @@ export function startOpenCodeV2SessionLog(input: {
             if (status === 404 && index < orderedPaths.length - 1) {
               preferExperimentalLog = path.includes("/api/session/");
               continue;
+            }
+            if (status === 404) {
+              // Neither log route exists on this server (e.g. a build that only
+              // serves the volatile feed). The volatile stream carries every
+              // event, so stop instead of hammering the server twice a second.
+              await input.onError?.(
+                new Error(`OpenCode v2 durable session log is not available for ${input.sessionId}; using the event stream only.`)
+              );
+              readyResolve();
+              return;
             }
             throw lastError;
           }

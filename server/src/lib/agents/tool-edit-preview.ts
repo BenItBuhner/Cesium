@@ -487,6 +487,34 @@ function previewFromNestedEditContainer(
   return undefined;
 }
 
+/**
+ * Preview for OpenCode-style file tools. `write` only carries the new content
+ * (`{ path | filePath, content }`); when no patch/before-after is available,
+ * render it as an all-added preview so a created/overwritten file is
+ * reviewable like an edit.
+ */
+export function extractOpenCodeToolEditPreview(
+  toolName: string,
+  input: unknown,
+  result: unknown,
+  fallbackPath?: string
+): AgentToolEditPreview | undefined {
+  const direct = extractToolEditPreview(input, result, fallbackPath);
+  if (direct) {
+    return direct;
+  }
+  const inputRecord = asRecord(input);
+  const content = inputRecord?.content;
+  if (/write/i.test(toolName) && typeof content === "string") {
+    return extractToolEditPreview(
+      { ...inputRecord, beforeFullFileContent: "", afterFullFileContent: content },
+      result,
+      fallbackPath
+    );
+  }
+  return undefined;
+}
+
 export function extractToolEditPreview(
   input: unknown,
   result: unknown,
@@ -496,11 +524,17 @@ export function extractToolEditPreview(
   const resultRecord = unwrapEditPayload(result);
   const path = pathFromRecords(resultRecord, inputRecord) ?? fallbackPath;
 
+  // OpenCode's write/edit tools report the unified patch as `metadata.diff`.
   const patchText =
-    firstString(resultRecord, ["diffString", "patch"]) ??
-    firstString(inputRecord, ["diffString", "patch"]);
+    firstString(resultRecord, ["diffString", "patch", "diff"]) ??
+    firstString(inputRecord, ["diffString", "patch", "diff"]);
   if (patchText?.trim()) {
-    return previewFromPatch(patchText, path);
+    const fromPatch = previewFromPatch(patchText, path);
+    // A string under these keys that is not a unified diff must not hide the
+    // other strategies below.
+    if (fromPatch) {
+      return fromPatch;
+    }
   }
 
   const blockPreview =

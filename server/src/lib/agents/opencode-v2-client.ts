@@ -145,6 +145,10 @@ export class OpenCodeV2Client {
         ...init,
         headers: this.headers(init?.headers),
         ...(controller ? { signal: controller.signal } : {}),
+        // `timeoutMs: 0` means "no deadline" (long polls such as /wait). Bun's
+        // fetch would still abort the idle socket after 5 minutes, so disable
+        // its idle timer for those requests (Node ignores the option).
+        ...(timeoutMs === 0 ? ({ timeout: false } as unknown as RequestInit) : {}),
       });
       const text = await response.text();
       if (!response.ok) {
@@ -296,6 +300,21 @@ export class OpenCodeV2Client {
     const query = new URLSearchParams({ order: "desc", limit: String(limit) });
     return dataArray(
       await this.request(`/api/session/${encodeURIComponent(id)}/message?${query.toString()}`)
+    );
+  }
+
+  /**
+   * Permission requests still waiting for a reply in this workspace
+   * (`GET /api/permission/request`, same `Permission.Request` rows that
+   * `permission.asked` carries). Used as the fallback when the volatile
+   * `/api/event` stream dropped the ask.
+   */
+  async listPendingPermissions(directory: string): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ "location[directory]": directory });
+    return dataArray(
+      await this.request(`/api/permission/request?${query.toString()}`, undefined, {
+        timeoutMs: 10_000,
+      })
     );
   }
 

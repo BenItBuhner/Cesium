@@ -1,0 +1,1171 @@
+{
+  "server": "opencode2 v0.0.0-beta-19135 (opencode-ai beta channel)",
+  "captured": "2026-09-05",
+  "rootSessionId": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+  "note": "Root spawns a foreground general subagent that runs a shell command. Child events interleave on the same volatile stream.",
+  "events": [
+    {
+      "id": "evt_070001ac2001FU1T0FD1G1vYTw",
+      "type": "server.connected",
+      "data": {}
+    },
+    {
+      "id": "evt_070001cb8001zg7ebgsaIlIJpv",
+      "created": 1788585450680,
+      "type": "session.created",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "slug": "cosmic-wolf",
+        "version": "0.0.0-beta-19135",
+        "projectID": "5488b2fc1130caeb176c1a0c4232b61386e41cb3",
+        "location": {
+          "directory": "/tmp/oc/ws-v2"
+        },
+        "subpath": "",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 0,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070001eb20017B6qoppT0yLGG6",
+      "created": 1788585451186,
+      "type": "session.inbox.enqueued",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "inboxID": "msg_070001eb1001JlbblOLLKeB3Lt",
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "You MUST use the subagent tool (agent: general, foreground) with this prompt: 'Run the shell command: echo from-subagent-fg  and reply with just the output.' When the subagent returns, reply with exactly what it reported."
+          },
+          "delivery": "steer"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 1,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070001eb4001CW9hIzIh1e3KHP",
+      "created": 1788585451188,
+      "type": "session.execution.started",
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 2,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070001eba001JPqPRL43Z6lqUh",
+      "created": 1788585451194,
+      "metadata": {
+        "instructions": {
+          "initial": true
+        }
+      },
+      "type": "session.instructions.updated",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "delta": {
+          "core/environment": "b016ffe9c5bd94801ff58463b4713c53528fdf0f31f12b84dca7e722d3428289",
+          "core/date": "e3e09389f07f5952421ea2083cd4b4e433c0af332b1dbdc2812e8c292fdb69f0",
+          "core/codemode": "52fec1fed10a0c4981959a9f2daefecd7512c06ef53869dd912637d7abedc47e",
+          "core/skill-guidance": "8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 3,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_070001ebb001Ido50F0EBjtqCw",
+      "created": 1788585451195,
+      "type": "session.inbox.delivered",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "inboxID": "msg_070001eb1001JlbblOLLKeB3Lt"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 4,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002af10015sN9E3DR4mtI7f",
+      "created": 1788585454321,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "agent": "build",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 5,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002af30013QeSL8yknq4CXD",
+      "created": 1788585454323,
+      "type": "session.reasoning.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "ordinal": 0,
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 6,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b11001Mwr1cI4vLHjsr0",
+      "created": 1788585454353,
+      "type": "session.tool.input.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "id": "call_de5228f4d3914280843213f8",
+        "name": "subagent"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 7,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b59001XJGhfgVjLa5MMJ",
+      "created": 1788585454425,
+      "type": "session.reasoning.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "ordinal": 0,
+        "delta": "The user wants me to use the subagent tool with agent: general, in foreground mode, with a specific prompt. Let me do that."
+      }
+    },
+    {
+      "id": "evt_070002b87001UFuw0sZ0a60HKF",
+      "created": 1788585454471,
+      "type": "session.reasoning.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "ordinal": 0,
+        "text": "The user wants me to use the subagent tool with agent: general, in foreground mode, with a specific prompt. Let me do that.",
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 8,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b890017F8r1lDB2b4Fsg",
+      "created": 1788585454473,
+      "type": "session.tool.input.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "id": "call_de5228f4d3914280843213f8",
+        "text": "{\"agent\":\"general\",\"description\":\"Run echo command\",\"prompt\":\"Run the shell command: echo from-subagent-fg  and reply with just the output.\"}"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 9,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b8a001nlfkK6k6trcQw7",
+      "created": 1788585454474,
+      "type": "session.tool.called",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "id": "call_de5228f4d3914280843213f8",
+        "input": {
+          "agent": "general",
+          "description": "Run echo command",
+          "prompt": "Run the shell command: echo from-subagent-fg  and reply with just the output."
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 10,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b8b001Rxu7W16Sn8FU82",
+      "created": 1788585454475,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 11,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b90001yNITKI3GRNgpiy",
+      "created": 1788585454480,
+      "type": "session.created",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "slug": "glowing-wolf",
+        "version": "0.0.0-beta-19135",
+        "projectID": "5488b2fc1130caeb176c1a0c4232b61386e41cb3",
+        "parentID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "location": {
+          "directory": "/tmp/oc/ws-v2"
+        },
+        "subpath": "",
+        "title": "Run echo command",
+        "agent": "general",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 0,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b91001gxlTnDGhLMG0wU",
+      "created": 1788585454481,
+      "type": "session.tool.progress",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "id": "call_de5228f4d3914280843213f8",
+        "metadata": {
+          "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+          "status": "running"
+        }
+      }
+    },
+    {
+      "id": "evt_070002b920016hV5S31xPwNnqE",
+      "created": 1788585454482,
+      "type": "session.inbox.enqueued",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "inboxID": "msg_070002b91002Pc7d1T1sb7JNwT",
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "You are a subagent spawned by another session.\nRun the shell command: echo from-subagent-fg  and reply with just the output."
+          },
+          "delivery": "steer"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 1,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b94001KuUgBM6Y9oyxIV",
+      "created": 1788585454484,
+      "type": "session.execution.started",
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 2,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070002b990019X2Q50YvKWj7yK",
+      "created": 1788585454489,
+      "metadata": {
+        "instructions": {
+          "initial": true
+        }
+      },
+      "type": "session.instructions.updated",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "delta": {
+          "core/environment": "0199847570c9c71c79c74360ec895ec0c603e2f60339e5eeca025be7fc18457e",
+          "core/date": "e3e09389f07f5952421ea2083cd4b4e433c0af332b1dbdc2812e8c292fdb69f0",
+          "core/codemode": "52fec1fed10a0c4981959a9f2daefecd7512c06ef53869dd912637d7abedc47e",
+          "core/skill-guidance": "8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 3,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_070002b9a001wqoY97yXpAdHGd",
+      "created": 1788585454490,
+      "type": "session.inbox.delivered",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "inboxID": "msg_070002b91002Pc7d1T1sb7JNwT"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 4,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003697001IrFzhUpUiC117q",
+      "created": 1788585457303,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "cost": 0,
+        "tokens": {
+          "input": 80,
+          "output": 536,
+          "reasoning": 0,
+          "cache": {
+            "read": 512,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_070003697002x3wyqDxi1OoEIf",
+      "created": 1788585457303,
+      "type": "session.renamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "title": "Echo from-subagent-fg command execution"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 13,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f24001TPfCJOkUtxL0tE",
+      "created": 1788585459492,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "agent": "general",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 5,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f260018JNG30GbhUxFkn",
+      "created": 1788585459494,
+      "type": "session.reasoning.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "ordinal": 0,
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 6,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f290015qABjEGx4aC1ip",
+      "created": 1788585459497,
+      "type": "session.tool.input.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "id": "call_dcb8353efc8d46fd86fca7da",
+        "name": "shell"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 7,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f8c0012u9j77kGiKpVMw",
+      "created": 1788585459596,
+      "type": "session.reasoning.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "ordinal": 0,
+        "delta": "The user wants me to run a shell command and reply with just the output."
+      }
+    },
+    {
+      "id": "evt_070003f8f001cRfTzbPVqWPOhI",
+      "created": 1788585459599,
+      "type": "session.reasoning.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "ordinal": 0,
+        "text": "The user wants me to run a shell command and reply with just the output.",
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 8,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f90001720TZ62O10jjY2",
+      "created": 1788585459600,
+      "type": "session.tool.input.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "id": "call_dcb8353efc8d46fd86fca7da",
+        "text": "{\"command\":\"echo from-subagent-fg\"}"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 9,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f91001zMMJEkz6ONqw13",
+      "created": 1788585459601,
+      "type": "session.tool.called",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "id": "call_dcb8353efc8d46fd86fca7da",
+        "input": {
+          "command": "echo from-subagent-fg"
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 10,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f93001vzX5EA4v96EsxR",
+      "created": 1788585459603,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 11,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f98001TmVsr4yk9G28Tv",
+      "created": 1788585459608,
+      "type": "shell.created",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "info": {
+          "id": "sh_070003f9600142Cts3nuNa77NE",
+          "status": "running",
+          "command": "echo from-subagent-fg",
+          "cwd": "/tmp/oc/ws-v2",
+          "shell": "/bin/bash",
+          "file": "/home/ubuntu/.local/share/opencode/shell/5488b2fc1130caeb176c1a0c4232b61386e41cb3/sh_070003f9600142Cts3nuNa77NE.out",
+          "metadata": {
+            "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV"
+          },
+          "time": {
+            "started": 1788585459606
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_070003f98002W2LvBmuC5tGoZ1",
+      "created": 1788585459608,
+      "type": "session.tool.progress",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "id": "call_dcb8353efc8d46fd86fca7da",
+        "metadata": {
+          "shellID": "sh_070003f9600142Cts3nuNa77NE"
+        }
+      }
+    },
+    {
+      "id": "evt_070003f9a001GtHENejMZAlock",
+      "created": 1788585459610,
+      "type": "shell.exited",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "id": "sh_070003f9600142Cts3nuNa77NE",
+        "exit": 0,
+        "status": "exited"
+      }
+    },
+    {
+      "id": "evt_070003f9b001sdI4sWLRKdX4e9",
+      "created": 1788585459611,
+      "type": "session.tool.success",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "id": "call_dcb8353efc8d46fd86fca7da",
+        "content": [
+          {
+            "type": "text",
+            "text": "from-subagent-fg\n"
+          },
+          {
+            "type": "text",
+            "text": "Command exited with code 0."
+          }
+        ],
+        "metadata": {
+          "status": "completed",
+          "truncated": false,
+          "exit": 0
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 12,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_070003f9c001wntCy9QXOsdIZ1",
+      "created": 1788585459612,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070002b9d0018AmDyc6qRLYlOM",
+        "finish": "tool-calls",
+        "rawFinish": "tool_calls",
+        "cost": 0,
+        "tokens": {
+          "input": 4457,
+          "output": 32,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 13,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070003f9e001OwRIJBk9dFCYr8",
+      "created": 1788585459614,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "cost": 0,
+        "tokens": {
+          "input": 4457,
+          "output": 32,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_0700050f5001Z5tv3WavYRyQ3j",
+      "created": 1788585464053,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "agent": "general",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 14,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_0700050f7001Tq0hDtnDeeVgq5",
+      "created": 1788585464055,
+      "type": "session.text.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM",
+        "ordinal": 0
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 15,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005161001L5z8V2AlVxCg1G",
+      "created": 1788585464161,
+      "type": "session.text.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM",
+        "ordinal": 0,
+        "delta": "from-subagent-fg"
+      }
+    },
+    {
+      "id": "evt_070005179001bhWtEoa80Fpd99",
+      "created": 1788585464185,
+      "type": "session.text.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM",
+        "ordinal": 0,
+        "text": "from-subagent-fg"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 16,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_07000517a001IOqV2zX0OmECmb",
+      "created": 1788585464186,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 17,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_07000517b001PAH2dQBP6oa3kO",
+      "created": 1788585464187,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "assistantMessageID": "msg_070003fa4001Bxy1KI15zXjpqM",
+        "finish": "stop",
+        "rawFinish": "stop",
+        "cost": 0,
+        "tokens": {
+          "input": 3802,
+          "output": 7,
+          "reasoning": 0,
+          "cache": {
+            "read": 704,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 18,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_07000517d001rOOnQQoJwN5Tip",
+      "created": 1788585464189,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "cost": 0,
+        "tokens": {
+          "input": 8259,
+          "output": 39,
+          "reasoning": 0,
+          "cache": {
+            "read": 704,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07000517e001bY6a6A2h1bCURA",
+      "created": 1788585464190,
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+        "seq": 19,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005181001ccUtbQsw6lfMwe",
+      "created": 1788585464193,
+      "type": "session.tool.success",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "id": "call_de5228f4d3914280843213f8",
+        "content": [
+          {
+            "type": "text",
+            "text": "<subagent sessionID=\"ses_f8fffd471ffee1qo3d1b5CzOVV\" state=\"completed\">\nfrom-subagent-fg\n</subagent>"
+          }
+        ],
+        "metadata": {
+          "sessionID": "ses_f8fffd471ffee1qo3d1b5CzOVV",
+          "status": "completed",
+          "truncated": false
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 14,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_070005183001lURxpw0JFCtIZ7",
+      "created": 1788585464195,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_070001ec2001EP0ys5497HUAHX",
+        "finish": "tool-calls",
+        "rawFinish": "tool_calls",
+        "cost": 0,
+        "tokens": {
+          "input": 623,
+          "output": 73,
+          "reasoning": 0,
+          "cache": {
+            "read": 4672,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 15,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005185001P0StaAxl6aCq8K",
+      "created": 1788585464197,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "cost": 0,
+        "tokens": {
+          "input": 703,
+          "output": 609,
+          "reasoning": 0,
+          "cache": {
+            "read": 5184,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_070005a7a001yzxzXHJ2RsY80P",
+      "created": 1788585466490,
+      "type": "session.step.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "agent": "build",
+        "model": {
+          "id": "kimi-k3",
+          "providerID": "techlit",
+          "variant": "default"
+        },
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 16,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005a7d001pk5n814z2nOxKB",
+      "created": 1788585466493,
+      "type": "session.reasoning.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0,
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 17,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005aa6001Vqbck9G0EngQ66",
+      "created": 1788585466534,
+      "type": "session.text.started",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 18,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005adc001swTms6zyusqD5H",
+      "created": 1788585466588,
+      "type": "session.reasoning.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0,
+        "delta": "The subagent returned \"from-subagent-fg\". The user asked me to reply with exactly what it reported."
+      }
+    },
+    {
+      "id": "evt_070005adc0026H41meKzJZ8ooc",
+      "created": 1788585466588,
+      "type": "session.reasoning.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0,
+        "text": "The subagent returned \"from-subagent-fg\". The user asked me to reply with exactly what it reported.",
+        "state": {
+          "reasoningField": "reasoning_content"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 19,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005ade001aQyoh9WcwlYlpQ",
+      "created": 1788585466590,
+      "type": "session.text.delta",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0,
+        "delta": "from-subagent-fg"
+      }
+    },
+    {
+      "id": "evt_070005ade002WOQ50mBCZv9J37",
+      "created": 1788585466590,
+      "type": "session.text.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "ordinal": 0,
+        "text": "from-subagent-fg"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 20,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005ae00014XIWfrEDF1c34q",
+      "created": 1788585466592,
+      "type": "session.step.streamed",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 21,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005ae1001cS4RlOiZzfdexg",
+      "created": 1788585466593,
+      "type": "session.step.ended",
+      "location": {
+        "directory": "/tmp/oc/ws-v2"
+      },
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "assistantMessageID": "msg_07000518b001ecCYxy5T8YxkGN",
+        "finish": "stop",
+        "rawFinish": "stop",
+        "cost": 0,
+        "tokens": {
+          "input": 165,
+          "output": 30,
+          "reasoning": 0,
+          "cache": {
+            "read": 5248,
+            "write": 0
+          }
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 22,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_070005ae2001PvrlPc1uvSCdn6",
+      "created": 1788585466594,
+      "type": "session.usage.updated",
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "cost": 0,
+        "tokens": {
+          "input": 868,
+          "output": 639,
+          "reasoning": 0,
+          "cache": {
+            "read": 10432,
+            "write": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_070005ae3001jTMJqbJD5ggg4g",
+      "created": 1788585466595,
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_f8fffe348ffeeUj2xzW6VSo11J"
+      },
+      "durable": {
+        "aggregateID": "ses_f8fffe348ffeeUj2xzW6VSo11J",
+        "seq": 23,
+        "version": 1
+      }
+    }
+  ]
+}

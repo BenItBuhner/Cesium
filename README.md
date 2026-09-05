@@ -147,7 +147,7 @@ Open [http://localhost:3000](http://localhost:3000), continue as a guest (or sig
 
 Optional extras:
 
-- **Agent CLIs.** Install any of Cursor Agent, Codex, Claude Code, OpenCode, Devin, or Google Antigravity and Cesium detects them; override paths with the `OPENCURSOR_*_BIN` variables in [`.env.example`](.env.example). Antigravity installs in one click from Settings → Agents.
+- **Agent CLIs.** Install any of Cursor Agent, Codex, Claude Code, OpenCode (the current `opencode` release and/or the `opencode2` v2 beta), Devin, or Google Antigravity and Cesium detects them; override paths with the `OPENCURSOR_*_BIN` variables in [`.env.example`](.env.example). Antigravity installs in one click from Settings → Agents.
 - **Model providers for Cesium Agent.** Add keys under Settings → Agents → Cesium Agent, or export `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, and friends. Any OpenAI-compatible host works via `CESIUM_BASE_URL` + `CESIUM_DEFAULT_MODEL`.
 - **Voice input.** Point `OPENCURSOR_TRANSCRIPTION_*` at any OpenAI-compatible transcription endpoint and dictate prompts.
 - **Postgres + Redis.** `docker compose up -d && npm --prefix server run db:migrate`, then set `DATABASE_URL` (see [Storage](#storage-backends)).
@@ -238,7 +238,14 @@ When both `OPENCURSOR_AUTH_USERNAME` and `OPENCURSOR_AUTH_PASSWORD` are set, the
 | `OPENCURSOR_CURSOR_CLI_BIN` / `OPENCURSOR_CURSOR_ACP_BIN` | Absolute path to Cursor Agent (overrides `PATH`; either name works). |
 | `OPENCURSOR_CURSOR_AGENT_ARGS` | JSON array of extra argv after the binary. |
 | `OPENCURSOR_CURSOR_PERMISSION_MODE` | Passed through to the Cursor CLI permission mode (e.g. `default`). |
-| `OPENCURSOR_OPENCODE_ACP_BIN` | Absolute path to the OpenCode ACP binary; otherwise resolved via `PATH` / `~/.opencode/bin`. |
+| `OPENCURSOR_OPENCODE_SERVER_BIN` | Absolute path to the OpenCode (current release) binary; otherwise `opencode` on `PATH` / `~/.opencode/bin`. Cesium runs `opencode serve` per workspace over its native HTTP/SSE API (legacy alias: `OPENCURSOR_OPENCODE_ACP_BIN`). |
+| `OPENCURSOR_OPENCODE_SERVER_URL` | Connect to an `opencode serve` you already run instead of spawning one (`OPENCURSOR_OPENCODE_SERVER_USERNAME` / `OPENCURSOR_OPENCODE_SERVER_PASSWORD` when it is protected). |
+| `OPENCURSOR_OPENCODE_V2_SERVER_BIN` | Absolute path to the OpenCode v2 beta binary (`opencode2` from `@opencode-ai/cli@beta`); otherwise `opencode2` on `PATH`. Cesium runs one shared `opencode2 serve --stdio` for all workspaces (legacy alias: `OPENCURSOR_OPENCODE_V2_BIN`). |
+| `OPENCURSOR_OPENCODE_V2_SERVER_URL` | Connect to an external v2 server instead (`OPENCURSOR_OPENCODE_V2_PASSWORD` for its basic-auth password; `OPENCURSOR_OPENCODE_V2_CONFIG_DIR` overrides `OPENCODE_CONFIG_DIR` for managed servers). |
+| `OPENCURSOR_OPENCODE_PROTOCOL` | Force `current` or `v2-beta` for new OpenCode chats; otherwise the chat's Generation option decides (switching it mid-chat starts a fresh session on the other server). |
+| `OPENCURSOR_OPENCODE_DB` / `OPENCURSOR_OPENCODE_V2_DB` | Per-generation `OPENCODE_DB` for the servers Cesium spawns. Both generations default to the same `~/.local/share/opencode/opencode.db`, and a database first created by the v2 beta cannot be opened by the current release, so give one of them its own file. |
+| `OPENCURSOR_OPENCODE_STARTUP_TIMEOUT_MS` | How long a spawned OpenCode server may take to become healthy (default `60000`; a first start can migrate the database and fetch catalogs). Startup crashes fail immediately with the process output. |
+| `OPENCURSOR_OPENCODE_SERVER_LINGER_MS` | How long a managed OpenCode server stays warm after its last chat detaches (default 10 minutes, `0` = stop immediately). Managed servers are always stopped when Cesium exits. |
 | `OPENCURSOR_REAL_HOME` | When the engine runs with a different `$HOME` (Docker/systemd), the real user home so `~/.opencode` resolves. |
 | `OPENCURSOR_DEVIN_CLI_BIN` | Absolute path to the Devin CLI for `devin-acp`; otherwise `devin` on `PATH` / `~/.local/bin/devin`. |
 | `OPENCURSOR_DEVIN_CLI_ARGS` | JSON array of argv after the Devin binary (default `["acp"]`). |
@@ -375,7 +382,7 @@ End-user flow once deployed: install the desktop app from `/download` (or run `n
 ## Troubleshooting
 
 - **Browser cannot reach the API / CORS errors.** Set `NEXT_PUBLIC_SERVER_URL` to the actual engine origin and add the exact Next.js origin (scheme and port) to `ALLOWED_ORIGINS`.
-- **Agent backend "not available".** Install the CLI or set the matching `OPENCURSOR_*_BIN` path; for OpenCode in containers, set `OPENCURSOR_REAL_HOME`.
+- **Agent backend "not available".** Install the CLI or set the matching `OPENCURSOR_*_BIN` path; for OpenCode in containers, set `OPENCURSOR_REAL_HOME`. If OpenCode (current) fails to start with "Database is not empty and has no session table", the v2 beta created `~/.local/share/opencode/opencode.db` first; set `OPENCURSOR_OPENCODE_DB` or `OPENCURSOR_OPENCODE_V2_DB` so each generation has its own database.
 - **Transcription 503 / not configured.** Set the transcription variables or a config file; check `GET /health` on the engine.
 - **`ERR_MODULE_NOT_FOUND` for `@cesium/core/dist/...`.** Run `npm run build:packages`; the engine and its tests import the built workspace packages.
 - **ChunkLoadError after upgrading.** Only relevant if you opted into the PWA with `ENABLE_NEXT_PWA=1`: hard-refresh or unregister the service worker after local rebuilds.

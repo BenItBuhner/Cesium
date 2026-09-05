@@ -273,6 +273,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call",
       toolCallId: callId,
+      tool: toolName,
       title: toolName,
       kind,
       status: "pending",
@@ -296,6 +297,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "in_progress",
       kind,
       title: toolName,
@@ -325,6 +327,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "completed",
       kind,
       title,
@@ -345,6 +348,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "failed",
       kind,
       title: toolName,
@@ -455,7 +459,11 @@ async function* iterateSseDataLines(
     headers: {
       Accept: "text/event-stream",
       "Cache-Control": "no-store",
+      // A compressing proxy/middleware would buffer SSE frames (Bun's fetch
+      // offers br/zstd by default); event streams must stay uncompressed.
+      "Accept-Encoding": "identity",
     },
+    ...({ timeout: false } as unknown as RequestInit),
   });
   if (!res.ok || !res.body) {
     throw new Error(`OpenCode SSE ${res.status}`);

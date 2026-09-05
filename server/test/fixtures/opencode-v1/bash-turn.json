@@ -1,0 +1,1518 @@
+{
+  "server": "opencode 1.18.29 (opencode-ai@latest)",
+  "captured": "2026-09-05",
+  "rootSessionId": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+  "note": "Directory-scoped /event stream for one bash tool call followed by streamed final text (message.part.delta frames then the full part).",
+  "events": [
+    {
+      "id": "evt_07003bfbb001V8BiH1GTvWPLaH",
+      "type": "session.created",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "version": "1.18.29",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585689018
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003bfd3001YFK7F257nwneCr",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585689041
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003bfd9001RSXpmOGW8AIT1e",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "user",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "time": {
+            "created": 1788585689041
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "techlit",
+            "modelID": "kimi-k3"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003bfdb001HFMlFoNoWEb0jp",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "type": "text",
+          "text": "Use the bash tool to run: echo hello-from-v1 && date +%s. Then reply with just the output.",
+          "messageID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "id": "prt_07003bfd80011RBlUeOWnQK7kY"
+        },
+        "time": 1788585689051
+      }
+    },
+    {
+      "id": "evt_07003bfde001aLvUz8tBkd8Xmm",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585689054
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003bfe4001Pl1eYRPuI8mmIy",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_07003bfe7001thnwKj8SHXYt0z",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585689063
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6"
+        }
+      }
+    },
+    {
+      "id": "evt_07003c012001iH7X9QrffFn10p",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585689105
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003c017001jHF5bjQI9TFtGw",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_07003c019001lUrbOboKpyVboz",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1788585689041
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "techlit",
+            "modelID": "kimi-k3"
+          },
+          "id": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003c05d001vTCkdBF25W1Qu9",
+      "type": "plugin.added",
+      "properties": {
+        "id": "core/config-reference"
+      }
+    },
+    {
+      "id": "evt_07003c05d002Ie5yG9CVcxNTsg",
+      "type": "plugin.added",
+      "properties": {
+        "id": "agent"
+      }
+    },
+    {
+      "id": "evt_07003c05e0017BfVnE8vECxAH7",
+      "type": "plugin.added",
+      "properties": {
+        "id": "command"
+      }
+    },
+    {
+      "id": "evt_07003c05e002Z1HyVfNzBNpzp5",
+      "type": "plugin.added",
+      "properties": {
+        "id": "skill"
+      }
+    },
+    {
+      "id": "evt_07003c05f001lb7iJqsTukqvN9",
+      "type": "plugin.added",
+      "properties": {
+        "id": "models-dev"
+      }
+    },
+    {
+      "id": "evt_07003c060001cWL7kgIjwYQbMD",
+      "type": "plugin.added",
+      "properties": {
+        "id": "config-agent"
+      }
+    },
+    {
+      "id": "evt_07003c0600028J1QLahenDJSI4",
+      "type": "plugin.added",
+      "properties": {
+        "id": "config-command"
+      }
+    },
+    {
+      "id": "evt_07003c061001rdCTRVVzv5tnYM",
+      "type": "plugin.added",
+      "properties": {
+        "id": "config-skill"
+      }
+    },
+    {
+      "id": "evt_07003c0620018oK2wlT1Gn51g2",
+      "type": "plugin.added",
+      "properties": {
+        "id": "alibaba"
+      }
+    },
+    {
+      "id": "evt_07003c062002RE5lP4rXAvWbLA",
+      "type": "plugin.added",
+      "properties": {
+        "id": "amazon-bedrock"
+      }
+    },
+    {
+      "id": "evt_07003c063001jy88e0vUZ6OysC",
+      "type": "plugin.added",
+      "properties": {
+        "id": "anthropic"
+      }
+    },
+    {
+      "id": "evt_07003c063002Fc8gRae17VyZ69",
+      "type": "plugin.added",
+      "properties": {
+        "id": "azure-cognitive-services"
+      }
+    },
+    {
+      "id": "evt_07003c0690014YWzpszVOzG5Aq",
+      "type": "plugin.added",
+      "properties": {
+        "id": "azure"
+      }
+    },
+    {
+      "id": "evt_07003c069002cspWY1L8SiZJ7j",
+      "type": "plugin.added",
+      "properties": {
+        "id": "cerebras"
+      }
+    },
+    {
+      "id": "evt_07003c06a001UiKHWVYPCj1RN0",
+      "type": "plugin.added",
+      "properties": {
+        "id": "cloudflare-ai-gateway"
+      }
+    },
+    {
+      "id": "evt_07003c06a002X9h6e2USPm1egy",
+      "type": "plugin.added",
+      "properties": {
+        "id": "cloudflare-workers-ai"
+      }
+    },
+    {
+      "id": "evt_07003c06b001zyKxMK8iiw0zjv",
+      "type": "plugin.added",
+      "properties": {
+        "id": "cohere"
+      }
+    },
+    {
+      "id": "evt_07003c06b002OPlJRaAfeGLY2F",
+      "type": "plugin.added",
+      "properties": {
+        "id": "deepinfra"
+      }
+    },
+    {
+      "id": "evt_07003c06c001bUDlcBF10Sprm3",
+      "type": "plugin.added",
+      "properties": {
+        "id": "gateway"
+      }
+    },
+    {
+      "id": "evt_07003c06c0020wPIGu5t9kYBsh",
+      "type": "plugin.added",
+      "properties": {
+        "id": "github-copilot"
+      }
+    },
+    {
+      "id": "evt_07003c06d001Y94547ymPX2pRt",
+      "type": "plugin.added",
+      "properties": {
+        "id": "gitlab"
+      }
+    },
+    {
+      "id": "evt_07003c06d002ccNd9XXvRVxEE8",
+      "type": "plugin.added",
+      "properties": {
+        "id": "google"
+      }
+    },
+    {
+      "id": "evt_07003c06d0036XyjtPA2GJ8IIx",
+      "type": "plugin.added",
+      "properties": {
+        "id": "google-vertex-anthropic"
+      }
+    },
+    {
+      "id": "evt_07003c06e001vBT9v7xyOhbpWO",
+      "type": "plugin.added",
+      "properties": {
+        "id": "google-vertex"
+      }
+    },
+    {
+      "id": "evt_07003c07e001U9ty0gAR2MYVhP",
+      "type": "plugin.added",
+      "properties": {
+        "id": "groq"
+      }
+    },
+    {
+      "id": "evt_07003c07e0029HWDWZME29ChXJ",
+      "type": "plugin.added",
+      "properties": {
+        "id": "kilo"
+      }
+    },
+    {
+      "id": "evt_07003c07f0016nLoWx49N4o8hT",
+      "type": "plugin.added",
+      "properties": {
+        "id": "llmgateway"
+      }
+    },
+    {
+      "id": "evt_07003c07f002YaDzcHnY6Ebjf5",
+      "type": "plugin.added",
+      "properties": {
+        "id": "mistral"
+      }
+    },
+    {
+      "id": "evt_07003c07f003O1vp003vuywYCx",
+      "type": "plugin.added",
+      "properties": {
+        "id": "nvidia"
+      }
+    },
+    {
+      "id": "evt_07003c081001E6A2Lxv5JwE64v",
+      "type": "plugin.added",
+      "properties": {
+        "id": "opencode"
+      }
+    },
+    {
+      "id": "evt_07003c08100240uKqkco357dPW",
+      "type": "plugin.added",
+      "properties": {
+        "id": "snowflake-cortex"
+      }
+    },
+    {
+      "id": "evt_07003c082001KXzvy0SPb6ZiBA",
+      "type": "plugin.added",
+      "properties": {
+        "id": "openai-compatible"
+      }
+    },
+    {
+      "id": "evt_07003c082002pRVY9rooNR8yYs",
+      "type": "plugin.added",
+      "properties": {
+        "id": "openai"
+      }
+    },
+    {
+      "id": "evt_07003c0830010VbEvrS7XFK2lX",
+      "type": "plugin.added",
+      "properties": {
+        "id": "openrouter"
+      }
+    },
+    {
+      "id": "evt_07003c083002AzgeAlqTjNHkcW",
+      "type": "plugin.added",
+      "properties": {
+        "id": "perplexity"
+      }
+    },
+    {
+      "id": "evt_07003c0830032m57bQqkDCNrPN",
+      "type": "plugin.added",
+      "properties": {
+        "id": "sap-ai-core"
+      }
+    },
+    {
+      "id": "evt_07003c149001KJjg3ajQdCNTtF",
+      "type": "catalog.updated",
+      "properties": {}
+    },
+    {
+      "id": "evt_07003c084001zQYcf1iaWfuatW",
+      "type": "plugin.added",
+      "properties": {
+        "id": "togetherai"
+      }
+    },
+    {
+      "id": "evt_07003c14a001ROtX5f59plA8J0",
+      "type": "plugin.added",
+      "properties": {
+        "id": "vercel"
+      }
+    },
+    {
+      "id": "evt_07003c14b001WNNOXCNiVHdydJ",
+      "type": "plugin.added",
+      "properties": {
+        "id": "venice"
+      }
+    },
+    {
+      "id": "evt_07003c14b002X7AL0f3SfMXlih",
+      "type": "plugin.added",
+      "properties": {
+        "id": "xai"
+      }
+    },
+    {
+      "id": "evt_07003c14c001tzy4daNE0xPODZ",
+      "type": "plugin.added",
+      "properties": {
+        "id": "zenmux"
+      }
+    },
+    {
+      "id": "evt_07003c14c002VaL82PGBj6yVvE",
+      "type": "plugin.added",
+      "properties": {
+        "id": "dynamic-provider"
+      }
+    },
+    {
+      "id": "evt_07003c14e001uMFRYFGz5wGFOm",
+      "type": "plugin.added",
+      "properties": {
+        "id": "config-plugin"
+      }
+    },
+    {
+      "id": "evt_07003c14e002R3ELiYZoX6WRNp",
+      "type": "plugin.added",
+      "properties": {
+        "id": "config-provider"
+      }
+    },
+    {
+      "id": "evt_07003c14f001GgtZbXtzbtXVnK",
+      "type": "plugin.added",
+      "properties": {
+        "id": "variant"
+      }
+    },
+    {
+      "id": "evt_07003c150001w3VaaJF06A9HEE",
+      "type": "reference.updated",
+      "properties": {}
+    },
+    {
+      "id": "evt_07003c15f001UBOfKfVB3X3IT5",
+      "type": "integration.updated",
+      "properties": {}
+    },
+    {
+      "id": "evt_07003c1bf001Zj615zxa2hUnfw",
+      "type": "catalog.updated",
+      "properties": {}
+    },
+    {
+      "id": "evt_07003c1cc001tp0WEZUmfuvQSJ",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cb260010MNG5O3vYKc36E",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003cb26001KWn5lK0Ybg15AX",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "step-start"
+        },
+        "time": 1788585691942
+      }
+    },
+    {
+      "id": "evt_07003cb29001MYe9VDStwkgq5b",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003cb290011HATTI99HPk8s7",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "reasoning",
+          "text": "",
+          "time": {
+            "start": 1788585691945
+          }
+        },
+        "time": 1788585691945
+      }
+    },
+    {
+      "id": "evt_07003cb2b0015ZD4n4bO8FpyVh",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": "The"
+      }
+    },
+    {
+      "id": "evt_07003cb2b002155FYRolcuT6S8",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " user"
+      }
+    },
+    {
+      "id": "evt_07003cb41001b4tKweeMKweoup",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " wants"
+      }
+    },
+    {
+      "id": "evt_07003cb41002wU7BhdRbSJKJHK",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " me"
+      }
+    },
+    {
+      "id": "evt_07003cb420010ehTV1AzlpeFEi",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " to"
+      }
+    },
+    {
+      "id": "evt_07003cb42002aTQwgsYh6sCPvc",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " run"
+      }
+    },
+    {
+      "id": "evt_07003cb420036LCQbJP83gMc9E",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " a"
+      }
+    },
+    {
+      "id": "evt_07003cb42004S4VfNP28M4mGbh",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " simple"
+      }
+    },
+    {
+      "id": "evt_07003cb42005lOeAbY228YlerL",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " bash"
+      }
+    },
+    {
+      "id": "evt_07003cb4300190rUBYUumjjvYW",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " command"
+      }
+    },
+    {
+      "id": "evt_07003cb43002H5rK95iM4Ye22L",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " and"
+      }
+    },
+    {
+      "id": "evt_07003cb43003nbxuydS19eDBAE",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " reply"
+      }
+    },
+    {
+      "id": "evt_07003cb60001NAbRNC8vU4h37U",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " with"
+      }
+    },
+    {
+      "id": "evt_07003cb61001Qmku6z9LnPbJ77",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " just"
+      }
+    },
+    {
+      "id": "evt_07003cb61002bhPVPSCSKvM8wb",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " the"
+      }
+    },
+    {
+      "id": "evt_07003cb61003ZyHiwOUl9711Dl",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": " output"
+      }
+    },
+    {
+      "id": "evt_07003cb61004dGJzBtl3SUBjYI",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+        "partID": "prt_07003cb290011HATTI99HPk8s7",
+        "field": "text",
+        "delta": "."
+      }
+    },
+    {
+      "id": "evt_07003cb8d001KAC3gkKpjX07iG",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003cb290011HATTI99HPk8s7",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "reasoning",
+          "text": "The user wants me to run a simple bash command and reply with just the output.",
+          "time": {
+            "start": 1788585691945,
+            "end": 1788585692045
+          }
+        },
+        "time": 1788585692045
+      }
+    },
+    {
+      "id": "evt_07003cb8f001LceXaHm667dxGt",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003cb8f001lSjcwh9COWy4kH",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_0972eaef486042208ba2d5fe",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1788585692047
+      }
+    },
+    {
+      "id": "evt_07003cb97001CD7KNjaO5xRAdU",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_0972eaef486042208ba2d5fe",
+          "state": {
+            "status": "running",
+            "input": {
+              "command": "echo hello-from-v1 && date +%s"
+            },
+            "time": {
+              "start": 1788585692055
+            }
+          },
+          "id": "prt_07003cb8f001lSjcwh9COWy4kH",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl"
+        },
+        "time": 1788585692055
+      }
+    },
+    {
+      "id": "evt_07003cbc7001k3GMxbdmuHoGSv",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_0972eaef486042208ba2d5fe",
+          "state": {
+            "metadata": {
+              "output": ""
+            },
+            "status": "running",
+            "input": {
+              "command": "echo hello-from-v1 && date +%s"
+            },
+            "time": {
+              "start": 1788585692055
+            }
+          },
+          "id": "prt_07003cb8f001lSjcwh9COWy4kH",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl"
+        },
+        "time": 1788585692103
+      }
+    },
+    {
+      "id": "evt_07003cbdb001tDfAgjPdrN4aEO",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_0972eaef486042208ba2d5fe",
+          "state": {
+            "metadata": {
+              "output": "hello-from-v1\n1788585692\n"
+            },
+            "status": "running",
+            "input": {
+              "command": "echo hello-from-v1 && date +%s"
+            },
+            "time": {
+              "start": 1788585692055
+            }
+          },
+          "id": "prt_07003cb8f001lSjcwh9COWy4kH",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl"
+        },
+        "time": 1788585692123
+      }
+    },
+    {
+      "id": "evt_07003cbf40018Fv5PnaTvFMDEC",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_0972eaef486042208ba2d5fe",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "echo hello-from-v1 && date +%s"
+            },
+            "output": "hello-from-v1\n1788585692\n",
+            "metadata": {
+              "output": "hello-from-v1\n1788585692\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "echo hello-from-v1 && date +%s",
+            "time": {
+              "start": 1788585692055,
+              "end": 1788585692148
+            }
+          },
+          "id": "prt_07003cb8f001lSjcwh9COWy4kH",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl"
+        },
+        "time": 1788585692148
+      }
+    },
+    {
+      "id": "evt_07003cbf8001DhVUh1gt7vC1vw",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003cbf8001DgjjJ2QIJBb7HJ",
+          "reason": "tool-calls",
+          "messageID": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "step-finish",
+          "tokens": {
+            "total": 7493,
+            "input": 7457,
+            "output": 36,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1788585692152
+      }
+    },
+    {
+      "id": "evt_07003cbfa001KRI7Lp2vJF7wRX",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "total": 7493,
+            "input": 7457,
+            "output": 36,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585689063,
+            "completed": 1788585692157
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cbfd001DmAn7eVgO7oQ08",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003bfe7001CGVxz1P5y6NFUl",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "total": 7493,
+            "input": 7457,
+            "output": 36,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585689063,
+            "completed": 1788585692157
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cbfe0014xBV94fF03kKBW",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cc00001lTGSQrV6EyBSnk",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585692160
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cc0a0011zjQKJ2XxM4gIl",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 7457,
+            "output": 36,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585692169
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003cc0b0017DJRGtfScHMUgo",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_07003cc0c001Y6Zq4IB7MLGRvy",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1788585689041
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "techlit",
+            "modelID": "kimi-k3"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6"
+        }
+      }
+    },
+    {
+      "id": "evt_07003cc0f001gEsUeAo9aQokq3",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d2f8001xe5Ehdhyviemqv",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003d2f8001CbuoHTTu9D8PU6",
+          "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "step-start"
+        },
+        "time": 1788585693944
+      }
+    },
+    {
+      "id": "evt_07003d2fa001jtDXw0rVmAk0CN",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003d2fa001AF41t1dAqKhLCH",
+          "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1788585693946
+          }
+        },
+        "time": 1788585693946
+      }
+    },
+    {
+      "id": "evt_07003d2fb00186PIyYBgY6bhy9",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+        "partID": "prt_07003d2fa001AF41t1dAqKhLCH",
+        "field": "text",
+        "delta": "hello-from-v1\n"
+      }
+    },
+    {
+      "id": "evt_07003d2fc001cjdYgyBGtSBifA",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+        "partID": "prt_07003d2fa001AF41t1dAqKhLCH",
+        "field": "text",
+        "delta": "1788585692"
+      }
+    },
+    {
+      "id": "evt_07003d342001n9Fl107gIRBZEM",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003d2fa001AF41t1dAqKhLCH",
+          "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "text",
+          "text": "hello-from-v1\n1788585692",
+          "time": {
+            "start": 1788585693946,
+            "end": 1788585694018
+          }
+        },
+        "time": 1788585694018
+      }
+    },
+    {
+      "id": "evt_07003d344001oesvHRgm5Yn11B",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "part": {
+          "id": "prt_07003d344001oTLwpVNoHtr1In",
+          "reason": "stop",
+          "messageID": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "type": "step-finish",
+          "tokens": {
+            "total": 7522,
+            "input": 85,
+            "output": 13,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 7424
+            }
+          },
+          "cost": 0
+        },
+        "time": 1788585694020
+      }
+    },
+    {
+      "id": "evt_07003d346001f45tXug6CZUsvh",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "total": 7522,
+            "input": 85,
+            "output": 13,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 7424
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585692160,
+            "completed": 1788585694024
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d348001W1PakMbZtdhP6a",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "msg_07003cc00001CXXkb8tw3ff0sD",
+          "parentID": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/tmp/oc/ws-v1",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "total": 7522,
+            "input": 85,
+            "output": 13,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 7424
+            }
+          },
+          "modelID": "kimi-k3",
+          "providerID": "techlit",
+          "time": {
+            "created": 1788585692160,
+            "completed": 1788585694024
+          },
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d349001CAArLqvndPqRCz",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d34b0017J395AkkMUvoJr",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d34b002mcvxcsNPvZMl2N",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6"
+      }
+    },
+    {
+      "id": "evt_07003d34c0012ebkUE2YpFG3oB",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "New session - 2026-09-05T05:21:29.018Z",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 7542,
+            "output": 49,
+            "reasoning": 0,
+            "cache": {
+              "read": 7424,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585694028
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_07003d34e0014X6p47sbDPLVDX",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_07003d34f001UDgsyhQ7osrpaf",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1788585689041
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "techlit",
+            "modelID": "kimi-k3"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_07003bfd1001cFwr6ICpy25ybi",
+          "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6"
+        }
+      }
+    },
+    {
+      "id": "evt_07003d51c001sPM5RdKnffaJne",
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+        "info": {
+          "id": "ses_f8ffc4045ffeYv8cNoLKKR80a6",
+          "slug": "neon-wizard",
+          "projectID": "global",
+          "directory": "/tmp/oc/ws-v1",
+          "path": "tmp/oc/ws-v1",
+          "title": "echo hello-from-v1 and timestamp output",
+          "agent": "build",
+          "model": {
+            "id": "kimi-k3",
+            "providerID": "techlit",
+            "variant": "default"
+          },
+          "version": "1.18.29",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 7542,
+            "output": 49,
+            "reasoning": 0,
+            "cache": {
+              "read": 7424,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1788585689018,
+            "updated": 1788585694028
+          }
+        }
+      }
+    }
+  ]
+}

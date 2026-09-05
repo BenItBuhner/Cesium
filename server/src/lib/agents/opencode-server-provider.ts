@@ -155,6 +155,22 @@ type ActiveOpenCodePrompt = {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
+  /**
+   * Turn OpenCode started on its own (a background `task` finishing injects a
+   * synthetic prompt into the parent), with no Cesium prompt awaiting it.
+   */
+  autonomous?: boolean;
+  /** Autonomous turn closed early because the user sent a new prompt. */
+  settledByPrompt?: boolean;
+  /** Set by cancel()/dispose(): the rejection is expected and must not be recorded as a failure. */
+  cancelled?: boolean;
+};
+
+/** Text/reasoning part bookkeeping for streaming `message.part.delta` frames. */
+type OpenCodePartInfo = {
+  kind: "text" | "reasoning";
+  messageId: string;
+  sessionId: string;
 };
 
 const PERMISSION_ANSWER_RETRY_DELAYS_MS = [0, 400, 1_200];
@@ -233,6 +249,19 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private readonly pendingPermissions = new Map<string, { sessionId: string; addedAt: number }>();
   /** Every permission requestId surfaced this session, to dedupe re-emits across SSE routes. */
   private readonly seenPermissionRequestIds = new Set<string>();
+  /** OpenCode event ids already processed (the session and global SSE routes both deliver them). */
+  private readonly seenServerEventIds = new Set<string>();
+  /** Assistant message id → owning session id (root or subagent child), for text routing. */
+  private readonly assistantMessageSessions = new Map<string, string>();
+  /** Part id → kind/message/session, so `message.part.delta` frames can be attributed. */
+  private readonly partInfo = new Map<string, OpenCodePartInfo>();
+  /** Child-session text emitted so far per part id (child text streams into subagent messages). */
+  private readonly childEmittedTextByPartId = new Map<string, string>();
+  /** Tool cards opened and not yet settled, so cancel() can close them out. */
+  private readonly openToolCalls = new Map<
+    string,
+    { title?: string; toolKind?: string; childSessionId?: string }
+  >();
   /** requestId → remembered-permission bookkeeping for persisting "always" choices. */
   private readonly pendingPermissionContext = new Map<
     string,
@@ -316,9 +345,10 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.events = this.deps.startEvents({
       client: this.connection.client,
       routes: ["/event"],
-      onEvent: (event) => {
-        void this.handleServerEvent(event.data);
-      },
+      // Return the promise so the consumer's ordered chain serializes handling;
+      // fire-and-forget let concurrent handlers interleave their storage writes
+      // and persist tool updates out of order.
+      onEvent: (event) => this.handleServerEvent(event.data),
       onError: (error) => {
         void this.handleSseStreamError(error);
       },
@@ -356,6 +386,27 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
       throw new Error(
         "OpenCode Server process exited; the session must be restarted before prompting."
       );
+    }
+    const autonomous = this.activePrompt;
+    if (autonomous?.autonomous && !autonomous.completed) {
+      // The user is steering into a background-resumed turn; close our message
+      // for it so the new prompt owns the assistant output from here on.
+      this.clearActivePromptCompletion(autonomous);
+      autonomous.completed = true;
+      autonomous.settledByPrompt = true;
+      if (autonomous.emittedTextByPartId.size > 0) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "assistant_message_end",
+            messageId: autonomous.messageId,
+            stopReason: "completed",
+          },
+        ]);
+      }
+      this.activePrompt = null;
+      autonomous.resolve();
     }
     const recovery = splitSessionRecoveryPrompt(input.text);
     if (recovery) {
@@ -438,7 +489,15 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     } catch (error) {
       this.acceptingPromptSse = false;
       this.clearActivePromptCompletion(activePrompt);
-      this.activePrompt = null;
+      if (this.activePrompt === activePrompt) {
+        this.activePrompt = null;
+      }
+      if (activePrompt.cancelled) {
+        // cancel()/dispose() already recorded the cancelled status; surfacing
+        // the abort as a failure here (or to the runtime) would overwrite it
+        // with lastError + a runtime-failure message.
+        return;
+      }
       await this.connection.client.abortSession(this.sessionId).catch(() => undefined);
       const message = error instanceof Error ? error.message : "OpenCode Server prompt failed.";
       this.log.error("prompt.failed", message, { messageId });
@@ -473,12 +532,20 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.pendingPermissions.clear();
     if (this.activePrompt) {
       this.clearActivePromptCompletion(this.activePrompt);
+      this.activePrompt.cancelled = true;
+      if (this.activePrompt.autonomous) {
+        // cancel() writes the cancelled status itself; keep the autonomous
+        // turn's completion hook from overwriting it with a failure.
+        this.activePrompt.settledByPrompt = true;
+        this.activePrompt.completed = true;
+      }
     }
     this.activePrompt?.reject(new Error("OpenCode Server session aborted."));
     this.activePrompt = null;
     this.log.info("session.cancel", `Aborting OpenCode session ${this.sessionId}.`);
     await this.connection?.client.abortSession(this.sessionId).catch(() => undefined);
     await this.callbacks.appendEvents([
+      ...this.cancelledToolCallEvents(),
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
@@ -687,6 +754,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
     if (this.activePrompt) {
       this.clearActivePromptCompletion(this.activePrompt);
+      this.activePrompt.cancelled = true;
     }
     this.activePrompt?.reject(new Error("OpenCode Server session disposed."));
     this.activePrompt = null;
@@ -1312,16 +1380,38 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
         ? (envelope.payload as Record<string, unknown>)
         : envelope;
     const type = asString(record.type);
+    const eventSessionId = this.eventSessionId(record);
+    if (eventSessionId && eventSessionId !== this.sessionId && !options.allowChildSessionEvents) {
+      // The directory-scoped /event route also carries subagent (child) sessions,
+      // but only the global route verifies ancestry and is allowed to process
+      // them. Leave the event unclaimed so that delivery is not deduped away.
+      return;
+    }
+    // The directory-scoped /event route and the pooled /global/event route both
+    // carry this session tree's events (the server publishes every event to
+    // both). Process each OpenCode event id once, in first-arrival order, or a
+    // single tool call renders twice and can flip completed -> running -> completed.
+    if (!this.rememberServerEvent(record)) {
+      return;
+    }
+    this.trackMessageParts(record);
+    if (!this.acceptingPromptSse) {
+      await this.maybeStartAutonomousTurn(record);
+    }
     // Permission lifecycle events must be handled even between turns: a
     // request raised at a turn boundary (or answered elsewhere) that gets
     // dropped leaves OpenCode blocked with no prompt shown to the user.
-    const isPermissionLifecycle = type === "permission.updated" || type === "permission.replied";
+    const isPermissionLifecycle =
+      type === "permission.updated" || type === "permission.asked" || type === "permission.replied";
     if (!this.acceptingPromptSse && !isPermissionLifecycle) {
       return;
     }
     this.noteSseActivity(record, options);
     if (type === "permission.replied") {
       await this.handleExternalPermissionReply(record);
+      return;
+    }
+    if (await this.handleStreamedText(record, options)) {
       return;
     }
     await this.handlePromptLifecycleEvent(record);
@@ -1348,10 +1438,369 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     if (this.disposed || (!this.acceptingPromptSse && !isPermissionLifecycle)) {
       return;
     }
+    this.trackOpenToolCalls(events);
     await this.callbacks.appendEvents(events);
     if (permission?.kind === "permission_request") {
       await this.handleSurfacedPermission(permission);
     }
+  }
+
+  private trackOpenToolCalls(events: AgentEventInput[]): void {
+    for (const event of events) {
+      if (event.kind === "tool_call") {
+        this.openToolCalls.set(event.toolCallId, {
+          title: event.title,
+          toolKind: event.toolKind,
+          childSessionId: event.openCodeSubagentSessionId,
+        });
+      } else if (event.kind === "tool_call_update") {
+        if (event.status === "completed" || event.status === "failed" || event.status === "cancelled") {
+          this.openToolCalls.delete(event.toolCallId);
+        } else if (!this.openToolCalls.has(event.toolCallId)) {
+          this.openToolCalls.set(event.toolCallId, {
+            title: event.title,
+            toolKind: event.toolKind,
+            childSessionId: event.openCodeSubagentSessionId,
+          });
+        }
+      }
+    }
+    if (this.openToolCalls.size > 500) {
+      const oldest = this.openToolCalls.keys().next().value as string | undefined;
+      if (oldest) this.openToolCalls.delete(oldest);
+    }
+  }
+
+  /**
+   * Close every still-running tool card as cancelled. The runtime disposes the
+   * session right after cancel(), so OpenCode's own trailing tool error for the
+   * aborted call is never processed.
+   */
+  private cancelledToolCallEvents(): AgentEventInput[] {
+    const events: AgentEventInput[] = [];
+    for (const [toolCallId, info] of this.openToolCalls) {
+      events.push({
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "tool_call_update",
+        toolCallId,
+        title: info.title,
+        toolKind: info.toolKind,
+        status: "cancelled",
+        detail: "Interrupted",
+        ...(info.childSessionId ? { openCodeSubagentSessionId: info.childSessionId } : {}),
+        raw: { type: "cesium.cancelled", toolCallId },
+      });
+    }
+    this.openToolCalls.clear();
+    return events;
+  }
+
+  /**
+   * Remember which session each assistant message belongs to and what kind of
+   * part each part id is, so `message.part.delta` frames (which only carry
+   * `partID`/`messageID`) can be attributed to root vs subagent text/reasoning.
+   */
+  private trackMessageParts(record: Record<string, unknown>): void {
+    const type = asString(record.type);
+    const properties = asRecord(record.properties);
+    if (!properties) {
+      return;
+    }
+    if (type === "message.updated") {
+      const info = asRecord(properties.info);
+      const id = asString(info?.id);
+      const sessionId = asString(info?.sessionID) ?? asString(properties.sessionID);
+      if (info?.role === "assistant" && id && sessionId) {
+        this.assistantMessageSessions.set(id, sessionId);
+        if (this.assistantMessageSessions.size > 5_000) {
+          const oldest = this.assistantMessageSessions.keys().next().value as string | undefined;
+          if (oldest) this.assistantMessageSessions.delete(oldest);
+        }
+      }
+      return;
+    }
+    if (type === "message.part.updated") {
+      const part = asRecord(properties.part);
+      const partId = asString(part?.id);
+      const messageId = asString(part?.messageID);
+      const sessionId = asString(part?.sessionID) ?? asString(properties.sessionID);
+      if (!part || !partId || !messageId || !sessionId) {
+        return;
+      }
+      if (part.type === "text" || part.type === "reasoning") {
+        this.partInfo.set(partId, { kind: part.type, messageId, sessionId });
+        if (this.partInfo.size > 10_000) {
+          const oldest = this.partInfo.keys().next().value as string | undefined;
+          if (oldest) this.partInfo.delete(oldest);
+        }
+      }
+    }
+  }
+
+  /**
+   * Streams assistant text as it is generated instead of waiting for each
+   * full part snapshot, and surfaces subagent (child session) text into the
+   * subagent's own message. Returns true when the event was consumed here.
+   *
+   * OpenCode emits `message.part.updated` with an empty text part first, then
+   * `message.part.delta` frames, then the full part again; the per-part
+   * emitted-text map makes the final snapshot a no-op.
+   */
+  private async handleStreamedText(
+    record: Record<string, unknown>,
+    options: { allowChildSessionEvents?: boolean }
+  ): Promise<boolean> {
+    const type = asString(record.type);
+    const properties = asRecord(record.properties);
+    if (!properties) {
+      return false;
+    }
+    if (type === "message.part.delta") {
+      if (properties.field !== "text") {
+        return true;
+      }
+      const partId = asString(properties.partID);
+      const delta = asString(properties.delta);
+      const info = partId ? this.partInfo.get(partId) : undefined;
+      if (!partId || !delta || !info) {
+        // Unknown part (e.g. a user/seed message part): never echo it.
+        return true;
+      }
+      if (this.assistantMessageSessions.get(info.messageId) !== info.sessionId) {
+        return true;
+      }
+      if (info.sessionId === this.sessionId) {
+        const active = this.activePrompt;
+        if (
+          !active ||
+          active.completed ||
+          info.messageId !== active.providerAssistantMessageId
+        ) {
+          return true;
+        }
+        const emitted =
+          info.kind === "text" ? active.emittedTextByPartId : active.emittedReasoningByPartId;
+        await this.appendPartTextDelta({
+          active,
+          partId,
+          text: (emitted.get(partId) ?? "") + delta,
+          kind: info.kind,
+          raw: record,
+        });
+        if (active.completionTimer) {
+          this.scheduleActivePromptCompletion(active, record);
+        }
+        return true;
+      }
+      if (options.allowChildSessionEvents && info.kind === "text") {
+        await this.appendChildText({
+          childSessionId: info.sessionId,
+          providerMessageId: info.messageId,
+          partId,
+          text: (this.childEmittedTextByPartId.get(partId) ?? "") + delta,
+          raw: record,
+        });
+      }
+      return true;
+    }
+    if (type === "message.part.updated" && options.allowChildSessionEvents) {
+      const part = asRecord(properties.part);
+      const partId = asString(part?.id);
+      const messageId = asString(part?.messageID);
+      const sessionId = asString(part?.sessionID) ?? asString(properties.sessionID);
+      const text = asString(part?.text);
+      if (
+        part?.type === "text" &&
+        partId &&
+        messageId &&
+        sessionId &&
+        sessionId !== this.sessionId &&
+        text &&
+        this.assistantMessageSessions.get(messageId) === sessionId
+      ) {
+        await this.appendChildText({
+          childSessionId: sessionId,
+          providerMessageId: messageId,
+          partId,
+          text,
+          raw: record,
+        });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async appendChildText(input: {
+    childSessionId: string;
+    providerMessageId: string;
+    partId: string;
+    text: string;
+    raw: unknown;
+  }): Promise<void> {
+    const previous = this.childEmittedTextByPartId.get(input.partId) ?? "";
+    const delta = openCodeServerPartTextDelta(previous, input.text);
+    if (!delta) {
+      return;
+    }
+    this.childEmittedTextByPartId.set(input.partId, input.text);
+    if (this.childEmittedTextByPartId.size > 10_000) {
+      const oldest = this.childEmittedTextByPartId.keys().next().value as string | undefined;
+      if (oldest) this.childEmittedTextByPartId.delete(oldest);
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "assistant_message_chunk",
+        messageId: `opencode-subagent:${input.childSessionId}:${input.providerMessageId}`,
+        text: delta,
+        raw: input.raw,
+      },
+    ]);
+  }
+
+  /**
+   * OpenCode started a new assistant message on the root session while no
+   * Cesium prompt is in flight: a background `task` finished and its synthetic
+   * completion prompt woke the parent. Adopt it as an autonomous turn so the
+   * output is not dropped and the conversation reflects that the agent is
+   * working again.
+   */
+  private async maybeStartAutonomousTurn(record: Record<string, unknown>): Promise<void> {
+    if (this.disposed || this.activePrompt || this.processExited) {
+      return;
+    }
+    const type = asString(record.type);
+    const properties = asRecord(record.properties);
+    if (!properties) {
+      return;
+    }
+    if (type === "message.part.updated") {
+      // Synthetic completion prompt: tell the user why the agent woke up.
+      const part = asRecord(properties.part);
+      const sessionId = asString(part?.sessionID) ?? asString(properties.sessionID);
+      const text = asString(part?.text);
+      if (part?.type === "text" && part.synthetic === true && sessionId === this.sessionId && text) {
+        const summary = text.match(/<summary>([\s\S]*?)<\/summary>/)?.[1]?.trim();
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: /failed|error/i.test(summary ?? "") ? "warning" : "info",
+            text: summary ?? "OpenCode received a background task result.",
+            raw: record,
+          },
+        ]);
+      }
+      return;
+    }
+    if (type !== "message.updated") {
+      return;
+    }
+    const info = asRecord(properties.info);
+    const id = asString(info?.id);
+    const sessionId = asString(info?.sessionID) ?? asString(properties.sessionID);
+    if (info?.role !== "assistant" || !id || sessionId !== this.sessionId) {
+      return;
+    }
+    // Trailing updates for the message that just finished a turn also arrive
+    // after the turn completed; only a fresh, still-open message starts a turn.
+    if (asString(info.finish) || asRecord(info.time)?.completed != null) {
+      return;
+    }
+    const active = this.createActivePrompt(`opencode-server-autonomous-${randomUUID()}`);
+    active.autonomous = true;
+    active.providerAssistantMessageId = id;
+    this.activePrompt = active;
+    this.acceptingPromptSse = true;
+    this.log.info(
+      "session.autonomous_execution",
+      "OpenCode resumed the root session without a Cesium prompt (background task completed)."
+    );
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "running",
+        detail: "OpenCode resumed after background work completed.",
+        raw: record,
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "running",
+      lastError: null,
+    }));
+    void this.waitForActivePrompt(active)
+      .then(() => this.finishAutonomousTurn(active, null))
+      .catch((error: unknown) =>
+        this.finishAutonomousTurn(active, error instanceof Error ? error : new Error(String(error)))
+      );
+  }
+
+  private async finishAutonomousTurn(active: ActiveOpenCodePrompt, error: Error | null): Promise<void> {
+    if (this.activePrompt === active) {
+      this.activePrompt = null;
+      this.acceptingPromptSse = false;
+    }
+    if (this.disposed || active.settledByPrompt) {
+      return;
+    }
+    if (error) {
+      this.log.error("prompt.autonomous_failed", error.message);
+    } else {
+      this.log.info(
+        "prompt.autonomous_complete",
+        `Background turn finished in ${Math.round((Date.now() - active.startedAt) / 1000)}s.`
+      );
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: error ? "failed" : "idle",
+        detail: error ? error.message : "OpenCode Server background turn complete.",
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => {
+      if (this.activePrompt && !this.activePrompt.completed) {
+        return current;
+      }
+      return {
+        ...current,
+        status: error
+          ? "failed"
+          : this.pendingPermissions.size > 0
+            ? "awaiting_permission"
+            : "idle",
+        pendingPermission: this.pendingPermissions.size > 0 ? current.pendingPermission : null,
+        lastError: error ? error.message : current.lastError,
+      };
+    });
+  }
+
+  /** True the first time an OpenCode event id is seen (events without ids are always processed). */
+  private rememberServerEvent(record: Record<string, unknown>): boolean {
+    const id = asString(record.id);
+    if (!id) {
+      return true;
+    }
+    if (this.seenServerEventIds.has(id)) {
+      return false;
+    }
+    this.seenServerEventIds.add(id);
+    if (this.seenServerEventIds.size > 20_000) {
+      const oldest = this.seenServerEventIds.values().next().value as string | undefined;
+      if (oldest) {
+        this.seenServerEventIds.delete(oldest);
+      }
+    }
+    return true;
   }
 
   private trackPermissionRequest(

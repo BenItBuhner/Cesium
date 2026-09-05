@@ -4,6 +4,11 @@ import { getOpenCodeAcpListenPort, openCodeAcpInternalBaseUrl } from "./opencode
 import { spawnSafeEnv } from "./spawn-env.js";
 import { harnessLog } from "./harness-diagnostics.js";
 import {
+  RecentOutput,
+  registerManagedServerShutdownHook,
+  waitForManagedServerReady,
+} from "./opencode-process-readiness.js";
+import {
   OpenCodeServerClient,
   openCodeServerAuthFromEnv,
 } from "./opencode-server-client.js";
@@ -32,25 +37,62 @@ type ManagedServerPoolRow = {
   refs: number;
   exitListeners: Set<(exit: OpenCodeServerProcessExit) => void>;
   exited: OpenCodeServerProcessExit | null;
+  lingerTimer?: ReturnType<typeof setTimeout>;
 };
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
+registerManagedServerShutdownHook(() => stopAllManagedOpenCodeServers());
+
+/**
+ * The runtime disposes idle conversation handles after a few seconds, so
+ * without a grace period every prompt after a short pause paid a full server
+ * boot (database open, plugin install, model catalog). Keep the process warm
+ * for a while after the last session detaches and reuse it.
+ */
+export function managedServerLingerMs(): number {
+  const raw = Number.parseInt(process.env.OPENCURSOR_OPENCODE_SERVER_LINGER_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 10 * 60_000;
+}
+
+function stopManagedOpenCodeServer(poolKey: string, row: ManagedServerPoolRow, reason: string): void {
+  if (managedServerPool.get(poolKey) === row) {
+    managedServerPool.delete(poolKey);
+  }
+  if (!row.child.killed && row.child.exitCode == null) {
+    harnessLog({
+      backendId: "opencode-server",
+      event: "process.stop",
+      detail: `Stopping managed OpenCode Server (${reason}): ${row.client.baseUrl}`,
+    });
+    row.child.kill();
+  }
+}
 
 function releaseManagedOpenCodeServer(poolKey: string, row: ManagedServerPoolRow): void {
   row.refs = Math.max(0, row.refs - 1);
   if (row.refs > 0) {
     return;
   }
-  if (managedServerPool.get(poolKey) === row) {
-    managedServerPool.delete(poolKey);
+  const linger = managedServerLingerMs();
+  if (linger === 0) {
+    stopManagedOpenCodeServer(poolKey, row, "last session detached");
+    return;
   }
-  if (!row.child.killed) {
-    harnessLog({
-      backendId: "opencode-server",
-      event: "process.stop",
-      detail: `Stopping managed OpenCode Server (last session detached): ${row.client.baseUrl}`,
-    });
-    row.child.kill();
+  clearTimeout(row.lingerTimer);
+  row.lingerTimer = setTimeout(() => {
+    row.lingerTimer = undefined;
+    if (row.refs === 0) {
+      stopManagedOpenCodeServer(poolKey, row, `idle for ${Math.round(linger / 1000)}s`);
+    }
+  }, linger);
+  row.lingerTimer.unref?.();
+}
+
+/** Stop every lingering managed server (used by tests and shutdown). */
+export function stopAllManagedOpenCodeServers(): void {
+  for (const [poolKey, row] of [...managedServerPool.entries()]) {
+    clearTimeout(row.lingerTimer);
+    stopManagedOpenCodeServer(poolKey, row, "shutdown");
   }
 }
 
@@ -99,6 +141,24 @@ async function waitForHealth(client: OpenCodeServerClient): Promise<void> {
   );
 }
 
+function isOpenCodeStartupBanner(line: string): boolean {
+  return (
+    /OPENCODE_SERVER_PASSWORD is not set; server is unsecured/i.test(line) ||
+    /^opencode server listening on /i.test(line)
+  );
+}
+
+/**
+ * First start on a machine can run database migrations, install plugin
+ * dependencies and fetch the model catalog before the health route answers;
+ * the old fixed 20s budget was tight for that. Startup failures no longer wait
+ * for this budget - the process exiting fails the connect immediately.
+ */
+function managedServerStartupTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.OPENCURSOR_OPENCODE_STARTUP_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 60_000;
+}
+
 export async function connectOpenCodeServer(input: {
   workspaceRoot: string;
   onStderrLine?: (line: string) => void;
@@ -125,9 +185,16 @@ export async function connectOpenCodeServer(input: {
 
   const poolKey = `opencode-server:${input.workspaceRoot}`;
   const existing = managedServerPool.get(poolKey);
-  if (existing) {
+  if (existing && !existing.exited) {
     existing.refs += 1;
-    await existing.ready;
+    clearTimeout(existing.lingerTimer);
+    existing.lingerTimer = undefined;
+    try {
+      await existing.ready;
+    } catch (error) {
+      releaseManagedOpenCodeServer(poolKey, existing);
+      throw error;
+    }
     return {
       client: existing.client,
       managed: true,
@@ -157,6 +224,11 @@ export async function connectOpenCodeServer(input: {
       cwd: input.workspaceRoot,
       env: spawnSafeEnv({
         OPENCURSOR_PROCESS_NAME: `Cesium Agent - OpenCode Server :${port}`,
+        // Per-generation database override: both OpenCode generations default to
+        // the same ~/.local/share/opencode/opencode.db (see opencode-process-readiness).
+        ...(process.env.OPENCURSOR_OPENCODE_DB?.trim()
+          ? { OPENCODE_DB: process.env.OPENCURSOR_OPENCODE_DB.trim() }
+          : {}),
       }),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -171,21 +243,27 @@ export async function connectOpenCodeServer(input: {
     detail: `Spawned OpenCode Server at ${baseUrl}`,
     data: { command, port, pid: child.pid ?? null, workspaceRoot: input.workspaceRoot },
   });
-  child.stderr.on("data", (chunk) => {
-    const text = String(chunk);
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed) {
-        harnessLog({
-          level: "debug",
-          backendId: "opencode-server",
-          event: "process.stderr",
-          detail: trimmed,
-        });
+  const recentOutput = new RecentOutput();
+  const reportOutput = (stream: "stdout" | "stderr") => (chunk: unknown) => {
+    for (const trimmed of recentOutput.push(chunk)) {
+      harnessLog({
+        level: "debug",
+        backendId: "opencode-server",
+        event: `process.${stream}`,
+        detail: trimmed,
+      });
+      // The startup banner is expected for a loopback server Cesium manages
+      // itself; only forward genuine diagnostics into the conversation.
+      if (stream === "stderr" && !isOpenCodeStartupBanner(trimmed)) {
         input.onStderrLine?.(trimmed);
       }
     }
-  });
+  };
+  child.stderr.on("data", reportOutput("stderr"));
+  // `opencode serve` prints fatal startup errors ("Database is not empty and
+  // has no session table", ...) on stdout, not stderr; keep them for the
+  // readiness failure message.
+  child.stdout?.on("data", reportOutput("stdout"));
   const client = new OpenCodeServerClient({
     baseUrl,
     directory: input.workspaceRoot,
@@ -195,7 +273,14 @@ export async function connectOpenCodeServer(input: {
     client,
     child,
     refs: 1,
-    ready: waitForHealth(client),
+    ready: waitForManagedServerReady({
+      child,
+      label: `OpenCode Server at ${baseUrl}`,
+      probe: async () => (await client.health()).healthy !== false,
+      timeoutMs: managedServerStartupTimeoutMs(),
+      intervalMs: 250,
+      recentOutput: () => recentOutput.snapshot(),
+    }),
     exitListeners: new Set(),
     exited: null,
   };
