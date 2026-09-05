@@ -1452,6 +1452,49 @@ export async function forkAgentConversation(
   }, requestOptions);
 }
 
+/**
+ * Open a side chat attached to `parentConversationId`. With `text` (or
+ * attachments) the first prompt is sent immediately; otherwise the side chat
+ * opens empty. The response is the child's snapshot head.
+ */
+export async function createAgentSideChat(
+  parentConversationId: string,
+  input?: {
+    text?: string;
+    attachments?: ImageAttachment[];
+    clientEventId?: string;
+    clientMessageId?: string;
+    clientTimezone?: string;
+  },
+  requestOptions?: { server?: ServerRequestContext }
+): Promise<AgentConversationSnapshotResponse> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(parentConversationId)}/side-chats`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        text: input?.text,
+        attachments: input?.attachments,
+        clientEventId: input?.clientEventId,
+        clientMessageId: input?.clientMessageId,
+        clientTimezone: input?.clientTimezone,
+      }),
+    },
+    requestOptions
+  );
+}
+
+export async function listAgentSideChats(
+  parentConversationId: string,
+  requestOptions?: { server?: ServerRequestContext }
+): Promise<{ conversations: AgentConversationRecord[] }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(parentConversationId)}/side-chats`,
+    undefined,
+    requestOptions
+  );
+}
+
 export async function listOrchestrationBoards(): Promise<{
   boards: OrchestrationBoardRecord[];
 }> {

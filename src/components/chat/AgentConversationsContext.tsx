@@ -82,6 +82,7 @@ import {
   answerAgentQuestion,
   buildAgentWebSocketUrl,
   cancelAgentConversation,
+  createAgentSideChat,
   createAndPromptAgentConversation,
   createAndPromptStandaloneAgentConversation,
   createAgentConversation,
@@ -429,6 +430,16 @@ type AgentConversationsContextValue = {
   forkConversation: (
     conversationId: string,
     options?: { upToMessageId?: string; beforeMessageId?: string }
+  ) => Promise<AgentConversationRecord>;
+  /**
+   * Open a side chat attached to `parentConversationId` (Cesium harness).
+   * Non-empty `text`/attachments are sent as the child's first prompt. Throws
+   * with the server's policy message (cap, nesting, empty parent) on refusal.
+   */
+  createSideChat: (
+    parentConversationId: string,
+    text?: string,
+    attachments?: ImageAttachment[]
   ) => Promise<AgentConversationRecord>;
   getConversationHistoryCursor: (conversationId: string) => ConversationHistoryCursor;
   loadOlderConversationHistory: (conversationId: string) => void;
@@ -2538,6 +2549,44 @@ busy,
     [mergeConversationSnapshot, syncConversationSnapshot, upsertConversation]
   );
 
+  const createSideChat = useCallback(
+    async (
+      parentConversationId: string,
+      text?: string,
+      attachments?: ImageAttachment[]
+    ): Promise<AgentConversationRecord> => {
+      const startedAt = performance.now();
+      const hasPrompt = Boolean(text?.trim()) || (attachments?.length ?? 0) > 0;
+      const result = await createAgentSideChat(parentConversationId, {
+        ...(hasPrompt
+          ? {
+              text: text ?? "",
+              attachments,
+              clientEventId:
+                globalThis.crypto?.randomUUID?.() ?? `local-user-event-${Date.now()}`,
+              clientMessageId:
+                globalThis.crypto?.randomUUID?.() ?? `local-user-message-${Date.now()}`,
+              clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }
+          : {}),
+      });
+      mergeConversationSnapshot(result.snapshot);
+      dispatchAgentConversationUpserted(result.snapshot.conversation);
+      // Subscribe right away so the child's first turn streams into its tab
+      // without waiting for the debounced subscription sweep.
+      flushAgentSubscriptionRef.current([result.snapshot.conversation.id]);
+      scheduleConversationCatchUpRef.current(result.snapshot.conversation.id);
+      recordPerfSample("conversation.create_side_chat.ack", startedAt, {
+        conversationId: result.snapshot.conversation.id,
+      });
+      void markWorkspaceActivity(result.snapshot.conversation.workspaceId).catch(
+        () => undefined
+      );
+      return result.snapshot.conversation;
+    },
+    [markWorkspaceActivity, mergeConversationSnapshot]
+  );
+
   useEffect(() => {
     eventRenderBatcher.clear();
     if (!activeWorkspaceId) {
@@ -3183,6 +3232,7 @@ flushAgentSubscription,
 mergeConversationSnapshot,
 refreshConversations,
 forkConversation,
+createSideChat,
 getConversationHistoryCursor,
 loadOlderConversationHistory,
 pendingConfigByConversationId,
@@ -3196,6 +3246,7 @@ cancelConversation,
 cancelPermissionForConversation,
 answerQuestionForConversation,
 clearPendingConfigForConversation,
+createSideChat,
 createConversation,
 createAndPromptConversation,
 createAndPromptStandaloneConversation,

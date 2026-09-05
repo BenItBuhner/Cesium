@@ -55,6 +55,7 @@ import {
   updateComposerDraftProfile,
 } from "@/lib/chat-draft-defaults";
 import { useComposerDefaults } from "@/hooks/useComposerDefaults";
+import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
@@ -175,6 +176,7 @@ export function AgentCenterPane() {
     stableConversationView,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
+  const { openSideChat } = useOpenSideChat(selectedConversationId);
 
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
@@ -1550,6 +1552,7 @@ export function AgentCenterPane() {
                     configLocked={false}
                     modeLocked={modeLocked}
                     onSubmit={handleSubmit}
+                    onRequestSideChat={openSideChat}
                     onCancel={() =>
                       selectedConversationId
                         ? cancelConversation(selectedConversationId)

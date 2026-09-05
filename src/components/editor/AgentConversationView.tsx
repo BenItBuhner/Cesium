@@ -22,6 +22,7 @@ import {
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import {
   extractComposerUserMessageHistory,
   latestGoalProgressStatus,
@@ -149,6 +150,7 @@ loadOlderConversationHistory,
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const rawThreadEvents = useConversationEvents(conversationId);
+  const { openSideChat } = useOpenSideChat(conversationId);
   // Defer the events together with the conversation id they belong to so a
   // conversation switch can never project the previous conversation's stale
   // events under the new id (deferred values lag by design on slow devices).
@@ -613,6 +615,7 @@ const showRecentChatsSection =
         busy={composerState.busy}
         configLocked={false}
         modeLocked={isOrchestrationModeLocked()}
+        onRequestSideChat={openSideChat}
         draftAttachments={composerDraftAttachments}
         onDraftAttachmentsChange={(next) =>
           upsertComposerDraft(composerDraftId, {
