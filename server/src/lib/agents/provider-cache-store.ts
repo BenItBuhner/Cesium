@@ -652,8 +652,45 @@ function codexAppServerEffortValues(entry: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
+/** Effective `config.toml` values relevant to model selection (`config/read`). */
+export type CodexAppServerConfigDefaults = {
+  /** `model` from config.toml, when set. */
+  model?: string;
+  /** `model_provider` from config.toml (`openai` when unset). */
+  modelProvider?: string;
+  /** `model_reasoning_effort` from config.toml, when set. */
+  reasoningEffort?: string;
+};
+
+export function codexAppServerConfigDefaultsFromConfigRead(
+  result: unknown
+): CodexAppServerConfigDefaults {
+  const record =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as Record<string, unknown>)
+      : {};
+  const config =
+    record.config && typeof record.config === "object" && !Array.isArray(record.config)
+      ? (record.config as Record<string, unknown>)
+      : record;
+  const readString = (key: string): string | undefined =>
+    typeof config[key] === "string" && (config[key] as string).trim() ? (config[key] as string).trim() : undefined;
+  return {
+    model: readString("model"),
+    modelProvider: readString("model_provider"),
+    reasoningEffort: readString("model_reasoning_effort"),
+  };
+}
+
+/**
+ * Builds the Codex config options from `model/list` plus the effective config
+ * defaults. `model/list` only knows OpenAI's built-in catalog, so when
+ * config.toml routes to a custom `model_provider` the configured model is
+ * added (and preferred) even though the server never lists it.
+ */
 export function codexAppServerOptionsFromModels(
-  models: Array<Record<string, unknown>>
+  models: Array<Record<string, unknown>>,
+  defaults: CodexAppServerConfigDefaults = {}
 ): AgentConfigOption[] {
   const modelOptions: AgentConfigOptionValue[] = models
     .map((entry) => {
@@ -671,17 +708,42 @@ export function codexAppServerOptionsFromModels(
         return null;
       }
       const reasoningLevels = codexAppServerEffortValues(entry);
+      const defaultReasoningEffort =
+        typeof entry.defaultReasoningEffort === "string" && reasoningLevels.includes(entry.defaultReasoningEffort)
+          ? entry.defaultReasoningEffort
+          : undefined;
+      const metadata: Record<string, string | string[]> = {};
+      if (reasoningLevels.length > 0) {
+        metadata.reasoningLevels = reasoningLevels;
+      }
+      if (defaultReasoningEffort) {
+        metadata.defaultReasoningEffort = defaultReasoningEffort;
+      }
       return {
         value,
         name,
-        metadata: reasoningLevels.length > 0 ? { reasoningLevels } : undefined,
+        description: typeof entry.description === "string" && entry.description.trim() ? entry.description : undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
     })
     .filter((value): value is NonNullable<typeof value> => Boolean(value));
 
+  const customProvider =
+    defaults.modelProvider && defaults.modelProvider !== "openai" ? defaults.modelProvider : undefined;
+  if (defaults.model && !modelOptions.some((option) => option.value === defaults.model)) {
+    modelOptions.unshift({
+      value: defaults.model,
+      name: customProvider ? `${defaults.model} (${customProvider})` : defaults.model,
+      description: customProvider
+        ? `Configured in ~/.codex/config.toml via model_provider "${customProvider}".`
+        : "Configured in ~/.codex/config.toml.",
+    });
+  }
+
   const defaultModel =
-    modelOptions.find((option) => !/-codex(?:-|$)/.test(option.value))?.value ??
+    defaults.model ??
     models.find((entry) => entry.isDefault === true && typeof entry.id === "string")?.id ??
+    modelOptions.find((option) => !/-codex(?:-|$)/.test(option.value))?.value ??
     modelOptions[0]?.value ??
     "__default__";
   const effortSet = new Set<string>();
@@ -695,7 +757,9 @@ export function codexAppServerOptionsFromModels(
     if (option.id === "model") {
       return {
         ...option,
-        description: "Models reported by the Codex App Server model/list endpoint.",
+        description: customProvider
+          ? `Models reported by Codex plus the model configured for provider "${customProvider}".`
+          : "Models reported by the Codex App Server model/list endpoint.",
         currentValue: String(defaultModel),
         options: modelOptions,
       };
@@ -703,11 +767,22 @@ export function codexAppServerOptionsFromModels(
     return option;
   });
   if (efforts.length > 0) {
+    const defaultEntry = models.find((entry) => entry.id === defaultModel || entry.model === defaultModel);
+    const defaultEffort =
+      defaults.reasoningEffort && efforts.includes(defaults.reasoningEffort)
+        ? defaults.reasoningEffort
+        : typeof defaultEntry?.defaultReasoningEffort === "string" && efforts.includes(defaultEntry.defaultReasoningEffort)
+          ? defaultEntry.defaultReasoningEffort
+          : efforts.includes("medium")
+            ? "medium"
+            : efforts[0]!;
     baseOptions.push({
       id: "model_reasoning_effort",
       name: "Reasoning Effort",
       category: "thought_level",
-      currentValue: efforts.includes("low") ? "low" : efforts[0]!,
+      currentValue: defaultEffort,
+      description:
+        "Applied when the selected model advertises it; custom-provider models use the Codex default.",
       options: efforts.map((effort) => ({ value: effort, name: titleCaseConfigValue(effort) })),
     });
   }
@@ -741,6 +816,9 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
     });
     transport.notify("initialized");
     await transport.request("account/read", { refreshToken: false }).catch(() => undefined);
+    const defaults = codexAppServerConfigDefaultsFromConfigRead(
+      await transport.request("config/read", {}).catch(() => undefined)
+    );
     const models: Array<Record<string, unknown>> = [];
     let cursor: string | null | undefined = null;
     do {
@@ -752,7 +830,7 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
       models.push(...(Array.isArray(result.data) ? result.data : []));
       cursor = result.nextCursor;
     } while (cursor);
-    return codexAppServerOptionsFromModels(models);
+    return codexAppServerOptionsFromModels(models, defaults);
   } catch (error) {
     logSeedProbeFailure(
       "codex-app-server",

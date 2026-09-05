@@ -255,7 +255,10 @@ When both `OPENCURSOR_AUTH_USERNAME` and `OPENCURSOR_AUTH_PASSWORD` are set, the
 | `OPENCURSOR_ANTIGRAVITY_ACP_HOME` | Overrides the `GEMINI_HOME` the ACP server stores credentials and sessions under (default `~/.gemini`). |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables the headless `gemini-api-key` auth method for the Antigravity ACP server. |
 | `OPENCURSOR_ANTIGRAVITY_CLI_BIN` / `OPENCURSOR_AGY_BIN` | Absolute path to the legacy Antigravity CLI (`agy`); otherwise `agy` on `PATH`. |
-| `OPENCURSOR_CODEX_BIN` | Codex CLI path. |
+| `OPENCURSOR_CODEX_BIN` | Codex CLI path for `codex-app-server` / `codex-acp`; otherwise `codex` on `PATH` or common tool dirs. Model, provider and MCP servers come from `~/.codex/config.toml` (custom `model_provider` entries are honoured). |
+| `OPENCURSOR_CODEX_APP_SERVER_ALLOW_BYPASS` | `1` lets the Codex "Bypass Permissions" execution mode map to `approvalPolicy: never` + `dangerFullAccess`; otherwise it behaves like Workspace Write. |
+| `OPENCURSOR_CODEX_APP_SERVER_ASK_IN_AGENT_MODE` | `1` enables Codex's `default_mode_request_user_input` feature so the question tool is available in Agent mode too (always available in Plan mode). |
+| `OPENCURSOR_CODEX_APP_SERVER_SETTLE_GRACE_MS` | Wait for `turn/completed` after Codex reports the thread idle/errored before settling the turn anyway (default `8000`). |
 | `OPENCURSOR_CLAUDE_BIN` | Claude CLI path. |
 | `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` | JSON merged into ACP `initialize.clientCapabilities` (e.g. `{"terminal":true}`). |
 | `OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT` | Recent message pairs included when handing off to another agent (default `25`). |

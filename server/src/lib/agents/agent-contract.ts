@@ -165,7 +165,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsCompletionRetry: false,
     supportsCloudExecution: false,
     supportsSideChats: false,
-    supportsCancelResume: false,
+    supportsCancelResume: true,
   },
   "codex-acp": {
     supportsLoadSession: true,

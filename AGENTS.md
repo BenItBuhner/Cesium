@@ -147,6 +147,48 @@ The app's WebView reaches a host-side backend at `http://10.0.2.2:9100`
 `build:web-assets` whenever shared `src/` web code changes - the APK ships a
 static copy.
 
+### Codex App Server harness (`codex-app-server`) testing
+
+The harness speaks Codex's app-server protocol v2 (verified against Codex CLI
+0.153.4). Ground truth for wire shapes is the CLI itself:
+`codex app-server generate-json-schema --experimental --out <dir>` (and
+`generate-ts`) plus `codex-rs/app-server/README.md` upstream.
+
+- **Install the CLI into a user prefix** (global npm prefix is not writable):
+ `npm config set prefix ~/.npm-global && npm i -g @openai/codex@latest`; the
+ harness detector already scans `~/.npm-global/bin`.
+- **Route Codex through the inference proxy** with a custom provider in
+ `~/.codex/config.toml` (no ChatGPT login needed):
+
+ ```toml
+ model = "kimi-k3"
+ model_provider = "techlit"
+
+ [model_providers.techlit]
+ name = "TechLit Proxy"
+ base_url = "https://infer.techlitnow.com/v1"
+ env_key = "TECHLIT_API_KEY"
+ wire_api = "responses"
+ ```
+
+ then `export TECHLIT_API_KEY=<proxy key>` before `npm run dev:server` or the
+ probe. `model/list` only knows OpenAI's catalog; the harness reads
+ `config/read` so the configured custom model is the default (never pin
+ `gpt-*` models onto a third-party provider - every turn fails).
+- **Deterministic tests**: `server/test/codex-app-server-e2e.test.ts` drives the
+ real provider against `server/test/fixtures/fake-codex-app-server.mjs`
+ (protocol-faithful double; scenarios selected by `scenario:<name>` in the
+ prompt). `server/test/codex-app-server.test.ts` covers normalization.
+- **Live probe**: `bun ./scripts/codex-app-server-probe.ts --scenario all`
+ (from `server/`) runs approval/question/plan/image/cancel/resume flows
+ through the provider and writes `server/tmp/codex-app-server-probe/events.jsonl`;
+ `--raw` captures the untouched JSON-RPC stream instead.
+- **Known quirks**: the container lacks bubblewrap (Codex warns and uses its
+ bundled copy); the proxy stringifies `function_call_output` content-item
+ arrays, so MCP tool results reach the model as `[object Object]` (shell
+ output is plain text and fine); Codex 0.153.4 emits no `commandExecution`
+ item for unified-exec commands that exit non-zero.
+
 ### Inference / model provider environment variables
 
 The built-in `cesium-agent` backend is the one that talks to LLM providers over

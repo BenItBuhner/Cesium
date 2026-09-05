@@ -467,9 +467,14 @@ function mergeConversationConfigOptionsWithBackend(
           ? backendOption
           : conversationOption;
     const fallbackCurrentValue = conversationOption.currentValue || backendOption.currentValue;
+    // `__default__` / `auto` are backend sentinels, not catalog entries; the
+    // catalog's own current value is the model the harness resolves them to.
+    const modelIdIsSentinel =
+      /^(?:__default__|auto)$/i.test(conversation.config.modelId ?? "") &&
+      !baseOption.options.some((option) => option.value === conversation.config.modelId);
     const currentValue =
       backendOption.category === "model"
-        ? conversation.config.modelId || fallbackCurrentValue
+        ? (modelIdIsSentinel ? undefined : conversation.config.modelId) || fallbackCurrentValue
         : backendOption.category === "mode"
           ? conversation.config.mode || fallbackCurrentValue
           : fallbackCurrentValue;
@@ -5337,14 +5342,26 @@ export function buildConversationModelOptions(
     }
   }
 
+  /**
+   * Backend sentinels (`__default__`, `auto`) never match a catalog row; when
+   * the conversation uses one, the catalog's own `currentValue` is the model
+   * the harness resolves to (e.g. Codex config.toml `model`), so select that.
+   */
+  const catalogHasModelId =
+    !!conversation.config.modelId &&
+    (modelOption?.options.some((option) => option.value === conversation.config.modelId) ?? false);
+  const persistedModelId =
+    conversation.config.modelId && (catalogHasModelId || !modelOption?.currentValue)
+      ? conversation.config.modelId
+      : undefined;
   const selectedModelValue =
-    conversation.config.modelId ||
+    persistedModelId ||
     modelOption?.currentValue ||
     backend?.defaultModelId ||
     "auto";
   /** Prefer persisted `config.modelId` so UI matches PATCH updates; option `currentValue` can lag when no runtime session. */
   const effectiveSelectedId =
-    conversation.config.modelId || modelOption?.currentValue || backend?.defaultModelId;
+    persistedModelId || modelOption?.currentValue || backend?.defaultModelId;
   const selectedName = conversation.config.modelName || backend?.defaultModelName;
 
   function sortByToggleOrder<T extends ModelInfo>(rows: T[]): T[] {
@@ -5414,8 +5431,29 @@ export function buildConversationModelOptions(
 
   if (thoughtLevelOption && thoughtLevelOption.options.length > 0) {
     const selectedThought = thoughtLevelOption.currentValue;
-    const variantRows = modelOption.options.flatMap((option) =>
-      resolveThoughtOptionsForModel(option, thoughtLevelOption).map((thought) => {
+    const variantRows = modelOption.options.flatMap((option) => {
+      const thoughts = resolveThoughtOptionsForModel(option, thoughtLevelOption);
+      if (thoughts.length === 0) {
+        // Models that do not advertise reasoning levels (custom-provider
+        // catalogs, non-reasoning models) still need a plain row; dropping
+        // them made the harness default disappear from the picker.
+        return [
+          {
+            id: option.value,
+            modelValue: option.value,
+            name: formatModelVariantLabel(option.name, option.value),
+            description: option.description,
+            detail: backend?.label ?? conversation.config.backendId,
+            provider,
+            backendId: conversation.config.backendId,
+            variantGroupId: option.modelGroupId,
+            variantGroupName: option.modelGroupName,
+            variantParameters: option.modelParameters,
+            selected: option.value === effectiveSelectedId,
+          } satisfies ModelInfo,
+        ];
+      }
+      return thoughts.map((thought) => {
         const baseName = formatModelVariantLabel(option.name, option.value);
         const thoughtLabel = titleCaseModelDetail(thought.name || thought.value);
         const normalizedThought = normalizeModelDetailLabel(thoughtLabel);
@@ -5447,8 +5485,8 @@ export function buildConversationModelOptions(
             option.value === effectiveSelectedId &&
             (!selectedThought || thought.value === selectedThought),
         } satisfies ModelInfo;
-      })
-    );
+      });
+    });
     if (variantRows.length > 0) {
       return filterVisible(variantRows);
     }

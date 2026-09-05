@@ -1050,7 +1050,11 @@ export class AgentRuntimeManager {
       return computePiAgentContextUsage(conversation).catch(() => unsupportedContextUsageSnapshot());
     }
     if (conversation.config.backendId !== "cesium-agent") {
-      return unsupportedContextUsageSnapshot();
+      // Harnesses that stream authoritative token accounting (Codex App Server)
+      // persist a snapshot on the record; everything else is unsupported.
+      return conversation.contextUsage?.supported
+        ? conversation.contextUsage
+        : unsupportedContextUsageSnapshot();
     }
     return computeCesiumAgentContextUsage({ workspace, conversation });
   }
@@ -1933,8 +1937,8 @@ export class AgentRuntimeManager {
     return updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
       // Harnesses whose native session survives an abort (Pi records the
-      // aborted turn in its session file) resume it on the next prompt instead
-      // of losing the whole conversation context.
+      // aborted turn in its session file; Codex records `<turn_aborted>`)
+      // resume it on the next prompt instead of losing the conversation context.
       providerSessionId: keepSession ? current.providerSessionId : null,
       queuedPrompts: [],
       pendingPermission: null,
