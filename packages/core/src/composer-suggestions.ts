@@ -28,7 +28,33 @@ export type SlashMenuAction =
   | { kind: "model"; model: ModelInfo }
   | { kind: "backend"; backendId: AgentBackendId }
   | { kind: "config"; configId: string; value: string }
-  | { kind: "insert"; insert: string };
+  | { kind: "insert"; insert: string }
+  /** Open a side chat attached to the current conversation (`/side [question]`). */
+  | { kind: "side-chat" };
+
+/** Slash spellings that open a side chat; Cursor parity is `/side`, `/btw` is its old alias. */
+export const SIDE_CHAT_SLASH_COMMANDS = ["side", "side-chat", "btw"] as const;
+/** What the menu inserts so the user can keep typing a question. */
+export const SIDE_CHAT_SLASH_INSERT = "/side ";
+
+const SIDE_CHAT_DIRECTIVE_REGEX = /^\/(side-chat|side|btw)(?=\s|$)\s*([\s\S]*)$/i;
+
+/**
+ * Detect a leading `/side`, `/side-chat`, or `/btw` directive. Returns the
+ * remaining text (the question to send into the new side chat; empty means
+ * "open it and let me type") or `null` when the draft is not a side-chat command.
+ */
+export function parseSideChatDirective(input: string): { text: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+  const match = trimmed.match(SIDE_CHAT_DIRECTIVE_REGEX);
+  if (!match) {
+    return null;
+  }
+  return { text: (match[2] ?? "").trim() };
+}
 
 export type SlashMenuItem = {
   id: string;
@@ -161,6 +187,11 @@ export function getSlashMenuSections(input: {
   /** Commands the live agent session advertises (ACP `available_commands_update`). */
   agentCommands?: AgentSlashCommand[] | null;
   gitSlashCommands?: boolean;
+  /**
+   * When true, offer `/side`: the host conversation can spawn a side chat
+   * (cesium-agent backend, at least one message, not itself a side chat).
+   */
+  sideChatAvailable?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;
 }): SlashMenuSection[] {
@@ -241,6 +272,21 @@ export function getSlashMenuSections(input: {
   }
 
   const commandItems: SlashMenuItem[] = [];
+
+  if (input.sideChatAvailable) {
+    const label = "Side chat";
+    const searchText =
+      "side chat /side side-chat btw aside parallel secondary chat primary context";
+    commandItems.push({
+      id: "side-chat",
+      label,
+      description:
+        "Open a side chat next to this one. It sees this chat as context; type a question after /side to send it right away.",
+      searchText,
+      searchKey: slashSearchKey(label, searchText),
+      action: { kind: "side-chat" },
+    });
+  }
 
   for (const command of input.agentCommands ?? []) {
     const name = command.name.trim().replace(/^\//, "");
@@ -465,6 +511,7 @@ export function applyComposerDirectives(
         "mode",
         "worktree",
         "delete-worktree",
+        ...SIDE_CHAT_SLASH_COMMANDS,
       ]);
       if (!reservedSlashCommands.has(token)) {
         const match = handlers.modeOptions?.find(
