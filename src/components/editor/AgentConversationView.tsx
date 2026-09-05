@@ -15,6 +15,7 @@ import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionError
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
+import { SideChatStrip } from "@/components/chat/SideChatStrip";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -715,6 +716,10 @@ const showRecentChatsSection =
 
   return (
     <div className="aurora-editor-surface flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
+      <SideChatStrip
+        conversationId={conversationId}
+        className={`relative z-20 shrink-0 ${EDITOR_CHAT_INSET_X_CLASS} pt-[10px]`}
+      />
       {isEmptyThread ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
