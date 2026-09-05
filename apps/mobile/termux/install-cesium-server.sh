@@ -126,6 +126,8 @@ printf 'Installing cesium-server dependencies...\n'
   # (EBADPLATFORM: wanted win32/darwin/linux). The server degrades to the
   # espeak TTS engine installed above.
   npm ci --no-workspaces --omit=optional
+  # Installs made before the server dropped its `"cesium": "file:.."`
+  # self-dependency left a root-pointing symlink that npm ci does not prune.
   rm -f node_modules/cesium
 )
 
