@@ -614,6 +614,72 @@ agentRoutes.post("/api/agents/conversations/:conversationId/redo", async (c) => 
   }
 });
 
+/**
+ * Open a side chat attached to `:conversationId` (the primary). The child
+ * inherits the parent's backend/mode/model/profile and is seeded with the
+ * parent's recent transcript as hidden model context. Works while the parent
+ * is running. With `text`/`attachments`, the first prompt is sent immediately
+ * (`/side <question>`); otherwise the side chat opens empty (`/side`).
+ */
+agentRoutes.post("/api/agents/conversations/:conversationId/side-chats", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const parentConversationId = c.req.param("conversationId");
+  const body = await c.req
+    .json<{
+      text?: string;
+      attachments?: AgentPromptAttachment[];
+      clientEventId?: string;
+      clientMessageId?: string;
+      clientTimezone?: string;
+    }>()
+    .catch(() => ({}) as Record<string, never>);
+  let created: Awaited<ReturnType<typeof agentRuntimeManager.createSideChat>>;
+  try {
+    created = await agentRuntimeManager.createSideChat(workspace, parentConversationId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not open a side chat.";
+    const status = /^Unknown parent conversation/.test(message) ? 404 : 400;
+    return c.json({ error: message }, status);
+  }
+  const text = body.text?.trim() ?? "";
+  if (!text && (!body.attachments || body.attachments.length === 0)) {
+    const snapshot = await agentRuntimeManager.getConversationSnapshotHead(
+      workspace,
+      created.conversation.id
+    );
+    return c.json(
+      {
+        snapshot: snapshot ?? {
+          conversation: created.conversation,
+          events: [],
+          window: { oldestSeq: 0, newestSeq: 0, hasOlder: false },
+        },
+      },
+      201
+    );
+  }
+  const snapshot = await agentRuntimeManager.promptConversation(
+    workspace,
+    created.conversation.id,
+    text,
+    body.attachments,
+    {
+      ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
+      ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+      ...(body.clientTimezone ? { clientTimezone: body.clientTimezone } : {}),
+    }
+  );
+  return c.json({ snapshot }, 201);
+});
+
+agentRoutes.get("/api/agents/conversations/:conversationId/side-chats", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const parentConversationId = c.req.param("conversationId");
+  c.header("Cache-Control", "no-store, max-age=0");
+  const conversations = await agentRuntimeManager.listSideChats(workspace, parentConversationId);
+  return c.json({ conversations });
+});
+
 agentRoutes.post("/api/agents/conversations/:conversationId/fork", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");

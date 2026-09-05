@@ -61,6 +61,9 @@ function originMergeKey(
   if (origin.kind === "trigger") {
     return `trigger:${origin.triggerId}:${origin.firedAt}`;
   }
+  if (origin.kind === "side-chat") {
+    return `side-chat:${origin.parentConversationId}`;
+  }
   return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 
