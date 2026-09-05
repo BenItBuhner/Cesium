@@ -60,6 +60,13 @@ import { harnessLog } from "./harness-diagnostics.js";
 import { buildAttachmentsReminderText } from "./attachment-reminders.js";
 import { getImportSourceForBackend } from "./import/registry.js";
 import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
+import {
+  isSideChatAwaitingFirstPrompt,
+  listSideChatsForParent,
+  prepareSideChatCreation,
+  seedSideChatFromParent,
+  type SideChatLimits,
+} from "./side-chat/side-chat-store.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -900,6 +907,51 @@ export class AgentRuntimeManager {
     return { conversation: newConversation };
   }
 
+  /** Side-chat limits come from the Cesium harness settings (env overrides included). */
+  async resolveSideChatLimits(): Promise<SideChatLimits> {
+    const settings = await getCesiumAgentSettings();
+    const { maxSideChatsPerParent, sideChatSeedMaxChars, sideChatDeltaMaxChars } =
+      settings.harness.limits;
+    return { maxSideChatsPerParent, sideChatSeedMaxChars, sideChatDeltaMaxChars };
+  }
+
+  /**
+   * Open a side chat: a durable child conversation attached to `parentConversationId`
+   * that inherits the parent's backend/mode/model/profile and is seeded with the
+   * parent's recent transcript as hidden reference context. Unlike `forkConversation`
+   * this works while the parent is still running - the seed is a snapshot and later
+   * parent activity reaches the child as deltas.
+   */
+  async createSideChat(
+    workspace: WorkspaceRecord,
+    parentConversationId: string
+  ): Promise<{ conversation: AgentConversationRecord; parent: AgentConversationRecord }> {
+    const parentRecord = await readConversationRecord(workspace.id, parentConversationId);
+    if (!parentRecord) {
+      throw new Error(`Unknown parent conversation: ${parentConversationId}`);
+    }
+    const parent = this.withBackendDefaults(parentRecord);
+    const limits = await this.resolveSideChatLimits();
+    const prepared = await prepareSideChatCreation({
+      workspace,
+      parent,
+      limits,
+      supportsSideChats: parent.capabilities.supportsSideChats === true,
+    });
+    const created = await this.createConversation(workspace, prepared.createInput);
+    await seedSideChatFromParent({ workspace, sideChat: created, parent, limits });
+    const seeded = await readConversationRecord(workspace.id, created.id);
+    return { conversation: this.withBackendDefaults(seeded ?? created), parent };
+  }
+
+  async listSideChats(
+    workspace: WorkspaceRecord,
+    parentConversationId: string
+  ): Promise<AgentConversationRecord[]> {
+    const records = await listSideChatsForParent(workspace.id, parentConversationId);
+    return records.map((record) => this.withBackendDefaults(record));
+  }
+
   async prepareRedoConversation(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -1432,7 +1484,11 @@ export class AgentRuntimeManager {
       }
     }
 
-    if (record.title === "New chat" || record.lastEventSeq === 0) {
+    if (
+      record.title === "New chat" ||
+      record.lastEventSeq === 0 ||
+      isSideChatAwaitingFirstPrompt(record)
+    ) {
       void generateConversationTitle(workspace.id, conversationId, trimmed, {
         attachmentCount: attachments?.length ?? 0,
         expectedTitle: record.title,

@@ -65,6 +65,12 @@ export type CesiumHarnessLimits = {
    * spawn their own sub-agents. Default: 1.
    */
   maxSpawnDepth: number;
+  /** Max open (non-archived) side chats attached to one parent conversation. Default: 4. */
+  maxSideChatsPerParent: number;
+  /** Char budget for the parent transcript seeded into a new side chat. Default: 32000. */
+  sideChatSeedMaxChars: number;
+  /** Char budget for each primary-chat delta block injected into a side chat. Default: 8000. */
+  sideChatDeltaMaxChars: number;
 };
 
 export type CesiumHarnessSettings = {

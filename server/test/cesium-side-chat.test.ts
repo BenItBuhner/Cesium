@@ -12,7 +12,9 @@ import {
   readSideChatReminderRaw,
   sideChatDeliveryStateFromEvents,
 } from "../src/lib/agents/side-chat/side-chat-context.js";
-import type { AgentStoredEvent } from "../src/lib/agents/types.js";
+import { SideChatTail } from "../src/lib/agents/side-chat/side-chat-tail.js";
+import { publish } from "../src/cache/pubsub.js";
+import type { AgentManagerEvent, AgentStoredEvent } from "../src/lib/agents/types.js";
 
 type EventInput = Omit<AgentStoredEvent, "eventId" | "conversationId" | "createdAt"> & {
   createdAt?: number;
@@ -247,6 +249,59 @@ test("delivery state derives from persisted reminders", () => {
   });
   assert.equal(readSideChatReminderRaw({ sideChat: { kind: "nope" } }), null);
   assert.equal(readSideChatReminderRaw(null), null);
+});
+
+const STORE_CHANNEL = "opencursor:agent:store-events";
+
+async function publishParentEvent(event: AgentStoredEvent, workspaceId = "ws"): Promise<void> {
+  const payload: AgentManagerEvent = {
+    type: "event",
+    workspaceId,
+    conversationId: event.conversationId,
+    event,
+  };
+  await publish(STORE_CHANNEL, payload);
+}
+
+test("SideChatTail buffers only newer parent events, dedupes, and honors discardThrough", async () => {
+  const tail = new SideChatTail({ workspaceId: "ws", parentConversationId: PARENT_ID, sinceSeq: 5 });
+  tail.attach();
+  try {
+    await publishParentEvent(ev({ seq: 4, kind: "status", status: "idle" }));
+    await publishParentEvent(ev({ seq: 6, kind: "user_message", messageId: "u6", content: "six" }));
+    await publishParentEvent(ev({ seq: 6, kind: "user_message", messageId: "u6", content: "six" }));
+    await publishParentEvent(ev({ seq: 8, kind: "status", status: "idle" }));
+    await publishParentEvent(ev({ seq: 7, kind: "assistant_message_chunk", messageId: "a", text: "seven" }));
+    // Other conversations and other workspaces are ignored.
+    await publishParentEvent(
+      { ...ev({ seq: 9, kind: "status", status: "idle" }), conversationId: "someone-else" },
+      "ws"
+    );
+    await publishParentEvent(ev({ seq: 10, kind: "status", status: "idle" }), "other-workspace");
+    assert.equal(tail.hasPending(), true);
+
+    tail.discardThrough(6);
+    const drained = tail.drain();
+    assert.deepEqual(
+      drained.map((event) => event.seq),
+      [7, 8],
+      "seq 4 predates the cursor, 6 was discarded, 7/8 are delivered in order"
+    );
+    assert.equal(tail.throughSeq, 8);
+    assert.equal(tail.hasPending(), false);
+    assert.deepEqual(tail.drain(), []);
+
+    await publish(STORE_CHANNEL, {
+      type: "conversation_deleted",
+      workspaceId: "ws",
+      conversationId: PARENT_ID,
+    } satisfies AgentManagerEvent);
+    assert.equal(tail.parentDeleted, true);
+  } finally {
+    tail.detach();
+  }
+  await publishParentEvent(ev({ seq: 11, kind: "status", status: "idle" }));
+  assert.equal(tail.hasPending(), false, "detached tails stop buffering");
 });
 
 test("unavailable notice is a one-shot block", () => {
