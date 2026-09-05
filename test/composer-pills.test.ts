@@ -21,7 +21,6 @@ import {
   createDefaultWorkspaceSession,
   mergeWorkspaceSessionFromImport,
 } from "../src/lib/workspace-session.ts";
-import type { ModelInfo } from "../src/lib/types.ts";
 
 function insightsWith(patch: Partial<WorkspaceInsights>): WorkspaceInsights {
   return { ...createEmptyWorkspaceInsights(), ...patch };
@@ -39,37 +38,36 @@ describe("composer pills visibility", () => {
     });
   });
 
-  test("resolve prefers per-conversation state, then last-used default", () => {
+  test("resolve prefers per-conversation state, then the account default", () => {
+    const accountDefault = { ...DEFAULT_COMPOSER_PILLS_VISIBILITY, diff: false };
     const scope = {
-      composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY, diff: false },
       composerPillsVisibilityByConversationId: {
         "conv-a": { ...DEFAULT_COMPOSER_PILLS_VISIBILITY, work: false },
       },
     };
     // Conversation with its own state keeps it.
-    assert.equal(resolveComposerPillsVisibility(scope, "conv-a").work, false);
-    assert.equal(resolveComposerPillsVisibility(scope, "conv-a").diff, true);
-    // Unknown conversation inherits the last-used default.
-    assert.equal(resolveComposerPillsVisibility(scope, "conv-new").diff, false);
-    assert.equal(resolveComposerPillsVisibility(scope, "conv-new").work, true);
-    // No conversation (draft) also inherits the last-used default.
-    assert.equal(resolveComposerPillsVisibility(scope, null).diff, false);
+    assert.equal(resolveComposerPillsVisibility(scope, "conv-a", accountDefault).work, false);
+    assert.equal(resolveComposerPillsVisibility(scope, "conv-a", accountDefault).diff, true);
+    // Unknown conversation inherits the account default.
+    assert.equal(resolveComposerPillsVisibility(scope, "conv-new", accountDefault).diff, false);
+    assert.equal(resolveComposerPillsVisibility(scope, "conv-new", accountDefault).work, true);
+    // No conversation (draft) also inherits the account default.
+    assert.equal(resolveComposerPillsVisibility(scope, null, accountDefault).diff, false);
+    // Without an account default the built-in defaults apply.
+    assert.deepEqual(resolveComposerPillsVisibility(scope, null), DEFAULT_COMPOSER_PILLS_VISIBILITY);
   });
 
-  test("withComposerPillsVisibility writes per-conversation state and the new default", () => {
-    const start = {
-      composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY },
-      composerPillsVisibilityByConversationId: {},
-    };
+  test("withComposerPillsVisibility pins per-conversation state only", () => {
+    const start = { composerPillsVisibilityByConversationId: {} };
     const next = withComposerPillsVisibility(start, "conv-a", {
       ...DEFAULT_COMPOSER_PILLS_VISIBILITY,
       sync: false,
     });
-    assert.equal(next.composerPillsVisibility?.sync, false);
     assert.equal(next.composerPillsVisibilityByConversationId?.["conv-a"]?.sync, false);
-    // A brand new conversation now inherits sync: false…
-    assert.equal(resolveComposerPillsVisibility(next, "conv-b").sync, false);
-    // …while conv-a keeps its own record even if the default changes later.
+    // The account default is owned by the settings document, so a brand new
+    // conversation does not inherit from the workspace scope…
+    assert.equal(resolveComposerPillsVisibility(next, "conv-b").sync, true);
+    // …while conv-a keeps its own record even after other chats change.
     const third = withComposerPillsVisibility(next, "conv-b", {
       ...DEFAULT_COMPOSER_PILLS_VISIBILITY,
       sync: true,
@@ -79,17 +77,13 @@ describe("composer pills visibility", () => {
     assert.equal(resolveComposerPillsVisibility(third, "conv-b").diff, false);
   });
 
-  test("withComposerPillsVisibility without a conversation only updates the default", () => {
-    const start = {
-      composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY },
-      composerPillsVisibilityByConversationId: {},
-    };
+  test("withComposerPillsVisibility without a conversation is a no-op", () => {
+    const start = { composerPillsVisibilityByConversationId: {} };
     const next = withComposerPillsVisibility(start, null, {
       ...DEFAULT_COMPOSER_PILLS_VISIBILITY,
       actions: false,
     });
-    assert.equal(next.composerPillsVisibility?.actions, false);
-    assert.deepEqual(next.composerPillsVisibilityByConversationId, {});
+    assert.equal(next, start);
   });
 });
 
@@ -322,13 +316,18 @@ describe("quick action visibility rules", () => {
 });
 
 describe("workspace session composer pills persistence", () => {
-  test("merge normalizes pills visibility and per-conversation map", () => {
-    const model: ModelInfo = { id: "m", name: "M", provider: "auto" };
-    const base = createDefaultWorkspaceSession([{ id: "t", title: "T", active: true }], model);
+  test("merge normalizes the per-conversation maps and strips legacy draft defaults", () => {
+    const base = createDefaultWorkspaceSession([{ id: "t", title: "T", active: true }]);
     const merged = mergeWorkspaceSessionFromImport(base, {
       schemaVersion: 1,
       chat: {
+        // Pre-account sessions persisted the new-chat defaults here; they now
+        // live in the account settings document and must not round-trip.
         composerPillsVisibility: { diff: false },
+        composerStatusBarVisibility: { repo: false },
+        backendId: "cursor-sdk",
+        mode: "plan",
+        model: { id: "m", name: "M", provider: "auto" },
         composerPillsVisibilityByConversationId: {
           "conv-1": { work: false },
           "": { diff: false },
@@ -338,13 +337,12 @@ describe("workspace session composer pills persistence", () => {
         },
       },
     });
-    assert.deepEqual(merged.chat.composerPillsVisibility, {
-      diff: false,
-      conflicts: true,
-      sync: true,
-      work: true,
-      actions: true,
-    });
+    const chat = merged.chat as Record<string, unknown>;
+    assert.equal("composerPillsVisibility" in chat, false);
+    assert.equal("composerStatusBarVisibility" in chat, false);
+    assert.equal("backendId" in chat, false);
+    assert.equal("mode" in chat, false);
+    assert.equal("model" in chat, false);
     assert.deepEqual(merged.chat.composerPillsVisibilityByConversationId, {
       "conv-1": { diff: true, conflicts: true, sync: true, work: false, actions: true },
     });

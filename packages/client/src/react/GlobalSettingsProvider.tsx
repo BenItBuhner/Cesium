@@ -21,6 +21,7 @@ import {
 } from "../global-settings-cache";
 import {
   fetchGlobalSettings,
+  isRevisionConflictError,
   saveGlobalSettings,
   fetchModelToggleState,
   refreshModelToggleState,
@@ -35,9 +36,43 @@ import { recordPerfSample } from "../dev-perf";
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
   ready: boolean;
+  /**
+   * True once the in-memory settings were fetched from the current settings
+   * server (as opposed to factory defaults or the offline cache). One-time
+   * migrations and cloud pushes gate on this so a failed boot fetch can never
+   * leak stale or default state into a durable store.
+   */
+  hydrated: boolean;
+  /**
+   * Increments on every user-originated edit (`updateSettings` returning a
+   * new object). Hydration from an engine, cache seeding, and model-toggle
+   * syncs do not bump it, so account sync can tell "the user changed
+   * something here" apart from "this device loaded another engine's copy".
+   */
+  editVersion: number;
+  /**
+   * Increments on every one-time migration (`migrateSettings`): folding a
+   * device's pre-account stores into the settings. Migrations are weaker than
+   * user edits for account sync - they land only when nothing else changed
+   * the account in the meantime, so an old device coming online can never
+   * clobber a pick the user just made elsewhere.
+   */
+  migrationVersion: number;
   settingsServerId: string | null;
   settingsServerMissing: boolean;
   updateSettings: (
+    updater: (current: GlobalSettingsState) => GlobalSettingsState
+  ) => void;
+  /** Apply a one-time legacy-store migration (bumps `migrationVersion`, not `editVersion`). */
+  migrateSettings: (
+    updater: (current: GlobalSettingsState) => GlobalSettingsState
+  ) => void;
+  /**
+   * Replace settings from the account document. Behaves like a hydration for
+   * edit tracking (no `editVersion` bump) but, unlike a server fetch, is
+   * persisted to the settings server as soon as one is hydrated.
+   */
+  applyAccountSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
   /** Re-fetch global settings from the server without writing local state back. */
@@ -68,6 +103,28 @@ function createDefaultState(): GlobalSettingsState {
   return createDefaultGlobalSettings();
 }
 
+/**
+ * Persist the latest in-memory settings to the settings server. Several
+ * clients of one account share an engine, and the account document makes
+ * them write the same converged state at about the same time; when one of
+ * them loses the `If-Match` race (412) the registry has already dropped the
+ * stale tag, so a single retry with the freshest state lands the write
+ * instead of silently leaving the engine behind until the next edit.
+ */
+async function persistGlobalSettings(
+  readLatest: () => GlobalSettingsState,
+  options: { keepalive?: boolean; server: ServerRequestContext }
+): Promise<void> {
+  try {
+    await saveGlobalSettings(readLatest(), options);
+  } catch (error) {
+    if (!isRevisionConflictError(error)) {
+      return;
+    }
+    await saveGlobalSettings(readLatest(), options).catch(() => {});
+  }
+}
+
 export function GlobalSettingsProvider({
   children,
   serverSettingsEnabled = true,
@@ -95,6 +152,11 @@ export function GlobalSettingsProvider({
    * reverted" wipe.
    */
   const hydratedFromServerRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
+  const markHydrated = useCallback((value: boolean) => {
+    hydratedFromServerRef.current = value;
+    setHydrated(value);
+  }, []);
   const settingsServerIdRef = useRef<string | null>(null);
   const seededCacheServerIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -208,7 +270,7 @@ export function GlobalSettingsProvider({
         // flush would persist them and wipe the user's saved customizations.
         return;
       }
-      await saveGlobalSettings(settingsRef.current, { ...options, server }).catch(() => {});
+      await persistGlobalSettings(() => settingsRef.current, { ...options, server });
     },
     [flushModelToggleUpdates, ready]
   );
@@ -218,7 +280,7 @@ export function GlobalSettingsProvider({
 
     // Any settings-server/context change invalidates hydration; saves stay
     // blocked until a fetch against the new context succeeds.
-    hydratedFromServerRef.current = false;
+    markHydrated(false);
 
     async function load(): Promise<void> {
       if (!settingsRequestContext) {
@@ -239,7 +301,7 @@ export function GlobalSettingsProvider({
         const result = await fetchGlobalSettings({ server: settingsRequestContext });
         if (!mounted) return;
         const normalized = normalizeLoadedGlobalSettings(result.settings);
-        hydratedFromServerRef.current = true;
+        markHydrated(true);
         const serverId = settingsServerIdRef.current;
         if (serverId) {
           writeCachedGlobalSettings(serverId, normalized);
@@ -265,7 +327,7 @@ export function GlobalSettingsProvider({
     return () => {
       mounted = false;
     };
-  }, [serverSettingsEnabled, settingsRequestContext]);
+  }, [markHydrated, serverSettingsEnabled, settingsRequestContext]);
 
   const syncModelToggleState = useCallback(async () => {
     const server = settingsServerRef.current;
@@ -291,7 +353,7 @@ export function GlobalSettingsProvider({
     try {
       const result = await fetchGlobalSettings({ server });
       const normalized = normalizeLoadedGlobalSettings(result.settings);
-      hydratedFromServerRef.current = true;
+      markHydrated(true);
       const serverId = settingsServerIdRef.current;
       if (serverId) {
         writeCachedGlobalSettings(serverId, normalized);
@@ -301,7 +363,7 @@ export function GlobalSettingsProvider({
     } catch {
       // Offline or auth; keep in-memory state.
     }
-  }, []);
+  }, [markHydrated]);
 
   const refreshModels = useCallback(async () => {
     const server = settingsServerRef.current;
@@ -380,7 +442,7 @@ export function GlobalSettingsProvider({
       if (!server) {
         return;
       }
-      void saveGlobalSettings(settingsRef.current, { server }).catch(() => {});
+      void persistGlobalSettings(() => settingsRef.current, { server });
     }, SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -443,7 +505,35 @@ export function GlobalSettingsProvider({
     syncModelToggleState,
   ]);
 
+  const [editVersion, setEditVersion] = useState(0);
   const updateSettings = useCallback(
+    (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
+      setSettings((current) => {
+        const next = updater(current);
+        if (next !== current) {
+          setEditVersion((version) => version + 1);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const [migrationVersion, setMigrationVersion] = useState(0);
+  const migrateSettings = useCallback(
+    (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
+      setSettings((current) => {
+        const next = updater(current);
+        if (next !== current) {
+          setMigrationVersion((version) => version + 1);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const applyAccountSettings = useCallback(
     (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
       setSettings((current) => updater(current));
     },
@@ -454,9 +544,14 @@ export function GlobalSettingsProvider({
     () => ({
       settings,
       ready,
+      hydrated,
+      editVersion,
+      migrationVersion,
       settingsServerId: settingsServer?.id ?? null,
       settingsServerMissing: requiresDefaultServer,
       updateSettings,
+      migrateSettings,
+      applyAccountSettings,
       refreshSettings: refetchGlobalSettingsFromServer,
       refreshModels,
       modelsRefreshing,
@@ -464,6 +559,11 @@ export function GlobalSettingsProvider({
       saveModelToggleUpdates,
     }),
     [
+      applyAccountSettings,
+      editVersion,
+      hydrated,
+      migrateSettings,
+      migrationVersion,
       ready,
       requiresDefaultServer,
       settings,

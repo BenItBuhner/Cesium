@@ -5,9 +5,9 @@ import { v } from "convex/values";
  * Cesium Cloud Context - user-scoped, cross-device state.
  *
  * Everything a signed-in user needs to sit down at any Cesium client and be
- * productive immediately: their engines (servers), personalization payload,
- * agent backend preferences, onboarding progress, and portable conversation
- * snapshots. Engines themselves stay self-hosted; only context lives here.
+ * productive immediately: their engines (servers), the account settings
+ * document, onboarding progress, and portable conversation snapshots.
+ * Engines themselves stay self-hosted; only context lives here.
  */
 export default defineSchema({
   /**
@@ -134,24 +134,19 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user_kind", ["userId", "kind"]),
 
-  /** Personalization: the client `UserPreferences` payload as portable JSON. */
+  /**
+   * The account settings document (`{ version: 2, settings }` JSON): every
+   * client-side preference that follows the user - theme, rail layout,
+   * keyboard shortcuts, feature flags, and the composer defaults (last-used
+   * harness / mode / model per harness). Engine-scoped state (model toggles
+   * merged against a live catalog, remembered permissions keyed by workspace)
+   * stays on each engine. `updatedAt` is the conflict-resolution clock.
+   */
   preferences: defineTable({
     userId: v.id("users"),
     payload: v.string(),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
-
-  /** Per-backend agent setup the user completed (not secrets - presence/prefs). */
-  agentPrefs: defineTable({
-    userId: v.id("users"),
-    backendId: v.string(),
-    enabled: v.boolean(),
-    defaultModelId: v.optional(v.string()),
-    defaultModelName: v.optional(v.string()),
-    configuredAt: v.number(),
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_backend", ["userId", "backendId"]),
 
   /** Setup-flow progress, so onboarding resumes on any device. */
   onboarding: defineTable({

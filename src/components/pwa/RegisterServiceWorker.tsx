@@ -2,8 +2,9 @@
 
 import { useEffect } from "react";
 import {
-  USER_PREFERENCES_STORAGE_KEY,
-  parseUserPreferences,
+  FEATURES_BOOT_CACHE_STORAGE_KEY,
+  USER_PREFERENCES_CHANGED_EVENT,
+  readFeaturesBootCache,
   type UserPreferences,
 } from "@/lib/preferences";
 import { resolveEffectiveUserPreferences } from "@/lib/platform-feature-flags";
@@ -12,11 +13,14 @@ import { isCesiumDesktopApp } from "@/lib/desktop-environment";
 const IPAD_RESUME_SW_URL = "/ipad-resume-sw.js";
 const IPAD_RESUME_SW_CACHE_PREFIX = "opencursor-ipad-resume-";
 
+/**
+ * This registrar mounts outside the settings providers, so it reads the
+ * boot-cache mirror the preferences provider maintains from account settings
+ * and re-syncs on the change event that provider broadcasts.
+ */
 function readIpadResumeCacheEnabled(): boolean {
   try {
-    return resolveEffectiveUserPreferences(
-      parseUserPreferences(window.localStorage.getItem(USER_PREFERENCES_STORAGE_KEY))
-    ).experimentalIpadResumeCache;
+    return resolveEffectiveUserPreferences(readFeaturesBootCache()).experimentalIpadResumeCache;
   } catch {
     return false;
   }
@@ -107,7 +111,7 @@ export function RegisterServiceWorker() {
     }
 
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === USER_PREFERENCES_STORAGE_KEY) {
+      if (event.key === FEATURES_BOOT_CACHE_STORAGE_KEY) {
         syncRegistration();
       }
     };
@@ -122,16 +126,13 @@ export function RegisterServiceWorker() {
       }
     };
     window.addEventListener("storage", handleStorage);
-    window.addEventListener("opencursor:user-preferences-changed", handlePreferencesChanged);
+    window.addEventListener(USER_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged);
 
     return () => {
       disposed = true;
       window.removeEventListener("load", syncRegistration);
       window.removeEventListener("storage", handleStorage);
-      window.removeEventListener(
-        "opencursor:user-preferences-changed",
-        handlePreferencesChanged
-      );
+      window.removeEventListener(USER_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged);
     };
   }, []);
 

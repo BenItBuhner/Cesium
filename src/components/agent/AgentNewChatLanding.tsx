@@ -71,10 +71,7 @@ import {
   getServerRailAppearance,
   isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
-import {
-  getLastWorkspaceForServer,
-  rememberLastWorkspaceForServer,
-} from "@/lib/per-server-workspace-memory";
+import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
   NO_WORKSPACE_PICKER_LABEL,
@@ -140,7 +137,6 @@ export function AgentNewChatLanding({
   } = useOpenInEditor();
   const {
     workspaceInfo,
-    workspaceSession,
     openWorkspaceById,
     openFolder,
     gitStatus,
@@ -162,6 +158,7 @@ export function AgentNewChatLanding({
     setRailFilters,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
+  const { rememberLastWorkspaceForServer, getLastWorkspaceForServer } = useLastWorkspaceMemory();
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces, byServerId: directoryByServerId } =
     useWorkspaceDirectory();
@@ -189,6 +186,7 @@ export function AgentNewChatLanding({
     noWorkspaceDraft,
     handleSubmit,
     activeCloudDevice,
+    composer,
   } = useAgentDraftComposer({ onInstantSubmit });
   const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
   const codespaces = useGithubCodespaces();
@@ -297,9 +295,11 @@ export function AgentNewChatLanding({
       activeServer.id,
       activeWorkspaceId,
       directoryByServerId,
+      getLastWorkspaceForServer,
       openFolder,
       openWorkspaceById,
       railFilters,
+      rememberLastWorkspaceForServer,
       setActiveCloudDeviceId,
       setActiveServer,
       setRailFilters,
@@ -408,7 +408,7 @@ export function AgentNewChatLanding({
       onModeChange: setDraftMode,
       model: draftModel,
       onModelChange: (next: typeof draftModel) => setDraftModel(next),
-      backendId: draftBackend?.id ?? workspaceSession.chat.backendId,
+      backendId: draftBackend?.id ?? composer.backendId,
       backends,
       onBackendChange: setDraftBackend,
       models: draftModels,
@@ -434,7 +434,7 @@ export function AgentNewChatLanding({
     setDraftBackend,
     setDraftMode,
     setDraftModel,
-    workspaceSession.chat.backendId,
+    composer.backendId,
   ]);
 
   useEffect(() => {
@@ -875,7 +875,7 @@ export function AgentNewChatLanding({
                 onModelChange={(next) => {
                   setDraftModel(next);
                 }}
-                backendId={draftBackend?.id ?? workspaceSession.chat.backendId}
+                backendId={draftBackend?.id ?? composer.backendId}
                 backends={backends}
                 onBackendChange={(next) => setDraftBackend(next)}
                 models={draftModels}

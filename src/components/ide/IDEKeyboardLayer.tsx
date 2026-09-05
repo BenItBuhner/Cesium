@@ -40,6 +40,7 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
+import { updateComposerDraftMode } from "@/lib/chat-draft-defaults";
 import { reloadAppWindow } from "@/lib/desktop-environment";
 import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
@@ -890,15 +891,15 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           workbench.toggleChat();
           break;
         case "workbench.action.focusChatPlanMode":
-          updateWorkspaceSession((current) => ({
+          updateSettings((current) => ({
             ...current,
-            chat: { ...current.chat, mode: "plan" },
+            composer: updateComposerDraftMode(current.composer, "plan"),
           }));
           break;
         case "workbench.action.focusChatAgentMode":
-          updateWorkspaceSession((current) => ({
+          updateSettings((current) => ({
             ...current,
-            chat: { ...current.chat, mode: "agent" },
+            composer: updateComposerDraftMode(current.composer, "agent"),
           }));
           break;
         case "recentChats.open":
@@ -1131,6 +1132,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       setPalette,
       setShellView,
       setToast,
+      updateSettings,
       updateWorkspaceSession,
       workbench,
       agentShell,

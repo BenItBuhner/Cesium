@@ -55,7 +55,11 @@ import {
   AGENT_RAIL_SOURCE_FILTER_LABELS,
   AGENT_RAIL_STATUS_FILTER_LABELS,
 } from "@/lib/agent-rail";
-import { getGlobalPinnedAgentConversationIdsSnapshot } from "@/lib/agent-rail-pins";
+import {
+  toggleCollapsedId,
+  withCollapsedIds,
+  withoutCollapsedId,
+} from "@/lib/agent-rail-collapse";
 import {
   agentRailConversationIsSettled,
   agentRailConversationNeedsAttention,
@@ -87,7 +91,7 @@ import {
   getServerDisplayLabel,
   getServerRailAppearance,
 } from "@/lib/server-rail-appearance";
-import { rememberLastWorkspaceForServer } from "@/lib/per-server-workspace-memory";
+import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
 import {
   createWorkspaceGitWorktree,
   forkAgentConversation,
@@ -143,9 +147,6 @@ const CHATS_SECTION_WORKSPACE_ID = STANDALONE_CHATS_FOLDER_SCOPE;
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
 const AGENT_RAIL_FOLDER_DRAG_TYPE = "application/x-opencursor-agent-chat-folder";
 
-const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
-const COLLAPSED_FOLDERS_STORAGE_KEY = "opencursor.agent-rail-collapsed-folders";
-
 /** "Ignore for a Day" settles the conversation for this long. */
 const DAY_MS = 86_400_000;
 
@@ -188,66 +189,6 @@ function createChatFolderId(): string {
     return crypto.randomUUID();
   }
   return `folder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_WORKSPACES_STORAGE_KEY);
-    if (!raw) {
-      return new Set();
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function readCollapsedFolderIdsFromStorage(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_FOLDERS_STORAGE_KEY);
-    if (!raw) {
-      return new Set();
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function writeCollapsedWorkspaceIdsToStorage(ids: Set<string>) {
-  try {
-    window.localStorage.setItem(
-      COLLAPSED_WORKSPACES_STORAGE_KEY,
-      JSON.stringify([...ids])
-    );
-  } catch {
-    /* quota or private mode */
-  }
-}
-
-function writeCollapsedFolderIdsToStorage(ids: Set<string>) {
-  try {
-    window.localStorage.setItem(
-      COLLAPSED_FOLDERS_STORAGE_KEY,
-      JSON.stringify([...ids])
-    );
-  } catch {
-    /* quota or private mode */
-  }
 }
 
 const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
@@ -392,6 +333,7 @@ export function AgentWorkspaceRail() {
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
+  const { rememberLastWorkspaceForServer } = useLastWorkspaceMemory();
   const dialogs = useWorkbenchDialogs();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const accountIdentity = useAccountIdentity();
@@ -441,8 +383,18 @@ export function AgentWorkspaceRail() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const workspacePickerAnchorRef = useRef<HTMLButtonElement>(null);
-  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
-  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
+  // Collapsed groups are account settings, so the rail folds the same way on
+  // every device.
+  const collapsedRailWorkspaceKeys = settings.general.collapsedRailWorkspaceKeys;
+  const collapsedRailFolderIds = settings.general.collapsedRailFolderIds;
+  const collapsedWorkspaceIds = useMemo(
+    () => new Set(collapsedRailWorkspaceKeys),
+    [collapsedRailWorkspaceKeys]
+  );
+  const collapsedFolderIds = useMemo(
+    () => new Set(collapsedRailFolderIds),
+    [collapsedRailFolderIds]
+  );
   const [draggingWorkspaceId, setDraggingWorkspaceId] = useState<string | null>(null);
   const [draggingConversationId, setDraggingConversationId] = useState<string | null>(null);
   const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
@@ -556,11 +508,6 @@ export function AgentWorkspaceRail() {
     },
     [activeWorkspaceId, gitStatus]
   );
-
-  useLayoutEffect(() => {
-    setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
-    setCollapsedFolderIds(readCollapsedFolderIdsFromStorage());
-  }, []);
 
   useEffect(() => {
     if (leftRailCollapsed && !isMobile) {
@@ -798,7 +745,7 @@ export function AgentWorkspaceRail() {
       return;
     }
     rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
-  }, [activeServer.id, activeWorkspaceId]);
+  }, [activeServer.id, activeWorkspaceId, rememberLastWorkspaceForServer]);
 
   const setAgentRailGroupBy = useCallback(
     (mode: AgentRailGroupByMode) => {
@@ -911,6 +858,7 @@ export function AgentWorkspaceRail() {
       activeWorkspaceId,
       openWorkspaceById,
       patchAgentRailSettings,
+      rememberLastWorkspaceForServer,
       setActiveServer,
       setStandaloneDraftActive,
     ]
@@ -1116,55 +1064,67 @@ export function AgentWorkspaceRail() {
     [startNewChatInWorkspace]
   );
 
-  const toggleWorkspaceCollapsed = useCallback((workspaceId: string) => {
-    setCollapsedWorkspaceIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(workspaceId)) {
-        next.delete(workspaceId);
-      } else {
-        next.add(workspaceId);
-      }
-      writeCollapsedWorkspaceIdsToStorage(next);
-      return next;
-    });
-  }, []);
+  const toggleWorkspaceCollapsed = useCallback(
+    (workspaceId: string) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          collapsedRailWorkspaceKeys: toggleCollapsedId(
+            current.general.collapsedRailWorkspaceKeys,
+            workspaceId
+          ),
+        },
+      }));
+    },
+    [updateSettings]
+  );
 
-  const toggleFolderCollapsed = useCallback((folderId: string) => {
-    setCollapsedFolderIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(folderId)) {
-        next.delete(folderId);
-      } else {
-        next.add(folderId);
-      }
-      writeCollapsedFolderIdsToStorage(next);
-      return next;
-    });
-  }, []);
+  const toggleFolderCollapsed = useCallback(
+    (folderId: string) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          collapsedRailFolderIds: toggleCollapsedId(current.general.collapsedRailFolderIds, folderId),
+        },
+      }));
+    },
+    [updateSettings]
+  );
 
   /** Collapse every section, workspace group, and folder in one shot. */
   const collapseAllRailGroups = useCallback(() => {
-    setCollapsedWorkspaceIds((prev) => {
-      const next = new Set(prev);
-      next.add(ATTENTION_SECTION_WORKSPACE_ID);
-      next.add(RUNNING_SECTION_WORKSPACE_ID);
-      next.add(PINNED_SECTION_WORKSPACE_ID);
-      next.add(CHATS_SECTION_WORKSPACE_ID);
-      for (const group of visibleGroups) {
-        next.add(resolveGroupWorkspaceAppearanceKey(group, activeServer.id));
+    updateSettings((current) => {
+      const workspaceKeys = withCollapsedIds(current.general.collapsedRailWorkspaceKeys, [
+        ATTENTION_SECTION_WORKSPACE_ID,
+        RUNNING_SECTION_WORKSPACE_ID,
+        PINNED_SECTION_WORKSPACE_ID,
+        CHATS_SECTION_WORKSPACE_ID,
+        ...visibleGroups.map((group) =>
+          resolveGroupWorkspaceAppearanceKey(group, activeServer.id)
+        ),
+      ]);
+      const folderIds = withCollapsedIds(
+        current.general.collapsedRailFolderIds,
+        current.general.chatFolders.map((folder) => folder.id)
+      );
+      if (
+        workspaceKeys === current.general.collapsedRailWorkspaceKeys &&
+        folderIds === current.general.collapsedRailFolderIds
+      ) {
+        return current;
       }
-      writeCollapsedWorkspaceIdsToStorage(next);
-      return next;
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          collapsedRailWorkspaceKeys: workspaceKeys,
+          collapsedRailFolderIds: folderIds,
+        },
+      };
     });
-    setCollapsedFolderIds((prev) => {
-      const next = new Set(prev);
-      for (const folder of settings.general.chatFolders) {
-        next.add(folder.id);
-      }
-      writeCollapsedFolderIdsToStorage(next);
-      return next;
-    });
-  }, [activeServer.id, settings.general.chatFolders, visibleGroups]);
+  }, [activeServer.id, updateSettings, visibleGroups]);
 
   const createFolderForWorkspace = useCallback(
     (_scopeId: string, options?: { conversationId?: string }) => {
@@ -1210,14 +1170,11 @@ export function AgentWorkspaceRail() {
           },
         };
       });
-      setCollapsedFolderIds((prev) => {
-        if (!prev.has(folderId)) {
-          return prev;
-        }
-        const next = new Set(prev);
-        next.delete(folderId);
-        writeCollapsedFolderIdsToStorage(next);
-        return next;
+      updateSettings((current) => {
+        const next = withoutCollapsedId(current.general.collapsedRailFolderIds, folderId);
+        return next === current.general.collapsedRailFolderIds
+          ? current
+          : { ...current, general: { ...current.general, collapsedRailFolderIds: next } };
       });
       setEditingFolderId(folderId);
     },
@@ -1229,13 +1186,13 @@ export function AgentWorkspaceRail() {
     if (folderIds.length === 0) {
       return;
     }
-    const pinnedIds = new Set(getGlobalPinnedAgentConversationIdsSnapshot());
+    const pinnedIds = new Set(settings.general.pinnedAgentConversationIds);
     for (const conversationId of folderIds) {
       if (!pinnedIds.has(conversationId)) {
         pinConversation(conversationId);
       }
     }
-  }, [pinConversation, settings.general.chatFolders]);
+  }, [pinConversation, settings.general.chatFolders, settings.general.pinnedAgentConversationIds]);
 
   const updateFolder = useCallback(
     (folderId: string, updater: (folder: ChatFolderState) => ChatFolderState) => {

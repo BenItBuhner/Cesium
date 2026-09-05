@@ -3568,7 +3568,7 @@ const handleNativeComposerKeyDown = useCallback(
   const composerStatusBarVisibility = resolveComposerStatusBarVisibilityForConversation(
     workspaceSession.chat,
     conversationId,
-    settings.general.composerStatusBarVisibility
+    settings.composer.statusBarVisibility
   );
   const statusBarHasVisibleItems =
     statusBarMounted &&

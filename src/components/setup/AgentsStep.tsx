@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Circle, Download, KeyRound, Loader2 } from "lucide-react";
-import { useCloudContext } from "@/contexts/CloudContext";
 import {
   installEngineBackendCli,
   listEngineBackends,
@@ -14,8 +13,9 @@ import { HarnessAuthSyncOffer } from "@/components/editor/settings/HarnessAuthSy
 /**
  * Step 2 - set up your agents. Lists the engine's backends with live
  * availability, offers one-click CLI installs for missing harnesses (streamed
- * install logs) and API-key auth for the built-in Cesium Agent. Configured
- * backends are remembered in the user's cloud context.
+ * install logs) and API-key auth for the built-in Cesium Agent. Harness
+ * availability is an engine fact (the engine reports what it can run), so
+ * nothing about it is mirrored to the account.
  */
 export function AgentsStep({
   baseUrl,
@@ -24,7 +24,6 @@ export function AgentsStep({
   baseUrl: string;
   onReady: (ready: boolean) => void;
 }) {
-  const cloud = useCloudContext();
   const serverContext = useMemo(() => ({ baseUrl }), [baseUrl]);
   const [backends, setBackends] = useState<EngineBackendInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,16 +69,6 @@ export function AgentsStep({
             ? `${backend.label} installed and ready.`
             : `${backend.label} installed. ${result.authHint ?? "Authenticate on the engine host to activate it."}`
         );
-        if (cloud.actions) {
-          void cloud.actions
-            .saveAgentPref({
-              backendId: backend.id,
-              enabled: true,
-              defaultModelId: backend.defaultModelId,
-              defaultModelName: backend.defaultModelName,
-            })
-            .catch(() => undefined);
-        }
       } else {
         setInstallNote(result.error ?? "Install failed.");
       }
@@ -105,11 +94,6 @@ export function AgentsStep({
         apiKey: apiKey.trim(),
         ...(custom ? { providerBaseUrl: custom, label: "Custom provider" } : {}),
       });
-      if (cloud.actions) {
-        void cloud.actions
-          .saveAgentPref({ backendId: keyFormBackend, enabled: true })
-          .catch(() => undefined);
-      }
       setKeyFormBackend(null);
       setApiKey("");
       await refresh();

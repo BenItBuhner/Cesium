@@ -93,10 +93,11 @@ describe("global settings", () => {
     assert.equal(settings.general.composerStatusBarVisibility, undefined);
   });
 
-  test("normalizes explicit composer status defaults", () => {
+  test("migrates the legacy explicit composer status default into the composer slice", () => {
     const base = createDefaultGlobalSettings();
+    const { composer: _composer, ...withoutComposer } = base;
     const settings = normalizeLoadedGlobalSettings({
-      ...base,
+      ...withoutComposer,
       general: {
         ...base.general,
         composerStatusBarVisibility: {
@@ -106,12 +107,63 @@ describe("global settings", () => {
         },
       },
     });
-    assert.deepEqual(settings.general.composerStatusBarVisibility, {
+    assert.deepEqual(settings.composer.statusBarVisibility, {
       repo: false,
       branch: false,
       goal: true,
       context: false,
     });
+    assert.equal("composerStatusBarVisibility" in settings.general, false);
+  });
+
+  test("carries the account composer defaults and new rail/workspace memory slices", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      composer: {
+        backendId: "cursor-sdk",
+        mode: "plan",
+        model: { id: "composer-2.5", name: "Composer 2.5", provider: "cursor", backendId: "cursor-sdk" },
+        lastModelByBackend: {},
+        statusBarVisibility: { repo: true, branch: true, goal: true, context: true },
+        pillsVisibility: { diff: true, conflicts: true, sync: true, work: true, actions: true },
+        updatedAt: 12,
+      },
+      general: {
+        ...base.general,
+        pinnedAgentConversationIds: ["conv-1", "conv-1", "", "conv-2"],
+        collapsedRailWorkspaceKeys: ["srv:ws-1"],
+        collapsedRailFolderIds: ["folder-1"],
+        lastWorkspaceByServer: { "srv-1": "ws-1", "": "ws-2", "srv-3": "" },
+      },
+    });
+    assert.equal(settings.composer.backendId, "cursor-sdk");
+    assert.equal(settings.composer.mode, "plan");
+    assert.equal(settings.composer.model.id, "composer-2.5");
+    assert.equal(settings.composer.updatedAt, 12);
+    assert.deepEqual(settings.general.pinnedAgentConversationIds, ["conv-1", "conv-2"]);
+    assert.deepEqual(settings.general.collapsedRailWorkspaceKeys, ["srv:ws-1"]);
+    assert.deepEqual(settings.general.collapsedRailFolderIds, ["folder-1"]);
+    assert.deepEqual(settings.general.lastWorkspaceByServer, { "srv-1": "ws-1" });
+  });
+
+  test("features carry the former client-only user preferences", () => {
+    const base = createDefaultGlobalSettings();
+    assert.deepEqual(base.features, {
+      experimentalIpadMode: false,
+      experimentalIpadCustomButtons: false,
+      experimentalIpadWindowedTabInset: false,
+      experimentalIpadResumeCache: false,
+      vscodeExtensionsBeta: false,
+    });
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      features: { experimentalIpadMode: true, vscodeExtensionsBeta: "yes" },
+    });
+    assert.equal(settings.features.experimentalIpadMode, true);
+    // Legacy documents without a custom-buttons flag follow the iPad mode toggle.
+    assert.equal(settings.features.experimentalIpadCustomButtons, true);
+    assert.equal(settings.features.vscodeExtensionsBeta, false);
   });
 
   test("defaults workspace rail appearances to empty map", () => {

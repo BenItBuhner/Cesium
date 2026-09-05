@@ -347,6 +347,13 @@ async function requestWithEtag<T>(
   return (await response.json()) as T;
 }
 
+const REVISION_CONFLICT_MESSAGE_PREFIX = "Revision conflict:";
+
+/** True for the error `mutateWithEtag` throws on 412 Precondition Failed. */
+export function isRevisionConflictError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith(REVISION_CONFLICT_MESSAGE_PREFIX);
+}
+
 /**
  * Makes a PUT-like request that includes `If-Match` from the registry (if
  * present) and captures the fresh ETag from the response for future writes.
@@ -404,7 +411,7 @@ async function mutateWithEtag(
     etagRegistry.delete(scopedRevisionKey);
     const etag = response.headers.get("etag");
     throw new Error(
-      `Revision conflict: server rejected If-Match (current: ${etag ?? "unknown"})`
+      `${REVISION_CONFLICT_MESSAGE_PREFIX} server rejected If-Match (current: ${etag ?? "unknown"})`
     );
   }
 

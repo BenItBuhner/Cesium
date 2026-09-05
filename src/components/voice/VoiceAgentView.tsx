@@ -12,7 +12,6 @@ import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
 import { Minimize2, Volume2, VolumeX, X } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useIsShellUnderlay } from "@/components/layout/ShellUnderlayContext";
 import { useAgentDraftComposer } from "@/hooks/useAgentDraftComposer";
 import type { SessionOrbStatus } from "@/lib/voice/session-orb-renderer";
@@ -38,7 +37,6 @@ const TRANSCRIPT_KIND_LABELS = {
 
 export function VoiceAgentView() {
   const session = useVoiceSession();
-  const { workspaceSession } = useWorkspace();
   const draft = useAgentDraftComposer();
   // The full-screen voice view portals above everything (z-10000), so it must
   // not render while its tree is the hidden preview layer beneath settings.
@@ -178,7 +176,7 @@ export function VoiceAgentView() {
           onModeChange={draft.setDraftMode}
           model={draft.draftModel}
           onModelChange={draft.setDraftModel}
-          backendId={draft.draftBackend?.id ?? workspaceSession.chat.backendId}
+          backendId={draft.draftBackend?.id ?? draft.composer.backendId}
           backends={draft.backends}
           onBackendChange={draft.setDraftBackend}
           models={draft.draftModels}

@@ -55,10 +55,6 @@ import {
 } from "@/lib/cloud/clerk-urls";
 import { installClerkFapiTunnel } from "@/lib/cloud/clerk-fapi-tunnel";
 import {
-  applyPersonalizationPayload,
-  collectPersonalizationPayload,
-} from "@/lib/cloud/personalization";
-import {
   adoptOnboardingForAccount,
   mergeOnboardingState,
   writeOnboardingState,
@@ -84,6 +80,7 @@ import {
   type CloudConversationCatalogRow,
 } from "@/lib/conversation-catalog";
 import { unwrapConvexActionErrors } from "@/lib/cloud/convex-errors";
+import type { CloudAccountSettingsRecord } from "@/lib/cloud/account-settings";
 import {
   consumeShareInviteFromLocation,
   setPendingShareInvite,
@@ -95,8 +92,10 @@ import {
  * Local-first remains the source of truth for the running session; the cloud
  * (Convex, identity via Clerk or a gated device key) is a mirror that makes a
  * fresh sign-in anywhere feel like sitting back down at your own desk:
- * servers, personalization, agent setup, onboarding progress, and portable
- * conversation snapshots are all restored automatically.
+ * servers, the account settings document, onboarding progress, and portable
+ * conversation snapshots are all restored automatically. Settings sync itself
+ * lives in `AccountSettingsSync` (under the settings provider); this file only
+ * exposes the live document and the save action.
  */
 
 /** Durable GitHub Codespace pairing metadata mirrored on a server row. */
@@ -202,15 +201,7 @@ export type CloudBootstrap = {
   sharedServers: CloudSharedServer[];
   incomingShares: CloudIncomingShare[];
   outgoingShares: CloudOutgoingShare[];
-  preferencesPayload: string | null;
   secrets: Array<{ kind: string; payload: string; updatedAt: number }>;
-  agentPrefs: Array<{
-    backendId: string;
-    enabled: boolean;
-    defaultModelId: string | null;
-    defaultModelName: string | null;
-    configuredAt: number;
-  }>;
   onboarding: {
     platform: string;
     completedSteps: string[];
@@ -256,15 +247,14 @@ export type CloudActions = {
   revokeServerShare(shareId: string): Promise<void>;
   /** Owner: delete a finished (declined/revoked) grant row. */
   removeServerShare(shareId: string): Promise<void>;
-  savePreferences(payload: string): Promise<void>;
+  /**
+   * Replace the account settings document. Resolves with the cloud write
+   * timestamp so the caller can record exactly which revision it is in sync
+   * with.
+   */
+  saveAccountSettings(payload: string): Promise<{ updatedAt: number }>;
   saveSecret(input: { kind: string; payload: string; updatedAt?: number }): Promise<void>;
   removeSecret(input: { kind: string }): Promise<void>;
-  saveAgentPref(input: {
-    backendId: string;
-    enabled: boolean;
-    defaultModelId?: string;
-    defaultModelName?: string;
-  }): Promise<void>;
   updateOnboarding(input: {
     platform: string;
     completeSteps?: string[];
@@ -397,6 +387,13 @@ export type CloudContextValue = {
    * consumers read that store rather than this list.
    */
   conversationCatalogs: CloudConversationCatalog[] | null;
+  /**
+   * Live account settings document. `undefined` while the cloud is off, the
+   * user is signed out, or the first result is still loading; `null` once it
+   * is known the user has never saved one. `AccountSettingsSync` reconciles it
+   * with the global settings provider.
+   */
+  accountSettings: CloudAccountSettingsRecord | null | undefined;
 };
 
 /**
@@ -422,6 +419,7 @@ const DISABLED_VALUE: CloudContextValue = {
   actions: null,
   github: null,
   conversationCatalogs: null,
+  accountSettings: undefined,
 };
 
 const CloudContext = createContext<CloudContextValue>(DISABLED_VALUE);
@@ -433,42 +431,6 @@ export function useCloudContext(): CloudContextValue {
 /* ------------------------------------------------------------------------ */
 /* Autonomous sync effects                                                   */
 /* ------------------------------------------------------------------------ */
-
-const PERSONALIZATION_SYNC_MARKER_KEY = "cesium-cloud-personalization-last-sync";
-export const CLOUD_PERSONALIZATION_APPLIED_EVENT = "cesium:cloud-personalization-applied";
-
-/**
- * Reconcile personalization between local storage and the cloud:
- * - cloud empty → seed it from local.
- * - cloud changed since our last sync → apply it locally (fresh device or
- *   another device updated it) and broadcast so theme/preferences re-read.
- * - cloud unchanged but local differs → push local up.
- */
-function reconcilePersonalization(
-  cloudPayload: string | null,
-  save: (payload: string) => Promise<void>
-): void {
-  const store = clientKeyValueStore();
-  const local = collectPersonalizationPayload();
-  const lastSynced = store.getItem(PERSONALIZATION_SYNC_MARKER_KEY);
-  if (cloudPayload === null) {
-    void save(local).then(() => store.setItem(PERSONALIZATION_SYNC_MARKER_KEY, local));
-    return;
-  }
-  if (cloudPayload === local) {
-    store.setItem(PERSONALIZATION_SYNC_MARKER_KEY, cloudPayload);
-    return;
-  }
-  if (lastSynced === cloudPayload) {
-    void save(local).then(() => store.setItem(PERSONALIZATION_SYNC_MARKER_KEY, local));
-    return;
-  }
-  const changed = applyPersonalizationPayload(cloudPayload);
-  store.setItem(PERSONALIZATION_SYNC_MARKER_KEY, cloudPayload);
-  if (changed) {
-    getClientPlatform().emitEvent(CLOUD_PERSONALIZATION_APPLIED_EVENT);
-  }
-}
 
 /**
  * Merge cloud servers into the local connection list (additive). Tombstoned
@@ -677,6 +639,13 @@ function CloudBridge({
     active ? identityArgs : "skip"
   ) as CloudConversationCatalog[] | null | undefined;
 
+  // Also separate from bootstrap: the settings document changes on every
+  // model pick / rail tweak on any device.
+  const accountSettings = useQuery(
+    api.preferences.get,
+    active ? identityArgs : "skip"
+  ) as CloudAccountSettingsRecord | null | undefined;
+
   const register = useMutation(api.context.register);
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
@@ -686,10 +655,9 @@ function CloudBridge({
   const updateShareMutation = useMutation(api.shares.update);
   const revokeShareMutation = useMutation(api.shares.revoke);
   const removeShareMutation = useMutation(api.shares.remove);
-  const savePreferencesMutation = useMutation(api.preferences.save);
+  const saveAccountSettingsMutation = useMutation(api.preferences.save);
   const saveSecretMutation = useMutation(api.secrets.save);
   const removeSecretMutation = useMutation(api.secrets.remove);
-  const saveAgentPrefMutation = useMutation(api.agents.save);
   const updateOnboardingMutation = useMutation(api.onboarding.update);
   const pushSnapshotMutation = useMutation(api.snapshots.push);
   const saveCatalogMutation = useMutation(api.catalogs.save);
@@ -766,17 +734,15 @@ function CloudBridge({
           })
         );
       },
-      async savePreferences(payload) {
-        await savePreferencesMutation({ ...identityArgs, payload });
+      async saveAccountSettings(payload) {
+        const result = await saveAccountSettingsMutation({ ...identityArgs, payload });
+        return { updatedAt: result.updatedAt };
       },
       async saveSecret(input) {
         await saveSecretMutation({ ...identityArgs, ...input });
       },
       async removeSecret(input) {
         await removeSecretMutation({ ...identityArgs, ...input });
-      },
-      async saveAgentPref(input) {
-        await saveAgentPrefMutation({ ...identityArgs, ...input });
       },
       async updateOnboarding(input) {
         await updateOnboardingMutation({ ...identityArgs, ...input });
@@ -809,9 +775,8 @@ function CloudBridge({
       removeShareMutation,
       respondShareMutation,
       revokeShareMutation,
-      saveAgentPrefMutation,
+      saveAccountSettingsMutation,
       saveCatalogMutation,
-      savePreferencesMutation,
       saveSecretMutation,
       saveServerMutation,
       updateOnboardingMutation,
@@ -885,8 +850,8 @@ function CloudBridge({
     [convex, identityArgs]
   );
 
-  // Autonomous restore: when the cloud context arrives, fold servers and
-  // personalization into local state without any user action.
+  // Autonomous restore: when the cloud context arrives, fold servers, voice
+  // secrets and onboarding progress into local state without any user action.
   const lastAppliedBootstrapRef = useRef<CloudBootstrap | null>(null);
   useEffect(() => {
     if (!bootstrap || lastAppliedBootstrapRef.current === bootstrap) {
@@ -901,7 +866,6 @@ function CloudBridge({
     for (const server of banned) {
       void actions.removeServer({ baseUrl: server.baseUrl }).catch(() => undefined);
     }
-    reconcilePersonalization(bootstrap.preferencesPayload, actions.savePreferences);
     applyCloudVoiceSecrets(bootstrap.secrets ?? []);
     const adopted = adoptOnboardingForAccount(bootstrap.user.key);
     writeOnboardingState(
@@ -1013,6 +977,7 @@ function CloudBridge({
       // proxy is available whenever the cloud identity is.
       github: active ? githubActions : null,
       conversationCatalogs: conversationCatalogs ?? null,
+      accountSettings: active ? accountSettings : undefined,
     }),
     [
       mode,
@@ -1025,6 +990,7 @@ function CloudBridge({
       actions,
       githubActions,
       conversationCatalogs,
+      accountSettings,
     ]
   );
 

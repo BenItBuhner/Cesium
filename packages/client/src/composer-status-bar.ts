@@ -35,11 +35,11 @@ const MAX_PER_CONVERSATION_ENTRIES = 300;
 
 /**
  * Minimal structural slice of `ChatSessionState` used by the status bar
- * config. `composerStatusBarVisibility` is the "last used" default applied to
- * new conversations; the ByConversationId map holds per-conversation state.
+ * config: the per-conversation map only. The "last used" default for new
+ * conversations is account-wide (`GlobalSettingsState.composer.statusBarVisibility`)
+ * and is passed in by callers.
  */
 export type ComposerStatusBarScopeState = {
-  composerStatusBarVisibility?: ComposerStatusBarVisibility;
   composerStatusBarVisibilityByConversationId?: Record<
     string,
     ComposerStatusBarVisibility
@@ -47,10 +47,9 @@ export type ComposerStatusBarScopeState = {
 };
 
 /**
- * Per-conversation state wins; otherwise an explicit global new-chat default,
- * then the legacy workspace default, then the built-in defaults. New
- * conversations therefore inherit whatever the user configured most recently,
- * and keep their own state once toggled.
+ * Per-conversation state wins; otherwise the account-wide new-chat default,
+ * then the built-in defaults. New conversations therefore inherit whatever the
+ * user configured most recently, and keep their own state once toggled.
  */
 export function resolveComposerStatusBarVisibilityForConversation(
   scope: ComposerStatusBarScopeState,
@@ -61,9 +60,7 @@ export function resolveComposerStatusBarVisibilityForConversation(
   if (conversationId && byConversation && byConversation[conversationId]) {
     return normalizeComposerStatusBarVisibility(byConversation[conversationId]);
   }
-  return normalizeComposerStatusBarVisibility(
-    newConversationDefault ?? scope.composerStatusBarVisibility
-  );
+  return normalizeComposerStatusBarVisibility(newConversationDefault);
 }
 
 function pruneStatusBarPerConversationMap(
@@ -114,25 +111,25 @@ export function pinComposerStatusBarVisibilityForConversation<
 }
 
 /**
- * Records a visibility change: the conversation (when known) keeps its own
- * entry, and the same value becomes the last-used default for new chats.
+ * Records a per-conversation visibility change. Callers also write the same
+ * value to the account composer defaults so future new chats start from it.
+ * Returns the same object when there is no conversation to pin.
  */
 export function withComposerStatusBarVisibility<T extends ComposerStatusBarScopeState>(
   scope: T,
   conversationId: string | null | undefined,
   next: ComposerStatusBarVisibility
 ): T {
+  if (!conversationId) {
+    return scope;
+  }
   const normalized = normalizeComposerStatusBarVisibility(next);
-  const byConversation = conversationId
-    ? pruneStatusBarPerConversationMap({
-        ...(scope.composerStatusBarVisibilityByConversationId ?? {}),
-        [conversationId]: normalized,
-      })
-    : scope.composerStatusBarVisibilityByConversationId ?? {};
   return {
     ...scope,
-    composerStatusBarVisibility: normalized,
-    composerStatusBarVisibilityByConversationId: byConversation,
+    composerStatusBarVisibilityByConversationId: pruneStatusBarPerConversationMap({
+      ...(scope.composerStatusBarVisibilityByConversationId ?? {}),
+      [conversationId]: normalized,
+    }),
   };
 }
 

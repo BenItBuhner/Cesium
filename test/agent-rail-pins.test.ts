@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { before, beforeEach, describe, test } from "node:test";
 import {
-  AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
-  getGlobalPinnedAgentConversationIdsSnapshot,
-  migrateGlobalPinnedAgentConversationIdsIfNeeded,
-  writeGlobalPinnedAgentConversationIds,
+  LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
+  clearLegacyPinnedAgentConversationIds,
+  normalizePinnedAgentConversationIds,
+  pinAgentConversationId,
+  readLegacyPinnedAgentConversationIds,
+  unpinAgentConversationId,
 } from "../src/lib/agent-rail-pins.ts";
 
 const LEGACY_SESSION_KEY = "opencursor.workspace-session.ws-1";
@@ -49,40 +51,54 @@ function seedLegacySession(pinnedIds: string[]): void {
   );
 }
 
-describe("agent rail pins", () => {
-  test("write + snapshot round-trips and dedupes", () => {
-    writeGlobalPinnedAgentConversationIds(["a", "b", "a", ""]);
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), ["a", "b"]);
+describe("agent rail pins (account setting helpers)", () => {
+  test("normalizes and dedupes ids", () => {
+    assert.deepEqual(normalizePinnedAgentConversationIds(["a", "b", "a", "", 3]), ["a", "b"]);
+    assert.deepEqual(normalizePinnedAgentConversationIds("nope"), []);
   });
 
-  test("migration seeds global pins from legacy session keys when the key is absent", () => {
-    seedLegacySession(["legacy-1", "legacy-2"]);
-    migrateGlobalPinnedAgentConversationIdsIfNeeded();
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), ["legacy-1", "legacy-2"]);
+  test("pin moves the id to the front and is a no-op when already first", () => {
+    const pinned = ["a", "b"];
+    assert.deepEqual(pinAgentConversationId(pinned, "b"), ["b", "a"]);
+    assert.deepEqual(pinAgentConversationId(pinned, "c"), ["c", "a", "b"]);
+    assert.equal(pinAgentConversationId(pinned, "a"), pinned);
   });
 
-  test("migration folds in the react session fallback", () => {
-    migrateGlobalPinnedAgentConversationIdsIfNeeded(["fallback-1"]);
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), ["fallback-1"]);
+  test("unpin removes the id and is a no-op when absent", () => {
+    const pinned = ["a", "b"];
+    assert.deepEqual(unpinAgentConversationId(pinned, "a"), ["b"]);
+    assert.equal(unpinAgentConversationId(pinned, "zzz"), pinned);
   });
+});
 
-  test("unpinning the last conversation is not undone by re-migration", () => {
-    // Legacy backup still references the conversation (session backups lag).
-    seedLegacySession(["conv-1"]);
-    migrateGlobalPinnedAgentConversationIdsIfNeeded(["conv-1"]);
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), ["conv-1"]);
-
-    // User unpins the only pinned conversation -> empty list is deliberate.
-    writeGlobalPinnedAgentConversationIds([]);
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), []);
-
-    // The migration effect re-runs on every session change; it must NOT
-    // resurrect the pin from the stale legacy session backup.
-    migrateGlobalPinnedAgentConversationIdsIfNeeded(["conv-1"]);
-    assert.deepEqual(getGlobalPinnedAgentConversationIdsSnapshot(), []);
-    assert.equal(
-      localStorageStub.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY),
-      "[]"
+describe("agent rail pins legacy device store", () => {
+  test("reads the pre-account global list, then legacy session backups, deduped", () => {
+    localStorageStub.setItem(
+      LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
+      JSON.stringify(["global-1", "shared"])
     );
+    seedLegacySession(["legacy-1", "shared", "legacy-2"]);
+    assert.deepEqual(readLegacyPinnedAgentConversationIds(), [
+      "global-1",
+      "shared",
+      "legacy-1",
+      "legacy-2",
+    ]);
+  });
+
+  test("falls back to the in-memory session list and reports null when nothing existed", () => {
+    assert.equal(readLegacyPinnedAgentConversationIds(), null);
+    assert.deepEqual(readLegacyPinnedAgentConversationIds(["fallback-1"]), ["fallback-1"]);
+  });
+
+  test("an explicitly empty legacy list is still 'found' (deliberate unpin-all)", () => {
+    localStorageStub.setItem(LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY, JSON.stringify([]));
+    assert.deepEqual(readLegacyPinnedAgentConversationIds(), []);
+  });
+
+  test("clear removes the legacy global key", () => {
+    localStorageStub.setItem(LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY, JSON.stringify(["a"]));
+    clearLegacyPinnedAgentConversationIds();
+    assert.equal(localStorageStub.getItem(LEGACY_AGENT_RAIL_PINNED_IDS_STORAGE_KEY), null);
   });
 });

@@ -1,16 +1,12 @@
-import type { ChatTab, EditorTab, EditorMode, ModelInfo } from "@cesium/core";
+import type { ChatTab, EditorTab } from "@cesium/core";
 import {
-  DEFAULT_COMPOSER_PILLS_VISIBILITY,
   normalizeComposerPillsVisibility,
   type ComposerPillsVisibility,
 } from "@cesium/core";
 import {
-  DEFAULT_COMPOSER_STATUS_BAR_VISIBILITY,
   normalizeComposerStatusBarVisibility,
   type ComposerStatusBarVisibility,
 } from "./composer-status-bar";
-import type { AgentBackendId } from "@cesium/core";
-import { isActiveAgentBackendId } from "@cesium/core";
 import type { AgentRailFilterState, AgentRailFilterToggleState } from "./agent-rail";
 import {
   createDefaultAgentRailFilterState,
@@ -322,22 +318,14 @@ export function persistChatScrollOverlay(
   );
 }
 
+/**
+ * Per-workspace chat UI state. New-chat defaults (harness / mode / model,
+ * capability profile, composer chrome defaults) deliberately do NOT live here:
+ * they are account-wide and belong to `GlobalSettingsState.composer`. This
+ * slice only holds state bound to specific conversations in this workspace.
+ */
 export type ChatSessionState = {
   tabs: ChatTab[];
-  mode: EditorMode;
-  model: ModelInfo;
-  backendId: AgentBackendId;
-  /**
-   * Per-backend "last used" model memory. New-chat drafts inherit the model
-   * the user last picked for that backend instead of snapping back to the
-   * backend's hardcoded default when switching harnesses or starting fresh.
-   */
-  lastModelByBackend?: Record<string, ModelInfo>;
-  /**
-   * Cesium capability profile for new-chat drafts ("code", "work", or a custom
-   * profile id). Persisted conversations bind their profile via config options.
-   */
-  profileId?: string;
   scrollTopByTabId: Record<string, number>;
   /** Message-anchored scroll (syncs across devices via workspace session). */
   scrollAnchorByTabId?: Record<string, ChatScrollAnchor>;
@@ -361,18 +349,39 @@ export type ChatSessionState = {
   unreadChatCompletionByConversationId?: Record<string, true>;
   /** Failed runs the user has viewed; key present means drop from Needs attention. */
   acknowledgedFailureByConversationId?: Record<string, true>;
-  /**
-   * Composer footer: repo / branch / Goal progress / context visibility
-   * toggles. This is the "last used" default inherited by new conversations.
-   */
-  composerStatusBarVisibility?: ComposerStatusBarVisibility;
-  /** Per-conversation status bar state; falls back to the last-used default. */
+  /** Per-conversation status bar state; falls back to the account composer default. */
   composerStatusBarVisibilityByConversationId?: Record<string, ComposerStatusBarVisibility>;
-  /** Composer action pill toggles ("last used" default for new conversations). */
-  composerPillsVisibility?: ComposerPillsVisibility;
-  /** Per-conversation pill state; falls back to the last-used default. */
+  /** Per-conversation pill state; falls back to the account composer default. */
   composerPillsVisibilityByConversationId?: Record<string, ComposerPillsVisibility>;
 };
+
+/**
+ * Draft-default fields that older clients persisted inside `chat`. They are
+ * read once for migration (see `extractLegacyComposerFieldsFromChatSession`)
+ * and stripped from every session this client writes, so a stale copy can
+ * never shadow the account-wide composer defaults again.
+ */
+const LEGACY_CHAT_COMPOSER_FIELDS = [
+  "backendId",
+  "mode",
+  "model",
+  "lastModelByBackend",
+  "profileId",
+  "composerStatusBarVisibility",
+  "composerPillsVisibility",
+] as const;
+
+export function stripLegacyChatComposerFields<T extends ChatSessionState>(chat: T): T {
+  const record = chat as Record<string, unknown>;
+  if (!LEGACY_CHAT_COMPOSER_FIELDS.some((key) => key in record)) {
+    return chat;
+  }
+  const next = { ...record };
+  for (const key of LEGACY_CHAT_COMPOSER_FIELDS) {
+    delete next[key];
+  }
+  return next as T;
+}
 
 export type AgentSidePaneSessionState = {
   editor: EditorSessionState;
@@ -518,17 +527,13 @@ export function getAgentSidePaneSessionScopeId(
 }
 
 export function createDefaultWorkspaceSession(
-  initialChatTabs: ChatTab[],
-  initialModel: ModelInfo
+  initialChatTabs: ChatTab[] = []
 ): WorkspaceSessionState {
   return {
     schemaVersion: 1,
     editor: createEmptyEditorSession(),
     chat: {
       tabs: initialChatTabs,
-      mode: "agent",
-      model: initialModel,
-      backendId: "cesium-agent",
       scrollTopByTabId: {},
       scrollAnchorByTabId: {},
       hiddenConversationIds: [],
@@ -539,9 +544,7 @@ export function createDefaultWorkspaceSession(
       dismissedPlanEventByConversationId: {},
       unreadChatCompletionByConversationId: {},
       acknowledgedFailureByConversationId: {},
-      composerStatusBarVisibility: { ...DEFAULT_COMPOSER_STATUS_BAR_VISIBILITY },
       composerStatusBarVisibilityByConversationId: {},
-      composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY },
       composerPillsVisibilityByConversationId: {},
     },
     explorer: {
@@ -651,7 +654,7 @@ export function createPersistableWorkspaceSession(
   return {
     schemaVersion: 1,
     editor: createPersistableEditorSession(session.editor),
-    chat: session.chat,
+    chat: stripLegacyChatComposerFields(session.chat),
     explorer: session.explorer,
     layout: session.layout,
     agentView: {
@@ -911,26 +914,6 @@ export function mergeWorkspaceSessionFromImport(
   if (r.schemaVersion !== 1) {
     return current;
   }
-  const importedChatBackendRaw = r.chat?.backendId;
-  const legacyChatBackendRemap: Record<string, AgentBackendId> = {
-    "claude-adapter": "claude-code-sdk",
-    "opencode-acp": "opencode-server",
-    "opencode-v2-beta": "opencode-server",
-    "codex-adapter": "codex-app-server",
-    "gemini-acp": "google-antigravity-cli",
-  };
-  const importedChatBackendRawMapped =
-    typeof importedChatBackendRaw === "string"
-      ? legacyChatBackendRemap[importedChatBackendRaw] ?? importedChatBackendRaw
-      : importedChatBackendRaw;
-  const importedChatBackendCoerced: AgentBackendId =
-    (importedChatBackendRawMapped as AgentBackendId | undefined) ?? current.chat.backendId;
-  const normalizedChatBackendId = isActiveAgentBackendId(importedChatBackendCoerced)
-    ? importedChatBackendCoerced
-    : current.chat.backendId;
-  const importedUnsupportedBackend =
-    importedChatBackendRaw != null &&
-    normalizedChatBackendId !== importedChatBackendCoerced;
   const normalizedSplitOrientation: EditorSplitOrientation =
     r.editor?.splitOrientation === "vertical" ? "vertical" : current.editor.splitOrientation;
   const normalizedSplitLayout =
@@ -956,7 +939,7 @@ export function mergeWorkspaceSessionFromImport(
       },
       current.editor
     ),
-    chat: {
+    chat: stripLegacyChatComposerFields({
       ...current.chat,
       ...(r.chat ?? {}),
       tabs: Array.isArray(r.chat?.tabs) && r.chat.tabs.length > 0 ? r.chat.tabs : current.chat.tabs,
@@ -1008,26 +991,17 @@ export function mergeWorkspaceSessionFromImport(
         typeof r.chat.acknowledgedFailureByConversationId === "object"
           ? r.chat.acknowledgedFailureByConversationId
           : current.chat.acknowledgedFailureByConversationId ?? {},
-      composerStatusBarVisibility: normalizeComposerStatusBarVisibility(
-        r.chat?.composerStatusBarVisibility ?? current.chat.composerStatusBarVisibility
-      ),
       composerStatusBarVisibilityByConversationId: normalizeVisibilityByConversationMap(
         r.chat?.composerStatusBarVisibilityByConversationId,
         current.chat.composerStatusBarVisibilityByConversationId ?? {},
         normalizeComposerStatusBarVisibility
-      ),
-      composerPillsVisibility: normalizeComposerPillsVisibility(
-        r.chat?.composerPillsVisibility ?? current.chat.composerPillsVisibility
       ),
       composerPillsVisibilityByConversationId: normalizeVisibilityByConversationMap(
         r.chat?.composerPillsVisibilityByConversationId,
         current.chat.composerPillsVisibilityByConversationId ?? {},
         normalizeComposerPillsVisibility
       ),
-      model: importedUnsupportedBackend ? current.chat.model : r.chat?.model ?? current.chat.model,
-      mode: importedUnsupportedBackend ? current.chat.mode : r.chat?.mode ?? current.chat.mode,
-      backendId: normalizedChatBackendId,
-    },
+    }),
     explorer: {
       ...current.explorer,
       ...(r.explorer ?? {}),

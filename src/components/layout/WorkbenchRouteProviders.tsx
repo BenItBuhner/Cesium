@@ -3,8 +3,10 @@
 import type { ReactNode } from "react";
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 import { FirstRunAccountGate } from "@/components/auth/FirstRunAccountGate";
+import { AccountSettingsSync } from "@/components/cloud/AccountSettingsSync";
 import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
+import { LegacyDeviceSettingsMigration } from "@/components/preferences/LegacyDeviceSettingsMigration";
 import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -21,6 +23,8 @@ function ThemedAuthBoundary({ children }: { children: ReactNode }) {
 
   return (
     <GlobalSettingsProvider serverSettingsEnabled={serverSettingsEnabled}>
+      <AccountSettingsSync />
+      <LegacyDeviceSettingsMigration />
       <ThemeProvider>
         <UserPreferencesProvider>{children}</UserPreferencesProvider>
       </ThemeProvider>

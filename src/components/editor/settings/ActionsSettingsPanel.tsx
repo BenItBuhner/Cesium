@@ -22,8 +22,7 @@ import {
   settingsSelectTriggerClass,
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { withComposerPillsVisibility } from "@/lib/composer-pills";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { parseShortcutBinding } from "@/lib/keyboard-shortcuts";
 import {
   deleteCustomQuickActionFromServer,
@@ -100,27 +99,30 @@ function slugifyActionId(label: string): string {
 }
 
 export function ActionsSettingsPanel() {
-  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { settings, updateSettings } = useGlobalSettings();
   const { config, loaded, error } = useQuickActionsConfig();
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const pillDefaults = normalizeComposerPillsVisibility(
-    workspaceSession.chat.composerPillsVisibility
-  );
+  // Account-wide default pill set for new conversations.
+  const pillDefaults = normalizeComposerPillsVisibility(settings.composer.pillsVisibility);
 
   const setPillDefault = useCallback(
     (key: keyof typeof pillDefaults, checked: boolean) => {
-      updateWorkspaceSession((current) => ({
+      updateSettings((current) => ({
         ...current,
-        chat: withComposerPillsVisibility(current.chat, null, {
-          ...normalizeComposerPillsVisibility(current.chat.composerPillsVisibility),
-          [key]: checked,
-        }),
+        composer: {
+          ...current.composer,
+          pillsVisibility: {
+            ...normalizeComposerPillsVisibility(current.composer.pillsVisibility),
+            [key]: checked,
+          },
+          updatedAt: Date.now(),
+        },
       }));
     },
-    [updateWorkspaceSession]
+    [updateSettings]
   );
 
   const keybindingInvalid = useMemo(() => {

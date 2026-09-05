@@ -4,6 +4,8 @@ import {
   type KeyboardShortcutsSettingsState,
 } from "@/lib/keyboard-shortcuts";
 import { parseUserPreferences, type UserPreferences } from "@/lib/preferences";
+import { normalizeComposerDefaults, type ComposerDefaultsState } from "@/lib/chat-draft-defaults";
+import { normalizeAuroraSettings, type AuroraSettingsState } from "@cesium/client";
 import {
   normalizeThemeConfig,
   type ThemeConfig,
@@ -31,9 +33,14 @@ export type SettingsExportBundle = {
   theme?: ThemePreference;
   /** v2+ full theming state. */
   themeConfig?: ThemeConfig;
+  /** Aurora backdrop; travels with the theme selection. */
+  aurora?: AuroraSettingsState;
+  /** Feature / experiment flags (`GlobalSettingsState.features`). */
   userPreferences?: UserPreferences;
   keyboardShortcuts?: KeyboardShortcutsSettingsState;
   globalApp?: GlobalAppSettingsSlice;
+  /** Account-wide new-chat composer defaults; travels with the app settings selection. */
+  composer?: ComposerDefaultsState;
   workspaceSession?: WorkspaceSessionState;
 };
 
@@ -129,6 +136,7 @@ export function buildSettingsExportBundle(options: {
   if (selection.theme) {
     bundle.theme = options.themeConfig.appearance;
     bundle.themeConfig = options.themeConfig;
+    bundle.aurora = options.globalSettings.aurora;
   }
   if (selection.userPreferences) {
     bundle.userPreferences = options.userPreferences;
@@ -138,6 +146,7 @@ export function buildSettingsExportBundle(options: {
   }
   if (selection.globalApp) {
     bundle.globalApp = sliceGlobalAppFromSettings(options.globalSettings);
+    bundle.composer = options.globalSettings.composer;
   }
   if (selection.workspaceSession) {
     bundle.workspaceSession = options.workspaceSession;
@@ -168,6 +177,9 @@ export function parseSettingsImportBundle(raw: unknown): SettingsExportBundle | 
   if (tc) {
     out.themeConfig = tc;
   }
+  if (r.aurora != null && typeof r.aurora === "object") {
+    out.aurora = normalizeAuroraSettings(r.aurora);
+  }
   if (r.userPreferences != null && typeof r.userPreferences === "object") {
     const parsedPrefs = parseUserPreferencesFromExport(r.userPreferences);
     if (parsedPrefs) {
@@ -179,6 +191,9 @@ export function parseSettingsImportBundle(raw: unknown): SettingsExportBundle | 
   }
   if (r.globalApp != null && typeof r.globalApp === "object") {
     out.globalApp = r.globalApp as GlobalAppSettingsSlice;
+  }
+  if (r.composer != null && typeof r.composer === "object") {
+    out.composer = normalizeComposerDefaults(r.composer);
   }
   const ws = parseWorkspaceSessionImport(r.workspaceSession);
   if (ws) {
@@ -203,6 +218,9 @@ export function stripBundleBySelection(
     if (bundle.theme != null) {
       next.theme = bundle.theme;
     }
+    if (bundle.aurora != null) {
+      next.aurora = bundle.aurora;
+    }
   }
   if (selection.userPreferences && bundle.userPreferences != null) {
     next.userPreferences = bundle.userPreferences;
@@ -212,6 +230,9 @@ export function stripBundleBySelection(
   }
   if (selection.globalApp && bundle.globalApp != null) {
     next.globalApp = bundle.globalApp;
+  }
+  if (selection.globalApp && bundle.composer != null) {
+    next.composer = bundle.composer;
   }
   if (selection.workspaceSession && bundle.workspaceSession != null) {
     next.workspaceSession = bundle.workspaceSession;

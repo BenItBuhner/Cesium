@@ -19,8 +19,10 @@ test("global settings ignore legacy goal feature flags", () => {
     },
   });
 
-  assert.deepEqual(defaults.features, { vscodeExtensionsBeta: false });
-  assert.deepEqual(normalized.features, { vscodeExtensionsBeta: true });
+  assert.equal(defaults.features.vscodeExtensionsBeta, false);
+  assert.equal(normalized.features.vscodeExtensionsBeta, true);
+  assert.equal(legacyGoalFeatureKey in defaults.features, false);
+  assert.equal(legacyGoalFeatureKey in normalized.features, false);
 });
 
 test("goal mode is a first-class mode id and accepts legacy burn alias", () => {

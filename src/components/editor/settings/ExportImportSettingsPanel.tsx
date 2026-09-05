@@ -210,7 +210,12 @@ export function ExportImportSettingsPanel() {
     if (slice.userPreferences != null) {
       importUserPreferences(slice.userPreferences);
     }
-    if (slice.keyboardShortcuts != null || slice.globalApp != null) {
+    if (
+      slice.keyboardShortcuts != null ||
+      slice.globalApp != null ||
+      slice.composer != null ||
+      slice.aurora != null
+    ) {
       updateSettings((c) => {
         let next = c;
         if (slice.keyboardShortcuts != null) {
@@ -218,6 +223,12 @@ export function ExportImportSettingsPanel() {
         }
         if (slice.globalApp != null) {
           next = mergeImportedGlobalAppSlice(next, slice.globalApp);
+        }
+        if (slice.composer != null) {
+          next = { ...next, composer: { ...slice.composer, updatedAt: Date.now() } };
+        }
+        if (slice.aurora != null) {
+          next = { ...next, aurora: slice.aurora };
         }
         return next;
       });
