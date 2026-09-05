@@ -42,6 +42,7 @@ import {
 import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
 import { authMiddleware, isAuthEnabled, SESSION_TOKEN_HEADER } from "./lib/auth.js";
 import { assertEngineExposureAllowed } from "./lib/engine-exposure-policy.js";
+import { attachContentLength } from "./lib/http-response-size.js";
 import { getEngineInstanceId } from "./lib/engine-instance.js";
 import { startUpdateAutoCheck } from "./lib/updates/update-manager.js";
 import { startCesiumTriggerScheduler } from "./lib/agents/trigger-scheduler.js";
@@ -114,6 +115,11 @@ export function createCesiumApp(): Hono {
 
   const app = new Hono();
   app.use("*", compress());
+  // Registered after compress() so it post-processes first: string-bodied API
+  // responses regain a Content-Length, which is what lets compress() honour its
+  // size threshold instead of gzipping 300-byte health probes.
+  app.use("/api/*", attachContentLength);
+  app.use("/health", attachContentLength);
   app.use(
     "*",
     cors({
@@ -125,6 +131,10 @@ export function createCesiumApp(): Hono {
         return "";
       },
       credentials: true,
+      // Without this browsers fall back to a ~5s preflight cache, so the
+      // workbench's custom-header API calls each cost an extra OPTIONS round
+      // trip (roughly a third of all idle traffic). Chrome caps this at 2h.
+      maxAge: 3600,
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: [
         "Content-Type",
@@ -151,10 +161,9 @@ export function createCesiumApp(): Hono {
   app.use("*", async (c, next) => {
     const startedAt = startServerPerfSpan();
     await next();
-    const pathname = new URL(c.req.url).pathname;
     const ms = recordServerPerfSpan("http.request", startedAt, {
       method: c.req.method,
-      path: pathname,
+      path: c.req.path,
       status: c.res.status,
     });
     if (serverPerfEnabled()) {
