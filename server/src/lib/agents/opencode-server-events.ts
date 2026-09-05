@@ -49,6 +49,10 @@ export async function consumeOpenCodeSse(input: {
       const response = await fetch(input.client.url(input.route), {
         headers: {
           Accept: "text/event-stream",
+          // Never let a compression middleware buffer SSE frames (Bun's fetch
+          // offers br/zstd by default, and a compressed event stream stalls
+          // until the encoder flushes).
+          "Accept-Encoding": "identity",
           ...input.client.headers(),
         },
         signal: input.signal,
@@ -59,19 +63,44 @@ export async function consumeOpenCodeSse(input: {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      while (!input.signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        const parsed = parseSseChunk(buffer);
-        buffer = parsed.rest;
-        for (const chunk of parsed.events) {
-          for (const line of dataLines(chunk)) {
-            await input.onEvent({ route: input.route, data: parseData(line) });
+      // Handlers persist events to storage; keep that off the socket read so
+      // the server never sees a slow consumer. Events are still handled in order.
+      let chain: Promise<void> = Promise.resolve();
+      let backlog = 0;
+      let failure: unknown;
+      const enqueue = (event: OpenCodeServerEvent) => {
+        backlog += 1;
+        chain = chain
+          .then(() => input.onEvent(event))
+          .catch((error: unknown) => {
+            failure ??= error;
+          })
+          .finally(() => {
+            backlog -= 1;
+          });
+      };
+      try {
+        while (!input.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const parsed = parseSseChunk(buffer);
+          buffer = parsed.rest;
+          for (const chunk of parsed.events) {
+            for (const line of dataLines(chunk)) {
+              enqueue({ route: input.route, data: parseData(line) });
+            }
+          }
+          if (failure) throw failure;
+          if (backlog > 10_000) {
+            await chain;
           }
         }
+      } finally {
+        await chain;
+        if (failure) throw failure;
       }
     } catch (error) {
       if (input.signal.aborted) {

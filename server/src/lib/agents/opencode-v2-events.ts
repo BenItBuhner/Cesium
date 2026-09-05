@@ -49,6 +49,11 @@ async function consumeSse(input: {
       ...input.client.headers(),
       Accept: "text/event-stream",
       "Cache-Control": "no-store",
+      // Bun's fetch advertises `gzip, deflate, br, zstd`; the beta server then
+      // Brotli-compresses the durable session log stream, and the encoder
+      // buffers the tiny `log.synced` frame indefinitely - the stream never
+      // becomes ready. SSE must always be delivered uncompressed.
+      "Accept-Encoding": "identity",
     },
     signal: input.signal,
   });

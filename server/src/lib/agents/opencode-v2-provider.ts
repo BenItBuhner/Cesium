@@ -135,6 +135,26 @@ function modelValue(model: unknown): string | undefined {
   return providerId && id ? `${providerId}/${id}${variant ? `#${variant}` : ""}` : undefined;
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function openCodeV2WaitSettleGraceMs(): number {
+  const raw = Number(process.env.OPENCURSOR_OPENCODE_V2_WAIT_SETTLE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1_500;
+}
+
 function openCodeV2PermissionPollIntervalMs(): number {
   const raw = Number(process.env.OPENCURSOR_OPENCODE_V2_PERMISSION_POLL_MS);
   return Number.isFinite(raw) && raw >= 50 ? raw : 1_500;
@@ -446,20 +466,27 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       onError: (error) => this.reportStreamError(error),
     });
     this.sessionLogs.set(id, rootLog);
-    let readyTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        Promise.all([this.globalEvents.ready, rootLog.ready]),
-        new Promise<never>((_, reject) => {
-          readyTimer = setTimeout(
-            () => reject(new Error("OpenCode v2 event streams did not become ready.")),
-            15_000
-          );
-          readyTimer.unref?.();
-        }),
-      ]);
-    } finally {
-      clearTimeout(readyTimer);
+    // The volatile feed is the real-time source and must be up before we
+    // prompt. The durable log is supplementary: local servers run without
+    // event persistence, so it only ever yields `log.synced`, and a server
+    // that never syncs it must not take the whole conversation down.
+    await withTimeout(
+      this.globalEvents.ready,
+      15_000,
+      "OpenCode v2 event stream (/api/event) did not become ready."
+    );
+    const logReady = await withTimeout(rootLog.ready, 3_000, "").then(
+      () => true,
+      () => false
+    );
+    if (!logReady) {
+      harnessLog({
+        level: "warning",
+        backendId: this.backend.id,
+        conversationId: this.callbacks.conversation.id,
+        event: "session.log_not_synced",
+        detail: "Durable session log did not sync within 3s; continuing on the volatile event stream.",
+      });
     }
     await this.discoverActiveChildren();
     this.startPermissionPolling();
@@ -895,6 +922,20 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       this.activePrompt !== active ||
       !this.connection
     ) {
+      return;
+    }
+    // `wait` resolves the moment the server finishes; the volatile stream is
+    // usually a few frames behind (final text, execution.succeeded). Let it
+    // settle the turn itself before reading the message list, so reconciliation
+    // only fills gaps the stream actually left.
+    const settled = await Promise.race([
+      active.promise.then(() => true, () => true),
+      new Promise<false>((resolve) => {
+        const timer = setTimeout(() => resolve(false), openCodeV2WaitSettleGraceMs());
+        timer.unref?.();
+      }),
+    ]);
+    if (settled || active.completed || active.cancelled || this.activePrompt !== active || !this.connection) {
       return;
     }
     const messages = await this.connection.client.listMessages(this.sessionId, 20);
@@ -1446,7 +1487,9 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       sessionId === this.sessionId ? backgroundSubagentNotice(payload, this.callbacks.conversation.id) : undefined;
     if (subagentNotice) events.push(subagentNotice);
     if (events.length > 0) {
-      await this.callbacks.appendEvents(events);
+      // Record emitted text BEFORE the storage write: `wait` can resolve while
+      // that write is in flight, and reconcileActivePrompt would otherwise see
+      // an empty transcript and append the same text a second time.
       if (rootTurn) {
         for (const event of events) {
           if (
@@ -1457,6 +1500,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
           }
         }
       }
+      await this.callbacks.appendEvents(events);
     }
     const permission = events.find((event) => event.kind === "permission_request");
     if (permission?.kind === "permission_request") {
