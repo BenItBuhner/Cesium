@@ -8,6 +8,7 @@ import {
   getPhoneDevice,
   listPhoneDevices,
 } from "../phone-control/service.js";
+import { asNumber, asString } from "../coerce.js";
 
 export const PHONE_MCP_SERVER_ID = "phone";
 
@@ -214,14 +215,6 @@ export const PHONE_MCP_TOOLS: Tool[] = [
     },
   },
 ];
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
 
 function json(value: unknown): string {
   return JSON.stringify(value, null, 2);

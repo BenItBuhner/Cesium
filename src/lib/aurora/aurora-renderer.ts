@@ -20,28 +20,6 @@ export type AuroraMood =
   | "error"
   | "paused";
 
-export const AURORA_MOODS: AuroraMood[] = [
-  "new-chat",
-  "idle",
-  "typing",
-  "working",
-  "waiting",
-  "completed",
-  "error",
-  "paused",
-];
-
-export const AURORA_MOOD_LABELS: Record<AuroraMood, string> = {
-  "new-chat": "New chat",
-  idle: "Idle",
-  typing: "Typing",
-  working: "Working",
-  waiting: "Needs input",
-  completed: "Completed",
-  error: "Error",
-  paused: "Paused",
-};
-
 type Rgb = [number, number, number];
 
 type MoodParams = {

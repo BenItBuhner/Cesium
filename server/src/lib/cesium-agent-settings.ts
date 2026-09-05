@@ -36,6 +36,7 @@ import {
   type CesiumAgentProfile,
   type CesiumProfileToolGroup,
 } from "./agents/cesium-profiles.js";
+import { asNumber, asRecord, asString } from "./coerce.js";
 
 export type { CesiumAgentProfile } from "./agents/cesium-profiles.js";
 
@@ -686,20 +687,6 @@ function defaultSettings(): CesiumAgentSettings {
     providerKeys: [],
     customProviders: [],
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function normalizeModeSettings(raw: unknown): CesiumModeSettings {

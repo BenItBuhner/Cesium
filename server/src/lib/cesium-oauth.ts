@@ -250,6 +250,11 @@ export async function listCesiumOAuthProviders(): Promise<CesiumOAuthProviderSta
   }
 }
 
+/**
+ * Subscription OAuth provider ids with a live credential (empty when none or
+ * on failure). Used by the composer catalog filter so OAuth-backed providers
+ * stay listed alongside providers with stored/env keys.
+ */
 export async function getCesiumOAuthConnectedProviderIds(): Promise<string[]> {
   try {
     return (await getSnapshot()).connectedIds;

@@ -238,6 +238,15 @@ export function normalizeEventsToHistory(
         }
         break;
       case "system_reminder":
+        // Targeted reminders were merged onto their user message above. Inline
+        // reminders (context that landed between tool iterations, or a seed
+        // written before the first prompt) replay as their own user-role
+        // message at exactly this position, after the tool results that
+        // preceded them - the same shape the model saw live, byte for byte.
+        if (event.placement === "inline" && event.text.trim()) {
+          flushPendingToolCalls(messages, pendingToolCalls);
+          messages.push({ role: "user", content: event.text });
+        }
         break;
       case "assistant_message_chunk":
         assistantTextById.set(event.messageId, `${assistantTextById.get(event.messageId) ?? ""}${event.text}`);
@@ -366,7 +375,11 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
         lines.push(`User: ${truncate(event.content, 1000)}`);
         break;
       case "system_reminder":
-        if (event.reason === "goal" || event.reason === "burn") {
+        if (
+          event.reason === "goal" ||
+          event.reason === "burn" ||
+          event.reason === "linked_conversation"
+        ) {
           break;
         }
         lines.push(truncate(event.text, 1000));

@@ -758,6 +758,7 @@ export function MessageThreadContent({
     [renderMessageAtIndex, renderUserTurnHeader]
   );
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual returns non-memoizable helpers by design; the compiler skipping this hook is expected.
   const virtualizer = useVirtualizer({
     count: useVirtualList ? segments.length : 0,
     getScrollElement: () => scrollRootRef?.current ?? null,

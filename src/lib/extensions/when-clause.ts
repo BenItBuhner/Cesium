@@ -249,7 +249,6 @@ export function evaluateWhenClause(
 /* ------------------------------------------------------------------ */
 
 const contextStores = new Map<string, Map<string, unknown>>();
-const contextListeners = new Map<string, Set<() => void>>();
 
 export function setExtensionContextKey(workspaceId: string, key: string, value: unknown): void {
   let store = contextStores.get(workspaceId);
@@ -258,9 +257,6 @@ export function setExtensionContextKey(workspaceId: string, key: string, value: 
     contextStores.set(workspaceId, store);
   }
   store.set(key, value);
-  for (const listener of contextListeners.get(workspaceId) ?? []) {
-    listener();
-  }
 }
 
 export function replaceExtensionContextKeys(
@@ -268,23 +264,8 @@ export function replaceExtensionContextKeys(
   keys: Record<string, unknown>
 ): void {
   contextStores.set(workspaceId, new Map(Object.entries(keys)));
-  for (const listener of contextListeners.get(workspaceId) ?? []) {
-    listener();
-  }
 }
 
 export function getExtensionContextKeys(workspaceId: string): WhenClauseContext {
   return Object.fromEntries(contextStores.get(workspaceId) ?? []);
-}
-
-export function subscribeExtensionContextKeys(workspaceId: string, listener: () => void): () => void {
-  let listeners = contextListeners.get(workspaceId);
-  if (!listeners) {
-    listeners = new Set();
-    contextListeners.set(workspaceId, listeners);
-  }
-  listeners.add(listener);
-  return () => {
-    listeners?.delete(listener);
-  };
 }

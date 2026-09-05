@@ -68,7 +68,12 @@ function assignRef(
   }
 }
 
-function resolvePointerSelection(
+/**
+ * Map a pointer event on the faux-text surface to a caret position: the
+ * nearest `[data-faux-offset-start]` span decides, snapping to whichever edge
+ * of the glyph the pointer is closer to.
+ */
+export function resolvePointerSelection(
   event: PointerEvent<HTMLElement>,
   valueLength: number
 ): TextSelection {
@@ -434,10 +439,4 @@ export function HardwareAwareTextInput(
   props: Omit<SharedProps, "multiline" | "rows">
 ) {
   return <HardwareAwareTextSurface {...props} multiline={false} />;
-}
-
-export function HardwareAwareTextArea(
-  props: Omit<SharedProps, "multiline" | "type">
-) {
-  return <HardwareAwareTextSurface {...props} multiline />;
 }

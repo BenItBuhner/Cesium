@@ -62,6 +62,52 @@ describe("completion failure projection", () => {
     );
   });
 
+  test("awaiting_question status does not add a bare activity label (the card is the state)", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m1",
+        content: "Ask me something",
+      },
+      {
+        seq: 2,
+        eventId: "q1",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "question",
+        questionId: "question-1",
+        prompt: "Pick a color",
+        options: [
+          { id: "option-1", label: "red" },
+          { id: "option-2", label: "green" },
+        ],
+        status: "pending",
+      },
+      {
+        seq: 3,
+        eventId: "st1",
+        conversationId: "c1",
+        createdAt: 3,
+        kind: "status",
+        status: "awaiting_question",
+        detail: "Pick a color",
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "pi-agent",
+    });
+    assert.equal(
+      messages.filter((entry) => entry.type === "activity-label").length,
+      0
+    );
+    assert.equal(messages.filter((entry) => entry.type === "ask-question").length, 1);
+  });
+
   test("hides provider setup failures from the thread (dock owns them)", () => {
     const message =
       "No API key configured for OpenAI. Add one in Settings → Agents → Cesium Agent, or connect an OAuth account.";

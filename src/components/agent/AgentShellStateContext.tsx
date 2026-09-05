@@ -1364,7 +1364,6 @@ export function AgentShellStateProvider({
 
     return null;
   }, [
-    activeWorkspaceGroup,
     activeWorkspaceId,
     isDraftConversationSelected,
     orderedGroups,

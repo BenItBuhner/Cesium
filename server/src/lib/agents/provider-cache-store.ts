@@ -13,8 +13,10 @@ import {
 import { createCesiumAgentConfigOptions } from "../cesium-agent-settings.js";
 import {
   buildPiAgentSeedConfigOptions,
+  createPiAgentToolApprovalConfigOption,
   hasPiAgentRichModelCatalog,
   isPiAgentPlaceholderModelCatalog,
+  PI_AGENT_TOOL_APPROVAL_OPTION_ID,
 } from "../pi-agent-model-catalog.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import { harnessLog } from "./harness-diagnostics.js";
@@ -1775,8 +1777,16 @@ function maybeInPlaceMigrate(
     }
   }
 
-  if (backendId === "pi-agent" && isPiAgentPlaceholderModelCatalog(cachedOptions)) {
-    return { upgraded: cachedOptions, needsReseed: true };
+  if (backendId === "pi-agent") {
+    // Older caches predate the Cesium tool approval option; add it in place so
+    // the composer shows it without waiting for a reseed.
+    const upgraded = cachedOptions.some((option) => option.id === PI_AGENT_TOOL_APPROVAL_OPTION_ID)
+      ? cachedOptions
+      : [...cachedOptions, createPiAgentToolApprovalConfigOption()];
+    const needsReseed = isPiAgentPlaceholderModelCatalog(cachedOptions);
+    if (upgraded !== cachedOptions || needsReseed) {
+      return { upgraded, needsReseed };
+    }
   }
 
   if (backendId === "codex-app-server") {

@@ -148,7 +148,8 @@ function cancelPending(providerId: string): void {
 function resolveProviderAuthMethod(
   authStorage: Awaited<ReturnType<typeof createPiAuthStorage>>,
   providerId: string,
-  settings: PiAgentSettingsPublic
+  settings: PiAgentSettingsPublic,
+  registryAuthStatus?: { configured: boolean; source?: string; label?: string }
 ): {
   configured: boolean;
   authMethod: PiAgentProviderAuthMethod;
@@ -194,6 +195,29 @@ function resolveProviderAuthMethod(
       authLabel: authStatus.label ?? "Environment variable",
     };
   }
+  if (authStatus.source === "runtime") {
+    // Cesium env alias (e.g. GOOGLE_API_KEY) or brokered OAuth token applied
+    // as a Pi runtime key.
+    return { configured: true, authMethod: "env", authLabel: "Environment variable" };
+  }
+
+  // models.json custom providers resolve their key through the registry
+  // (inline literal, env var name, or `!command`), not through auth.json.
+  const registrySource = registryAuthStatus?.source ?? authStatus.source;
+  if (
+    registrySource === "models_json_key" ||
+    registrySource === "models_json_command" ||
+    registrySource === "fallback"
+  ) {
+    return {
+      configured: true,
+      authMethod: "api_key",
+      authLabel:
+        registrySource === "models_json_command"
+          ? "models.json (command)"
+          : "models.json",
+    };
+  }
 
   return { configured: false, authMethod: null };
 }
@@ -231,7 +255,12 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
 
   const providers: PiAgentProviderStatus[] = providerIds.map((id) => {
     const oauthProvider = oauthById.get(id);
-    const auth = resolveProviderAuthMethod(authStorage, id, settings);
+    const auth = resolveProviderAuthMethod(
+      authStorage,
+      id,
+      settings,
+      modelRegistry.getProviderAuthStatus(id)
+    );
     const modelCount = allModels.filter((model) => model.provider === id).length;
     const xaiOauth = id === XAI_OAUTH_PROVIDER_ID && xaiConnected;
     return {
@@ -484,15 +513,27 @@ export async function completePiAgentOAuthCallback(input: {
   return { providerId: pending.providerId };
 }
 
+/**
+ * Remove every credential Cesium controls for a provider: subscription OAuth
+ * tokens, auth.json API keys, and Settings-stored keys. Providers configured
+ * only through env vars or models.json have nothing to disconnect and are a
+ * no-op (the UI hides the action for them).
+ */
 export async function disconnectPiAgentOAuth(providerIdInput: string): Promise<PiAgentSettingsResponse> {
   const providerId = normalizeProviderId(providerIdInput);
-  assertSupportedProviderId(providerId);
+  if (!providerId) {
+    throw new Error("Provider id is required.");
+  }
 
-  cancelPending(providerId);
+  if (isSubscriptionOAuthProviderId(providerId)) {
+    cancelPending(providerId);
+  }
   await ensureAuthStorageUnlocked();
 
   const authStorage = await createPiAuthStorage();
-  authStorage.logout(providerId);
+  if (authStorage.has(providerId)) {
+    authStorage.logout(providerId);
+  }
   authStorage.removeRuntimeApiKey(providerId);
   if (providerId === XAI_OAUTH_PROVIDER_ID) {
     await clearXaiOAuthCredentials();
@@ -505,22 +546,6 @@ export async function disconnectPiAgentOAuth(providerIdInput: string): Promise<P
   }
 
   return getPiAgentSettingsResponse();
-}
-
-export async function waitForPiAgentOAuthCompletion(
-  providerIdInput: string,
-  timeoutMs = 120_000
-): Promise<boolean> {
-  const providerId = normalizeProviderId(providerIdInput);
-  const pending = pendingByProvider.get(providerId);
-  if (!pending) {
-    return false;
-  }
-  const result = await Promise.race([
-    pending.loginPromise.then(() => true).catch(() => false),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
-  return result;
 }
 
 export function piAgentOAuthSuccessHtml(providerLabel: string, sessionId?: string): string {

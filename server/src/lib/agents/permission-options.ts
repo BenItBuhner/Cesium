@@ -36,9 +36,6 @@ export const STANDARD_PERMISSION_OPTIONS: AgentPermissionOption[] = [
   { optionId: "reject_always", name: "Always reject", kind: "reject_always" },
 ];
 
-/** @deprecated Prefer STANDARD_PERMISSION_OPTIONS - alias kept for call sites. */
-export const PERMISSION_OPTIONS = STANDARD_PERMISSION_OPTIONS;
-
 export function isAgentPermissionCategory(value: unknown): value is AgentPermissionCategory {
   return (
     value === "editFile" ||

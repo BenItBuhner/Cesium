@@ -1,20 +1,5 @@
 import type { ChatMessage } from "@/lib/types";
 
-/**
- * @deprecated Use {@link buildMessageThreadSegments} - flat rows break `position: sticky` for
- * user headers because the assistant lives in a sibling block; turns group user + tail together.
- */
-export type MessageThreadRow =
-  | {
-      kind: "user_todo";
-      key: string;
-      userIndex: number;
-      todoIndex: number;
-      stackOrder: number;
-    }
-  | { kind: "user"; key: string; index: number; stackOrder: number }
-  | { kind: "message"; key: string; index: number };
-
 /** Message rows before the first `user` turn (rare, but may appear in some transcripts). */
 export type PreambleSegment = {
   type: "preamble";

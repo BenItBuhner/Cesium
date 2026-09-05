@@ -3391,8 +3391,6 @@ const authSessionsEmitter = new EventEmitter<unknown>();
 /* ------------------------------------------------------------------ */
 
 function createVscodeShim(extensionId: string) {
-  const runtimeContext = extensionRuntimeContexts.get(extensionId);
-  const extensionRoot = runtimeContext?.extensionPath ?? process.cwd();
   const workspaceFolder = {
     uri: Uri.file(workspaceRoot),
     name: path.basename(workspaceRoot),
@@ -4268,7 +4266,7 @@ function createVscodeShim(extensionId: string) {
       onDidChangeWorkspaceFolders: noopEvent,
     },
     env: {
-      appName: "OpenCursor",
+      appName: "Cesium",
       appRoot: workspaceRoot,
       appHost: "desktop",
       language: "en",

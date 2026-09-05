@@ -4,12 +4,7 @@ import { kokoroEngine } from "./kokoro.js";
 import { openAiCompatEngine } from "./openai-compat.js";
 import { piperEngine } from "./piper.js";
 import { resolveTtsEnginePreference } from "./settings-resolve.js";
-import type {
-  VoiceTtsEngine,
-  VoiceTtsEngineStatus,
-  VoiceTtsSynthesisRequest,
-  VoiceTtsSynthesisResult,
-} from "./types.js";
+import type { VoiceTtsEngine, VoiceTtsEngineStatus } from "./types.js";
 
 /**
  * Engine registry. Preference order favors instant local engines:
@@ -112,16 +107,4 @@ export async function resolveTtsEngine(
     }
   }
   return null;
-}
-
-export async function synthesizeSpeech(
-  request: VoiceTtsSynthesisRequest & { engine?: string | null }
-): Promise<VoiceTtsSynthesisResult> {
-  const engine = await resolveTtsEngine(request.engine);
-  if (!engine) {
-    throw new Error(
-      "No TTS engine is available. Install espeak-ng/piper, add kokoro-js, or configure a remote engine."
-    );
-  }
-  return engine.synthesize(request);
 }

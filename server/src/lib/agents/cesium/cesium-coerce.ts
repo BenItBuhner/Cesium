@@ -1,15 +1,10 @@
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
+import { asRecord, asString } from "../../coerce.js";
 
-// NOTE: this asString intentionally TRIMS (and treats whitespace-only as undefined),
-// which is deliberately different from the shared json-coerce.ts asString. Preserve this.
-export function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
+// asString here TRIMS (whitespace-only -> undefined), deliberately unlike the
+// untrimmed json-coerce.ts variant; both re-exports share the canonical lib/coerce.ts.
+export { asRecord, asString, asStringArray } from "../../coerce.js";
 
+/** Finite number, also accepting numeric strings ("42" -> 42). */
 export function asNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -21,12 +16,6 @@ export function asNumber(value: unknown): number | undefined {
     }
   }
   return undefined;
-}
-
-export function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }
 
 export function safeJson(value: unknown): string {

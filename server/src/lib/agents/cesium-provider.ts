@@ -40,17 +40,24 @@ import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
-import {
-  callMcpTool,
-  callMcpToolRich,
-  refreshWorkspaceMcpMirror,
-} from "../mcp/connection-manager.js";
+import { callMcpToolRich, refreshWorkspaceMcpMirror } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
-import { readConversationEvents } from "./session-store.js";
+import { readConversationEvents, readConversationRecord } from "./session-store.js";
+import {
+  deltaPayloadFor,
+  resolveSideChatDelta,
+  sideChatInlineReminderEvent,
+  sideChatOriginOf,
+  sideChatTurnStartReminderEvent,
+  unavailablePayloadFor,
+  type SideChatOrigin,
+  type SideChatReminderPayload,
+} from "./side-chat/side-chat-store.js";
+import { SideChatTail } from "./side-chat/side-chat-tail.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   applyCesiumProfileExclusionsToModePolicy,
@@ -153,8 +160,6 @@ import type {
   OrchestrationAssignmentStatus,
   OrchestrationBoardSnapshot,
   OrchestrationColumnId,
-  OrchestrationIssuePriority,
-  OrchestrationPermissionDecision,
 } from "../orchestration/types.js";
 import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
@@ -168,6 +173,7 @@ import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
+  AgentConversationRecord,
   AgentConversationStatus,
   AgentEventInput,
   AgentQueuedChatPrompt,
@@ -524,6 +530,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * primary agent and subagents; refreshed with the harness each turn.
    */
   private modelRosterText = "";
+  /**
+   * Side chats only: live tail of the parent conversation for the running
+   * turn, plus the highest parent seq already delivered this turn. Deltas are
+   * appended to the model context between tool iterations and persisted as
+   * inline reminders so the next rebuild reproduces the same tail.
+   */
+  private sideChatTail: SideChatTail | null = null;
+  private sideChatCursor = 0;
+  private sideChatParentUnavailableNoticed = false;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -875,6 +890,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             conversationId: this.callbacks.conversation.id,
           })
         : null;
+      const sideChatTurn = await this.beginSideChatTurn();
       const promptContext = await this.resolveSystemPromptContext(
         summaries,
         skillsMirror.skillsList
@@ -958,6 +974,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
           conversationTitle: this.callbacks.conversation.title,
           conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
+          sideChat: sideChatTurn
+            ? {
+                parentConversationId: sideChatTurn.origin.parentConversationId,
+                parentTitle:
+                  sideChatTurn.parent?.title ?? sideChatTurn.origin.parentTitle ?? "Primary chat",
+              }
+            : null,
         }),
         featureReminder
           ? `<harness-features>\n${featureReminder}\n</harness-features>`
@@ -995,6 +1018,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
             },
           },
         },
+        // Side chats: everything the primary did since the last delivered
+        // cursor rides on this user message too (tail position, so the prefix
+        // above it is untouched). Persisted once; rebuilds replay it verbatim.
+        ...(sideChatTurn?.payload
+          ? [
+              sideChatTurnStartReminderEvent({
+                sideChatId: this.callbacks.conversation.id,
+                userMessageId: input.userMessageId,
+                payload: sideChatTurn.payload,
+              }),
+            ]
+          : []),
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
@@ -1166,6 +1201,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
             );
           }
         }
+        // Side chats: anything the primary did while those tools ran lands
+        // here, after the tool results and before the next model call - the
+        // only slot where appending keeps every earlier byte of the prompt
+        // identical for the provider's prefix cache.
+        await this.injectSideChatDeltas(toolResultMessages);
         await this.waitAtPauseCheckpoint();
         if (this.cancelled) {
           return;
@@ -1215,9 +1255,123 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (this.cancelled) {
         pluginOutcome = { status: "cancelled" };
       }
+      this.endSideChatTurn();
       await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
+  }
+
+  /**
+   * Side chats: start tailing the parent before reading the idle delta so no
+   * parent event can slip between the read and the subscription, then drop
+   * whatever the delta already covered. Returns the turn-start payload (if
+   * any) for the caller to persist next to the mode reminder.
+   */
+  private async beginSideChatTurn(): Promise<{
+    origin: SideChatOrigin;
+    parent: AgentConversationRecord | null;
+    payload: SideChatReminderPayload | null;
+  } | null> {
+    const origin = sideChatOriginOf(this.callbacks.conversation);
+    if (!origin) {
+      return null;
+    }
+    this.endSideChatTurn();
+    const tail = new SideChatTail({
+      workspaceId: this.callbacks.workspace.id,
+      parentConversationId: origin.parentConversationId,
+      sinceSeq: 0,
+    });
+    tail.attach();
+    this.sideChatTail = tail;
+    try {
+      const resolution = await resolveSideChatDelta({
+        workspaceId: this.callbacks.workspace.id,
+        sideChat: this.callbacks.conversation,
+        limits: this.harness.settings.limits,
+      });
+      if (!resolution) {
+        return null;
+      }
+      this.sideChatCursor = resolution.throughSeq;
+      this.sideChatParentUnavailableNoticed = resolution.parent === null;
+      tail.discardThrough(resolution.throughSeq);
+      return { origin, parent: resolution.parent, payload: resolution.payload };
+    } catch (error) {
+      console.warn(
+        "[cesium-agent] side chat: failed to resolve primary-chat context at turn start:",
+        error instanceof Error ? error.message : error
+      );
+      return { origin, parent: null, payload: null };
+    }
+  }
+
+  /**
+   * Side chats: deliver parent activity buffered during the last tool batch as
+   * one inline block. Appended to the in-memory tail and persisted in the same
+   * position so the next history rebuild is byte-identical to what the model
+   * sees now. Noise-only slices advance the cursor without emitting anything.
+   */
+  private async injectSideChatDeltas(toolResultMessages: CesiumHistoryMessage[]): Promise<void> {
+    const tail = this.sideChatTail;
+    const origin = sideChatOriginOf(this.callbacks.conversation);
+    if (!tail || !origin || this.cancelled) {
+      return;
+    }
+    let payload: SideChatReminderPayload | null = null;
+    try {
+      if (tail.parentDeleted) {
+        tail.drain();
+        payload = unavailablePayloadFor({
+          origin,
+          cursor: this.sideChatCursor,
+          alreadyNoticed: this.sideChatParentUnavailableNoticed,
+        });
+        this.sideChatParentUnavailableNoticed = true;
+      } else if (tail.hasPending()) {
+        const parentEvents = tail.drain();
+        const parent = await readConversationRecord(
+          this.callbacks.workspace.id,
+          origin.parentConversationId
+        ).catch(() => null);
+        if (parent) {
+          payload = deltaPayloadFor({
+            parent,
+            parentEvents,
+            fromSeq: this.sideChatCursor,
+            limits: this.harness.settings.limits,
+          });
+        } else {
+          payload = unavailablePayloadFor({
+            origin,
+            cursor: this.sideChatCursor,
+            alreadyNoticed: this.sideChatParentUnavailableNoticed,
+          });
+          this.sideChatParentUnavailableNoticed = true;
+        }
+        this.sideChatCursor = Math.max(this.sideChatCursor, tail.throughSeq);
+      }
+      if (!payload) {
+        return;
+      }
+      await this.callbacks.appendEvents([
+        sideChatInlineReminderEvent({
+          sideChatId: this.callbacks.conversation.id,
+          payload,
+        }),
+      ]);
+      toolResultMessages.push({ role: "user", content: payload.text });
+    } catch (error) {
+      console.warn(
+        "[cesium-agent] side chat: failed to inject primary-chat delta:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  private endSideChatTurn(): void {
+    this.sideChatTail?.detach();
+    this.sideChatTail = null;
   }
 
   private async runAdapterWithWarning(
@@ -1576,6 +1730,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.resumeWaiter?.();
     this.resumeWaiter = null;
     this.releaseResumeAck();
+    this.endSideChatTurn();
     this.subagentsV2?.dispose();
     this.subagentsV2 = null;
     await this.pluginRuntime?.dispose();
@@ -1803,7 +1958,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       case "wait":
         return await this.toolWait(args);
       case "call_mcp_tool":
-        return await this.toolCallMcp(args, randomUUID(), toolTitle(name, args));
+        return await this.toolCallMcp(args);
       default:
         break;
     }
@@ -2419,7 +2574,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolCreateWorktree(request.arguments);
           break;
         case "call_mcp_tool":
-          result = await this.toolCallMcp(effectiveRequest.arguments, effectiveRequest.id, title);
+          result = await this.toolCallMcp(effectiveRequest.arguments);
           break;
         case "refresh_mcp_servers":
           result = await this.toolRefreshMcpServers();
@@ -3287,11 +3442,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       .join("\n");
   }
 
-  private async toolCallMcp(
-    args: Record<string, unknown>,
-    _toolCallId: string,
-    _title: string
-  ): Promise<string> {
+  private async toolCallMcp(args: Record<string, unknown>): Promise<string> {
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
     const toolName = normalized.toolName;

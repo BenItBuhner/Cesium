@@ -93,9 +93,6 @@ export type WorkspaceProfileFile = {
   recentWorkspaceIds: string[];
 };
 
-/** @deprecated Import from `./workspace-constants.js` instead. */
-export { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
-
 function deriveWorkspaceName(root: string, preferredName?: string): string {
   const trimmed = preferredName?.trim();
   if (trimmed) {

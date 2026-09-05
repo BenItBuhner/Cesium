@@ -126,5 +126,5 @@ export function useAccountIdentity(): AccountIdentity {
       imageUrl: null,
       serverLabel,
     };
-  }, [activeServer, auth, cloud, serverLabel]);
+  }, [auth, cloud, serverLabel]);
 }

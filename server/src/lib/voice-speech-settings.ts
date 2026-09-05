@@ -5,6 +5,7 @@ import { isSecretEnvelope, secretLastFour } from "@cesium/core";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
 import { openSecretSync, sealSecretSync } from "./secret-envelope-node.js";
 import { getSecretWrappingKeySync } from "./secret-wrapping-key.js";
+import { asRecord } from "./coerce.js";
 
 /**
  * User-facing voice / speech settings that used to live only in env vars
@@ -122,12 +123,6 @@ export type VoiceSpeechSettingsPublic = {
 const SETTINGS_FILE = path.join(DATA_DIR, "profile", "voice-speech-settings.json");
 
 let syncCache: VoiceSpeechSettings | null | undefined;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -362,10 +357,6 @@ async function readStored(): Promise<VoiceSpeechSettings | null> {
   const stored = hydrateStored(await readJsonFile<unknown>(SETTINGS_FILE, null));
   setSyncCache(stored);
   return stored;
-}
-
-export async function getVoiceSpeechSettings(): Promise<VoiceSpeechSettings | null> {
-  return readStored();
 }
 
 export function resolvePreferredField(
@@ -631,4 +622,3 @@ export async function deleteVoiceSpeechSettings(): Promise<void> {
   });
   setSyncCache(null);
 }
-

@@ -29,6 +29,25 @@ const eslintConfig = defineConfig([
       // disabling keeps `npm run lint` usable without rewriting half the tree.
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/refs": "off",
+      // Codify the repo-wide convention for intentionally unused bindings:
+      // `_`-prefixed parameters/catch bindings satisfy a caller-imposed
+      // signature, and `const { omitted: _omitted, ...rest } = obj` is the
+      // idiomatic way to drop a key. Plain unused variables still warn.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          args: "after-used",
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
+      ],
+      // Shared components also ship inside the Electron renderer and the
+      // mobile WebView bundle (Vite, no Next runtime and no `next/image`
+      // shim), and most sources are runtime URLs (favicons, plugin icons,
+      // user uploads) that the Next image loader cannot optimize anyway.
+      "@next/next/no-img-element": "off",
     },
   },
   {

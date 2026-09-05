@@ -6,6 +6,7 @@ import {
   mcpProtocolMeta,
   type McpProtocolProbeResult,
 } from "./protocol.js";
+import { isRecord } from "../coerce.js";
 
 const STDIO_PROBE_MS = 4_000;
 
@@ -53,10 +54,6 @@ class ReadBuffer {
 
 function serializeMessage(message: unknown): string {
   return `${JSON.stringify(message)}\n`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function stdioRpcOnce(input: {

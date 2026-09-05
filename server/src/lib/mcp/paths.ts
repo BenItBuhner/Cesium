@@ -9,10 +9,6 @@ export function mcpSecretsPath(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "mcp-secrets.json");
 }
 
-export function workspaceMcpMirrorRoot(workspaceRoot: string): string {
-  return path.join(workspaceRoot, "mcp-servers");
-}
-
 export function slugifyMcpServerId(label: string): string {
   const slug = label
     .trim()

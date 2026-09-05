@@ -30,7 +30,6 @@ const [
     updateCesiumTrigger,
   },
   {
-    CESIUM_AUTHORED_SKILLS_DIR,
     createAuthoredSkill,
     deleteAuthoredSkill,
     listAuthorableSkills,
