@@ -72,6 +72,15 @@ const QUIESCENCE_TIMEOUT_MS = 30_000;
 const MUTATING_BUILTIN_TOOLS = new Set(["bash", "edit", "write"]);
 
 /**
+ * Startup notices already written per conversation in this process. Runtimes
+ * are re-created after a few idle seconds, and the snapshot used for dedupe is
+ * windowed, so without this a broken extension would be reported on every
+ * re-attach of a long conversation.
+ */
+const emittedStartupNotices = new Map<string, Set<string>>();
+const EMITTED_STARTUP_NOTICE_CONVERSATION_LIMIT = 500;
+
+/**
  * Seed a fresh handle's options from the cached catalog while carrying over
  * every value the conversation already chose (model, mode, thinking level,
  * tool approval). Runtimes are disposed when idle, so a value picked in the
@@ -738,18 +747,32 @@ class PiAgentSessionHandle implements AgentSessionHandle {
     if (notices.length === 0) {
       return;
     }
+    const conversationId = this.callbacks.conversation.id;
+    let remembered = emittedStartupNotices.get(conversationId);
+    if (!remembered) {
+      if (emittedStartupNotices.size >= EMITTED_STARTUP_NOTICE_CONVERSATION_LIMIT) {
+        const oldest = emittedStartupNotices.keys().next().value;
+        if (oldest !== undefined) {
+          emittedStartupNotices.delete(oldest);
+        }
+      }
+      remembered = new Set<string>();
+      emittedStartupNotices.set(conversationId, remembered);
+    }
     const snapshot = await this.callbacks.readSnapshot().catch(() => null);
-    const seen = new Set(
-      (snapshot?.events ?? [])
+    const seen = new Set([
+      ...remembered,
+      ...(snapshot?.events ?? [])
         .filter((event) => event.kind === "system")
-        .map((event) => (event.kind === "system" ? event.text : ""))
-    );
+        .map((event) => (event.kind === "system" ? event.text : "")),
+    ]);
     const events: AgentEventInput[] = [];
     for (const notice of notices) {
       if (seen.has(notice.text)) {
         continue;
       }
       seen.add(notice.text);
+      remembered.add(notice.text);
       events.push({
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
