@@ -238,6 +238,20 @@ export function normalizeOpenCodeServerEvent(input: {
     // Non-tool text updates include user/noReply seed content. The provider
     // session handles active assistant text separately once it knows the message id.
   }
+  if (type === "permission.asked") {
+    // OpenCode >= 1.x publishes the ask itself with the same `Permission.Request`
+    // shape that GET /permission returns (id, sessionID, permission, patterns,
+    // metadata, always, tool.{messageID, callID}); surface it immediately
+    // instead of waiting for the next poll.
+    const event = normalizeOpenCodePolledPermission({
+      conversationId: input.conversationId,
+      entry: properties,
+    });
+    if (!event || event.kind !== "permission_request") {
+      return [];
+    }
+    return [{ ...event, raw: input.payload }];
+  }
   if (type === "permission.updated") {
     const permission = asRecord(properties.permission) ?? properties;
     const id = asString(permission.id) ?? asString(permission.permissionID);
@@ -326,10 +340,10 @@ export function openCodeServerLegacyPermissionResponse(
 }
 
 /**
- * Modern OpenCode servers do not emit any SSE event when a permission is
- * ASKED (only `permission.replied` once it resolves), so pending requests
- * must be discovered by polling `GET /permission`. This maps one polled row
- * to the normalized `permission_request` event shape.
+ * Maps one `Permission.Request` row - as published by `permission.asked` on
+ * OpenCode >= 1.x, or returned by polling `GET /permission` (the fallback for
+ * asks the SSE stream dropped and for older servers with no ask event) - to
+ * the normalized `permission_request` event shape.
  */
 export function normalizeOpenCodePolledPermission(input: {
   conversationId: string;
@@ -344,10 +358,17 @@ export function normalizeOpenCodePolledPermission(input: {
   const patterns = Array.isArray(input.entry.patterns)
     ? input.entry.patterns.filter((value): value is string => typeof value === "string")
     : [];
-  const detail =
+  const always = Array.isArray(input.entry.always)
+    ? input.entry.always.filter((value): value is string => typeof value === "string")
+    : [];
+  const primaryDetail =
     asString(metadata?.command) ??
     asString(input.entry.title) ??
     (patterns.length > 0 ? patterns.join(", ") : undefined);
+  const detail =
+    [primaryDetail, always.length > 0 ? `Allow Always remembers: ${always.join(", ")}` : undefined]
+      .filter((line): line is string => Boolean(line))
+      .join("\n") || undefined;
   const toolCallId = asString(asRecord(input.entry.tool)?.callID);
   return {
     eventId: randomUUID(),

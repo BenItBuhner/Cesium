@@ -455,6 +455,9 @@ async function* iterateSseDataLines(
     headers: {
       Accept: "text/event-stream",
       "Cache-Control": "no-store",
+      // A compressing proxy/middleware would buffer SSE frames (Bun's fetch
+      // offers br/zstd by default); event streams must stay uncompressed.
+      "Accept-Encoding": "identity",
     },
   });
   if (!res.ok || !res.body) {
