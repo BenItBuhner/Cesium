@@ -781,6 +781,30 @@ export function isGoogleAntigravitySubagentTaskToolEvent(event: SubagentToolCall
   return isStrictAcpSubagentTaskToolEvent(event);
 }
 
+/**
+ * Claude Code: the subagent tool is named `Agent` (listed by the CLI as `Task`)
+ * and its input carries `description` + `prompt` (+ optional `subagent_type`).
+ * Live sessions emit dedicated `subagent` events, so this mostly matters for
+ * transcripts imported from `~/.claude/projects` JSONL files.
+ */
+export function isClaudeCodeSubagentTaskToolEvent(event: SubagentToolCallEvent): boolean {
+  if (event.kind !== "tool_call" && event.kind !== "tool_call_update") {
+    return false;
+  }
+  const rawUpdate = getToolRawUpdate(event);
+  const rawName = typeof rawUpdate?.name === "string" ? rawUpdate.name.trim() : "";
+  if (rawName === "Agent" || rawName === "Task") {
+    return true;
+  }
+  const toolKind =
+    "toolKind" in event && typeof event.toolKind === "string" ? event.toolKind : "";
+  const title = "title" in event && typeof event.title === "string" ? event.title : "";
+  if (toolKind === "task" && /^Subagent\b/.test(title)) {
+    return true;
+  }
+  return isStrictAcpSubagentTaskToolEvent(event);
+}
+
 export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   AgentBackendId,
   (event: SubagentToolCallEvent) => boolean
@@ -794,7 +818,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "grok-build": isStrictAcpSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
   "codex-acp": isStrictAcpSubagentTaskToolEvent,
-  "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
+  "claude-code-sdk": isClaudeCodeSubagentTaskToolEvent,
   "pi-agent": isStrictAcpSubagentTaskToolEvent,
   "google-antigravity-cli": isGoogleAntigravitySubagentTaskToolEvent,
   "google-antigravity-acp": isGoogleAntigravitySubagentTaskToolEvent,

@@ -34,9 +34,8 @@ import {
   describeClaudeCodeSdkAuthStatus,
   getClaudeCodeSdkProxyModel,
   getClaudeCodeSdkProxyModelName,
-  hasClaudeCodeAmbientCliAuth,
-  hasClaudeCodeSdkAuthConfig,
   hasClaudeCodeSdkProxyConfig,
+  hasClaudeCodeSdkUsableAuth,
 } from "../claude-code-sdk-credentials.js";
 import { AcpSessionHandle } from "./acp/acp-session.js";
 import {
@@ -308,12 +307,12 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
       // The Claude Agent SDK ships its own CLI runtime, so ambient host
       // credentials (native `claude login`, installed CLI) make the backend
       // usable without any explicit key. Explicit auth config always wins.
-      const hasAuth = hasClaudeCodeSdkAuthConfig() || hasClaudeCodeAmbientCliAuth();
+      const hasAuth = hasClaudeCodeSdkUsableAuth();
       return createBackendInfo({
         id: "claude-code-sdk",
         label: "Claude Code SDK",
         description: hasAuth
-          ? "Anthropic Claude Agent SDK with stock Claude Code tools and OpenCursor MCP settings bridged in memory."
+          ? "Anthropic Claude Agent SDK: stock Claude Code tools, subagents, plan mode, questions, and Cesium MCP/plugins bridged over a persistent streaming session."
           : "Claude Code SDK requires ANTHROPIC_API_KEY, a configured proxy, a supported provider env, or an installed `claude` CLI login. Open Settings -> Agents to configure it.",
         experimental: true,
         commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
@@ -322,10 +321,10 @@ function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
         defaultMode: "agent",
         defaultModelId: hasClaudeCodeSdkProxyConfig()
           ? getClaudeCodeSdkProxyModel()
-          : "claude-sonnet-4-5",
+          : "default",
         defaultModelName: hasClaudeCodeSdkProxyConfig()
           ? getClaudeCodeSdkProxyModelName()
-          : "Claude Sonnet 4.5",
+          : "Default (recommended)",
       });
     }
     case "pi-agent":

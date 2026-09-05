@@ -993,5 +993,8 @@ export async function deleteConversationFromStore(
   }
   await storage.deleteAgentConversation(conversationId);
   await invalidateConversationCaches(workspaceId, conversationId);
+  // Harness-side memory (Claude session id, context usage) dies with the conversation.
+  const { deleteClaudeCodeSdkConversationState } = await import("./claude-code-sdk-session-state.js");
+  await deleteClaudeCodeSdkConversationState(workspaceId, conversationId).catch(() => undefined);
   notify({ type: "conversation_deleted", workspaceId, conversationId });
 }
