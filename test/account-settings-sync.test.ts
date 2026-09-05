@@ -103,6 +103,7 @@ describe("account settings document", () => {
 
 describe("account settings reconciliation", () => {
   const local = createDefaultGlobalSettings();
+  const edited = settingsWith((base) => ({ ...base, aurora: { ...base.aurora, enabled: !base.aurora.enabled } }));
   const cloudDoc = (settings: GlobalSettingsState, updatedAt: number) => ({
     payload: serializeAccountSettingsDocument(settings),
     updatedAt,
@@ -111,162 +112,97 @@ describe("account settings reconciliation", () => {
     signature: accountSettingsSignature(settings),
     cloudUpdatedAt,
   });
+  const decide = (input: Partial<Parameters<typeof resolveAccountSettingsSync>[0]>) =>
+    resolveAccountSettingsSync({
+      cloud: null,
+      local,
+      hydrated: true,
+      marker: null,
+      localEditsPending: false,
+      localMigrationsPending: false,
+      ...input,
+    });
 
   test("waits while the cloud query is loading", () => {
-    assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: undefined,
-        local,
-        hydrated: true,
-        marker: null,
-        localEditsPending: false,
-        localDirtySince: null,
-      }),
-      { action: "wait" }
-    );
+    assert.deepEqual(decide({ cloud: undefined }), { action: "wait" });
   });
 
   test("seeds an empty account from hydrated settings only", () => {
+    assert.deepEqual(decide({ cloud: null }), { action: "push" });
     assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: null,
-        local,
-        hydrated: true,
-        marker: null,
-        localEditsPending: false,
-        localDirtySince: null,
-      }),
-      { action: "push" }
-    );
-    assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: null,
-        local,
-        hydrated: false,
-        marker: null,
-        localEditsPending: true,
-        localDirtySince: 5,
-      }),
+      decide({ cloud: null, hydrated: false, localEditsPending: true }),
       { action: "noop" }
     );
   });
 
   test("a stale v1 blob in the cloud counts as empty and gets replaced", () => {
     assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: { payload: JSON.stringify({ version: 1, theme: "dark" }), updatedAt: 3 },
-        local,
-        hydrated: true,
-        marker: null,
-        localEditsPending: false,
-        localDirtySince: null,
-      }),
+      decide({ cloud: { payload: JSON.stringify({ version: 1, theme: "dark" }), updatedAt: 3 } }),
       { action: "push" }
     );
   });
 
-  test("identical documents are a noop", () => {
+  test("identical documents are a noop even with pending bookkeeping", () => {
     assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: cloudDoc(themed, 7),
-        local: themed,
-        hydrated: true,
-        marker: null,
-        localEditsPending: true,
-        localDirtySince: 1,
-      }),
+      decide({ cloud: cloudDoc(themed, 7), local: themed, localEditsPending: true, localMigrationsPending: true }),
       { action: "noop" }
     );
   });
 
   test("loading an engine's copy is not an edit: the account wins", () => {
     // Fresh engine (factory defaults) hydrated on a device whose account has a theme.
-    const decision = resolveAccountSettingsSync({
-      cloud: cloudDoc(themed, 7),
-      local,
-      hydrated: true,
-      marker: null,
-      localEditsPending: false,
-      localDirtySince: null,
-    });
-    assert.equal(decision.action, "apply");
+    assert.equal(decide({ cloud: cloudDoc(themed, 7) }).action, "apply");
     // Same when the account changed since this device last synced.
-    const stale = resolveAccountSettingsSync({
-      cloud: cloudDoc(themed, 9),
-      local,
-      hydrated: true,
-      marker: inSyncMarker(local, 7),
-      localEditsPending: false,
-      localDirtySince: null,
-    });
-    assert.equal(stale.action, "apply");
+    assert.equal(
+      decide({ cloud: cloudDoc(themed, 9), marker: inSyncMarker(local, 7) }).action,
+      "apply"
+    );
   });
 
   test("a fresh device applies the account before it connects an engine", () => {
-    const decision = resolveAccountSettingsSync({
-      cloud: cloudDoc(themed, 7),
-      local,
-      hydrated: false,
-      marker: null,
-      localEditsPending: false,
-      localDirtySince: null,
-    });
-    assert.equal(decision.action, "apply");
+    assert.equal(decide({ cloud: cloudDoc(themed, 7), hydrated: false }).action, "apply");
   });
 
-  test("local edits push when the account did not move since the last sync", () => {
-    const edited = settingsWith((base) => ({ ...base, aurora: { ...base.aurora, enabled: !base.aurora.enabled } }));
+  test("explicit local edits always push, whether or not the account moved", () => {
     assert.deepEqual(
-      resolveAccountSettingsSync({
-        cloud: cloudDoc(local, 7),
-        local: edited,
-        hydrated: true,
-        marker: inSyncMarker(local, 7),
-        localEditsPending: true,
-        localDirtySince: 8,
-      }),
+      decide({ cloud: cloudDoc(local, 7), local: edited, marker: inSyncMarker(local, 7), localEditsPending: true }),
+      { action: "push" }
+    );
+    // Another device wrote in the meantime: this device's pick still lands
+    // (and that device then follows it) instead of being silently dropped.
+    assert.deepEqual(
+      decide({ cloud: cloudDoc(themed, 20), local: edited, marker: inSyncMarker(local, 7), localEditsPending: true }),
       { action: "push" }
     );
   });
 
-  test("conflicts resolve to the last writer", () => {
-    const edited = settingsWith((base) => ({ ...base, aurora: { ...base.aurora, enabled: !base.aurora.enabled } }));
-    // Account changed at 20, local edit started at 15 -> account wins.
+  test("migrations push only while the account did not move", () => {
+    assert.deepEqual(
+      decide({ cloud: cloudDoc(local, 7), local: edited, marker: inSyncMarker(local, 7), localMigrationsPending: true }),
+      { action: "push" }
+    );
+    // The account changed since the last reconciliation: the account wins and
+    // the device's legacy fold is dropped.
     assert.equal(
-      resolveAccountSettingsSync({
-        cloud: cloudDoc(themed, 20),
-        local: edited,
-        hydrated: true,
-        marker: inSyncMarker(local, 7),
-        localEditsPending: true,
-        localDirtySince: 15,
-      }).action,
+      decide({ cloud: cloudDoc(themed, 20), local: edited, marker: inSyncMarker(local, 7), localMigrationsPending: true }).action,
       "apply"
     );
-    // Local edit started at 25 -> local wins.
+    // No marker at all (first reconciliation on this device): same outcome.
     assert.equal(
-      resolveAccountSettingsSync({
-        cloud: cloudDoc(themed, 20),
-        local: edited,
-        hydrated: true,
-        marker: inSyncMarker(local, 7),
-        localEditsPending: true,
-        localDirtySince: 25,
-      }).action,
-      "push"
+      decide({ cloud: cloudDoc(themed, 20), local: edited, localMigrationsPending: true }).action,
+      "apply"
     );
   });
 
   test("unhydrated local edits never overwrite the account", () => {
-    const edited = settingsWith((base) => ({ ...base, aurora: { ...base.aurora, enabled: !base.aurora.enabled } }));
     assert.equal(
-      resolveAccountSettingsSync({
+      decide({
         cloud: cloudDoc(themed, 7),
         local: edited,
         hydrated: false,
         marker: inSyncMarker(local, 7),
         localEditsPending: true,
-        localDirtySince: 99,
+        localMigrationsPending: true,
       }).action,
       "apply"
     );

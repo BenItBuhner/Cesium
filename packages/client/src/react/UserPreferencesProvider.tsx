@@ -56,7 +56,7 @@ export function UserPreferencesProvider({
   children: ReactNode;
 }) {
   const featureFlags = useCesiumRendererFeatureFlags();
-  const { settings, hydrated, updateSettings } = useGlobalSettings();
+  const { settings, hydrated, updateSettings, migrateSettings } = useGlobalSettings();
   const features = settings.features;
 
   const setFeatures = useCallback(
@@ -83,10 +83,13 @@ export function UserPreferencesProvider({
     migratedLegacyRef.current = true;
     const legacy = readLegacyUserPreferences();
     if (legacy) {
-      setFeatures((current) => mergeLegacyUserPreferences(current, legacy));
+      migrateSettings((current) => {
+        const next = mergeLegacyUserPreferences(current.features, legacy);
+        return next === current.features ? current : { ...current, features: next };
+      });
     }
     clearLegacyUserPreferences();
-  }, [hydrated, setFeatures]);
+  }, [hydrated, migrateSettings]);
 
   const effective = useMemo(() => resolveEffectiveUserPreferences(features), [features]);
 

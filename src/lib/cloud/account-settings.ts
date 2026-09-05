@@ -148,9 +148,16 @@ export type AccountSettingsSyncDecision =
  *   engine this device currently uses for settings, and engines are followers.
  *   Loading settings from an engine (boot fetch, refetch, switching the
  *   settings server) is therefore never treated as a user edit.
- * - Only explicit edits on this device (`localEditsPending`) push upward. If
- *   the account also changed since the last reconciliation, the more recent
- *   side wins (`cloud.updatedAt` vs. the first pending local edit).
+ * - Explicit edits on this device (`localEditsPending`) always push: a pick
+ *   the user just made is never silently discarded because another device
+ *   happened to write first. Every device pushes its own edits exactly once
+ *   and then follows the account, so concurrent edits converge on the last
+ *   push.
+ * - One-time migrations (`localMigrationsPending`: folding a device's legacy
+ *   stores into the settings) are weaker: they land only while the account
+ *   document has not moved since this device last reconciled. If it did, the
+ *   account wins and the migration is dropped - an old device coming online
+ *   must never clobber what the user did elsewhere.
  * - Pushing requires settings hydrated from an engine so factory defaults or
  *   an offline cache never overwrite the account. Applying only requires the
  *   cloud document, so a fresh device looks like home before it connects an
@@ -163,10 +170,10 @@ export function resolveAccountSettingsSync(input: {
   hydrated: boolean;
   marker: AccountSettingsSyncMarker | null;
   localEditsPending: boolean;
-  /** Epoch ms of the first local edit since the last reconciliation. */
-  localDirtySince: number | null;
+  localMigrationsPending?: boolean;
 }): AccountSettingsSyncDecision {
-  const { cloud, local, hydrated, marker, localEditsPending, localDirtySince } = input;
+  const { cloud, local, hydrated, marker, localEditsPending } = input;
+  const localMigrationsPending = input.localMigrationsPending ?? false;
   if (cloud === undefined) {
     return { action: "wait" };
   }
@@ -185,13 +192,12 @@ export function resolveAccountSettingsSync(input: {
     return { action: "noop" };
   }
 
-  const cloudChangedSinceMarker = !marker || marker.cloudUpdatedAt !== cloud!.updatedAt;
-  if (localEditsPending && hydrated) {
-    if (!cloudChangedSinceMarker) {
+  if (hydrated) {
+    if (localEditsPending) {
       return { action: "push" };
     }
-    // Both sides moved: last writer wins.
-    if (localDirtySince !== null && localDirtySince > cloud!.updatedAt) {
+    const cloudChangedSinceMarker = !marker || marker.cloudUpdatedAt !== cloud!.updatedAt;
+    if (localMigrationsPending && !cloudChangedSinceMarker) {
       return { action: "push" };
     }
   }

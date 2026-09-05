@@ -21,6 +21,7 @@ import {
 } from "../global-settings-cache";
 import {
   fetchGlobalSettings,
+  isRevisionConflictError,
   saveGlobalSettings,
   fetchModelToggleState,
   refreshModelToggleState,
@@ -49,9 +50,21 @@ type GlobalSettingsContextValue = {
    * something here" apart from "this device loaded another engine's copy".
    */
   editVersion: number;
+  /**
+   * Increments on every one-time migration (`migrateSettings`): folding a
+   * device's pre-account stores into the settings. Migrations are weaker than
+   * user edits for account sync - they land only when nothing else changed
+   * the account in the meantime, so an old device coming online can never
+   * clobber a pick the user just made elsewhere.
+   */
+  migrationVersion: number;
   settingsServerId: string | null;
   settingsServerMissing: boolean;
   updateSettings: (
+    updater: (current: GlobalSettingsState) => GlobalSettingsState
+  ) => void;
+  /** Apply a one-time legacy-store migration (bumps `migrationVersion`, not `editVersion`). */
+  migrateSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
   /**
@@ -88,6 +101,28 @@ const cancelTimeout = (handle: number | null): void => {
 
 function createDefaultState(): GlobalSettingsState {
   return createDefaultGlobalSettings();
+}
+
+/**
+ * Persist the latest in-memory settings to the settings server. Several
+ * clients of one account share an engine, and the account document makes
+ * them write the same converged state at about the same time; when one of
+ * them loses the `If-Match` race (412) the registry has already dropped the
+ * stale tag, so a single retry with the freshest state lands the write
+ * instead of silently leaving the engine behind until the next edit.
+ */
+async function persistGlobalSettings(
+  readLatest: () => GlobalSettingsState,
+  options: { keepalive?: boolean; server: ServerRequestContext }
+): Promise<void> {
+  try {
+    await saveGlobalSettings(readLatest(), options);
+  } catch (error) {
+    if (!isRevisionConflictError(error)) {
+      return;
+    }
+    await saveGlobalSettings(readLatest(), options).catch(() => {});
+  }
 }
 
 export function GlobalSettingsProvider({
@@ -235,7 +270,7 @@ export function GlobalSettingsProvider({
         // flush would persist them and wipe the user's saved customizations.
         return;
       }
-      await saveGlobalSettings(settingsRef.current, { ...options, server }).catch(() => {});
+      await persistGlobalSettings(() => settingsRef.current, { ...options, server });
     },
     [flushModelToggleUpdates, ready]
   );
@@ -407,7 +442,7 @@ export function GlobalSettingsProvider({
       if (!server) {
         return;
       }
-      void saveGlobalSettings(settingsRef.current, { server }).catch(() => {});
+      void persistGlobalSettings(() => settingsRef.current, { server });
     }, SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -484,6 +519,20 @@ export function GlobalSettingsProvider({
     []
   );
 
+  const [migrationVersion, setMigrationVersion] = useState(0);
+  const migrateSettings = useCallback(
+    (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
+      setSettings((current) => {
+        const next = updater(current);
+        if (next !== current) {
+          setMigrationVersion((version) => version + 1);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
   const applyAccountSettings = useCallback(
     (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
       setSettings((current) => updater(current));
@@ -497,9 +546,11 @@ export function GlobalSettingsProvider({
       ready,
       hydrated,
       editVersion,
+      migrationVersion,
       settingsServerId: settingsServer?.id ?? null,
       settingsServerMissing: requiresDefaultServer,
       updateSettings,
+      migrateSettings,
       applyAccountSettings,
       refreshSettings: refetchGlobalSettingsFromServer,
       refreshModels,
@@ -511,6 +562,8 @@ export function GlobalSettingsProvider({
       applyAccountSettings,
       editVersion,
       hydrated,
+      migrateSettings,
+      migrationVersion,
       ready,
       requiresDefaultServer,
       settings,

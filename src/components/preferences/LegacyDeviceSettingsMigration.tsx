@@ -26,10 +26,11 @@ import type { GlobalSettingsState } from "@/lib/global-settings";
  * - account slice populated -> the account wins, the device copy is dropped.
  *
  * Either way the legacy keys are removed afterwards, so nothing on this
- * device can shadow the account again. Renders nothing.
+ * device can shadow the account again. Applied as a migration, so it lands in
+ * the account only when nothing else changed it meanwhile. Renders nothing.
  */
 export function LegacyDeviceSettingsMigration() {
-  const { hydrated, updateSettings } = useGlobalSettings();
+  const { hydrated, migrateSettings } = useGlobalSettings();
   const migratedRef = useRef(false);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function LegacyDeviceSettingsMigration() {
     const legacyCollapsed = readLegacyCollapsedRailState();
     const legacyLastWorkspace = readLegacyLastWorkspaceByServer();
 
-    updateSettings((current) => {
+    migrateSettings((current) => {
       let general: GlobalSettingsState["general"] = current.general;
       if (
         legacyPins &&
@@ -81,7 +82,7 @@ export function LegacyDeviceSettingsMigration() {
     clearLegacyPinnedAgentConversationIds();
     clearLegacyCollapsedRailState();
     clearLegacyLastWorkspaceByServer();
-  }, [hydrated, updateSettings]);
+  }, [hydrated, migrateSettings]);
 
   return null;
 }

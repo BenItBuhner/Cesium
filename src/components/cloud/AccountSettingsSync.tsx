@@ -57,8 +57,10 @@ function writeMarker(userKey: string, marker: AccountSettingsSyncMarker): void {
  *   devices and engines. When it changes anywhere, every client applies it
  *   immediately; the settings provider then persists it to that client's
  *   settings server, so engines follow the account.
- * - Explicit edits on this device are debounced and uploaded. If the account
- *   moved in the meantime, the more recent side wins.
+ * - Explicit edits on this device are debounced and uploaded; each device
+ *   pushes its own edits once and then follows the account.
+ * - One-time legacy-store migrations upload only while nobody else changed
+ *   the account, so an old device can never clobber a fresh pick.
  * - Loading settings from an engine is never mistaken for an edit, so
  *   connecting a fresh engine (factory defaults) or switching the settings
  *   server can never reset the account.
@@ -68,7 +70,8 @@ function writeMarker(userKey: string, marker: AccountSettingsSyncMarker): void {
  */
 export function AccountSettingsSync() {
   const cloud = useCloudContext();
-  const { settings, hydrated, editVersion, applyAccountSettings } = useGlobalSettings();
+  const { settings, hydrated, editVersion, migrationVersion, applyAccountSettings } =
+    useGlobalSettings();
   const userKey = cloud.status === "ready" ? cloud.userKey : null;
   const actions = cloud.status === "ready" ? cloud.actions : null;
   const accountSettings = cloud.accountSettings;
@@ -77,35 +80,31 @@ export function AccountSettingsSync() {
   settingsRef.current = settings;
   const editVersionRef = useRef(editVersion);
   editVersionRef.current = editVersion;
-  /** Edit version this device last reconciled (pushed or accepted the account over). */
+  const migrationVersionRef = useRef(migrationVersion);
+  migrationVersionRef.current = migrationVersion;
+  /** Versions this device last reconciled (pushed, or accepted the account over). */
   const syncedEditVersionRef = useRef(editVersion);
-  const localDirtySinceRef = useRef<number | null>(null);
+  const syncedMigrationVersionRef = useRef(migrationVersion);
   const pushTimerRef = useRef<number | null>(null);
   const pushInFlightRef = useRef(false);
   const activeUserKeyRef = useRef<string | null>(null);
   /** Bumped after a failed upload so the reconcile effect re-runs and retries. */
   const [retryTick, setRetryTick] = useState(0);
 
-  // Local edits are tracked per account; switching accounts (or signing out)
-  // resets the bookkeeping so one user's pending edits never reach another.
+  // Pending edits are tracked per account; switching accounts (or signing
+  // out) resets the bookkeeping so one user's pending edits never reach another.
   useEffect(() => {
     if (activeUserKeyRef.current === userKey) {
       return;
     }
     activeUserKeyRef.current = userKey;
     syncedEditVersionRef.current = editVersionRef.current;
-    localDirtySinceRef.current = null;
+    syncedMigrationVersionRef.current = migrationVersionRef.current;
     if (pushTimerRef.current != null) {
       window.clearTimeout(pushTimerRef.current);
       pushTimerRef.current = null;
     }
   }, [userKey]);
-
-  useEffect(() => {
-    if (editVersion !== syncedEditVersionRef.current && localDirtySinceRef.current === null) {
-      localDirtySinceRef.current = Date.now();
-    }
-  }, [editVersion]);
 
   useEffect(() => {
     if (!userKey || !actions) {
@@ -117,7 +116,7 @@ export function AccountSettingsSync() {
       hydrated,
       marker: readAccountSettingsSyncMarker(userKey),
       localEditsPending: editVersion !== syncedEditVersionRef.current,
-      localDirtySince: localDirtySinceRef.current,
+      localMigrationsPending: migrationVersion !== syncedMigrationVersionRef.current,
     });
 
     if (decision.action === "wait") {
@@ -127,13 +126,13 @@ export function AccountSettingsSync() {
     if (decision.action === "noop") {
       if (accountSettings) {
         // In sync with a real account document: record the revision and
-        // forget any edits, they are all reflected in the cloud copy.
+        // forget pending edits, they are all reflected in the cloud copy.
         writeMarker(userKey, {
           signature: accountSettingsSignature(settings),
           cloudUpdatedAt: accountSettings.updatedAt,
         });
         syncedEditVersionRef.current = editVersion;
-        localDirtySinceRef.current = null;
+        syncedMigrationVersionRef.current = migrationVersion;
       }
       return;
     }
@@ -145,9 +144,9 @@ export function AccountSettingsSync() {
         signature: accountSettingsSignature(applyAccountSyncedSettings(settings, cloudSettings)),
         cloudUpdatedAt: accountSettings!.updatedAt,
       });
-      // Whatever was pending locally lost the tie-break (or was never saved).
+      // Whatever was pending locally is superseded by the account.
       syncedEditVersionRef.current = editVersion;
-      localDirtySinceRef.current = null;
+      syncedMigrationVersionRef.current = migrationVersion;
       return;
     }
 
@@ -164,6 +163,7 @@ export function AccountSettingsSync() {
       }
       const snapshot = settingsRef.current;
       const pushedEditVersion = editVersionRef.current;
+      const pushedMigrationVersion = migrationVersionRef.current;
       pushInFlightRef.current = true;
       void actions
         .saveAccountSettings(serializeAccountSettingsDocument(snapshot))
@@ -175,8 +175,8 @@ export function AccountSettingsSync() {
           if (syncedEditVersionRef.current < pushedEditVersion) {
             syncedEditVersionRef.current = pushedEditVersion;
           }
-          if (syncedEditVersionRef.current === editVersionRef.current) {
-            localDirtySinceRef.current = null;
+          if (syncedMigrationVersionRef.current < pushedMigrationVersion) {
+            syncedMigrationVersionRef.current = pushedMigrationVersion;
           }
         })
         .catch(() => {
@@ -201,6 +201,7 @@ export function AccountSettingsSync() {
     applyAccountSettings,
     editVersion,
     hydrated,
+    migrationVersion,
     retryTick,
     settings,
     userKey,

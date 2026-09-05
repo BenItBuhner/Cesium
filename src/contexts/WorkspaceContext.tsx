@@ -515,7 +515,7 @@ function replaceFolderChildren(
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const { experimentalIpadResumeCache } = useUserPreferences();
-  const { updateSettings } = useGlobalSettings();
+  const { migrateSettings } = useGlobalSettings();
   const cloud = useCloudContext();
   const cloudUserKeyRef = useRef<string | null>(null);
   cloudUserKeyRef.current = cloud.userKey;
@@ -657,12 +657,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!legacy) {
         return;
       }
-      updateSettings((current) => {
+      migrateSettings((current) => {
         const composer = adoptLegacyComposerFields(current.composer, legacy);
         return composer === current.composer ? current : { ...current, composer };
       });
     },
-    [updateSettings]
+    [migrateSettings]
   );
 
   const flushWorkspaceSessionNow = useCallback(
