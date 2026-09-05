@@ -495,6 +495,18 @@ function detailForTool(name: string, payload: ToolPayload): string | undefined {
   if (name === "Skill") {
     return shortText(input?.args ?? input?.arguments, 240);
   }
+  // MCP tools, Agent, and multimodal Read return Anthropic content blocks;
+  // show their text instead of the block JSON.
+  if (Array.isArray(payload.result)) {
+    const text = textFromClaudeToolResult(payload.result).trim();
+    if (text) {
+      return text.length > 520 ? `${text.slice(0, 519)}…` : text;
+    }
+    const images = payload.result.filter((block) => asRecord(block)?.type === "image").length;
+    if (images > 0) {
+      return `${images} image${images === 1 ? "" : "s"}`;
+    }
+  }
   return detailForToolPayload({ input: payload.input, result: payload.result });
 }
 

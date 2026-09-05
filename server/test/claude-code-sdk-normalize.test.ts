@@ -169,6 +169,57 @@ test("Claude 2.1 task-list, subagent, question, and plan tools get explicit kind
   assert.equal(permissionCategoryForClaudeTool("Read"), undefined);
 });
 
+test("MCP and Agent tool results made of content blocks render their text, not block JSON", () => {
+  const done = claudeToolUseToAgentEvent({
+    conversationId: "c1",
+    eventId: "e-mcp",
+    status: "completed",
+    tool: {
+      id: "toolu_mcp",
+      name: "mcp__probe__add",
+      input: { a: 1234, b: 4321 },
+      result: [{ type: "text", text: "5555" }],
+    },
+  });
+  assert.equal(done.kind, "tool_call_update");
+  assert.equal(done.toolKind, "mcp");
+  assert.equal(done.detail, "5555");
+  const multi = claudeToolUseToAgentEvent({
+    conversationId: "c1",
+    eventId: "e-agent",
+    status: "completed",
+    tool: {
+      id: "toolu_agent",
+      name: "Agent",
+      input: { description: "x", prompt: "y" },
+      result: [
+        { type: "text", text: "Found package.json" },
+        { type: "text", text: "and tsconfig.json" },
+      ],
+    },
+  });
+  assert.equal(multi.detail, "Found package.json\nand tsconfig.json");
+  const image = claudeToolUseToAgentEvent({
+    conversationId: "c1",
+    eventId: "e-read",
+    status: "completed",
+    tool: {
+      id: "toolu_read",
+      name: "Read",
+      input: { file_path: "/tmp/shot.png" },
+      result: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }],
+    },
+  });
+  assert.equal(image.detail, "1 image");
+  const plain = claudeToolUseToAgentEvent({
+    conversationId: "c1",
+    eventId: "e-read-text",
+    status: "completed",
+    tool: { id: "toolu_read2", name: "Read", input: { file_path: "/tmp/a.ts" }, result: "1\tconst x = 1;" },
+  });
+  assert.equal(plain.detail, "1\tconst x = 1;", "string results are untouched");
+});
+
 test("ClaudeTaskPlanTracker folds TaskCreate/TaskUpdate/TaskList traffic into one plan", () => {
   const tracker = new ClaudeTaskPlanTracker();
   assert.equal(tracker.noteToolUse({ id: "t1", name: "TaskCreate", input: { subject: "A", description: "a" } }), false);
