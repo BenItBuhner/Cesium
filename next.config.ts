@@ -77,7 +77,15 @@ const nextConfig: NextConfig = {
   // The React Compiler is currently crashing Next.js during page compilation
   // in this deployment. Keep it off so production and dev builds can complete.
   reactCompiler: false,
-  turbopack: {},
+  turbopack: {
+    resolveAlias: {
+      // The voice VAD loads onnxruntime's wasm from `/voice/ort/` at runtime
+      // (`ort.env.wasm.wasmPaths`). Point the wasm-only entry at the package's
+      // "extern wasm" build, whose glue has no `new URL(*.wasm, import.meta.url)`
+      // reference, so the build stops emitting a dead 26 MB wasm asset.
+      "onnxruntime-web/wasm": "./node_modules/onnxruntime-web/dist/ort.wasm.min.mjs",
+    },
+  },
   experimental: {
     /**
      * Persist Turbopack's compile graph under .next/cache so builds that
@@ -101,6 +109,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   /** Hide the floating Next dev indicator so it stops covering the bottom-left rail. */
   devIndicators: false,
+  /** `next dev` otherwise appends a boilerplate block to the repo's AGENTS.md on every start. */
+  agentRules: false,
   env: {
     NEXT_PUBLIC_ENABLE_NEXT_PWA: pwaEnabled ? "1" : "0",
   },

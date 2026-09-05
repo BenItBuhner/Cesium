@@ -134,7 +134,13 @@ export async function createSileroVad(
     const contentType = modelResponse.headers.get("content-type") ?? "";
     if (contentType.includes("text/html")) return null; // SPA fallback page
     const model = await modelResponse.arrayBuffer();
-    const ort = (await import("onnxruntime-web")) as unknown as OrtModule;
+    // WASM-only entry: the default export is the WebGPU+WASM bundle, and it
+    // carries a `new URL("...jsep.wasm", import.meta.url)` reference that made
+    // Vite and Turbopack emit a 26 MB WebGPU wasm into every web build,
+    // desktop package and the Android APK - dead weight, since the runtime
+    // loads its wasm from `wasmPaths` below. Both bundlers are configured to
+    // resolve this to the "extern wasm" build, which emits nothing.
+    const ort = (await import("onnxruntime-web/wasm")) as unknown as OrtModule;
     ort.env.wasm.wasmPaths = `${assetBase}/ort/`;
     ort.env.wasm.numThreads = 1;
     const session = await ort.InferenceSession.create(model, {
