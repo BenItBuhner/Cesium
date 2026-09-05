@@ -1374,24 +1374,64 @@ test("creating the runtime for an in-flight prompt never downgrades the record t
   await handle2.dispose();
 });
 
-test("local slash commands: /clear placeholder results are not rendered as replies", async () => {
+test("local slash commands: synthetic CLI echoes become one note each, never replies", async () => {
+  // Shapes captured from Claude Code 2.1.211: local commands echo their output as an
+  // `assistant` message with `model: "<synthetic>"` and settle with `num_turns: 0`.
+  const synthetic = (sessionId: string, text: string) => ({
+    ...assistantMessage(sessionId, `synthetic-${uuid()}`, [{ type: "text", text }]),
+    message: {
+      ...assistantMessage(sessionId, "x", []).message,
+      id: `synthetic-${uuid()}`,
+      model: "<synthetic>",
+      stop_reason: "stop_sequence",
+      content: [{ type: "text", text }],
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  });
   const fake = createFakeClaudeQuery(async ({ sessionId, emit, turn }) => {
     if (turn === 1) {
       emit({ type: "conversation_reset", session_id: sessionId, new_conversation_id: "fresh-session", uuid: uuid() });
-      emit(resultMessage("fresh-session", { result: "(no content)" }));
+      emit(synthetic("fresh-session", "(no content)"));
+      emit(resultMessage("fresh-session", { result: "", num_turns: 0, total_cost_usd: 0 }));
       return;
     }
-    emit(assistantMessage("fresh-session", "m2", [{ type: "text", text: "clean slate" }]));
+    if (turn === 2) {
+      emit({ type: "system", subtype: "status", session_id: "fresh-session", uuid: uuid(), status: "compacting" });
+      emit({ type: "system", subtype: "status", session_id: "fresh-session", uuid: uuid(), status: null, compact_result: "failed", compact_error: "Not enough messages to compact." });
+      emit(synthetic("fresh-session", "Not enough messages to compact."));
+      emit(resultMessage("fresh-session", { result: "Not enough messages to compact.", num_turns: 0, total_cost_usd: 0 }));
+      return;
+    }
+    if (turn === 3) {
+      emit(synthetic("fresh-session", "Set model to sonnet"));
+      emit(resultMessage("fresh-session", { result: "Set model to sonnet", num_turns: 0, total_cost_usd: 0 }));
+      return;
+    }
+    emit(assistantMessage("fresh-session", "m4", [{ type: "text", text: "clean slate" }]));
     emit(resultMessage("fresh-session"));
   });
   const { callbacks, appended, conversation } = createCallbacks({ root: workspaceRoot("slash") });
   const handle = await providerWith(fake.queryFn).startSession(callbacks);
   await handle.prompt({ text: "/clear", userMessageId: "u1" });
-  assert.equal(eventsOfKind(appended, "assistant_message_chunk").length, 0, "placeholder result is not a reply");
+  assert.equal(eventsOfKind(appended, "assistant_message_chunk").length, 0, "placeholder echo is not a reply");
   assert.ok(eventsOfKind(appended, "system").some((event) => /history was cleared/.test(event.text)));
   assert.equal(conversation().providerSessionId, "fresh-session", "the reset adopts the new session id");
   assert.equal(conversation().status, "idle");
-  await handle.prompt({ text: "hello", userMessageId: "u2" });
+
+  await handle.prompt({ text: "/compact", userMessageId: "u2" });
+  assert.equal(eventsOfKind(appended, "assistant_message_chunk").length, 0, "compaction failure echo is not a reply");
+  const compactNotes = eventsOfKind(appended, "system").filter((event) => /Not enough messages to compact/.test(event.text));
+  assert.equal(compactNotes.length, 1, "status warning, synthetic echo, and result text collapse into one note");
+  assert.equal(compactNotes[0]!.level, "warning");
+
+  await handle.prompt({ text: "/model sonnet", userMessageId: "u3" });
+  assert.equal(eventsOfKind(appended, "assistant_message_chunk").length, 0);
+  const modelNotes = eventsOfKind(appended, "system").filter((event) => event.text === "Set model to sonnet");
+  assert.equal(modelNotes.length, 1, "command output without a status counterpart renders once as an info note");
+  assert.equal(modelNotes[0]!.level, "info");
+  assert.equal(conversation().status, "idle");
+
+  await handle.prompt({ text: "hello", userMessageId: "u4" });
   assert.deepEqual(eventsOfKind(appended, "assistant_message_chunk").map((chunk) => chunk.text), ["clean slate"]);
   await handle.dispose();
 });
