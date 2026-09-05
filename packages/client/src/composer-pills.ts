@@ -16,29 +16,30 @@ const MAX_PER_CONVERSATION_ENTRIES = 300;
 
 /**
  * Minimal structural slice of `ChatSessionState` used by the composer pill
- * config. `composerPillsVisibility` is the "last used" default applied to new
- * conversations; the ByConversationId map holds per-conversation overrides.
+ * config: the per-conversation override map only. The "last used" default for
+ * new conversations is account-wide (`GlobalSettingsState.composer.pillsVisibility`)
+ * and is passed in by callers.
  */
 export type ComposerPillsScopeState = {
-  composerPillsVisibility?: ComposerPillsVisibility;
   composerPillsVisibilityByConversationId?: Record<string, ComposerPillsVisibility>;
 };
 
 /**
- * Per-conversation override wins; otherwise the last-used default; otherwise
- * built-in defaults. New conversations therefore inherit whatever the user
- * configured most recently.
+ * Per-conversation override wins; otherwise the account-wide default;
+ * otherwise built-in defaults. New conversations therefore inherit whatever
+ * the user configured most recently, on any device.
  */
 export function resolveComposerPillsVisibility(
   scope: ComposerPillsScopeState,
-  conversationId: string | null | undefined
+  conversationId: string | null | undefined,
+  newConversationDefault?: ComposerPillsVisibility
 ): ComposerPillsVisibility {
   const byConversation = scope.composerPillsVisibilityByConversationId;
   if (conversationId && byConversation && byConversation[conversationId]) {
     return normalizeComposerPillsVisibility(byConversation[conversationId]);
   }
-  if (scope.composerPillsVisibility) {
-    return normalizeComposerPillsVisibility(scope.composerPillsVisibility);
+  if (newConversationDefault) {
+    return normalizeComposerPillsVisibility(newConversationDefault);
   }
   return { ...DEFAULT_COMPOSER_PILLS_VISIBILITY };
 }
@@ -56,26 +57,25 @@ function prunePerConversationMap<T>(map: Record<string, T>): Record<string, T> {
 }
 
 /**
- * Records a visibility change: the conversation (when known) gets its own
- * entry, and the same value becomes the last-used default so future new
- * conversations start from it.
+ * Records a per-conversation visibility override. Callers also write the same
+ * value to the account composer defaults so future new chats start from it.
+ * Returns the same object when there is no conversation to pin.
  */
 export function withComposerPillsVisibility<T extends ComposerPillsScopeState>(
   scope: T,
   conversationId: string | null | undefined,
   next: ComposerPillsVisibility
 ): T {
+  if (!conversationId) {
+    return scope;
+  }
   const normalized = normalizeComposerPillsVisibility(next);
-  const byConversation = conversationId
-    ? prunePerConversationMap({
-        ...(scope.composerPillsVisibilityByConversationId ?? {}),
-        [conversationId]: normalized,
-      })
-    : scope.composerPillsVisibilityByConversationId ?? {};
   return {
     ...scope,
-    composerPillsVisibility: normalized,
-    composerPillsVisibilityByConversationId: byConversation,
+    composerPillsVisibilityByConversationId: prunePerConversationMap({
+      ...(scope.composerPillsVisibilityByConversationId ?? {}),
+      [conversationId]: normalized,
+    }),
   };
 }
 

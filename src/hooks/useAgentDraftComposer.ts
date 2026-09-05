@@ -33,7 +33,8 @@ import {
 } from "@/lib/chat-modes";
 import {
   resolveLastUsedDraftModel,
-  updateChatDraftDefault,
+  updateComposerDraftDefault,
+  updateComposerDraftMode,
 } from "@/lib/chat-draft-defaults";
 import type {
   AgentBackendId,
@@ -45,6 +46,7 @@ import { isStandaloneChatWorkspace } from "@/lib/types";
 import { resolveLandingComposerDraftId } from "@/lib/chat-draft-title";
 import { backendSupportsCloudExecution } from "@/lib/cloud-execution-devices";
 import { useCloudExecutionDevice } from "@/hooks/useCloudExecutionDevice";
+import { useComposerDefaults } from "@/hooks/useComposerDefaults";
 
 export function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -111,14 +113,12 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   );
   const {
     activeWorkspaceId,
-    workspaceSession,
-    updateWorkspaceSession,
-    seedWorkspaceSessionChatDraft,
     openWorkspaceById,
     gitStatus,
     createWorktree,
     deleteWorktree,
   } = useWorkspace();
+  const { composer, updateComposer } = useComposerDefaults();
   const {
     activeWorkspaceGroup,
     setSelectedConversationId,
@@ -162,34 +162,32 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     () =>
       pickAvailableBackend(
         backends,
-        activeCloudDevice ? activeCloudDevice.backendId : workspaceSession.chat.backendId
+        activeCloudDevice ? activeCloudDevice.backendId : composer.backendId
       ),
-    [activeCloudDevice, backends, workspaceSession.chat.backendId]
+    [activeCloudDevice, backends, composer.backendId]
   );
   // No backend (no connected server / engine offline) means no model catalog.
-  // Never fall back to the persisted session model: it would parade a model
-  // the user cannot actually run in the picker.
+  // Never fall back to the persisted model: it would parade a model the user
+  // cannot actually run in the picker.
   const draftModels = useMemo(
     () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : []),
     [draftBackend]
   );
-  // Depend on the narrow chat fields the resolution actually reads - the
-  // whole `chat` object is replaced by unrelated session folds (unread maps,
-  // tab titles) several times per second under load, and each spurious
-  // recompute used to re-derive the full model catalog.
-  const chatRef = useRef(workspaceSession.chat);
-  chatRef.current = workspaceSession.chat;
-  const chatModel = workspaceSession.chat.model;
-  const chatBackendId = workspaceSession.chat.backendId;
-  const chatLastModelByBackend = workspaceSession.chat.lastModelByBackend;
+  // Depend on the narrow fields the resolution actually reads so unrelated
+  // settings edits do not re-derive the full model catalog.
+  const composerRef = useRef(composer);
+  composerRef.current = composer;
+  const composerModel = composer.model;
+  const composerBackendId = composer.backendId;
+  const composerLastModelByBackend = composer.lastModelByBackend;
   const draftModel = useMemo(() => {
     if (!draftBackend) return NO_MODEL_PLACEHOLDER;
     return (
-      resolveLastUsedDraftModel(chatRef.current, draftBackend, draftModels) ??
+      resolveLastUsedDraftModel(composerRef.current, draftBackend, draftModels) ??
       resolveDraftModelForBackend(draftBackend)
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveLastUsedDraftModel reads only model/backendId/lastModelByBackend from chat.
-  }, [draftBackend, draftModels, chatModel, chatBackendId, chatLastModelByBackend]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveLastUsedDraftModel reads only model/backendId/lastModelByBackend.
+  }, [draftBackend, draftModels, composerModel, composerBackendId, composerLastModelByBackend]);
   const draftModeOptions = useMemo(
     () =>
       draftBackend
@@ -200,10 +198,10 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
   const draftMode = useMemo(
     () =>
       resolveCanonicalModeId(
-        String(workspaceSession.chat.mode ?? draftModeOptions[0]?.id ?? "agent"),
+        String(composer.mode ?? draftModeOptions[0]?.id ?? "agent"),
         draftModeOptions
       ) as EditorMode,
-    [draftModeOptions, workspaceSession.chat.mode]
+    [draftModeOptions, composer.mode]
   );
 
   // Standalone chats live in auto-created sandbox workspaces (named "Chat").
@@ -236,48 +234,38 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
 
   const setDraftMode = useCallback(
     (next: EditorMode) => {
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: { ...current.chat, mode: next },
-      }));
+      updateComposer((current) => updateComposerDraftMode(current, next));
     },
-    [updateWorkspaceSession]
+    [updateComposer]
   );
 
   const setDraftModel = useCallback(
     (next: ModelInfo) => {
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: updateChatDraftDefault(current.chat, { model: next }),
-      }));
+      updateComposer((current) => updateComposerDraftDefault(current, { model: next }));
     },
-    [updateWorkspaceSession]
+    [updateComposer]
   );
 
   const setDraftBackend = useCallback(
     (nextBackendId: AgentBackendId) => {
       const nextBackend = pickAvailableBackend(backends, nextBackendId);
       if (!nextBackend) return;
-      const nextMode =
-        buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
-        workspaceSession.chat.mode;
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: updateChatDraftDefault(current.chat, {
+      updateComposer((current) =>
+        updateComposerDraftDefault(current, {
           backendId: nextBackend.id,
-          mode: nextMode ?? current.chat.mode,
+          mode: buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? current.mode,
           // Restore the model the user last used on this backend; only fall
           // back to the backend default when nothing was remembered.
           model:
             resolveLastUsedDraftModel(
-              current.chat,
+              current,
               nextBackend,
               buildDraftModelOptionsForBackend(nextBackend)
             ) ?? resolveDraftModelForBackend(nextBackend),
-        }),
-      }));
+        })
+      );
     },
-    [backends, updateWorkspaceSession, workspaceSession.chat.mode]
+    [backends, updateComposer]
   );
 
   const handleSubmit = useCallback(
@@ -291,9 +279,7 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       // Capability profile (Code / Work / custom presets) rides along for the
       // built-in agent only; other backends do not understand profile ids.
       const draftProfileId =
-        backend.id === "cesium-agent"
-          ? workspaceSession.chat.profileId?.trim() || undefined
-          : undefined;
+        backend.id === "cesium-agent" ? composer.profileId?.trim() || undefined : undefined;
       // Cloud execution rides along only when the pinned backend actually
       // advertises it (the pseudo-device pins the composer to such backends).
       const cloudExecution = Boolean(
@@ -314,13 +300,8 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         );
         if (!created) return false;
         resetComposerDraft(composerDraftId);
-        // Carry the chosen backend/mode/model into the fresh sandbox before
-        // opening it, so its session does not reset to default drafts.
-        seedWorkspaceSessionChatDraft(created.workspaceId, {
-          backendId: backend.id,
-          mode: draftMode,
-          model: draftModel,
-        });
+        // The chosen backend/mode/model are account defaults, so the fresh
+        // sandbox workspace inherits them without any per-workspace seeding.
         setStandaloneDraftActive(false);
         await openWorkspaceById(created.workspaceId);
         setSelectedConversationId(created.conversation.id);
@@ -399,10 +380,9 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       noWorkspaceDraft,
       openWorkspaceById,
       refreshConversationGroups,
-      seedWorkspaceSessionChatDraft,
       setSelectedConversationId,
       setStandaloneDraftActive,
-      workspaceSession.chat.profileId,
+      composer.profileId,
       composerDraftId,
       resetComposerDraft,
     ]
@@ -433,6 +413,8 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
     handleSubmit,
     /** Non-null while new chats are pinned to a cloud pseudo-device. */
     activeCloudDevice,
+    /** Account-wide composer defaults the draft resolves from. */
+    composer,
   };
 }
 

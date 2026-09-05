@@ -35,9 +35,31 @@ import { recordPerfSample } from "../dev-perf";
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
   ready: boolean;
+  /**
+   * True once the in-memory settings were fetched from the current settings
+   * server (as opposed to factory defaults or the offline cache). One-time
+   * migrations and cloud pushes gate on this so a failed boot fetch can never
+   * leak stale or default state into a durable store.
+   */
+  hydrated: boolean;
+  /**
+   * Increments on every user-originated edit (`updateSettings` returning a
+   * new object). Hydration from an engine, cache seeding, and model-toggle
+   * syncs do not bump it, so account sync can tell "the user changed
+   * something here" apart from "this device loaded another engine's copy".
+   */
+  editVersion: number;
   settingsServerId: string | null;
   settingsServerMissing: boolean;
   updateSettings: (
+    updater: (current: GlobalSettingsState) => GlobalSettingsState
+  ) => void;
+  /**
+   * Replace settings from the account document. Behaves like a hydration for
+   * edit tracking (no `editVersion` bump) but, unlike a server fetch, is
+   * persisted to the settings server as soon as one is hydrated.
+   */
+  applyAccountSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
   /** Re-fetch global settings from the server without writing local state back. */
@@ -95,6 +117,11 @@ export function GlobalSettingsProvider({
    * reverted" wipe.
    */
   const hydratedFromServerRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
+  const markHydrated = useCallback((value: boolean) => {
+    hydratedFromServerRef.current = value;
+    setHydrated(value);
+  }, []);
   const settingsServerIdRef = useRef<string | null>(null);
   const seededCacheServerIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -218,7 +245,7 @@ export function GlobalSettingsProvider({
 
     // Any settings-server/context change invalidates hydration; saves stay
     // blocked until a fetch against the new context succeeds.
-    hydratedFromServerRef.current = false;
+    markHydrated(false);
 
     async function load(): Promise<void> {
       if (!settingsRequestContext) {
@@ -239,7 +266,7 @@ export function GlobalSettingsProvider({
         const result = await fetchGlobalSettings({ server: settingsRequestContext });
         if (!mounted) return;
         const normalized = normalizeLoadedGlobalSettings(result.settings);
-        hydratedFromServerRef.current = true;
+        markHydrated(true);
         const serverId = settingsServerIdRef.current;
         if (serverId) {
           writeCachedGlobalSettings(serverId, normalized);
@@ -265,7 +292,7 @@ export function GlobalSettingsProvider({
     return () => {
       mounted = false;
     };
-  }, [serverSettingsEnabled, settingsRequestContext]);
+  }, [markHydrated, serverSettingsEnabled, settingsRequestContext]);
 
   const syncModelToggleState = useCallback(async () => {
     const server = settingsServerRef.current;
@@ -291,7 +318,7 @@ export function GlobalSettingsProvider({
     try {
       const result = await fetchGlobalSettings({ server });
       const normalized = normalizeLoadedGlobalSettings(result.settings);
-      hydratedFromServerRef.current = true;
+      markHydrated(true);
       const serverId = settingsServerIdRef.current;
       if (serverId) {
         writeCachedGlobalSettings(serverId, normalized);
@@ -301,7 +328,7 @@ export function GlobalSettingsProvider({
     } catch {
       // Offline or auth; keep in-memory state.
     }
-  }, []);
+  }, [markHydrated]);
 
   const refreshModels = useCallback(async () => {
     const server = settingsServerRef.current;
@@ -443,7 +470,21 @@ export function GlobalSettingsProvider({
     syncModelToggleState,
   ]);
 
+  const [editVersion, setEditVersion] = useState(0);
   const updateSettings = useCallback(
+    (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
+      setSettings((current) => {
+        const next = updater(current);
+        if (next !== current) {
+          setEditVersion((version) => version + 1);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const applyAccountSettings = useCallback(
     (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
       setSettings((current) => updater(current));
     },
@@ -454,9 +495,12 @@ export function GlobalSettingsProvider({
     () => ({
       settings,
       ready,
+      hydrated,
+      editVersion,
       settingsServerId: settingsServer?.id ?? null,
       settingsServerMissing: requiresDefaultServer,
       updateSettings,
+      applyAccountSettings,
       refreshSettings: refetchGlobalSettingsFromServer,
       refreshModels,
       modelsRefreshing,
@@ -464,6 +508,9 @@ export function GlobalSettingsProvider({
       saveModelToggleUpdates,
     }),
     [
+      applyAccountSettings,
+      editVersion,
+      hydrated,
       ready,
       requiresDefaultServer,
       settings,

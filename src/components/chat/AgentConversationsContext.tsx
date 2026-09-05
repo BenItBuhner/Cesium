@@ -810,7 +810,7 @@ export function AgentConversationsProvider({
   const flushAgentSubscriptionRef = useRef<(extraConversationIds?: string[]) => void>(() => {});
   const scheduleConversationCatchUpRef = useRef<(conversationId: string) => void>(() => {});
   const openConversationsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chatDraftRef = useRef(workspaceSession.chat);
+  const composerDefaultsRef = useRef(globalSettings.composer);
   const loadedSnapshotConversationIdsRef = useRef(new Set<string>());
   const backgroundSnapshotCooldownUntilRef = useRef<Record<string, number>>({});
   const openConversationIdsRef = useRef<string[]>([]);
@@ -888,8 +888,8 @@ export function AgentConversationsProvider({
   }, [eventRenderBatcher]);
 
   useEffect(() => {
-    chatDraftRef.current = workspaceSession.chat;
-  }, [workspaceSession.chat]);
+    composerDefaultsRef.current = globalSettings.composer;
+  }, [globalSettings.composer]);
 
   useEffect(() => {
     historyMetaRef.current = historyMetaById;
@@ -2411,7 +2411,7 @@ conversation,
 backendId:
 effectiveConfig.backendId ??
 backend?.id ??
-chatDraftRef.current.backendId,
+composerDefaultsRef.current.backendId,
 models,
 model,
 modeOptions:

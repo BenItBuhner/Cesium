@@ -120,13 +120,12 @@ export function AppearanceSettingsPanel() {
   const [draft, setDraft] = useState<CustomThemeEntry | null>(null);
 
   const { enginePagesVisible } = useSettingsEngineAvailability();
-  const { updateWorkspaceSession, workspaceSession } = useWorkspace();
+  const { updateWorkspaceSession } = useWorkspace();
   const general = settings.general;
   const sideColumnsSwapped = general.sideColumnsSwapped;
   const toggleNewChatWidget = useNewChatWidgetVisibilityToggle();
   const composerStatusBarDefault = normalizeComposerStatusBarVisibility(
-    general.composerStatusBarVisibility ??
-      workspaceSession.chat.composerStatusBarVisibility
+    settings.composer.statusBarVisibility
   );
 
   const patchGeneral = (patch: Partial<typeof general>) => {
@@ -150,14 +149,19 @@ export function AppearanceSettingsPanel() {
   };
 
   const setComposerFooter = (value: boolean) => {
-    patchGeneral({
-      composerStatusBarVisibility: {
-        repo: value,
-        branch: value,
-        goal: value,
-        context: value,
+    updateSettings((current) => ({
+      ...current,
+      composer: {
+        ...current.composer,
+        statusBarVisibility: {
+          repo: value,
+          branch: value,
+          goal: value,
+          context: value,
+        },
+        updatedAt: Date.now(),
       },
-    });
+    }));
   };
 
   useEffect(() => {

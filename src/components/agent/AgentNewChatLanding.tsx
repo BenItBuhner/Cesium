@@ -140,7 +140,6 @@ export function AgentNewChatLanding({
   } = useOpenInEditor();
   const {
     workspaceInfo,
-    workspaceSession,
     openWorkspaceById,
     openFolder,
     gitStatus,
@@ -189,6 +188,7 @@ export function AgentNewChatLanding({
     noWorkspaceDraft,
     handleSubmit,
     activeCloudDevice,
+    composer,
   } = useAgentDraftComposer({ onInstantSubmit });
   const { cloudDevices, setActiveCloudDeviceId } = useCloudExecutionDevice(backends);
   const codespaces = useGithubCodespaces();
@@ -408,7 +408,7 @@ export function AgentNewChatLanding({
       onModeChange: setDraftMode,
       model: draftModel,
       onModelChange: (next: typeof draftModel) => setDraftModel(next),
-      backendId: draftBackend?.id ?? workspaceSession.chat.backendId,
+      backendId: draftBackend?.id ?? composer.backendId,
       backends,
       onBackendChange: setDraftBackend,
       models: draftModels,
@@ -434,7 +434,7 @@ export function AgentNewChatLanding({
     setDraftBackend,
     setDraftMode,
     setDraftModel,
-    workspaceSession.chat.backendId,
+    composer.backendId,
   ]);
 
   useEffect(() => {
@@ -875,7 +875,7 @@ export function AgentNewChatLanding({
                 onModelChange={(next) => {
                   setDraftModel(next);
                 }}
-                backendId={draftBackend?.id ?? workspaceSession.chat.backendId}
+                backendId={draftBackend?.id ?? composer.backendId}
                 backends={backends}
                 onBackendChange={(next) => setDraftBackend(next)}
                 models={draftModels}

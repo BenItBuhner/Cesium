@@ -136,9 +136,9 @@ export function ComposerStatusBar({
   const agentShell = useAgentShellStateMaybe();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [goalSummaryOpen, setGoalSummaryOpen] = useState(false);
-  const newConversationDefault =
-    settings.general.composerStatusBarVisibility ??
-    workspaceSession.chat.composerStatusBarVisibility;
+  // Account-wide default for new conversations; per-conversation state lives
+  // in the workspace session next to the conversation.
+  const newConversationDefault = settings.composer.statusBarVisibility;
 
   const openPullRequestView = useCallback(() => {
     bridgeRef.current?.openPullRequestTab();
@@ -188,16 +188,17 @@ export function ComposerStatusBar({
 
   const setVisibility = useCallback(
     (next: typeof visibility) => {
-      // Persist per conversation and as the last-used default for new chats.
-      updateWorkspaceSession((current) => ({
-        ...current,
-        chat: withComposerStatusBarVisibility(current.chat, conversationId, next),
-      }));
+      // Persist per conversation and as the account-wide default for new chats.
+      updateWorkspaceSession((current) => {
+        const nextChat = withComposerStatusBarVisibility(current.chat, conversationId, next);
+        return nextChat === current.chat ? current : { ...current, chat: nextChat };
+      });
       updateSettings((current) => ({
         ...current,
-        general: {
-          ...current.general,
-          composerStatusBarVisibility: next,
+        composer: {
+          ...current.composer,
+          statusBarVisibility: next,
+          updatedAt: Date.now(),
         },
       }));
     },

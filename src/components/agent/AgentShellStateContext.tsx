@@ -1974,14 +1974,14 @@ export function AgentShellStateProvider({
     const title = formatProvisionalChatTitleFromComposer(snapshot);
     resetComposerDraft(draftId);
 
-    const chat = workspaceSession.chat;
+    const composer = settings.composer;
     const input = {
-      backendId: chat.backendId,
-      mode: chat.mode,
-      modelId: chat.model.modelValue ?? chat.model.id,
-      modelName: chat.model.name,
-      ...(chat.backendId === "cesium-agent" && chat.profileId?.trim()
-        ? { profileId: chat.profileId.trim() }
+      backendId: composer.backendId,
+      mode: composer.mode,
+      modelId: composer.model.modelValue ?? composer.model.id,
+      modelName: composer.model.name,
+      ...(composer.backendId === "cesium-agent" && composer.profileId?.trim()
+        ? { profileId: composer.profileId.trim() }
         : {}),
       title,
     };
@@ -2024,8 +2024,8 @@ export function AgentShellStateProvider({
     activeWorkspaceId,
     refreshConversationGroups,
     resetComposerDraft,
+    settings.composer,
     upsertComposerDraft,
-    workspaceSession.chat,
   ]);
 
   const bumpAgentConversationMruForServer = useCallback(

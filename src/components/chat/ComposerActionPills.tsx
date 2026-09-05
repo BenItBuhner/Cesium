@@ -52,6 +52,7 @@ import type { AgentConversationStatus } from "@/lib/agent-types";
 import { isAgentCesiumTurnActive } from "@/lib/agent-chat";
 import { useConversationEvents } from "@/components/chat/AgentConversationsContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspaceInsights, requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
 import { runQuickAction, useQuickActionsConfig } from "@/lib/quick-actions";
 import { executeQuickActionUiCommand } from "@/lib/quick-action-ui";
@@ -304,6 +305,7 @@ export function ComposerActionPills({
   shellInsetClass = "mx-0 @min-[481px]:mx-[10px]",
 }: ComposerActionPillsProps) {
   const { activeWorkspaceId, workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { settings, updateSettings } = useGlobalSettings();
   const { effectiveActions, loaded } = useQuickActionsConfig();
   const runCommandRunner = useIDECommandRunner();
   const conversationEvents = useConversationEvents(conversationId);
@@ -311,7 +313,11 @@ export function ComposerActionPills({
   const conversationRunning =
     conversationStatus != null && isAgentCesiumTurnActive(conversationStatus);
 
-  const visibility = resolveComposerPillsVisibility(workspaceSession.chat, conversationId);
+  const visibility = resolveComposerPillsVisibility(
+    workspaceSession.chat,
+    conversationId,
+    settings.composer.pillsVisibility
+  );
   const anyPillsEnabled =
     visibility.diff || visibility.conflicts || visibility.sync || visibility.work || visibility.actions;
 
@@ -373,12 +379,17 @@ export function ComposerActionPills({
 
   const setVisibility = useCallback(
     (next: ComposerPillsVisibility) => {
-      updateWorkspaceSession((current) => ({
+      // Per-conversation override plus the account-wide default for new chats.
+      updateWorkspaceSession((current) => {
+        const nextChat = withComposerPillsVisibility(current.chat, conversationId, next);
+        return nextChat === current.chat ? current : { ...current, chat: nextChat };
+      });
+      updateSettings((current) => ({
         ...current,
-        chat: withComposerPillsVisibility(current.chat, conversationId, next),
+        composer: { ...current.composer, pillsVisibility: next, updatedAt: Date.now() },
       }));
     },
-    [conversationId, updateWorkspaceSession]
+    [conversationId, updateSettings, updateWorkspaceSession]
   );
 
   const handleContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {

@@ -50,7 +50,6 @@ import {
   createDefaultWorkspaceSession,
   mergeWorkspaceSessionFromImport,
   createPersistableWorkspaceSession,
-  type ChatSessionState,
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import {
@@ -83,7 +82,11 @@ import {
   SETUP_ROUTE,
   wasFirstServerNoticeDismissed,
 } from "@/lib/onboarding/workspace-errors";
-import { NO_MODEL_PLACEHOLDER } from "@/lib/agent-chat";
+import {
+  adoptLegacyComposerFields,
+  extractLegacyComposerFieldsFromChatSession,
+} from "@/lib/chat-draft-defaults";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
 /** 10s keeps NAT/proxies warm while cutting ping wakeups ~70% vs the old 3s - a real battery win on mobile radios. The server also sends protocol pings, so client pings are liveness probes, not the keepalive. */
 const HEARTBEAT_INTERVAL_MS = 10_000;
@@ -187,16 +190,6 @@ type WorkspaceContextValue = {
     updater: (current: WorkspaceSessionState) => WorkspaceSessionState
   ) => Promise<void>;
   flushWorkspaceSessionNow: () => Promise<void>;
-  /**
-   * Pre-seed the local session backup for a workspace that is about to be
-   * opened for the first time (e.g. a fresh standalone-chat sandbox) so the
-   * optimistic transition inherits the given chat draft selection instead of
-   * resetting to hard defaults.
-   */
-  seedWorkspaceSessionChatDraft: (
-    workspaceId: string,
-    chat: Pick<ChatSessionState, "backendId" | "mode" | "model">
-  ) => void;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
   lastFileChange: FileChangeNotice | null;
@@ -250,9 +243,7 @@ type WorkspaceContextValue = {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function createSessionDefaults(): WorkspaceSessionState {
-  // No fake default model: a fresh session shows an empty model picker until
-  // a connected server's backend catalog resolves a real one.
-  return createDefaultWorkspaceSession([], NO_MODEL_PLACEHOLDER);
+  return createDefaultWorkspaceSession([]);
 }
 
 function readWindowLocationContext(): {
@@ -524,6 +515,7 @@ function replaceFolderChildren(
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const { experimentalIpadResumeCache } = useUserPreferences();
+  const { updateSettings } = useGlobalSettings();
   const cloud = useCloudContext();
   const cloudUserKeyRef = useRef<string | null>(null);
   cloudUserKeyRef.current = cloud.userKey;
@@ -649,27 +641,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [getSessionScopeId, sessionReady, windowId, workspaceInfo, writeIpadResumeSnapshot]
   );
 
-  const seedWorkspaceSessionChatDraft = useCallback(
-    (
-      workspaceId: string,
-      chat: Pick<ChatSessionState, "backendId" | "mode" | "model">
-    ) => {
-      // The optimistic workspace transition falls back to hard session
-      // defaults when no local backup exists, then immediately re-writes that
-      // backup - which would beat any server-side session seed during
-      // hydration. Writing the backup first keeps the chat draft selection.
-      const defaults = createSessionDefaults();
-      writeWorkspaceSessionBackup(getSessionScopeId(workspaceId), {
-        ...defaults,
-        chat: {
-          ...defaults.chat,
-          backendId: chat.backendId,
-          mode: chat.mode,
-          model: chat.model,
-        },
+  /**
+   * Sessions written before composer defaults moved to the account still
+   * carry the workspace's last harness / mode / model inside `chat`. Fold
+   * them into the account defaults exactly once (only while the account has
+   * never set any), so an upgraded install keeps the picks it was using.
+   */
+  const adoptLegacyChatDraftDefaults = useCallback(
+    (rawSession: unknown) => {
+      const rawChat =
+        rawSession && typeof rawSession === "object"
+          ? (rawSession as { chat?: unknown }).chat
+          : undefined;
+      const legacy = extractLegacyComposerFieldsFromChatSession(rawChat);
+      if (!legacy) {
+        return;
+      }
+      updateSettings((current) => {
+        const composer = adoptLegacyComposerFields(current.composer, legacy);
+        return composer === current.composer ? current : { ...current, composer };
       });
     },
-    [getSessionScopeId]
+    [updateSettings]
   );
 
   const flushWorkspaceSessionNow = useCallback(
@@ -978,6 +971,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
         setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
+        adoptLegacyChatDraftDefaults(localBackup ?? sessionResult.session);
         let normalized = normalizeWorkspaceSession(localBackup ?? sessionResult.session);
         if (!localBackup && typeof window !== "undefined") {
           const urlShell = workbenchViewFromSearchParam(
@@ -1028,7 +1022,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [experimentalIpadResumeCache, getSessionScopeId, setServerWorkspace, windowId]
+    [
+      adoptLegacyChatDraftDefaults,
+      experimentalIpadResumeCache,
+      getSessionScopeId,
+      setServerWorkspace,
+      windowId,
+    ]
   );
 
   const applyWorkspaceListingUpdate = useCallback(
@@ -1824,7 +1824,6 @@ let lastHeartbeatRunAt = Date.now();
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
       flushWorkspaceSessionNow,
-      seedWorkspaceSessionChatDraft,
       connected: connectionState === "open",
       connectionState,
       lastFileChange,
@@ -1870,7 +1869,6 @@ let lastHeartbeatRunAt = Date.now();
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
       flushWorkspaceSessionNow,
-      seedWorkspaceSessionChatDraft,
       connectionState,
       lastFileChange,
       fsResyncToken,

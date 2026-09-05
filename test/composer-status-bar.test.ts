@@ -15,7 +15,6 @@ import {
   createDefaultWorkspaceSession,
   mergeWorkspaceSessionFromImport,
 } from "../src/lib/workspace-session.ts";
-import type { ModelInfo } from "../src/lib/types.ts";
 
 describe("composer status bar helpers", () => {
   test("composerStatusBarHasVisibleItems respects toggles and git", () => {
@@ -113,46 +112,44 @@ describe("composer status bar helpers", () => {
 
 describe("per-conversation composer status bar visibility", () => {
   const hidden = { repo: false, branch: false, goal: false, context: false };
+  const allOn = { repo: true, branch: true, goal: true, context: true };
 
-  test("conversation state wins over the last-used default", () => {
+  test("conversation state wins over the account default", () => {
+    const accountDefault = { repo: false, branch: true, goal: true, context: true };
     const scope = {
-      composerStatusBarVisibility: { repo: false, branch: true, goal: true, context: true },
       composerStatusBarVisibilityByConversationId: { "conv-a": hidden },
     };
-    assert.deepEqual(resolveComposerStatusBarVisibilityForConversation(scope, "conv-a"), hidden);
-    // New conversations inherit the last-used default.
+    assert.deepEqual(
+      resolveComposerStatusBarVisibilityForConversation(scope, "conv-a", accountDefault),
+      hidden
+    );
+    // New conversations inherit the account default.
     assert.equal(
-      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new").repo,
+      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new", accountDefault).repo,
       false
     );
     assert.equal(
-      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new").branch,
+      resolveComposerStatusBarVisibilityForConversation(scope, "conv-new", accountDefault).branch,
       true
     );
+    // Without an account default the built-in defaults apply.
+    assert.deepEqual(resolveComposerStatusBarVisibilityForConversation(scope, "conv-new"), allOn);
   });
 
-  test("toggling writes both the conversation entry and the new-chat default", () => {
-    const start = {
-      composerStatusBarVisibility: {
-        repo: true,
-        branch: true,
-        goal: true,
-        context: true,
-      },
-      composerStatusBarVisibilityByConversationId: {},
-    };
+  test("toggling writes the conversation entry; the account default is owned elsewhere", () => {
+    const start = { composerStatusBarVisibilityByConversationId: {} };
     const afterA = withComposerStatusBarVisibility(start, "conv-a", {
       repo: true,
       branch: false,
       goal: true,
       context: true,
     });
-    assert.equal(afterA.composerStatusBarVisibility?.branch, false);
     assert.equal(
       afterA.composerStatusBarVisibilityByConversationId?.["conv-a"]?.branch,
       false
     );
-    // conv-a keeps its own state even after another conversation changes the default.
+    assert.equal("composerStatusBarVisibility" in afterA, false);
+    // conv-a keeps its own state even after another conversation toggles.
     const afterB = withComposerStatusBarVisibility(afterA, "conv-b", {
       repo: false,
       branch: true,
@@ -167,39 +164,30 @@ describe("per-conversation composer status bar visibility", () => {
       resolveComposerStatusBarVisibilityForConversation(afterB, "conv-a").repo,
       true
     );
+    // A chat without its own entry resolves to whatever default the caller passes.
     assert.equal(
-      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-c").repo,
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-c", {
+        ...allOn,
+        repo: false,
+      }).repo,
       false
     );
+    // Toggling without a conversation is a no-op on the workspace scope.
+    assert.equal(withComposerStatusBarVisibility(afterB, null, hidden), afterB);
   });
 
-  test("pinning snapshots the last-used default without changing it", () => {
-    const scope = {
-      composerStatusBarVisibility: {
-        repo: true,
-        branch: false,
-        goal: true,
-        context: true,
-      },
-      composerStatusBarVisibilityByConversationId: {},
-    };
-    const pinned = pinComposerStatusBarVisibilityForConversation(scope, "conv-a");
+  test("pinning snapshots the account default into the conversation", () => {
+    const accountDefault = { repo: true, branch: false, goal: true, context: true };
+    const scope = { composerStatusBarVisibilityByConversationId: {} };
+    const pinned = pinComposerStatusBarVisibilityForConversation(scope, "conv-a", accountDefault);
     assert.deepEqual(
       pinned.composerStatusBarVisibilityByConversationId?.["conv-a"],
-      { repo: true, branch: false, goal: true, context: true }
+      accountDefault
     );
-    // The last-used default itself is untouched.
-    assert.deepEqual(pinned.composerStatusBarVisibility, scope.composerStatusBarVisibility);
   });
 
-  test("an explicit new-chat default wins over stale workspace state when pinning", () => {
+  test("the account default wins over stale workspace state when pinning", () => {
     const staleWorkspaceState = {
-      composerStatusBarVisibility: {
-        repo: true,
-        branch: true,
-        goal: true,
-        context: true,
-      },
       composerStatusBarVisibilityByConversationId: {},
     };
     assert.deepEqual(
@@ -224,67 +212,54 @@ describe("per-conversation composer status bar visibility", () => {
 
   test("pinning is a no-op for pinned conversations and missing ids", () => {
     const scope = {
-      composerStatusBarVisibility: {
-        repo: true,
-        branch: true,
-        goal: true,
-        context: true,
-      },
       composerStatusBarVisibilityByConversationId: {
         "conv-a": hidden,
       },
     };
-    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, "conv-a"), scope);
-    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, null), scope);
-    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, undefined), scope);
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, "conv-a", allOn), scope);
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, null, allOn), scope);
+    assert.equal(pinComposerStatusBarVisibilityForConversation(scope, undefined, allOn), scope);
   });
 
-  test("a pinned chat keeps its state after the default moves from another chat", () => {
-    // Chat A is created while the default hides the branch label.
-    const start = {
-      composerStatusBarVisibility: {
-        repo: true,
-        branch: false,
-        goal: true,
-        context: true,
-      },
-      composerStatusBarVisibilityByConversationId: {},
-    };
-    const pinnedA = pinComposerStatusBarVisibilityForConversation(start, "conv-a");
-    // The user then re-enables the branch label from chat B.
-    const afterB = withComposerStatusBarVisibility(pinnedA, "conv-b", {
+  test("a pinned chat keeps its state after the account default moves", () => {
+    // Chat A is created while the account default hides the branch label.
+    const start = { composerStatusBarVisibilityByConversationId: {} };
+    const pinnedA = pinComposerStatusBarVisibilityForConversation(start, "conv-a", {
       repo: true,
-      branch: true,
+      branch: false,
       goal: true,
       context: true,
     });
+    // The user then re-enables the branch label from chat B; the account
+    // default (owned by the settings document) follows suit.
+    const afterB = withComposerStatusBarVisibility(pinnedA, "conv-b", allOn);
     // Chat A retains its creation-time state; new chats get the latest default.
     assert.equal(
       resolveComposerStatusBarVisibilityForConversation(afterB, "conv-a").branch,
       false
     );
     assert.equal(
-      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-new").branch,
+      resolveComposerStatusBarVisibilityForConversation(afterB, "conv-new", allOn).branch,
       true
     );
   });
 });
 
 describe("workspace session composer status bar visibility", () => {
-  test("imports composerStatusBarVisibility from persisted chat session", () => {
-    const model: ModelInfo = { id: "m", name: "M", provider: "auto" };
-    const base = createDefaultWorkspaceSession([{ id: "t", title: "T", active: true }], model);
+  test("strips the legacy workspace default and keeps per-conversation entries", () => {
+    const base = createDefaultWorkspaceSession([{ id: "t", title: "T", active: true }]);
     const normalized = mergeWorkspaceSessionFromImport(base, {
       schemaVersion: 1,
       chat: {
         composerStatusBarVisibility: { repo: false, branch: true, context: false },
+        composerStatusBarVisibilityByConversationId: {
+          "conv-1": { repo: false },
+        },
       },
     });
-    assert.deepEqual(normalized.chat.composerStatusBarVisibility, {
-      repo: false,
-      branch: true,
-      goal: true,
-      context: false,
+    assert.equal("composerStatusBarVisibility" in normalized.chat, false);
+    assert.deepEqual(normalized.chat.composerStatusBarVisibilityByConversationId, {
+      "conv-1": { repo: false, branch: true, goal: true, context: true },
     });
   });
 });

@@ -31,14 +31,16 @@ import {
   type QuickSwitcherScopeId,
 } from "./quick-open-scopes";
 import {
-  normalizeComposerStatusBarVisibility,
-  type ComposerStatusBarVisibility,
-} from "./composer-status-bar";
+  createDefaultComposerDefaults,
+  normalizeComposerDefaults,
+  type ComposerDefaultsState,
+} from "./composer-defaults";
 import {
   createDefaultDevicePickerState,
   normalizeDevicePickerState,
   type DevicePickerState,
 } from "./device-picker";
+import { DEFAULT_USER_PREFERENCES, type UserPreferences } from "./preferences";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 
@@ -220,11 +222,16 @@ export type GeneralSettingsState = {
   /** Section / entry order and hidden entries in the device (server) picker. */
   devicePicker: DevicePickerState;
   /**
-   * Defaults for the repo / branch / goal / context row beneath the composer.
-   * Omitted on legacy profiles so their workspace's last-used value migrates
-   * naturally until the user changes a toggle or saves an explicit default.
+   * Cross-workspace agent rail pins (most recent first). Conversation ids are
+   * engine-unique, so one account-wide list serves every device and server.
    */
-  composerStatusBarVisibility?: ComposerStatusBarVisibility;
+  pinnedAgentConversationIds: string[];
+  /** Workspace groups the user collapsed in the agent rail (server-scoped keys). */
+  collapsedRailWorkspaceKeys: string[];
+  /** Chat folders the user collapsed in the agent rail. */
+  collapsedRailFolderIds: string[];
+  /** Last opened workspace per server id, so any device resumes where the account left off. */
+  lastWorkspaceByServer: Record<string, string>;
 };
 
 export type AgentRailSettingsState = {
@@ -332,9 +339,12 @@ export type ModelsSettingsState = {
 /** Reserved for future tool/MCP preferences; persisted object is always empty today. */
 export type ToolsSettingsState = Record<string, never>;
 
-export type FeaturesSettingsState = {
-  vscodeExtensionsBeta: boolean;
-};
+/**
+ * Feature flags and experimental surfaces. This is the former client-only
+ * `UserPreferences` document (iPad experiments + VS Code extensions beta),
+ * folded into the account settings so every device agrees.
+ */
+export type FeaturesSettingsState = UserPreferences;
 
 export type GlobalAppSettingsSlice = {
   general: GeneralSettingsState;
@@ -351,6 +361,8 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   keyboardShortcuts: KeyboardShortcutsSettingsState;
   /** Animated aurora backdrop behind the workbench and settings. */
   aurora: AuroraSettingsState;
+  /** Account-wide new-chat defaults: last-used harness / mode / model, profile, composer chrome. */
+  composer: ComposerDefaultsState;
 };
 
 export const DEFAULT_CMD_TAGS = [
@@ -372,6 +384,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     themeConfig: createDefaultThemeConfig(),
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
     aurora: createDefaultAuroraSettings(),
+    composer: createDefaultComposerDefaults(),
     general: {
       doNotDisturb: false,
       batchStreamEvents: true,
@@ -405,6 +418,10 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       },
       newChatWidgets: createDefaultNewChatWidgetsState(),
       devicePicker: createDefaultDevicePickerState(),
+      pinnedAgentConversationIds: [],
+      collapsedRailWorkspaceKeys: [],
+      collapsedRailFolderIds: [],
+      lastWorkspaceByServer: {},
     },
     agents: {
       submitCtrlEnter: false,
@@ -438,9 +455,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       byBackend: {},
     },
     tools: {},
-    features: {
-      vscodeExtensionsBeta: false,
-    },
+    features: { ...DEFAULT_USER_PREFERENCES },
   };
 }
 
@@ -927,6 +942,14 @@ export function normalizeLoadedGlobalSettings(
     return base;
   }
 
+  // Pre-composer profiles kept the explicit new-chat status-bar default on
+  // `general`; it now lives in `composer` (folded in below) and must not keep
+  // round-tripping through the spread.
+  const {
+    composerStatusBarVisibility: legacyComposerStatusBarVisibility,
+    ...rawGeneral
+  } = (r.general ?? {}) as Record<string, unknown>;
+
   return {
     schemaVersion: 1,
     themeConfig: normalizeThemeConfig((r as { themeConfig?: unknown }).themeConfig),
@@ -934,7 +957,7 @@ export function normalizeLoadedGlobalSettings(
     aurora: normalizeAuroraSettings((r as { aurora?: unknown }).aurora),
     general: {
       ...base.general,
-      ...(r.general ?? {}),
+      ...rawGeneral,
       batchStreamEvents:
         typeof (r.general as Record<string, unknown> | undefined)
           ?.batchStreamEvents === "boolean"
@@ -985,13 +1008,22 @@ export function normalizeLoadedGlobalSettings(
       devicePicker: normalizeDevicePickerState(
         (r.general as Record<string, unknown> | undefined)?.devicePicker
       ),
-      composerStatusBarVisibility:
-        (r.general as Record<string, unknown> | undefined)
-          ?.composerStatusBarVisibility === undefined
-          ? undefined
-          : normalizeComposerStatusBarVisibility(
-              (r.general as Record<string, unknown>).composerStatusBarVisibility
-            ),
+      pinnedAgentConversationIds: normalizeIdList(
+        (r.general as Record<string, unknown> | undefined)?.pinnedAgentConversationIds,
+        MAX_PINNED_CONVERSATIONS
+      ),
+      collapsedRailWorkspaceKeys: normalizeIdList(
+        (r.general as Record<string, unknown> | undefined)?.collapsedRailWorkspaceKeys,
+        MAX_COLLAPSED_RAIL_KEYS
+      ),
+      collapsedRailFolderIds: normalizeIdList(
+        (r.general as Record<string, unknown> | undefined)?.collapsedRailFolderIds,
+        MAX_COLLAPSED_RAIL_KEYS
+      ),
+      lastWorkspaceByServer: normalizeStringMap(
+        (r.general as Record<string, unknown> | undefined)?.lastWorkspaceByServer,
+        MAX_LAST_WORKSPACE_ENTRIES
+      ),
     },
     agents: {
       ...base.agents,
@@ -1017,13 +1049,74 @@ export function normalizeLoadedGlobalSettings(
           : base.models.byBackend,
     },
     tools: {},
-    features: {
-      vscodeExtensionsBeta:
-        typeof (r as { features?: { vscodeExtensionsBeta?: unknown } }).features
-          ?.vscodeExtensionsBeta === "boolean"
-          ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
-              .vscodeExtensionsBeta
-          : base.features.vscodeExtensionsBeta,
-    },
+    features: normalizeFeaturesSettings((r as { features?: unknown }).features),
+    composer: normalizeComposerDefaults((r as { composer?: unknown }).composer, {
+      legacyStatusBarVisibility: legacyComposerStatusBarVisibility,
+    }),
   };
+}
+
+function normalizeFeaturesSettings(raw: unknown): FeaturesSettingsState {
+  const base = { ...DEFAULT_USER_PREFERENCES };
+  if (!raw || typeof raw !== "object") {
+    return base;
+  }
+  const record = raw as Partial<Record<keyof FeaturesSettingsState, unknown>>;
+  const flag = (key: keyof FeaturesSettingsState): boolean =>
+    typeof record[key] === "boolean" ? (record[key] as boolean) : base[key];
+  const experimentalIpadMode = flag("experimentalIpadMode");
+  return {
+    experimentalIpadMode,
+    // Older preference documents had no separate custom-buttons flag; it
+    // followed the iPad mode toggle.
+    experimentalIpadCustomButtons:
+      typeof record.experimentalIpadCustomButtons === "boolean"
+        ? record.experimentalIpadCustomButtons
+        : experimentalIpadMode,
+    experimentalIpadWindowedTabInset: flag("experimentalIpadWindowedTabInset"),
+    experimentalIpadResumeCache: flag("experimentalIpadResumeCache"),
+    vscodeExtensionsBeta: flag("vscodeExtensionsBeta"),
+  };
+}
+
+const MAX_PINNED_CONVERSATIONS = 500;
+const MAX_COLLAPSED_RAIL_KEYS = 2000;
+const MAX_LAST_WORKSPACE_ENTRIES = 200;
+
+function normalizeIdList(raw: unknown, max: number): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+    if (out.length >= max) {
+      break;
+    }
+  }
+  return out;
+}
+
+function normalizeStringMap(raw: unknown, max: number): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (count >= max) {
+      break;
+    }
+    if (!key.trim() || typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    out[key] = value;
+    count += 1;
+  }
+  return out;
 }
