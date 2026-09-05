@@ -134,6 +134,8 @@ npm run build:packages            # shared workspace packages the server imports
 cp .env.example .env.local        # set WORKSPACE_ROOT to the folder to open first
 ```
 
+On Windows PowerShell use `Copy-Item .env.example .env.local` for the last step; keep `NEXT_PUBLIC_SERVER_URL=http://localhost:9100` unless you move the engine.
+
 Then, in two terminals:
 
 ```bash
@@ -161,7 +163,7 @@ Optional extras:
 | `packages/` | Shared core, contracts, client SDK, UI, and the `cesium-workbench` CLI |
 | `convex/` | Optional cloud sync (Convex functions and schema) |
 
-The client is a window onto your machine; nothing sensitive lives in it. The engine holds the workspaces, files, terminals, and agent sessions, and adds auth and rate limits the moment you open it beyond this computer.
+The client is a window onto your machine; nothing sensitive lives in it. The engine holds the workspaces, files, terminals, and agent sessions, and adds auth and rate limits the moment you open it beyond this computer. Clients register one or more directories as workspaces and send `x-opencursor-workspace-id` on API calls; live agent output streams over `/ws/agent`, terminals over `/ws/terminal`, and file changes over `/ws/fs`. Voice input posts audio to `POST /api/audio/transcriptions` (OpenAI-compatible multipart).
 
 ## Configuration reference
 
