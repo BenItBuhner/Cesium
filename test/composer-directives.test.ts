@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   applyComposerDirectives,
+  filterSlashMenuSectionsForDisplay,
   getActiveSlashQuery,
   getSlashMenuSections,
   parseSideChatDirective,
@@ -96,5 +97,42 @@ describe("side chat slash command (shared core)", () => {
       without.find((section) => section.id === "commands")?.items.some((entry) => entry.id === "side-chat") ?? false,
       false
     );
+  });
+
+  test("a huge model catalog cannot push the Side chat command past the visible cap", () => {
+    const models = Array.from({ length: 6_000 }, (_, index) => ({
+      id: `vendor/model-${index}`,
+      name: index % 7 === 0 ? `Poolside Model ${index}` : `Model ${index}`,
+      provider: "fixture" as const,
+    }));
+    const sections = getSlashMenuSections({
+      activeBackend: {
+        id: "cesium-agent",
+        label: "Cesium Agent",
+        available: true,
+        capabilities: { supportsModeSelection: true, supportsModelSelection: true },
+      },
+      modeOptions: [
+        { id: "agent", label: "Agent" },
+        { id: "ask", label: "Ask" },
+      ],
+      models,
+      sideChatAvailable: true,
+    });
+
+    const unfiltered = filterSlashMenuSectionsForDisplay(sections, "");
+    assert.equal(unfiltered.visibleCount, 80);
+    assert.equal(unfiltered.truncated, true);
+    const commands = unfiltered.sections.find((section) => section.id === "commands");
+    assert.ok(commands?.items.some((item) => item.id === "side-chat"), "Side chat survives the cap");
+    assert.equal(unfiltered.sections.find((section) => section.id === "modes")?.items.length, 2);
+
+    // "side" also matches hundreds of "Poolside" models; the command still shows.
+    const bySide = filterSlashMenuSectionsForDisplay(sections, "side");
+    assert.ok(
+      bySide.sections.find((section) => section.id === "commands")?.items.some((item) => item.id === "side-chat"),
+      "Side chat is visible for the /side query"
+    );
+    assert.equal(bySide.visibleCount, 80);
   });
 });
