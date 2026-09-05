@@ -7,6 +7,7 @@ import {
   mcpProtocolMeta,
   type McpProtocolProbeResult,
 } from "./protocol.js";
+import { isRecord } from "../coerce.js";
 
 const STDIO_PROBE_MS = 4_000;
 
@@ -16,10 +17,6 @@ type JsonRpcResponse = {
   result?: unknown;
   error?: { message?: string };
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 async function stdioRpcOnce(input: {
   command: string;

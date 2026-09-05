@@ -143,8 +143,6 @@ export type GlobalSettings = {
   };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
-    /** @deprecated Unified tap/hold shortcut; ignored if present in older profiles. */
-    voiceInputMode?: "hold" | "toggle";
   };
 };
 

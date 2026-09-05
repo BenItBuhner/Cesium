@@ -9,18 +9,8 @@ import {
   useEffect,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  Infinity,
-  Flame,
-  Layers,
-  ListChecks,
-  Bug,
-  MessageSquare,
-  ChevronDown,
-  Check,
-  GitBranch,
-  type LucideIcon,
-} from "lucide-react";
+import { Check, ChevronDown, type LucideIcon } from "lucide-react";
+import { iconForModeTone } from "@/components/chat/mode-tone-icon";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -49,25 +39,6 @@ const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
   orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
-
-function iconForModeTone(tone: KnownEditorMode): LucideIcon {
-  switch (tone) {
-    case "plan":
-      return ListChecks;
-    case "debug":
-      return Bug;
-    case "ask":
-      return MessageSquare;
-    case "goal":
-      return Flame;
-    case "workflow":
-      return GitBranch;
-    case "orchestration":
-      return Layers;
-    default:
-      return Infinity;
-  }
-}
 
 interface ModeDropdownProps {
   mode: EditorMode;

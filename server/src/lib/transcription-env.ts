@@ -115,10 +115,6 @@ function loadTranscriptionDefaultsPayload(): TranscriptionFilePayload | null {
   return null;
 }
 
-export function resetTranscriptionEnvCacheForTests(): void {
-  mergedDefaultsCache = undefined;
-}
-
 function useStoredSettings(env: NodeJS.ProcessEnv): boolean {
   return env === process.env;
 }

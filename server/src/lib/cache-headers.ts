@@ -24,7 +24,3 @@ export function setShortCache(
   // poison each other's cache entries.
   c.header("Vary", "x-opencursor-workspace-id, x-opencursor-session-token, Cookie");
 }
-
-export function setNoCache(c: Context): void {
-  c.header("Cache-Control", "no-store, max-age=0");
-}

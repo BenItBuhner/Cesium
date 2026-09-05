@@ -188,7 +188,7 @@ loadOlderConversationHistory,
         backendId: conversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
+    [conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
   );
   const dockedAsk = useMemo(
     () =>

@@ -48,7 +48,3 @@ export function getEngineInstanceId(): string {
   persistInstanceId(cachedInstanceId);
   return cachedInstanceId;
 }
-
-export function resetEngineInstanceIdForTests(): void {
-  cachedInstanceId = null;
-}

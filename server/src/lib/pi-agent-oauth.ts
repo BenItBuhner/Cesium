@@ -507,22 +507,6 @@ export async function disconnectPiAgentOAuth(providerIdInput: string): Promise<P
   return getPiAgentSettingsResponse();
 }
 
-export async function waitForPiAgentOAuthCompletion(
-  providerIdInput: string,
-  timeoutMs = 120_000
-): Promise<boolean> {
-  const providerId = normalizeProviderId(providerIdInput);
-  const pending = pendingByProvider.get(providerId);
-  if (!pending) {
-    return false;
-  }
-  const result = await Promise.race([
-    pending.loginPromise.then(() => true).catch(() => false),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
-  return result;
-}
-
 export function piAgentOAuthSuccessHtml(providerLabel: string, sessionId?: string): string {
   return oauthCompletionHtml({
     title: "Pi Agent connected",

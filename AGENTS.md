@@ -20,14 +20,13 @@ handles the first two, but you must repeat them by hand if you re-run installs):
 - **`bun` is required for the backend** and lives at `~/.bun/bin` (added to
   `~/.bashrc`). A non-login shell may not have it on `PATH`; export
   `PATH="$HOME/.bun/bin:$PATH"` if `bun` is not found.
-- **Remove the self-referential symlink `server/node_modules/cesium`** after any
-  `npm install` / `npm install --prefix server`. The server's `"cesium": "file:.."`
-  dependency symlinks that path back to the repo root; Next.js dev (Turbopack) then
-  panics with an infinite `track_glob` loop ("`server/node_modules/cesium` is a
-  symlink that causes an infinite loop") and every page returns HTTP 500. Nothing
-  in the server actually imports the `cesium` package, so `rm -f
-  server/node_modules/cesium` is safe. If the frontend was already running when the
-  symlink reappeared, its next request may 500 until the symlink is gone.
+- **A stale `server/node_modules/cesium` symlink breaks Next.js dev.** Older
+  checkouts declared `"cesium": "file:.."` in `server/package.json`, which symlinked
+  that path back to the repo root; Turbopack then panics with an infinite
+  `track_glob` loop and every page returns HTTP 500. The dependency is gone, but
+  a `node_modules` installed before its removal still carries the link, so if you
+  see that panic run `rm -f server/node_modules/cesium` (nothing imports it) and
+  reload.
 - **Build the shared workspace packages before running/testing the server:**
   `npm run build:packages`. The backend and its tests import `@cesium/core/dist/*`,
   so without a build you get `ERR_MODULE_NOT_FOUND` for `@cesium/core/dist/mcp.js`

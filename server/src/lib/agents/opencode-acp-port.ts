@@ -29,8 +29,3 @@ export async function getOpenCodeAcpListenPort(workspaceRoot: string): Promise<n
 export function openCodeAcpInternalBaseUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
 }
-
-/** CLI args appended after the opencode executable (stock flags; no fork required). */
-export function buildOpenCodeAcpCliArgs(port: number): string[] {
-  return ["acp", "--hostname", "127.0.0.1", "--port", String(port)];
-}

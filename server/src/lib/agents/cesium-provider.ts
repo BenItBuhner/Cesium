@@ -40,11 +40,7 @@ import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
-import {
-  callMcpTool,
-  callMcpToolRich,
-  refreshWorkspaceMcpMirror,
-} from "../mcp/connection-manager.js";
+import { callMcpToolRich, refreshWorkspaceMcpMirror } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
@@ -164,8 +160,6 @@ import type {
   OrchestrationAssignmentStatus,
   OrchestrationBoardSnapshot,
   OrchestrationColumnId,
-  OrchestrationIssuePriority,
-  OrchestrationPermissionDecision,
 } from "../orchestration/types.js";
 import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
@@ -1964,7 +1958,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       case "wait":
         return await this.toolWait(args);
       case "call_mcp_tool":
-        return await this.toolCallMcp(args, randomUUID(), toolTitle(name, args));
+        return await this.toolCallMcp(args);
       default:
         break;
     }
@@ -2580,7 +2574,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolCreateWorktree(request.arguments);
           break;
         case "call_mcp_tool":
-          result = await this.toolCallMcp(effectiveRequest.arguments, effectiveRequest.id, title);
+          result = await this.toolCallMcp(effectiveRequest.arguments);
           break;
         case "refresh_mcp_servers":
           result = await this.toolRefreshMcpServers();
@@ -3448,11 +3442,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       .join("\n");
   }
 
-  private async toolCallMcp(
-    args: Record<string, unknown>,
-    _toolCallId: string,
-    _title: string
-  ): Promise<string> {
+  private async toolCallMcp(args: Record<string, unknown>): Promise<string> {
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
     const toolName = normalized.toolName;

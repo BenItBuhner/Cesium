@@ -395,7 +395,6 @@ browserProxyRoutes.all("/*", async (c) => {
     c.req.header("host") ||
     url.host;
   const requestOrigin = `${incomingProto}://${incomingHost}`;
-  const upstreamBase = new URL(`${upstream.origin}/`);
 
   const headers = forwardableHeaders(c.req.raw.headers);
   headers.set("host", upstream.host);

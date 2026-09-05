@@ -22,6 +22,7 @@ import {
   resolveConversationModel,
 } from "@/lib/agent-chat";
 import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { pickAvailableBackend } from "@cesium/core";
 import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
@@ -132,19 +133,6 @@ function agentSocketMessageWorkspaceScope(
     default:
       return null;
   }
-}
-
-function pickAvailableBackend(
-  backends: AgentBackendInfo[],
-  preferredBackendId?: AgentBackendId
-): AgentBackendInfo | null {
-  return (
-    backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
-    backends.find((backend) => backend.available && backend.enabled !== false) ??
-    backends.find((backend) => backend.available) ??
-    backends[0] ??
-    null
-  );
 }
 
 /**
@@ -2214,6 +2202,7 @@ const executePrompt = useCallback(
     },
     [
       clearEditingQueuedPromptForConversation,
+      eventsStore,
       markWorkspaceActivity,
       mergeConversationSnapshot,
     ]
@@ -2930,6 +2919,13 @@ busy,
       buildAgentWebSocketUrl(activeWorkspaceId)
     );
     socketRef.current = socket;
+    // These maps live for the provider's lifetime (never reassigned), so the
+    // cleanup below can safely drain the same instances it captured here.
+    const pendingSocketUpserts = pendingSocketUpsertsRef.current;
+    const pendingForeignUpserts = pendingForeignUpsertsRef.current;
+    const consistencyCheckTimers = consistencyCheckTimersRef.current;
+    const deltaRequestCooldownUntil = deltaRequestCooldownUntilRef.current;
+    const deltaRecovery = deltaRecoveryRef.current;
 
     // App-level heartbeat: protocol-level pings keep middleboxes happy but a
     // half-open TCP session (flaky Wi-Fi, mobile network handoff) leaves the
@@ -3151,19 +3147,19 @@ busy,
         clearTimeout(socketUpsertFlushTimerRef.current);
         socketUpsertFlushTimerRef.current = null;
       }
-      pendingSocketUpsertsRef.current.clear();
-      pendingForeignUpsertsRef.current.clear();
-      for (const timer of consistencyCheckTimersRef.current.values()) {
+      pendingSocketUpserts.clear();
+      pendingForeignUpserts.clear();
+      for (const timer of consistencyCheckTimers.values()) {
         clearTimeout(timer);
       }
-      consistencyCheckTimersRef.current.clear();
-      deltaRequestCooldownUntilRef.current.clear();
-      for (const recovery of deltaRecoveryRef.current.values()) {
+      consistencyCheckTimers.clear();
+      deltaRequestCooldownUntil.clear();
+      for (const recovery of deltaRecovery.values()) {
         if (recovery.timer != null) {
           clearTimeout(recovery.timer);
         }
       }
-      deltaRecoveryRef.current.clear();
+      deltaRecovery.clear();
     };
   }, [
     activeWorkspaceId,

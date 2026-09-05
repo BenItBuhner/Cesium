@@ -92,14 +92,9 @@ export function registerCesiumFeatureDefinition(
   return CESIUM_FEATURE_REGISTRY.register(definition);
 }
 
-/** Preferred registration API; the feature name remains as a compatibility alias. */
-export const registerCesiumHarnessPlugin = registerCesiumFeatureDefinition;
-
 export function getCesiumFeatureCatalog() {
   return CESIUM_FEATURE_REGISTRY.catalog();
 }
-
-export const getCesiumHarnessPluginCatalog = getCesiumFeatureCatalog;
 
 /**
  * Resolve the active harness feature stack from settings.

@@ -28,15 +28,3 @@ export const popoverMenuSeparatorClass = "my-[4px] h-px shrink-0 bg-[var(--borde
 /** Uppercase section label (filter menus). */
 export const popoverMenuSectionLabelClass =
   "px-[10px] pb-[3px] pt-[6px] font-sans text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--text-disabled)]";
-
-/** Search / title header strip (workspace picker). */
-export const popoverMenuSearchHeaderClass =
-  "border-b border-[var(--border-card)] px-[10px] py-[7px]";
-
-export const popoverMenuFooterClass = "border-t border-[var(--border-card)] p-[4px]";
-
-/** Radio / checkbox row in filter-style menus. */
-export const popoverMenuFormRowClass =
-  "flex cursor-pointer items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[13px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
-
-export const popoverMenuAccentActionClass = `${popoverMenuItemClass} !text-[var(--accent)]`;

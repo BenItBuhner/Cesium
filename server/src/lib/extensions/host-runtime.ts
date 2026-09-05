@@ -622,11 +622,6 @@ export function getExtensionHostStatus(workspaceId: string): ExtensionHostStatus
   return serializeHostStatus(hosts.get(workspaceId), workspaceId);
 }
 
-export function isExtensionHostRunning(workspaceId: string): boolean {
-  const host = hosts.get(workspaceId);
-  return Boolean(host && !host.child.killed);
-}
-
 export async function stopExtensionHost(workspaceId: string): Promise<ExtensionHostStatus> {
   const restart = restartStates.get(workspaceId);
   if (restart?.timer) {
@@ -684,12 +679,6 @@ export function notifyHostConfigChanged(input: {
     notify: "configChanged",
     params: { extensionId: input.extensionId, settings: input.settings },
   });
-}
-
-export function notifyHostThemeChanged(workspaceId: string, theme: unknown): void {
-  const host = hosts.get(workspaceId);
-  if (!host || host.child.killed) return;
-  sendHostNotify(host, { notify: "themeChanged", params: { theme } });
 }
 
 /* ------------------------------------------------------------------ */

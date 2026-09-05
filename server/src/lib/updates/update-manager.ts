@@ -28,6 +28,7 @@ import {
   resolveNpmPackage,
 } from "./feeds.js";
 import { isNewerVersion } from "./semver.js";
+import { isRecord } from "../coerce.js";
 
 const STATE_FILE = path.join(DATA_DIR, "profile", "update-state.json");
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -70,10 +71,6 @@ const UPDATE_CHANNEL_IDS: readonly CesiumUpdateChannelId[] = [
   "desktop",
   "mobile",
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Coerce one persisted release into the current schema, or drop it. The state

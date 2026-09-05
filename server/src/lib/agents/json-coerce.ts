@@ -1,16 +1,16 @@
+/** Plain object or `undefined` (callers spread the result into optional chains). */
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }
 
+/** Non-empty string, returned untrimmed (event payload text keeps its whitespace). */
 export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-export function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
+export { asNumber } from "../coerce.js";
 
 export function firstString(
   record: Record<string, unknown> | undefined,

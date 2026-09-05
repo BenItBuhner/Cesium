@@ -1,6 +1,5 @@
 import {
   app,
-  BrowserWindow,
   ipcMain,
   Menu,
   nativeImage,
