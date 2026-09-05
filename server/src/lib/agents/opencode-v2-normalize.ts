@@ -4,7 +4,7 @@ import {
   mapOpenCodeToolLocations,
   mapOpenCodeToolNameToAcpKind,
 } from "./opencode-global-sse.js";
-import { extractToolEditPreview } from "./tool-edit-preview.js";
+import { extractOpenCodeToolEditPreview } from "./tool-edit-preview.js";
 import type { AgentEventInput, AgentToolCallStatus } from "./types.js";
 
 type RecordValue = Record<string, unknown>;
@@ -207,9 +207,23 @@ export function openCodeV2PermissionRequestEvent(input: {
     ? data.save.filter((value): value is string => typeof value === "string")
     : [];
   const message = asString(data.message);
+  // write/edit asks carry `metadata.files[]` ({ file, status, additions, deletions, patch }).
+  const files = Array.isArray(asRecord(data.metadata)?.files)
+    ? (asRecord(data.metadata)!.files as unknown[]).flatMap((entry) => {
+        const file = asRecord(entry);
+        const name = asString(file?.file) ?? asString(file?.path);
+        if (!name) return [];
+        const additions = typeof file?.additions === "number" ? file.additions : undefined;
+        const deletions = typeof file?.deletions === "number" ? file.deletions : undefined;
+        const counts =
+          additions != null || deletions != null ? ` (+${additions ?? 0} -${deletions ?? 0})` : "";
+        return [`${asString(file?.status) ?? "change"} ${name}${counts}`];
+      })
+    : [];
   const detailLines = [
     ...(message ? [message] : []),
-    ...resources,
+    ...resources.filter((resource) => !files.some((line) => line.includes(resource))),
+    ...files,
     ...(save.length > 0 ? [`Allow Always remembers: ${save.join(", ")}`] : []),
   ];
   return {
@@ -770,7 +784,7 @@ export class OpenCodeV2EventNormalizer {
         ? rawInput.description
         : name;
     const editPreview =
-      kind === "edit" ? extractToolEditPreview(rawInput, rawOutput) : undefined;
+      kind === "edit" ? extractOpenCodeToolEditPreview(name, rawInput, rawOutput) : undefined;
     const raw = {
       ...input.payload,
       tool: name,

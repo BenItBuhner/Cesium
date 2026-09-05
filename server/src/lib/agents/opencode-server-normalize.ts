@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { asRecord, asString } from "./json-coerce.js";
 import { openCodeToolPartToAcpSessionUpdate } from "./opencode-global-sse.js";
-import { extractToolEditPreview } from "./tool-edit-preview.js";
+import { extractOpenCodeToolEditPreview } from "./tool-edit-preview.js";
 import type { AgentEventInput, AgentPlanEntry, AgentToolCallStatus } from "./types.js";
 
 type RecordValue = Record<string, unknown>;
@@ -79,7 +79,9 @@ function toolEventFromAcpUpdate(input: {
   const rawInput = input.update.rawInput;
   const rawOutput = input.update.rawOutput;
   const editPreview =
-    toolKind === "edit" ? extractToolEditPreview(rawInput, rawOutput) : undefined;
+    toolKind === "edit"
+      ? extractOpenCodeToolEditPreview(asString(input.update.tool) ?? title, rawInput, rawOutput)
+      : undefined;
   const common = {
     eventId: randomUUID(),
     conversationId: input.conversationId,

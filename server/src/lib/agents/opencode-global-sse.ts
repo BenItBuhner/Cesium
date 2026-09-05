@@ -273,6 +273,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call",
       toolCallId: callId,
+      tool: toolName,
       title: toolName,
       kind,
       status: "pending",
@@ -296,6 +297,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "in_progress",
       kind,
       title: toolName,
@@ -325,6 +327,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "completed",
       kind,
       title,
@@ -345,6 +348,7 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return {
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
+      tool: toolName,
       status: "failed",
       kind,
       title: toolName,

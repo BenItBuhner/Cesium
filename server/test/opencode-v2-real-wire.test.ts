@@ -238,6 +238,56 @@ test("real beta foreground subagent: child linked via metadata.sessionID and chi
   assert.match(rootText, /from-subagent-fg/);
 });
 
+test("write tool calls render an all-added preview and permission asks summarize file changes", () => {
+  const normalizer = new OpenCodeV2EventNormalizer();
+  const root = "ses_write";
+  const base = { sessionID: root, assistantMessageID: "msg_w", id: "call_write" };
+  normalizer.normalize({
+    conversationId: "conv",
+    rootSessionId: root,
+    payload: { type: "session.tool.input.started", data: { ...base, name: "write" } },
+    rootMessageId: "msg_root",
+  });
+  // Real beta write input: { path, content } (v1 uses filePath).
+  const called = normalizer.normalize({
+    conversationId: "conv",
+    rootSessionId: root,
+    payload: {
+      type: "session.tool.called",
+      data: { ...base, input: { path: "notes.txt", content: "alpha\nbeta\n" }, executed: false },
+    },
+    rootMessageId: "msg_root",
+  });
+  const update = called[0]!;
+  assert.equal(update.kind, "tool_call_update");
+  assert.equal(update.kind === "tool_call_update" && update.toolKind, "edit");
+  assert.deepEqual(update.kind === "tool_call_update" && update.locations, [{ path: "notes.txt" }]);
+  const preview = update.kind === "tool_call_update" ? update.editPreview : undefined;
+  assert.ok(preview, "write produces a preview from its content");
+  assert.equal(preview!.addedLines, 2);
+  assert.equal(preview!.removedLines, 0);
+  assert.deepEqual(
+    preview!.lines.filter((line) => line.kind === "add").map((line) => line.text),
+    ["alpha", "beta"]
+  );
+
+  const permission = openCodeV2PermissionRequestEvent({
+    conversationId: "conv",
+    request: {
+      id: "per_edit",
+      sessionID: root,
+      action: "edit",
+      resources: ["/ws/notes.txt"],
+      save: ["*"],
+      metadata: { files: [{ file: "/ws/notes.txt", status: "added", additions: 2, deletions: 0, patch: "..." }] },
+      source: { type: "tool", messageID: "msg_w", id: "call_write" },
+    },
+  });
+  assert.equal(permission.title, "OpenCode requests edit");
+  assert.match(permission.detail ?? "", /added \/ws\/notes\.txt \(\+2 -0\)/);
+  assert.equal(permission.toolCallId, `opencode-v2:${root}:call_write`);
+});
+
 test("reconcileMessages emits completion for a tool whose result event was missed", () => {
   const fixture = loadFixture("shell-turn");
   const normalizer = new OpenCodeV2EventNormalizer();

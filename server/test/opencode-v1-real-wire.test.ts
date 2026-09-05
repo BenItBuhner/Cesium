@@ -215,6 +215,53 @@ function createRig(input: {
   };
 }
 
+test("1.x write/edit parts render diff previews from metadata.diff or the written content", async () => {
+  const { normalizeOpenCodeServerEvent } = await import("../src/lib/agents/opencode-server-normalize.js");
+  const root = "ses_write";
+  const part = (state: Json) => ({
+    type: "message.part.updated",
+    properties: {
+      sessionID: root,
+      part: { id: "prt_w", messageID: "msg_w", sessionID: root, type: "tool", tool: "write", callID: "call_w", state },
+    },
+  });
+  // Shape produced by opencode 1.18.29's write tool (createTwoFilesPatch output in metadata.diff).
+  const withDiff = normalizeOpenCodeServerEvent({
+    conversationId: "conv",
+    rootSessionId: root,
+    payload: part({
+      status: "completed",
+      input: { filePath: "notes.txt", content: "alpha\ngamma\n" },
+      output: "",
+      title: "notes.txt",
+      metadata: {
+        filepath: "/ws/notes.txt",
+        exists: true,
+        diff: "Index: /ws/notes.txt\n===================================================================\n--- /ws/notes.txt\n+++ /ws/notes.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n",
+      },
+    }),
+  });
+  const diffEvent = withDiff[0]!;
+  assert.equal(diffEvent.kind, "tool_call_update");
+  const diffPreview = diffEvent.kind === "tool_call_update" ? diffEvent.editPreview : undefined;
+  assert.ok(diffPreview, "metadata.diff produces a preview");
+  assert.equal(diffPreview!.addedLines, 1);
+  assert.equal(diffPreview!.removedLines, 1);
+  assert.ok(diffPreview!.lines.some((line) => line.kind === "remove" && line.text === "beta"));
+  assert.ok(diffPreview!.lines.some((line) => line.kind === "add" && line.text === "gamma"));
+
+  // Pending/running write: only the input is known -> all-added preview of the new content.
+  const pending = normalizeOpenCodeServerEvent({
+    conversationId: "conv",
+    rootSessionId: root,
+    payload: part({ status: "running", input: { filePath: "notes.txt", content: "alpha\nbeta\n" } }),
+  });
+  const runningPreview = pending[0]!.kind === "tool_call_update" ? pending[0]!.editPreview : undefined;
+  assert.ok(runningPreview, "write input renders a preview before completion");
+  assert.equal(runningPreview!.addedLines, 2);
+  assert.deepEqual(pending[0]!.kind === "tool_call_update" && pending[0]!.locations, [{ path: "notes.txt" }]);
+});
+
 test("real 1.18.29 bash turn: one monotonic tool card and streamed text from delta frames", async () => {
   const fixture = loadFixture("bash-turn");
   const rig = createRig({ fixture });
