@@ -195,7 +195,16 @@ export interface StorageDriver {
 
   appendAgentEvents(
     input: AppendAgentEventsInput
-  ): Promise<{ events: AgentStoredEvent[]; newLastSeq: number }>;
+  ): Promise<{
+    events: AgentStoredEvent[];
+    newLastSeq: number;
+    /**
+     * The post-append conversation record when the driver already has it in
+     * hand. Lets the session store skip a follow-up lookup on the streaming
+     * path; drivers that cannot return it cheaply may omit it.
+     */
+    conversation?: AgentConversationRecord;
+  }>;
   deleteAgentEvents(input: {
     conversationId: string;
     eventIds: string[];

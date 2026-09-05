@@ -415,7 +415,8 @@ export async function appendConversationEvents(
       withConversationQueue(workspaceId, conversationId, async () => {
         const storage = await getStorage();
         const appended = await storage.appendAgentEvents({ conversationId, events });
-        const updated = await storage.getAgentConversation(conversationId);
+        const updated =
+          appended.conversation ?? (await storage.getAgentConversation(conversationId));
         if (!updated) {
           throw new Error(`Unknown conversation: ${conversationId}`);
         }
@@ -462,7 +463,8 @@ export async function appendConversationEventsAndPatchRecord(
           events,
           conversationPatch,
         });
-        const updated = await storage.getAgentConversation(conversationId);
+        const updated =
+          appended.conversation ?? (await storage.getAgentConversation(conversationId));
         if (!updated) {
           throw new Error(`Unknown conversation: ${conversationId}`);
         }
