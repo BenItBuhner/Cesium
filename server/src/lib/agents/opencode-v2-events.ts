@@ -244,6 +244,16 @@ export function startOpenCodeV2SessionLog(input: {
               preferExperimentalLog = path.includes("/api/session/");
               continue;
             }
+            if (status === 404) {
+              // Neither log route exists on this server (e.g. a build that only
+              // serves the volatile feed). The volatile stream carries every
+              // event, so stop instead of hammering the server twice a second.
+              await input.onError?.(
+                new Error(`OpenCode v2 durable session log is not available for ${input.sessionId}; using the event stream only.`)
+              );
+              readyResolve();
+              return;
+            }
             throw lastError;
           }
         }
