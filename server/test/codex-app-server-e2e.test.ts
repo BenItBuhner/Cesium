@@ -644,6 +644,50 @@ test("codex app server e2e: cancel interrupts the turn and keeps the cancelled s
   assert.deepEqual(statuses, ["cancelled"], "interrupted completion does not override the cancel");
 });
 
+test("codex app server e2e: cancelling while an approval is pending clears the permission and interrupts", async (t) => {
+  const harness = await createHarness();
+  const handle = await harness.provider.startSession(harness.callbacks);
+  t.after(() => handle.dispose());
+  const turn = handle.prompt({ text: "scenario:approval", userMessageId: "user-cancel-approval" });
+  await waitFor(() => harness.conversation().status === "awaiting_permission", 5_000, "approval prompt");
+  await handle.cancel();
+  await turn;
+  assert.equal(harness.conversation().status, "cancelled");
+  assert.equal(harness.conversation().pendingPermission, null);
+  const resolved = eventsOfKind(harness.events, "permission_resolved");
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0]?.outcome, "cancelled");
+  assert.deepEqual(eventsOfKind(harness.events, "status").map((event) => event.status), ["awaiting_permission", "cancelled"]);
+  const interrupt = await findClientMessage(harness, (message) => message.method === "turn/interrupt");
+  assert.ok(interrupt);
+});
+
+test("codex app server e2e: a missing Codex binary fails session start with a clear error", async () => {
+  const harness = await createHarness();
+  const provider = createCodexAppServerProvider({
+    backend: {
+      id: "codex-app-server",
+      label: "Codex",
+      description: "fake",
+      available: true,
+      defaultMode: "agent",
+      defaultModelId: "__default__",
+      defaultModelName: "Codex App Server Default",
+      capabilities: AGENT_CAPABILITIES["codex-app-server"],
+    },
+    runtime: {
+      command: path.join(TEST_ROOT, "definitely-not-codex"),
+      args: [],
+      commandPreview: "definitely-not-codex app-server",
+    },
+    configOptions: [],
+  });
+  await assert.rejects(
+    () => provider.startSession(harness.callbacks),
+    (error: unknown) => error instanceof Error && /Failed to start Codex App Server|ENOENT/.test(error.message)
+  );
+});
+
 test("codex app server e2e: cancelling an already-settled turn leaves the recorded state alone", async (t) => {
   const harness = await createHarness();
   const handle = await harness.provider.startSession(harness.callbacks);

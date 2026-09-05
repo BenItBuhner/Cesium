@@ -245,6 +245,11 @@ async function runApprovalScenario(ctx) {
     proposedExecpolicyAmendment: ["pwd"],
     availableDecisions: ["accept", { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["pwd"] } }, "cancel"],
   });
+  if (activeTurn !== ctx) {
+    // The turn was interrupted while the approval was pending; the real server
+    // already emitted serverRequest/resolved and turn/completed.
+    return;
+  }
   notify("serverRequest/resolved", { threadId: ctx.threadId, requestId: response.id });
   notify("thread/status/changed", { threadId: ctx.threadId, status: { type: "active", activeFlags: [] } });
   // The real server deserializes `CommandExecutionRequestApprovalResponse { decision }`.
@@ -700,6 +705,12 @@ function handleRequest(message) {
         setTimeout(() => {
           if (ctx.interruptible) {
             notify("item/completed", { item: agentMessageItem(ctx.interruptible.itemId, "Working on it"), threadId: ctx.threadId, turnId: ctx.turnId, completedAtMs: Date.now() });
+          }
+          // Interrupting clears outstanding server requests before the turn ends.
+          for (const [requestId, pending] of pendingServerRequests) {
+            pendingServerRequests.delete(requestId);
+            notify("serverRequest/resolved", { threadId: ctx.threadId, requestId });
+            pending.resolve({ id: requestId, result: undefined, error: { code: -32800, message: "interrupted" } });
           }
           completeTurn(ctx, "interrupted");
         }, 20);
