@@ -1594,16 +1594,47 @@ async function readStoredConfigOptions(
   return record && Array.isArray(record.configOptions) ? record.configOptions : [];
 }
 
+/**
+ * A seed that came back without a model catalog (CLI not installed, probe
+ * failed) is remembered here so the next reader does not immediately spawn the
+ * same failing probe again. Without this, every backend listing - i.e. every
+ * conversation-list / rail request - re-ran `codex` / `opencode` / `grok`
+ * probes on hosts that do not have them (two or three failing child processes
+ * and a warning log line per request, forever). Explicit refreshes
+ * (`forceRefreshAllBackendCaches`) clear the backoff.
+ */
+const SEED_RETRY_BACKOFF_MS = 5 * 60 * 1000;
+const lastEmptySeed = new Map<
+  AgentBackendId,
+  { at: number; options: AgentConfigOption[] }
+>();
+
+export function clearSeedRetryBackoffForTests(): void {
+  lastEmptySeed.clear();
+}
+
 function startSeedRefresh(
-  backendId: AgentBackendId
+  backendId: AgentBackendId,
+  options?: { ignoreBackoff?: boolean }
 ): Promise<AgentConfigOption[]> {
   const existing = inFlightRefreshes.get(backendId);
   if (existing) {
     return existing;
   }
+  if (!options?.ignoreBackoff) {
+    const recentEmpty = lastEmptySeed.get(backendId);
+    if (recentEmpty && Date.now() - recentEmpty.at < SEED_RETRY_BACKOFF_MS) {
+      return Promise.resolve(recentEmpty.options);
+    }
+  }
   const promise = (async () => {
     try {
       const seeded = await createSeedConfigOptions(backendId);
+      if (backendId !== "cesium-agent" && !hasRichModelCatalog(seeded, backendId)) {
+        lastEmptySeed.set(backendId, { at: Date.now(), options: seeded });
+      } else {
+        lastEmptySeed.delete(backendId);
+      }
       if (seeded.length > 0) {
         // The rich-catalog guard protects CLI-probed backends from a flaky
         // probe clobbering a good cache. Cesium Agent's options are computed
@@ -1687,7 +1718,7 @@ export async function forceRefreshAllBackendCaches(
 
   const results = await Promise.allSettled(
     backendIds.map(async (backendId) => {
-      const refreshPromise = startSeedRefresh(backendId);
+      const refreshPromise = startSeedRefresh(backendId, { ignoreBackoff: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const result = await Promise.race([
