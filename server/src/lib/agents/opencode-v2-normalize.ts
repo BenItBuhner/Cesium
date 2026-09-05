@@ -80,6 +80,14 @@ function mergeRawOutput(data: RecordValue): RecordValue {
   return output;
 }
 
+function rememberBounded(set: Set<string>, value: string, limit = 2_000): void {
+  if (set.size >= limit) {
+    const oldest = set.values().next().value;
+    if (oldest) set.delete(oldest);
+  }
+  set.add(value);
+}
+
 function toolStatus(type: string): AgentToolCallStatus {
   if (type === "session.tool.success") return "completed";
   if (type === "session.tool.failed") return "failed";
@@ -356,6 +364,8 @@ export class OpenCodeV2EventNormalizer {
   private readonly emittedReasoning = new Map<string, string>();
   /** Shell processes spawned on behalf of a `session.tool.*` call (see `shell.*` handling). */
   private readonly toolOwnedShells = new Set<string>();
+  /** Shells / PTYs this conversation saw created without an owning tool call. */
+  private readonly standaloneShells = new Set<string>();
   /** Last status emitted per tool call (`${sessionId}:${callId}`), for reconciliation. */
   private readonly toolStatuses = new Map<string, AgentToolCallStatus>();
 
@@ -598,17 +608,23 @@ export class OpenCodeV2EventNormalizer {
         // (no owning session) still get their own card.
         if (type === "shell.created") {
           if (asString(asRecord(info.metadata)?.sessionID)) {
-            if (this.toolOwnedShells.size >= 2_000) {
-              const oldest = this.toolOwnedShells.values().next().value;
-              if (oldest) this.toolOwnedShells.delete(oldest);
-            }
-            this.toolOwnedShells.add(ptyId);
+            rememberBounded(this.toolOwnedShells, ptyId);
             return [];
           }
+          rememberBounded(this.standaloneShells, ptyId);
         } else if (this.toolOwnedShells.has(ptyId)) {
           if (type !== "shell.exited") this.toolOwnedShells.delete(ptyId);
           return [];
+        } else if (!this.standaloneShells.has(ptyId)) {
+          // `shell.exited` / `shell.deleted` carry no session: on a server shared
+          // by several conversations this may be someone else's shell. Only
+          // render lifecycle updates for shells this conversation saw created.
+          return [];
         }
+      } else if (type !== "pty.created" && !this.standaloneShells.has(ptyId)) {
+        return [];
+      } else if (type === "pty.created") {
+        rememberBounded(this.standaloneShells, ptyId);
       }
       const ended = type.endsWith(".exited") || type.endsWith(".deleted");
       const command = asString(info.command) ?? asString(info.title) ?? type.split(".")[0] ?? "pty";

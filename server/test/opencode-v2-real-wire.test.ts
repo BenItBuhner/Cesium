@@ -122,6 +122,40 @@ test("real beta shell turn: one terminal card keyed by data.id, completed with o
   assert.ok(events.some((event) => event.kind === "reasoning"), "reasoning deltas surface");
 });
 
+test("shell lifecycle events without a session never render for shells this conversation did not see created", () => {
+  const fixture = loadFixture("shell-turn");
+  const normalizer = new OpenCodeV2EventNormalizer();
+  // On a shared server another conversation's shell exits on the same feed;
+  // `shell.exited` carries only { id, exit, status }.
+  const foreign = normalizer.normalize({
+    conversationId: "conv",
+    rootSessionId: fixture.rootSessionId,
+    payload: { type: "shell.exited", data: { id: "sh_foreign", exit: 0, status: "exited" } },
+    rootMessageId: "msg_root",
+  });
+  assert.deepEqual(foreign, []);
+  // A standalone shell (no owning tool call) still renders its own card.
+  const created = normalizer.normalize({
+    conversationId: "conv",
+    rootSessionId: fixture.rootSessionId,
+    payload: { type: "shell.created", data: { info: { id: "sh_alone", status: "running", command: "top", cwd: "/ws", metadata: {} } } },
+    rootMessageId: "msg_root",
+  });
+  assert.equal(created.length, 1);
+  assert.equal(created[0]!.kind === "tool_call" && created[0]!.toolCallId, "opencode-v2-shell:sh_alone");
+  const exited = normalizer.normalize({
+    conversationId: "conv",
+    rootSessionId: fixture.rootSessionId,
+    payload: { type: "shell.exited", data: { id: "sh_alone", exit: 0, status: "exited" } },
+    rootMessageId: "msg_root",
+  });
+  assert.equal(exited.length, 1);
+  assert.equal(exited[0]!.kind === "tool_call_update" && exited[0]!.status, "completed");
+  // The real capture's tool-owned shell produces neither card.
+  const events = replayThroughNormalizer(fixture);
+  assert.ok(!events.some((e) => (e.kind === "tool_call" || e.kind === "tool_call_update") && e.toolCallId.startsWith("opencode-v2-shell:")));
+});
+
 test("real beta permission.asked normalizes to a permission_request linked to the tool call", () => {
   const fixture = loadFixture("permission-turn");
   const asked = fixture.events.find((event) => event.type === "permission.asked")!;

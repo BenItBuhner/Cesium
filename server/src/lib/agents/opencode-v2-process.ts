@@ -8,6 +8,7 @@ import {
   OpenCodeV2Client,
   openCodeV2AuthFromEnv,
 } from "./opencode-v2-client.js";
+import { RecentOutput, waitForManagedServerReady } from "./opencode-process-readiness.js";
 
 export type OpenCodeV2Connection = {
   client: OpenCodeV2Client;
@@ -16,13 +17,22 @@ export type OpenCodeV2Connection = {
 };
 
 type ManagedServerPoolRow = {
-  client: OpenCodeV2Client;
+  baseUrl: string;
+  password: string;
   child: ChildProcess;
   ready: Promise<void>;
   refs: number;
 };
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
+
+/**
+ * One v2 server hosts every workspace: the beta resolves the location of each
+ * request from `x-opencode-directory` / the session, so a single `opencode2
+ * serve` process is the intended "one server, many clients" topology. All
+ * Cesium workspaces share this pool entry and just send their own directory.
+ */
+const SHARED_POOL_KEY = "opencode-v2-beta:shared";
 
 /** Central detection (env override → PATH → `~/.opencode/bin` → common bins). */
 export function resolveOpenCodeV2CommandPath(): string | null {
@@ -42,6 +52,12 @@ async function waitForHealth(client: OpenCodeV2Client): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`OpenCode v2 Beta did not become healthy at ${client.baseUrl}.`);
+}
+
+/** See the current-generation counterpart: first start can migrate the database and fetch catalogs. */
+function managedServerStartupTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.OPENCURSOR_OPENCODE_STARTUP_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 60_000;
 }
 
 function stopManagedChild(child: ChildProcess): void {
@@ -97,13 +113,23 @@ export async function connectOpenCodeV2(input: {
     };
   }
 
-  const poolKey = `opencode-v2-beta:${input.workspaceRoot}`;
+  const poolKey = SHARED_POOL_KEY;
   const existing = managedServerPool.get(poolKey);
   if (existing) {
     existing.refs += 1;
-    await existing.ready;
+    try {
+      await existing.ready;
+    } catch (error) {
+      releaseManagedServer(poolKey, existing);
+      throw error;
+    }
     return {
-      client: existing.client,
+      // Each workspace gets its own client so its requests carry its directory.
+      client: new OpenCodeV2Client({
+        baseUrl: existing.baseUrl,
+        password: existing.password,
+        directory: input.workspaceRoot,
+      }),
       managed: true,
       dispose: async () => releaseManagedServer(poolKey, existing),
     };
@@ -141,10 +167,11 @@ export async function connectOpenCodeV2(input: {
         : {}),
     }
   );
+  const recentOutput = new RecentOutput();
   const reportLines = (chunk: unknown) => {
-    for (const line of String(chunk).split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('{"url":')) {
+    for (const trimmed of recentOutput.push(chunk)) {
+      // `--stdio` mode announces readiness with a single {"url": ...} line.
+      if (!trimmed.startsWith('{"url":')) {
         input.onOutputLine?.(trimmed);
       }
     }
@@ -158,10 +185,18 @@ export async function connectOpenCodeV2(input: {
     directory: input.workspaceRoot,
   });
   const row: ManagedServerPoolRow = {
-    client,
+    baseUrl,
+    password,
     child,
     refs: 1,
-    ready: waitForHealth(client),
+    ready: waitForManagedServerReady({
+      child,
+      label: `OpenCode v2 Beta at ${baseUrl}`,
+      probe: async () => (await client.health()).healthy === true,
+      timeoutMs: managedServerStartupTimeoutMs(),
+      intervalMs: 250,
+      recentOutput: () => recentOutput.snapshot(),
+    }),
   };
   managedServerPool.set(poolKey, row);
   child.once("exit", () => {
