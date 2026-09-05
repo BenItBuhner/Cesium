@@ -138,6 +138,8 @@ export type AgentProviderCapabilities = {
    * Optional for stored-record compatibility; absent means unsupported.
    */
   supportsCloudExecution?: boolean;
+  /** True when a cancelled turn leaves the provider session resumable (Pi). */
+  supportsCancelResume?: boolean;
 };
 
 /**
@@ -907,6 +909,7 @@ export const AGENT_CAPABILITY_KEYS = [
   "supportsInlineReasoning",
   "supportsCompletionRetry",
   "supportsCloudExecution",
+  "supportsCancelResume",
 ] as const satisfies readonly (keyof AgentProviderCapabilities)[];
 
 export const AGENT_STORED_EVENT_KINDS = [

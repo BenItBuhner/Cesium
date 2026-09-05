@@ -1744,15 +1744,19 @@ export class AgentRuntimeManager {
 
       if (isConversationTurnInProgress(record.status)) {
         const runtime = await this.resolveActiveRuntime(workspace, conversationId);
+        let keepSession = false;
         if (runtime) {
           await runtime.handle.cancel();
+          keepSession = this.retainsSessionAfterCancel(runtime);
           await this.disposeRuntime(conversationId);
-          this.skipRecoverySeedOnce.add(conversationId);
+          if (!keepSession) {
+            this.skipRecoverySeedOnce.add(conversationId);
+          }
         }
         await updateConversationRecord(workspace.id, conversationId, (current) => ({
           ...current,
           status: "idle",
-          providerSessionId: null,
+          providerSessionId: keepSession ? current.providerSessionId : null,
           pendingPermission: null,
           pendingQuestion: null,
           queuedPrompts: remaining,
@@ -1861,19 +1865,29 @@ export class AgentRuntimeManager {
       }));
     }
     await runtime.handle.cancel();
+    const keepSession = this.retainsSessionAfterCancel(runtime);
     await this.disposeRuntime(conversationId);
-    this.skipRecoverySeedOnce.add(conversationId);
+    if (!keepSession) {
+      this.skipRecoverySeedOnce.add(conversationId);
+    }
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
     return updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
-      providerSessionId: null,
+      // Harnesses whose native session survives an abort (Pi records the
+      // aborted turn in its session file) resume it on the next prompt instead
+      // of losing the whole conversation context.
+      providerSessionId: keepSession ? current.providerSessionId : null,
       queuedPrompts: [],
       pendingPermission: null,
       pendingQuestion: null,
     }));
+  }
+
+  private retainsSessionAfterCancel(runtime: ActiveRuntime): boolean {
+    return runtime.provider.backend.capabilities.supportsCancelResume === true;
   }
 
   async pauseConversation(
