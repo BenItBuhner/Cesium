@@ -2,7 +2,11 @@ import {
   isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@cesium/core";
-import { getLiveUpdateRunKey, toLiveUpdatePayload } from "./liveUpdateProjection";
+import {
+  getLiveUpdateRunKey,
+  toLiveUpdateGroupPayload,
+  toLiveUpdatePayload,
+} from "./liveUpdateProjection";
 import {
   DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES,
   DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES,
@@ -13,7 +17,11 @@ import {
   type LiveUpdateStatus,
 } from "./liveUpdateTypes";
 
-export { getLiveUpdateRunKey, toLiveUpdatePayload } from "./liveUpdateProjection";
+export {
+  getLiveUpdateRunKey,
+  toLiveUpdateGroupPayload,
+  toLiveUpdatePayload,
+} from "./liveUpdateProjection";
 
 export type LiveUpdatesNative = {
   startOrUpdate(payload: LiveUpdatePayload): Promise<LiveUpdateStatus>;
@@ -26,17 +34,26 @@ export type LiveUpdatesNative = {
 
 type TrackedRun = {
   runKey: string;
-  signature: string;
   projection: MobileAgentProjection;
   startedAt: number | null;
-  /** This run currently owns its own posted notification. */
-  postedIndividually: boolean;
-  /** An allowed alert is waiting to ride out with the next posted payload. */
+  /** An allowed alert is waiting to ride out with the next posted live payload. */
   pendingAlert: boolean;
 };
 
-/** Run key of the single aggregated notification in "combined" mode. */
-export const COMBINED_RUN_KEY = "cesium-agents-combined";
+/**
+ * Run-key prefix of the single consolidated live notification. The full key
+ * is suffixed with the key of the run that opened the current batch of
+ * concurrent agents: one batch keeps one notification identity from its
+ * first agent to its last (agents joining or leaving update it in place
+ * instead of re-materializing the chip), and the next batch after everything
+ * went quiet gets a fresh key, so a swipe-dismissal of the previous one does
+ * not silence it.
+ */
+export const LIVE_RUN_KEY_PREFIX = "cesium-agents-live";
+
+export function getLiveBatchRunKey(firstRunKey: string): string {
+  return `${LIVE_RUN_KEY_PREFIX}:${firstRunKey}`;
+}
 
 /**
  * How long a web-bridge projection sync keeps the native agent socket's
@@ -46,29 +63,13 @@ export const COMBINED_RUN_KEY = "cesium-agents-combined";
  */
 export const WEB_SYNC_FRESH_MS = 10_000;
 
-/** Volatile ETA fields only budge the dedupe signature once per bucket. */
-const ETA_SIGNATURE_BUCKET_MS = 60_000;
-
 /**
- * Dedupe signature for a payload. `estimatedCompletionAt` (and its seconds
- * mirror) embed "now" and therefore differ on every derivation tick even
- * when nothing visible changed; posting each tick re-rendered the live
- * notification every 500ms. Bucketing them keeps reposts down to real
- * content changes (progress, body text, alerts) plus at most one repost
- * per minute of ETA drift. The posted payload itself keeps precise values.
+ * Dedupe signature for a payload. Every field of the payload is display
+ * content (time estimates are already rounded to minutes in the text), so a
+ * repost happens exactly when something visible changed.
  */
 export function getLiveUpdateSignature(payload: LiveUpdatePayload): string {
-  return JSON.stringify({
-    ...payload,
-    estimatedCompletionAt:
-      payload.estimatedCompletionAt == null
-        ? null
-        : Math.round(payload.estimatedCompletionAt / ETA_SIGNATURE_BUCKET_MS),
-    estimatedRemainingSeconds:
-      payload.estimatedRemainingSeconds == null
-        ? null
-        : Math.round(payload.estimatedRemainingSeconds / 60),
-  });
+  return JSON.stringify(payload);
 }
 
 /**
@@ -102,14 +103,15 @@ function isAlertAllowed(mode: LiveUpdateAlertMode, appActive: boolean): boolean 
 }
 
 /**
- * Tracks the live notification of every active agent run, keyed by
- * conversation. Each conversation's current run maps onto its own native
- * notification; terminal updates post one final (alerting, dismissible)
- * notification and drop the run from tracking.
+ * Tracks every active agent run (keyed by conversation) and projects the
+ * whole set onto ONE consolidated live notification: a lone run shows its
+ * full detail (activity, progress, diffstat), two or more list every agent
+ * with its phase. Runs that end leave the live notification and post their
+ * own dismissible completion card under the run's sticky key.
  *
  * Alert behavior is user-configurable per category (completion /
  * needs-input) and respects the app's foreground state: by default an agent
- * completing while the user is inside the app posts no notification at all.
+ * completing while the user is inside the app posts no completion card.
  */
 export class LiveUpdateController {
   private runs = new Map<string, TrackedRun>();
@@ -120,8 +122,9 @@ export class LiveUpdateController {
   private displayPreferences: LiveUpdateDisplayPreferences =
     DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES;
   private lastWebSyncAt = 0;
-  private combinedPosted = false;
-  private combinedSignature = "";
+  /** Identity and last posted content of the consolidated live notification. */
+  private liveRunKey: string | null = null;
+  private liveSignature = "";
 
   constructor(
     private readonly native: LiveUpdatesNative,
@@ -165,18 +168,16 @@ export class LiveUpdateController {
     // Run identity is STICKY while a conversation is tracked. The web bridge
     // and the native agent socket derive `startedAt` from different event
     // windows (the socket only sees a head snapshot), so they routinely
-    // disagree on the derived run key for the very same run. Honoring every
-    // derived key cancelled + reposted the notification (a new notification
-    // id is hashed from the key) each time the sources alternated - a rapid
-    // visible close/reopen loop. The first tracked key owns the notification
-    // until the run leaves tracking through a terminal update; a genuinely
-    // new run then starts fresh with its own key.
+    // disagree on the derived run key for the very same run. The first
+    // tracked key owns the run (it names the completion card and, for the
+    // batch opener, the live notification) until the run leaves tracking
+    // through a terminal update; a genuinely new run then starts fresh.
     const runKey = tracked?.runKey ?? getLiveUpdateRunKey(projection);
 
     const active = isMobileAgentRunActive(projection.status);
     if (!active && !tracked) {
       // A run we never watched finished in the past - do not resurrect it as
-      // a stale notification.
+      // a stale completion card.
       return;
     }
 
@@ -192,91 +193,70 @@ export class LiveUpdateController {
     const alert = computeLiveUpdateAlert(tracked?.projection ?? null, projection);
 
     if (!active) {
-      // Terminal update: the run leaves tracking; its final notification
-      // posts under the same sticky key so it replaces the ongoing one.
+      // Terminal update: the run leaves the live notification. Its completion
+      // card posts under the run's own key - and only when the completion
+      // preference allows it (a user inside the app already watched it end).
       this.runs.delete(conversationId);
-      if (alert && !isAlertAllowed(this.alertPreferences.completion, this.appActive)) {
-        // Honor the completion preference: when it must not surface (user is
-        // inside the app, or completions are disabled), remove the run's
-        // ongoing notification instead of posting a final one.
-        if (tracked) {
-          await this.native.stopRun(runKey).catch(() => undefined);
-        }
-      } else {
+      if (alert && isAlertAllowed(this.alertPreferences.completion, this.appActive)) {
         const payload = this.buildRunPayload(projection, runKey, startedAt);
-        payload.alert = alert;
-        const signature = getLiveUpdateSignature(payload);
-        if (tracked?.signature !== signature) {
-          this.status = await this.native.startOrUpdate(payload);
-        }
+        payload.alert = true;
+        this.status = await this.native.startOrUpdate(payload);
       }
-      await this.syncPresentation();
+      await this.syncLive();
       return;
     }
 
     // Needs-input alert on a still-active run: gating only silences the
-    // alert; the ongoing notification itself must stay current.
+    // alert; the live notification itself must stay current.
     const allowedAlert =
       alert && isAlertAllowed(this.alertPreferences.intervention, this.appActive);
     this.runs.set(conversationId, {
       runKey,
-      signature: tracked?.signature ?? "",
       projection,
       startedAt,
-      postedIndividually: tracked?.postedIndividually ?? false,
       pendingAlert: (tracked?.pendingAlert ?? false) || allowedAlert,
     });
-    await this.syncPresentation();
+    await this.syncLive();
   }
 
   /**
-   * Projects the tracked run set onto native notifications according to the
-   * multi-agent display preference: one notification per run, or a single
-   * aggregated notification while two or more runs are active (a lone run
-   * keeps its full per-run detail).
+   * Projects the tracked run set onto the consolidated live notification:
+   * removed when nothing runs, the lone run's full detail for one agent, the
+   * agent list for two or more. Posts only when the visible content changed.
    */
-  private async syncPresentation() {
+  private async syncLive() {
     const runs = [...this.runs.values()];
-    const combineActive =
-      this.displayPreferences.multiAgent === "combined" && runs.length >= 2;
-
-    if (!combineActive) {
-      if (this.combinedPosted) {
-        this.combinedPosted = false;
-        this.combinedSignature = "";
-        await this.native.stopRun(COMBINED_RUN_KEY).catch(() => undefined);
-      }
-      for (const run of runs) {
-        const payload = this.buildRunPayload(run.projection, run.runKey, run.startedAt);
-        payload.alert = run.pendingAlert;
-        run.pendingAlert = false;
-        const signature = getLiveUpdateSignature(payload);
-        if (run.signature === signature) continue;
-        run.signature = signature;
-        run.postedIndividually = true;
-        this.status = await this.native.startOrUpdate(payload);
+    if (runs.length === 0) {
+      const retired = this.liveRunKey;
+      this.liveRunKey = null;
+      this.liveSignature = "";
+      if (retired != null) {
+        await this.native.stopRun(retired).catch(() => undefined);
       }
       return;
     }
-
-    // Fold per-run notifications into the single aggregated one.
-    for (const run of runs) {
-      if (!run.postedIndividually) continue;
-      run.postedIndividually = false;
-      run.signature = "";
-      await this.native.stopRun(run.runKey).catch(() => undefined);
+    const first = runs[0];
+    if (!first) {
+      return;
     }
-    const payload = this.buildCombinedPayload(runs);
+    const liveRunKey = this.liveRunKey ?? getLiveBatchRunKey(first.runKey);
+    const payload =
+      runs.length === 1
+        ? this.buildRunPayload(first.projection, liveRunKey, first.startedAt)
+        : toLiveUpdateGroupPayload(
+            runs.map((run) => ({ projection: run.projection, startedAt: run.startedAt })),
+            liveRunKey
+          );
     payload.alert = runs.some((run) => run.pendingAlert);
     for (const run of runs) {
       run.pendingAlert = false;
     }
     const signature = getLiveUpdateSignature(payload);
-    if (this.combinedPosted && signature === this.combinedSignature) {
+    if (this.liveRunKey === liveRunKey && signature === this.liveSignature) {
       return;
     }
-    this.combinedPosted = true;
-    this.combinedSignature = signature;
+    this.liveRunKey = liveRunKey;
+    this.liveSignature = signature;
     this.status = await this.native.startOrUpdate(payload);
   }
 
@@ -287,91 +267,18 @@ export class LiveUpdateController {
   ): LiveUpdatePayload {
     const payload = toLiveUpdatePayload(projection, {
       etaMode: this.displayPreferences.eta,
+      startedAt,
     });
     payload.runKey = runKey;
-    payload.startedAt = startedAt;
     return payload;
   }
 
   /**
-   * One notification summarizing every active run: aggregate todo progression
-   * when all runs expose one (never a time estimate - cross-run ETAs are pure
-   * noise), earliest start as the elapsed anchor, and needs-input surfaced
-   * with the single blocked run's conversation wired to the actions when
-   * unambiguous.
-   */
-  private buildCombinedPayload(runs: TrackedRun[]): LiveUpdatePayload {
-    const projections = runs.map((run) => run.projection);
-    const interventions = projections.filter((p) => p.pendingIntervention != null);
-    const aggregate = projections.every((p) => p.todoProgress != null)
-      ? {
-          completed: projections.reduce(
-            (sum, p) => sum + (p.todoProgress?.completed ?? 0),
-            0
-          ),
-          total: projections.reduce((sum, p) => sum + (p.todoProgress?.total ?? 0), 0),
-        }
-      : null;
-    const startedAts = runs
-      .map((run) => run.startedAt)
-      .filter((value): value is number => value != null);
-    const parts = projections.slice(0, 3).map((p) => {
-      const title = p.title || "Agent";
-      const todo = p.todoProgress;
-      return todo ? `${title} ${todo.completed}/${todo.total}` : title;
-    });
-    if (projections.length > 3) {
-      parts.push(`+${projections.length - 3} more`);
-    }
-    const summary = parts.join(" · ");
-    const focus = interventions.length === 1 ? interventions[0] ?? null : null;
-    const progressLabel = aggregate
-      ? `${aggregate.completed}/${aggregate.total}`
-      : null;
-    return {
-      runKey: COMBINED_RUN_KEY,
-      title: `${projections.length} agents running`,
-      body:
-        interventions.length > 0
-          ? `${
-              interventions.length === 1
-                ? "1 agent needs input"
-                : `${interventions.length} agents need input`
-            } · ${summary}`
-          : summary,
-      shortText: progressLabel ?? `${projections.length}`,
-      workspaceId: focus?.workspaceId ?? null,
-      conversationId: focus?.conversationId ?? null,
-      startedAt: startedAts.length > 0 ? Math.min(...startedAts) : null,
-      progressKind: aggregate ? "todo" : "indeterminate",
-      progressLabel,
-      progress: aggregate?.completed ?? 0,
-      progressMax: aggregate?.total ?? 100,
-      indeterminate: aggregate == null,
-      todoCompleted: aggregate?.completed,
-      todoTotal: aggregate?.total,
-      intervention:
-        focus?.pendingIntervention ??
-        interventions[0]?.pendingIntervention ??
-        null,
-      // Quick-action ids only when exactly one run is blocked - answering
-      // "the" permission is ambiguous otherwise.
-      permissionRequestId: focus?.pendingPermissionRequestId ?? null,
-      permissionAllowOptionId: focus?.pendingPermissionAllowOptionId ?? null,
-      permissionDenyOptionId: focus?.pendingPermissionDenyOptionId ?? null,
-      questionId: focus?.pendingQuestionId ?? null,
-      ongoing: true,
-      cancellable: false,
-      promote: true,
-    };
-  }
-
-  /**
    * Reconciles the full set of tracked agents (foreground web sync). Runs
-   * missing from the list no longer exist and lose their notifications -
-   * including natively persisted ongoing notifications left behind by a
-   * previous app process (restored by the foreground service), which this
-   * controller instance never tracked.
+   * missing from the list no longer exist and leave the live notification;
+   * natively persisted ongoing notifications this controller does not own
+   * (left behind by a previous app process, or per-run notifications from an
+   * older app version) are cancelled.
    */
   async updateAll(projections: MobileAgentProjection[]) {
     this.lastWebSyncAt = this.now();
@@ -382,14 +289,13 @@ export class LiveUpdateController {
       await this.update(projection);
     }
     let removed = false;
-    for (const [conversationId, tracked] of [...this.runs]) {
+    for (const conversationId of [...this.runs.keys()]) {
       if (seen.has(conversationId)) continue;
       this.runs.delete(conversationId);
       removed = true;
-      await this.native.stopRun(tracked.runKey).catch(() => undefined);
     }
     if (removed) {
-      await this.syncPresentation();
+      await this.syncLive();
     }
     await this.reconcileNativeRuns();
   }
@@ -413,37 +319,27 @@ export class LiveUpdateController {
   }
 
   /**
-   * Cancels natively persisted ongoing runs this controller does not track.
-   * The projection set is authoritative for what is actually running, so any
-   * other stored run is a stale leftover whose chronometer would otherwise
-   * tick forever.
+   * Cancels natively persisted ongoing notifications other than the live one
+   * this controller owns. The projection set is authoritative for what is
+   * actually running, so any other stored run is a stale leftover whose
+   * chronometer would otherwise tick forever.
    */
   private async reconcileNativeRuns() {
     if (typeof this.native.getActiveRunKeys !== "function") {
       return;
     }
     const nativeRunKeys = await this.native.getActiveRunKeys().catch(() => []);
-    if (nativeRunKeys.length === 0) {
-      return;
-    }
-    const expected = new Set([...this.runs.values()].map((run) => run.runKey));
-    if (this.combinedPosted) {
-      expected.add(COMBINED_RUN_KEY);
-    }
     for (const runKey of nativeRunKeys) {
-      if (expected.has(runKey)) continue;
+      if (runKey === this.liveRunKey) continue;
       await this.native.stopRun(runKey).catch(() => undefined);
     }
   }
 
   async removeConversation(conversationId: string) {
-    const tracked = this.runs.get(conversationId);
-    if (!tracked) {
+    if (!this.runs.delete(conversationId)) {
       return;
     }
-    this.runs.delete(conversationId);
-    await this.native.stopRun(tracked.runKey).catch(() => undefined);
-    await this.syncPresentation();
+    await this.syncLive();
   }
 
   async refreshStatus() {
@@ -465,10 +361,15 @@ export class LiveUpdateController {
     return [...this.runs.keys()];
   }
 
+  /** Run key of the posted live notification, or null while nothing runs. */
+  getLiveRunKey() {
+    return this.liveRunKey;
+  }
+
   async stop() {
     this.runs.clear();
-    this.combinedPosted = false;
-    this.combinedSignature = "";
+    this.liveRunKey = null;
+    this.liveSignature = "";
     await this.native.stop();
   }
 }

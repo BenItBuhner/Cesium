@@ -16,7 +16,6 @@ import {
   type MobileLiveUpdatePreference,
   type MobileNotificationAlertMode,
   type MobileNotificationEtaMode,
-  type MobileNotificationMultiAgentMode,
   type MobileNativeStatus,
   type MobileNativeToWebMessage,
 } from "@/lib/mobile-bridge";
@@ -45,11 +44,6 @@ const ETA_MODE_OPTIONS = [
   { value: "always", label: "All runs" },
   { value: "off", label: "Never" },
 ] satisfies Array<{ value: MobileNotificationEtaMode; label: string }>;
-
-const MULTI_AGENT_OPTIONS = [
-  { value: "separate", label: "A notification per agent" },
-  { value: "combined", label: "One combined notification" },
-] satisfies Array<{ value: MobileNotificationMultiAgentMode; label: string }>;
 
 export function MobileNativeSettings() {
   const [available, setAvailable] = useState(false);
@@ -87,10 +81,7 @@ export function MobileNativeSettings() {
     });
   const displayPreferences =
     live?.displayPreferences ?? DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES;
-  const setDisplayPreference = (
-    key: "eta" | "multiAgent",
-    value: MobileNotificationEtaMode | MobileNotificationMultiAgentMode
-  ) =>
+  const setDisplayPreference = (key: "eta", value: MobileNotificationEtaMode) =>
     postMobileBridgeMessage({
       type: "setNotificationDisplayPreferences",
       preferences: { ...displayPreferences, [key]: value },
@@ -125,8 +116,8 @@ export function MobileNativeSettings() {
           title="Run progress placement"
           description={
             apiSupported && renderSupported && promotionGranted
-              ? "Android Live Updates show each agent run in the status bar chip, lock screen, and Samsung's Now Bar (One UI 8+)."
-              : "Android Live Updates are preferred. This device will automatically fall back to a standard live notification while promoted ongoing activity is unavailable."
+              ? "One live notification tracks all running agents (a lone agent in full detail, several as a list). Android Live Updates place it in the status bar chip, lock screen, and Samsung's Now Bar (One UI 8+)."
+              : "One live notification tracks all running agents (a lone agent in full detail, several as a list). Android Live Updates are preferred; this device falls back to a standard live notification while promoted ongoing activity is unavailable."
           }
           trailing={
             <SettingsThemeSelect
@@ -181,30 +172,9 @@ export function MobileNativeSettings() {
           }
         />
         <SettingsRow
-          searchId="mobile-multi-agent-style"
-          title="Multiple agents"
-          description="With several agents running at once, either keep a live notification per agent or fold them into one combined notification with aggregate progress. A single running agent always shows its full detail."
-          trailing={
-            <SettingsThemeSelect
-              className="w-full max-w-[min(100%,340px)]"
-              triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,340px)]`}
-              value={displayPreferences.multiAgent}
-              options={MULTI_AGENT_OPTIONS}
-              onChange={(value) =>
-                setDisplayPreference(
-                  "multiAgent",
-                  value as MobileNotificationMultiAgentMode
-                )
-              }
-              ariaLabel="Multiple agent notification style"
-              placement="below"
-            />
-          }
-        />
-        <SettingsRow
           searchId="mobile-completion-alerts"
           title="Agent finished notifications"
-          description="When an agent run completes, fails, or is cancelled. By default nothing is posted while you are inside the app - you are already watching it finish."
+          description="The completion card posted when an agent run completes, fails, or is cancelled: files changed, runtime, the agent's summary, and Review / View PR shortcuts. By default nothing is posted while you are inside the app - you are already watching it finish."
           trailing={
             <SettingsThemeSelect
               className="w-full max-w-[min(100%,340px)]"
