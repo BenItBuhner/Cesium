@@ -721,6 +721,35 @@ export type AgentContextUsageCategory = {
   colorKey: string;
 };
 
+/** Mirrors `AgentContextSegmentKind` in @cesium/core protocol.ts. */
+export type AgentContextSegmentKind =
+  | "system_prompt"
+  | "tool_definitions"
+  | "mcp_definitions"
+  | "user_message"
+  | "system_reminder"
+  | "assistant_message"
+  | "reasoning"
+  | "tool_call"
+  | "plan"
+  | "compaction_summary"
+  | "agent_handoff"
+  | "chat_fork";
+
+/** One block of the context window in model order. Mirrors @cesium/core. */
+export type AgentContextUsageSegment = {
+  id: string;
+  kind: AgentContextSegmentKind;
+  categoryId: AgentContextUsageCategoryId;
+  label: string;
+  tokens: number;
+  colorKey: string;
+  seqStart?: number;
+  seqEnd?: number;
+  createdAt?: number;
+  detail?: string;
+};
+
 export type AgentContextUsageSnapshot = {
   supported: boolean;
   limitTokens: number;
@@ -728,6 +757,56 @@ export type AgentContextUsageSnapshot = {
   percentFull: number;
   categories: AgentContextUsageCategory[];
   approximate?: boolean;
+  /** Chronological breakdown (sequential view); absent for pooled-only backends. */
+  timeline?: AgentContextUsageSegment[];
+};
+
+export type AgentContextTranscriptToolCall = {
+  toolCallId: string;
+  name: string;
+  title: string;
+  toolKind: string;
+  status: AgentToolCallStatus;
+  arguments: Record<string, unknown> | string | null;
+  result: string | null;
+  editPreview?: AgentToolEditPreview;
+  locations?: AgentToolLocation[];
+  pluginId?: string;
+  pluginName?: string;
+  pluginIconUrl?: string;
+};
+
+/** Timeline segment plus verbatim content. Mirrors @cesium/core. */
+export type AgentContextTranscriptEntry = AgentContextUsageSegment & {
+  text?: string;
+  tools?: Array<{ name: string; description: string; parameters: unknown }>;
+  toolCall?: AgentContextTranscriptToolCall;
+  reminders?: Array<{ reason: string; text: string }>;
+  attachments?: Array<{
+    name?: string;
+    mimeType: string;
+    kind?: "image" | "file";
+    size?: number;
+  }>;
+  compaction?: {
+    retainedTurnCount: number;
+    compressedTurnCount: number;
+    sourceRange?: { fromSeq: number; toSeq: number };
+    estimatedTokensBefore?: number;
+    estimatedTokensAfter?: number;
+    generation?: number;
+  };
+  events?: AgentStoredEvent[];
+};
+
+export type AgentContextTranscript = {
+  conversationId: string;
+  backendId: AgentBackendId;
+  modelId: string | null;
+  generatedAt: number;
+  usage: AgentContextUsageSnapshot;
+  entries: AgentContextTranscriptEntry[];
+  notes: string[];
 };
 
 export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {

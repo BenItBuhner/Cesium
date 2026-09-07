@@ -99,7 +99,34 @@ test("estimateCesiumContextUsageFromParts includes summarized conversation bucke
   );
 });
 
-test("estimateCesiumContextUsageFromParts keeps conversation bucket for non-history events", () => {
+test("estimateCesiumContextUsageFromParts counts in-flight tool output before it completes", () => {
+  const events: AgentStoredEvent[] = [
+    {
+      seq: 1,
+      eventId: "tool-running",
+      conversationId: "conv-1",
+      createdAt: 1,
+      kind: "tool_call_update",
+      toolCallId: "term-1",
+      title: "Ran npm test",
+      toolKind: "terminal",
+      status: "running",
+      detail: "Streaming terminal output that is about to land in context.",
+    },
+  ];
+
+  const usage = estimateCesiumContextUsageFromParts({
+    systemPromptFull: buildCesiumSystemPrompt(),
+    events,
+    limitTokens: 100_000,
+  });
+
+  const conversation = usage.categories.find((row) => row.id === "conversation");
+  assert.ok(conversation);
+  assert.ok(conversation.tokens > 0);
+});
+
+test("estimateCesiumContextUsageFromParts attributes MCP tool traffic to the MCP bucket", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -121,7 +148,12 @@ test("estimateCesiumContextUsageFromParts keeps conversation bucket for non-hist
     limitTokens: 100_000,
   });
 
-  const conversation = usage.categories.find((row) => row.id === "conversation");
-  assert.ok(conversation);
-  assert.ok(conversation.tokens > 0);
+  const mcp = usage.categories.find((row) => row.id === "mcp");
+  assert.ok(mcp);
+  // The prompt's MCP section plus the in-flight MCP tool payload.
+  const mcpSegments = usage.timeline?.filter((segment) => segment.categoryId === "mcp") ?? [];
+  assert.equal(mcpSegments.length, 2);
+  assert.equal(mcpSegments.map((segment) => segment.kind).join(","), "mcp_definitions,tool_call");
+  assert.equal(mcp.tokens, mcpSegments.reduce((sum, segment) => sum + segment.tokens, 0));
+  assert.equal(usage.categories.some((row) => row.id === "conversation"), false);
 });
