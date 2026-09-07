@@ -28,6 +28,10 @@ const baseProjection: MobileAgentProjection = {
   lastError: null,
   todoProgress: null,
   goalProgress: null,
+  phase: "working",
+  editStats: null,
+  summary: null,
+  pullRequestUrl: null,
 };
 
 describe("watch agent contract", () => {

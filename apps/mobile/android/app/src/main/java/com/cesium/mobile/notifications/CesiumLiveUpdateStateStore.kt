@@ -6,9 +6,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Persists every active agent run (keyed by runKey) so the foreground service
- * can restore all live notifications after a process restart, plus the set of
- * runs the user explicitly dismissed so they are not resurrected.
+ * Persists every ongoing notification payload (keyed by runKey - in practice
+ * the single consolidated live notification) so the foreground service can
+ * restore it after a process restart, plus the set of notifications the user
+ * explicitly dismissed so they are not resurrected.
  */
 object CesiumLiveUpdateStateStore {
   private const val STATE_PREFS = "cesium-live-update-state"
@@ -23,28 +24,21 @@ object CesiumLiveUpdateStateStore {
     "runKey",
     "title",
     "body",
+    "expandedBody",
+    "subText",
     "shortText",
     "workspaceId",
     "conversationId",
-    "progressKind",
-    "progressLabel",
     "intervention",
     "permissionRequestId",
     "permissionAllowOptionId",
     "permissionDenyOptionId",
-    "questionId"
+    "questionId",
+    "pullRequestUrl"
   )
-  private val longKeys = listOf("startedAt")
-  private val intKeys = listOf(
-    "progress",
-    "progressMax",
-    "todoCompleted",
-    "todoTotal",
-    "todoCurrentIndex",
-    "goalProgressPercent"
-  )
+  private val longKeys = listOf("startedAt", "completedAt")
+  private val intKeys = listOf("progress", "progressMax")
   private val booleanKeys = listOf(
-    "indeterminate",
     "ongoing",
     "cancellable",
     "promote"
@@ -141,6 +135,26 @@ object CesiumLiveUpdateStateStore {
     // Migration: honor the single-slot key written by older builds.
     return context.getSharedPreferences(MOBILE_PREFS, Context.MODE_PRIVATE)
       .getString(LEGACY_LAST_DISMISSED_RUN_KEY, null) == runKey
+  }
+
+  /**
+   * Forgets a dismissal. Called when an alerting update (needs input,
+   * completion) re-surfaces a dismissed notification: from then on it is
+   * visible again and must keep updating, until the user dismisses it anew.
+   */
+  fun clearDismissed(context: Context, runKey: String?) {
+    if (runKey.isNullOrBlank()) return
+    val prefs = context.getSharedPreferences(MOBILE_PREFS, Context.MODE_PRIVATE)
+    val dismissed = readDismissed(context).toMutableList()
+    val removed = dismissed.remove(runKey)
+    val legacyMatches = prefs.getString(LEGACY_LAST_DISMISSED_RUN_KEY, null) == runKey
+    if (!removed && !legacyMatches) return
+    prefs.edit()
+      .putString(DISMISSED_RUNS_KEY, JSONArray(dismissed).toString())
+      .apply {
+        if (legacyMatches) remove(LEGACY_LAST_DISMISSED_RUN_KEY)
+      }
+      .apply()
   }
 
   private fun readDismissed(context: Context): List<String> {

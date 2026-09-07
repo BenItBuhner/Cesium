@@ -115,6 +115,15 @@ class CesiumNotificationQuickActionReceiver : BroadcastReceiver() {
 
   private fun repost(context: Context, extras: Bundle, body: String) {
     extras.putString("body", body)
+    // The first expanded line carried the question / permission text (or the
+    // blocked agent's row); the answer replaces it so the card does not keep
+    // asking until the next projection sync.
+    extras.getString("expandedBody")?.let { expanded ->
+      extras.putString(
+        "expandedBody",
+        (listOf(body) + expanded.split("\n").drop(1)).joinToString("\n")
+      )
+    }
     if (extras.getBoolean("ongoing", true)) {
       CesiumLiveUpdateStateStore.saveRun(context, extras)
     }

@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { MobileAgentProjection } from "@cesium/core";
 import {
-  COMBINED_RUN_KEY,
+  LIVE_RUN_KEY_PREFIX,
   LiveUpdateController,
   WEB_SYNC_FRESH_MS,
   computeLiveUpdateAlert,
+  getLiveBatchRunKey,
   getLiveUpdateSignature,
   type LiveUpdatesNative,
 } from "./LiveUpdateController";
@@ -35,6 +36,10 @@ function projection(
     lastError: null,
     todoProgress: null,
     goalProgress: null,
+    phase: "working",
+    editStats: null,
+    summary: null,
+    pullRequestUrl: null,
     ...overrides,
   };
 }
@@ -72,24 +77,43 @@ class FakeNative implements LiveUpdatesNative {
   async getActiveRunKeys() {
     return this.persistedRunKeys;
   }
+
+  get ongoing() {
+    return this.posted.filter((payload) => payload.ongoing !== false);
+  }
+  get terminal() {
+    return this.posted.filter((payload) => payload.ongoing === false);
+  }
 }
 
-test("tracks one live notification per concurrent agent", async () => {
+const LIVE_A = getLiveBatchRunKey("a:10");
+
+test("concurrent agents share one consolidated live notification", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
 
-  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
-  await controller.update(projection({ conversationId: "b", startedAt: 20 }));
+  await controller.update(projection({ conversationId: "a", startedAt: 10, title: "Fix build" }));
+  await controller.update(
+    projection({ conversationId: "b", startedAt: 20, title: "Write docs", phase: "starting" })
+  );
 
   assert.deepEqual(controller.getTrackedConversationIds().sort(), ["a", "b"]);
   assert.equal(native.posted.length, 2);
+  // Every post targets the same notification identity, named by the batch opener.
   assert.deepEqual(
     native.posted.map((payload) => payload.runKey),
-    ["a:10", "b:20"]
+    [LIVE_A, LIVE_A]
   );
+  assert.ok(LIVE_A.startsWith(`${LIVE_RUN_KEY_PREFIX}:`));
+  assert.equal(controller.getLiveRunKey(), LIVE_A);
+  // A lone run shows its own title and detail; two runs become the agent list.
+  assert.equal(native.posted[0]?.title, "Fix build");
+  assert.equal(native.posted[1]?.title, "2 agents running");
+  assert.equal(native.posted[1]?.expandedBody, "• Fix build · Working\n• Write docs · Starting");
+  assert.deepEqual(native.stoppedRuns, []);
 });
 
-test("deduplicates unchanged payloads per run", async () => {
+test("deduplicates unchanged live payloads", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
 
@@ -113,6 +137,7 @@ test("alerts once when an agent starts needing input, then stays silent", async 
       startedAt: 10,
       status: "awaiting_permission",
       pendingIntervention: "permission",
+      phase: "needs_permission",
     })
   );
   await controller.update(
@@ -121,6 +146,7 @@ test("alerts once when an agent starts needing input, then stays silent", async 
       startedAt: 10,
       status: "awaiting_permission",
       pendingIntervention: "permission",
+      phase: "needs_permission",
       currentActivity: "Still waiting",
     })
   );
@@ -131,7 +157,7 @@ test("alerts once when an agent starts needing input, then stays silent", async 
   );
 });
 
-test("terminal updates alert, post once, and end tracking without cancelling", async () => {
+test("a finished lone run posts its completion card and retires the live notification", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
   // Backgrounded app: the default "background" completion mode posts.
@@ -144,15 +170,61 @@ test("terminal updates alert, post once, and end tracking without cancelling", a
       startedAt: 10,
       status: "completed",
       completedAt: 5_000,
+      phase: "finished",
     })
   );
 
   assert.equal(native.posted.length, 2);
-  assert.equal(native.posted[1]?.alert, true);
-  assert.equal(native.posted[1]?.ongoing, false);
-  // The completion notification must stay visible: no stopRun for it.
-  assert.deepEqual(native.stoppedRuns, []);
+  const card = native.posted[1];
+  assert.equal(card?.alert, true);
+  assert.equal(card?.ongoing, false);
+  // The card lives under the run's own key so it survives independently of
+  // the live notification, which is removed now that nothing runs.
+  assert.equal(card?.runKey, "a:10");
+  assert.equal(card?.subText, "Finished");
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
+  assert.equal(controller.getLiveRunKey(), null);
   assert.deepEqual(controller.getTrackedConversationIds(), []);
+});
+
+test("a finishing agent leaves the list while the others keep the live notification", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setAppActive(false);
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10, title: "Fix build" }));
+  await controller.update(projection({ conversationId: "b", startedAt: 20, title: "Write docs" }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 10, status: "completed", phase: "finished" })
+  );
+
+  assert.equal(native.terminal.length, 1);
+  assert.equal(native.terminal[0]?.runKey, "a:10");
+  // The survivor regains the lone-run detail view under the SAME live key -
+  // the batch identity does not change when its opener finishes.
+  const live = native.posted.at(-1);
+  assert.equal(live?.runKey, LIVE_A);
+  assert.equal(live?.title, "Write docs");
+  assert.equal(live?.ongoing, true);
+  assert.deepEqual(native.stoppedRuns, []);
+  assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
+});
+
+test("the next batch after everything went quiet gets a fresh live identity", async () => {
+  const native = new FakeNative();
+  const controller = new LiveUpdateController(native);
+  controller.setAppActive(false);
+
+  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
+  await controller.update(
+    projection({ conversationId: "a", startedAt: 10, status: "completed", phase: "finished" })
+  );
+  await controller.update(projection({ conversationId: "b", startedAt: 99 }));
+
+  // A swipe-dismissal of the first batch's notification must not silence
+  // this one: its key differs.
+  assert.equal(native.posted.at(-1)?.runKey, getLiveBatchRunKey("b:99"));
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
 });
 
 test("completions while the app is foregrounded post nothing by default", async () => {
@@ -162,13 +234,13 @@ test("completions while the app is foregrounded post nothing by default", async 
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(
-    projection({ conversationId: "a", startedAt: 10, status: "completed" })
+    projection({ conversationId: "a", startedAt: 10, status: "completed", phase: "finished" })
   );
 
-  // Only the ongoing progress update posted; the terminal one was suppressed
-  // and the ongoing notification was removed instead.
+  // Only the live notification posted; no completion card, and the live
+  // notification is removed instead.
   assert.equal(native.posted.length, 1);
-  assert.deepEqual(native.stoppedRuns, ["a:10"]);
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
   assert.deepEqual(controller.getTrackedConversationIds(), []);
 });
 
@@ -180,15 +252,15 @@ test("completion mode 'always' posts even while the app is foregrounded", async 
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(
-    projection({ conversationId: "a", startedAt: 10, status: "completed" })
+    projection({ conversationId: "a", startedAt: 10, status: "completed", phase: "finished" })
   );
 
-  assert.equal(native.posted.length, 2);
-  assert.equal(native.posted[1]?.alert, true);
-  assert.deepEqual(native.stoppedRuns, []);
+  assert.equal(native.terminal.length, 1);
+  assert.equal(native.terminal[0]?.alert, true);
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
 });
 
-test("completion mode 'off' never posts a terminal notification", async () => {
+test("completion mode 'off' never posts a completion card", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
   controller.setAppActive(false);
@@ -196,11 +268,11 @@ test("completion mode 'off' never posts a terminal notification", async () => {
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(
-    projection({ conversationId: "a", startedAt: 10, status: "failed" })
+    projection({ conversationId: "a", startedAt: 10, status: "failed", phase: "failed" })
   );
 
-  assert.equal(native.posted.length, 1);
-  assert.deepEqual(native.stoppedRuns, ["a:10"]);
+  assert.equal(native.terminal.length, 0);
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
 });
 
 test("intervention alerts go silent while foregrounded when set to background-only", async () => {
@@ -216,10 +288,11 @@ test("intervention alerts go silent while foregrounded when set to background-on
       startedAt: 10,
       status: "awaiting_permission",
       pendingIntervention: "permission",
+      phase: "needs_permission",
     })
   );
 
-  // The ongoing notification still updates (state accuracy), just silently.
+  // The live notification still updates (state accuracy), just silently.
   assert.equal(native.posted.length, 2);
   assert.equal(native.posted[1]?.alert, false);
   assert.equal(native.posted[1]?.intervention, "permission");
@@ -230,13 +303,14 @@ test("ignores runs that finished before they were ever tracked", async () => {
   const controller = new LiveUpdateController(native);
 
   await controller.update(
-    projection({ conversationId: "a", status: "completed", startedAt: null })
+    projection({ conversationId: "a", status: "completed", startedAt: null, phase: "finished" })
   );
 
   assert.equal(native.posted.length, 0);
+  assert.equal(controller.getLiveRunKey(), null);
 });
 
-test("an active run keeps its notification identity when the derived key drifts", async () => {
+test("an active run keeps its identity when the derived key drifts", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
 
@@ -250,10 +324,9 @@ test("an active run keeps its notification identity when the derived key drifts"
   );
 
   assert.deepEqual(native.stoppedRuns, []);
-  assert.equal(native.posted.length, 2);
   assert.deepEqual(
     native.posted.map((payload) => payload.runKey),
-    ["a:10", "a:10"]
+    [LIVE_A, LIVE_A]
   );
 });
 
@@ -277,25 +350,7 @@ test("the elapsed anchor pins to the earliest known start of the run", async () 
   );
 });
 
-test("a new run after a terminal boundary starts a fresh notification", async () => {
-  const native = new FakeNative();
-  const controller = new LiveUpdateController(native);
-  controller.setAppActive(false);
-
-  await controller.update(projection({ conversationId: "a", startedAt: 10 }));
-  await controller.update(
-    projection({ conversationId: "a", startedAt: 10, status: "completed" })
-  );
-  await controller.update(projection({ conversationId: "a", startedAt: 99 }));
-
-  assert.deepEqual(
-    native.posted.map((payload) => payload.runKey),
-    ["a:10", "a:10", "a:99"]
-  );
-  assert.deepEqual(native.stoppedRuns, []);
-});
-
-test("terminal updates replace the ongoing notification even when the derived key drifted", async () => {
+test("the completion card keeps the sticky key and pinned start even when the terminal projection drifted", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
   controller.setAppActive(false);
@@ -303,16 +358,20 @@ test("terminal updates replace the ongoing notification even when the derived ke
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   // Terminal projection derived from a source that lost the start event.
   await controller.update(
-    projection({ conversationId: "a", startedAt: 999, status: "completed" })
+    projection({
+      conversationId: "a",
+      startedAt: 999,
+      status: "completed",
+      completedAt: 61_010,
+      phase: "finished",
+    })
   );
 
-  // Same key => same native notification id => the final state replaces the
-  // ongoing notification instead of leaving a zombie behind.
-  assert.deepEqual(
-    native.posted.map((payload) => payload.runKey),
-    ["a:10", "a:10"]
-  );
-  assert.equal(native.posted[1]?.ongoing, false);
+  const card = native.terminal[0];
+  assert.equal(card?.runKey, "a:10");
+  assert.equal(card?.startedAt, 10);
+  // Runtime is measured from the pinned start, not the drifted one.
+  assert.equal(card?.body, "Run complete (runtime 1m 01s).");
 });
 
 test("socket projections are suppressed while web bridge syncs are fresh", async () => {
@@ -335,7 +394,7 @@ test("socket projections are suppressed while web bridge syncs are fresh", async
   );
   assert.equal(native.posted.length, 2);
   // Identity and elapsed anchor survive the source handover.
-  assert.equal(native.posted[1]?.runKey, "a:10");
+  assert.equal(native.posted[1]?.runKey, LIVE_A);
   assert.equal(native.posted[1]?.startedAt, 10);
 });
 
@@ -348,10 +407,10 @@ test("socket projections flow before the first web sync", async () => {
   assert.equal(native.posted.length, 1);
 });
 
-test("volatile ETA drift does not repost the notification", async () => {
+test("sub-minute ETA drift does not repost the live notification", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
-  const withEta = (estimatedCompletionAt: number) =>
+  const withEta = (estimatedRemainingMs: number) =>
     projection({
       conversationId: "a",
       startedAt: 10,
@@ -359,36 +418,31 @@ test("volatile ETA drift does not repost the notification", async () => {
         percent: 40,
         headline: "Compiling",
         runtimeMs: 60_000,
-        estimatedRemainingMs: 90_000,
-        estimatedCompletionAt,
+        estimatedRemainingMs,
+        estimatedCompletionAt: 1_000_000 + estimatedRemainingMs,
       },
     });
 
-  await controller.update(withEta(1_000_000));
-  // Same state re-derived 500ms later: only the now-anchored ETA moved.
-  await controller.update(withEta(1_000_500));
-  // A full minute of drift is a real change and may repost.
-  await controller.update(withEta(1_090_000));
+  await controller.update(withEta(90_000));
+  // Same state re-derived 500ms later: the estimate moved by half a second.
+  await controller.update(withEta(89_500));
+  // A full minute of drift changes the "~Nm left" text and may repost.
+  await controller.update(withEta(20_000));
 
   assert.equal(native.posted.length, 2);
 });
 
-test("getLiveUpdateSignature ignores sub-minute ETA jitter only", () => {
-  const base = {
+test("getLiveUpdateSignature tracks visible content only", () => {
+  const base: LiveUpdatePayload = {
     runKey: "a:10",
     title: "Agent run",
     body: "Working",
-    progressKind: "goal" as const,
-    estimatedCompletionAt: 1_000_000,
-    estimatedRemainingSeconds: 90,
+    expandedBody: "Working\nGoal 40% · ~2m left",
   };
-  assert.equal(
-    getLiveUpdateSignature(base),
-    getLiveUpdateSignature({ ...base, estimatedCompletionAt: 1_000_500 })
-  );
+  assert.equal(getLiveUpdateSignature(base), getLiveUpdateSignature({ ...base }));
   assert.notEqual(
     getLiveUpdateSignature(base),
-    getLiveUpdateSignature({ ...base, estimatedCompletionAt: 1_090_000 })
+    getLiveUpdateSignature({ ...base, expandedBody: "Working\nGoal 41% · ~2m left" })
   );
   assert.notEqual(
     getLiveUpdateSignature(base),
@@ -406,103 +460,58 @@ test("updateAll reconciles away runs that no longer exist", async () => {
   ]);
   await controller.updateAll([projection({ conversationId: "b", startedAt: 20 })]);
 
-  assert.deepEqual(native.stoppedRuns, ["a:10"]);
+  // The live notification shrinks back to the lone-run view; nothing is cancelled.
+  assert.deepEqual(native.stoppedRuns, []);
+  assert.equal(native.posted.at(-1)?.title, "Agent run");
+  assert.equal(native.posted.at(-1)?.runKey, LIVE_A);
   assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
 });
 
-test("updateAll cancels natively persisted runs left over from a dead process", async () => {
+test("updateAll removes the live notification once every run is gone", async () => {
   const native = new FakeNative();
-  // A previous app process persisted these ongoing runs; the foreground
-  // service restored their notifications, but no agent is running anymore.
-  native.persistedRunKeys = ["ghost:123", "b:20"];
   const controller = new LiveUpdateController(native);
 
-  await controller.updateAll([projection({ conversationId: "b", startedAt: 20 })]);
+  await controller.updateAll([projection({ conversationId: "a", startedAt: 10 })]);
+  await controller.updateAll([]);
 
-  // The tracked run survives; the ghost's notification is stopped.
-  assert.deepEqual(native.stoppedRuns, ["ghost:123"]);
-  assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
+  assert.equal(controller.getLiveRunKey(), null);
 });
 
-function todoProgress(completed: number, total: number) {
-  return {
-    total,
-    completed,
-    blocked: 0,
-    pending: total - completed - 1,
-    inProgress: 1,
-    currentIndex: completed + 1,
-    percent: Math.round((completed / total) * 100),
-    estimatedRemainingMs: null,
-    estimatedCompletionAt: null,
-  };
-}
-
-test("combined mode folds concurrent runs into one aggregated notification", async () => {
+test("updateAll cancels natively persisted notifications left over from a dead process", async () => {
   const native = new FakeNative();
+  // A previous app process persisted these ongoing notifications (one from an
+  // older per-run build, one live batch); the foreground service restored
+  // them, but this controller owns neither.
+  native.persistedRunKeys = ["ghost:123", getLiveBatchRunKey("old:1"), LIVE_A];
   const controller = new LiveUpdateController(native);
-  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
 
-  await controller.update(
-    projection({
-      conversationId: "a",
-      startedAt: 10,
-      title: "Fix build",
-      todoProgress: todoProgress(2, 5),
-    })
-  );
-  // A lone run keeps its full per-run detail.
-  assert.equal(native.posted[0]?.runKey, "a:10");
+  await controller.updateAll([projection({ conversationId: "a", startedAt: 10 })]);
 
-  await controller.update(
-    projection({
-      conversationId: "b",
-      startedAt: 20,
-      title: "Write docs",
-      todoProgress: todoProgress(1, 3),
-    })
-  );
-  // The individual notification folds into the aggregate.
-  assert.deepEqual(native.stoppedRuns, ["a:10"]);
-  const combined = native.posted.at(-1);
-  assert.equal(combined?.runKey, COMBINED_RUN_KEY);
-  assert.equal(combined?.title, "2 agents running");
-  assert.equal(combined?.body, "Fix build 2/5 · Write docs 1/3");
-  // Aggregate todo progression across runs; never a time estimate.
-  assert.equal(combined?.progressKind, "todo");
-  assert.equal(combined?.progress, 3);
-  assert.equal(combined?.progressMax, 8);
-  assert.equal(combined?.shortText, "3/8");
-  assert.equal(combined?.estimatedCompletionAt, undefined);
-  // Elapsed anchors at the earliest running agent.
-  assert.equal(combined?.startedAt, 10);
+  // The current live notification survives; the leftovers are stopped.
+  assert.deepEqual(native.stoppedRuns, ["ghost:123", getLiveBatchRunKey("old:1")]);
+  assert.deepEqual(controller.getTrackedConversationIds(), ["a"]);
 });
 
-test("combined notification unfolds to per-run detail when one agent finishes", async () => {
+test("removeConversation drops an agent from the live notification", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
-  controller.setAppActive(false);
-  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(projection({ conversationId: "b", startedAt: 20 }));
-  await controller.update(
-    projection({ conversationId: "a", startedAt: 10, status: "completed" })
-  );
+  await controller.removeConversation("a");
+  assert.equal(native.posted.at(-1)?.title, "Agent run");
+  assert.deepEqual(native.stoppedRuns, []);
 
-  // The finished run posts its own terminal notification under its sticky
-  // key, the aggregate is retired, and the survivor regains full detail.
-  const terminal = native.posted.find((payload) => payload.ongoing === false);
-  assert.equal(terminal?.runKey, "a:10");
-  assert.ok(native.stoppedRuns.includes(COMBINED_RUN_KEY));
-  assert.equal(native.posted.at(-1)?.runKey, "b:20");
-  assert.deepEqual(controller.getTrackedConversationIds(), ["b"]);
+  await controller.removeConversation("b");
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
+  await controller.removeConversation("unknown");
+  assert.deepEqual(native.stoppedRuns, [LIVE_A]);
 });
 
-test("combined notification surfaces needs-input with the blocked run's conversation", async () => {
+test("the consolidated notification surfaces needs-input with the blocked run's conversation", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
-  controller.setDisplayPreferences({ eta: "goal", multiAgent: "combined" });
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
   await controller.update(projection({ conversationId: "b", startedAt: 20 }));
@@ -512,45 +521,42 @@ test("combined notification surfaces needs-input with the blocked run's conversa
       startedAt: 10,
       status: "awaiting_permission",
       pendingIntervention: "permission",
+      phase: "needs_permission",
     })
   );
 
-  const combined = native.posted.at(-1);
-  assert.equal(combined?.runKey, COMBINED_RUN_KEY);
-  assert.equal(combined?.alert, true);
-  assert.equal(combined?.intervention, "permission");
-  assert.equal(combined?.conversationId, "a");
-  assert.match(combined?.body ?? "", /^1 agent needs input · /);
+  const live = native.posted.at(-1);
+  assert.equal(live?.runKey, LIVE_A);
+  assert.equal(live?.alert, true);
+  assert.equal(live?.intervention, "permission");
+  assert.equal(live?.conversationId, "a");
+  assert.equal(live?.shortText, "INPUT");
+  assert.match(live?.body ?? "", /^1 needs input · /);
 });
 
-test("separate mode is untouched by combined bookkeeping", async () => {
+test("stop clears tracking and the live identity", async () => {
   const native = new FakeNative();
   const controller = new LiveUpdateController(native);
 
   await controller.update(projection({ conversationId: "a", startedAt: 10 }));
-  await controller.update(projection({ conversationId: "b", startedAt: 20 }));
+  await controller.stop();
 
-  assert.deepEqual(
-    native.posted.map((payload) => payload.runKey),
-    ["a:10", "b:20"]
-  );
-  assert.deepEqual(native.stoppedRuns, []);
+  assert.equal(native.stoppedAll, 1);
+  assert.equal(controller.getLiveRunKey(), null);
+  assert.deepEqual(controller.getTrackedConversationIds(), []);
 });
 
 test("refreshStatus absorbs natively persisted display preferences", async () => {
   const native = new FakeNative();
   native.getPromotionStatus = async () => ({
     ...status(),
-    displayPreferences: { eta: "always", multiAgent: "combined" },
+    displayPreferences: { eta: "always" },
   });
   const controller = new LiveUpdateController(native);
 
   await controller.refreshStatus();
 
-  assert.deepEqual(controller.getDisplayPreferences(), {
-    eta: "always",
-    multiAgent: "combined",
-  });
+  assert.deepEqual(controller.getDisplayPreferences(), { eta: "always" });
 });
 
 test("refreshStatus absorbs natively persisted alert preferences", async () => {
@@ -574,8 +580,9 @@ test("computeLiveUpdateAlert covers intervention and terminal transitions", () =
   const needsInput = projection({
     status: "awaiting_question",
     pendingIntervention: "question",
+    phase: "needs_answer",
   });
-  const completed = projection({ status: "completed" });
+  const completed = projection({ status: "completed", phase: "finished" });
 
   // First sight of an agent already waiting on the user must alert.
   assert.equal(computeLiveUpdateAlert(null, needsInput), true);

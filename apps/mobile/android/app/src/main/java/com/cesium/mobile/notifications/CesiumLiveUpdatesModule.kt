@@ -97,17 +97,6 @@ internal fun normalizeEtaMode(value: String?): String =
     else -> ETA_MODE_GOAL
   }
 
-/** Concurrent runs: one notification each, or a single aggregated one. */
-internal const val MULTI_AGENT_SEPARATE = "separate"
-internal const val MULTI_AGENT_COMBINED = "combined"
-
-internal fun normalizeMultiAgentMode(value: String?): String =
-  when (value) {
-    MULTI_AGENT_SEPARATE,
-    MULTI_AGENT_COMBINED -> value
-    else -> MULTI_AGENT_SEPARATE
-  }
-
 /**
  * Whether this Android build actually RENDERS promoted live updates.
  * Base Android 16 (SDK 36.0) shipped the Live Update APIs without the
@@ -146,12 +135,16 @@ class CesiumLiveUpdatesModule(
     )
     val runKey = extras.getString("runKey")
     val alert = extras.getBoolean("alert", false)
-    // A dismissed run stays quiet for progress updates, but interventions and
-    // completions still surface - those need the user, not the other way
-    // around.
+    // A dismissed notification stays quiet for progress updates, but
+    // interventions and completions still surface - those need the user, not
+    // the other way around. Once an alert brings it back it is visible again
+    // and must keep updating, so the dismissal is forgotten.
     if (!alert && CesiumLiveUpdateStateStore.wasDismissed(reactContext, runKey)) {
       promise.resolve(statusMap(suppressedByDismissal = true))
       return
+    }
+    if (alert) {
+      CesiumLiveUpdateStateStore.clearDismissed(reactContext, runKey)
     }
     val intent = Intent(reactContext, CesiumForegroundService::class.java).apply {
       action = CesiumForegroundService.ACTION_UPDATE
@@ -257,14 +250,13 @@ class CesiumLiveUpdatesModule(
     val eta = normalizeEtaMode(
       if (preferences.hasKey("eta")) preferences.getString("eta") else null
     )
-    val multiAgent = normalizeMultiAgentMode(
-      if (preferences.hasKey("multiAgent")) preferences.getString("multiAgent") else null
-    )
     reactContext
       .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
       .edit()
       .putString(KEY_ETA_MODE, eta)
-      .putString(KEY_MULTI_AGENT_MODE, multiAgent)
+      // Older builds persisted a per-agent / combined choice here; the phone
+      // now always shows one consolidated live notification.
+      .remove(LEGACY_KEY_MULTI_AGENT_MODE)
       .apply()
     promise.resolve(statusMap())
   }
@@ -396,7 +388,6 @@ class CesiumLiveUpdatesModule(
       "displayPreferences",
       Arguments.createMap().apply {
         putString("eta", etaMode())
-        putString("multiAgent", multiAgentMode())
       }
     )
     // Promotion diagnostics: whether this Android build can render promoted
@@ -439,9 +430,9 @@ class CesiumLiveUpdatesModule(
         putString("runKey", "cesium-promotion-diagnostic")
         putString("title", "Cesium agent")
         putString("body", "Diagnostic")
+        putString("expandedBody", "Diagnostic\nSecond line")
         putBoolean("ongoing", true)
         putBoolean("promote", true)
-        putBoolean("indeterminate", true)
       }
       CesiumAgentNotification.hasPromotableCharacteristics(
         CesiumAgentNotification.build(reactContext, sample)
@@ -487,12 +478,6 @@ class CesiumLiveUpdatesModule(
         .getString(KEY_ETA_MODE, null)
     )
 
-  private fun multiAgentMode(): String =
-    normalizeMultiAgentMode(
-      reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .getString(KEY_MULTI_AGENT_MODE, null)
-    )
-
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
     return if (Build.VERSION.SDK_INT >= 24) {
@@ -509,7 +494,7 @@ class CesiumLiveUpdatesModule(
     private const val KEY_COMPLETION_ALERT_MODE = "alert-mode-completion"
     private const val KEY_INTERVENTION_ALERT_MODE = "alert-mode-intervention"
     private const val KEY_ETA_MODE = "display-eta-mode"
-    private const val KEY_MULTI_AGENT_MODE = "display-multi-agent"
+    private const val LEGACY_KEY_MULTI_AGENT_MODE = "display-multi-agent"
   }
 }
 
@@ -526,17 +511,12 @@ private fun ReadableMap.toBundle(): Bundle {
       }
     }
   }
-  if (hasKey("startedAt") && !isNull("startedAt")) {
-    bundle.putLong("startedAt", getDouble("startedAt").toLong())
+  listOf("startedAt", "completedAt").forEach { key ->
+    if (hasKey(key) && !isNull(key)) {
+      bundle.putLong(key, getDouble(key).toLong())
+    }
   }
-  listOf(
-    "progress",
-    "progressMax",
-    "todoCompleted",
-    "todoTotal",
-    "todoCurrentIndex",
-    "goalProgressPercent"
-  ).forEach { key ->
+  listOf("progress", "progressMax").forEach { key ->
     if (hasKey(key) && !isNull(key)) {
       bundle.putInt(key, getDouble(key).toInt())
     }

@@ -76,22 +76,22 @@ export const DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES: MobileNotificationAl
 export type MobileNotificationEtaMode = "goal" | "always" | "off";
 
 /**
- * How concurrent agent runs present on the phone:
- * "separate" - one live notification per run.
- * "combined" - a single aggregated live notification while two or more runs
- *              are active (a lone run keeps its full detail).
+ * How concurrent agent runs present in the Electron tray menu:
+ * "separate" - one tray entry per run.
+ * "combined" - a single aggregated entry while two or more runs are active.
+ *
+ * Android has no such choice: the phone always shows ONE consolidated live
+ * notification (a lone run in full detail, several runs as an agent list).
  */
 export type MobileNotificationMultiAgentMode = "separate" | "combined";
 
 export type MobileNotificationDisplayPreferences = {
   eta: MobileNotificationEtaMode;
-  multiAgent: MobileNotificationMultiAgentMode;
 };
 
 export const DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES: MobileNotificationDisplayPreferences =
   {
     eta: "goal",
-    multiAgent: "separate",
   };
 
 export type MobileNativeStatus = {
@@ -177,7 +177,10 @@ export type MobileAgentProjectionMessage = {
   projection: unknown;
 };
 
-/** Full set of tracked agent projections (one live notification per run). */
+/**
+ * Full set of tracked agent projections. The native shell folds them into one
+ * consolidated live notification (plus a completion card per finished run).
+ */
 export type MobileAgentProjectionsMessage = {
   type: "agentProjections";
   projections: unknown[];

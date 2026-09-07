@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Android live notifications are consolidated: one live notification now tracks every running agent instead of one notification per run. A lone agent shows its activity, progress (`Task 3 of 7` / `Goal 62%` with the optional time estimate), and diffstat (`+120 −8 · 4 files`) as separate lines with the elapsed chronometer; two or more agents become `N agents running` with one `Title · Phase` line per agent (`Starting`, `Editing`, `Writing`, `Finishing`, `Needs permission`, ...) and a collapsed roll-up (`1 needs input · 2 editing`). Blocked agents list first and keep their Allow / Deny / Reply quick actions when exactly one agent is waiting.
+- Finished runs post a dedicated completion card: `Finished` / `Failed` / `Cancelled` in the header with the end time, the run's diffstat, `Goal complete (runtime 17m 23s).` plus a one-line excerpt of the agent's final reply, and **Review** (opens the conversation) / **View PR** (opens the pull request the run reported) actions.
+- Notifications render with `BigTextStyle` (still promotable to an Android 16 Live Update / Samsung Now Bar) instead of the segmented `ProgressStyle` bar; the status-bar chip keeps the todo fraction / goal percent / `INPUT`, and the pre-Android 16 shade keeps a determinate bar for runs with structured progress.
+- The live notification keeps one identity per batch of concurrent agents, so agents joining or finishing update it in place, and the next batch after everything went quiet gets a fresh identity so a swipe-dismissal never silences future runs. An alert (needs input, completion) that re-surfaces a dismissed notification also forgets the dismissal so it keeps updating.
+- The "Multiple agents" (per-agent vs combined) setting is gone from the Android settings; the desktop tray keeps its own per-agent / combined choice.
+- `MobileAgentProjection` (`@cesium/core`) gained `phase`, `editStats`, `summary`, and `pullRequestUrl`, derived from the current run's events only.
+
 ## [0.11.1] - 2026-09-02
 
 Patch cut so Android, Wear OS, and desktop installers pick up the native Clerk sign-in fix that landed after `v0.11.0`. Tag `v0.11.1` after this lands on `main` to publish the rebuilt APKs and desktop installers. The public `/download` page reads GitHub `releases/latest`, so those assets appear automatically once the tag publishes.

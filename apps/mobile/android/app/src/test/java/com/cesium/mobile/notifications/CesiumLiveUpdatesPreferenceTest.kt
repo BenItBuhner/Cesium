@@ -96,14 +96,6 @@ class CesiumLiveUpdatesPreferenceTest {
   }
 
   @Test
-  fun multiAgentModeDefaultsToSeparateNotifications() {
-    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode(null))
-    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode("bogus"))
-    assertEquals(MULTI_AGENT_SEPARATE, normalizeMultiAgentMode(MULTI_AGENT_SEPARATE))
-    assertEquals(MULTI_AGENT_COMBINED, normalizeMultiAgentMode(MULTI_AGENT_COMBINED))
-  }
-
-  @Test
   fun legacyStoredValuesMigrateWithoutFlippingUserIntent() {
     // Old "nowbar" requested promotion with fallback - that is now "live".
     assertEquals(

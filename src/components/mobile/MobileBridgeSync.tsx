@@ -128,8 +128,9 @@ export function MobileBridgeSync() {
   }, [focusedConversationEvents, focusedConversation]);
 
   // Project every conversation with an active agent run (not just the focused
-  // one) so each agent keeps its own live notification. Terminal runs linger
-  // briefly so their completion alert is delivered before tracking stops.
+  // one) so the native shell can list them all in its consolidated live
+  // notification. Terminal runs linger briefly so their completion card is
+  // delivered before tracking stops.
   // Computed in an effect because the tracked map carries impure bookkeeping
   // (previous projections, linger timestamps).
   const [activeProjections, setActiveProjections] = useState<MobileAgentProjection[]>(

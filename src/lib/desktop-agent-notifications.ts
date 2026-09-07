@@ -23,6 +23,7 @@ import {
   type MobileNotificationAlertPreferences,
   type MobileNotificationDisplayPreferences,
   type MobileNotificationEtaMode,
+  type MobileNotificationMultiAgentMode,
 } from "@/lib/mobile-bridge";
 import {
   isMobileAgentRunActive,
@@ -33,15 +34,24 @@ import type {
   DesktopNotifyPayload,
 } from "@/lib/desktop-native-bridge";
 
+/**
+ * Desktop display preferences: the shared ETA choice plus how concurrent runs
+ * present in the tray menu (Android has no equivalent - the phone always
+ * shows one consolidated live notification).
+ */
+export type DesktopNotificationDisplayPreferences = MobileNotificationDisplayPreferences & {
+  multiAgent: MobileNotificationMultiAgentMode;
+};
+
 export type DesktopAgentNotificationPreferences = {
   alerts: MobileNotificationAlertPreferences;
-  display: MobileNotificationDisplayPreferences;
+  display: DesktopNotificationDisplayPreferences;
 };
 
 export const DEFAULT_DESKTOP_AGENT_NOTIFICATION_PREFERENCES: DesktopAgentNotificationPreferences =
   {
     alerts: DEFAULT_MOBILE_NOTIFICATION_ALERT_PREFERENCES,
-    display: DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES,
+    display: { ...DEFAULT_MOBILE_NOTIFICATION_DISPLAY_PREFERENCES, multiAgent: "separate" },
   };
 
 export const DESKTOP_NOTIFICATION_PREFERENCES_STORAGE_KEY =
@@ -81,13 +91,12 @@ export function sanitizeDesktopAgentNotificationPreferences(
       eta:
         typeof candidate.display?.eta === "string" &&
         ETA_MODES.has(candidate.display.eta)
-          ? (candidate.display.eta as MobileNotificationDisplayPreferences["eta"])
+          ? (candidate.display.eta as MobileNotificationEtaMode)
           : defaults.display.eta,
       multiAgent:
         typeof candidate.display?.multiAgent === "string" &&
         MULTI_AGENT_MODES.has(candidate.display.multiAgent)
-          ? (candidate.display
-              .multiAgent as MobileNotificationDisplayPreferences["multiAgent"])
+          ? (candidate.display.multiAgent as MobileNotificationMultiAgentMode)
           : defaults.display.multiAgent,
     },
   };

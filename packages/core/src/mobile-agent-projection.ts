@@ -6,11 +6,50 @@ import type {
   AgentPermissionOptionKind,
   AgentPlanEntry,
   AgentStoredEvent,
+  AgentToolEditPreview,
   AgentToolLocation,
 } from "./protocol";
 import { latestGoalProgressStatus } from "./agent-chat";
 
 export type MobilePendingIntervention = "permission" | "question" | null;
+
+/**
+ * Coarse phase of an agent run for compact listings where a full activity
+ * line does not fit ("Fix build · Editing"). Derived from the run status,
+ * pending intervention, structured progress, and the kind of the most recent
+ * activity event; `getMobileAgentPhaseLabel` turns it into display text.
+ */
+export type MobileAgentPhase =
+  | "starting"
+  | "thinking"
+  | "writing"
+  | "editing"
+  | "reading"
+  | "running"
+  | "searching"
+  | "browsing"
+  | "planning"
+  | "delegating"
+  | "waiting"
+  | "working"
+  | "finishing"
+  | "needs_permission"
+  | "needs_answer"
+  | "pausing"
+  | "paused"
+  | "finished"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "idle";
+
+/** Aggregate of the file edits observed during one agent run. */
+export type MobileAgentEditStats = {
+  /** Distinct files touched (edit tool calls without a path count once each). */
+  files: number;
+  additions: number;
+  deletions: number;
+};
 
 export type MobileTodoProgress = {
   total: number;
@@ -59,6 +98,13 @@ export type MobileAgentProjection = {
   lastError: string | null;
   todoProgress: MobileTodoProgress | null;
   goalProgress: MobileGoalProgress | null;
+  phase: MobileAgentPhase;
+  /** File edits seen so far in the current run; null until the first edit lands. */
+  editStats: MobileAgentEditStats | null;
+  /** One clean line excerpted from the agent's final reply. Terminal runs only. */
+  summary: string | null;
+  /** Pull request the run reported (final reply or tool output). Terminal runs only. */
+  pullRequestUrl: string | null;
 };
 
 export function isMobileAgentRunActive(status: MobileAgentProjection["status"]): boolean {
@@ -88,6 +134,71 @@ export function getMobileNotificationChip(status: MobileAgentProjection["status"
     default:
       return "RUN";
   }
+}
+
+export function getMobileAgentPhaseLabel(phase: MobileAgentPhase): string {
+  switch (phase) {
+    case "starting":
+      return "Starting";
+    case "thinking":
+      return "Thinking";
+    case "writing":
+      return "Writing";
+    case "editing":
+      return "Editing";
+    case "reading":
+      return "Reading";
+    case "running":
+      return "Running commands";
+    case "searching":
+      return "Searching";
+    case "browsing":
+      return "Browsing";
+    case "planning":
+      return "Planning";
+    case "delegating":
+      return "Delegating";
+    case "waiting":
+      return "Waiting";
+    case "finishing":
+      return "Finishing";
+    case "needs_permission":
+      return "Needs permission";
+    case "needs_answer":
+      return "Needs an answer";
+    case "pausing":
+      return "Pausing";
+    case "paused":
+      return "Paused";
+    case "finished":
+      return "Finished";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    case "interrupted":
+      return "Interrupted";
+    case "idle":
+      return "Idle";
+    case "working":
+    default:
+      return "Working";
+  }
+}
+
+/**
+ * "+120 −8 · 4 files" - the diffstat line of a run. The deletions count uses
+ * a real minus sign so it never reads as a hyphenated range.
+ */
+export function formatMobileEditStats(
+  stats: MobileAgentEditStats | null | undefined
+): string | null {
+  if (!stats || stats.files <= 0) {
+    return null;
+  }
+  return `+${stats.additions} −${stats.deletions} · ${stats.files} ${
+    stats.files === 1 ? "file" : "files"
+  }`;
 }
 
 export function deriveMobileAgentProjection(
@@ -133,6 +244,15 @@ export function deriveMobileAgentProjection(
   const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
   const todoProgress = deriveTodoProgress(sortedEvents, elapsedMs, now);
   const goalProgress = deriveGoalProgress(sortedEvents, conversation.status, now);
+  const runEvents = currentRunEvents(sortedEvents);
+  const phase = derivePhase(conversation, status, runEvents, todoProgress, goalProgress);
+  const editStats = deriveEditStats(runEvents);
+  // The final reply only matters once the run is over (completion card); it
+  // is also the most expensive scan, so active runs skip it.
+  const outcome =
+    completedAt != null
+      ? deriveRunOutcome(runEvents)
+      : { summary: null, pullRequestUrl: null };
 
   return {
     workspaceId: conversation.workspaceId,
@@ -165,6 +285,318 @@ export function deriveMobileAgentProjection(
     lastError: conversation.lastError,
     todoProgress,
     goalProgress,
+    phase,
+    editStats,
+    summary: outcome.summary,
+    pullRequestUrl: outcome.pullRequestUrl,
+  };
+}
+
+/**
+ * Events of the CURRENT run only. One conversation hosts many runs; the loaded
+ * window can span several, and per-run aggregates (edit stats, final reply,
+ * phase) must not leak across runs. Trailing status rows are the terminal
+ * boundary of the run that just ended and still belong to it, so the scan for
+ * the previous boundary starts before them.
+ */
+function currentRunEvents(events: AgentStoredEvent[]): AgentStoredEvent[] {
+  let end = events.length;
+  while (end > 0 && events[end - 1]?.kind === "status") {
+    end -= 1;
+  }
+  for (let i = end - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event?.kind === "status" && isTerminalEventStatus(event.status)) {
+      return events.slice(i + 1);
+    }
+  }
+  return events;
+}
+
+/** Goal runs this far along are wrapping up rather than "working". */
+const FINISHING_GOAL_PERCENT = 90;
+
+function derivePhase(
+  conversation: AgentConversationRecord,
+  status: MobileAgentProjection["status"],
+  runEvents: AgentStoredEvent[],
+  todo: MobileTodoProgress | null,
+  goal: MobileGoalProgress | null
+): MobileAgentPhase {
+  switch (status) {
+    case "completed":
+      return "finished";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "interrupted":
+      return "interrupted";
+    case "paused":
+      return "paused";
+    case "idle":
+      return "idle";
+    case "pause_requested":
+    case "pausing":
+      return "pausing";
+    case "awaiting_permission":
+      return "needs_permission";
+    case "awaiting_question":
+      return "needs_answer";
+    default:
+      break;
+  }
+  if (conversation.pendingPermission) {
+    return "needs_permission";
+  }
+  if (conversation.pendingQuestion) {
+    return "needs_answer";
+  }
+  if (goal && goal.percent >= FINISHING_GOAL_PERCENT) {
+    return "finishing";
+  }
+  if (
+    todo &&
+    todo.total > 0 &&
+    todo.currentIndex === todo.total &&
+    todo.completed === todo.total - 1
+  ) {
+    return "finishing";
+  }
+  return deriveActivityPhase(runEvents);
+}
+
+/**
+ * Phase from the most recent activity-bearing event of the run. Only the
+ * latest one counts: an older in-flight tool call is stale once the model has
+ * moved on to streaming text or the next call.
+ */
+function deriveActivityPhase(runEvents: AgentStoredEvent[]): MobileAgentPhase {
+  for (let i = runEvents.length - 1; i >= 0; i--) {
+    const event = runEvents[i];
+    if (!event) continue;
+    switch (event.kind) {
+      case "subagent":
+        return event.status === "running" ? "delegating" : "thinking";
+      case "tool_call":
+      case "tool_call_update":
+        if (event.status === "in_progress" || event.status === "pending") {
+          return phaseForToolKind(resolveToolCallKind(event, runEvents, i));
+        }
+        // Between tool calls the model is deciding what to do next.
+        return "thinking";
+      case "assistant_message_chunk":
+        return "writing";
+      case "reasoning":
+        return "thinking";
+      case "plan":
+        return "planning";
+      default:
+        continue;
+    }
+  }
+  return "starting";
+}
+
+function phaseForToolKind(toolKind: string | undefined): MobileAgentPhase {
+  switch (toolKind) {
+    case "read":
+      return "reading";
+    case "edit":
+    case "delete":
+    case "move":
+      return "editing";
+    case "terminal":
+    case "execute":
+      return "running";
+    case "grep":
+    case "search":
+    case "search_web":
+    case "fetch":
+      return "searching";
+    case "browser":
+      return "browsing";
+    case "todo":
+    case "goal":
+      return "planning";
+    case "subagent":
+    case "task":
+    case "orchestration":
+      return "delegating";
+    case "think":
+      return "thinking";
+    case "wait":
+      return "waiting";
+    default:
+      return "working";
+  }
+}
+
+function resolveToolCallKind(
+  event: ToolCallLikeEvent,
+  events: AgentStoredEvent[],
+  index: number
+): string | undefined {
+  if (event.toolKind != null || event.kind === "tool_call") {
+    return event.toolKind;
+  }
+  for (let i = index - 1; i >= 0; i--) {
+    const origin = events[i];
+    if (origin?.kind === "tool_call" && origin.toolCallId === event.toolCallId) {
+      return origin.toolKind;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Sums the edit previews of the run's tool calls into one diffstat. Each tool
+ * call contributes its latest preview once (updates supersede the initial
+ * call), failed and cancelled edits never land and are skipped, and files are
+ * counted by distinct path so re-editing a file does not inflate the count.
+ */
+function deriveEditStats(runEvents: AgentStoredEvent[]): MobileAgentEditStats | null {
+  const previews = new Map<string, AgentToolEditPreview>();
+  const finalStatus = new Map<string, string>();
+  for (const event of runEvents) {
+    if (event.kind !== "tool_call" && event.kind !== "tool_call_update") continue;
+    finalStatus.set(event.toolCallId, event.status);
+    if (event.editPreview) {
+      previews.set(event.toolCallId, event.editPreview);
+    }
+  }
+  const paths = new Set<string>();
+  let unnamed = 0;
+  let additions = 0;
+  let deletions = 0;
+  for (const [toolCallId, preview] of previews) {
+    const status = finalStatus.get(toolCallId);
+    if (status === "failed" || status === "cancelled") continue;
+    additions += Math.max(0, preview.addedLines);
+    deletions += Math.max(0, preview.removedLines);
+    const path = preview.path?.trim();
+    if (path) {
+      paths.add(path.replace(/^file:\/\//i, "").replace(/\\/g, "/"));
+    } else {
+      unnamed += 1;
+    }
+  }
+  const files = paths.size + unnamed;
+  if (files === 0) {
+    return null;
+  }
+  return { files, additions, deletions };
+}
+
+const PULL_REQUEST_URL_PATTERN =
+  /https?:\/\/[^\s<>()"'`]+?\/(?:pull|pulls|merge_requests|pull-requests|pullrequest)\/\d+(?:[/?#][^\s<>()"'`]*)?/gi;
+
+/**
+ * First pull/merge request link in a piece of text (GitHub, GitLab, Bitbucket,
+ * Azure DevOps shapes), with trailing sentence punctuation stripped.
+ */
+export function findMobilePullRequestUrl(text: string | null | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+  PULL_REQUEST_URL_PATTERN.lastIndex = 0;
+  const match = PULL_REQUEST_URL_PATTERN.exec(text);
+  return match ? match[0].replace(/[.,;:!?]+$/, "") : null;
+}
+
+/** Length budget for the completion card's excerpt of the final reply. */
+const SUMMARY_MAX = 160;
+/** Prefer ending the excerpt at a sentence boundary when one lands past this. */
+const SUMMARY_SENTENCE_MIN = 60;
+
+/**
+ * Reduces a markdown reply to one clean notification line: code fences,
+ * links, headings, list markers, emphasis, and HTML are stripped, the first
+ * non-empty paragraph is kept, and it is cut at a sentence boundary when the
+ * budget forces truncation. Payload-shaped text is rejected outright.
+ */
+export function summarizeMobileAssistantReply(
+  text: string | null | undefined,
+  maxLength: number = SUMMARY_MAX
+): string | null {
+  if (!text) {
+    return null;
+  }
+  const cleaned = text
+    .replace(/```[\s\S]*?(?:```|$)/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>\n]+>/g, " ")
+    // Headings label sections ("## Summary"); they never summarize anything.
+    .replace(/^\s{0,3}#{1,6}\s.*$/gm, "")
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/`([^`\n]*)`/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1$2");
+  const paragraph = cleaned
+    .split(/\n\s*\n/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .find((part) => part.length > 0);
+  if (!paragraph) {
+    return null;
+  }
+  if (paragraph.length > maxLength) {
+    const window = paragraph.slice(0, maxLength);
+    const boundary = Math.max(
+      window.lastIndexOf(". "),
+      window.lastIndexOf("! "),
+      window.lastIndexOf("? ")
+    );
+    if (boundary >= SUMMARY_SENTENCE_MIN) {
+      return sanitizeMobileActivityText(window.slice(0, boundary + 1), maxLength);
+    }
+  }
+  return sanitizeMobileActivityText(paragraph, maxLength);
+}
+
+/**
+ * What the run produced, for the completion card: an excerpt of the final
+ * assistant reply and the pull request the run opened. The PR link is taken
+ * from the most recent tool output / system line first - that is where a PR
+ * created by a tool actually lands - and only then from the reply, whose
+ * first link is the PR being announced (later links tend to be the base it
+ * stacks on).
+ */
+function deriveRunOutcome(runEvents: AgentStoredEvent[]): {
+  summary: string | null;
+  pullRequestUrl: string | null;
+} {
+  let lastMessageId: string | null = null;
+  let pullRequestUrl: string | null = null;
+  for (let i = runEvents.length - 1; i >= 0; i--) {
+    const event = runEvents[i];
+    if (!event) continue;
+    if (lastMessageId == null && event.kind === "assistant_message_chunk") {
+      lastMessageId = event.messageId;
+    } else if (
+      pullRequestUrl == null &&
+      (event.kind === "tool_call" || event.kind === "tool_call_update")
+    ) {
+      pullRequestUrl = findMobilePullRequestUrl(event.detail);
+    } else if (pullRequestUrl == null && event.kind === "system") {
+      pullRequestUrl = findMobilePullRequestUrl(event.text);
+    }
+    if (lastMessageId != null && pullRequestUrl != null) break;
+  }
+  const replyText =
+    lastMessageId == null
+      ? null
+      : runEvents
+          .map((event) =>
+            event.kind === "assistant_message_chunk" && event.messageId === lastMessageId
+              ? event.text
+              : ""
+          )
+          .join("");
+  return {
+    summary: summarizeMobileAssistantReply(replyText),
+    pullRequestUrl: pullRequestUrl ?? findMobilePullRequestUrl(replyText),
   };
 }
 

@@ -1,27 +1,32 @@
 export type LiveUpdatePayload = {
   runKey: string;
   title: string;
+  /** Collapsed one-line body. */
   body: string;
+  /**
+   * Expanded body, one line per "\n" (rendered with BigTextStyle, which stays
+   * eligible for Android 16 promotion). The consolidated live notification
+   * lists every running agent here; a lone run lists its activity, progress,
+   * and diffstat; a finished run its diffstat and outcome. Falls back to
+   * `body` when absent.
+   */
+  expandedBody?: string | null;
+  /** Header sub text ("Finished", "Failed"); terminal notifications only. */
+  subText?: string | null;
+  /** Status-bar chip text of a promoted live update ("3/7", "62%", "INPUT"). */
   shortText?: string | null;
   workspaceId?: string | null;
   conversationId?: string | null;
+  /** Elapsed-time chronometer anchor while the notification is ongoing. */
   startedAt?: number | null;
+  /** Shown as the notification time once the run has ended. */
+  completedAt?: number | null;
   /**
-   * Estimated completion timestamp, present only when the eta display
-   * preference allows it for this run kind. Informational: the native chip
-   * never renders a countdown; the estimate surfaces as body text.
+   * Determinate progress bar for the pre-Android 16 shade. Both present or
+   * neither; the consolidated multi-agent notification never carries one.
    */
-  estimatedCompletionAt?: number | null;
-  progressKind: "todo" | "goal" | "indeterminate" | "terminal";
-  progressLabel?: string | null;
-  progress?: number;
-  progressMax?: number;
-  indeterminate?: boolean;
-  todoCompleted?: number;
-  todoTotal?: number;
-  todoCurrentIndex?: number | null;
-  goalProgressPercent?: number;
-  estimatedRemainingSeconds?: number | null;
+  progress?: number | null;
+  progressMax?: number | null;
   intervention?: "permission" | "question" | null;
   /**
    * Identifiers for answering the pending intervention straight from the
@@ -33,6 +38,8 @@ export type LiveUpdatePayload = {
   permissionAllowOptionId?: string | null;
   permissionDenyOptionId?: string | null;
   questionId?: string | null;
+  /** Target of the "View PR" action on a finished notification. */
+  pullRequestUrl?: string | null;
   ongoing?: boolean;
   cancellable?: boolean;
   promote?: boolean;
@@ -76,22 +83,12 @@ export const DEFAULT_LIVE_UPDATE_ALERT_PREFERENCES: LiveUpdateAlertPreferences =
  */
 export type LiveUpdateEtaMode = "goal" | "always" | "off";
 
-/**
- * How concurrent agent runs present:
- * "separate" - one live notification per run.
- * "combined" - a single aggregated live notification whenever two or more
- *              runs are active (a lone run keeps its full detail view).
- */
-export type LiveUpdateMultiAgentMode = "separate" | "combined";
-
 export type LiveUpdateDisplayPreferences = {
   eta: LiveUpdateEtaMode;
-  multiAgent: LiveUpdateMultiAgentMode;
 };
 
 export const DEFAULT_LIVE_UPDATE_DISPLAY_PREFERENCES: LiveUpdateDisplayPreferences = {
   eta: "goal",
-  multiAgent: "separate",
 };
 
 export type LiveUpdateStatus = {
