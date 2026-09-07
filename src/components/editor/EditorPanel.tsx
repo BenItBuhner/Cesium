@@ -58,6 +58,9 @@ const ExtensionSurfaceView = lazyPanel(() =>
 const PullRequestView = lazyPanel(() =>
   import("./PullRequestView").then((m) => m.PullRequestView)
 );
+const ContextInspectorView = lazyPanel(() =>
+  import("./ContextInspectorView").then((m) => m.ContextInspectorView)
+);
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
@@ -1336,6 +1339,14 @@ export function EditorPanel({
           group: options?.group,
         });
       },
+      openContextInspectorTab: (input) => {
+        dispatch({
+          type: "OPEN_CONTEXT_INSPECTOR_TAB",
+          conversationId: input.conversationId,
+          title: input.title,
+          group: input.group,
+        });
+      },
       openExtensionSurfaceTab: (input) => {
         dispatch({
           type: "OPEN_EXTENSION_SURFACE_TAB",
@@ -2005,6 +2016,14 @@ export function EditorPanel({
     if (tab.kind === "pullRequest" || tab.pullRequest) {
       return (
         <PullRequestView key={tab.id} initialBaseRef={tab.pullRequest?.baseRef} />
+      );
+    }
+    if (tab.kind === "contextInspector" || tab.contextInspector) {
+      return (
+        <ContextInspectorView
+          key={tab.id}
+          conversationId={tab.contextInspector?.conversationId ?? ""}
+        />
       );
     }
     if (tab.extensionSurface) {

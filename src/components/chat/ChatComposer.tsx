@@ -182,6 +182,8 @@ import {
   resolveComposerStatusBarVisibilityForConversation,
 } from "@/lib/composer-status-bar";
 import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
+import { useOpenContextInspector } from "@/hooks/useOpenContextInspector";
+import { useOptionalAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
 import { useCesiumTurnPillMotion } from "@/components/chat/cesium-turn-control-motion";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -3602,6 +3604,23 @@ const handleNativeComposerKeyDown = useCallback(
     });
   const showContextUsage = composerStatusBarVisibility.context;
   const [contextBreakdownOpen, setContextBreakdownOpen] = useState(false);
+  const openContextInspector = useOpenContextInspector();
+  const agentConversationsForContext = useOptionalAgentConversations();
+  const contextInspectorConversationId =
+    conversationId && conversationId !== "__empty__" ? conversationId : null;
+  const contextInspectorTitle =
+    (contextInspectorConversationId
+      ? agentConversationsForContext?.conversationsById[contextInspectorConversationId]?.title
+      : null) ?? "Conversation";
+  const openContextInspectorForConversation = useCallback(() => {
+    if (!contextInspectorConversationId) {
+      return;
+    }
+    openContextInspector({
+      conversationId: contextInspectorConversationId,
+      title: contextInspectorTitle,
+    });
+  }, [contextInspectorConversationId, contextInspectorTitle, openContextInspector]);
   const {
     usage: contextUsage,
     loading: contextLoading,
@@ -3651,6 +3670,9 @@ const handleNativeComposerKeyDown = useCallback(
           loading={contextLoading}
           error={contextError}
           onClose={() => setContextBreakdownOpen(false)}
+          onOpenAdvanced={
+            contextInspectorConversationId ? openContextInspectorForConversation : undefined
+          }
         />
       </div>
     ) : null;

@@ -41,6 +41,7 @@ import {
 import { readAgentBackendConfigCache } from "./provider-cache-store.js";
 import { AGENT_CAPABILITY_KEYS } from "./agent-contract.js";
 import {
+  computeCesiumAgentContextTranscript,
   computeCesiumAgentContextUsage,
   unsupportedContextUsageSnapshot,
 } from "./cesium-context-usage.js";
@@ -80,6 +81,7 @@ import type {
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentConversationStatus,
+  AgentContextTranscript,
   AgentContextUsageSnapshot,
   AgentEventInput,
   AgentPromptAttachment,
@@ -1066,6 +1068,35 @@ export class AgentRuntimeManager {
         : unsupportedContextUsageSnapshot();
     }
     return computeCesiumAgentContextUsage({ workspace, conversation });
+  }
+
+  /**
+   * Verbatim context transcript for the Advanced inspector. Cesium Agent
+   * reproduces the exact blocks it sends; external harnesses fall back to the
+   * stored conversation plus whatever totals they report.
+   */
+  async getConversationContextTranscript(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentContextTranscript | null> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      return null;
+    }
+    const conversation = this.withBackendDefaults(record);
+    if (conversation.config.backendId === "cesium-agent") {
+      return computeCesiumAgentContextTranscript({ workspace, conversation });
+    }
+    const [usage, snapshot] = await Promise.all([
+      this.getConversationContextUsage(workspace, conversationId),
+      readConversationSnapshot(workspace.id, conversationId, conversation),
+    ]);
+    const { buildEventsOnlyContextTranscript } = await import("./context-timeline.js");
+    return buildEventsOnlyContextTranscript({
+      conversation,
+      events: snapshot?.events ?? [],
+      usage,
+    });
   }
 
   async getConversationSnapshotHead(

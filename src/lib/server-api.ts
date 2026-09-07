@@ -71,6 +71,7 @@ export {
   startCesiumOAuth,
   evaluateBrowserControlTab,
   executeInstalledExtensionCommand,
+  fetchAgentContextTranscript,
   fetchAgentContextUsage,
   fetchAgentConversationSnapshot,
   fetchAgentDeploymentHints,

@@ -801,6 +801,45 @@ export type AgentContextUsageCategory = {
   colorKey: string;
 };
 
+/**
+ * What a chronological context block is. Static blocks (`system_prompt`,
+ * `tool_definitions`, `mcp_definitions`) precede every conversation block;
+ * the rest mirror the history messages the model actually receives.
+ */
+export type AgentContextSegmentKind =
+  | "system_prompt"
+  | "tool_definitions"
+  | "mcp_definitions"
+  | "user_message"
+  | "system_reminder"
+  | "assistant_message"
+  | "reasoning"
+  | "tool_call"
+  | "plan"
+  | "compaction_summary"
+  | "agent_handoff"
+  | "chat_fork";
+
+/**
+ * One block of the context window in the order the model receives it.
+ * `categoryId` ties the block back to a pooled category so the pooled and
+ * sequential views always reconcile to the same totals.
+ */
+export type AgentContextUsageSegment = {
+  id: string;
+  kind: AgentContextSegmentKind;
+  categoryId: AgentContextUsageCategoryId;
+  label: string;
+  tokens: number;
+  colorKey: string;
+  /** Inclusive stored-event seq range the block was built from (event-backed blocks only). */
+  seqStart?: number;
+  seqEnd?: number;
+  createdAt?: number;
+  /** Short secondary text (tool title, first line of a message) for legend rows and tooltips. */
+  detail?: string;
+};
+
 export type AgentContextUsageSnapshot = {
   supported: boolean;
   limitTokens: number;
@@ -808,6 +847,74 @@ export type AgentContextUsageSnapshot = {
   percentFull: number;
   categories: AgentContextUsageCategory[];
   approximate?: boolean;
+  /**
+   * Chronological breakdown powering the sequential view. Absent when the
+   * backend only reports pooled totals (provider-native accounting).
+   */
+  timeline?: AgentContextUsageSegment[];
+};
+
+export type AgentContextTranscriptToolCall = {
+  toolCallId: string;
+  name: string;
+  title: string;
+  toolKind: string;
+  status: AgentToolCallStatus;
+  /** Parsed tool arguments, or the raw argument string when it is not JSON. */
+  arguments: Record<string, unknown> | string | null;
+  /** Verbatim tool result as stored - exactly what the model receives, untruncated. */
+  result: string | null;
+  editPreview?: AgentToolEditPreview;
+  locations?: AgentToolLocation[];
+  pluginId?: string;
+  pluginName?: string;
+  pluginIconUrl?: string;
+};
+
+/**
+ * A timeline segment plus its verbatim content. Powers the Advanced context
+ * inspector: nothing here is summarized or truncated beyond what the model
+ * itself receives.
+ */
+export type AgentContextTranscriptEntry = AgentContextUsageSegment & {
+  /** Verbatim text body (system prompt section, message text, summary, reminder). */
+  text?: string;
+  /** Tool schemas advertised to the model (`tool_definitions` blocks). */
+  tools?: Array<{ name: string; description: string; parameters: unknown }>;
+  /** Tool invocation with arguments and result (`tool_call` blocks). */
+  toolCall?: AgentContextTranscriptToolCall;
+  /** Targeted system reminders merged onto this user message. */
+  reminders?: Array<{ reason: string; text: string }>;
+  attachments?: Array<{
+    name?: string;
+    mimeType: string;
+    kind?: "image" | "file";
+    size?: number;
+  }>;
+  compaction?: {
+    retainedTurnCount: number;
+    compressedTurnCount: number;
+    sourceRange?: { fromSeq: number; toSeq: number };
+    estimatedTokensBefore?: number;
+    estimatedTokensAfter?: number;
+    generation?: number;
+  };
+  /**
+   * Stored events the block was built from, untouched (raw trace). Streamed
+   * assistant chunks are merged into one row carrying `firstSeq`.
+   */
+  events?: AgentStoredEvent[];
+};
+
+export type AgentContextTranscript = {
+  conversationId: string;
+  backendId: AgentBackendId;
+  modelId: string | null;
+  generatedAt: number;
+  usage: AgentContextUsageSnapshot;
+  entries: AgentContextTranscriptEntry[];
+  /** Fidelity notes shown to the user (e.g. which profile the system prompt was resolved from). */
+  notes: string[];
 };
 
 export type AgentSocketClientMessage =

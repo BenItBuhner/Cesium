@@ -1,270 +1,262 @@
+import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
 import {
-  buildCesiumBaseSystemPrompt,
-} from "@cesium/core/mcp";
-import { resolveCesiumModelContextWindow } from "../cesium-agent-settings.js";
-import { buildOpenAiToolDefinitions, normalizeEventsToHistory } from "./cesium-provider.js";
+  getCesiumAgentSettings,
+  resolveCesiumModelContextWindow,
+} from "../cesium-agent-settings.js";
+import type { WorkspaceRecord } from "../workspace-registry.js";
+import {
+  HISTORY_COMPACTION_TARGET_TURNS,
+  HISTORY_COMPACTION_THRESHOLD_RATIO,
+  HISTORY_TURN_LIMIT,
+} from "./cesium/cesium-prompt.js";
+import { buildOpenAiToolDefinitions, resolveCesiumTools } from "./cesium/cesium-tools.js";
+import { filterCesiumToolsForProfile, resolveCesiumProfile } from "./cesium-profiles.js";
+import {
+  CONTEXT_CATEGORY_COLOR_KEY,
+  buildConversationContextEntries,
+  contextEntryToSegment,
+  estimateContextTokensFromText,
+  poolContextEntries,
+} from "./context-timeline.js";
+import { readConversationSnapshot } from "./session-store.js";
 import type {
-  AgentContextUsageCategory,
-  AgentContextUsageCategoryId,
+  AgentContextTranscript,
+  AgentContextTranscriptEntry,
   AgentContextUsageSnapshot,
   AgentConversationRecord,
   AgentStoredEvent,
 } from "./types.js";
-import type { WorkspaceRecord } from "../workspace-registry.js";
-import { readConversationSnapshot } from "./session-store.js";
 
-const HISTORY_TURN_LIMIT = 250;
-const SYSTEM_PROMPT_CACHE_TTL_MS = 60_000;
+const PROMPT_CONTEXT_CACHE_TTL_MS = 60_000;
 const USAGE_SNAPSHOT_CACHE_TTL_MS = 15_000;
 
-let cachedToolDefinitionsText: string | null = null;
+export type OpenAiToolDefinitionList = ReturnType<typeof buildOpenAiToolDefinitions>;
 
-const systemPromptCache = new Map<string, { expiresAt: number; prompt: string }>();
+type CesiumPromptContext = {
+  systemPromptFull: string;
+  toolDefinitions: OpenAiToolDefinitionList;
+  notes: string[];
+};
+
+let cachedDefaultToolDefinitions: OpenAiToolDefinitionList | null = null;
+
+const promptContextCache = new Map<string, { expiresAt: number; value: CesiumPromptContext }>();
 const usageSnapshotCache = new Map<
   string,
   { expiresAt: number; lastEventSeq: number; snapshot: AgentContextUsageSnapshot }
 >();
 
-function toolDefinitionsText(): string {
-  if (!cachedToolDefinitionsText) {
-    cachedToolDefinitionsText = JSON.stringify(buildOpenAiToolDefinitions());
+function defaultToolDefinitions(): OpenAiToolDefinitionList {
+  if (!cachedDefaultToolDefinitions) {
+    cachedDefaultToolDefinitions = buildOpenAiToolDefinitions();
   }
-  return cachedToolDefinitionsText;
+  return cachedDefaultToolDefinitions;
 }
 
-function systemPromptCacheKey(
-  workspaceId: string,
-  conversation: AgentConversationRecord
-): string {
-  return [
-    workspaceId,
-    conversation.config.backendId ?? "",
-  ].join(":");
-}
-
-function estimateTokensFromText(text: string): number {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return 0;
-  }
-  return Math.ceil(trimmed.length / 4);
-}
-
-function estimateTokensFromMessages(
-  messages: ReturnType<typeof normalizeEventsToHistory>
-): number {
-  let chars = 0;
-  for (const message of messages) {
-    if (typeof message.content === "string") {
-      chars += message.content.length;
-    } else if (message.content != null) {
-      chars += JSON.stringify(message.content).length;
-    }
-    if (message.toolCalls) {
-      chars += JSON.stringify(message.toolCalls).length;
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
-function rawConversationEventText(event: AgentStoredEvent): string {
-  switch (event.kind) {
-    case "user_message":
-      return event.hidden ? "" : event.content;
-    case "system_reminder":
-      if (event.reason === "goal" || event.reason === "burn") return "";
-      return event.text;
-    case "assistant_message_chunk":
-    case "reasoning":
-      return event.text;
-    case "tool_call":
-    case "tool_call_update":
-      return JSON.stringify({
-        title: event.title,
-        toolKind: event.toolKind,
-        status: event.status,
-        detail: event.detail,
-        locations: event.locations,
-        editPreview: event.editPreview,
-      });
-    case "plan":
-      return event.entries.map((entry) => `${entry.status}: ${entry.content}`).join("\n");
-    case "plan_file":
-      return [event.title, event.path].filter(Boolean).join("\n");
-    case "subagent":
-      return JSON.stringify({
-        title: event.title,
-        meta: event.meta,
-        status: event.status,
-        recentActivity: event.recentActivity,
-        transcript: event.transcript,
-      });
-    case "question":
-      return JSON.stringify({
-        prompt: event.prompt,
-        questions: event.questions,
-        options: event.options,
-        answer: event.answer,
-        status: event.status,
-      });
-    case "permission_request":
-      return JSON.stringify({
-        title: event.title,
-        detail: event.detail,
-        options: event.options,
-      });
-    case "chat_fork":
-      return event.transcript;
-    case "agent_handoff":
-      return `${event.fromAgent} -> ${event.toAgent}`;
-    case "compression_summary":
-      return event.summary;
-    case "assistant_message_end":
-    case "permission_resolved":
-    case "system":
-    case "status":
-      return "";
-  }
-}
-
-function estimateTokensFromRawConversationEvents(events: AgentStoredEvent[]): number {
-  const text = events
-    .map(rawConversationEventText)
-    .filter((part) => part.trim().length > 0)
-    .join("\n\n");
-  return estimateTokensFromText(text);
-}
-
-function estimateConversationTokens(events: AgentStoredEvent[]): number {
-  const normalized = estimateTokensFromMessages(historyMessagesWithoutSystem(events));
-  const raw = estimateTokensFromRawConversationEvents(events);
-  return Math.max(normalized, raw);
-}
-
-function splitSystemPrompt(full: string): { base: string; mcp: string } {
-  const marker = "\n\n---\n\n## Third-Party & MCP Server Tools";
-  const index = full.indexOf(marker);
-  if (index < 0) {
+/**
+ * Pull the MCP section out of the system prompt so it can be attributed to
+ * the MCP bucket. Works for both prompt builders: the profile prompt joins
+ * `## ` sections with blank lines, the legacy agent prompt precedes the MCP
+ * heading with a `---` rule.
+ */
+export function splitSystemPrompt(full: string): { base: string; mcp: string } {
+  const heading = /^## Third-Party & MCP Server Tools[^\n]*$/m.exec(full);
+  if (!heading) {
     return { base: full, mcp: "" };
   }
-  return {
-    base: full.slice(0, index).trimEnd(),
-    mcp: full.slice(index).trim(),
-  };
+  const start = heading.index;
+  const nextHeading = /^## /m.exec(full.slice(start + heading[0].length));
+  const end = nextHeading ? start + heading[0].length + nextHeading.index : full.length;
+  const before = full.slice(0, start).replace(/\n+\s*---\s*\n*$/, "\n\n");
+  const after = full.slice(end);
+  const base = [before.trimEnd(), after.trim()].filter(Boolean).join("\n\n");
+  return { base, mcp: full.slice(start, end).trim() };
 }
 
-function splitEventsForContext(events: AgentStoredEvent[]): {
-  retained: AgentStoredEvent[];
-  compressed: AgentStoredEvent[];
-} {
-  const userTurns = events.filter((event) => event.kind === "user_message").length;
-  if (userTurns <= HISTORY_TURN_LIMIT) {
-    return { retained: events, compressed: [] };
+function conversationProfileId(conversation: AgentConversationRecord): string | null {
+  const option = conversation.configOptions?.find((entry) => entry.id === "profile");
+  const raw = option?.currentValue;
+  if (typeof raw === "string" && raw.trim()) {
+    return raw.trim();
   }
-  const sorted = [...events].sort((a, b) => a.seq - b.seq);
-  let retainedUsers = 0;
-  let splitIndex = 0;
-  for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    if (sorted[index]!.kind === "user_message") {
-      retainedUsers += 1;
-      splitIndex = index;
-      if (retainedUsers >= HISTORY_TURN_LIMIT) {
-        break;
-      }
-    }
-  }
-  return {
-    compressed: sorted.slice(0, splitIndex),
-    retained: sorted.slice(splitIndex),
-  };
+  return conversation.config.profileId?.trim() || null;
 }
 
-function historyMessagesWithoutSystem(
-  events: AgentStoredEvent[]
-): ReturnType<typeof normalizeEventsToHistory> {
-  return normalizeEventsToHistory(events).filter((message) => message.role !== "system");
-}
-
-function summarizedConversationTokens(events: AgentStoredEvent[]): number {
-  const summaries = events.filter((event) => event.kind === "compression_summary");
-  if (summaries.length === 0) {
-    return 0;
-  }
-  return estimateTokensFromMessages(historyMessagesWithoutSystem(summaries));
-}
-
-async function resolveCesiumSystemPromptForUsage(input: {
+/**
+ * Resolve the prompt + tool schemas the way the live session does (profile
+ * base, verbatim profile instructions, profile tool envelope). Per-turn
+ * additions the runtime layers on top - plugin prompt transforms and the
+ * model roster appended to spawn tools - are not reproduced here.
+ */
+async function resolveCesiumPromptContext(input: {
   workspace: WorkspaceRecord;
   conversation: AgentConversationRecord;
-}): Promise<string> {
-  const cacheKey = systemPromptCacheKey(input.workspace.id, input.conversation);
-  const cached = systemPromptCache.get(cacheKey);
+}): Promise<CesiumPromptContext> {
+  const profileId = conversationProfileId(input.conversation);
+  const cacheKey = [
+    input.workspace.id,
+    input.conversation.config.backendId ?? "",
+    profileId ?? "default",
+  ].join(":");
+  const cached = promptContextCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.prompt;
+    return cached.value;
   }
-  const prompt = buildCesiumBaseSystemPrompt();
-  systemPromptCache.set(cacheKey, {
-    expiresAt: Date.now() + SYSTEM_PROMPT_CACHE_TTL_MS,
-    prompt,
+  let value: CesiumPromptContext;
+  try {
+    const settings = await getCesiumAgentSettings();
+    const profile = resolveCesiumProfile({
+      profileId,
+      customProfiles: settings.profiles,
+      defaultProfileId: settings.defaultProfileId,
+    });
+    const tools = filterCesiumToolsForProfile(
+      resolveCesiumTools(settings.harness).tools,
+      profile
+    );
+    value = {
+      systemPromptFull: buildCesiumBaseSystemPrompt({
+        base: profile.prompt.base,
+        customInstructions: profile.prompt.customInstructions,
+      }),
+      toolDefinitions: buildOpenAiToolDefinitions(tools),
+      notes: [
+        `System prompt and tool schemas resolved from the "${profile.name}" agent profile. ` +
+          "Per-turn runtime additions (plugin prompt transforms, the subagent model roster) are not included.",
+      ],
+    };
+  } catch {
+    value = {
+      systemPromptFull: buildCesiumBaseSystemPrompt(),
+      toolDefinitions: defaultToolDefinitions(),
+      notes: [
+        "Agent settings could not be read; the default Cesium system prompt and tool set are shown.",
+      ],
+    };
+  }
+  promptContextCache.set(cacheKey, {
+    expiresAt: Date.now() + PROMPT_CONTEXT_CACHE_TTL_MS,
+    value,
   });
-  return prompt;
+  return value;
 }
 
-export function estimateCesiumContextUsageFromParts(input: {
+export type CesiumContextParts = {
   systemPromptFull: string;
+  /** Defaults to the full default Cesium tool set. */
+  toolDefinitions?: OpenAiToolDefinitionList;
   events: AgentStoredEvent[];
   limitTokens: number;
-}): AgentContextUsageSnapshot {
-  const { base, mcp } = splitSystemPrompt(input.systemPromptFull);
-  const toolsText = toolDefinitionsText();
-  const { retained } = splitEventsForContext(input.events);
-  const retainedWithoutSummaries = retained.filter(
-    (event) => event.kind !== "compression_summary"
-  );
+};
 
-  const categoryRows: Array<{
-    id: AgentContextUsageCategoryId;
-    label: string;
-    tokens: number;
-    colorKey: string;
-  }> = [
+/**
+ * Mirror the provider's compaction rule so the estimate reflects what the
+ * next turn actually sends: once the visible turn count or the estimated
+ * size crosses the threshold, only the newest
+ * `HISTORY_COMPACTION_TARGET_TURNS` turns (plus any compaction summaries
+ * inside that window) survive.
+ */
+function retainEntriesForContext(input: {
+  entries: AgentContextTranscriptEntry[];
+  events: AgentStoredEvent[];
+  systemTokens: number;
+  limitTokens: number;
+}): { retained: AgentContextTranscriptEntry[]; compacted: boolean; droppedTurns: number } {
+  const visibleUserSeqs = input.events
+    .filter((event) => event.kind === "user_message" && !event.hidden)
+    .map((event) => event.seq)
+    .sort((a, b) => a - b);
+  const estimatedTokensBefore =
+    input.systemTokens + input.entries.reduce((sum, entry) => sum + entry.tokens, 0);
+  const shouldCompact =
+    visibleUserSeqs.length > HISTORY_TURN_LIMIT ||
+    (input.limitTokens > 0 &&
+      estimatedTokensBefore >= input.limitTokens * HISTORY_COMPACTION_THRESHOLD_RATIO);
+  if (!shouldCompact || visibleUserSeqs.length === 0) {
+    return { retained: input.entries, compacted: false, droppedTurns: 0 };
+  }
+  const splitIndex = Math.max(0, visibleUserSeqs.length - HISTORY_COMPACTION_TARGET_TURNS);
+  const splitSeq = visibleUserSeqs[splitIndex] ?? 0;
+  return {
+    retained: input.entries.filter((entry) => (entry.seqStart ?? 0) >= splitSeq),
+    compacted: true,
+    droppedTurns: splitIndex,
+  };
+}
+
+/**
+ * Every block of the context window in model order: system prompt, tool
+ * schemas, MCP section, then the retained conversation blocks.
+ */
+export function buildCesiumContextEntries(input: CesiumContextParts): {
+  entries: AgentContextTranscriptEntry[];
+  compacted: boolean;
+  droppedTurns: number;
+} {
+  const { base, mcp } = splitSystemPrompt(input.systemPromptFull);
+  const toolDefinitions = input.toolDefinitions ?? defaultToolDefinitions();
+  const toolsText = JSON.stringify(toolDefinitions);
+
+  const staticEntries: AgentContextTranscriptEntry[] = [
     {
       id: "system_prompt",
+      kind: "system_prompt",
+      categoryId: "system_prompt",
       label: "System prompt",
-      tokens: estimateTokensFromText(base),
-      colorKey: "system",
+      tokens: estimateContextTokensFromText(base),
+      colorKey: CONTEXT_CATEGORY_COLOR_KEY.system_prompt,
+      detail: "Persona, environment, and operating instructions",
+      text: base,
     },
     {
       id: "tool_definitions",
+      kind: "tool_definitions",
+      categoryId: "tool_definitions",
       label: "Tool definitions",
-      tokens: estimateTokensFromText(toolsText),
-      colorKey: "tools",
-    },
-    {
-      id: "mcp",
-      label: "MCP",
-      tokens: estimateTokensFromText(mcp),
-      colorKey: "mcp",
-    },
-    {
-      id: "summarized_conversation",
-      label: "Summarized conversation",
-      tokens: summarizedConversationTokens(input.events),
-      colorKey: "summarized",
-    },
-    {
-      id: "conversation",
-      label: "Conversation",
-      tokens: estimateConversationTokens(retainedWithoutSummaries),
-      colorKey: "conversation",
+      tokens: estimateContextTokensFromText(toolsText),
+      colorKey: CONTEXT_CATEGORY_COLOR_KEY.tool_definitions,
+      detail: `${toolDefinitions.length} tool schema${toolDefinitions.length === 1 ? "" : "s"}`,
+      text: toolsText,
+      tools: toolDefinitions.map((tool) => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters,
+      })),
     },
   ];
-  const categories: AgentContextUsageCategory[] = categoryRows.filter(
-    (row) =>
-      row.tokens > 0 ||
-      (row.id === "conversation" && retainedWithoutSummaries.length > 0)
-  );
+  if (mcp) {
+    staticEntries.push({
+      id: "mcp_definitions",
+      kind: "mcp_definitions",
+      categoryId: "mcp",
+      label: "MCP servers",
+      tokens: estimateContextTokensFromText(mcp),
+      colorKey: CONTEXT_CATEGORY_COLOR_KEY.mcp,
+      detail: "Connected MCP servers section of the system prompt",
+      text: mcp,
+    });
+  }
 
+  const conversationEntries = buildConversationContextEntries(input.events);
+  const { retained, compacted, droppedTurns } = retainEntriesForContext({
+    entries: conversationEntries,
+    events: input.events,
+    systemTokens: staticEntries[0]!.tokens,
+    limitTokens: input.limitTokens,
+  });
+  return {
+    entries: [...staticEntries.filter((entry) => entry.tokens > 0), ...retained],
+    compacted,
+    droppedTurns,
+  };
+}
+
+export function estimateCesiumContextUsageFromParts(
+  input: CesiumContextParts
+): AgentContextUsageSnapshot {
+  const { entries } = buildCesiumContextEntries(input);
+  const timeline = entries.map(contextEntryToSegment);
+  const categories = poolContextEntries(timeline);
   const usedTokens = categories.reduce((sum, row) => sum + row.tokens, 0);
   const limitTokens = input.limitTokens;
   const percentFull =
@@ -277,6 +269,71 @@ export function estimateCesiumContextUsageFromParts(input: {
     percentFull,
     categories,
     approximate: true,
+    timeline,
+  };
+}
+
+export function buildCesiumContextTranscriptFromParts(
+  input: CesiumContextParts & {
+    conversation: Pick<AgentConversationRecord, "id" | "config">;
+    notes?: string[];
+  }
+): AgentContextTranscript {
+  const { entries, compacted, droppedTurns } = buildCesiumContextEntries(input);
+  const timeline = entries.map(contextEntryToSegment);
+  const categories = poolContextEntries(timeline);
+  const usedTokens = categories.reduce((sum, row) => sum + row.tokens, 0);
+  const limitTokens = input.limitTokens;
+  const notes = [...(input.notes ?? [])];
+  notes.push(
+    "Token counts are character-based estimates (about four characters per token)."
+  );
+  if (compacted) {
+    notes.push(
+      `History compaction is active: ${droppedTurns} earlier turn${droppedTurns === 1 ? "" : "s"} ` +
+        `are no longer sent verbatim. Only the newest ${HISTORY_COMPACTION_TARGET_TURNS} turns plus ` +
+        "compaction summaries reach the model."
+    );
+  }
+  return {
+    conversationId: input.conversation.id,
+    backendId: input.conversation.config.backendId ?? "cesium-agent",
+    modelId: input.conversation.config.modelId ?? null,
+    generatedAt: Date.now(),
+    usage: {
+      supported: true,
+      limitTokens,
+      usedTokens,
+      percentFull:
+        limitTokens > 0 ? Math.min(100, Math.round((usedTokens / limitTokens) * 100)) : 0,
+      categories,
+      approximate: true,
+      timeline,
+    },
+    entries,
+    notes,
+  };
+}
+
+async function loadCesiumContextParts(input: {
+  workspace: WorkspaceRecord;
+  conversation: AgentConversationRecord;
+}): Promise<CesiumContextParts & { notes: string[] }> {
+  const snapshot = await readConversationSnapshot(
+    input.workspace.id,
+    input.conversation.id,
+    input.conversation
+  );
+  const promptContext = await resolveCesiumPromptContext(input);
+  const limitTokens = await resolveCesiumModelContextWindow(
+    input.conversation.config.modelId ?? "openai/gpt-5.1"
+  );
+  return {
+    systemPromptFull: promptContext.systemPromptFull,
+    toolDefinitions: promptContext.toolDefinitions,
+    events: snapshot?.events ?? [],
+    limitTokens,
+    notes: promptContext.notes,
   };
 }
 
@@ -299,27 +356,26 @@ export async function computeCesiumAgentContextUsage(input: {
     return cachedUsage.snapshot;
   }
 
-  const snapshot = await readConversationSnapshot(
-    input.workspace.id,
-    input.conversation.id,
-    input.conversation
-  );
-  const events = snapshot?.events ?? [];
-  const systemPromptFull = await resolveCesiumSystemPromptForUsage(input);
-  const limitTokens = await resolveCesiumModelContextWindow(
-    input.conversation.config.modelId ?? "openai/gpt-5.1"
-  );
-  const result = estimateCesiumContextUsageFromParts({
-    systemPromptFull,
-    events,
-    limitTokens,
-  });
+  const parts = await loadCesiumContextParts(input);
+  const result = estimateCesiumContextUsageFromParts(parts);
   usageSnapshotCache.set(usageCacheKey, {
     expiresAt: Date.now() + USAGE_SNAPSHOT_CACHE_TTL_MS,
     lastEventSeq,
     snapshot: result,
   });
   return result;
+}
+
+/** Full verbatim context transcript for the Advanced inspector (never cached: it is opened on demand). */
+export async function computeCesiumAgentContextTranscript(input: {
+  workspace: WorkspaceRecord;
+  conversation: AgentConversationRecord;
+}): Promise<AgentContextTranscript> {
+  const parts = await loadCesiumContextParts(input);
+  return buildCesiumContextTranscriptFromParts({
+    ...parts,
+    conversation: input.conversation,
+  });
 }
 
 export function unsupportedContextUsageSnapshot(): AgentContextUsageSnapshot {

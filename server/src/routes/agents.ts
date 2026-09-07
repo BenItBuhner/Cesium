@@ -278,6 +278,20 @@ agentRoutes.get("/api/agents/conversations/:conversationId/context-usage", async
   return c.json({ usage });
 });
 
+agentRoutes.get("/api/agents/conversations/:conversationId/context-transcript", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  c.header("Cache-Control", "no-store, max-age=0");
+  const transcript = await agentRuntimeManager.getConversationContextTranscript(
+    workspace,
+    conversationId
+  );
+  if (!transcript) {
+    return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
+  }
+  return c.json({ transcript });
+});
+
 agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
