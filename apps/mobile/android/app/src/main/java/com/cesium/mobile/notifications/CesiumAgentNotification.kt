@@ -6,16 +6,28 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
 import com.cesium.mobile.R
-import com.cesium.shared.generated.CesiumDesignTokens
 import kotlin.math.abs
 
+/**
+ * Builds the two agent notifications the JS controller posts:
+ *
+ * - the single consolidated LIVE notification (ongoing) - a lone run in full
+ *   detail or "N agents running" with one line per agent, and
+ * - a COMPLETION card per finished run (dismissible) - diffstat, outcome, and
+ *   Review / View PR actions.
+ *
+ * Both render their multi-line body with [NotificationCompat.BigTextStyle],
+ * which is one of the styles Android 16 promotes to a Live Update (the status
+ * bar chip / lock screen / Samsung Now Bar). InboxStyle would fit a list too
+ * but is not promotable, so lines travel as one "\n"-joined string instead.
+ */
 object CesiumAgentNotification {
   /**
    * v2: IMPORTANCE_DEFAULT (was LOW). Only IMPORTANCE_MIN is documented as
@@ -30,9 +42,10 @@ object CesiumAgentNotification {
   const val ALERT_CHANNEL_ID = "cesium-agent-alerts"
 
   /**
-   * Base for per-run notification ids. Each active agent run gets its own
-   * stable id so multiple agents can be tracked side by side. The range stays
-   * clear of the phone-control foreground notification (0xCE72).
+   * Base for notification ids. The live notification and every completion
+   * card hash their run key onto a stable id so updates land in place and the
+   * cards of different runs sit side by side. The range stays clear of the
+   * phone-control foreground notification (0xCE72).
    */
   const val NOTIFICATION_ID_BASE = 6100
   private const val NOTIFICATION_ID_RANGE = 40_000
@@ -80,11 +93,11 @@ object CesiumAgentNotification {
     val runKey = extras.getString("runKey") ?: ""
     val title = extras.getString("title") ?: "Cesium agent"
     val body = extras.getString("body") ?: "Running"
+    val expandedBody = extras.getString("expandedBody")
+    val subText = extras.getString("subText")
     val shortText = extras.getString("shortText")
-    val progressMax = extras.getInt("progressMax", 100)
-    val progress = extras.getInt("progress", 0)
-    val indeterminate = extras.getBoolean("indeterminate", true)
     val startedAt = extras.getLong("startedAt", System.currentTimeMillis())
+    val completedAt = extras.getLong("completedAt", 0L)
     val ongoing = extras.getBoolean("ongoing", true)
     val alert = extras.getBoolean("alert", false)
     val requestPromotion = extras.getBoolean("promote", false) && ongoing
@@ -98,19 +111,31 @@ object CesiumAgentNotification {
       .setSmallIcon(R.drawable.ic_stat_cesium)
       .setContentTitle(title)
       .setContentText(body)
+      .setStyle(
+        NotificationCompat.BigTextStyle().bigText(resolveExpandedText(body, expandedBody))
+      )
       .setCategory(
         if (ongoing) Notification.CATEGORY_PROGRESS else Notification.CATEGORY_STATUS
       )
       .setOngoing(ongoing)
       .setOnlyAlertOnce(!alert)
       .setShowWhen(true)
-      .setWhen(startedAt)
-      .setContentIntent(openIntent(context, extras, "open"))
+      // A completion card is stamped with when the run ended; the live
+      // notification with when it started (the chronometer anchor below).
+      .setWhen(resolveNotificationWhen(startedAt, completedAt, ongoing))
+      .setContentIntent(openIntent(context, extras, if (ongoing) "open" else "review"))
       .setDeleteIntent(deleteIntent(context, extras))
 
     if (Build.VERSION.SDK_INT >= 31 && ongoing) {
       builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
     }
+
+    resolveHeaderSubText(
+      subText = subText,
+      shortText = shortText,
+      ongoing = ongoing,
+      sdkInt = Build.VERSION.SDK_INT
+    )?.let { builder.setSubText(it) }
 
     val chip = resolveChipPresentation(
       shortText = shortText,
@@ -119,24 +144,21 @@ object CesiumAgentNotification {
     )
 
     if (Build.VERSION.SDK_INT >= 36) {
-      applyProgressStyle(
-        builder,
-        extras,
-        progressMax,
-        progress,
-        indeterminate,
-        progressColors(context)
-      )
       builder.setRequestPromotedOngoing(requestPromotion)
       if (chip.shortCriticalText != null) {
         builder.setShortCriticalText(chip.shortCriticalText)
       }
-    } else {
-      if (ongoing) {
-        builder.setProgress(progressMax, progress.coerceIn(0, progressMax), indeterminate)
-      }
-      if (!shortText.isNullOrBlank()) {
-        builder.setSubText(shortText)
+    } else if (ongoing) {
+      // Pre-16 shade: a determinate bar for structured progress (todo fraction
+      // or goal percent). Nothing spins for runs without it - the chronometer
+      // already says the run is alive.
+      val progressMax = extras.getInt("progressMax", 0)
+      if (extras.containsKey("progress") && progressMax > 0) {
+        builder.setProgress(
+          progressMax,
+          extras.getInt("progress", 0).coerceIn(0, progressMax),
+          false
+        )
       }
     }
 
@@ -149,6 +171,20 @@ object CesiumAgentNotification {
       }
     }
 
+    if (ongoing) {
+      addLiveActions(builder, context, extras)
+    } else {
+      addCompletionActions(builder, context, extras)
+    }
+
+    return builder.build()
+  }
+
+  private fun addLiveActions(
+    builder: NotificationCompat.Builder,
+    context: Context,
+    extras: Bundle
+  ) {
     addAction(builder, context, extras, "open", "Open")
     val intervention = extras.getString("intervention")
     val hasPermissionQuickActions =
@@ -187,8 +223,25 @@ object CesiumAgentNotification {
         }
       }
     }
+  }
 
-    return builder.build()
+  /** Review opens the finished conversation; View PR opens the pull request the run reported. */
+  private fun addCompletionActions(
+    builder: NotificationCompat.Builder,
+    context: Context,
+    extras: Bundle
+  ) {
+    addAction(builder, context, extras, "review", "Review")
+    val pullRequestUrl = extras.getString("pullRequestUrl")
+    if (isOpenableHttpUrl(pullRequestUrl)) {
+      builder.addAction(
+        NotificationCompat.Action.Builder(
+          android.R.drawable.ic_menu_view,
+          "View PR",
+          viewUrlIntent(context, extras, "view_pr", pullRequestUrl!!)
+        ).build()
+      )
+    }
   }
 
   fun canPostPromoted(context: Context): Boolean {
@@ -224,62 +277,6 @@ object CesiumAgentNotification {
     } catch (_: Throwable) {
       false
     }
-  }
-
-  private fun applyProgressStyle(
-    builder: NotificationCompat.Builder,
-    extras: Bundle,
-    max: Int,
-    current: Int,
-    indeterminate: Boolean,
-    colors: CesiumProgressColors
-  ) {
-    val safeMax = max.coerceIn(1, MAX_PROGRESS_SEGMENTS)
-    val safeProgress = current.coerceIn(0, safeMax)
-    val progressKind = extras.getString("progressKind") ?: "indeterminate"
-    val style = NotificationCompat.ProgressStyle()
-      .setProgressIndeterminate(indeterminate)
-    if (!indeterminate) {
-      style
-        .setProgress(safeProgress)
-        .setStyledByProgress(progressKind == "goal")
-      when (progressKind) {
-        "todo" -> {
-          val completed = extras.getInt("todoCompleted", safeProgress)
-          val currentIndex = extras.getInt("todoCurrentIndex", completed + 1)
-          val segments = (1..safeMax).map { index ->
-            NotificationCompat.ProgressStyle.Segment(1).setColor(
-              when {
-                index <= completed -> colors.completed
-                index == currentIndex -> colors.active
-                else -> colors.pending
-              }
-            )
-          }
-          style.setProgressSegments(segments)
-        }
-        "goal" -> {
-          style.setProgressSegments(
-            listOf(
-              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.goal)
-            )
-          )
-        }
-        // Terminal and any unknown determinate kind get one explicit segment
-        // so every posted ProgressStyle carries a well-formed track instead
-        // of relying on platform defaults.
-        else -> {
-          style.setProgressSegments(
-            listOf(
-              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(
-                if (safeProgress >= safeMax) colors.completed else colors.pending
-              )
-            )
-          )
-        }
-      }
-    }
-    builder.setStyle(style)
   }
 
   private fun addAction(
@@ -383,8 +380,27 @@ object CesiumAgentNotification {
       putExtra("workspaceId", extras.getString("workspaceId"))
     }
     // Request codes must differ per run AND per action, otherwise concurrent
-    // agent notifications overwrite each other's intent extras via
+    // completion cards overwrite each other's intent extras via
     // FLAG_UPDATE_CURRENT and every tap lands on the same conversation.
+    return PendingIntent.getActivity(
+      context,
+      requestCode(runKey, action),
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+  }
+
+  /** Opens an external URL (the run's pull request) in the system browser. */
+  private fun viewUrlIntent(
+    context: Context,
+    extras: Bundle,
+    action: String,
+    url: String
+  ): PendingIntent {
+    val runKey = extras.getString("runKey") ?: ""
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
     return PendingIntent.getActivity(
       context,
       requestCode(runKey, action),
@@ -412,19 +428,6 @@ object CesiumAgentNotification {
   private fun requestCode(runKey: String, action: String): Int =
     abs("$runKey:$action".hashCode())
 
-  private fun progressColors(context: Context): CesiumProgressColors {
-    val dark =
-      context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-        Configuration.UI_MODE_NIGHT_YES
-    return if (dark) {
-      resolveCesiumProgressColors(true)
-    } else {
-      resolveCesiumProgressColors(false)
-    }
-  }
-
-  private const val MAX_PROGRESS_SEGMENTS = 100
-
   /** RemoteInput result key for the inline question reply. */
   const val REMOTE_INPUT_KEY = "cesium_remote_reply"
 }
@@ -432,9 +435,9 @@ object CesiumAgentNotification {
 /**
  * What occupies the status-bar chip of a promoted live update. Concrete
  * progress text (todo fraction "3/7", goal percent, or a status word like
- * DONE/INPUT) always owns the chip when present; the elapsed-time
- * chronometer is only the fallback face for runs with nothing better to
- * show. ETA countdowns were removed on purpose: extrapolated completion
+ * INPUT) always owns the chip when present; the elapsed-time chronometer is
+ * the fallback face for runs (and the multi-agent list) with nothing better
+ * to show. ETA countdowns were removed on purpose: extrapolated completion
  * times for volatile todo lists were wrong often enough to be noise.
  */
 internal data class CesiumChipPresentation(
@@ -462,26 +465,40 @@ internal fun resolveChipPresentation(
   )
 }
 
-internal data class CesiumProgressColors(
-  val completed: Int,
-  val active: Int,
-  val pending: Int,
-  val goal: Int
-)
+/**
+ * The expanded (BigTextStyle) body: the multi-line payload when the JS layer
+ * sent one, otherwise the collapsed line so older payloads still expand to
+ * something.
+ */
+internal fun resolveExpandedText(body: String, expandedBody: String?): String =
+  expandedBody?.takeIf { it.isNotBlank() } ?: body
 
-internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
-  if (dark) {
-    CesiumProgressColors(
-      completed = CesiumDesignTokens.Dark.AskAccent.toInt(),
-      active = CesiumDesignTokens.Dark.WorkflowAccent.toInt(),
-      pending = CesiumDesignTokens.Dark.TextSecondary.toInt(),
-      goal = CesiumDesignTokens.Dark.GoalAccent.toInt()
-    )
-  } else {
-    CesiumProgressColors(
-      completed = CesiumDesignTokens.Light.AskAccent.toInt(),
-      active = CesiumDesignTokens.Light.WorkflowAccent.toInt(),
-      pending = CesiumDesignTokens.Light.TextSecondary.toInt(),
-      goal = CesiumDesignTokens.Light.GoalAccent.toInt()
-    )
-  }
+/**
+ * Header sub text ("Cesium · Finished · 3:06 PM"). A completion card names
+ * its outcome; a live notification on the pre-16 shade shows the progress
+ * text there because that build has no status-bar chip to carry it. On
+ * Android 16+ the chip owns the progress text and the header stays clean.
+ */
+internal fun resolveHeaderSubText(
+  subText: String?,
+  shortText: String?,
+  ongoing: Boolean,
+  sdkInt: Int
+): String? {
+  val status = subText?.takeIf { it.isNotBlank() }
+  if (status != null) return status
+  if (ongoing && sdkInt < 36) return shortText?.takeIf { it.isNotBlank() }
+  return null
+}
+
+/** Timestamp shown in the header: the run's end for completion cards, its start otherwise. */
+internal fun resolveNotificationWhen(startedAt: Long, completedAt: Long, ongoing: Boolean): Long =
+  if (!ongoing && completedAt > 0L) completedAt else startedAt
+
+/** Only web URLs get a View PR action; anything else would be an intent the shade cannot open. */
+internal fun isOpenableHttpUrl(url: String?): Boolean {
+  if (url.isNullOrBlank()) return false
+  val trimmed = url.trim()
+  return trimmed.startsWith("https://", ignoreCase = true) ||
+    trimmed.startsWith("http://", ignoreCase = true)
+}

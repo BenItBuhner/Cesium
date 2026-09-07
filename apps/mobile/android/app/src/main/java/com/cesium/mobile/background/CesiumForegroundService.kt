@@ -10,11 +10,13 @@ import com.cesium.mobile.notifications.CesiumAgentNotification
 import com.cesium.mobile.notifications.CesiumLiveUpdateStateStore
 
 /**
- * Hosts the live notifications for every active agent run. One run's
- * notification anchors the foreground service; the rest are posted as regular
- * notifications with their own per-run ids. When the anchor run finishes, the
- * service re-anchors onto another active run before detaching, so remaining
- * agents keep their process-alive guarantee.
+ * Hosts the ongoing agent notifications. The JS controller posts a single
+ * consolidated live notification for all running agents; it anchors the
+ * foreground service, and completion cards (terminal, dismissible) are posted
+ * as regular notifications with their own per-run ids. The service stays
+ * generic over run keys: should several ongoing keys ever coexist (e.g. a
+ * leftover from an older build), the anchor moves onto another one before
+ * detaching, so the process-alive guarantee never lapses.
  */
 class CesiumForegroundService : Service() {
   private var anchorRunKey: String? = null
