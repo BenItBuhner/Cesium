@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   deriveMobileAgentProjection,
+  findMobilePullRequestUrl,
+  formatMobileEditStats,
+  getMobileAgentPhaseLabel,
   getMobileNotificationChip,
   isMobileAgentRunActive,
+  summarizeMobileAssistantReply,
 } from "../src/lib/mobile-agent-projection.ts";
 import type { AgentConversationRecord, AgentStoredEvent } from "../src/lib/agent-types.ts";
 
@@ -720,6 +724,441 @@ describe("notification activity hygiene", () => {
     });
     const projection = deriveMobileAgentProjection(conversation, [], { now: 6000 });
     assert.equal(projection.currentActivity, "Agent run failed");
+  });
+});
+
+describe("run phase, edit stats, and outcome", () => {
+  const running = (): AgentConversationRecord =>
+    createConversation({ status: "running", lastEventSeq: 9, updatedAt: 5000 });
+
+  const statusEvent = (
+    seq: number,
+    status: AgentStoredEvent extends { kind: "status"; status: infer S } ? S : never,
+    createdAt = seq * 1000
+  ): AgentStoredEvent => ({
+    seq,
+    eventId: `status-${seq}`,
+    conversationId: "c1",
+    createdAt,
+    kind: "status",
+    status,
+  });
+
+  const editCall = (
+    seq: number,
+    toolCallId: string,
+    path: string | undefined,
+    addedLines: number,
+    removedLines: number,
+    status: "pending" | "in_progress" | "completed" | "failed" = "completed"
+  ): AgentStoredEvent => ({
+    seq,
+    eventId: `edit-${seq}`,
+    conversationId: "c1",
+    createdAt: seq * 1000,
+    kind: "tool_call",
+    toolCallId,
+    title: `Edit ${path ?? "file"}`,
+    toolKind: "edit",
+    status,
+    editPreview: { path, source: "replace", addedLines, removedLines, lines: [] },
+  });
+
+  const chunk = (seq: number, messageId: string, text: string): AgentStoredEvent => ({
+    seq,
+    eventId: `chunk-${seq}`,
+    conversationId: "c1",
+    createdAt: seq * 1000,
+    kind: "assistant_message_chunk",
+    messageId,
+    text,
+  });
+
+  test("a run with no activity yet is starting", () => {
+    const projection = deriveMobileAgentProjection(
+      running(),
+      [
+        {
+          seq: 1,
+          eventId: "u1",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "user_message",
+          messageId: "m1",
+          content: "Go",
+        },
+        statusEvent(2, "running"),
+      ],
+      { now: 3000 }
+    );
+    assert.equal(projection.phase, "starting");
+    assert.equal(getMobileAgentPhaseLabel(projection.phase), "Starting");
+    assert.equal(projection.editStats, null);
+    assert.equal(projection.summary, null);
+    assert.equal(projection.pullRequestUrl, null);
+  });
+
+  test("the phase follows the most recent activity event", () => {
+    const base = [statusEvent(1, "running")];
+    const editing = deriveMobileAgentProjection(
+      running(),
+      [...base, editCall(2, "call-1", "src/app.ts", 3, 1, "in_progress")],
+      { now: 3000 }
+    );
+    assert.equal(editing.phase, "editing");
+
+    const writing = deriveMobileAgentProjection(
+      running(),
+      [...base, editCall(2, "call-1", "src/app.ts", 3, 1), chunk(3, "m1", "Now I will")],
+      { now: 4000 }
+    );
+    assert.equal(writing.phase, "writing");
+
+    const thinking = deriveMobileAgentProjection(
+      running(),
+      [...base, editCall(2, "call-1", "src/app.ts", 3, 1)],
+      { now: 3000 }
+    );
+    // Between tool calls the model is deciding its next step.
+    assert.equal(thinking.phase, "thinking");
+
+    const reading = deriveMobileAgentProjection(
+      running(),
+      [
+        ...base,
+        {
+          seq: 2,
+          eventId: "t2",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "tool_call",
+          toolCallId: "call-2",
+          title: "Read file",
+          toolKind: "read",
+          status: "pending",
+        },
+        // An update that omits the kind recovers it from the originating call.
+        {
+          seq: 3,
+          eventId: "t3",
+          conversationId: "c1",
+          createdAt: 2500,
+          kind: "tool_call_update",
+          toolCallId: "call-2",
+          status: "in_progress",
+        },
+      ],
+      { now: 3000 }
+    );
+    assert.equal(reading.phase, "reading");
+
+    const delegating = deriveMobileAgentProjection(
+      running(),
+      [
+        ...base,
+        {
+          seq: 2,
+          eventId: "sub",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "subagent",
+          subagentId: "s1",
+          title: "Explore",
+          status: "running",
+          transcript: [],
+        },
+      ],
+      { now: 3000 }
+    );
+    assert.equal(delegating.phase, "delegating");
+    assert.equal(getMobileAgentPhaseLabel(delegating.phase), "Delegating");
+  });
+
+  test("interventions, pausing, and terminal states outrank tool activity", () => {
+    const needsPermission = deriveMobileAgentProjection(
+      createConversation({
+        status: "awaiting_permission",
+        pendingPermission: { requestId: "perm", requestedAt: 2000, options: [] },
+      }),
+      [statusEvent(1, "running"), editCall(2, "call-1", "a.ts", 1, 0, "in_progress")],
+      { now: 3000 }
+    );
+    assert.equal(needsPermission.phase, "needs_permission");
+    assert.equal(getMobileAgentPhaseLabel(needsPermission.phase), "Needs permission");
+
+    const needsAnswer = deriveMobileAgentProjection(
+      createConversation({
+        status: "awaiting_question",
+        pendingQuestion: { questionId: "q1", requestedAt: 2000 },
+      }),
+      [],
+      { now: 3000 }
+    );
+    assert.equal(needsAnswer.phase, "needs_answer");
+
+    const pausing = deriveMobileAgentProjection(
+      createConversation({ status: "pausing" }),
+      [statusEvent(1, "running"), chunk(2, "m1", "text")],
+      { now: 3000 }
+    );
+    assert.equal(pausing.phase, "pausing");
+
+    const finished = deriveMobileAgentProjection(
+      createConversation({ status: "idle", updatedAt: 5000 }),
+      [statusEvent(1, "running"), chunk(2, "m1", "Done."), statusEvent(3, "idle")],
+      { now: 6000 }
+    );
+    assert.equal(finished.status, "completed");
+    assert.equal(finished.phase, "finished");
+
+    const failed = deriveMobileAgentProjection(
+      createConversation({ status: "failed", lastError: "boom" }),
+      [],
+      { now: 6000 }
+    );
+    assert.equal(failed.phase, "failed");
+  });
+
+  test("the last open todo marks the run as finishing", () => {
+    const projection = deriveMobileAgentProjection(
+      running(),
+      [
+        statusEvent(1, "running"),
+        {
+          seq: 2,
+          eventId: "p1",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "plan",
+          planId: "plan",
+          entries: [
+            { id: "a", content: "Wire bridge", status: "completed" },
+            { id: "b", content: "Update tests", status: "completed" },
+            { id: "c", content: "Write changelog", status: "in_progress" },
+          ],
+        },
+        editCall(3, "call-1", "CHANGELOG.md", 4, 0, "in_progress"),
+      ],
+      { now: 4000 }
+    );
+    assert.equal(projection.phase, "finishing");
+    assert.equal(getMobileAgentPhaseLabel(projection.phase), "Finishing");
+  });
+
+  test("a goal past ninety percent is finishing", () => {
+    const projection = deriveMobileAgentProjection(
+      running(),
+      [
+        statusEvent(1, "running", 0),
+        {
+          seq: 2,
+          eventId: "goal-set",
+          conversationId: "c1",
+          createdAt: 10_000,
+          kind: "tool_call_update",
+          toolCallId: "goal-set",
+          status: "completed",
+          raw: { request: { name: "goal_set", arguments: { objective: "Ship it" } } },
+        },
+        {
+          seq: 3,
+          eventId: "goal-progress",
+          conversationId: "c1",
+          createdAt: 40_000,
+          kind: "tool_call_update",
+          toolCallId: "goal-progress",
+          status: "completed",
+          raw: {
+            request: {
+              name: "goal_summarize",
+              arguments: { progressPercent: 92, headline: "Final verification" },
+            },
+          },
+        },
+        editCall(4, "call-1", "src/app.ts", 2, 2, "in_progress"),
+      ],
+      { now: 70_000 }
+    );
+    assert.equal(projection.goalProgress?.percent, 92);
+    assert.equal(projection.phase, "finishing");
+  });
+
+  test("edit stats sum each tool call's latest preview across distinct files", () => {
+    const projection = deriveMobileAgentProjection(
+      running(),
+      [
+        statusEvent(1, "running"),
+        editCall(2, "call-1", "src/app.ts", 10, 2, "pending"),
+        // The completed update for the same call supersedes the pending preview.
+        {
+          seq: 3,
+          eventId: "edit-3",
+          conversationId: "c1",
+          createdAt: 3000,
+          kind: "tool_call_update",
+          toolCallId: "call-1",
+          status: "completed",
+          editPreview: {
+            path: "src/app.ts",
+            source: "replace",
+            addedLines: 12,
+            removedLines: 3,
+            lines: [],
+          },
+        },
+        // Same file again: lines add up, the file counts once.
+        editCall(4, "call-2", "file://src/app.ts", 5, 1),
+        editCall(5, "call-3", "README.md", 20, 0),
+        // Failed edits never landed.
+        editCall(6, "call-4", "broken.ts", 100, 100, "failed"),
+        // A preview with no path still counts as one touched file.
+        editCall(7, "call-5", undefined, 1, 1),
+      ],
+      { now: 8000 }
+    );
+    assert.deepEqual(projection.editStats, { files: 3, additions: 38, deletions: 5 });
+    assert.equal(formatMobileEditStats(projection.editStats), "+38 −5 · 3 files");
+  });
+
+  test("edit stats and the phase are scoped to the current run", () => {
+    const events: AgentStoredEvent[] = [
+      statusEvent(1, "running"),
+      editCall(2, "old-1", "old.ts", 50, 50),
+      chunk(3, "m1", "First run done"),
+      statusEvent(4, "idle"),
+      {
+        seq: 5,
+        eventId: "u2",
+        conversationId: "c1",
+        createdAt: 5000,
+        kind: "user_message",
+        messageId: "m2",
+        content: "Again",
+      },
+      statusEvent(6, "running"),
+    ];
+    const fresh = deriveMobileAgentProjection(running(), events, { now: 7000 });
+    assert.equal(fresh.editStats, null);
+    assert.equal(fresh.phase, "starting");
+
+    const editing = deriveMobileAgentProjection(
+      running(),
+      [...events, editCall(7, "new-1", "new.ts", 4, 1, "in_progress")],
+      { now: 8000 }
+    );
+    assert.deepEqual(editing.editStats, { files: 1, additions: 4, deletions: 1 });
+    assert.equal(editing.phase, "editing");
+  });
+
+  test("terminal runs carry a clean excerpt of the final reply and its PR link", () => {
+    const projection = deriveMobileAgentProjection(
+      createConversation({ status: "idle", updatedAt: 9000 }),
+      [
+        statusEvent(1, "running"),
+        chunk(2, "m1", "Let me look."),
+        editCall(3, "call-1", "src/app.ts", 609, 17),
+        chunk(4, "m2", "## Summary\n\n"),
+        chunk(
+          5,
+          "m2",
+          "Goal complete. v5 is on `cursor/thirty-day-fast-track-v5-4dbe`, stacked on **v4**; " +
+            "see [the PR](https://github.com/acme/app/pull/41) and the base https://github.com/acme/app/pull/40.\n\n" +
+            "```ts\nconst hidden = true;\n```\n"
+        ),
+        statusEvent(6, "idle"),
+      ],
+      { now: 10_000 }
+    );
+    assert.equal(projection.status, "completed");
+    // The "## Summary" heading is dropped, not promoted to the excerpt.
+    assert.equal(
+      projection.summary,
+      "Goal complete. v5 is on cursor/thirty-day-fast-track-v5-4dbe, stacked on v4; see the PR and the base https://github.com/acme/app/pull/40."
+    );
+    // The first link in the reply is the PR being announced; the base it
+    // stacks on comes later.
+    assert.equal(projection.pullRequestUrl, "https://github.com/acme/app/pull/41");
+    assert.deepEqual(projection.editStats, { files: 1, additions: 609, deletions: 17 });
+  });
+
+  test("the outcome is only derived for terminal runs", () => {
+    const projection = deriveMobileAgentProjection(
+      running(),
+      [
+        statusEvent(1, "running"),
+        chunk(2, "m1", "Opened https://github.com/acme/app/pull/7 for review."),
+      ],
+      { now: 3000 }
+    );
+    assert.equal(projection.summary, null);
+    assert.equal(projection.pullRequestUrl, null);
+  });
+
+  test("a PR created by a tool outranks links mentioned in the reply", () => {
+    const projection = deriveMobileAgentProjection(
+      createConversation({ status: "idle", updatedAt: 9000 }),
+      [
+        statusEvent(1, "running"),
+        {
+          seq: 2,
+          eventId: "pr-tool",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "tool_call_update",
+          toolCallId: "pr-1",
+          status: "completed",
+          detail: '{"url":"https://gitlab.com/acme/app/-/merge_requests/12","state":"open"}',
+        },
+        chunk(
+          3,
+          "m1",
+          "Opened the merge request on top of https://gitlab.com/acme/app/-/merge_requests/11."
+        ),
+        statusEvent(4, "idle"),
+      ],
+      { now: 10_000 }
+    );
+    assert.equal(
+      projection.summary,
+      "Opened the merge request on top of https://gitlab.com/acme/app/-/merge_requests/11."
+    );
+    assert.equal(projection.pullRequestUrl, "https://gitlab.com/acme/app/-/merge_requests/12");
+  });
+
+  test("long summaries are cut at a sentence boundary", () => {
+    const sentence = "This first sentence explains the change in some detail so it is long enough.";
+    const overflow =
+      "The second sentence keeps going and going and going and going and going well past the one hundred and sixty character budget.";
+    const summary = summarizeMobileAssistantReply(`${sentence} ${overflow}`);
+    assert.equal(summary, sentence);
+    // Without a usable boundary the excerpt is hard-truncated instead.
+    const truncated = summarizeMobileAssistantReply(overflow.replace(/\./g, "").repeat(2));
+    assert.ok(truncated != null && truncated.endsWith("…") && truncated.length <= 160);
+    assert.equal(summarizeMobileAssistantReply("   \n\n  "), null);
+    // Payload-shaped replies never become a summary.
+    assert.equal(summarizeMobileAssistantReply('{"ok":true}'), null);
+  });
+
+  test("findMobilePullRequestUrl strips trailing punctuation and handles other forges", () => {
+    assert.equal(
+      findMobilePullRequestUrl("Done: https://bitbucket.org/acme/app/pull-requests/5."),
+      "https://bitbucket.org/acme/app/pull-requests/5"
+    );
+    assert.equal(
+      findMobilePullRequestUrl("(https://dev.azure.com/acme/app/_git/app/pullrequest/9)"),
+      "https://dev.azure.com/acme/app/_git/app/pullrequest/9"
+    );
+    assert.equal(findMobilePullRequestUrl("https://github.com/acme/app/issues/3"), null);
+    assert.equal(findMobilePullRequestUrl(null), null);
+  });
+
+  test("formatMobileEditStats pluralizes and hides empty stats", () => {
+    assert.equal(
+      formatMobileEditStats({ files: 1, additions: 4, deletions: 0 }),
+      "+4 −0 · 1 file"
+    );
+    assert.equal(formatMobileEditStats(null), null);
+    assert.equal(formatMobileEditStats({ files: 0, additions: 0, deletions: 0 }), null);
   });
 });
 
