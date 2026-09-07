@@ -18,6 +18,7 @@ export * from "./cloud-agents-types";
 export * from "./agent-rail";
 export * from "./agent-rail-status";
 export * from "./composer-status-bar";
+export * from "./context-usage-timeline";
 export * from "./composer-pills";
 export * from "./composer-defaults";
 export * from "./workspace-session";

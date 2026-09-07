@@ -256,7 +256,8 @@ export interface EditorTab {
     | "kanban"
     | "plan"
     | "extension"
-    | "pullRequest";
+    | "pullRequest"
+    | "contextInspector";
   content: string;
   active?: boolean;
   /** New explicit discriminator for extension surfaces; older tab kinds still infer from legacy fields. */
@@ -269,7 +270,8 @@ export interface EditorTab {
     | "terminal"
     | "orchestration"
     | "extension"
-    | "pullRequest";
+    | "pullRequest"
+    | "contextInspector";
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
   transcriptMessages?: ChatMessage[];
   /** Real OpenCode session id for live subagent transcript hydration. */
@@ -336,6 +338,10 @@ export interface EditorTab {
   pullRequest?: {
     /** Optional base-ref override; the server picks a default when absent. */
     baseRef?: string;
+  };
+  /** Advanced context inspector: the verbatim context window of one conversation. */
+  contextInspector?: {
+    conversationId: string;
   };
   extensionSurface?: {
     kind: "marketplace" | "webview" | "customEditor" | "view" | "output";

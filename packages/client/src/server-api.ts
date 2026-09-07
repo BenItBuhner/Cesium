@@ -14,6 +14,7 @@ import type {
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
+  AgentContextTranscript,
   AgentContextUsageSnapshot,
   AgentImportResult,
   AgentImportSessionSummary,
@@ -1170,6 +1171,17 @@ export async function fetchAgentContextUsage(
 ): Promise<{ usage: AgentContextUsageSnapshot }> {
   return request(
     `/api/agents/conversations/${encodeURIComponent(conversationId)}/context-usage`,
+    options?.signal ? { signal: options.signal } : undefined
+  );
+}
+
+/** Verbatim context transcript (system prompt, tool schemas, every history block) for the Advanced inspector. */
+export async function fetchAgentContextTranscript(
+  conversationId: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ transcript: AgentContextTranscript }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/context-transcript`,
     options?.signal ? { signal: options.signal } : undefined
   );
 }

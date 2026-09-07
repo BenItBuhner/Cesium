@@ -52,6 +52,12 @@ export type EditorBridge = {
     group?: EditorGroup
   ) => void;
   openPullRequestTab: (options?: { baseRef?: string; group?: EditorGroup }) => void;
+  /** Advanced context inspector for one conversation (verbatim context window). */
+  openContextInspectorTab: (input: {
+    conversationId: string;
+    title: string;
+    group?: EditorGroup;
+  }) => void;
   openExtensionSurfaceTab: (input: {
     extensionId: string;
     surfaceId: string;
@@ -87,4 +93,9 @@ export function useEditorBridgeRef(): MutableRefObject<EditorBridge | null> {
     throw new Error("useEditorBridgeRef must be used within EditorBridgeProvider");
   }
   return ctx;
+}
+
+/** Same as {@link useEditorBridgeRef} but tolerates rendering outside the provider. */
+export function useEditorBridgeRefMaybe(): MutableRefObject<EditorBridge | null> | null {
+  return useContext(EditorBridgeRefContext);
 }

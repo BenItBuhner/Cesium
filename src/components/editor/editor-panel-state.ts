@@ -139,6 +139,12 @@ export type EditorPanelAction =
       group?: EditorGroup;
     }
   | {
+      type: "OPEN_CONTEXT_INSPECTOR_TAB";
+      conversationId: string;
+      title: string;
+      group?: EditorGroup;
+    }
+  | {
       type: "OPEN_EXTENSION_SURFACE_TAB";
       extensionId: string;
       surfaceId: string;
@@ -978,6 +984,55 @@ export function editorPanelReducer(
         content: "",
         kind: "pullRequest",
         pullRequest: { baseRef: action.baseRef },
+      };
+      const targetGroup =
+        action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");
+      if (targetGroup === "right") {
+        const splitState = state.split ? state : { ...state, split: true };
+        return {
+          ...splitState,
+          focusedGroup: "right",
+          rightTabs: [...splitState.rightTabs, tab],
+          rightActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "left",
+        leftTabs: [...state.leftTabs, tab],
+        leftActiveId: tabId,
+      };
+    }
+
+    case "OPEN_CONTEXT_INSPECTOR_TAB": {
+      const tabId = `context-inspector:${action.conversationId}`;
+      const name = truncateTabName(`Context · ${action.title.trim() || "Untitled"}`);
+      const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
+      const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
+      if (existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map((tab) => (tab.id === tabId ? { ...tab, name } : tab)),
+        };
+      }
+      if (existingRight && action.group !== "left") {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map((tab) => (tab.id === tabId ? { ...tab, name } : tab)),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "plaintext",
+        icon: "contextInspector",
+        content: "",
+        kind: "contextInspector",
+        contextInspector: { conversationId: action.conversationId },
       };
       const targetGroup =
         action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");

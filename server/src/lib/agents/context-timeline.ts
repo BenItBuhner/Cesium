@@ -16,7 +16,6 @@ import type {
   AgentStoredEvent,
 } from "./types.js";
 
-type UserMessageEvent = Extract<AgentStoredEvent, { kind: "user_message" }>;
 type SystemReminderEvent = Extract<AgentStoredEvent, { kind: "system_reminder" }>;
 type AssistantChunkEvent = Extract<AgentStoredEvent, { kind: "assistant_message_chunk" }>;
 type ToolCallEvent = Extract<AgentStoredEvent, { kind: "tool_call" }>;
