@@ -26,8 +26,8 @@ import {
   contextColor,
   type ContextUsageBarSegment,
 } from "@/components/chat/ContextUsageBar";
-import { useContextUsageViewMode } from "@/components/chat/ContextBreakdownDock";
 import { ContextUsageRing } from "@/components/chat/ContextUsageRing";
+import { useContextUsageViewMode } from "@/hooks/useContextUsageViewMode";
 import type {
   AgentContextSegmentKind,
   AgentContextTranscript,

@@ -10,10 +10,9 @@ import {
   condenseContextTimeline,
   contextTimelineCondenseThreshold,
   largestContextSegments,
-  readStoredContextUsageViewMode,
-  writeStoredContextUsageViewMode,
   type ContextUsageViewMode,
 } from "@/lib/context-usage-timeline";
+import { useContextUsageViewMode } from "@/hooks/useContextUsageViewMode";
 import type { AgentContextUsageSnapshot } from "@/lib/agent-types";
 import { ContextUsageBar, contextColor } from "./ContextUsageBar";
 import { ContextUsageRing } from "./ContextUsageRing";
@@ -67,25 +66,6 @@ function ContextViewModeToggle({
       })}
     </div>
   );
-}
-
-export function useContextUsageViewMode(): [
-  ContextUsageViewMode,
-  (mode: ContextUsageViewMode) => void,
-] {
-  const [mode, setMode] = useState<ContextUsageViewMode>(() =>
-    readStoredContextUsageViewMode(
-      typeof window === "undefined" ? null : window.localStorage
-    )
-  );
-  const update = (next: ContextUsageViewMode) => {
-    setMode(next);
-    writeStoredContextUsageViewMode(
-      typeof window === "undefined" ? null : window.localStorage,
-      next
-    );
-  };
-  return [mode, update];
 }
 
 export function ContextBreakdownDock({
