@@ -55,6 +55,12 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default also installs the obsolete `tools` package,
+          # which Google stopped serving (android-actions/setup-android#537);
+          # sdkmanager exits 1 on it and fails the step. NDK and CMake are
+          # installed in the next step.
+          packages: platform-tools
 
       - name: Install Android toolchain and mobile dependencies
         run: |
