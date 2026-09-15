@@ -37,7 +37,7 @@
     "lint": "eslint",
     "test": "node --import tsx --test ./test/*.test.ts",
     "voice:assets": "node ./scripts/setup-voice-assets.mjs",
-    "test:server-installer": "bash ./test/cesium-server-tunnel.test.sh",
+    "test:server-installer": "bash ./test/cesium-server-tunnel.test.sh && bash ./test/install-cesium-server-systemd.test.sh",
     "test:mcp": "npm run build --workspace @cesium/core && npm run test:mcp --workspace cesium-server",
     "test:browser:e2e": "tsx --test ./test/browser-engine.e2e.ts"
   },

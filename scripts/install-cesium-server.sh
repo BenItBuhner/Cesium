@@ -1,6 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# systemd unit rendering lives ahead of the install flow so tests can source
+# this file with CESIUM_INSTALLER_SOURCE_ONLY=1 and run the output through
+# `systemd-analyze --user verify` without performing an install.
+
+# `%` starts a specifier in every unit-file value (`%h` is the home
+# directory), so a literal path has to double it.
+systemd_path() {
+  printf '%s' "${1//%/%%}"
+}
+
+# ExecStart= is the one setting here that is split into words shell-style, so
+# its executable path is double-quoted with the characters quoting itself
+# interprets escaped. systemd still refuses executable names containing
+# quotes, backslashes, or control characters, whatever the escaping.
+systemd_exec_word() {
+  local value="${1//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$(systemd_path "$value")"
+}
+
+# WorkingDirectory= and the append: targets of StandardOutput=/StandardError=
+# are plain path settings: systemd takes the rest of the line verbatim and
+# never unquotes it, so a shell-quoted path is parsed as a relative path that
+# starts with `"` and the unit fails to load with "bad unit file setting".
+render_systemd_unit() {
+  local manager_bin="$1"
+  local working_directory="$2"
+  local log_file="$3"
+  printf '[Unit]\nDescription=Cesium local server and secure tunnel\nAfter=network-online.target\nWants=network-online.target\n\n'
+  printf '[Service]\nType=simple\nExecStart=%s supervise\n' "$(systemd_exec_word "$manager_bin")"
+  printf 'WorkingDirectory=%s\n' "$(systemd_path "$working_directory")"
+  printf 'Restart=always\nRestartSec=5\nKillMode=control-group\n'
+  printf 'StandardOutput=append:%s\n' "$(systemd_path "$log_file")"
+  printf 'StandardError=append:%s\n\n[Install]\nWantedBy=default.target\n' "$(systemd_path "$log_file")"
+}
+
+if [[ "${CESIUM_INSTALLER_SOURCE_ONLY:-0}" == "1" ]]; then
+  # `return` only succeeds when sourced; a direct run with the flag set exits.
+  # shellcheck disable=SC2317
+  return 0 2>/dev/null || exit 0
+fi
+
 if [[ "${EUID:-$(id -u)}" == "0" ]]; then
   printf 'Do not run the Cesium installer as root.\n' >&2
   exit 1
@@ -446,12 +488,6 @@ chmod 600 "$ENV_FILE"
 install -m 700 "$SOURCE_DIR/scripts/cesium-server" "$BIN_DIR/cesium-server"
 ln -sfn "$BIN_DIR/cesium-server" "$USER_BIN_DIR/cesium-server"
 
-systemd_quote() {
-  local value="${1//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  printf '"%s"' "$value"
-}
-
 xml_escape() {
   local value="${1//&/&amp;}"
   value="${value//</&lt;}"
@@ -465,17 +501,21 @@ configure_service_manager() {
       local unit_dir="$HOME/.config/systemd/user"
       local unit_file="$unit_dir/cesium-server.service"
       mkdir -p "$unit_dir"
-      {
-        printf '[Unit]\nDescription=Cesium local server and secure tunnel\nAfter=network-online.target\nWants=network-online.target\n\n'
-        printf '[Service]\nType=simple\nExecStart=%s supervise\n' "$(systemd_quote "$BIN_DIR/cesium-server")"
-        printf 'WorkingDirectory=%s\n' "$(systemd_quote "$SOURCE_DIR")"
-        printf 'Restart=always\nRestartSec=5\nKillMode=control-group\n'
-        printf 'StandardOutput=append:%s\n' "$CESIUM_HOME/logs/supervisor.log"
-        printf 'StandardError=append:%s\n\n[Install]\nWantedBy=default.target\n' "$CESIUM_HOME/logs/supervisor.log"
-      } >"$unit_file.tmp"
+      render_systemd_unit "$BIN_DIR/cesium-server" "$SOURCE_DIR" \
+        "$CESIUM_HOME/logs/supervisor.log" >"$unit_file.tmp"
       mv "$unit_file.tmp" "$unit_file"
       chmod 600 "$unit_file"
       systemctl --user daemon-reload
+      # A setting systemd rejects only surfaces later, at `start`, as "bad
+      # unit file setting"; stop here with the manager's reason instead.
+      local load_state
+      load_state="$(systemctl --user show -p LoadState --value \
+        cesium-server.service 2>/dev/null || true)"
+      if [[ -n "$load_state" && "$load_state" != "loaded" ]]; then
+        printf 'systemd did not load %s (LoadState=%s).\n' "$unit_file" "$load_state" >&2
+        systemctl --user status cesium-server.service --no-pager >&2 || true
+        exit 1
+      fi
       systemctl --user enable cesium-server.service >/dev/null
       ;;
     launchd)
