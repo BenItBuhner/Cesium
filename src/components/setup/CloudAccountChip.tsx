@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { UserButton } from "@clerk/nextjs";
 import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
-import { Check, Cloud, CloudOff, Link2 } from "lucide-react";
+import { Check, Cloud, CloudOff, Link2, TriangleAlert } from "lucide-react";
 import { useCloudContext } from "@/contexts/CloudContext";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 /**
  * Header chip summarizing the cloud account state.
@@ -61,21 +61,14 @@ function DeviceModeChip({
   status: string;
   userKey: string | null;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copy, feedback } = useCopyToClipboard({ copiedResetMs: 2000 });
   const deviceKey = userKey?.startsWith("device:") ? userKey.slice(7) : null;
 
-  const copyLinkUrl = async () => {
+  const copyLinkUrl = () => {
     if (!deviceKey) {
       return;
     }
-    const url = `${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable (permissions/insecure context) - ignore.
-    }
+    void copy(`${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`);
   };
 
   return (
@@ -88,16 +81,22 @@ function DeviceModeChip({
       {deviceKey ? (
         <button
           type="button"
-          onClick={() => void copyLinkUrl()}
-          title="Copy a link that signs another device into this cloud context"
+          onClick={copyLinkUrl}
+          title={
+            feedback === "failed"
+              ? "Could not copy the link. Open Settings → Account to copy it by hand."
+              : "Copy a link that signs another device into this cloud context"
+          }
           className="inline-flex items-center gap-[4px] rounded-[var(--radius-pill)] border border-[var(--border-card)] px-[8px] py-[2px] text-[10px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
         >
-          {copied ? (
+          {feedback === "copied" ? (
             <Check className="size-[11px]" strokeWidth={2} aria-hidden />
+          ) : feedback === "failed" ? (
+            <TriangleAlert className="size-[11px]" strokeWidth={1.75} aria-hidden />
           ) : (
             <Link2 className="size-[11px]" strokeWidth={1.75} aria-hidden />
           )}
-          {copied ? "Copied" : "Link device"}
+          {feedback === "copied" ? "Copied" : feedback === "failed" ? "Copy failed" : "Link device"}
         </button>
       ) : null}
     </span>

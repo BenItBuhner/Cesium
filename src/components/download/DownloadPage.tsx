@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   Check,
@@ -10,9 +10,12 @@ import {
   ExternalLink,
   Github,
   TerminalSquare,
+  TriangleAlert,
 } from "lucide-react";
 import { PlatformIcon } from "@/components/download/PlatformIcon";
 import { WorkbenchLink } from "@/components/landing/WorkbenchLink";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { describeCopyFailure, type CopyTextResult } from "@/lib/copy-to-clipboard";
 import {
   installerButtonLabel,
   pickRecommendedAsset,
@@ -45,7 +48,12 @@ function AssetButton({
 }
 
 function CopyableCommand({ command, label }: { command: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  const codeRef = useRef<HTMLPreElement>(null);
+  const { copy, feedback } = useCopyToClipboard({ copiedResetMs: 1600 });
+  const [failure, setFailure] = useState<Extract<CopyTextResult, { ok: false }> | null>(
+    null
+  );
+  const failed = feedback === "failed" && failure !== null;
   return (
     <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)]">
       <div className="flex items-center justify-between gap-[10px] border-b border-[var(--border-subtle)] px-[14px] py-[8px]">
@@ -53,24 +61,37 @@ function CopyableCommand({ command, label }: { command: string; label: string })
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard.writeText(command).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1600);
+            // Synchronous from the click: mobile browsers only allow the
+            // clipboard write inside the tap gesture.
+            void copy(command, { selectionFallback: codeRef.current }).then((result) => {
+              setFailure(result.ok ? null : result);
             });
           }}
           className="inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
         >
-          {copied ? (
+          {feedback === "copied" ? (
             <Check className="size-[12px]" strokeWidth={2} aria-hidden />
+          ) : failed ? (
+            <TriangleAlert className="size-[12px]" strokeWidth={2} aria-hidden />
           ) : (
             <Copy className="size-[12px]" strokeWidth={1.75} aria-hidden />
           )}
-          {copied ? "Copied" : "Copy"}
+          {feedback === "copied" ? "Copied" : failed ? "Failed" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto px-[14px] py-[12px] font-mono text-[12px] leading-relaxed text-[var(--text-primary)]">
+      <pre
+        ref={codeRef}
+        className="cursor-text select-all overflow-x-auto px-[14px] py-[12px] font-mono text-[12px] leading-relaxed text-[var(--text-primary)]"
+      >
         {command}
       </pre>
+      <p role="status" aria-live="polite" className={failed ? "px-[14px] pb-[10px] text-[11.5px] text-[var(--goal-accent)]" : "sr-only"}>
+        {failed
+          ? describeCopyFailure(failure, "command")
+          : feedback === "copied"
+            ? "Command copied to the clipboard."
+            : ""}
+      </p>
     </div>
   );
 }

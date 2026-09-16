@@ -16,6 +16,7 @@ import {
   Github,
   Link2,
   Loader2,
+  TriangleAlert,
 } from "lucide-react";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
@@ -37,6 +38,7 @@ import { useOptionalAuth } from "@/components/auth/AuthProvider";
 import { HarnessAuthSyncSummaryCard } from "@/components/editor/settings/HarnessAuthSyncSection";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -161,7 +163,7 @@ function CloudSyncToggleRow({
 
 function CloudAccountSection() {
   const cloud = useCloudContext();
-  const [copied, setCopied] = useState(false);
+  const { copy, feedback: copyFeedback } = useCopyToClipboard({ copiedResetMs: 2000 });
   const configuredMode = getCloudMode();
   const [localOnly, setLocalOnly] = useState(false);
   useEffect(() => {
@@ -201,34 +203,40 @@ function CloudAccountSection() {
     const deviceKey = cloud.userKey?.startsWith("device:")
       ? cloud.userKey.slice(7)
       : null;
-    const copyLinkUrl = async () => {
-      if (!deviceKey) {
+    const deviceLinkUrl = deviceKey
+      ? `${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`
+      : null;
+    const copyLinkUrl = () => {
+      if (!deviceLinkUrl) {
         return;
       }
-      const url = `${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard unavailable (permissions/insecure context) - ignore.
-      }
+      void copy(deviceLinkUrl);
     };
     return (
       <SettingsSection>
         <CloudSyncToggleRow localOnly={localOnly} onChange={setLocalOnly} />
-        {deviceKey ? (
+        {deviceLinkUrl ? (
           <SettingsRow
             title="Link another device"
-            description="Copy a link that signs another device into this cloud context."
+            description={
+              copyFeedback === "failed"
+                ? `Could not copy automatically. Copy this link by hand: ${deviceLinkUrl}`
+                : "Copy a link that signs another device into this cloud context."
+            }
             trailing={
-              <button type="button" className={rowButtonClass} onClick={() => void copyLinkUrl()}>
-                {copied ? (
+              <button type="button" className={rowButtonClass} onClick={copyLinkUrl}>
+                {copyFeedback === "copied" ? (
                   <Check className="size-[13px]" strokeWidth={2} aria-hidden />
+                ) : copyFeedback === "failed" ? (
+                  <TriangleAlert className="size-[13px]" strokeWidth={1.75} aria-hidden />
                 ) : (
                   <Link2 className="size-[13px]" strokeWidth={1.75} aria-hidden />
                 )}
-                {copied ? "Copied" : "Copy link"}
+                {copyFeedback === "copied"
+                  ? "Copied"
+                  : copyFeedback === "failed"
+                    ? "Copy failed"
+                    : "Copy link"}
               </button>
             }
           />

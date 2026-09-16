@@ -1,8 +1,9 @@
 "use client";
 
-import { Check, Copy, ExternalLink, Smartphone } from "lucide-react";
+import { ExternalLink, Smartphone } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { CopyableCommandLine } from "@/components/ui/CopyableCommandLine";
 import { getStoredSessionToken } from "@/lib/auth-client";
 import { openExternalUrl, postMobileBridgeMessage } from "@/lib/mobile-bridge";
 
@@ -28,48 +29,16 @@ export function isMobileNativeRuntime(): boolean {
   );
 }
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    // Older Android System WebViews do not expose navigator.clipboard.
-    try {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      const copied = document.execCommand("copy");
-      textarea.remove();
-      return copied;
-    } catch {
-      return false;
-    }
-  }
-}
-
 type SetupStatus = { kind: "info" | "ok" | "error"; text: string };
 
 export function TermuxServerSetup({ compact = false }: { compact?: boolean }) {
   const [mobileRuntime] = useState(isMobileNativeRuntime);
   const { probeServer, saveServer, setActiveServer } = useServerConnections();
   const [checking, setChecking] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<SetupStatus | null>(null);
 
   const openFDroid = useCallback(() => {
     openExternalUrl(TERMUX_FDROID_URL, { features: "noopener" });
-  }, []);
-
-  const copyCommand = useCallback(async () => {
-    const copied = await copyText(TERMUX_INSTALL_COMMAND);
-    setCopied(copied);
-    if (copied) {
-      window.setTimeout(() => setCopied(false), 1800);
-    }
   }, []);
 
   const connect = useCallback(async () => {
@@ -151,24 +120,12 @@ export function TermuxServerSetup({ compact = false }: { compact?: boolean }) {
         2 · Paste this in Termux. It upgrades packages first (fixes broken curl), then
         installs and starts the server.
       </p>
-      <div className="mt-[6px] flex min-w-0 items-center gap-[7px]">
-        <code className="hide-scrollbar-x block min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[7px] font-mono text-[10.5px] leading-none text-[var(--text-primary)]">
-          {TERMUX_INSTALL_COMMAND}
-        </code>
-        <button
-          type="button"
-          onClick={() => void copyCommand()}
-          className="inline-flex h-[30px] w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
-          aria-label="Copy Termux install command"
-        >
-          {copied ? (
-            <Check className="size-[13px]" strokeWidth={1.8} aria-hidden />
-          ) : (
-            <Copy className="size-[13px]" strokeWidth={1.6} aria-hidden />
-          )}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
+      <CopyableCommandLine
+        className="mt-[6px]"
+        command={TERMUX_INSTALL_COMMAND}
+        copyAriaLabel="Copy Termux install command"
+        testId="termux-install"
+      />
 
       <p className="mt-[10px] font-sans text-[11.5px] font-medium text-[var(--text-secondary)]">
         3 · Connect Cesium when installation finishes.
