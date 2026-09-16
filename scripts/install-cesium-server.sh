@@ -37,6 +37,63 @@ render_systemd_unit() {
   printf 'StandardError=append:%s\n\n[Install]\nWantedBy=default.target\n' "$(systemd_path "$log_file")"
 }
 
+# --- server dependency install -------------------------------------------
+# Defined ahead of the install flow (like the systemd helpers) so tests can
+# source this file with CESIUM_INSTALLER_SOURCE_ONLY=1 and drive them with a
+# fake bun, no network required.
+
+# bun links the server's file: @cesium/* workspace deps by copying each
+# package's built files into server/node_modules. A copy left behind by an
+# earlier install (a partial or now-inconsistent @cesium/core tree, or the
+# obsolete root-pointing `cesium` self-link) is what bun then tries to
+# reconcile on the next run, and a stale/incomplete one makes it abort with
+# "FileNotFound: failed copying files from cache to destination for package
+# @cesium/core". Removing the nested copies makes bun re-materialize them from
+# the freshly built packages. Used both before installing (drop stale state
+# from a prior install) and after building (so runtime resolves @cesium/*
+# through the root workspace symlinks that point at the built dist).
+clean_nested_workspace_copies() {
+  local source_dir="$1"
+  rm -rf "$source_dir/server/node_modules/@cesium" \
+    "$source_dir/server/node_modules/cesium"
+}
+
+# One filtered bun install. With CESIUM_BUN_INSTALL_FORCE=1 it adds --force,
+# which bypasses the on-disk bun cache - the recovery lever for a corrupt
+# cached package, not something to run on every install.
+run_server_bun_install() {
+  local bun_bin="$1"
+  local source_dir="$2"
+  local -a args=(install --filter @cesium/core --filter cesium-server
+    --ignore-scripts --no-save)
+  if [[ "${CESIUM_BUN_INSTALL_FORCE:-0}" == "1" ]]; then
+    args+=(--force)
+  fi
+  (cd "$source_dir" && "$bun_bin" "${args[@]}")
+}
+
+# Install the server's workspace dependencies, tolerating stale state left by
+# a previous install over the same checkout. Returns non-zero (with an
+# actionable message) instead of letting a bare bun error abort the script.
+install_server_dependencies() {
+  local bun_bin="$1"
+  local source_dir="$2"
+  clean_nested_workspace_copies "$source_dir"
+  if CESIUM_BUN_INSTALL_FORCE=0 run_server_bun_install "$bun_bin" "$source_dir"; then
+    return 0
+  fi
+  printf 'bun install failed; clearing stale dependency state and retrying with a bypassed cache...\n' >&2
+  clean_nested_workspace_copies "$source_dir"
+  if CESIUM_BUN_INSTALL_FORCE=1 run_server_bun_install "$bun_bin" "$source_dir"; then
+    return 0
+  fi
+  printf 'Failed to install Cesium server dependencies with bun.\n' >&2
+  printf 'Clear the stale dependency state and rerun the installer:\n' >&2
+  printf '  rm -rf %q/server/node_modules %q/node_modules\n' "$source_dir" "$source_dir" >&2
+  printf '  %q pm cache rm\n' "$bun_bin" >&2
+  return 1
+}
+
 if [[ "${CESIUM_INSTALLER_SOURCE_ONLY:-0}" == "1" ]]; then
   # `return` only succeeds when sourced; a direct run with the flag set exits.
   # shellcheck disable=SC2317
@@ -345,28 +402,22 @@ export PUPPETEER_SKIP_DOWNLOAD=1
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 export npm_config_fund=false
 export npm_config_audit=false
+if ! install_server_dependencies "$BUN_BIN" "$SOURCE_DIR"; then
+  exit 1
+fi
 (
   cd "$SOURCE_DIR"
-  "$BUN_BIN" install \
-    --filter @cesium/core \
-    --filter cesium-server \
-    --ignore-scripts \
-    --no-save
   "$BUN_BIN" run --cwd packages/core build
   # The server imports @cesium/contracts, whose package exports point at
   # dist/ - build it or the server fails to resolve the module at runtime.
   "$BUN_BIN" run --cwd packages/contracts build
-  # Checkouts installed before the server dropped its `"cesium": "file:.."`
-  # self-dependency still carry a root-pointing symlink here; bun does not
-  # prune it on upgrade, and it recurses into the whole repo.
-  rm -f server/node_modules/cesium
-  # bun materializes the server's file:../packages/* dependencies as nested
-  # copies taken at install time - before the packages were built - so a
-  # dist-less @cesium/core copy under server/node_modules shadows the built
-  # workspace package and the server dies with "Cannot find module
-  # '@cesium/core/...'". Remove the nested copies; imports then resolve
-  # through the root workspace symlinks, which point at the built packages.
-  rm -rf server/node_modules/@cesium
+  # bun materialized the file:../packages/* deps as nested copies taken during
+  # install - before the packages were built - so a dist-less @cesium/core copy
+  # under server/node_modules would shadow the built workspace package and the
+  # server would die with "Cannot find module '@cesium/core/...'". Drop the
+  # nested copies again now that dist exists; imports then resolve through the
+  # root workspace symlinks, which point at the built packages.
+  clean_nested_workspace_copies "$SOURCE_DIR"
 )
 
 if [[ ! -f "$SOURCE_DIR/packages/core/dist/index.js" ]]; then
