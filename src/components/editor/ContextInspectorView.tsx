@@ -18,6 +18,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { useOptionalAgentConversations } from "@/components/chat/AgentConversationsContext";
@@ -28,6 +29,7 @@ import {
 } from "@/components/chat/ContextUsageBar";
 import { ContextUsageRing } from "@/components/chat/ContextUsageRing";
 import { useContextUsageViewMode } from "@/hooks/useContextUsageViewMode";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type {
   AgentContextSegmentKind,
   AgentContextTranscript,
@@ -100,15 +102,6 @@ function countLines(text: string): number {
     if (text.charCodeAt(index) === 10) count += 1;
   }
   return count;
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const monoBlock =
@@ -584,7 +577,7 @@ function EntryCard({
 }) {
   const [rawLocal, setRawLocal] = useState<boolean | null>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copy, feedback: copyFeedback } = useCopyToClipboard({ copiedResetMs: 1_400 });
   const raw = rawLocal ?? rawAll;
   const ref = useRef<HTMLElement | null>(null);
 
@@ -594,7 +587,7 @@ function EntryCard({
     }
   }, [selected]);
 
-  const copyPayload = useCallback(async () => {
+  const copyPayload = useCallback(() => {
     const text = raw
       ? prettyJson(entry.events && entry.events.length > 0 ? entry.events : entry.tools ?? entry.text ?? "")
       : entry.toolCall
@@ -603,11 +596,8 @@ function EntryCard({
             entry.toolCall.result ?? "",
           ].join("\n\n")
         : entry.text ?? "";
-    if (await copyText(text)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_400);
-    }
-  }, [entry, raw]);
+    void copy(text);
+  }, [copy, entry, raw]);
 
   const seqLabel =
     entry.seqStart != null
@@ -688,13 +678,15 @@ function EntryCard({
         </button>
         <button
           type="button"
-          onClick={() => void copyPayload()}
-          title="Copy this block"
+          onClick={copyPayload}
+          title={copyFeedback === "failed" ? "Could not copy this block" : "Copy this block"}
           aria-label="Copy this block"
           className="flex size-[20px] shrink-0 items-center justify-center rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
         >
-          {copied ? (
+          {copyFeedback === "copied" ? (
             <Check className="size-[12px] text-[var(--status-success)]" strokeWidth={2} aria-hidden />
+          ) : copyFeedback === "failed" ? (
+            <TriangleAlert className="size-[12px] text-[var(--goal-accent)]" strokeWidth={2} aria-hidden />
           ) : (
             <Copy className="size-[12px]" strokeWidth={1.75} aria-hidden />
           )}

@@ -15,6 +15,7 @@ import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
 import {
   acquireExtensionSocket,
   releaseExtensionSocket,
@@ -556,8 +557,10 @@ export function ExtensionsWorkspaceBridge() {
         }
         case "clipboard-write": {
           const text = typeof payload.text === "string" ? payload.text : "";
-          if (text && typeof navigator !== "undefined" && navigator.clipboard) {
-            void navigator.clipboard.writeText(text).catch(() => undefined);
+          if (text) {
+            // Extension-initiated, so no user gesture is guaranteed; the
+            // helper never rejects and simply reports failure.
+            void copyTextToClipboard(text);
           }
           return;
         }

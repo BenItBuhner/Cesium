@@ -1,7 +1,8 @@
 "use client";
 
-import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCopyToClipboard, type CopyFeedback } from "@/hooks/useCopyToClipboard";
 import {
   attachSessionToken,
   getStoredSessionToken,
@@ -83,7 +84,9 @@ export function PublicAccessSettings({
   const [credentials, setCredentials] = useState<GeneratedCredentials | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const { copy: copyToClipboard, feedbackFor: copyFeedbackFor } = useCopyToClipboard({
+    copiedResetMs: 1600,
+  });
   const draftDirtyRef = useRef(false);
 
   const request = useCallback(
@@ -295,12 +298,25 @@ export function PublicAccessSettings({
     });
   }, [cloud.actions, serverBaseUrl, status]);
 
-  const copy = useCallback(async (key: string, value: string | null | undefined) => {
-    if (!value) return;
-    await navigator.clipboard.writeText(value);
-    setCopied(key);
-    window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 1600);
-  }, []);
+  // Called straight from the click so the clipboard write starts inside the
+  // user gesture (mobile browsers reject it otherwise).
+  const copy = useCallback(
+    (key: string, value: string | null | undefined) => {
+      if (!value) return;
+      void copyToClipboard(value, { key });
+    },
+    [copyToClipboard]
+  );
+  const copyIcon = (feedback: CopyFeedback) =>
+    feedback === "copied" ? (
+      <Check className="size-[13px]" aria-hidden />
+    ) : feedback === "failed" ? (
+      <TriangleAlert className="size-[13px]" aria-hidden />
+    ) : (
+      <Copy className="size-[13px]" aria-hidden />
+    );
+  const copyLabel = (feedback: CopyFeedback) =>
+    feedback === "copied" ? "Copied" : feedback === "failed" ? "Copy failed" : "Copy";
 
   const enabled = status?.enabled === true;
   const signedInConnectUrl = (() => {
@@ -400,16 +416,10 @@ export function PublicAccessSettings({
               <button
                 type="button"
                 className={rowButtonClass}
-                onClick={() =>
-                  void copy("link", signedInConnectUrl ?? status.connectUrl)
-                }
+                onClick={() => copy("link", signedInConnectUrl ?? status.connectUrl)}
               >
-                {copied === "link" ? (
-                  <Check className="size-[13px]" aria-hidden />
-                ) : (
-                  <Copy className="size-[13px]" aria-hidden />
-                )}
-                {copied === "link" ? "Copied" : "Copy"}
+                {copyIcon(copyFeedbackFor("link"))}
+                {copyLabel(copyFeedbackFor("link"))}
               </button>
               <a
                 href={signedInConnectUrl ?? status.connectUrl}
@@ -453,18 +463,14 @@ export function PublicAccessSettings({
                 type="button"
                 className={rowButtonClass}
                 onClick={() =>
-                  void copy(
+                  copy(
                     "credentials",
                     `Username: ${credentials.username}\nPassword: ${credentials.password}`
                   )
                 }
               >
-                {copied === "credentials" ? (
-                  <Check className="size-[13px]" aria-hidden />
-                ) : (
-                  <Copy className="size-[13px]" aria-hidden />
-                )}
-                {copied === "credentials" ? "Copied" : "Copy"}
+                {copyIcon(copyFeedbackFor("credentials"))}
+                {copyLabel(copyFeedbackFor("credentials"))}
               </button>
             ) : null}
             {enabled && status?.auth.credentialsManagerGenerated ? (
