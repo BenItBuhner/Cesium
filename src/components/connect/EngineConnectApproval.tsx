@@ -120,6 +120,14 @@ function EngineConnectApprovalInner({ code }: { code: string }) {
     return () => window.clearInterval(timer);
   }, []);
 
+  // The stash only has to survive the sign-in round trip; once the approval
+  // page renders for a ready account it must not drag the user back here.
+  useEffect(() => {
+    if (cloud.status === "ready") {
+      setPendingEngineConnect(null);
+    }
+  }, [cloud.status]);
+
   useEffect(() => {
     if (phase.kind !== "done") {
       return;

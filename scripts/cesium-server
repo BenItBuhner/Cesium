@@ -669,6 +669,10 @@ wait_for_pairing() {
   local result status account exit_code=0
   result="$("$BUN_BIN" "$CONNECT_HELPER" wait "$code" "$CONNECT_WAIT_TIMEOUT")" || exit_code=$?
   if ((exit_code != 0)); then
+    if ((exit_code == 130 || exit_code == 143)); then
+      printf '\nStopped waiting. The link stays valid until it expires; approve it any time.\n'
+      return 1
+    fi
     status="$(json_field "${result:-"{}"}" status 2>/dev/null || true)"
     case "$status" in
       expired) printf 'The link expired before it was opened. Run: cesium-server connect\n' ;;

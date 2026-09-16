@@ -879,6 +879,12 @@ function CloudBridge({
   // Autonomous restore: when the cloud context arrives, fold servers, voice
   // secrets and onboarding progress into local state without any user action.
   const lastAppliedBootstrapRef = useRef<CloudBootstrap | null>(null);
+  const [bootstrapApplied, setBootstrapApplied] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setBootstrapApplied(false);
+    }
+  }, [active]);
   useEffect(() => {
     if (!bootstrap || lastAppliedBootstrapRef.current === bootstrap) {
       return;
@@ -898,6 +904,7 @@ function CloudBridge({
       mergeOnboardingState(adopted, bootstrap.onboarding),
       bootstrap.user.key
     );
+    setBootstrapApplied(true);
   }, [bootstrap, actions]);
 
   // Local server-list changes push up (additive, idempotent upserts). The
@@ -968,8 +975,14 @@ function CloudBridge({
     return getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, pushLocalServers);
   }, [active, actions]);
 
+  // Voice settings (and the account wrapping key they ride with) push only
+  // after the first bootstrap was applied. `getVoiceSecretsForCloud` creates
+  // a wrapping key when this device has none; pushing before the bootstrap
+  // adopted the account's existing key made every fresh device overwrite it
+  // - and every credential sealed with the old key (harness sign-ins, paired
+  // engines) became unreadable on every device.
   useEffect(() => {
-    if (!active) {
+    if (!active || !bootstrapApplied) {
       return;
     }
     const pushVoiceSecrets = () => {
@@ -979,7 +992,7 @@ function CloudBridge({
     };
     pushVoiceSecrets();
     return getClientPlatform().addEventListener(VOICE_CLIENT_SETTINGS_EVENT, pushVoiceSecrets);
-  }, [active, actions]);
+  }, [active, actions, bootstrapApplied]);
 
   const status: CloudStatus = !authReady
     ? "loading"
