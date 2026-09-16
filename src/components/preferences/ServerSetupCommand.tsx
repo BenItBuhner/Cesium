@@ -1,7 +1,8 @@
 "use client";
 
-import { Check, Copy, SquareTerminal } from "lucide-react";
+import { SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CopyableCommandLine } from "@/components/ui/CopyableCommandLine";
 import { buildCesiumServerInstallCommand } from "@/lib/server-install-command";
 
 /**
@@ -26,7 +27,6 @@ export function ServerSetupCommand({
 }) {
   const [origin] = useState(hostedWebAppOrigin);
   const [command, setCommand] = useState("");
-  const [copied, setCopied] = useState(false);
   const [rendezvousStatus, setRendezvousStatus] = useState<
     "checking" | "ready" | "unavailable"
   >("checking");
@@ -49,17 +49,6 @@ export function ServerSetupCommand({
       });
     return () => controller.abort();
   }, [origin]);
-
-  const copyCommand = async () => {
-    if (!command) return;
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
-    }
-  };
 
   if (!origin) {
     return null;
@@ -98,25 +87,19 @@ export function ServerSetupCommand({
           </p>
         </div>
       </div>
-      <div className="mt-[9px] flex min-w-0 items-center gap-[7px]">
-        <code className="hide-scrollbar-x block min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[9px] py-[7px] font-mono text-[10.5px] leading-none text-[var(--text-primary)]">
-          {command || "Preparing install command..."}
-        </code>
-        <button
-          type="button"
-          disabled={!command || rendezvousStatus !== "ready"}
-          onClick={() => void copyCommand()}
-          className="inline-flex h-[30px] w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
-          aria-label="Copy Cesium server install command"
-        >
-          {copied ? (
-            <Check className="size-[13px]" strokeWidth={1.8} aria-hidden />
-          ) : (
-            <Copy className="size-[13px]" strokeWidth={1.6} aria-hidden />
-          )}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
+      {/*
+        Copying is deliberately not gated on the rendezvous check below. That
+        check only says whether the installed server will be able to publish a
+        stable connect link; the command itself is valid either way, and a
+        disabled Copy button just looked broken on phones.
+      */}
+      <CopyableCommandLine
+        className="mt-[9px]"
+        command={command}
+        placeholder="Preparing install command..."
+        copyAriaLabel="Copy Cesium server install command"
+        testId="server-install"
+      />
       <p className="mt-[7px] font-sans text-[10.5px] leading-relaxed text-[var(--text-disabled)]">
         {rendezvousStatus === "unavailable" ? (
           "Stable connection storage is not configured on this deployment. The site owner must attach Upstash Redis before sharing this installer."
