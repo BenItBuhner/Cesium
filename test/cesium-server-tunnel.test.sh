@@ -98,8 +98,12 @@ fi
 original_tunnel_pid="$(<"$TUNNEL_PID_FILE")"
 start_tunnel
 run_output="$(print_connection_details)"
-[[ "$run_output" == *"Connect: https://cesium-test.vercel.app?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
-  printf 'FAIL: run did not use the latest healthy public URL\n%s\n' "$run_output" >&2
+[[ "$run_output" == *"Connect: https://cesium-test.vercel.app/agent?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
+  printf 'FAIL: run did not use the latest healthy public URL on the workbench route\n%s\n' "$run_output" >&2
+  exit 1
+}
+[[ "$run_output" == *"Password: test-password"* ]] || {
+  printf 'FAIL: legacy connect block must still print the credentials\n%s\n' "$run_output" >&2
   exit 1
 }
 assert_equal "$original_tunnel_pid" "$(<"$TUNNEL_PID_FILE")" \
@@ -114,10 +118,74 @@ status_output="$(status)"
 
 printf '%s\n' "https://stale-first.lhr.life" >"$PUBLIC_URL_FILE"
 connect_output="$(print_connection_details)"
-[[ "$connect_output" == *"Connect: https://cesium-test.vercel.app?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
+[[ "$connect_output" == *"Connect: https://cesium-test.vercel.app/agent?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
   printf 'FAIL: connection details did not use the latest healthy public URL\n%s\n' "$connect_output" >&2
   exit 1
 }
+
+# One-link pairing: with a backend-managed tunnel and a working helper the
+# connect block prints the /connect/<code> link (and no password); the legacy
+# block stays one flag away and is the fallback when the helper fails.
+FAKE_BUN="$TEST_HOME/fake-bun"
+cat >"$FAKE_BUN" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "$1" == "-e" ]]; then
+  exec node -e "$2"
+fi
+case "$2" in
+  start)
+    if [[ "${FAKE_PAIRING_FAIL:-0}" == "1" ]]; then
+      printf 'Could not reach https://cesium-test.vercel.app to register the connect link\n' >&2
+      exit 1
+    fi
+    printf '{"code":"abcdefghjkmnpqrstuvwxyz234","connectUrl":"https://cesium-test.vercel.app/connect/abcdefghjkmnpqrstuvwxyz234","fingerprint":"7945-06CC-202F","label":"home","publicUrl":"https://current-second.lhr.life","expiresAt":1}\n'
+    ;;
+  qr) printf 'QR-CODE\n' ;;
+  wait) printf '{"status":"attached","account":{"email":"bennett@example.com","name":null}}\n' ;;
+  *) exit 2 ;;
+esac
+FAKE
+chmod +x "$FAKE_BUN"
+BUN_BIN="$FAKE_BUN"
+CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS=1
+export CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS
+if ! pairing_available; then
+  printf 'FAIL: pairing should be available with a backend-managed tunnel, helper, and auth\n' >&2
+  exit 1
+fi
+pairing_output="$(print_connection_details auto never)"
+[[ "$pairing_output" == *"https://cesium-test.vercel.app/connect/abcdefghjkmnpqrstuvwxyz234"* ]] || {
+  printf 'FAIL: connect did not print the pairing link\n%s\n' "$pairing_output" >&2
+  exit 1
+}
+[[ "$pairing_output" == *"Fingerprint: 7945-06CC-202F"* ]] || {
+  printf 'FAIL: connect did not print the fingerprint\n%s\n' "$pairing_output" >&2
+  exit 1
+}
+[[ "$pairing_output" != *"Password:"* && "$pairing_output" != *"serverUrl="* ]] || {
+  printf 'FAIL: the pairing block must not print credentials or the legacy URL\n%s\n' "$pairing_output" >&2
+  exit 1
+}
+wait_output="$(print_connection_details auto wait)"
+[[ "$wait_output" == *"Attached to bennett@example.com."* ]] || {
+  printf 'FAIL: connect did not report the approving account\n%s\n' "$wait_output" >&2
+  exit 1
+}
+legacy_output="$(print_connection_details legacy never)"
+[[ "$legacy_output" == *"Connect: https://cesium-test.vercel.app/agent?serverUrl="* && "$legacy_output" == *"Password: test-password"* ]] || {
+  printf 'FAIL: --legacy did not print the manual block\n%s\n' "$legacy_output" >&2
+  exit 1
+}
+FAKE_PAIRING_FAIL=1
+export FAKE_PAIRING_FAIL
+fallback_output="$(print_connection_details auto never 2>/dev/null)"
+[[ "$fallback_output" == *"Connect: https://cesium-test.vercel.app/agent?serverUrl="* ]] || {
+  printf 'FAIL: a failed pairing registration must fall back to the legacy block\n%s\n' "$fallback_output" >&2
+  exit 1
+}
+unset FAKE_PAIRING_FAIL
+unset CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS
+BUN_BIN=/bin/false
 assert_equal "https://current-second.lhr.life" \
   "$(<"$PUBLIC_URL_FILE")" \
   "the rotated healthy URL is persisted"

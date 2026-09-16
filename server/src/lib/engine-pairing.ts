@@ -141,8 +141,17 @@ function defaultGetCredentials(): { username: string; password: string } | null 
 
 export class EnginePairingManager {
   private pairings = new Map<string, PairingRecord>();
+  private deps: EnginePairingManagerDeps;
 
-  constructor(private readonly deps: EnginePairingManagerDeps = {}) {}
+  constructor(deps: EnginePairingManagerDeps = {}) {
+    this.deps = deps;
+  }
+
+  /** Route tests swap the cloud fetch / public-access context on the singleton. */
+  overrideDepsForTests(deps: EnginePairingManagerDeps): void {
+    this.deps = { ...this.deps, ...deps };
+    this.pairings.clear();
+  }
 
   /** Register a fresh pairing (superseding any pending one) and return its link. */
   async start(input: { ttlMs?: number } = {}): Promise<EnginePairingView> {
@@ -207,10 +216,14 @@ export class EnginePairingManager {
       );
     }
     const payload = (await response.json().catch(() => null)) as { expiresAt?: unknown } | null;
-    const expiresAt =
+    // The cloud may shorten the link's life (its own TTL clamp), never extend
+    // it past what this engine asked for.
+    const expiresAt = Math.min(
+      now + ttlMs,
       typeof payload?.expiresAt === "number" && Number.isFinite(payload.expiresAt)
         ? payload.expiresAt
-        : now + ttlMs;
+        : now + ttlMs
+    );
     for (const [existingCode, record] of this.pairings) {
       if (record.status === "pending") {
         record.status = "cancelled";
