@@ -11,6 +11,7 @@ import {
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
 import { ClerkNativeHandoff } from "@/components/auth/ClerkNativeHandoff";
+import { PendingEngineConnectRedirect } from "@/components/connect/PendingEngineConnectRedirect";
 import {
   ConvexProvider,
   ConvexReactClient,
@@ -112,6 +113,12 @@ export type CloudCodespaceMeta = {
   enginePassword?: string;
 };
 
+/** Recorded when an engine was attached through the one-link pairing flow. */
+export type CloudServerPairingMeta = {
+  fingerprint: string;
+  attachedAt: number;
+};
+
 export type CloudServer = {
   name: string;
   baseUrl: string;
@@ -121,6 +128,8 @@ export type CloudServer = {
   rendezvous: RendezvousLocator | null;
   /** Present for engines living inside a paired GitHub Codespace. */
   codespace?: CloudCodespaceMeta | null;
+  /** Present for engines attached via `/connect/<code>`. */
+  pairing?: CloudServerPairingMeta | null;
   notes: string | null;
   lastConnectedAt: number | null;
 };
@@ -218,10 +227,19 @@ export type CloudActions = {
     sessionToken?: string;
     rendezvous?: RendezvousLocator;
     codespace?: CloudCodespaceMeta;
+    pairing?: CloudServerPairingMeta;
     notes?: string;
     markConnected?: boolean;
   }): Promise<void>;
   removeServer(input: CloudServerRemoval): Promise<void>;
+  /**
+   * One-link engine pairing: record that this account approved
+   * `/connect/<code>` after the engine credential was claimed and saved.
+   */
+  approveEnginePairing(input: {
+    code: string;
+    serverId: string;
+  }): Promise<{ alreadyApproved: boolean }>;
   /** Owner: grant another account access to one of this user's servers. */
   createServerShare(input: {
     baseUrl?: string;
@@ -649,6 +667,7 @@ function CloudBridge({
   const register = useMutation(api.context.register);
   const saveServerMutation = useMutation(api.servers.save);
   const removeServerMutation = useMutation(api.servers.remove);
+  const approvePairingMutation = useMutation(api.pairings.approve);
   const createShareMutation = useMutation(api.shares.create);
   const respondShareMutation = useMutation(api.shares.respond);
   const claimShareMutation = useMutation(api.shares.claimByCode);
@@ -681,6 +700,12 @@ function CloudBridge({
       },
       async removeServer(input) {
         await removeServerMutation({ ...identityArgs, ...input });
+      },
+      async approveEnginePairing(input) {
+        const result = await unwrapConvexActionErrors(() =>
+          approvePairingMutation({ ...identityArgs, ...input })
+        );
+        return { alreadyApproved: result.alreadyApproved };
       },
       // Share failures render directly in settings and toasts, so every call
       // unwraps Convex error envelopes into human-readable messages.
@@ -764,6 +789,7 @@ function CloudBridge({
       },
     }),
     [
+      approvePairingMutation,
       claimShareMutation,
       convex,
       createShareMutation,
@@ -994,7 +1020,12 @@ function CloudBridge({
     ]
   );
 
-  return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
+  return (
+    <CloudContext.Provider value={value}>
+      <PendingEngineConnectRedirect status={status} />
+      {children}
+    </CloudContext.Provider>
+  );
 }
 
 const CLERK_READY_TIMEOUT_MS = 8_000;

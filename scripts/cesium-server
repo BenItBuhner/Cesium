@@ -48,8 +48,11 @@ SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
 SUPERVISOR_PROCESS_SIGNATURE="cesium-server supervise"
 MANAGER_BIN="${CESIUM_MANAGER_BIN:-$CESIUM_HOME/bin/cesium-server}"
 RENDEZVOUS_HELPER="$SOURCE_DIR/scripts/cesium-rendezvous.mjs"
+CONNECT_HELPER="$SOURCE_DIR/scripts/cesium-connect.mjs"
 PUBLIC_HEALTH_TIMEOUT="${CESIUM_PUBLIC_HEALTH_TIMEOUT:-120}"
 TUNNEL_URL_TIMEOUT="${CESIUM_TUNNEL_URL_TIMEOUT:-60}"
+# How long `connect` / `run` wait for the account to approve the pairing link.
+CONNECT_WAIT_TIMEOUT="${CESIUM_CONNECT_WAIT_TIMEOUT:-600}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -582,34 +585,135 @@ encoded_public_url() {
   printf '%s' "$value"
 }
 
+# One-link account pairing is available when the engine owns public access
+# (it registers the link with the account site itself), the bun runtime and
+# helper are present, and engine authentication is on.
+pairing_available() {
+  backend_manages_public_access || return 1
+  [[ -n "${CESIUM_WEB_URL:-}" ]] || return 1
+  [[ -x "$BUN_BIN" && -f "$CONNECT_HELPER" ]] || return 1
+  [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" && -n "${OPENCURSOR_AUTH_PASSWORD:-}" ]]
+}
+
+json_field() {
+  local json="$1"
+  local field="$2"
+  CESIUM_JSON="$json" CESIUM_FIELD="$field" "$BUN_BIN" -e '
+    const value = JSON.parse(process.env.CESIUM_JSON ?? "{}")[process.env.CESIUM_FIELD ?? ""];
+    if (value === undefined || value === null) process.exit(1);
+    process.stdout.write(typeof value === "string" ? value : JSON.stringify(value));
+  ' 2>/dev/null
+}
+
+# Legacy connect block: web URL carrying the engine URL, plus the credentials
+# to type in. Kept for accountless users and as the fallback when the account
+# site cannot register a pairing link.
+print_legacy_connection_details() {
+  local remote="$1"
+  if [[ -n "${CESIUM_WEB_URL:-}" ]]; then
+    local stable_url
+    stable_url="$(stable_connect_url || true)"
+    if [[ -n "$stable_url" ]]; then
+      local session_token signed_url
+      session_token="$(issue_connect_session_token || true)"
+      signed_url="$stable_url"
+      if [[ -n "$session_token" ]]; then
+        signed_url="$(attach_session_to_connect_url "$stable_url" "$session_token")"
+      fi
+      printf 'Connect: %s\n' "$signed_url"
+    else
+      # The workbench route consumes ?serverUrl=; the site root is the
+      # marketing page and drops it.
+      printf 'Connect: %s/agent?serverUrl=%s\n' \
+        "${CESIUM_WEB_URL%/}" "$(encoded_public_url "$remote")"
+    fi
+  fi
+  if [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" ]]; then
+    printf 'Username: %s\n' "$OPENCURSOR_AUTH_USERNAME"
+    printf 'Password: %s\n' "$OPENCURSOR_AUTH_PASSWORD"
+  fi
+}
+
+# Mint a pairing link on the engine and print it (with a QR code when stdout
+# is a terminal). Returns 1 when the engine could not register the link so the
+# caller can fall back to the legacy block.
+print_pairing_link() {
+  local pairing
+  pairing="$("$BUN_BIN" "$CONNECT_HELPER" start 2>"$RUN_DIR/connect-error")" || {
+    if [[ -s "$RUN_DIR/connect-error" ]]; then
+      printf 'Account link unavailable: %s\n' "$(tr '\n' ' ' <"$RUN_DIR/connect-error")" >&2
+    fi
+    rm -f "$RUN_DIR/connect-error"
+    return 1
+  }
+  rm -f "$RUN_DIR/connect-error"
+  local connect_url fingerprint code
+  connect_url="$(json_field "$pairing" connectUrl)" || return 1
+  fingerprint="$(json_field "$pairing" fingerprint)" || return 1
+  code="$(json_field "$pairing" code)" || return 1
+  printf '\nOpen this link on any device and sign in to attach this engine to your account:\n\n'
+  printf '  %s\n\n' "$connect_url"
+  if [[ "${CESIUM_CONNECT_QR:-1}" == "1" && -t 1 ]]; then
+    "$BUN_BIN" "$CONNECT_HELPER" qr "$connect_url" 2>/dev/null | sed 's/^/  /' || true
+    printf '\n'
+  fi
+  printf 'Fingerprint: %s (the page shows the same code)\n' "$fingerprint"
+  printf 'The link is single-use and expires in 10 minutes. Manual details: cesium-server connect --legacy\n'
+  PAIRING_CODE="$code"
+}
+
+# Block until the pairing is approved (or expires) and report the account.
+wait_for_pairing() {
+  local code="$1"
+  printf '\nWaiting for approval (Ctrl-C to stop waiting; the link stays valid)...\n'
+  local result status account exit_code=0
+  result="$("$BUN_BIN" "$CONNECT_HELPER" wait "$code" "$CONNECT_WAIT_TIMEOUT")" || exit_code=$?
+  if ((exit_code != 0)); then
+    status="$(json_field "${result:-"{}"}" status 2>/dev/null || true)"
+    case "$status" in
+      expired) printf 'The link expired before it was opened. Run: cesium-server connect\n' ;;
+      cancelled) printf 'The link was replaced by a newer one.\n' ;;
+      timeout) printf 'Still waiting - the link stays valid until it expires. Rerun: cesium-server connect\n' ;;
+      *) printf 'Could not confirm the attach; check with: cesium-server status\n' ;;
+    esac
+    return 1
+  fi
+  status="$(json_field "$result" status || true)"
+  account="$(json_field "$result" account 2>/dev/null || true)"
+  local who=""
+  if [[ -n "$account" && "$account" != "null" ]]; then
+    who="$(json_field "$account" email 2>/dev/null || json_field "$account" name 2>/dev/null || true)"
+  fi
+  if [[ -n "$who" ]]; then
+    printf '\nAttached to %s. Every device signed in to that account can use this engine now.\n' "$who"
+  else
+    printf '\nAttached. Every device signed in to the approving account can use this engine now.\n'
+  fi
+}
+
 print_connection_details() {
+  local mode="${1:-auto}"
+  local wait_mode="${2:-auto}"
   printf '\nCesium server is running.\n'
   printf 'Local URL: %s\n' "$LOCAL_URL"
   if [[ "${CESIUM_TUNNEL_ENABLED:-0}" == "1" ]]; then
     local remote
     remote="$(public_url)" || {
       printf 'Public tunnel: unavailable; run cesium-server run to retry.\n'
+      printf 'Workspace: %s\n' "${WORKSPACE_ROOT:-}"
       return 0
     }
     printf 'Public URL: %s\n' "$remote"
-    if [[ -n "${CESIUM_WEB_URL:-}" ]]; then
-      local stable_url
-      stable_url="$(stable_connect_url || true)"
-      if [[ -n "$stable_url" ]]; then
-        local session_token signed_url
-        session_token="$(issue_connect_session_token || true)"
-        signed_url="$stable_url"
-        if [[ -n "$session_token" ]]; then
-          signed_url="$(attach_session_to_connect_url "$stable_url" "$session_token")"
-        fi
-        printf 'Connect: %s\n' "$signed_url"
-      else
-        local separator="?"
-        [[ "$CESIUM_WEB_URL" == *"?"* ]] && separator="&"
-        printf 'Connect: %s%sserverUrl=%s\n' \
-          "${CESIUM_WEB_URL%/}" "$separator" "$(encoded_public_url "$remote")"
+    printf 'Workspace: %s\n' "${WORKSPACE_ROOT:-}"
+    PAIRING_CODE=""
+    if [[ "$mode" != "legacy" ]] && pairing_available && print_pairing_link; then
+      if [[ -n "$PAIRING_CODE" ]] && { [[ "$wait_mode" == "wait" ]] || { [[ "$wait_mode" == "auto" ]] && [[ -t 1 ]]; }; }; then
+        wait_for_pairing "$PAIRING_CODE" || true
       fi
+      return 0
     fi
+    print_legacy_connection_details "$remote"
+    return 0
   fi
   if [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" ]]; then
     printf 'Username: %s\n' "$OPENCURSOR_AUTH_USERNAME"
@@ -860,6 +964,13 @@ main() {
           printf 'Rendezvous: %s\n' "$(tr '\n' ' ' <"$RENDEZVOUS_ERROR_FILE")" >&2
         fi
         printf 'Inspect: cesium-server logs server; cesium-server logs rendezvous\n' >&2
+        # A reachable engine is still usable even while the rendezvous
+        # registry is unhappy - show how to connect instead of leaving the
+        # user with only an error.
+        if curl -fsS --max-time 5 "$LOCAL_URL/health" >/dev/null 2>&1 &&
+          public_url >/dev/null 2>&1; then
+          print_connection_details
+        fi
         return 1
       fi
       print_connection_details
@@ -888,7 +999,21 @@ main() {
       printf '\n'
       ;;
     connect)
-      print_connection_details
+      local connect_mode="auto" connect_wait="auto"
+      shift
+      for argument in "$@"; do
+        case "$argument" in
+          --legacy) connect_mode="legacy" ;;
+          --no-wait) connect_wait="never" ;;
+          --wait) connect_wait="wait" ;;
+          --no-qr) CESIUM_CONNECT_QR=0 ;;
+          *)
+            printf 'Usage: cesium-server connect [--legacy] [--wait|--no-wait] [--no-qr]\n' >&2
+            exit 2
+            ;;
+        esac
+      done
+      print_connection_details "$connect_mode" "$connect_wait"
       ;;
     credentials)
       printf 'Username: %s\nPassword: %s\n' \
@@ -901,7 +1026,7 @@ main() {
       update_install
       ;;
     *)
-      printf 'Usage: cesium-server {run|stop|restart|status|health|connect|credentials|logs [server|tunnel|rendezvous|supervisor]|update}\n' >&2
+      printf 'Usage: cesium-server {run|stop|restart|status|health|connect [--legacy] [--wait|--no-wait] [--no-qr]|credentials|logs [server|tunnel|rendezvous|supervisor]|update}\n' >&2
       exit 2
       ;;
   esac

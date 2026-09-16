@@ -85,8 +85,8 @@ export function ServerSetupCommand({
             {accountLinked ? (
               <>
                 Run this on the machine Cesium should access. It installs into{" "}
-                <span className="font-mono">~/.cesium</span>, starts immediately, and attaches
-                to your account so every signed-in device can use it.
+                <span className="font-mono">~/.cesium</span>, starts immediately, and prints a
+                link - open it on any device to attach the engine to your account.
               </>
             ) : (
               <>

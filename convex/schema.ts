@@ -78,12 +78,78 @@ export default defineSchema({
       })
     ),
     notes: v.optional(v.string()),
+    /**
+     * Set when the engine was attached through the one-link pairing flow
+     * (`/connect/<code>`). The engine credential itself lives sealed in
+     * `userSecrets` under `engine.auth.<rendezvous.serverId>`; this only
+     * records what the approving device saw.
+     */
+    pairing: v.optional(
+      v.object({
+        fingerprint: v.string(),
+        attachedAt: v.number(),
+      })
+    ),
     lastConnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_url", ["userId", "baseUrl"]),
+
+  /**
+   * Device-authorization style engine pairings. An engine that wants to be
+   * attached to an account registers a short-lived pairing (via the web
+   * app's `/api/connect/pairings` facade, unauthenticated - the engine has no
+   * identity yet) and prints `/connect/<code>`. A signed-in browser opening
+   * that link approves it. The row never carries engine secrets: the browser
+   * fetches the credential from the engine directly using the code, then
+   * stores it sealed in `userSecrets`.
+   */
+  enginePairings: defineTable({
+    /** URL capability (`/connect/<code>`): 128-bit URL-safe random string. */
+    code: v.string(),
+    /** SHA-256 (base64url) of the engine's poll secret; gates status reads. */
+    pollSecretHash: v.string(),
+    /** Rendezvous server id - the engine's stable identity. */
+    serverId: v.string(),
+    /** Human-checkable engine fingerprint (derived from `serverId`). */
+    fingerprint: v.string(),
+    /** Engine label (defaults to its hostname). */
+    label: v.string(),
+    /** Public HTTPS base URL the approving browser should reach. */
+    publicUrl: v.string(),
+    status: v.union(v.literal("pending"), v.literal("approved")),
+    approvedUserId: v.optional(v.id("users")),
+    approvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_code", ["code"])
+    .index("by_server", ["serverId"])
+    .index("by_expiry", ["expiresAt"]),
+
+  /**
+   * Rendezvous registry records (the encrypted "where is my engine right
+   * now" pointer engines publish every few seconds). Mirrors the Upstash
+   * layout so `/api/rendezvous/<serverId>` can run on Convex when no Redis
+   * is attached: one row per server id, holding the write-secret hash that
+   * claimed the id plus the latest ciphertext. Payloads are AES-GCM
+   * ciphertext only decryptable with the locator's read secret.
+   */
+  rendezvousRecords: defineTable({
+    serverId: v.string(),
+    /** SHA-256 (base64url) of the rendezvous write secret that owns the id. */
+    secretHash: v.string(),
+    /** Base64url `iv.ciphertext+tag` produced by the engine. */
+    ciphertext: v.string(),
+    version: v.number(),
+    updatedAt: v.number(),
+    expiresAt: v.number(),
+    /** Ownership of the id lapses when unused for this long. */
+    authExpiresAt: v.number(),
+  }).index("by_server", ["serverId"]),
 
   /**
    * Account-to-account server sharing: one row per grant of one server to one

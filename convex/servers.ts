@@ -97,6 +97,13 @@ export const save = mutation({
     codespace: v.optional(codespaceMetaValidator),
     notes: v.optional(v.string()),
     markConnected: v.optional(v.boolean()),
+    /** Set by the one-link pairing flow; preserved by every other upsert. */
+    pairing: v.optional(
+      v.object({
+        fingerprint: v.string(),
+        attachedAt: v.number(),
+      })
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await ensureUser(ctx, args.deviceKey);
@@ -163,6 +170,7 @@ export const save = mutation({
       await ctx.db.patch(existing._id, {
         ...patch,
         ...(rendezvous ? { rendezvous } : {}),
+        ...(args.pairing ? { pairing: args.pairing } : {}),
         ...(args.markConnected ? { lastConnectedAt: now } : {}),
         updatedAt: now,
       });
@@ -172,6 +180,7 @@ export const save = mutation({
       userId,
       ...patch,
       ...(rendezvous ? { rendezvous } : {}),
+      ...(args.pairing ? { pairing: args.pairing } : {}),
       lastConnectedAt: args.markConnected ? now : undefined,
       createdAt: now,
       updatedAt: now,
