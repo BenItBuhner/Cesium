@@ -37,6 +37,15 @@ const HARNESS_AUTH_SYNC_IDS = new Set([
 ]);
 const HARNESS_AUTH_MAX_PAYLOAD_CHARS = 200_000;
 
+/**
+ * Engine credentials attached through the one-link pairing flow: one row per
+ * engine, `engine.auth.<rendezvous serverId>`, holding the `{ username,
+ * password }` pair sealed on the approving device with the account wrapping
+ * key. Any signed-in device opens it to log in to that engine without typing.
+ */
+const ENGINE_AUTH_KIND_PREFIX = "engine.auth.";
+const ENGINE_AUTH_SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
+
 const secretRecord = v.object({
   kind: v.string(),
   payload: v.string(),
@@ -50,9 +59,20 @@ function isHarnessAuthKind(kind: string): boolean {
   );
 }
 
+function isEngineAuthKind(kind: string): boolean {
+  return (
+    kind.startsWith(ENGINE_AUTH_KIND_PREFIX) &&
+    ENGINE_AUTH_SERVER_ID_PATTERN.test(kind.slice(ENGINE_AUTH_KIND_PREFIX.length))
+  );
+}
+
 function assertKind(kind: string): string {
   const trimmed = kind.trim();
-  if (!ALLOWED_KINDS.has(trimmed) && !isHarnessAuthKind(trimmed)) {
+  if (
+    !ALLOWED_KINDS.has(trimmed) &&
+    !isHarnessAuthKind(trimmed) &&
+    !isEngineAuthKind(trimmed)
+  ) {
     throw new Error("Unknown secret kind.");
   }
   return trimmed;

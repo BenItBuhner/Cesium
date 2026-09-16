@@ -22,6 +22,7 @@ import {
   LandingHeaderActions,
   LandingHeroActions,
 } from "@/components/landing/LandingAuthActions";
+import { LandingConnectForwarder } from "@/components/landing/LandingConnectForwarder";
 import { CesiumMark } from "@/components/ui/CesiumMark";
 
 /* ------------------------------------------------------------------------ */
@@ -273,6 +274,7 @@ export function LandingPage() {
 
   return (
     <div className="fixed inset-0 z-0 overflow-y-auto overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-primary)]">
+      <LandingConnectForwarder />
       {/* nav */}
       <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-main)_82%,transparent)] backdrop-blur-md">
         <div className="mx-auto flex h-[56px] max-w-[1100px] items-center justify-between px-[24px]">

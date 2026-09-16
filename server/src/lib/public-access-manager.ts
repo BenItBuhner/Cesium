@@ -6,6 +6,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile } from "./persistence.js";
 import { isAuthEnabled, rotateAuthSecurityState } from "./auth.js";
@@ -352,6 +353,33 @@ export class PublicAccessManager {
   async getStatus(): Promise<PublicAccessStatus> {
     await this.load();
     return this.status();
+  }
+
+  /**
+   * Identity + reachability an account pairing needs: stable server id, the
+   * rendezvous read secret (the same one today's connect fragment carries),
+   * the account site origin, and the URL a browser can reach right now.
+   * `null` until public access is enabled and a public URL proved healthy.
+   */
+  async getPairingContext(): Promise<{
+    serverId: string;
+    rendezvousReadSecret: string;
+    webAppOrigin: string;
+    publicUrl: string;
+    label: string;
+  } | null> {
+    await this.load();
+    const config = this.config;
+    if (!config?.enabled || !this.currentPublicUrl) {
+      return null;
+    }
+    return {
+      serverId: config.serverId,
+      rendezvousReadSecret: config.rendezvousReadSecret,
+      webAppOrigin: new URL(config.webAppUrl).origin,
+      publicUrl: this.currentPublicUrl,
+      label: config.label || os.hostname() || "Cesium engine",
+    };
   }
 
   async updateConfig(input: PublicAccessConfigInput): Promise<PublicAccessStatus> {
