@@ -102,7 +102,7 @@ export function ServerSetupCommand({
       />
       <p className="mt-[7px] font-sans text-[10.5px] leading-relaxed text-[var(--text-disabled)]">
         {rendezvousStatus === "unavailable" ? (
-          "Stable connection storage is not configured on this deployment. The site owner must attach Upstash Redis before sharing this installer."
+          "Stable connection storage is not configured on this deployment. The site owner must enable Cesium Cloud or attach Upstash Redis before sharing this installer."
         ) : rendezvousStatus === "checking" ? (
           "Checking stable connection service..."
         ) : (
