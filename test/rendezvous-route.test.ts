@@ -5,6 +5,7 @@ import {
   handleRendezvousPut,
 } from "../src/lib/rendezvous-route.ts";
 import {
+  ConvexRendezvousStore,
   createRendezvousStoreFromEnv,
   type RendezvousRecord,
   type RendezvousStore,
@@ -142,10 +143,19 @@ describe("rendezvous route", () => {
     assert.equal(expired.status, 404);
   });
 
-  test("fails closed when durable storage is not configured", () => {
-    assert.throws(
-      () => createRendezvousStoreFromEnv({}),
-      /Attach Upstash Redis/
-    );
+  test("falls back to the Cesium Cloud registry, failing closed only with cloud off", () => {
+    const previous = process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+    try {
+      delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+      assert.ok(createRendezvousStoreFromEnv({}) instanceof ConvexRendezvousStore);
+      process.env.NEXT_PUBLIC_CESIUM_CLOUD = "0";
+      assert.throws(() => createRendezvousStoreFromEnv({}), /Attach Upstash Redis/);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+      } else {
+        process.env.NEXT_PUBLIC_CESIUM_CLOUD = previous;
+      }
+    }
   });
 });

@@ -42,6 +42,10 @@ if (posture.kind === "client-only") {
  * - `/auth/native-return` - packaged-app ticket handoff; the page itself
  *   bounces unsigned visitors back to sign-in with `native_handoff=1`.
  * - `/api/rendezvous` - engines (curl, no browser session) publish here.
+ * - `/api/connect` - engines register / poll one-link pairings here.
+ * - `/connect/<code>` - the pairing approval page runs its own sign-in gate
+ *   (it must stash the code before Clerk's redirect, which always lands on
+ *   `/setup`), so the network boundary must not bounce it first.
  * - `/api/releases` - powers the download page for signed-out visitors.
  * - `/~offline`, `/manifest.json` - PWA plumbing fetched without credentials.
  */
@@ -52,6 +56,8 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/auth/native-return",
   "/api/rendezvous(.*)",
+  "/api/connect(.*)",
+  "/connect(.*)",
   "/api/releases(.*)",
   "/~offline",
   "/manifest.json",

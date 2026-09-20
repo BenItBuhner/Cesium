@@ -10,10 +10,14 @@ import {
   shouldOfferManualServerConnect,
 } from "@/lib/account-server-sync";
 import {
+  buildEngineConnectUrl,
+  parseEngineConnectInput,
+} from "@/lib/cloud/engine-pairing";
+import {
   assertEngineConnectionAllowed,
   REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE,
-  normalizeServerBaseUrl,
   setStoredSessionToken,
+  type RendezvousLocator,
 } from "@cesium/client";
 import {
   checkEngineHealth,
@@ -35,15 +39,17 @@ export function DeviceConnectPanel({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [fallbackOpen, setFallbackOpen] = useState(false);
+  const [pendingRendezvous, setPendingRendezvous] = useState<RendezvousLocator | null>(null);
 
   const linked = accountOwnsServers(cloud);
   const showManualByDefault = shouldOfferManualServerConnect(cloud);
   const showManual = showManualByDefault || fallbackOpen;
 
-  const finalize = (baseUrl: string) => {
+  const finalize = (baseUrl: string, rendezvous?: RendezvousLocator | null) => {
     const saved = saveServer({
       label: name.trim() || undefined,
       baseUrl,
+      ...(rendezvous ? { rendezvous } : {}),
     });
     setActiveServer(saved.id);
     onConnected(saved.id);
@@ -52,14 +58,30 @@ export function DeviceConnectPanel({
   const testAndConnect = async (rawUrl: string) => {
     setError(null);
     setPhase("checking");
-    let baseUrl: string;
-    try {
-      baseUrl = normalizeServerBaseUrl(rawUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    const parsed = parseEngineConnectInput(rawUrl);
+    if (parsed.kind === "invalid") {
+      setError(parsed.message);
       setPhase("idle");
       return;
     }
+    if (parsed.kind === "pairing-link") {
+      // A one-link pairing URL is approved on its own page (sign-in gate,
+      // fingerprint check, account writes) - hand off instead of probing it.
+      const origin =
+        typeof window !== "undefined" && /^https?:$/.test(window.location.protocol)
+          ? window.location.origin
+          : "";
+      const target = parsed.url || (origin ? buildEngineConnectUrl(origin, parsed.code) : "");
+      if (!target) {
+        setError("Open that connect link in your browser to attach the engine.");
+        setPhase("idle");
+        return;
+      }
+      window.location.assign(target);
+      return;
+    }
+    const baseUrl = parsed.baseUrl;
+    const rendezvous = parsed.rendezvous ?? null;
     try {
       await checkEngineHealth(baseUrl);
       const auth = await getEngineAuthStatus(baseUrl);
@@ -69,16 +91,20 @@ export function DeviceConnectPanel({
       });
       if (auth.enabled && !auth.authenticated) {
         setBaseUrlInput(baseUrl);
+        setPendingRendezvous(rendezvous);
+        if (parsed.label && !name.trim()) {
+          setName(parsed.label);
+        }
         setPhase("needs-auth");
         return;
       }
-      finalize(baseUrl);
+      finalize(baseUrl, rendezvous);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
         message === REMOTE_ENGINE_AUTH_REQUIRED_MESSAGE
           ? message
-          : `Could not reach the engine: ${message}`
+          : `Could not reach the engine at ${baseUrl}: ${message}`
       );
       setPhase("idle");
     }
@@ -88,10 +114,14 @@ export function DeviceConnectPanel({
     setError(null);
     setPhase("checking");
     try {
-      const baseUrl = normalizeServerBaseUrl(baseUrlInput);
+      const parsed = parseEngineConnectInput(baseUrlInput);
+      if (parsed.kind !== "engine-url") {
+        throw new Error("Server URL must be an absolute http(s) URL.");
+      }
+      const baseUrl = parsed.baseUrl;
       const { token } = await loginToEngine(baseUrl, username, password);
       setStoredSessionToken(token, null, baseUrl);
-      finalize(baseUrl);
+      finalize(baseUrl, pendingRendezvous ?? parsed.rendezvous ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("needs-auth");
@@ -102,8 +132,9 @@ export function DeviceConnectPanel({
     <div className="flex flex-col gap-[8px] px-[8px] py-[6px]">
       {linked ? (
         <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
-          Install the engine on the other machine. Once it signs in, it shows up on every
-          device on this account. No URL to paste.
+          On the other machine run <span className="font-mono">cesium-server connect</span> and
+          open the link it prints on any device. Approve once and the engine appears here on
+          every device signed in to this account - no URL or password to copy.
         </p>
       ) : (
         <p className="font-sans text-[11.5px] leading-snug text-[var(--text-secondary)]">
@@ -124,15 +155,17 @@ export function DeviceConnectPanel({
             strokeWidth={1.7}
             aria-hidden
           />
-          Local fallback
+          Connect with a URL instead
         </button>
       ) : null}
       {showManual ? (
         <>
           {linked ? (
             <p className="font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
-              Paste a connect URL only for a local engine that is not attached to this
-              account.
+              Paste the engine URL or the connect link from{" "}
+              <span className="font-mono">cesium-server connect --legacy</span>, then sign in
+              with its username and password. Use this for an engine that is not attached to
+              this account.
             </p>
           ) : null}
           <input

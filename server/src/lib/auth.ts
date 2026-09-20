@@ -988,6 +988,9 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     pathname === "/api/auth/status" ||
     pathname === "/api/auth/login" ||
     pathname === "/api/auth/logout" ||
+    // One-link pairing: the approving browser proves possession of the
+    // short-lived connect code instead of holding an engine session.
+    pathname === "/api/pairing/claim" ||
     pathname === "/api/mcp/oauth/callback" ||
     pathname === "/api/settings/pi-agent/oauth/callback" ||
     pathname === "/api/cloud-agents/oauth/callback" ||

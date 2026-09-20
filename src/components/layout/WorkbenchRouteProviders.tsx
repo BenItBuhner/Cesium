@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { AuthProvider, useAuth } from "@/components/auth/AuthProvider";
 import { FirstRunAccountGate } from "@/components/auth/FirstRunAccountGate";
 import { AccountSettingsSync } from "@/components/cloud/AccountSettingsSync";
+import { EngineCredentialAutoLogin } from "@/components/cloud/EngineCredentialAutoLogin";
 import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
 import { LegacyDeviceSettingsMigration } from "@/components/preferences/LegacyDeviceSettingsMigration";
@@ -24,6 +25,7 @@ function ThemedAuthBoundary({ children }: { children: ReactNode }) {
   return (
     <GlobalSettingsProvider serverSettingsEnabled={serverSettingsEnabled}>
       <AccountSettingsSync />
+      <EngineCredentialAutoLogin />
       <LegacyDeviceSettingsMigration />
       <ThemeProvider>
         <UserPreferencesProvider>{children}</UserPreferencesProvider>

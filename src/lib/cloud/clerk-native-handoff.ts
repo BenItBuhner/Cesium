@@ -34,10 +34,27 @@ export function isNativeClerkHandoffSearch(searchParams: SearchParamsLike): bool
   return value === "1" || value === "true";
 }
 
+/**
+ * Same-origin paths a sign-in may resume at instead of `/setup`. Only the
+ * engine-connect approval page qualifies: it carries a short-lived pairing
+ * code that must survive the Clerk round trip. Anything else (absolute URLs,
+ * protocol-relative tricks, other routes) falls back to the default.
+ */
+const RESUMABLE_REDIRECT_PATTERN = /^\/connect\/[a-z0-9]{20,64}$/;
+
+export function resumableClerkRedirectPath(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return RESUMABLE_REDIRECT_PATTERN.test(trimmed) ? trimmed : null;
+}
+
 export function clerkAuthRedirectPath(searchParams: SearchParamsLike): string {
-  return isNativeClerkHandoffSearch(searchParams)
-    ? NATIVE_CLERK_HANDOFF_PATH
-    : WEB_CLERK_REDIRECT_PATH;
+  if (isNativeClerkHandoffSearch(searchParams)) {
+    return NATIVE_CLERK_HANDOFF_PATH;
+  }
+  return (
+    resumableClerkRedirectPath(firstParam(searchParams, "redirect_url")) ??
+    WEB_CLERK_REDIRECT_PATH
+  );
 }
 
 export function nativeClerkHandoffUrl(origin = DEFAULT_PRODUCTION_SITE_URL): string {

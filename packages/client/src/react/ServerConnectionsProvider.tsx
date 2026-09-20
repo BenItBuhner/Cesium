@@ -35,6 +35,7 @@ import {
   resolveRendezvousEndpoint,
   stripRendezvousBootstrapFromLocation,
   type RendezvousBootstrap,
+  type RendezvousLocator,
 } from "../rendezvous";
 import { migrateStoredAuthServerBaseUrl, setStoredSessionToken } from "../auth-client";
 import {
@@ -72,7 +73,13 @@ type ServerConnectionsContextValue = {
   requiresDefaultServer: boolean;
   setActiveServer: (serverId: string) => void;
   setDefaultServer: (serverId: string) => void;
-  saveServer: (input: { id?: string; label?: string; baseUrl: string }) => ServerConnection;
+  saveServer: (input: {
+    id?: string;
+    label?: string;
+    baseUrl: string;
+    /** Tunnel-backed engines keep their locator so URL rotations follow. */
+    rendezvous?: RendezvousLocator;
+  }) => ServerConnection;
   removeServer: (serverId: string) => void;
   probeServer: (baseUrl: string) => Promise<ServerProbeResult>;
   refreshServerHealth: () => Promise<Record<string, ServerRuntimeStatus>>;
@@ -520,7 +527,12 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     });
   }, []);
 
-  const saveServer = useCallback((input: { id?: string; label?: string; baseUrl: string }) => {
+  const saveServer = useCallback((input: {
+    id?: string;
+    label?: string;
+    baseUrl: string;
+    rendezvous?: RendezvousLocator;
+  }) => {
     const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
     assertEngineServerUrlAllowed(normalizedBaseUrl);
     if (isBrowserMachineUrl(normalizedBaseUrl) && !isBrowserMachineOffered()) {
