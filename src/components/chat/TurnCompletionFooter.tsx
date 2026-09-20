@@ -1,7 +1,8 @@
 "use client";
 
-import { Copy, GitFork } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Check, Copy, GitFork, TriangleAlert } from "lucide-react";
+import { useCallback } from "react";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { formatAgentRunDuration } from "@/lib/format-agent-run-duration";
 
 const actionButtonClass =
@@ -14,21 +15,16 @@ interface TurnCompletionFooterProps {
 }
 
 export function TurnCompletionFooter({ durationMs, onFork, copyText }: TurnCompletionFooterProps) {
-  const [copied, setCopied] = useState(false);
+  const { copy, feedback: copyFeedback } = useCopyToClipboard({ copiedResetMs: 1500 });
   const trimmedCopyText = copyText?.trim() ?? "";
 
-  const handleCopy = useCallback(async () => {
+  // Synchronous from the click so the clipboard write runs inside the gesture.
+  const handleCopy = useCallback(() => {
     if (!trimmedCopyText) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(trimmedCopyText);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard access can fail outside secure contexts; keep the control silent.
-    }
-  }, [trimmedCopyText]);
+    void copy(trimmedCopyText);
+  }, [copy, trimmedCopyText]);
 
   const showCopy = trimmedCopyText.length > 0;
 
@@ -53,11 +49,24 @@ export function TurnCompletionFooter({ durationMs, onFork, copyText }: TurnCompl
             {showCopy ? (
               <button
                 type="button"
-                onClick={() => void handleCopy()}
-                aria-label={copied ? "Copied response" : "Copy response"}
+                onClick={handleCopy}
+                aria-label={
+                  copyFeedback === "copied"
+                    ? "Copied response"
+                    : copyFeedback === "failed"
+                      ? "Could not copy response"
+                      : "Copy response"
+                }
+                title={copyFeedback === "failed" ? "Could not copy response" : undefined}
                 className={actionButtonClass}
               >
-                <Copy className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
+                {copyFeedback === "copied" ? (
+                  <Check className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
+                ) : copyFeedback === "failed" ? (
+                  <TriangleAlert className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
+                ) : (
+                  <Copy className="size-[13px] shrink-0" strokeWidth={1.75} aria-hidden />
+                )}
               </button>
             ) : null}
           </div>

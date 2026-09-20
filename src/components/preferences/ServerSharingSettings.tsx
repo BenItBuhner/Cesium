@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCloudContext, type CloudOutgoingShare } from "@/contexts/CloudContext";
+import { useCopyToClipboard, type CopyFeedback } from "@/hooks/useCopyToClipboard";
 import {
   cloudServerIdentity,
   isCloudSyncableServerUrl,
@@ -55,13 +56,12 @@ function formatExpiry(expiresAt: number | null): string | null {
   }
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
+function copyLinkLabel(feedback: CopyFeedback): string {
+  return feedback === "copied"
+    ? "Copied!"
+    : feedback === "failed"
+      ? "Copy failed - select the link"
+      : "Copy link";
 }
 
 function shareStatusChip(share: CloudOutgoingShare): {
@@ -108,7 +108,9 @@ export function ServerSharingSettings() {
     email: string | null;
     serverName: string;
   } | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const { copy: copyLink, feedbackFor: copyFeedbackFor } = useCopyToClipboard({
+    copiedResetMs: 1500,
+  });
 
   // Redeem form state.
   const [redeemValue, setRedeemValue] = useState("");
@@ -234,15 +236,14 @@ export function ServerSharingSettings() {
     }
   }, [actions, redeemValue]);
 
-  const handleCopy = useCallback(async (key: string, text: string) => {
-    const ok = await copyToClipboard(text);
-    setCopiedKey(ok ? key : null);
-    if (ok) {
-      window.setTimeout(() => {
-        setCopiedKey((current) => (current === key ? null : current));
-      }, 1500);
-    }
-  }, []);
+  // Runs straight from the click so the clipboard write starts inside the
+  // user gesture (mobile browsers reject it otherwise).
+  const handleCopy = useCallback(
+    (key: string, text: string) => {
+      void copyLink(text, { key });
+    },
+    [copyLink]
+  );
 
   if (cloud.mode === "disabled") {
     return null;
@@ -473,10 +474,10 @@ export function ServerSharingSettings() {
                   <button
                     type="button"
                     className={buttonClass}
-                    onClick={() => void handleCopy("created", createdInvite.link)}
+                    onClick={() => handleCopy("created", createdInvite.link)}
                   >
                     <Copy className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                    {copiedKey === "created" ? "Copied!" : "Copy link"}
+                    {copyLinkLabel(copyFeedbackFor("created"))}
                   </button>
                   {createdInvite.email ? (
                     <a
@@ -541,11 +542,11 @@ export function ServerSharingSettings() {
                       <button
                         type="button"
                         className={buttonClass}
-                        onClick={() => void handleCopy(share.shareId, link)}
+                        onClick={() => handleCopy(share.shareId, link)}
                         title="Copy the invite link"
                       >
                         <Link2 className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                        {copiedKey === share.shareId ? "Copied!" : "Copy link"}
+                        {copyLinkLabel(copyFeedbackFor(share.shareId))}
                       </button>
                     ) : null}
                     {share.status === "accepted" && !share.expired ? (

@@ -2,7 +2,15 @@
 
 import { SignOutButton } from "@clerk/nextjs";
 import { ClerkAuthTrigger } from "@/components/auth/ClerkAuthTrigger";
-import { Check, CircleUserRound, Link2, LogOut, Settings, UserRound } from "lucide-react";
+import {
+  Check,
+  CircleUserRound,
+  Link2,
+  LogOut,
+  Settings,
+  TriangleAlert,
+  UserRound,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useOptionalAuth } from "@/components/auth/AuthProvider";
@@ -10,6 +18,7 @@ import { useShellView } from "@/components/layout/ShellViewContext";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useAccountIdentity } from "@/hooks/useAccountIdentity";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 export type AccountPopoverProps = {
   open: boolean;
@@ -31,7 +40,7 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
     width: 280,
     maxHeight: 360,
   });
-  const [copied, setCopied] = useState(false);
+  const { copy, feedback: copyFeedback, reset: resetCopyFeedback } = useCopyToClipboard();
   const identity = useAccountIdentity();
   const cloud = useCloudContext();
   const auth = useOptionalAuth();
@@ -87,7 +96,7 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
 
   useEffect(() => {
     if (!open) {
-      setCopied(false);
+      resetCopyFeedback();
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -109,7 +118,7 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [anchorRef, onClose, open]);
+  }, [anchorRef, onClose, open, resetCopyFeedback]);
 
   if (!open) {
     return null;
@@ -120,18 +129,11 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
       ? cloud.userKey.slice(7)
       : null;
 
-  const copyDeviceLink = async () => {
+  const copyDeviceLink = () => {
     if (!deviceKey) {
       return;
     }
-    const url = `${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
-    }
+    void copy(`${window.location.origin}/setup?link=${encodeURIComponent(deviceKey)}`);
   };
 
   const openAccountSettings = () => {
@@ -230,14 +232,20 @@ export function AccountPopover({ open, onClose, anchorRef }: AccountPopoverProps
             type="button"
             role="menuitem"
             className={rowClass}
-            onClick={() => void copyDeviceLink()}
+            onClick={copyDeviceLink}
           >
-            {copied ? (
+            {copyFeedback === "copied" ? (
               <Check className="size-[13px] shrink-0" strokeWidth={2} />
+            ) : copyFeedback === "failed" ? (
+              <TriangleAlert className="size-[13px] shrink-0" strokeWidth={1.5} />
             ) : (
               <Link2 className="size-[13px] shrink-0" strokeWidth={1.5} />
             )}
-            {copied ? "Link copied" : "Link another device"}
+            {copyFeedback === "copied"
+              ? "Link copied"
+              : copyFeedback === "failed"
+                ? "Could not copy - use Account settings"
+                : "Link another device"}
           </button>
         ) : null}
         <button type="button" role="menuitem" className={rowClass} onClick={openAccountSettings}>

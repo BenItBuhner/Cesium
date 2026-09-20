@@ -14,6 +14,7 @@ import {
 import { Group, Panel, Separator } from "react-resizable-panels";
 import dynamic from "next/dynamic";
 import { loadChunkWithRecovery } from "@/lib/chunk-load-recovery";
+import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
 import { EditorTabs } from "./EditorTabs";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { PlanMarkdownPreview } from "./PlanMarkdownPreview";
@@ -1445,9 +1446,8 @@ export function EditorPanel({
 
   const copyToClipboard = useCallback(
     async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
+      const result = await copyTextToClipboard(text);
+      if (!result.ok) {
         flashNotice("Could not copy to clipboard.", "error");
       }
     },
