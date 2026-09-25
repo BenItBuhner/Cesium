@@ -8,6 +8,8 @@ import {
   isProjectChildBusy,
   isProjectChildRemote,
   mergeProjectListings,
+  projectEngineName,
+  projectListingEngineName,
   normalizeProjectAgentName,
   parseProjectNoticeNames,
   projectChildBucket,
@@ -293,4 +295,39 @@ test("mergeProjectListings gives a duplicated id to the first engine and reports
     { projects: [], error: "Could not load Projects from Build box." }
   );
   assert.deepEqual(mergeProjectListings([], []), { projects: [], error: null });
+});
+
+test("projectEngineName names engines by label and adds the id only when a label is shared", () => {
+  const engines = [
+    { id: PROJECT_HOME_ENGINE_ID, label: "Home" },
+    { id: "eng_9691e93c", label: " Build box " },
+    { id: "eng_aaaa0001", label: "Laptop" },
+    { id: "eng_aaaa0002", label: "laptop" },
+    { id: "eng_blank000", label: "  " },
+  ];
+  assert.equal(projectEngineName(PROJECT_HOME_ENGINE_ID, engines), "Home");
+  assert.equal(projectEngineName("eng_9691e93c", engines), "Build box");
+  assert.equal(projectEngineName("eng_aaaa0001", engines), "Laptop (eng_aaaa0001)");
+  assert.equal(projectEngineName("eng_aaaa0002", engines), "laptop (eng_aaaa0002)");
+  assert.equal(projectEngineName("eng_blank000", engines), "eng_blank000", "a blank label falls back to the id");
+  assert.equal(projectEngineName("eng_removed0", engines), "eng_removed0", "an engine no longer paired keeps its id");
+});
+
+test("projectListingEngineName prefers the engine's own name over the connection label", () => {
+  const listed = mergeProjectListings(
+    [],
+    [
+      {
+        serverId: "srv-local",
+        serverLabel: "localhost:9100",
+        projects: [summary({ id: "checkout", engineLabel: "Home" }), summary({ id: "legacy" })],
+      },
+    ]
+  ).projects;
+  assert.deepEqual(
+    listed.map((project) => projectListingEngineName(project)),
+    ["Home", "localhost:9100"],
+    "engines that predate engineLabel keep the connection label"
+  );
+  assert.equal(projectListingEngineName({ engineLabel: "  ", serverLabel: "Build box" }), "Build box");
 });

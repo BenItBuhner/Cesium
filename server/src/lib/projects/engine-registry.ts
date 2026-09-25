@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PROJECT_HOME_ENGINE_ID, type ProjectEngineSummary } from "@cesium/core/projects";
+import {
+  PROJECT_HOME_ENGINE_ID,
+  projectEngineName,
+  type ProjectEngineSummary,
+} from "@cesium/core/projects";
 import { getEngineInstanceId } from "../engine-instance.js";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { openSecretSync, sealSecretSync } from "../secret-envelope-node.js";
@@ -167,16 +171,23 @@ export async function listEngineSummaries(): Promise<ProjectEngineSummary[]> {
   return [homeEngineSummary(), ...(await load()).map(peerEngineSummary)];
 }
 
-/** Resolves an engine reference (id or case-insensitive label) to an engine id. */
+/**
+ * Resolves an engine reference to an engine id: an id, a case-insensitive
+ * label, or the "Label (id)" form `projectEngineName` uses for shared labels.
+ */
 export async function resolveEngineRef(ref: string | null | undefined): Promise<string> {
   const wanted = ref?.trim() ?? "";
   if (!wanted || wanted === PROJECT_HOME_ENGINE_ID) {
     return PROJECT_HOME_ENGINE_ID;
   }
+  const idInName = wanted.match(/\(([^()]+)\)$/)?.[1]?.trim();
+  if (idInName === PROJECT_HOME_ENGINE_ID) {
+    return PROJECT_HOME_ENGINE_ID;
+  }
   const lowered = wanted.toLowerCase();
   const engines = await load();
   const match =
-    engines.find((entry) => entry.id === wanted) ??
+    engines.find((entry) => entry.id === wanted || entry.id === idInName) ??
     engines.find((entry) => entry.label.toLowerCase() === lowered);
   if (match) {
     return match.id;
@@ -184,11 +195,14 @@ export async function resolveEngineRef(ref: string | null | undefined): Promise<
   if (homeEngineLabel().toLowerCase() === lowered) {
     return PROJECT_HOME_ENGINE_ID;
   }
-  const known = [
-    `${PROJECT_HOME_ENGINE_ID} (${homeEngineLabel()})`,
-    ...engines.map((entry) => `${entry.id} (${entry.label})`),
-  ];
+  const summaries = await listEngineSummaries();
+  const known = summaries.map((engine) => projectEngineName(engine.id, summaries));
   throw new ProjectError(`Unknown engine "${wanted}". Engines: ${known.join(", ")}.`, 400, "engine_not_found");
+}
+
+/** `projectEngineName` against this engine's current registry. */
+export async function engineNameFor(engineId: string): Promise<string> {
+  return projectEngineName(engineId, await listEngineSummaries());
 }
 
 export function peerEngineSummary(engine: PeerEngineRecord): ProjectEngineSummary {

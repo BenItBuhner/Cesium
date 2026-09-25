@@ -1,4 +1,9 @@
-import { projectChildBucketLabel, type ProjectChildSummary } from "@cesium/core/projects";
+import {
+  projectChildBucketLabel,
+  projectEngineName,
+  type ProjectChildSummary,
+  type ProjectEngineListing,
+} from "@cesium/core/projects";
 import {
   PROJECT_NOTES_FILE,
   listContextFiles,
@@ -44,7 +49,7 @@ function compactChild(child: ProjectChildSummary) {
     id: child.id,
     status: child.status,
     bucket: child.bucket,
-    engine: child.engineId,
+    engine: child.engineLabel,
     harness: child.backendId,
     model: child.modelId,
     mode: child.mode,
@@ -55,6 +60,22 @@ function compactChild(child: ProjectChildSummary) {
     lastReply: child.lastReplyPreview,
     lastError: child.lastError,
     ...(child.deletedAt != null ? { deletedAt: new Date(child.deletedAt).toISOString() } : {}),
+  };
+}
+
+/** Engines by name; ids, URLs and bindable folders are for people setting the Project up. */
+function compactEngine(engine: ProjectEngineListing, engines: readonly ProjectEngineListing[]) {
+  return {
+    engine: projectEngineName(engine.id, engines),
+    ...(engine.kind === "home" ? { thisEngine: true } : {}),
+    online: engine.online,
+    ...(engine.error ? { error: engine.error } : {}),
+    repos: engine.repos.map((repo) => ({ name: repo.name, root: repo.root })),
+    harnesses: engine.harnesses.map((harness) => ({
+      id: harness.id,
+      label: harness.label,
+      defaultModel: harness.defaultModelId,
+    })),
   };
 }
 
@@ -72,8 +93,10 @@ export async function executeProjectOrchestratorTool(
     throw new ProjectError(`${name} is not a Project tool.`);
   }
   switch (name) {
-    case "project_list_engines":
-      return json({ engines: await listProjectEngines(projectId) });
+    case "project_list_engines": {
+      const engines = await listProjectEngines(projectId);
+      return json({ engines: engines.map((engine) => compactEngine(engine, engines)) });
+    }
     case "project_create_agent": {
       const child = await createProjectChild(
         projectId,
@@ -189,22 +212,24 @@ export async function buildProjectOrchestratorReminder(
     `Your model: ${context.modelName}`,
     `Agents working: ${working} of max ${record.settings.maxActiveChildren}`,
     "",
-    "Engines:",
+    "Engines (refer to them by these names):",
     ...engines.map(
       (engine) =>
-        `- ${engine.id}: ${engine.label}${engine.kind === "home" ? " (this engine)" : engine.online ? "" : ` · OFFLINE${engine.error ? `: ${oneLine(engine.error, PREVIEW_IN_TABLE_MAX_CHARS)}` : ""}`}`
+        `- ${projectEngineName(engine.id, engines)}${engine.kind === "home" ? " (this engine)" : engine.online ? "" : ` · OFFLINE${engine.error ? `: ${oneLine(engine.error, PREVIEW_IN_TABLE_MAX_CHARS)}` : ""}`}`
     ),
     "",
     "Repositories:",
     ...(record.repos.length > 0
-      ? record.repos.map((repo) => `- ${repo.name} (id ${repo.id}, engine ${repo.engineId}) ${repo.root}`)
+      ? record.repos.map(
+          (repo) => `- ${repo.name} (engine ${projectEngineName(repo.engineId, engines)}) ${repo.root}`
+        )
       : ["- none bound; agents without a repo get an empty scratch folder"]),
     "",
     "Agents:",
     ...(children.length > 0
       ? children.map(
           (child) =>
-            `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineId}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
+            `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
         )
       : ["- none yet"]),
     "</project>",

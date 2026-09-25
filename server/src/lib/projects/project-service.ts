@@ -5,6 +5,7 @@ import {
   isProjectChildBusy,
   normalizeProjectAgentName,
   projectChildBucket,
+  projectEngineName,
   sortProjectChildren,
   type ProjectAgentDelivery,
   type ProjectChildSummary,
@@ -101,7 +102,7 @@ export async function requireProject(projectId: string): Promise<ProjectRecord> 
 }
 
 function engineLabel(engineId: string, engines: ProjectEngineSummary[]): string {
-  return engines.find((engine) => engine.id === engineId)?.label ?? engineId;
+  return projectEngineName(engineId, engines);
 }
 
 async function observeChild(child: ProjectChildRecord): Promise<ChildObservation> {
@@ -231,6 +232,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
             child.lastStatus === "awaiting_permission" || child.lastStatus === "awaiting_question"
         ).length,
         turnsCompleted: record.children.reduce((sum, child) => sum + child.turnsCompleted, 0),
+        engineLabel: homeEngineLabel(),
       } satisfies ProjectSummary;
     })
   );
@@ -684,8 +686,9 @@ export async function createProjectChild(
   }
   const requestedEngine = input.engine?.trim() ? await resolveEngineRef(input.engine) : null;
   if (repo && requestedEngine && requestedEngine !== repo.engineId) {
+    const engines = await listEngineSummaries();
     throw new ProjectError(
-      `Repository ${repo.name} lives on engine "${repo.engineId}", not "${requestedEngine}".`
+      `Repository ${repo.name} lives on engine "${engineLabel(repo.engineId, engines)}", not "${engineLabel(requestedEngine, engines)}".`
     );
   }
   const engineId = repo?.engineId ?? requestedEngine ?? PROJECT_HOME_ENGINE_ID;
