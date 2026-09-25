@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import type { ProjectSnapshot } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
+import {
+  messageText,
+  startFakeChatModel,
+  text,
+  toolCall,
+  waitFor,
+} from "./helpers/fake-chat-model.js";
 
 const TEST_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-projects-runtime-"));
 const REPO_ALPHA = path.join(TEST_DATA_DIR, "repos", "alpha");
@@ -36,79 +41,10 @@ for (const key of [
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 process.env.WORKSPACE_ALLOWED_ROOTS = TEST_DATA_DIR;
 
-type ChatMessage = { role: string; content?: unknown; tool_calls?: unknown; tool_call_id?: string };
-type ChatTool = { function?: { name?: string } };
-type ChatRequest = { messages: ChatMessage[]; tools?: ChatTool[]; stream?: boolean };
-type Responder = (request: ChatRequest, res: ServerResponse) => Promise<void>;
+const model = await startFakeChatModel();
+const { script, requestsFor } = model;
 
-const ORCHESTRATOR_MARKER = "You are the orchestrator of a Cesium Project";
-const scripts = new Map<string, Responder[]>();
-const requests = new Map<string, ChatRequest[]>();
-
-function messageText(message: ChatMessage | undefined): string {
-  if (!message) {
-    return "";
-  }
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-  if (Array.isArray(message.content)) {
-    return message.content
-      .map((part) =>
-        part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-          ? (part as { text: string }).text
-          : ""
-      )
-      .join("");
-  }
-  return "";
-}
-
-/** Routes each agent request to the script of the conversation that sent it. */
-function scriptKey(request: ChatRequest): string {
-  const texts = request.messages.map(messageText);
-  if (texts.some((text) => text.includes(ORCHESTRATOR_MARKER))) {
-    return "orchestrator";
-  }
-  for (const text of texts) {
-    const match = text.match(/You are "([^"]+)", an agent in the Cesium Project/);
-    if (match) {
-      return match[1]!;
-    }
-  }
-  return "unknown";
-}
-
-function script(key: string, ...responders: Responder[]): void {
-  scripts.set(key, [...(scripts.get(key) ?? []), ...responders]);
-}
-
-function requestsFor(key: string): ChatRequest[] {
-  return requests.get(key) ?? [];
-}
-
-const modelServer = createServer((req, res) => {
-  const chunks: Buffer[] = [];
-  req.on("data", (chunk: Buffer) => chunks.push(chunk));
-  req.on("end", () => {
-    void (async () => {
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatRequest;
-      if (!Array.isArray(body.tools) || body.tools.length === 0) {
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ choices: [{ message: { content: "Generated Title" } }] }));
-        return;
-      }
-      const key = scriptKey(body);
-      requests.set(key, [...requestsFor(key), body]);
-      const responder = scripts.get(key)?.shift() ?? text([`${key}: acknowledged.`]);
-      await responder(body, res);
-    })();
-  });
-});
-await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
-const MODEL_PORT = (modelServer.address() as AddressInfo).port;
-
-process.env.CESIUM_BASE_URL = `http://127.0.0.1:${MODEL_PORT}/v1`;
+process.env.CESIUM_BASE_URL = model.baseUrl;
 process.env.CESIUM_API_KEY = "sk-test-projects";
 process.env.CESIUM_PROVIDER_ID = "projhost";
 process.env.CESIUM_DEFAULT_MODEL = "kimi-k3";
@@ -146,69 +82,9 @@ const stopWatcher = startProjectWatcher();
 
 after(async () => {
   stopWatcher();
-  await new Promise<void>((resolve) => modelServer.close(() => resolve()));
+  await model.close();
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true });
 });
-
-function writeSseHead(res: ServerResponse): void {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-}
-
-function writeSse(res: ServerResponse, payload: unknown): void {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-function toolCall(id: string, name: string, args: Record<string, unknown>): Responder {
-  return async (_request, res) => {
-    writeSseHead(res);
-    writeSse(res, {
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              { index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } },
-            ],
-          },
-        },
-      ],
-    });
-    writeSse(res, { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
-    res.end("data: [DONE]\n\n");
-  };
-}
-
-function text(parts: string[], options: { delayMs?: number } = {}): Responder {
-  return async (_request, res) => {
-    writeSseHead(res);
-    for (const part of parts) {
-      writeSse(res, { choices: [{ index: 0, delta: { content: part } }] });
-      if (options.delayMs) {
-        await new Promise((resolve) => setTimeout(resolve, options.delayMs));
-      }
-    }
-    writeSse(res, { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
-    res.end("data: [DONE]\n\n");
-  };
-}
-
-async function waitFor<T>(
-  label: string,
-  probe: () => Promise<T | null | undefined>,
-  predicate: (value: T) => boolean,
-  timeoutMs = 20_000
-): Promise<T> {
-  const startedAt = Date.now();
-  let last: T | null | undefined;
-  while (Date.now() - startedAt < timeoutMs) {
-    last = await probe();
-    if (last != null && predicate(last)) {
-      return last;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`Timed out waiting for ${label}. Last value: ${JSON.stringify(last)?.slice(0, 3000)}`);
-}
 
 function eventsOfKind<K extends AgentStoredEvent["kind"]>(
   events: AgentStoredEvent[],
@@ -389,6 +265,7 @@ test("the orchestrator gets only the Project tools, its own prompt and the Proje
   assert.ok(allText.includes(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT), "orchestrator system prompt");
   assert.doesNotMatch(allText, /<harness-features>/, "no ordinary mode reminder");
   assert.match(allText, /<project>\nProject: Launch/);
+  assert.match(allText, /Engines:\n- home: .+ \(this engine\)\n\nRepositories:/);
   assert.match(allText, /- alpha \(id rep_[a-f0-9]{8}, engine home\)/);
   assert.match(allText, /- web \(id rep_[a-f0-9]{8}, engine home\)/);
   assert.match(allText, /<project_notes path="notes.md">\n# Launch/);
