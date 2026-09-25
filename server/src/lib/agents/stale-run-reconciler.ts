@@ -29,12 +29,15 @@ import type { AgentConversationStatus } from "./types.js";
  * Statuses that imply a live provider runtime must exist somewhere. After a
  * restart none can, so all of them are safe to interrupt at boot - including
  * the awaiting_* states, whose pending permission/question belonged to a
- * runtime that no longer exists and can never be answered.
+ * runtime that no longer exists and can never be answered, and "paused",
+ * whose suspended turn lived only inside that runtime: a fresh handle has
+ * nothing to resume, so the record would otherwise stay paused forever.
  */
 const BOOT_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
   "running",
   "pause_requested",
   "pausing",
+  "paused",
   "awaiting_permission",
   "awaiting_question",
 ]);
@@ -42,12 +45,15 @@ const BOOT_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
 /**
  * Statuses the watchdog may interrupt while the server is up. The awaiting_*
  * states are excluded here: answering a permission/question lazily re-ensures
- * the runtime, so a missing runtime is recoverable for them.
+ * the runtime, so a missing runtime is recoverable for them. A paused turn is
+ * not: resume() on a re-ensured handle is a no-op, so a paused record whose
+ * runtime vanished is as stuck as a running one.
  */
 const WATCHDOG_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
   "running",
   "pause_requested",
   "pausing",
+  "paused",
 ]);
 
 /** How often the watchdog looks for busy conversations without a runtime. */
