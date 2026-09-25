@@ -199,6 +199,7 @@ import {
   parseCesiumWriteFileArgs,
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
+import { formatGlobResult, globWorkspaceEntries } from "./cesium/cesium-glob.js";
 import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
 import {
   applyTodoPatch,
@@ -2585,6 +2586,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "grep":
           result = await this.toolGrep(request.arguments);
           break;
+        case "glob":
+          result = await this.toolGlob(request.arguments);
+          break;
         case "edit_file":
           result = await this.toolEditFile(request.arguments, request.id, title);
           break;
@@ -2882,6 +2886,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
     };
     await visit(root);
     return results.length ? results.join("\n\n") : "No matches.";
+  }
+
+  private async toolGlob(args: Record<string, unknown>): Promise<string> {
+    const pattern = asString(args.pattern);
+    if (!pattern) throw new Error("glob.pattern is required.");
+    const searchPath = asString(args.path) ?? ".";
+    const searchRoot = resolveWorkspacePath(this.callbacks.workspace.root, searchPath);
+    const stat = await fs.stat(searchRoot).catch(() => null);
+    if (!stat?.isDirectory()) {
+      throw new Error(`glob.path must be an existing directory inside the workspace: ${searchPath}`);
+    }
+    const result = await globWorkspaceEntries({
+      workspaceRoot: this.callbacks.workspace.root,
+      searchRoot,
+      pattern,
+      maxResults: asNumber(args.maxResults),
+    });
+    return formatGlobResult(result, { pattern, searchPath });
   }
 
   private async toolEditFile(
