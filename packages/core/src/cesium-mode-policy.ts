@@ -18,6 +18,7 @@ export type CesiumModeToolPolicySummary = {
 const READ_ONLY_TOOLS = new Set([
   "read_file",
   "grep",
+  "glob",
   "search_history",
   "read_history_page",
   "list_conversations",
@@ -221,6 +222,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
         allowed: [
           "read_file",
           "grep",
+          "glob",
           "search_history",
           "read_history_page",
           "ask_question",
@@ -244,6 +246,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
         allowed: [
           "read_file",
           "grep",
+          "glob",
           "search_history",
           "read_history_page",
           "ask_question",
@@ -280,6 +283,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
         allowed: [
           "read_file",
           "grep",
+          "glob",
           "edit_file",
           "write_file",
           "terminal",
@@ -307,6 +311,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "workflow_await",
           "read_file",
           "grep",
+          "glob",
           "edit_file",
           "write_file",
           "terminal",
@@ -327,6 +332,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
         allowed: [
           "read_file",
           "grep",
+          "glob",
           "edit_file",
           "write_file",
           "terminal",
