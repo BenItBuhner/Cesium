@@ -73,6 +73,17 @@ const productionSecurityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=(self)" },
 ];
 
+/**
+ * Files under public/ ship unhashed, so Vercel serves them with
+ * `max-age=0, must-revalidate`: every workbench load re-validates every icon
+ * it paints (one edge request each, ~70 model/agent/integration icons). Those
+ * folders change only with a release, so browsers may keep them for an hour
+ * and reuse a stale copy for a day while revalidating in the background.
+ */
+const publicAssetCacheHeaders = [
+  { key: "Cache-Control", value: "public, max-age=3600, stale-while-revalidate=86400" },
+];
+
 const nextConfig: NextConfig = {
   // The React Compiler is currently crashing Next.js during page compilation
   // in this deployment. Keep it off so production and dev builds can complete.
@@ -128,6 +139,14 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: productionSecurityHeaders,
+      },
+      {
+        source: "/(icons|model-icons|agent-backend-icons|integration-icons|landing|desktop)/:path*",
+        headers: publicAssetCacheHeaders,
+      },
+      {
+        source: "/:file(favicon\\.ico|favicon\\.png|icon-source\\.svg)",
+        headers: publicAssetCacheHeaders,
       },
     ];
   },
