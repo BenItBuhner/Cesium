@@ -314,6 +314,19 @@ test("pairing verifies the token, refuses this engine itself, and seals the stor
       [peerEngineId, "peer-engine", "peer"],
     ]
   );
+  const detailed = await api<{ engines: ProjectEngineListing[] }>(
+    "GET",
+    "/api/projects/engines?detail=1"
+  );
+  assert.deepEqual(
+    detailed.json.engines.map((engine) => engine.id),
+    ["home", peerEngineId],
+    "the detailed listing works before any Project exists"
+  );
+  const detailedPeer = detailed.json.engines.find((engine) => engine.id === peerEngineId);
+  assert.ok(detailedPeer?.harnesses.some((harness) => harness.id === "cesium-agent"));
+  assert.deepEqual(detailedPeer.repos, []);
+  assert.ok(Array.isArray(detailedPeer.workspaces));
   const enginesFile = path.join(HOME_DATA_DIR, "projects", "engines.json");
   const stored = await fs.readFile(enginesFile, "utf8");
   assert.equal(stored.includes(peerToken), false, "the peer token is sealed at rest");

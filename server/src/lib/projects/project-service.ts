@@ -219,6 +219,8 @@ export async function listProjects(): Promise<ProjectSummary[]> {
         updatedAt: record.updatedAt,
         archivedAt: record.archivedAt,
         orchestratorStatus: orchestrator?.status ?? "unknown",
+        orchestratorConversationId: record.orchestrator.conversationId,
+        orchestratorWorkspaceId: record.orchestrator.workspaceId,
         repoCount: record.repos.length,
         agentCount: live.length,
         workingCount: live.filter((child) => isProjectChildBusy(child.lastStatus)).length,
@@ -226,6 +228,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
           (child) =>
             child.lastStatus === "awaiting_permission" || child.lastStatus === "awaiting_question"
         ).length,
+        turnsCompleted: record.children.reduce((sum, child) => sum + child.turnsCompleted, 0),
       } satisfies ProjectSummary;
     })
   );
@@ -899,9 +902,15 @@ export async function readProjectChildTranscript(
   return { agent: child.name, status: observation.status, transcript };
 }
 
-/** Every engine with its bound repos and the harnesses it can run right now (asks each peer). */
-export async function listProjectEngines(projectId: string): Promise<ProjectEngineListing[]> {
-  const record = await requireProject(projectId);
+/**
+ * Every engine with its bound repos, the harnesses it can run right now and its
+ * bindable workspaces (asks each peer); `null` lists them before a Project exists.
+ */
+export async function listProjectEngines(projectId: string | null): Promise<ProjectEngineListing[]> {
+  const record = projectId ? await requireProject(projectId) : null;
+  if (!record) {
+    await assertProjectsEnabled();
+  }
   const harnessesByEngine = new Map<string, ProjectEngineListing["harnesses"]>();
   const workspacesByEngine = new Map<string, ProjectEngineListing["workspaces"]>();
   const [backends, homeWorkspaces] = await Promise.all([
@@ -934,7 +943,7 @@ export async function listProjectEngines(projectId: string): Promise<ProjectEngi
   );
   return (await listEngineSummaries()).map((engine) => ({
     ...engine,
-    repos: record.repos
+    repos: (record?.repos ?? [])
       .filter((repo) => repo.engineId === engine.id)
       .map((repo) => ({ id: repo.id, name: repo.name, root: repo.root })),
     harnesses: (harnessesByEngine.get(engine.id) ?? []).filter((harness) => harness.available),

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import type { ProjectSnapshot } from "@cesium/core/projects";
+import type { ProjectSnapshot, ProjectSummary } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
 import {
   messageText,
@@ -243,10 +243,16 @@ test("creating a multi-repo Project provisions a hidden cesium-agent orchestrato
   assert.equal(sandboxRepo.status, 400);
   assert.match(String(sandboxRepo.json.error), /cannot be added as repositories/);
 
-  const listed = await api<{ projects: Array<{ id: string; repoCount: number }> }>("GET", "/api/projects");
+  const listed = await api<{ projects: ProjectSummary[] }>("GET", "/api/projects");
   assert.deepEqual(
-    listed.json.projects.map((entry) => [entry.id, entry.repoCount]),
-    [[project.id, 2]]
+    listed.json.projects.map((entry) => [
+      entry.id,
+      entry.repoCount,
+      entry.orchestratorConversationId,
+      entry.orchestratorWorkspaceId,
+      entry.turnsCompleted,
+    ]),
+    [[project.id, 2, project.orchestrator.conversationId, workspace.id, 0]]
   );
 });
 
@@ -397,6 +403,9 @@ test("steer lands mid-turn on a busy child and queued work runs as its next turn
   const child = await childRecord("web");
   assert.equal(child.turnsCompleted, 2);
   assert.equal(child.lastReplyPreview, "Docs written.");
+  const listed = await api<{ projects: ProjectSummary[] }>("GET", "/api/projects");
+  const summary = listed.json.projects.find((entry) => entry.id === project.id);
+  assert.ok(summary && summary.turnsCompleted >= 2, "the summary counts finished child turns");
 });
 
 test("reports from children that finish while the orchestrator is busy coalesce into one turn", async () => {

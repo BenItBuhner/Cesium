@@ -23,6 +23,15 @@ import type {
   HarnessAuthSnapshot,
   HarnessAuthSyncEngineState,
   HarnessAuthSyncId,
+  ProjectAgentDelivery,
+  ProjectChildSummary,
+  ProjectContextFile,
+  ProjectEngineListing,
+  ProjectEngineSummary,
+  ProjectPeerTokenSummary,
+  ProjectSettings,
+  ProjectSnapshot,
+  ProjectSummary,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -5515,5 +5524,328 @@ export async function fetchUsageOverview(options?: {
       options?.signal ? { signal: options.signal } : undefined,
       { skipWorkspaceHeader: true, cache: "no-store" }
     )
+  );
+}
+
+// Projects (Beta). Every call takes an optional server so a client can reach
+// the engine that hosts a Project, or mint a peer token on another engine.
+
+export type ProjectRequestOptions = { server?: ServerRequestContext };
+
+export type ProjectRepoRequest = {
+  engineId?: string | null;
+  workspaceId?: string | null;
+  root?: string | null;
+  name?: string | null;
+};
+
+export type ProjectCreateRequest = {
+  name: string;
+  icon?: string | null;
+  repos?: ProjectRepoRequest[];
+  prompt?: string | null;
+  modelId?: string | null;
+};
+
+export type ProjectPatchRequest = {
+  name?: string;
+  icon?: string | null;
+  archived?: boolean;
+  settings?: Partial<ProjectSettings>;
+};
+
+export type ProjectAgentCreateRequest = {
+  name: string;
+  instructions: string;
+  repo?: string | null;
+  engine?: string | null;
+  harness?: string | null;
+  model?: string | null;
+  mode?: string | null;
+};
+
+export type ProjectAgentPatchRequest = {
+  name?: string | null;
+  model?: string | null;
+  mode?: string | null;
+};
+
+function projectPath(projectId: string, suffix = ""): string {
+  return `/api/projects/${encodeURIComponent(projectId)}${suffix}`;
+}
+
+function projectAgentPath(projectId: string, agent: string, suffix = ""): string {
+  return projectPath(projectId, `/agents/${encodeURIComponent(agent)}${suffix}`);
+}
+
+function projectRequest<T>(
+  input: string,
+  init: RequestInit | undefined,
+  options: ProjectRequestOptions | undefined
+): Promise<T> {
+  return request<T>(input, init, {
+    skipWorkspaceHeader: true,
+    cache: "no-store",
+    ...(options?.server ? { server: options.server } : {}),
+  });
+}
+
+function jsonInit(method: string, body?: unknown): RequestInit {
+  return body === undefined ? { method } : { method, body: JSON.stringify(body) };
+}
+
+export async function listProjects(options?: ProjectRequestOptions): Promise<ProjectSummary[]> {
+  const result = await projectRequest<{ projects: ProjectSummary[] }>(
+    "/api/projects",
+    undefined,
+    options
+  );
+  return result.projects;
+}
+
+export function createProject(
+  input: ProjectCreateRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest("/api/projects", jsonInit("POST", input), options);
+}
+
+export function fetchProject(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest(projectPath(projectId), undefined, options);
+}
+
+export function patchProject(
+  projectId: string,
+  patch: ProjectPatchRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest(projectPath(projectId), jsonInit("PATCH", patch), options);
+}
+
+export async function deleteProject(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(projectPath(projectId), jsonInit("DELETE"), options);
+}
+
+export function addProjectRepo(
+  projectId: string,
+  repo: ProjectRepoRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest(projectPath(projectId, "/repos"), jsonInit("POST", repo), options);
+}
+
+export function removeProjectRepo(
+  projectId: string,
+  repoId: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest(
+    projectPath(projectId, `/repos/${encodeURIComponent(repoId)}`),
+    jsonInit("DELETE"),
+    options
+  );
+}
+
+export function listProjectContextFiles(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<{ root: string; files: ProjectContextFile[] }> {
+  return projectRequest(projectPath(projectId, "/context"), undefined, options);
+}
+
+export function readProjectContextFile(
+  projectId: string,
+  path: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectContextFile & { content: string }> {
+  return projectRequest(
+    projectPath(projectId, `/context/file?path=${encodeURIComponent(path)}`),
+    undefined,
+    options
+  );
+}
+
+export async function writeProjectContextFile(
+  projectId: string,
+  input: { path: string; content: string; mode?: "replace" | "append" },
+  options?: ProjectRequestOptions
+): Promise<ProjectContextFile> {
+  const result = await projectRequest<{ written: ProjectContextFile }>(
+    projectPath(projectId, "/context/file"),
+    jsonInit("PUT", input),
+    options
+  );
+  return result.written;
+}
+
+export async function deleteProjectContextFile(
+  projectId: string,
+  path: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(
+    projectPath(projectId, `/context/file?path=${encodeURIComponent(path)}`),
+    jsonInit("DELETE"),
+    options
+  );
+}
+
+export async function createProjectAgent(
+  projectId: string,
+  input: ProjectAgentCreateRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectChildSummary> {
+  const result = await projectRequest<{ agent: ProjectChildSummary }>(
+    projectPath(projectId, "/agents"),
+    jsonInit("POST", input),
+    options
+  );
+  return result.agent;
+}
+
+export async function patchProjectAgent(
+  projectId: string,
+  agent: string,
+  patch: ProjectAgentPatchRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectChildSummary> {
+  const result = await projectRequest<{ agent: ProjectChildSummary }>(
+    projectAgentPath(projectId, agent),
+    jsonInit("PATCH", patch),
+    options
+  );
+  return result.agent;
+}
+
+export async function deleteProjectAgent(
+  projectId: string,
+  agent: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(projectAgentPath(projectId, agent), jsonInit("DELETE"), options);
+}
+
+export function messageProjectAgent(
+  projectId: string,
+  agent: string,
+  input: { text: string; delivery: "steer" | "queue" },
+  options?: ProjectRequestOptions
+): Promise<{ agent: string; delivery: ProjectAgentDelivery }> {
+  return projectRequest(
+    projectAgentPath(projectId, agent, "/messages"),
+    jsonInit("POST", input),
+    options
+  );
+}
+
+export function stopProjectAgent(
+  projectId: string,
+  agent: string,
+  options?: ProjectRequestOptions
+): Promise<{ agent: string; stopped: boolean; status: string }> {
+  return projectRequest(projectAgentPath(projectId, agent, "/stop"), jsonInit("POST"), options);
+}
+
+export function fetchProjectAgentTranscript(
+  projectId: string,
+  agent: string,
+  turns?: number,
+  options?: ProjectRequestOptions
+): Promise<{ agent: string; status: string; transcript: string }> {
+  const query = turns ? `?turns=${encodeURIComponent(String(turns))}` : "";
+  return projectRequest(projectAgentPath(projectId, agent, `/transcript${query}`), undefined, options);
+}
+
+export async function listProjectEngineListings(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectEngineListing[]> {
+  const result = await projectRequest<{ engines: ProjectEngineListing[] }>(
+    projectPath(projectId, "/engines"),
+    undefined,
+    options
+  );
+  return result.engines;
+}
+
+export async function listProjectEngines(
+  options?: ProjectRequestOptions
+): Promise<ProjectEngineSummary[]> {
+  const result = await projectRequest<{ engines: ProjectEngineSummary[] }>(
+    "/api/projects/engines",
+    undefined,
+    options
+  );
+  return result.engines;
+}
+
+/** Every engine with its harnesses and bindable workspaces, before a Project exists. */
+export async function listProjectEngineDetails(
+  options?: ProjectRequestOptions
+): Promise<ProjectEngineListing[]> {
+  const result = await projectRequest<{ engines: ProjectEngineListing[] }>(
+    "/api/projects/engines?detail=1",
+    undefined,
+    options
+  );
+  return result.engines;
+}
+
+export async function pairProjectEngine(
+  input: { baseUrl: string; token: string; label?: string | null },
+  options?: ProjectRequestOptions
+): Promise<ProjectEngineSummary> {
+  const result = await projectRequest<{ engine: ProjectEngineSummary }>(
+    "/api/projects/engines",
+    jsonInit("POST", input),
+    options
+  );
+  return result.engine;
+}
+
+export async function removeProjectEngine(
+  engineId: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(
+    `/api/projects/engines/${encodeURIComponent(engineId)}`,
+    jsonInit("DELETE"),
+    options
+  );
+}
+
+export async function listProjectPeerTokens(
+  options?: ProjectRequestOptions
+): Promise<ProjectPeerTokenSummary[]> {
+  const result = await projectRequest<{ tokens: ProjectPeerTokenSummary[] }>(
+    "/api/projects/peer-tokens",
+    undefined,
+    options
+  );
+  return result.tokens;
+}
+
+/** The secret comes back exactly once; the engine keeps only its hash. */
+export function mintProjectPeerToken(
+  label: string,
+  options?: ProjectRequestOptions
+): Promise<{ token: ProjectPeerTokenSummary; secret: string }> {
+  return projectRequest("/api/projects/peer-tokens", jsonInit("POST", { label }), options);
+}
+
+export async function revokeProjectPeerToken(
+  tokenId: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(
+    `/api/projects/peer-tokens/${encodeURIComponent(tokenId)}`,
+    jsonInit("DELETE"),
+    options
   );
 }
