@@ -78,6 +78,9 @@ describe("rendezvous route", () => {
 
     const get = await handleRendezvousGet(store, request("GET"), SERVER_ID, now + 1);
     assert.equal(get.status, 200);
+    // Hits may be coalesced by the CDN for a few seconds (several devices
+    // following one engine); browsers must never cache them.
+    assert.equal(get.headers.get("cache-control"), "public, max-age=0, s-maxage=5");
     const payload = (await get.json()) as { record: RendezvousRecord };
     assert.equal(payload.record.ciphertext, CIPHERTEXT);
     assert.equal(payload.record.expiresAt, now + 90_000);
@@ -131,6 +134,9 @@ describe("rendezvous route", () => {
     const store = new MemoryRendezvousStore();
     const missing = await handleRendezvousGet(store, request("GET"), SERVER_ID);
     assert.equal(missing.status, 404);
+    // A miss must never be cached: the engine's next publish has to show up
+    // on the very next lookup.
+    assert.equal(missing.headers.get("cache-control"), "no-store, max-age=0");
 
     store.records.set(SERVER_ID, {
       version: 1,
@@ -141,6 +147,7 @@ describe("rendezvous route", () => {
     });
     const expired = await handleRendezvousGet(store, request("GET"), SERVER_ID, 3);
     assert.equal(expired.status, 404);
+    assert.equal(expired.headers.get("cache-control"), "no-store, max-age=0");
   });
 
   test("falls back to the Cesium Cloud registry, failing closed only with cloud off", () => {
