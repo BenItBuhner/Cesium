@@ -26,8 +26,30 @@ export function safeJson(value: unknown): string {
   }
 }
 
+/** Head-only truncation. Use for previews where only the opening matters. */
 export function truncate(value: string, max = 40_000): string {
   return value.length > max ? `${value.slice(0, max)}\n...[truncated ${value.length - max} chars]` : value;
+}
+
+export function truncationMarker(omitted: number): string {
+  return `\n...[truncated ${omitted} chars from the middle]...\n`;
+}
+
+/**
+ * Head+tail truncation. Keeps the first and last `max / 2` characters and
+ * replaces the middle with an explicit elision marker, so the most recent end
+ * (final test output, latest activity) survives alongside the opening.
+ */
+export function truncateMiddle(value: string, max = 40_000): string {
+  if (value.length <= max) {
+    return value;
+  }
+  const headLength = Math.ceil(max / 2);
+  const tailLength = max - headLength;
+  const omitted = value.length - headLength - tailLength;
+  return `${value.slice(0, headLength)}${truncationMarker(omitted)}${
+    tailLength > 0 ? value.slice(-tailLength) : ""
+  }`;
 }
 
 export function parseJsonArgs(value: unknown): Record<string, unknown> {

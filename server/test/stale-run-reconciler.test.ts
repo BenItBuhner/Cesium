@@ -202,6 +202,57 @@ test("watchdog leaves runs with a live runtime alone", async () => {
   }
 });
 
+test("boot sweep interrupts a conversation that was paused when the process died", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "stale-boot-paused-test");
+  const paused = await seedConversation(workspace.id, "paused");
+
+  await reconcileStaleAgentRunsOnBoot({ hasLiveRuntime: () => false });
+
+  // The pause waiter lived only in the dead runtime; a fresh handle cannot
+  // resume it, so leaving the record "paused" would strand it forever.
+  const after = await readConversationRecord(workspace.id, paused.id);
+  assert.equal(after?.status, "interrupted");
+  const events = await readConversationEvents(workspace.id, paused.id);
+  assert.ok(
+    events.some((event) => event.kind === "status" && event.status === "interrupted"),
+    "expected an interrupted status event to be appended"
+  );
+});
+
+test("watchdog interrupts a paused conversation whose runtime disappeared", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "stale-watchdog-paused-test");
+  const stop = startStaleAgentRunWatchdog({
+    tickMs: 25,
+    graceMs: 40,
+    hasLiveRuntime: () => false,
+  });
+  try {
+    const paused = await seedConversation(workspace.id, "paused");
+    await delay(250);
+    const after = await readConversationRecord(workspace.id, paused.id);
+    assert.equal(after?.status, "interrupted");
+  } finally {
+    stop();
+  }
+});
+
+test("watchdog leaves a paused conversation with a live runtime alone", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "healthy-paused-watchdog-test");
+  const stop = startStaleAgentRunWatchdog({
+    tickMs: 25,
+    graceMs: 40,
+    hasLiveRuntime: () => true,
+  });
+  try {
+    const paused = await seedConversation(workspace.id, "paused");
+    await delay(200);
+    const after = await readConversationRecord(workspace.id, paused.id);
+    assert.equal(after?.status, "paused");
+  } finally {
+    stop();
+  }
+});
+
 test("watchdog never touches awaiting states (recoverable on demand)", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "awaiting-watchdog-test");
   const stop = startStaleAgentRunWatchdog({
