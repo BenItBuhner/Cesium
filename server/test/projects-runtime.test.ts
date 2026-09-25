@@ -63,6 +63,7 @@ const [
   { getWorkspaceById, listWorkspaces },
   { buildAgentConversationsAllPayload },
   { createStandaloneChatWorkspace },
+  { setCompletionRetryDelaysForTests },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -75,14 +76,17 @@ const [
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/rail-payload.js"),
   import("../src/lib/standalone-chats.js"),
+  import("../src/lib/agents/completion-retry.js"),
 ]);
 
+setCompletionRetryDelaysForTests([20, 20, 20]);
 const app = createCesiumApp();
 startAgentPromptQueueDrainListener();
 const stopWatcher = startProjectWatcher();
 
 after(async () => {
   stopWatcher();
+  setCompletionRetryDelaysForTests(null);
   await model.close();
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true });
 });
@@ -448,12 +452,22 @@ test("reports from children that finish while the orchestrator is busy coalesce 
 });
 
 test("a report queued behind an orchestrator turn that fails upstream still reaches it", async () => {
-  const upstreamOutage: Responder = async (_request, res) => {
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: { message: "All routes failed", type: "service_unavailable" } }));
-  };
-  script("orchestrator", upstreamOutage, text(["Picked up the late report."]));
+  const upstreamOutage =
+    (delayMs: number): Responder =>
+    async (_request, res) => {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ error: { message: "All routes failed", type: "service_unavailable" } }));
+    };
+  // The outage outlasts every automatic retry, so the turn itself fails.
+  script(
+    "orchestrator",
+    upstreamOutage(1_500),
+    upstreamOutage(0),
+    upstreamOutage(0),
+    upstreamOutage(0),
+    text(["Picked up the late report."])
+  );
   script("late", text(["Late work done."]));
   await promptOrchestrator("Plan the next step.");
   await waitFor("orchestrator busy", orchestratorSnapshot, (value) => value.conversation.status === "running");
@@ -482,6 +496,11 @@ test("a report queued behind an orchestrator turn that fails upstream still reac
       event.displayContent === "Agent update · late"
   );
   assert.ok(failedAt >= 0, "the first turn failed upstream");
+  const failure = recovered.events[failedAt]!;
+  assert.match(
+    failure.kind === "status" ? failure.detail ?? "" : "",
+    /returned an error instead of a reply after 4 attempts: service_unavailable: All routes failed/
+  );
   assert.ok(reportAt > failedAt, "the queued report ran as the next turn without a human prompt");
   const removed = await api("DELETE", `/api/projects/${project.id}/agents/late`);
   assert.equal(removed.status, 200, JSON.stringify(removed.json));
