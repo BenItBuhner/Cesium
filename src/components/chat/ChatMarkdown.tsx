@@ -314,11 +314,11 @@ function renderInline(text: string): ReactNode[] {
 function renderInlineWithBreaks(text: string): ReactNode[] {
   const lines = text.split("\n");
   return lines.flatMap((line, index) => {
-    const lineNodes = renderInline(line);
+    const lineNodes = <Fragment key={`line-${index}`}>{renderInline(line)}</Fragment>;
     if (index === lines.length - 1) {
-      return lineNodes;
+      return [lineNodes];
     }
-    return [...lineNodes, <br key={`br-${index}`} />];
+    return [lineNodes, <br key={`br-${index}`} />];
   });
 }
 
