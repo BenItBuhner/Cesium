@@ -273,15 +273,14 @@ export function isWithinAllowedRoots(targetPath: string): boolean {
 
   const resolvedTarget = path.resolve(targetPath);
 
-  // Ephemeral per-chat sandboxes live under the data dir, which may sit outside
-  // $HOME / WORKSPACE_ALLOWED_ROOTS. Always allow that tree.
-  const standaloneChatsRoot = path.resolve(DATA_DIR, "standalone-chats");
-  const standaloneRelative = path.relative(standaloneChatsRoot, resolvedTarget);
-  if (
-    standaloneRelative === "" ||
-    (!standaloneRelative.startsWith("..") && !path.isAbsolute(standaloneRelative))
-  ) {
-    return true;
+  // Ephemeral per-chat sandboxes and Project context folders live under the
+  // data dir, which may sit outside $HOME / WORKSPACE_ALLOWED_ROOTS. Always
+  // allow those trees.
+  for (const engineManagedRoot of ["standalone-chats", "projects"]) {
+    const relative = path.relative(path.resolve(DATA_DIR, engineManagedRoot), resolvedTarget);
+    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return true;
+    }
   }
 
   return getAllowedWorkspaceRoots().some((allowedRoot) => {
