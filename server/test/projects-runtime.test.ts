@@ -63,6 +63,7 @@ const [
   { getWorkspaceById, listWorkspaces },
   { buildAgentConversationsAllPayload },
   { createStandaloneChatWorkspace },
+  { buildProjectOrchestratorReminder, executeProjectOrchestratorTool, setProjectAgentCheckWindowForTests },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -75,6 +76,7 @@ const [
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/rail-payload.js"),
   import("../src/lib/standalone-chats.js"),
+  import("../src/lib/projects/orchestrator-tools.js"),
 ]);
 
 const app = createCesiumApp();
@@ -382,8 +384,12 @@ test("steer lands mid-turn on a busy child and queued work runs as its next turn
     text(["Steered web and queued docs."])
   );
   await promptOrchestrator("Web needs dark mode, then docs.");
-  assert.deepEqual(JSON.parse(await waitForTool("call_steer_web")), { agent: "web", delivery: "mid_turn" });
-  assert.deepEqual(JSON.parse(await waitForTool("call_queue_web")), { agent: "web", delivery: "queued" });
+  const steered = JSON.parse(await waitForTool("call_steer_web")) as Record<string, string>;
+  const queued = JSON.parse(await waitForTool("call_queue_web")) as Record<string, string>;
+  assert.deepEqual([steered.agent, steered.delivery], ["web", "mid_turn"]);
+  assert.deepEqual([queued.agent, queued.delivery], ["web", "queued"]);
+  assert.match(steered.note!, /after your turn ends and never during it/);
+  assert.match(queued.note!, /after your turn ends and never during it/);
 
   await waitFor(
     "web queue to drain",
@@ -538,6 +544,93 @@ test("stopping a busy child is silent, and a human turn in the child reports aga
   const resumed = await childRecord("slow");
   assert.equal(resumed.suppressReports, false);
   assert.equal(resumed.suppressedThroughSeq, null);
+});
+
+test("the orchestrator is told to wait for reports, and repeat checks of an unchanged roster come back short", async () => {
+  await waitForOrchestratorIdle("idle before polling");
+  script(
+    "poller",
+    toolCall("call_poller_wait", "wait", { seconds: 4, reason: "long job" }),
+    text(["Poller done."])
+  );
+  let reminderWhileWorking = "";
+  const onceThePollerWaits =
+    (responder: Responder): Responder =>
+    async (request, res) => {
+      await waitFor(
+        "poller in its wait tool",
+        () => childSnapshot("poller"),
+        (value) => eventsOfKind(value.events, "tool_call").some((event) => event.toolCallId === "call_poller_wait")
+      );
+      reminderWhileWorking = await buildProjectOrchestratorReminder(project.id, {
+        dateLabel: "today",
+        modelName: MODEL_ID,
+      });
+      await responder(request, res);
+    };
+  script(
+    "orchestrator",
+    toolCall("call_create_poller", "project_create_agent", { name: "poller", instructions: "Run the long job." }),
+    onceThePollerWaits(toolCall("call_poll_1", "project_list_agents", {})),
+    toolCall("call_poll_2", "project_list_agents", {}),
+    toolCall("call_poll_3", "project_list_agents", { agent: "poller" }),
+    toolCall("call_poll_4", "project_list_agents", { agent: "poller" }),
+    text(["Poller started; I will wait for its report."]),
+    toolCall("call_after_report", "project_list_agents", { agent: "poller" }),
+    text(["Poller finished."])
+  );
+  await promptOrchestrator("Start the long job.");
+
+  const created = JSON.parse(await waitForTool("call_create_poller")) as { note: string };
+  assert.match(created.note, /Do not check on them in the meantime: finish any other delegation, then end your turn\./);
+
+  type Roster = { agents: Array<{ name: string; bucket: string }>; note?: string };
+  const first = JSON.parse(await waitForTool("call_poll_1")) as Roster;
+  assert.equal(first.agents.find((agent) => agent.name === "poller")?.bucket, "working");
+  assert.match(first.note ?? "", /after your turn ends and never during it/);
+  assert.match(reminderWhileWorking, /Agents working: \d+ of max \d+\nWorking agents report back with <project_agent_updates> after this turn ends\. Do not poll them\./);
+
+  const second = JSON.parse(await waitForTool("call_poll_2")) as Record<string, unknown>;
+  assert.equal(second.unchanged, true);
+  assert.equal(second.checksWithoutChange, 1);
+  assert.equal(second.agents, undefined, "the unchanged roster is not repeated");
+  assert.match(String(second.note), /^Nothing has changed since your last check \d+s ago, and nothing can change while your turn is running\./);
+
+  const single = JSON.parse(await waitForTool("call_poll_3")) as { agent: { name: string }; note?: string };
+  assert.equal(single.agent.name, "poller", "a check of one agent is tracked on its own");
+  assert.match(single.note ?? "", /never during it/);
+  assert.equal((JSON.parse(await waitForTool("call_poll_4")) as Record<string, unknown>).unchanged, true);
+
+  const reported = await waitFor(
+    "poller report turn",
+    orchestratorSnapshot,
+    (value) =>
+      value.conversation.status === "idle" &&
+      eventsOfKind(value.events, "tool_call_update").some(
+        (event) => event.toolCallId === "call_after_report" && event.status !== "in_progress"
+      )
+  );
+  const afterReport = JSON.parse(toolResult(reported.events, "call_after_report")) as {
+    agent: { bucket: string; lastReply: string };
+    unchanged?: boolean;
+    note?: string;
+  };
+  assert.equal(afterReport.unchanged, undefined, "a changed agent gets the full answer again");
+  assert.equal(afterReport.agent.bucket, "idle");
+  assert.equal(afterReport.agent.lastReply, "Poller done.");
+  assert.equal(afterReport.note, undefined, "no wait note once nothing is working");
+
+  setProjectAgentCheckWindowForTests(0);
+  try {
+    const repeat = JSON.parse(
+      await executeProjectOrchestratorTool(project.id, "project_list_agents", { agent: "poller" })
+    ) as { agent?: unknown; unchanged?: boolean };
+    assert.ok(repeat.agent && !repeat.unchanged, "outside the window a repeat check gets the full answer");
+  } finally {
+    setProjectAgentCheckWindowForTests(null);
+  }
+  const removed = await api("DELETE", `/api/projects/${project.id}/agents/poller`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.json));
 });
 
 test("rename, transcript, delete and context tools work from the orchestrator", async () => {
