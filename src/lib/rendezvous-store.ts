@@ -107,9 +107,10 @@ export class MemoryRateLimiter {
 }
 
 /**
- * Engines heartbeat every 15 s; a record lives 90 s. Re-publishing the same
- * (server, secret) within this window is skipped so each engine costs about
- * half the Convex writes without any client seeing a stale endpoint.
+ * Engines heartbeat every 30 s (older installs still every 15 s); a record
+ * lives 90 s. Re-publishing the same (server, secret) within this window is
+ * skipped so a fast-beating engine costs about half the Convex writes without
+ * any client seeing a stale endpoint.
  */
 const CONVEX_PUBLISH_DEBOUNCE_MS = 20_000;
 
