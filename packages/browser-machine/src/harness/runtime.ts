@@ -291,7 +291,10 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         return;
       }
 
-      const systemPrompt = buildCesiumBaseSystemPrompt();
+      const systemPrompt = buildCesiumBaseSystemPrompt({
+        modelName: record.config.modelName,
+        workspaceRoot: workspace.root,
+      });
 
       for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
         if (turn.cancelled) return;

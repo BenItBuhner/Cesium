@@ -659,11 +659,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return this.callbacks.conversation.config.profileId?.trim() || null;
   }
 
-  /** Profile-resolved base system prompt (persona + verbatim profile instructions). */
+  /**
+   * Profile-resolved base system prompt (persona + verbatim profile
+   * instructions) with the session constants filled in. Model name and
+   * workspace root only change on a model switch or relocation, so the prompt
+   * prefix stays byte-stable across ordinary turns; per-turn facts (date, git
+   * state, AGENTS.md, MCP, skills) travel in the reminder instead.
+   */
   private profileSystemPrompt(): string {
+    const modelId = this.currentModelId();
     return buildCesiumBaseSystemPrompt({
       base: this.activeProfile.prompt.base,
       customInstructions: this.activeProfile.prompt.customInstructions,
+      modelName: resolveModelDisplayName(this.callbacks.conversation.config.modelName, modelId),
+      workspaceRoot: this.callbacks.workspace.root,
     });
   }
 
