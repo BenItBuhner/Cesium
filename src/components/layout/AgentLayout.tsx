@@ -33,6 +33,8 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { MobileShareIntake } from "@/components/mobile/MobileShareIntake";
 import { MobileNotificationRouting } from "@/components/mobile/MobileNotificationRouting";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
+import { NewProjectDialogHost } from "@/components/projects/NewProjectDialog";
+import { ProjectsProvider } from "@/components/projects/ProjectsProvider";
 import { VoiceSessionProvider } from "@/components/voice/VoiceSessionProvider";
 import { VoiceAgentView } from "@/components/voice/VoiceAgentView";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -514,12 +516,15 @@ export function AgentLayout() {
     <WorkbenchContextMenuProvider>
       <EditorBridgeProvider>
         <AgentShellStateProvider>
-          <VoiceSessionProvider>
-            <AgentLayoutShell />
-            <MobileShareIntake />
-            <MobileNotificationRouting />
-            <ExtensionsWorkspaceBridge />
-          </VoiceSessionProvider>
+          <ProjectsProvider>
+            <VoiceSessionProvider>
+              <AgentLayoutShell />
+              <MobileShareIntake />
+              <MobileNotificationRouting />
+              <ExtensionsWorkspaceBridge />
+            </VoiceSessionProvider>
+            <NewProjectDialogHost />
+          </ProjectsProvider>
         </AgentShellStateProvider>
       </EditorBridgeProvider>
     </WorkbenchContextMenuProvider>

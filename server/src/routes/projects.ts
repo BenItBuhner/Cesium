@@ -98,7 +98,14 @@ function nullableString(record: Record<string, unknown>, key: string): string | 
 // Literal paths first: they would otherwise match `/api/projects/:id`.
 projectRoutes.get(
   "/api/projects/engines",
-  guarded(async (c) => c.json({ engines: await listProjectEngineSummaries() }))
+  guarded(async (c) =>
+    c.json({
+      engines:
+        c.req.query("detail") === "1"
+          ? await listProjectEngines(null)
+          : await listProjectEngineSummaries(),
+    })
+  )
 );
 
 projectRoutes.post(

@@ -788,6 +788,14 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("servers", "saved", "Saved servers"),
 
   // -- Beta --
+  section("beta", "projects", "Projects", "projects orchestrator agents beta"),
+  row(
+    "beta",
+    "projects",
+    "Projects",
+    "Orchestrator chat that runs agents across repositories and engines.",
+    ["orchestrator", "agents", "engines", "repositories"]
+  ),
   section("beta", "browser", "Browser", "new browser beta experimental chromium"),
   row("beta", "new-browser", "New browser", "Experimental Chromium-backed browser engine."),
   section("beta", "extensions", "Extensions", "vscode extension marketplace beta"),

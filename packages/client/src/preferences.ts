@@ -15,6 +15,8 @@ export type UserPreferences = {
   experimentalIpadResumeCache: boolean;
   /** Desktop-only Beta: enable VS Code extension marketplace/runtime surfaces. */
   vscodeExtensionsBeta: boolean;
+  /** Beta: Projects (an orchestrator chat that runs agents across repos and engines). Engines read the same flag. */
+  projects: boolean;
 };
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
@@ -23,6 +25,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   experimentalIpadWindowedTabInset: false,
   experimentalIpadResumeCache: false,
   vscodeExtensionsBeta: false,
+  projects: false,
 };
 
 /**
@@ -75,6 +78,7 @@ export function parseUserPreferences(raw: string | null): UserPreferences {
       vscodeExtensionsBeta: hasVscodeExtensionsBetaPreference
         ? parsed?.vscodeExtensionsBeta === true
         : false,
+      projects: parsed?.projects === true,
     };
   } catch {
     return DEFAULT_USER_PREFERENCES;
@@ -88,6 +92,7 @@ export function serializeUserPreferences(preferences: UserPreferences): string {
     experimentalIpadWindowedTabInset: preferences.experimentalIpadWindowedTabInset,
     experimentalIpadResumeCache: preferences.experimentalIpadResumeCache,
     vscodeExtensionsBeta: preferences.vscodeExtensionsBeta,
+    projects: preferences.projects,
   });
 }
 
@@ -97,7 +102,8 @@ export function userPreferencesEqual(a: UserPreferences, b: UserPreferences): bo
     a.experimentalIpadCustomButtons === b.experimentalIpadCustomButtons &&
     a.experimentalIpadWindowedTabInset === b.experimentalIpadWindowedTabInset &&
     a.experimentalIpadResumeCache === b.experimentalIpadResumeCache &&
-    a.vscodeExtensionsBeta === b.vscodeExtensionsBeta
+    a.vscodeExtensionsBeta === b.vscodeExtensionsBeta &&
+    a.projects === b.projects
   );
 }
 
@@ -144,6 +150,7 @@ export function mergeLegacyUserPreferences(
     experimentalIpadResumeCache:
       account.experimentalIpadResumeCache || legacy.experimentalIpadResumeCache,
     vscodeExtensionsBeta: account.vscodeExtensionsBeta || legacy.vscodeExtensionsBeta,
+    projects: account.projects || legacy.projects,
   };
   return userPreferencesEqual(merged, account) ? account : merged;
 }

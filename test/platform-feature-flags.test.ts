@@ -114,4 +114,14 @@ describe("platform feature flags", () => {
     };
     assert.equal(resolveEffectiveUserPreferences(stored).vscodeExtensionsBeta, true);
   });
+
+  test("Projects is offered on every shell", () => {
+    const stored = parseUserPreferences(JSON.stringify({ projects: true }));
+    delete (globalThis as typeof globalThis & { window?: unknown }).window;
+    assert.equal(resolveEffectiveUserPreferences(stored).projects, true);
+    (globalThis as typeof globalThis & { window?: unknown }).window = {
+      cesiumMobile: { isReactNative: true },
+    };
+    assert.equal(resolveEffectiveUserPreferences(stored).projects, true);
+  });
 });

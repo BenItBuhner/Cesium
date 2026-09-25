@@ -10,6 +10,7 @@ import {
   type ProjectChildSummary,
   type ProjectEngineListing,
   type ProjectEngineSummary,
+  type ProjectHarnessInfo,
   type ProjectRepoBinding,
   type ProjectSettings,
   type ProjectSnapshot,
@@ -19,6 +20,7 @@ import { listAgentBackendsWithCache } from "../agents/providers.js";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
 import { readConversationRecord } from "../agents/session-store.js";
 import type { AgentBackendId, AgentBackendInfo } from "../agents/types.js";
+import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { isEngineManagedWorkspace } from "../standalone-chat-paths.js";
 import {
   ensureWorkspaceRegistered,
@@ -219,6 +221,8 @@ export async function listProjects(): Promise<ProjectSummary[]> {
         updatedAt: record.updatedAt,
         archivedAt: record.archivedAt,
         orchestratorStatus: orchestrator?.status ?? "unknown",
+        orchestratorConversationId: record.orchestrator.conversationId,
+        orchestratorWorkspaceId: record.orchestrator.workspaceId,
         repoCount: record.repos.length,
         agentCount: live.length,
         workingCount: live.filter((child) => isProjectChildBusy(child.lastStatus)).length,
@@ -226,6 +230,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
           (child) =>
             child.lastStatus === "awaiting_permission" || child.lastStatus === "awaiting_question"
         ).length,
+        turnsCompleted: record.children.reduce((sum, child) => sum + child.turnsCompleted, 0),
       } satisfies ProjectSummary;
     })
   );
@@ -614,6 +619,25 @@ export function buildChildBrief(input: {
   ].join("\n");
 }
 
+/**
+ * The Project default model belongs to the default harness on the home engine
+ * (it names a provider configured there), so another harness or a peer engine
+ * falls back to its own default unless a model is requested explicitly.
+ */
+export function resolveChildModelId(input: {
+  requested: string | null | undefined;
+  isHome: boolean;
+  harness: string;
+  settings: Pick<ProjectRecord["settings"], "defaultChildBackendId" | "defaultChildModelId">;
+}): string | null {
+  const requested = input.requested?.trim();
+  if (requested) {
+    return requested;
+  }
+  const defaultHarness = input.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
+  return input.isHome && input.harness === defaultHarness ? input.settings.defaultChildModelId : null;
+}
+
 export type CreateChildInput = {
   name: string;
   instructions: string;
@@ -671,9 +695,12 @@ export async function createProjectChild(
   const harness = isHome
     ? (await resolveHarness(input.harness, record.settings.defaultChildBackendId)).id
     : input.harness?.trim() || record.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
-  // The Project default model names a provider configured on the home engine;
-  // peers fall back to their own default for the harness.
-  const modelId = input.model?.trim() || (isHome ? record.settings.defaultChildModelId : null);
+  const modelId = resolveChildModelId({
+    requested: input.model,
+    isHome,
+    harness,
+    settings: record.settings,
+  });
   const name = uniqueChildName(record, baseName);
   const childId = `pca_${randomHex(6)}`;
   const created = await host.create({
@@ -899,24 +926,44 @@ export async function readProjectChildTranscript(
   return { agent: child.name, status: observation.status, transcript };
 }
 
-/** Every engine with its bound repos and the harnesses it can run right now (asks each peer). */
-export async function listProjectEngines(projectId: string): Promise<ProjectEngineListing[]> {
-  const record = await requireProject(projectId);
+/**
+ * This engine's harnesses. The Cesium Agent's default model lives in its settings
+ * (env bootstrap or the user's pick), not in the static registry entry.
+ */
+export async function listHomeHarnesses(): Promise<ProjectHarnessInfo[]> {
+  const [backends, cesiumDefaultModelId] = await Promise.all([
+    listAgentBackendsWithCache(),
+    getCesiumAgentSettings()
+      .then((settings) => settings.defaultModelId)
+      .catch(() => null),
+  ]);
+  return backends.map((backend) => ({
+    id: backend.id,
+    label: backend.label,
+    available: backend.available,
+    defaultModelId:
+      backend.id === ORCHESTRATOR_BACKEND_ID && cesiumDefaultModelId
+        ? cesiumDefaultModelId
+        : backend.defaultModelId,
+  }));
+}
+
+/**
+ * Every engine with its bound repos, the harnesses it can run right now and its
+ * bindable workspaces (asks each peer); `null` lists them before a Project exists.
+ */
+export async function listProjectEngines(projectId: string | null): Promise<ProjectEngineListing[]> {
+  const record = projectId ? await requireProject(projectId) : null;
+  if (!record) {
+    await assertProjectsEnabled();
+  }
   const harnessesByEngine = new Map<string, ProjectEngineListing["harnesses"]>();
   const workspacesByEngine = new Map<string, ProjectEngineListing["workspaces"]>();
-  const [backends, homeWorkspaces] = await Promise.all([
-    listAgentBackendsWithCache(),
+  const [homeHarnesses, homeWorkspaces] = await Promise.all([
+    listHomeHarnesses(),
     listWorkspaces(),
   ]);
-  harnessesByEngine.set(
-    PROJECT_HOME_ENGINE_ID,
-    backends.map((backend) => ({
-      id: backend.id,
-      label: backend.label,
-      available: backend.available,
-      defaultModelId: backend.defaultModelId,
-    }))
-  );
+  harnessesByEngine.set(PROJECT_HOME_ENGINE_ID, homeHarnesses);
   workspacesByEngine.set(
     PROJECT_HOME_ENGINE_ID,
     homeWorkspaces
@@ -934,7 +981,7 @@ export async function listProjectEngines(projectId: string): Promise<ProjectEngi
   );
   return (await listEngineSummaries()).map((engine) => ({
     ...engine,
-    repos: record.repos
+    repos: (record?.repos ?? [])
       .filter((repo) => repo.engineId === engine.id)
       .map((repo) => ({ id: repo.id, name: repo.name, root: repo.root })),
     harnesses: (harnessesByEngine.get(engine.id) ?? []).filter((harness) => harness.available),

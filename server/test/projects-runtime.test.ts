@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import type { ProjectSnapshot } from "@cesium/core/projects";
+import type { ProjectSnapshot, ProjectSummary } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
 import {
   messageText,
@@ -11,6 +11,7 @@ import {
   text,
   toolCall,
   waitFor,
+  type Responder,
 } from "./helpers/fake-chat-model.js";
 
 const TEST_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-projects-runtime-"));
@@ -243,10 +244,16 @@ test("creating a multi-repo Project provisions a hidden cesium-agent orchestrato
   assert.equal(sandboxRepo.status, 400);
   assert.match(String(sandboxRepo.json.error), /cannot be added as repositories/);
 
-  const listed = await api<{ projects: Array<{ id: string; repoCount: number }> }>("GET", "/api/projects");
+  const listed = await api<{ projects: ProjectSummary[] }>("GET", "/api/projects");
   assert.deepEqual(
-    listed.json.projects.map((entry) => [entry.id, entry.repoCount]),
-    [[project.id, 2]]
+    listed.json.projects.map((entry) => [
+      entry.id,
+      entry.repoCount,
+      entry.orchestratorConversationId,
+      entry.orchestratorWorkspaceId,
+      entry.turnsCompleted,
+    ]),
+    [[project.id, 2, project.orchestrator.conversationId, workspace.id, 0]]
   );
 });
 
@@ -397,6 +404,9 @@ test("steer lands mid-turn on a busy child and queued work runs as its next turn
   const child = await childRecord("web");
   assert.equal(child.turnsCompleted, 2);
   assert.equal(child.lastReplyPreview, "Docs written.");
+  const listed = await api<{ projects: ProjectSummary[] }>("GET", "/api/projects");
+  const summary = listed.json.projects.find((entry) => entry.id === project.id);
+  assert.ok(summary && summary.turnsCompleted >= 2, "the summary counts finished child turns");
 });
 
 test("reports from children that finish while the orchestrator is busy coalesce into one turn", async () => {
@@ -428,6 +438,46 @@ test("reports from children that finish while the orchestrator is busy coalesce 
   );
   assert.equal(combined.length, 1);
   assert.match(combined[0]!.displayContent ?? "", /^Agent update · (one, two|two, one)$/);
+});
+
+test("a report queued behind an orchestrator turn that fails upstream still reaches it", async () => {
+  const upstreamOutage: Responder = async (_request, res) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ error: { message: "All routes failed", type: "service_unavailable" } }));
+  };
+  script("orchestrator", upstreamOutage, text(["Picked up the late report."]));
+  script("late", text(["Late work done."]));
+  await promptOrchestrator("Plan the next step.");
+  await waitFor("orchestrator busy", orchestratorSnapshot, (value) => value.conversation.status === "running");
+  const created = await api("POST", `/api/projects/${project.id}/agents`, {
+    name: "late",
+    instructions: "Do the late work.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  await waitFor("report queued behind the failing turn", orchestratorSnapshot, (value) =>
+    value.conversation.queuedPrompts.some((entry) => entry.text.includes('name="late"'))
+  );
+
+  const recovered = await waitFor("report delivered after the failure", orchestratorSnapshot, (value) =>
+    value.conversation.status === "idle" &&
+    value.conversation.queuedPrompts.length === 0 &&
+    eventsOfKind(value.events, "assistant_message_chunk").some((event) =>
+      event.text.includes("Picked up the late report.")
+    )
+  );
+  const failedAt = recovered.events.findIndex(
+    (event) => event.kind === "status" && event.status === "failed"
+  );
+  const reportAt = recovered.events.findIndex(
+    (event) =>
+      event.kind === "user_message" &&
+      event.displayContent === "Agent update · late"
+  );
+  assert.ok(failedAt >= 0, "the first turn failed upstream");
+  assert.ok(reportAt > failedAt, "the queued report ran as the next turn without a human prompt");
+  const removed = await api("DELETE", `/api/projects/${project.id}/agents/late`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.json));
 });
 
 test("stopping a busy child is silent, and a human turn in the child reports again", async () => {

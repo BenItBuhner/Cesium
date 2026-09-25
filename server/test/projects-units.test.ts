@@ -19,6 +19,7 @@ const [
   { readProject },
   { normalizePeerBaseUrl },
   peerTokens,
+  { resolveChildModelId },
 ] = await Promise.all([
   import("../src/lib/projects/child-host.js"),
   import("../src/lib/projects/notices.js"),
@@ -27,6 +28,7 @@ const [
   import("../src/lib/projects/project-store.js"),
   import("../src/lib/projects/peer-client.js"),
   import("../src/lib/projects/peer-tokens.js"),
+  import("../src/lib/projects/project-service.js"),
 ]);
 
 after(async () => {
@@ -291,6 +293,25 @@ test("peer engine URLs normalize to a bare http(s) base", () => {
   for (const bad of ["", "engine:9100", "ftp://engine", "http://user:pw@engine", "http://engine/?x=1", "http://engine/#h"]) {
     assert.equal(normalizePeerBaseUrl(bad), null, bad);
   }
+});
+
+test("the Project default model only applies to the default harness on the home engine", () => {
+  const settings = { defaultChildBackendId: null, defaultChildModelId: "techlit/kimi-k3" };
+  const pick = (harness: string, isHome = true, requested: string | null = null) =>
+    resolveChildModelId({ requested, isHome, harness, settings });
+  assert.equal(pick("cesium-agent"), "techlit/kimi-k3", "unset default harness means cesium-agent");
+  assert.equal(pick("codex-app-server"), null, "another harness keeps its own default");
+  assert.equal(pick("cesium-agent", false), null, "peers keep their own default");
+  assert.equal(pick("codex-app-server", true, " gpt-5.6-sol "), "gpt-5.6-sol", "an explicit model wins");
+  assert.equal(
+    resolveChildModelId({
+      requested: null,
+      isHome: true,
+      harness: "codex-app-server",
+      settings: { defaultChildBackendId: "codex-app-server", defaultChildModelId: "gpt-5.6-sol" },
+    }),
+    "gpt-5.6-sol"
+  );
 });
 
 test("peer tokens are stored as hashes, verify by secret, and stop working once revoked", async () => {

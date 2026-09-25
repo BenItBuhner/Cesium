@@ -31,11 +31,13 @@ type UserPreferencesContextValue = {
   experimentalIpadWindowedTabInset: boolean;
   experimentalIpadResumeCache: boolean;
   vscodeExtensionsBeta: boolean;
+  projects: boolean;
   setExperimentalIpadMode: (enabled: boolean) => void;
   setExperimentalIpadCustomButtons: (enabled: boolean) => void;
   setExperimentalIpadWindowedTabInset: (enabled: boolean) => void;
   setExperimentalIpadResumeCache: (enabled: boolean) => void;
   setVscodeExtensionsBeta: (enabled: boolean) => void;
+  setProjects: (enabled: boolean) => void;
   /** Replace persisted preferences (e.g. settings import). */
   importUserPreferences: (next: UserPreferences) => void;
 };
@@ -135,6 +137,13 @@ export function UserPreferencesProvider({
     setFeatures((prev) => ({ ...prev, vscodeExtensionsBeta: enabled }));
   }, [featureFlags.vscodeExtensionsBetaSettings, setFeatures]);
 
+  const setProjects = useCallback(
+    (enabled: boolean) => {
+      setFeatures((prev) => ({ ...prev, projects: enabled }));
+    },
+    [setFeatures]
+  );
+
   const importUserPreferences = useCallback(
     (next: UserPreferences) => {
       setFeatures(() => next);
@@ -150,11 +159,13 @@ export function UserPreferencesProvider({
       experimentalIpadWindowedTabInset: effective.experimentalIpadWindowedTabInset,
       experimentalIpadResumeCache: effective.experimentalIpadResumeCache,
       vscodeExtensionsBeta: effective.vscodeExtensionsBeta,
+      projects: effective.projects,
       setExperimentalIpadMode,
       setExperimentalIpadCustomButtons,
       setExperimentalIpadWindowedTabInset,
       setExperimentalIpadResumeCache,
       setVscodeExtensionsBeta,
+      setProjects,
       importUserPreferences,
     }),
     [
@@ -164,6 +175,7 @@ export function UserPreferencesProvider({
       setExperimentalIpadWindowedTabInset,
       setExperimentalIpadResumeCache,
       setVscodeExtensionsBeta,
+      setProjects,
       importUserPreferences,
     ]
   );

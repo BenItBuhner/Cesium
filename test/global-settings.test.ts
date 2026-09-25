@@ -155,6 +155,7 @@ describe("global settings", () => {
       experimentalIpadWindowedTabInset: false,
       experimentalIpadResumeCache: false,
       vscodeExtensionsBeta: false,
+      projects: false,
     });
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -164,6 +165,12 @@ describe("global settings", () => {
     // Legacy documents without a custom-buttons flag follow the iPad mode toggle.
     assert.equal(settings.features.experimentalIpadCustomButtons, true);
     assert.equal(settings.features.vscodeExtensionsBeta, false);
+    assert.equal(settings.features.projects, false, "Projects stays off unless set");
+    const withProjects = normalizeLoadedGlobalSettings({
+      ...base,
+      features: { ...base.features, projects: true },
+    });
+    assert.equal(withProjects.features.projects, true, "the engines' Projects flag round-trips");
   });
 
   test("defaults workspace rail appearances to empty map", () => {

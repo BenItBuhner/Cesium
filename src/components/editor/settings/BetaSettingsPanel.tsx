@@ -17,11 +17,13 @@ export function BetaSettingsPanel() {
     experimentalIpadWindowedTabInset,
     experimentalIpadResumeCache,
     vscodeExtensionsBeta,
+    projects,
     setExperimentalIpadMode,
     setExperimentalIpadCustomButtons,
     setExperimentalIpadWindowedTabInset,
     setExperimentalIpadResumeCache,
     setVscodeExtensionsBeta,
+    setProjects,
   } = useUserPreferences();
   const { ipadBetaSettings, vscodeExtensionsBetaSettings } = useCesiumRendererFeatureFlags();
   const { settings, updateSettings } = useGlobalSettings();
@@ -30,6 +32,17 @@ export function BetaSettingsPanel() {
   return (
     <>
       <SettingsNestedBreadcrumbs parentNav="advanced" parentLabel="Advanced" label="Beta" />
+      <SettingsSection title="Projects">
+        <SettingsRow
+          searchId="projects"
+          title="Projects"
+          description="Direct a body of work through one orchestrator chat. It creates, steers, queues, stops and deletes agents on any harness, across several repositories and paired engines, keeps shared notes, and hears back when each agent finishes a turn. Projects appear at the top of the sidebar."
+          trailing={
+            <ToggleSwitch checked={projects} onChange={setProjects} size="md" variant="green" />
+          }
+          border={false}
+        />
+      </SettingsSection>
       <SettingsSection title="Browser">
         <SettingsRow
           searchId="new-browser"
