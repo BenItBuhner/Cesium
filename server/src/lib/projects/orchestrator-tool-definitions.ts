@@ -41,12 +41,18 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         },
         instructions: { type: "string", description: "The agent's first task, in full." },
         repo: { type: "string", description: "Repository name or id from project_list_engines." },
-        engine: { type: "string", description: "Engine id from project_list_engines. Default: home." },
+        engine: {
+          type: "string",
+          description: "Engine id or label from project_list_engines, for scratch work on that machine. Default: home.",
+        },
         harness: {
           type: "string",
           description: "Agent harness id (e.g. cesium-agent, codex-app-server). Default: Project default.",
         },
-        model: { type: "string", description: "Model id for the harness. Default: harness default." },
+        model: {
+          type: "string",
+          description: "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere.",
+        },
         mode: { type: "string", description: "Harness mode, e.g. agent or plan. Default: agent." },
       },
       additionalProperties: false,

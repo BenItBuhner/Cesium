@@ -44,6 +44,14 @@ export type ProjectEngineSummary = {
   lastSeenAt: number | null;
 };
 
+/** A token this engine minted so another engine can run Project agents here. */
+export type ProjectPeerTokenSummary = {
+  id: string;
+  label: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
+
 export type ProjectChildAttention = {
   kind: "permission" | "question";
   title: string;

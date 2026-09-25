@@ -19,6 +19,7 @@ import {
   stopProjectChild,
   updateProjectChild,
 } from "./project-service.js";
+import { listEngineSummaries } from "./engine-registry.js";
 import { PROJECT_ORCHESTRATOR_TOOL_NAMES } from "./orchestrator-tool-definitions.js";
 
 const NOTES_REMINDER_MAX_CHARS = 6_000;
@@ -174,10 +175,11 @@ export async function buildProjectOrchestratorReminder(
   context: { dateLabel: string; modelName: string }
 ): Promise<string> {
   const record = await requireProject(projectId);
-  const [children, files, notes] = await Promise.all([
+  const [children, files, notes, engines] = await Promise.all([
     listProjectChildSummaries(record),
     listContextFiles(projectId).catch(() => []),
     readContextFile(projectId, PROJECT_NOTES_FILE).catch(() => null),
+    listEngineSummaries(),
   ]);
   const working = children.filter((child) => child.bucket === "working").length;
   const lines: string[] = [
@@ -186,6 +188,12 @@ export async function buildProjectOrchestratorReminder(
     `Date: ${context.dateLabel}`,
     `Your model: ${context.modelName}`,
     `Agents working: ${working} of max ${record.settings.maxActiveChildren}`,
+    "",
+    "Engines:",
+    ...engines.map(
+      (engine) =>
+        `- ${engine.id}: ${engine.label}${engine.kind === "home" ? " (this engine)" : engine.online ? "" : ` · OFFLINE${engine.error ? `: ${oneLine(engine.error, PREVIEW_IN_TABLE_MAX_CHARS)}` : ""}`}`
+    ),
     "",
     "Repositories:",
     ...(record.repos.length > 0

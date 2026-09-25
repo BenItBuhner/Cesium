@@ -7,8 +7,17 @@ import {
   readContextFile,
   writeContextFile,
 } from "../lib/projects/context-store.js";
+import {
+  addProjectEngine,
+  deleteProjectEngine,
+  listProjectEngineSummaries,
+  listProjectPeerTokens,
+  mintProjectPeerToken,
+  revokeProjectPeerToken,
+} from "../lib/projects/engine-service.js";
 import { ProjectsDisabledError } from "../lib/projects/feature-flag.js";
 import { getProjectContextDir } from "../lib/projects/paths.js";
+import { PeerRequestError } from "../lib/projects/peer-client.js";
 import {
   ProjectError,
   addProjectRepo,
@@ -42,6 +51,9 @@ function errorResponse(c: Context, error: unknown): Response {
   }
   if (error instanceof ProjectContextError) {
     return c.json({ error: error.message, code: "project_context_invalid" }, 400);
+  }
+  if (error instanceof PeerRequestError) {
+    return c.json({ error: error.message, code: error.code }, 502);
   }
   throw error;
 }
@@ -82,6 +94,54 @@ function nullableString(record: Record<string, unknown>, key: string): string | 
   }
   return asString(record[key]) ?? null;
 }
+
+// Literal paths first: they would otherwise match `/api/projects/:id`.
+projectRoutes.get(
+  "/api/projects/engines",
+  guarded(async (c) => c.json({ engines: await listProjectEngineSummaries() }))
+);
+
+projectRoutes.post(
+  "/api/projects/engines",
+  guarded(async (c) => {
+    const body = await jsonBody(c);
+    const engine = await addProjectEngine({
+      baseUrl: asString(body.baseUrl) ?? "",
+      token: asString(body.token) ?? "",
+      label: asString(body.label) ?? null,
+    });
+    return c.json({ engine }, 201);
+  })
+);
+
+projectRoutes.delete(
+  "/api/projects/engines/:engineId",
+  guarded(async (c) => {
+    await deleteProjectEngine(param(c, "engineId"));
+    return c.json({ ok: true });
+  })
+);
+
+projectRoutes.get(
+  "/api/projects/peer-tokens",
+  guarded(async (c) => c.json({ tokens: await listProjectPeerTokens() }))
+);
+
+projectRoutes.post(
+  "/api/projects/peer-tokens",
+  guarded(async (c) => {
+    const body = await jsonBody(c);
+    return c.json(await mintProjectPeerToken(asString(body.label) ?? ""), 201);
+  })
+);
+
+projectRoutes.delete(
+  "/api/projects/peer-tokens/:tokenId",
+  guarded(async (c) => {
+    await revokeProjectPeerToken(param(c, "tokenId"));
+    return c.json({ ok: true });
+  })
+);
 
 projectRoutes.get(
   "/api/projects",

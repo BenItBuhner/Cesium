@@ -1,4 +1,4 @@
-import { isProjectChildBusy } from "@cesium/core/projects";
+import { PROJECT_HOME_ENGINE_ID, isProjectChildBusy } from "@cesium/core/projects";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
 import { subscribeAgentStoreEvents } from "../agents/session-store.js";
 import { getWorkspaceById } from "../workspace-registry.js";
@@ -6,6 +6,7 @@ import {
   observeConversationRecord,
   type ChildObservation,
 } from "./child-host.js";
+import { callPeerEngine, isPeerEngineReachable, listPeerEngines } from "./engine-registry.js";
 import { isProjectsEnabled } from "./feature-flag.js";
 import { composeProjectNotice, type ProjectNoticeUpdate } from "./notices.js";
 import { childHostFor } from "./project-service.js";
@@ -130,8 +131,9 @@ async function evaluateObservation(
     return { patch, update };
   }
   const event = noticeEvent(observation.status);
+  const turns = Math.max(1, digest.turnsEnded ?? 1);
   if (event === "finished") {
-    patch.turnsCompleted = child.turnsCompleted + 1;
+    patch.turnsCompleted = child.turnsCompleted + turns;
   }
   if (digest.replyPreview) {
     patch.lastReplyPreview = digest.replyPreview;
@@ -145,7 +147,9 @@ async function evaluateObservation(
         ? `${observation.lastError ?? "The turn failed."}${digest.replyPreview ? `\nLast reply: ${digest.replyPreview}` : ""}`
         : event === "stopped"
           ? `Stopped outside your control.${digest.replyPreview ? `\nLast reply: ${digest.replyPreview}` : ""}`
-          : digest.replyPreview,
+          : turns > 1 && digest.replyPreview
+            ? `${turns} turns finished since the last update. Latest reply:\n${digest.replyPreview}`
+            : digest.replyPreview,
   };
   return { patch, update };
 }
@@ -230,6 +234,91 @@ export async function settleProjectWatcher(): Promise<void> {
   }
 }
 
+const PEER_POLL_TICK_MS = 2_000;
+const PEER_POLL_BUSY_MS = 2_000;
+const PEER_POLL_RECENT_MS = 5_000;
+const PEER_POLL_IDLE_MS = 30_000;
+const PEER_POLL_ERROR_MS = 10_000;
+const PEER_RECENT_WINDOW_MS = 5 * 60_000;
+const PEER_HEARTBEAT_MS = 30_000;
+const PEER_HEARTBEAT_TIMEOUT_MS = 5_000;
+
+const peerNextPollAt = new Map<string, number>();
+const peerPollsInFlight = new Set<string>();
+
+function nextPeerPollDelay(observation: ChildObservation, now: number): number {
+  if (isProjectChildBusy(observation.status) || observation.queued > 0) {
+    return PEER_POLL_BUSY_MS;
+  }
+  if (observation.updatedAt != null && now - observation.updatedAt < PEER_RECENT_WINDOW_MS) {
+    return PEER_POLL_RECENT_MS;
+  }
+  return PEER_POLL_IDLE_MS;
+}
+
+async function pollPeerChild(
+  record: ProjectRecord,
+  child: ProjectChildRecord,
+  force: boolean
+): Promise<void> {
+  const key = `${record.id}:${child.id}`;
+  if (peerPollsInFlight.has(key) || (!force && (peerNextPollAt.get(key) ?? 0) > Date.now())) {
+    return;
+  }
+  peerPollsInFlight.add(key);
+  try {
+    const observation = await childHostFor(child.engineId).observe({
+      workspaceId: child.workspaceId,
+      conversationId: child.conversationId,
+    });
+    peerNextPollAt.set(key, Date.now() + nextPeerPollDelay(observation, Date.now()));
+    await scheduleProjectChildObservation(record.id, child.id, observation);
+  } catch {
+    peerNextPollAt.set(key, Date.now() + PEER_POLL_ERROR_MS);
+  } finally {
+    peerPollsInFlight.delete(key);
+  }
+}
+
+/**
+ * Peer engines cannot push store events here, so their children are polled:
+ * every 2s while working or queued, 5s shortly after activity, 30s when quiet.
+ * Children on engines that stopped answering wait for the heartbeat.
+ * `force` polls every remote child now regardless of schedule.
+ */
+export async function pollProjectPeerChildren(options?: { force?: boolean }): Promise<void> {
+  if (!(await isProjectsEnabled())) {
+    return;
+  }
+  const force = options?.force === true;
+  const polls: Promise<void>[] = [];
+  for (const record of await listProjectRecords()) {
+    for (const child of record.children) {
+      if (child.deletedAt != null || child.engineId === PROJECT_HOME_ENGINE_ID) {
+        continue;
+      }
+      if (force || isPeerEngineReachable(child.engineId)) {
+        polls.push(pollPeerChild(record, child, force));
+      }
+    }
+  }
+  await Promise.all(polls);
+}
+
+/** Refreshes every peer's online status so polling resumes once it answers again. */
+export async function heartbeatProjectPeerEngines(): Promise<void> {
+  if (!(await isProjectsEnabled())) {
+    return;
+  }
+  await Promise.all(
+    (await listPeerEngines()).map((engine) =>
+      callPeerEngine(engine.id, (client) => client.info(PEER_HEARTBEAT_TIMEOUT_MS)).catch(
+        () => undefined
+      )
+    )
+  );
+}
+
 /** Re-checks every live child and drains idle orchestrators that still hold notices. */
 export async function kickProjectWatcher(): Promise<void> {
   if (!(await isProjectsEnabled())) {
@@ -238,7 +327,8 @@ export async function kickProjectWatcher(): Promise<void> {
   const records = await listProjectRecords();
   for (const record of records) {
     for (const child of record.children) {
-      if (child.deletedAt == null) {
+      // Remote children are picked up by the first peer poll.
+      if (child.deletedAt == null && child.engineId === PROJECT_HOME_ENGINE_ID) {
         void scheduleProjectChildObservation(record.id, child.id, null);
       }
     }
@@ -271,8 +361,27 @@ export function startProjectWatcher(): () => void {
       observeConversationRecord(event.conversation)
     );
   });
+  let polling = false;
+  const pollTimer = setInterval(() => {
+    if (polling) {
+      return;
+    }
+    polling = true;
+    void pollProjectPeerChildren()
+      .catch(() => undefined)
+      .finally(() => {
+        polling = false;
+      });
+  }, PEER_POLL_TICK_MS);
+  const heartbeatTimer = setInterval(() => {
+    void heartbeatProjectPeerEngines().catch(() => undefined);
+  }, PEER_HEARTBEAT_MS);
+  pollTimer.unref?.();
+  heartbeatTimer.unref?.();
   stopWatching = () => {
     unsubscribe();
+    clearInterval(pollTimer);
+    clearInterval(heartbeatTimer);
     stopWatching = null;
   };
   void kickProjectWatcher().catch((error) => {
