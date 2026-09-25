@@ -68,7 +68,7 @@ after(async () => {
 // Prompt snapshot
 // ---------------------------------------------------------------------------
 
-test("code base prompt with no custom instructions is byte-identical to the pre-refactor prompt", async () => {
+test("code base prompt with no custom instructions is byte-identical to the checked-in snapshot", async () => {
   const fixturePath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "fixtures",
@@ -78,6 +78,51 @@ test("code base prompt with no custom instructions is byte-identical to the pre-
   assert.equal(buildCesiumBaseSystemPrompt(), snapshot);
   assert.equal(buildCesiumBaseSystemPrompt({ base: "code", customInstructions: "" }), snapshot);
   assert.equal(buildCesiumBaseSystemPrompt({ base: "code", customInstructions: "   " }), snapshot);
+});
+
+// ---------------------------------------------------------------------------
+// Placeholder substitution
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_PLACEHOLDER = /\{[a-z_]+\}/g;
+
+test("base prompts contain no unfilled template placeholders", () => {
+  for (const base of ["code", "work", "minimal"] as const) {
+    const prompt = buildCesiumBaseSystemPrompt({ base });
+    assert.deepEqual(
+      prompt.match(TEMPLATE_PLACEHOLDER) ?? [],
+      [],
+      `${base} base leaked template holes such as {model_name} or {date} into the prompt`
+    );
+  }
+});
+
+test("model name and workspace root are the only substitutions and are session-stable", () => {
+  const first = buildCesiumBaseSystemPrompt({
+    modelName: "Kimi K3",
+    workspaceRoot: "/srv/repos/cesium",
+  });
+  assert.ok(first.includes("powered by the Kimi K3 model"));
+  assert.ok(first.includes("You are under the `/srv/repos/cesium` directory"));
+  assert.ok(!first.includes("configured model"));
+  // Same inputs render byte-identically regardless of when they are built, so
+  // the prompt prefix stays cacheable across turns: per-turn facts (date,
+  // git state, AGENTS.md, MCP servers, skills) are delegated to the reminder.
+  assert.equal(
+    first,
+    buildCesiumBaseSystemPrompt({ modelName: "Kimi K3", workspaceRoot: "/srv/repos/cesium" })
+  );
+  assert.ok(!first.includes(new Date().getFullYear().toString()));
+  for (const section of ["## Project Instruction Files", "## MCP Servers", "## Skills"]) {
+    assert.ok(
+      first.includes(`\`${section}\` in the per-turn \`<system-reminder>\``),
+      `prompt should point at the reminder's ${section} section`
+    );
+  }
+  // Blank inputs fall back to the neutral phrasing instead of leaking a hole.
+  const fallback = buildCesiumBaseSystemPrompt({ modelName: "  ", workspaceRoot: "" });
+  assert.ok(fallback.includes("powered by the configured model"));
+  assert.ok(fallback.includes("You are under the `current workspace` directory"));
 });
 
 test("custom instructions render verbatim inside a delimited Profile Instructions section", () => {
