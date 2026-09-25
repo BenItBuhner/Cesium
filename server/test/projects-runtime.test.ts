@@ -445,10 +445,18 @@ test("reports from children that finish while the orchestrator is busy coalesce 
   assert.equal(queued.conversation.queuedPrompts.length, 1, "one queued turn for both reports");
   assert.equal(queued.conversation.queuedPrompts[0]!.coalesceKey, `project-notice:${project.id}`);
 
-  const drained = await waitForOrchestratorIdle("coalesced notice drained");
-  const combined = noticeMessages(drained.events).filter(
-    (event) => event.content.includes('name="one"') && event.content.includes('name="two"')
+  const isCombined = (event: { content: string }) =>
+    event.content.includes('name="one"') && event.content.includes('name="two"');
+  // Idle with an empty queue alone can be the instant between dequeuing the notice and starting its turn.
+  const drained = await waitFor(
+    "coalesced notice drained",
+    orchestratorSnapshot,
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.conversation.queuedPrompts.length === 0 &&
+      noticeMessages(value.events).some(isCombined)
   );
+  const combined = noticeMessages(drained.events).filter(isCombined);
   assert.equal(combined.length, 1);
   assert.match(combined[0]!.displayContent ?? "", /^Agent update · (one, two|two, one)$/);
 });
