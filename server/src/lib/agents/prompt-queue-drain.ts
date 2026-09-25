@@ -1,17 +1,17 @@
 import { getWorkspaceById } from "../workspace-registry.js";
-import { agentRuntimeManager } from "./runtime-manager.js";
+import { agentRuntimeManager, canStartQueuedPrompt } from "./runtime-manager.js";
 import { subscribeAgentStoreEvents } from "./session-store.js";
 
 const inFlight = new Set<string>();
 
-/** When a conversation is idle and has a server-side queue, start the next turn. */
+/** When a conversation can run its server-side queue (see `canStartQueuedPrompt`), start the next turn. */
 export function startAgentPromptQueueDrainListener(): void {
   subscribeAgentStoreEvents((event) => {
     if (event.type !== "conversation") {
       return;
     }
     const c = event.conversation;
-    if (c.status !== "idle" || !c.queuedPrompts?.length) {
+    if (!canStartQueuedPrompt(c)) {
       return;
     }
     if (inFlight.has(c.id)) {

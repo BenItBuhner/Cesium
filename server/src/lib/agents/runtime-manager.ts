@@ -113,6 +113,27 @@ function isConversationTurnInProgress(status: AgentConversationStatus): boolean 
   );
 }
 
+/**
+ * Idle conversations run their queue. Engine notices (the only entries with a
+ * `coalesceKey`) also run after a failed or interrupted turn, so Project reports
+ * are not stranded; a turn the user stopped still waits for them.
+ */
+export function canStartQueuedPrompt(
+  conversation: Pick<AgentConversationRecord, "status" | "queuedPrompts">
+): boolean {
+  const head = conversation.queuedPrompts?.[0];
+  if (!head) {
+    return false;
+  }
+  if (conversation.status === "idle") {
+    return true;
+  }
+  return (
+    (conversation.status === "failed" || conversation.status === "interrupted") &&
+    Boolean(head.coalesceKey)
+  );
+}
+
 function extractAssistantTextForMessage(
   events: AgentStoredEvent[],
   messageId: string,
@@ -1973,8 +1994,8 @@ export class AgentRuntimeManager {
   }
 
   /**
-   * Pops the next server-side queued prompt and starts it. Caller must only
-   * invoke when the conversation is idle; errors re-insert the item at the front.
+   * Pops the next server-side queued prompt and starts it when
+   * `canStartQueuedPrompt` allows; errors re-insert the item at the front.
    */
   async drainOneQueuedPrompt(
     workspace: WorkspaceRecord,
@@ -1982,52 +2003,65 @@ export class AgentRuntimeManager {
   ): Promise<void> {
     return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
       const record = await readConversationRecord(workspace.id, conversationId);
-      if (!record || record.status !== "idle" || !record.queuedPrompts.length) {
+      if (!record || !canStartQueuedPrompt(record)) {
         return;
       }
-      const [head, ...rest] = record.queuedPrompts;
+      await this.startQueueHeadLocked(workspace, conversationId, record.queuedPrompts);
+    });
+  }
+
+  /** Must run under the prompt gate. Returns the started entry, or null when it failed to start. */
+  private async startQueueHeadLocked(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    queue: AgentQueuedChatPrompt[]
+  ): Promise<AgentQueuedChatPrompt | null> {
+    const [head, ...rest] = queue;
+    if (!head) {
+      return null;
+    }
+    await updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      queuedPrompts: rest,
+    }));
+
+    try {
+      await this.promptConversationLocked(
+        workspace,
+        conversationId,
+        head.text,
+        head.attachments,
+        {
+          ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
+          ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+          ...(head.clientTimezone ? { clientTimezone: head.clientTimezone } : {}),
+          ...(head.delivery ? { delivery: head.delivery } : {}),
+          ...(head.configOverride ? { configOverride: head.configOverride } : {}),
+          ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
+          ...(head.hidden ? { hidden: true } : {}),
+          ...(head.displayContent ? { displayContent: head.displayContent } : {}),
+          ...(head.coalesceKey ? { coalesceKey: head.coalesceKey } : {}),
+        }
+      );
+      return head;
+    } catch (error) {
+      console.error("[agent] starting the queued prompt failed; restoring queue head:", error);
       await updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
-        queuedPrompts: rest,
+        queuedPrompts: [head, ...(current.queuedPrompts ?? [])],
       }));
-
-      const reinsertHead = async (): Promise<void> => {
-        await updateConversationRecord(workspace.id, conversationId, (current) => ({
-          ...current,
-          queuedPrompts: [head, ...(current.queuedPrompts ?? [])],
-        }));
-      };
-
-      try {
-        await this.promptConversationLocked(
-          workspace,
-          conversationId,
-          head.text,
-          head.attachments,
-          {
-            ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
-            ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
-            ...(head.clientTimezone ? { clientTimezone: head.clientTimezone } : {}),
-            ...(head.delivery ? { delivery: head.delivery } : {}),
-            ...(head.configOverride ? { configOverride: head.configOverride } : {}),
-            ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
-            ...(head.hidden ? { hidden: true } : {}),
-            ...(head.displayContent ? { displayContent: head.displayContent } : {}),
-          }
-        );
-      } catch (error) {
-        console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
-        await reinsertHead();
-      }
-    });
+      return null;
+    }
   }
 
   /**
    * Deliver an engine-authored notice (e.g. Project child updates). Starts a
    * turn when the conversation is idle with an empty queue; otherwise folds
-   * into the queued entry with the same `coalesceKey`, or appends one. Runs
-   * under the prompt gate because `drainOneQueuedPrompt` writes back the queue
-   * it read, which would drop a merge made outside the gate.
+   * into the queued entry with the same `coalesceKey`, or appends one. When no
+   * turn is running (the last one failed or was cancelled, so the idle drain
+   * never fires), the queue head starts right away instead of waiting for the
+   * user. Runs under the prompt gate because `drainOneQueuedPrompt` writes back
+   * the queue it read, which would drop a merge made outside the gate.
    */
   async deliverNotice(
     workspace: WorkspaceRecord,
@@ -2052,7 +2086,7 @@ export class AgentRuntimeManager {
         return "started";
       }
       let outcome: "queued" | "merged" = "queued";
-      await updateConversationRecord(workspace.id, conversationId, (current) => {
+      const updated = await updateConversationRecord(workspace.id, conversationId, (current) => {
         const currentQueue = current.queuedPrompts ?? [];
         const index = currentQueue.findIndex((entry) => entry.coalesceKey === input.coalesceKey);
         if (index >= 0) {
@@ -2082,6 +2116,16 @@ export class AgentRuntimeManager {
           ],
         };
       });
+      if (!isConversationTurnInProgress(updated.status)) {
+        const started = await this.startQueueHeadLocked(
+          workspace,
+          conversationId,
+          updated.queuedPrompts ?? []
+        );
+        if (started?.coalesceKey === input.coalesceKey) {
+          return "started";
+        }
+      }
       return outcome;
     });
   }
