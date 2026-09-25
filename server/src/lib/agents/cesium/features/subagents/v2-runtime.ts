@@ -110,6 +110,12 @@ export type SubagentsV2RuntimeOptions = {
    * that caller (its own children, depth checks from its position).
    */
   toolsetForAgent?: (agentPath: string) => CesiumSubagentToolset | null;
+  /**
+   * Fallback for read_subagent_transcript when the agent is not live in this
+   * runtime (previous session, server restart): the transcript as persisted
+   * on the parent's `subagent` cards, or null when none was recorded.
+   */
+  readPersistedTranscript?: (subagentId: string) => Promise<AgentStoredEvent[] | null>;
 };
 
 function providerPart(modelId: string): string {
@@ -518,15 +524,18 @@ export class SubagentsV2Runtime {
   async readTranscript(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const id = asString(args.subagentId) ?? asString(args.target);
     if (!id) throw new Error("read_subagent_transcript.subagentId is required.");
-    let agent: SubagentsV2Agent;
+    let transcript: AgentStoredEvent[] | null = null;
     try {
-      agent = this.resolveAgent(id, callerPath);
+      transcript = this.resolveAgent(id, callerPath).transcript;
     } catch {
+      transcript = (await this.options.readPersistedTranscript?.(id)) ?? null;
+    }
+    if (!transcript) {
       return `No collaborative subagent transcript found for ${id}.`;
     }
     const offset = Math.max(0, Math.floor(asNumber(args.offset) ?? 0));
     const limit = Math.max(1, Math.min(200, Math.floor(asNumber(args.limit) ?? 50)));
-    return agent.transcript
+    return transcript
       .slice(offset, offset + limit)
       .map((event) => `${event.kind}: ${JSON.stringify(event)}`)
       .join("\n");
