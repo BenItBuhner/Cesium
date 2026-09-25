@@ -67,6 +67,7 @@ import {
   PROJECT_ORCHESTRATOR_TOOLS,
   PROJECT_ORCHESTRATOR_TOOL_NAMES,
 } from "../projects/orchestrator-tool-definitions.js";
+import { isProjectsEnabled } from "../projects/feature-flag.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   applyCesiumProfileExclusionsToModePolicy,
@@ -172,7 +173,8 @@ import type {
 } from "../orchestration/types.js";
 import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
-  COMPLETION_RETRY_DELAYS_MS,
+  completionRetryDelayMs,
+  findUpstreamErrorPayload,
   formatCompressingContextStatusDetail,
   formatTakingLongerStatusDetail,
   isTransientProviderCompletionError,
@@ -431,6 +433,15 @@ export type CesiumAssistantStreamSink = {
   pushText: (text: string) => Promise<void>;
   pushReasoning: (text: string) => Promise<void>;
   flush: () => Promise<void>;
+  /** Drops output not yet persisted, e.g. from a model attempt that is being retried. */
+  discardPending: () => void;
+};
+
+type CesiumAdapterStreamHandlers = {
+  onTextDelta?: (text: string) => Promise<void>;
+  onReasoningDelta?: (text: string) => Promise<void>;
+  /** A failed attempt is about to be retried; drop what it buffered. */
+  onDiscardAttempt?: () => void;
 };
 
 /**
@@ -505,7 +516,20 @@ export function createCesiumAssistantStreamSink(input: {
       await flushReasoning();
       await flushText();
     },
+    discardPending: () => {
+      pendingReasoning = "";
+      pendingText = "";
+    },
   };
+}
+
+function emptyModelResponseError(model: string, raw: unknown, attempts = 1): Error {
+  return new Error(
+    `Cesium received an empty model response from ${model} with no text and no tool calls` +
+      (attempts > 1 ? ` after ${attempts} attempts. ` : ". ") +
+      "Treating this as an upstream provider failure instead of a completed turn. " +
+      `Raw response: ${truncate(safeJson(raw), 2000)}`
+  );
 }
 
 class PermissionRefusedToolCallError extends Error {
@@ -1236,6 +1260,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             {
               onTextDelta: (text) => assistantStream.pushText(text),
               onReasoningDelta: (text) => assistantStream.pushReasoning(text),
+              onDiscardAttempt: () => assistantStream.discardPending(),
             }
           );
         } finally {
@@ -1247,11 +1272,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         result = (await this.pluginRuntime?.afterModel(result)) ?? result;
         if (result.toolRequests.length === 0) {
           if (isEmptyCesiumAdapterResult(result)) {
-            throw new Error(
-              `Cesium received an empty model response from ${modelProviderId}/${modelPart(modelId)} with no text and no tool calls. ` +
-                "Treating this as an upstream provider failure instead of a completed turn. " +
-                `Raw response: ${truncate(safeJson(result.raw), 2000)}`
-            );
+            throw emptyModelResponseError(`${modelProviderId}/${modelPart(modelId)}`, result.raw);
           }
           this.acceptingSteers = false;
           if (this.pendingSteers.length > 0) {
@@ -1581,10 +1602,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async runAdapterWithWarning(
     input: RunAdapterInput,
     iteration: number,
-    handlers: {
-      onTextDelta?: (text: string) => Promise<void>;
-      onReasoningDelta?: (text: string) => Promise<void>;
-    } = {}
+    handlers: CesiumAdapterStreamHandlers = {}
   ): Promise<CesiumAdapterResult> {
     const providerId = providerPart(input.modelId);
     const timer = setTimeout(() => {
@@ -1602,81 +1620,135 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
       ]).catch(() => undefined);
     }, CESIUM_RESPONSE_WARNING_MS);
+    // Projects turns also retry a reply that comes back empty, reasoning-only,
+    // or as an error payload inside an HTTP 200, instead of failing the turn.
+    const retryEmptyReplies = await isProjectsEnabled();
+    const model = `${providerId}/${modelPart(input.modelId)}`;
     try {
       for (let retryIndex = 0; ; retryIndex += 1) {
         if (this.cancelled) {
           throw new CesiumTurnCancelledError();
         }
-        let emittedDelta = false;
+        const attempts = retryIndex + 1;
+        const progress = { emittedText: false, emittedDelta: false };
+        let failure: unknown;
+        let failureMessage: string;
+        let retryable: boolean;
         try {
-          const textParts: string[] = [];
-          const reasoningParts: string[] = [];
-          const toolRequests: CesiumToolRequest[] = [];
-          const rawEvents: unknown[] = [];
-          let finalRaw: unknown;
-          for await (const event of streamAdapter(input)) {
-            if (this.cancelled) {
-              throw new CesiumTurnCancelledError();
-            }
-            if ("raw" in event && event.raw !== undefined) {
-              finalRaw = event.raw;
-              rawEvents.push(event.raw);
-            }
-            switch (event.kind) {
-              case "text_delta":
-                textParts.push(event.text);
-                emittedDelta = emittedDelta || event.text.length > 0;
-                await handlers.onTextDelta?.(event.text);
-                break;
-              case "reasoning_delta":
-                reasoningParts.push(event.text);
-                emittedDelta = emittedDelta || event.text.length > 0;
-                await handlers.onReasoningDelta?.(event.text);
-                break;
-              case "tool_request":
-                toolRequests.push(event.request);
-                break;
-              case "raw":
-              case "done":
-                break;
-            }
+          const result = await this.streamAdapterAttempt(
+            input,
+            handlers,
+            progress,
+            retryEmptyReplies
+          );
+          if (!retryEmptyReplies || !isEmptyCesiumAdapterResult(result)) {
+            return result;
           }
-          return {
-            text: textParts.join(""),
-            reasoning: reasoningParts.join("") || undefined,
-            toolRequests,
-            raw: rawEvents.length > 1 ? rawEvents : finalRaw,
-          };
+          const upstream = findUpstreamErrorPayload(result.raw);
+          if (upstream) {
+            failureMessage = upstream.message;
+            retryable = upstream.retryable;
+            failure = new Error(
+              `${model} returned an error instead of a reply` +
+                `${attempts > 1 ? ` after ${attempts} attempts` : ""}: ${upstream.message}`
+            );
+          } else {
+            failureMessage = "empty model response";
+            retryable = true;
+            failure = emptyModelResponseError(model, result.raw, attempts);
+          }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const canRetry =
-            retryIndex < COMPLETION_AUTO_RETRY_MAX_ATTEMPTS &&
-            !emittedDelta &&
-            isTransientProviderCompletionError(message);
-          if (!canRetry) {
+          if (error instanceof CesiumTurnCancelledError) {
             throw error;
           }
-          const delayMs =
-            COMPLETION_RETRY_DELAYS_MS[
-              Math.min(retryIndex, COMPLETION_RETRY_DELAYS_MS.length - 1)
-            ] ?? COMPLETION_RETRY_DELAYS_MS[0]!;
-          console.warn(
-            `[cesium-agent] transient provider error (attempt ${retryIndex + 1}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}), retrying in ${delayMs}ms:`,
-            message
-          );
-          await this.emitConversationStatus(
-            "running",
-            formatTakingLongerStatusDetail(retryIndex + 1, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
-          );
-          await sleepMs(delayMs);
-          if (this.cancelled) {
-            throw new CesiumTurnCancelledError();
-          }
+          failure = error;
+          failureMessage = error instanceof Error ? error.message : String(error);
+          retryable = isTransientProviderCompletionError(failureMessage);
+        }
+        const streamedOutput = retryEmptyReplies ? progress.emittedText : progress.emittedDelta;
+        if (retryIndex >= COMPLETION_AUTO_RETRY_MAX_ATTEMPTS || streamedOutput || !retryable) {
+          throw failure;
+        }
+        const delayMs = completionRetryDelayMs(retryIndex);
+        console.warn(
+          `[cesium-agent] provider attempt ${attempts} failed, retrying (${attempts}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}) in ${delayMs}ms:`,
+          truncate(failureMessage, 500)
+        );
+        handlers.onDiscardAttempt?.();
+        await this.emitConversationStatus(
+          "running",
+          formatTakingLongerStatusDetail(attempts, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
+        );
+        await sleepMs(delayMs);
+        if (this.cancelled) {
+          throw new CesiumTurnCancelledError();
         }
       }
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Streams one model attempt into `handlers`. With `holdBlankText`, text
+   * deltas wait until the reply has visible text, so an attempt that turns out
+   * empty persists nothing and can be retried cleanly.
+   */
+  private async streamAdapterAttempt(
+    input: RunAdapterInput,
+    handlers: CesiumAdapterStreamHandlers,
+    progress: { emittedText: boolean; emittedDelta: boolean },
+    holdBlankText: boolean
+  ): Promise<CesiumAdapterResult> {
+    const textParts: string[] = [];
+    const reasoningParts: string[] = [];
+    const toolRequests: CesiumToolRequest[] = [];
+    const rawEvents: unknown[] = [];
+    let finalRaw: unknown;
+    let heldText = "";
+    for await (const event of streamAdapter(input)) {
+      if (this.cancelled) {
+        throw new CesiumTurnCancelledError();
+      }
+      if ("raw" in event && event.raw !== undefined) {
+        finalRaw = event.raw;
+        rawEvents.push(event.raw);
+      }
+      switch (event.kind) {
+        case "text_delta": {
+          textParts.push(event.text);
+          progress.emittedDelta = progress.emittedDelta || event.text.length > 0;
+          if (holdBlankText && !progress.emittedText) {
+            heldText += event.text;
+            if (!heldText.trim()) {
+              break;
+            }
+          }
+          const text = heldText || event.text;
+          heldText = "";
+          progress.emittedText = progress.emittedText || text.trim().length > 0;
+          await handlers.onTextDelta?.(text);
+          break;
+        }
+        case "reasoning_delta":
+          reasoningParts.push(event.text);
+          progress.emittedDelta = progress.emittedDelta || event.text.length > 0;
+          await handlers.onReasoningDelta?.(event.text);
+          break;
+        case "tool_request":
+          toolRequests.push(event.request);
+          break;
+        case "raw":
+        case "done":
+          break;
+      }
+    }
+    return {
+      text: textParts.join(""),
+      reasoning: reasoningParts.join("") || undefined,
+      toolRequests,
+      raw: rawEvents.length > 1 ? rawEvents : finalRaw,
+    };
   }
 
   async pause(): Promise<void> {

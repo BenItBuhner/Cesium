@@ -3,6 +3,19 @@ export const COMPLETION_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
 
 export const COMPLETION_AUTO_RETRY_MAX_ATTEMPTS = COMPLETION_RETRY_DELAYS_MS.length;
 
+let retryDelaysOverrideForTests: readonly number[] | null = null;
+
+/** Shortens the provider retry backoff so tests don't sleep for real; `null` restores it. */
+export function setCompletionRetryDelaysForTests(delays: readonly number[] | null): void {
+  retryDelaysOverrideForTests = delays;
+}
+
+/** Backoff before automatic retry `retryIndex + 1`. */
+export function completionRetryDelayMs(retryIndex: number): number {
+  const delays = retryDelaysOverrideForTests ?? COMPLETION_RETRY_DELAYS_MS;
+  return delays[Math.min(retryIndex, delays.length - 1)] ?? COMPLETION_RETRY_DELAYS_MS[0];
+}
+
 export const TAKING_LONGER_STATUS_PREFIX = "Taking longer";
 
 export const COMPRESSING_CONTEXT_STATUS_PREFIX = "Compressing context";
@@ -124,6 +137,87 @@ export function isTransientProviderCompletionError(message: string): boolean {
     return true;
   }
   return false;
+}
+
+export type UpstreamErrorPayload = {
+  /** `code: message` as the upstream reported it. */
+  message: string;
+  retryable: boolean;
+};
+
+const NON_RETRYABLE_UPSTREAM_ERROR =
+  /invalid[_\s-]?(request|api[_\s-]?key|argument)|unauthori[sz]ed|unauthenticated|authentication|permission|forbidden|not[_\s-]?found|does not exist|context[_\s-]?(length|window)|maximum context|too many tokens|insufficient[_\s-]?quota|billing|content[_\s-]?(filter|policy)|unsupported|failed[_\s-]?precondition/i;
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numericStatus(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d{3}$/.test(value.trim())
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+  return Number.isInteger(parsed) && parsed >= 100 && parsed <= 599 ? parsed : undefined;
+}
+
+/**
+ * Reads an error that arrived inside a successful (HTTP 200) response: an
+ * `{"error":...}` chunk in a chat stream, a Responses API `error` or
+ * `response.failed` event, or an Anthropic / Google error body. Anything
+ * without a client-side cause (bad request, auth, unknown model, context or
+ * quota) counts as a retryable upstream blip.
+ */
+export function detectUpstreamErrorPayload(raw: unknown): UpstreamErrorPayload | null {
+  const record = objectRecord(raw);
+  if (!record) {
+    return null;
+  }
+  let error: unknown;
+  if (record.type === "response.failed") {
+    error = objectRecord(record.response)?.error ?? "The provider reported response.failed.";
+  } else if (record.type === "error") {
+    error = record.error ?? record;
+  } else if (record.error !== undefined && record.error !== null && record.error !== "") {
+    error = record.error;
+  } else {
+    return null;
+  }
+  const detail = objectRecord(error) ?? {};
+  const message =
+    nonEmptyString(error) ??
+    nonEmptyString(detail.message) ??
+    nonEmptyString(objectRecord(detail.metadata)?.raw) ??
+    "The provider returned an error with no message.";
+  const code = nonEmptyString(detail.code) ?? nonEmptyString(detail.type) ?? nonEmptyString(detail.status);
+  const status = numericStatus(detail.code) ?? numericStatus(detail.status);
+  const clientError =
+    status !== undefined && status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status);
+  const signals = [detail.type, detail.code, detail.status, message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return {
+    message: code && code !== message ? `${code}: ${message}` : status ? `${status}: ${message}` : message,
+    retryable: !clientError && !NON_RETRYABLE_UPSTREAM_ERROR.test(signals),
+  };
+}
+
+/** First upstream error payload among an adapter result's raw events. */
+export function findUpstreamErrorPayload(raw: unknown): UpstreamErrorPayload | null {
+  for (const event of Array.isArray(raw) ? raw : [raw]) {
+    const found = detectUpstreamErrorPayload(event);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
 }
 
 export function sleepMs(ms: number): Promise<void> {
