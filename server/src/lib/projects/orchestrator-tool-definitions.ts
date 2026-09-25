@@ -40,10 +40,10 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
           description: "Short handle, e.g. api-tests. Lowercase letters, digits and dashes.",
         },
         instructions: { type: "string", description: "The agent's first task, in full." },
-        repo: { type: "string", description: "Repository name or id from project_list_engines." },
+        repo: { type: "string", description: "Repository name from project_list_engines." },
         engine: {
           type: "string",
-          description: "Engine id or label from project_list_engines, for scratch work on that machine. Default: home.",
+          description: "Engine name from project_list_engines, for scratch work on that machine. Default: this engine.",
         },
         harness: {
           type: "string",
@@ -53,7 +53,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         model: {
           type: "string",
           description:
-            "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
+            "Model id for the harness. Default: the Project default on this engine, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
         },
         mode: { type: "string", description: "Harness mode, e.g. agent or plan. Default: agent." },
       },
@@ -217,7 +217,7 @@ export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
   "",
   "How you work:",
   "- Break the user's goal into well-scoped tasks and give each one to a child agent with project_create_agent. Instructions must stand on their own: the goal, where to work, constraints, what done means, and what to report back.",
-  "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness.",
+  "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness. Engines have names (for example this engine's own name, or a paired machine's label): use those names in tool calls, notes and replies, never internal ids or URLs.",
   "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages, and only between your turns: nothing new reaches you while your turn is running, so calling project_list_agents again cannot show progress.",
   "- Do not poll. Once you have delegated, end your turn with a short reply to the user; the next <project_agent_updates> message starts your next turn.",
   "- Use project_steer_agent to correct a child that is working now (it lands mid-turn when the harness supports it). Use project_queue_agent to hand a child its next task.",

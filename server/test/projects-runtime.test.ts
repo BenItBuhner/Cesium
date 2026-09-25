@@ -41,6 +41,7 @@ for (const key of [
 }
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 process.env.WORKSPACE_ALLOWED_ROOTS = TEST_DATA_DIR;
+process.env.CESIUM_ENGINE_LABEL = "Home";
 
 const model = await startFakeChatModel();
 const { script, requestsFor } = model;
@@ -265,8 +266,10 @@ test("creating a multi-repo Project provisions a hidden cesium-agent orchestrato
       entry.orchestratorConversationId,
       entry.orchestratorWorkspaceId,
       entry.turnsCompleted,
+      entry.engineLabel,
     ]),
-    [[project.id, 2, project.orchestrator.conversationId, workspace.id, 0]]
+    [[project.id, 2, project.orchestrator.conversationId, workspace.id, 0, "Home"]],
+    "the listing names the engine it lives on, for the sidebar badge"
   );
 });
 
@@ -285,9 +288,10 @@ test("the orchestrator gets only the Project tools, its own prompt and the Proje
   assert.ok(allText.includes(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT), "orchestrator system prompt");
   assert.doesNotMatch(allText, /<harness-features>/, "no ordinary mode reminder");
   assert.match(allText, /<project>\nProject: Launch/);
-  assert.match(allText, /Engines:\n- home: .+ \(this engine\)\n\nRepositories:/);
-  assert.match(allText, /- alpha \(id rep_[a-f0-9]{8}, engine home\)/);
-  assert.match(allText, /- web \(id rep_[a-f0-9]{8}, engine home\)/);
+  assert.match(allText, /Engines \(refer to them by these names\):\n- Home \(this engine\)\n\nRepositories:/);
+  assert.match(allText, /- alpha \(engine Home\) \//);
+  assert.match(allText, /- web \(engine Home\) \//);
+  assert.doesNotMatch(allText, /engine home\b/, "the home engine goes by its name, not its id");
   assert.match(allText, /<project_notes path="notes.md">\n# Launch/);
   assert.equal(snapshot.conversation.title, "Launch", "title generation leaves the Project name alone");
   const files = await fs.readdir(project.contextRoot);

@@ -112,6 +112,8 @@ const [
   { startProjectWatcher, settleProjectWatcher, pollProjectPeerChildren, heartbeatProjectPeerEngines },
   { readProject },
   { getWorkspaceById },
+  { executeProjectOrchestratorTool },
+  { resolveEngineRef },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/session-store.js"),
@@ -120,6 +122,8 @@ const [
   import("../src/lib/projects/project-watcher.js"),
   import("../src/lib/projects/project-store.js"),
   import("../src/lib/workspace-registry.js"),
+  import("../src/lib/projects/orchestrator-tools.js"),
+  import("../src/lib/projects/engine-registry.js"),
 ]);
 
 const app = createCesiumApp();
@@ -423,7 +427,8 @@ test("the orchestrator runs agents on both engines and hears back from the remot
   );
   assert.equal(
     (JSON.parse(created?.detail ?? "{}") as { created?: { engine?: string } }).created?.engine,
-    peerEngineId
+    "peer-engine",
+    "the orchestrator sees the engine's name, not its id"
   );
 
   const remote = await childRecord("remote");
@@ -446,8 +451,63 @@ test("the orchestrator runs agents on both engines and hears back from the remot
   const reminder = requestsFor("orchestrator")[0]!.messages.map(messageText).join("\n");
   assert.match(
     reminder,
-    new RegExp(`Engines:\\n- home: home-engine \\(this engine\\)\\n- ${peerEngineId}: peer-engine\\n`)
+    /Engines \(refer to them by these names\):\n- home-engine \(this engine\)\n- peer-engine\n/
   );
+  assert.match(reminder, /- alpha \(engine home-engine\) /);
+  assert.match(reminder, /- beta \(engine peer-engine\) /);
+
+  const later = await waitFor(
+    "an orchestrator turn that lists both agents",
+    async () => requestsFor("orchestrator").at(-1),
+    (request) =>
+      /- remote: .* · engine peer-engine · repo beta/.test(request.messages.map(messageText).join("\n"))
+  );
+  const laterText = later.messages.map(messageText).join("\n");
+  assert.match(laterText, /- local: .* · engine home-engine · repo alpha/);
+  assert.equal(laterText.includes(peerEngineId), false, "no engine id anywhere the orchestrator reads");
+  assert.equal(laterText.includes(PEER_URL), false, "no engine URL either");
+});
+
+test("orchestrator tools and errors name engines; names and ids both resolve", async () => {
+  const listed = JSON.parse(await executeProjectOrchestratorTool(project.id, "project_list_engines", {})) as {
+    engines: Array<{ engine: string; thisEngine?: boolean; repos: Array<{ name: string }>; harnesses: Array<{ id: string }> }>;
+  };
+  assert.deepEqual(
+    listed.engines.map((engine) => [engine.engine, engine.thisEngine ?? false, engine.repos.map((repo) => repo.name)]),
+    [
+      ["home-engine", true, ["alpha"]],
+      ["peer-engine", false, ["beta"]],
+    ]
+  );
+  assert.ok(listed.engines[1]!.harnesses.some((harness) => harness.id === "cesium-agent"));
+  const listedText = JSON.stringify(listed);
+  assert.equal(listedText.includes(peerEngineId), false);
+  assert.equal(listedText.includes(PEER_URL), false);
+
+  const agents = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_list_agents", { agent: "remote" })
+  ) as { agent: { engine: string } };
+  assert.equal(agents.agent.engine, "peer-engine");
+
+  const mismatch = await api("POST", `/api/projects/${project.id}/agents`, {
+    name: "misplaced",
+    repo: "beta",
+    engine: "home-engine",
+    instructions: "Nope.",
+  });
+  assert.equal(mismatch.status, 400);
+  assert.equal(mismatch.json.error, 'Repository beta lives on engine "peer-engine", not "home-engine".');
+
+  assert.equal(await resolveEngineRef("Peer-Engine"), peerEngineId);
+  assert.equal(await resolveEngineRef(peerEngineId), peerEngineId);
+  assert.equal(await resolveEngineRef(`peer-engine (${peerEngineId})`), peerEngineId, "the shared-label form");
+  assert.equal(await resolveEngineRef("home-engine (home)"), "home");
+  await assert.rejects(resolveEngineRef("nowhere"), {
+    message: 'Unknown engine "nowhere". Engines: home-engine, peer-engine.',
+  });
+
+  const projects = await api<{ projects: Array<{ id: string; engineLabel?: string }> }>("GET", "/api/projects");
+  assert.equal(projects.json.projects.find((entry) => entry.id === project.id)?.engineLabel, "home-engine");
 });
 
 test("steer, queue, transcript and rename reach a remote agent", async () => {

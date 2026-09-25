@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ChevronRight, Network, Plus } from "lucide-react";
 import {
   isProjectChildRemote,
+  projectListingEngineName,
   projectSummaryStatusLine,
   sortProjectChildren,
   type ProjectListing,
@@ -81,6 +82,7 @@ function ProjectRailRow({
   onToggle: () => void;
 }) {
   const { openProject } = useProjects();
+  const engineName = projectListingEngineName(project);
   const busy = project.workingCount > 0 || project.orchestratorStatus === "running";
   const bucket =
     project.attentionCount > 0 ? "needs_attention" : busy ? "working" : "idle";
@@ -124,9 +126,9 @@ function ProjectRailRow({
           </span>
           {onOtherEngine ? (
             <ProjectEngineBadge
-              label={project.serverLabel}
+              label={engineName}
               remote={false}
-              title={`Lives on ${project.serverLabel}; opening it switches to that engine`}
+              title={`Lives on ${engineName}; opening it switches to that engine`}
             />
           ) : null}
           {project.agentCount > 0 || busy ? (

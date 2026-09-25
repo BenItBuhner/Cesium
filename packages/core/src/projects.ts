@@ -44,6 +44,27 @@ export type ProjectEngineSummary = {
   lastSeenAt: number | null;
 };
 
+/**
+ * How Projects name an engine to people and to the orchestrator: its label,
+ * with the id appended only when another engine shares that label. An id no
+ * listed engine owns (a peer removed since) stays as the id.
+ */
+export function projectEngineName(
+  engineId: string,
+  engines: readonly Pick<ProjectEngineSummary, "id" | "label">[]
+): string {
+  const engine = engines.find((entry) => entry.id === engineId);
+  const label = engine?.label.trim();
+  if (!label) {
+    return engineId;
+  }
+  const lowered = label.toLowerCase();
+  const shared = engines.some(
+    (other) => other.id !== engineId && other.label.trim().toLowerCase() === lowered
+  );
+  return shared ? `${label} (${engineId})` : label;
+}
+
 export type ProjectHarnessInfo = {
   id: string;
   label: string;
@@ -130,6 +151,8 @@ export type ProjectSummary = {
   attentionCount: number;
   /** Turns finished across every agent, deleted ones included; it only grows. */
   turnsCompleted: number;
+  /** Name of the engine that hosts the Project; engines from before it was listed omit it. */
+  engineLabel?: string;
 };
 
 export type ProjectSnapshot = {
@@ -262,6 +285,11 @@ export function projectSummaryStatusLine(
 
 /** A Project as listed by one of the engines the client is connected to. */
 export type ProjectListing = ProjectSummary & { serverId: string; serverLabel: string };
+
+/** The engine's own name for itself, else the client's name for the connection. */
+export function projectListingEngineName(listing: Pick<ProjectListing, "engineLabel" | "serverLabel">): string {
+  return listing.engineLabel?.trim() || listing.serverLabel;
+}
 
 /** One engine's answer to a Project list request; `projects` is null when the request failed. */
 export type ProjectServerListing = {
