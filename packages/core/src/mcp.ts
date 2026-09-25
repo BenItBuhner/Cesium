@@ -74,7 +74,24 @@ export type BuildCesiumBaseSystemPromptInput = {
   base?: CesiumPromptProfileBase;
   /** Verbatim profile-authored text appended as its own Profile Instructions section. */
   customInstructions?: string;
+  /**
+   * Session constants substituted into the prompt. Both are stable for the
+   * life of a session (a model switch is the only thing that changes either),
+   * so filling them here keeps the system prompt byte-stable across turns for
+   * provider prefix caching. Everything that changes per turn (date, git
+   * state, AGENTS.md, MCP servers, skills) lives in the per-turn
+   * `<system-reminder>` instead and the prompt refers the model there.
+   */
+  modelName?: string;
+  workspaceRoot?: string;
 };
+
+const MODEL_NAME_PLACEHOLDER = "{model_name}";
+const WORKSPACE_ROOT_PLACEHOLDER = "{entire_path}";
+// The templates read "powered by the {model_name} model" and "under the
+// `{entire_path}` directory", so the fallbacks complete those phrases.
+const DEFAULT_MODEL_NAME = "configured";
+const DEFAULT_WORKSPACE_ROOT = "current workspace";
 
 const CESIUM_CODE_PERSONA_SECTION = `## Persona
 
@@ -84,9 +101,9 @@ You are concise yet friendly and persistent; although, you avoid all usage of em
 
 const CESIUM_CODE_ENVIRONMENT_SECTION = `## Current Environment
 
-You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. It is currently {date}, and you can use the terminal to access the time, ensuring you use the clock for more time-sensitive tasks; these are rare, but if there are general timeframes for task execution while you wait or parallelize work, this can be of use.
+You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. The current date is given in the per-turn \`<system-reminder>\`, and you can use the terminal to access the time, ensuring you use the clock for more time-sensitive tasks; these are rare, but if there are general timeframes for task execution while you wait or parallelize work, this can be of use.
 
-This repository is {git_initialized_state_and_name_and_branch}, and shall explicitly follow the Git patterns requested by the user if any; do not touch or interface with Git or GH unless requested by the user.`;
+The repository state (whether this is a git repository, its current branch, and whether it has uncommitted changes) is also given in the per-turn \`<system-reminder>\`. Explicitly follow the Git patterns requested by the user if any; do not touch or interface with Git or GH unless requested by the user.`;
 
 const CESIUM_CODE_CONVERSATIONS_SECTION = `## Conversations, Relocation & Worktrees
 
@@ -117,11 +134,7 @@ Tool schemas may remain visible even when a mode blocks or restricts a tool. Vis
 
 const CESIUM_PROJECT_INSTRUCTIONS_SECTION = `## Project Instruction Files
 
-The following content is provided by default in this environment from the user and/or another agent. It comes from project instruction files such as \`AGENTS.md\` (the open cross-agent standard) and/or \`CLAUDE.md\` (Claude Code's equivalent). When both exist, \`CLAUDE.md\` is included under \`AGENTS.md\`. Use this to quickly grasp what the user expects in terms of context, practices, and constraints.
-
-\`\`\`\`markdown
-{agents_markdown_content}
-\`\`\`\`
+Project instruction files such as \`AGENTS.md\` (the open cross-agent standard) and/or \`CLAUDE.md\` (Claude Code's equivalent) are provided by default in this environment from the user and/or another agent. When both exist, \`CLAUDE.md\` is included under \`AGENTS.md\`. Their current contents are given under \`## Project Instruction Files\` in the per-turn \`<system-reminder>\`. Use this to quickly grasp what the user expects in terms of context, practices, and constraints.
 
 This content should be followed to a tee, and if there is any contradictory information within compared to the text above, treat the project instruction files as priority.`;
 
@@ -129,9 +142,7 @@ const CESIUM_MCP_TOOLS_SECTION = `## Third-Party & MCP Server Tools
 
 Although you have a ton of features and tools that are accessible to you, there are even more over the MCP method, which the user has configured for you. These are quite different from your other tools, as these are discoverable as files under their own MCP directory, and enables you to locate and use these third-party tools such as Linear, Notion, and Context7, just to name a few examples.
 
-As configured by the user, you have the following MCP servers currently visible and exposed to you:
-
-{bulleted_list_of_mcp_servers}
+The MCP servers currently visible and exposed to you are listed under \`## MCP Servers\` in the per-turn \`<system-reminder>\`.
 
 When using these tools, you must parse through the mirrored MCP metadata and actually locate the instructions and tools necessary for the task inferred by user references to these tools, such as mentioned issues, pages, or other excerpts from these applications.
 
@@ -141,9 +152,7 @@ const CESIUM_SKILLS_SECTION = `## External Skills & Instructions
 
 Although you have built-in tools, there are also Agent Skills (the open \`SKILL.md\` standard), which are discoverable as files under the workspace \`agent-skills/\` directory - the same progressive-disclosure pattern used for \`mcp-servers/\`.
 
-As configured by the user, you have the following skills currently visible and exposed to you:
-
-{list_of_skills}
+The skills currently visible and exposed to you are listed under \`## Skills\` in the per-turn \`<system-reminder>\`.
 
 When a skill is relevant, or the user cites/tags one, you must parse through the mirrored skill metadata and actually read the instructions before acting. Always read \`agent-skills/_index.md\`, then the relevant \`agent-skills/<skill-id>/summary.txt\` and \`agent-skills/<skill-id>/SKILL.md\`. Resolve relative paths from that skill subdirectory.
 
@@ -157,9 +166,9 @@ You are concise yet friendly and persistent; although, you avoid all usage of em
 
 const CESIUM_WORK_ENVIRONMENT_SECTION = `## Current Environment
 
-You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. It is currently {date}; per-turn reminders keep this fresh, so lean on them for time-sensitive coordination.
+You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. The current date is given in the per-turn \`<system-reminder>\`; those reminders keep it fresh, so lean on them for time-sensitive coordination.
 
-This repository is {git_initialized_state_and_name_and_branch}. In this profile you do not run terminal commands or perform Git operations; treat the workspace as a place for documents and working files, not a build environment.`;
+The repository state is also given in the per-turn \`<system-reminder>\`. In this profile you do not run terminal commands or perform Git operations; treat the workspace as a place for documents and working files, not a build environment.`;
 
 const CESIUM_WORK_CONVERSATIONS_SECTION = `## Conversations & Past Work
 
@@ -185,9 +194,9 @@ You are concise yet friendly and persistent; although, you avoid all usage of em
 
 const CESIUM_MINIMAL_ENVIRONMENT_SECTION = `## Current Environment
 
-You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. It is currently {date}; per-turn reminders keep this fresh.
+You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. The current date is given in the per-turn \`<system-reminder>\`; those reminders keep it fresh.
 
-This repository is {git_initialized_state_and_name_and_branch}, and shall explicitly follow the Git patterns requested by the user if any; do not touch or interface with Git or GH unless requested by the user.`;
+The repository state (whether this is a git repository, its current branch, and whether it has uncommitted changes) is also given in the per-turn \`<system-reminder>\`. Explicitly follow the Git patterns requested by the user if any; do not touch or interface with Git or GH unless requested by the user.`;
 
 function buildCesiumProfileInstructionsSection(customInstructions: string): string {
   return `## Profile Instructions
@@ -232,14 +241,25 @@ function cesiumBasePromptSections(base: CesiumPromptProfileBase): string[] {
 }
 
 /**
- * Compose the Cesium base system prompt for a profile base. Calling with no
- * input (or \`base: "code"\` and empty instructions) produces the original
- * coding prompt byte-for-byte.
+ * Compose the Cesium base system prompt for a profile base. The model name and
+ * workspace root are the only substitutions; every other environment fact is
+ * delivered by the per-turn reminder. Calling with no input renders neutral
+ * fallbacks ("the configured model", "the `current workspace` directory").
  */
 export function buildCesiumBaseSystemPrompt(
   input: BuildCesiumBaseSystemPromptInput = {}
 ): string {
-  const sections = cesiumBasePromptSections(input.base ?? "code");
+  const modelName = input.modelName?.trim() || DEFAULT_MODEL_NAME;
+  const workspaceRoot = input.workspaceRoot?.trim() || DEFAULT_WORKSPACE_ROOT;
+  // split/join rather than replaceAll: this module also ships in the mobile
+  // WebView bundle, whose oldest supported Chromium predates replaceAll.
+  const sections = cesiumBasePromptSections(input.base ?? "code").map((section) =>
+    section
+      .split(MODEL_NAME_PLACEHOLDER)
+      .join(modelName)
+      .split(WORKSPACE_ROOT_PLACEHOLDER)
+      .join(workspaceRoot)
+  );
   const custom = input.customInstructions?.trim();
   if (custom) {
     sections.push(buildCesiumProfileInstructionsSection(custom));

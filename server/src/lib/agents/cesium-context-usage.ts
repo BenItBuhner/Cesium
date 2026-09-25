@@ -1,4 +1,5 @@
 import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
+import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   getCesiumAgentSettings,
   resolveCesiumModelContextWindow,
@@ -93,10 +94,14 @@ async function resolveCesiumPromptContext(input: {
   conversation: AgentConversationRecord;
 }): Promise<CesiumPromptContext> {
   const profileId = conversationProfileId(input.conversation);
+  const modelId = input.conversation.config.modelId ?? "";
+  const modelName = resolveModelDisplayName(input.conversation.config.modelName, modelId);
   const cacheKey = [
     input.workspace.id,
     input.conversation.config.backendId ?? "",
     profileId ?? "default",
+    modelId,
+    modelName,
   ].join(":");
   const cached = promptContextCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -118,6 +123,8 @@ async function resolveCesiumPromptContext(input: {
       systemPromptFull: buildCesiumBaseSystemPrompt({
         base: profile.prompt.base,
         customInstructions: profile.prompt.customInstructions,
+        modelName,
+        workspaceRoot: input.workspace.root,
       }),
       toolDefinitions: buildOpenAiToolDefinitions(tools),
       notes: [
@@ -127,7 +134,10 @@ async function resolveCesiumPromptContext(input: {
     };
   } catch {
     value = {
-      systemPromptFull: buildCesiumBaseSystemPrompt(),
+      systemPromptFull: buildCesiumBaseSystemPrompt({
+        modelName,
+        workspaceRoot: input.workspace.root,
+      }),
       toolDefinitions: defaultToolDefinitions(),
       notes: [
         "Agent settings could not be read; the default Cesium system prompt and tool set are shown.",

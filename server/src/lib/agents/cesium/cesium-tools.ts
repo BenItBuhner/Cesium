@@ -12,6 +12,7 @@ import {
 } from "./features/index.js";
 import { normalizeCesiumMode } from "../cesium-mode-policy.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
+import { GLOB_DEFAULT_RESULTS, GLOB_MAX_RESULTS } from "./cesium-glob.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
 
@@ -99,6 +100,31 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         path: { type: "string" },
         context: { type: "number" },
         maxResults: { type: "number" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "glob",
+    description:
+      "Find workspace files and directories by glob pattern, or list a directory. Returns workspace-relative paths (directories end with \"/\"), sorted, skipping .git, node_modules, .next, and .docker. Examples: pattern \"*\" lists one directory; \"src/**/*.ts\" finds files recursively; \"**/*.{test,spec}.ts\" matches alternatives. Read-only; use grep to search file contents.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description:
+            "Glob relative to path. Supports *, **, ?, {a,b}, and [...]. Use \"*\" to list the directory's immediate children.",
+        },
+        path: {
+          type: "string",
+          description: "Directory to search under, relative to the workspace root. Defaults to the root.",
+        },
+        maxResults: {
+          type: "number",
+          description: `Maximum entries to return (default ${GLOB_DEFAULT_RESULTS}, max ${GLOB_MAX_RESULTS}).`,
+        },
       },
       required: ["pattern"],
       additionalProperties: false,
@@ -1051,6 +1077,8 @@ export function toolKind(
       return "wait";
     case "grep":
       return "grep";
+    case "glob":
+      return "search";
     case "todo":
     case "create_plan":
     case "update_plan":
@@ -1185,6 +1213,11 @@ export function toolTitle(
     }
     case "grep":
       return `Grep ${asString(args.pattern) ?? "workspace"}`;
+    case "glob": {
+      const pattern = asString(args.pattern) ?? "*";
+      const searchPath = asString(args.path);
+      return searchPath ? `Glob ${pattern} in ${searchPath}` : `Glob ${pattern}`;
+    }
     case "memory": {
       const action = asString(args.action) ?? "use";
       if (action === "save") {
