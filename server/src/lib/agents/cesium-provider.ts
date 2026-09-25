@@ -508,6 +508,16 @@ class PermissionRefusedToolCallError extends Error {
 
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
+/** Model-facing framing for a steer injected into a running turn. */
+export function formatMidTurnSteer(text: string): string {
+  return [
+    "[Steering message - sent while you were working on this turn]",
+    "Read it now and adjust the rest of this turn accordingly; earlier work stays valid unless it says otherwise.",
+    "",
+    text,
+  ].join("\n");
+}
+
 class CesiumSessionHandle implements AgentSessionHandle {
   readonly sessionId: string;
   configOptions: AgentConfigOption[];
@@ -550,6 +560,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private sideChatTail: SideChatTail | null = null;
   private sideChatCursor = 0;
   private sideChatParentUnavailableNoticed = false;
+  /**
+   * Mid-turn steers accepted by `steer()` and not yet shown to the model.
+   * `acceptingSteers` flips off synchronously right before the loop commits
+   * to finishing, so a steer is either injected into this turn or refused
+   * (and queued by the runtime) - never silently dropped.
+   */
+  private pendingSteers: Array<{ text: string; userMessageId: string }> = [];
+  private acceptingSteers = false;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -789,8 +807,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.resumeWaiter = null;
     this.releaseResumeAck();
     this.activeUserMessageId = input.userMessageId;
+    this.pendingSteers = [];
+    this.acceptingSteers = true;
     let pluginOutcome: CesiumHarnessTurnOutcome = { status: "cancelled" };
-    const assistantMessageId = `cesium-assistant-${randomUUID()}`;
+    let assistantMessageId = `cesium-assistant-${randomUUID()}`;
     try {
       await this.refreshHarnessFromSettings();
       const pluginTurnInput = await this.pluginRuntime?.turnStart({
@@ -1165,6 +1185,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
                 `Raw response: ${truncate(safeJson(result.raw), 2000)}`
             );
           }
+          this.acceptingSteers = false;
+          if (this.pendingSteers.length > 0) {
+            // A steer arrived while the model was writing its answer: keep the
+            // answer in context, hand the model the steer, and keep going.
+            this.acceptingSteers = true;
+            if (result.text.trim()) {
+              toolResultMessages.push({ role: "assistant", content: result.text.trim() });
+            }
+            assistantMessageId = await this.injectPendingSteers(
+              toolResultMessages,
+              assistantMessageId
+            );
+            continue;
+          }
           history.push({ role: "assistant", content: result.text });
           await this.finishAssistant(assistantMessageId, result.raw);
           pluginOutcome = { status: "completed" };
@@ -1230,6 +1264,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (this.cancelled) {
           return;
         }
+        if (this.pendingSteers.length > 0) {
+          assistantMessageId = await this.injectPendingSteers(
+            toolResultMessages,
+            assistantMessageId
+          );
+        }
       }
     } catch (error) {
       if (this.cancelled || error instanceof CesiumTurnCancelledError) {
@@ -1275,10 +1315,86 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (this.cancelled) {
         pluginOutcome = { status: "cancelled" };
       }
+      this.acceptingSteers = false;
+      await this.requeueUndeliveredSteers();
       this.endSideChatTurn();
       await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
+  }
+
+  async steer(input: { text: string; userMessageId: string }): Promise<boolean> {
+    const text = input.text.trim();
+    if (!text || this.disposed || this.cancelled || !this.acceptingSteers) {
+      return false;
+    }
+    this.pendingSteers.push({ text, userMessageId: input.userMessageId });
+    return true;
+  }
+
+  /**
+   * Hand every pending steer to the model at the current position: close the
+   * assistant message streamed so far, persist each steer as a visible user
+   * message right here (so rebuilt history matches what the model saw), and
+   * return a fresh assistant message id for the rest of the turn.
+   */
+  private async injectPendingSteers(
+    toolResultMessages: CesiumHistoryMessage[],
+    assistantMessageId: string
+  ): Promise<string> {
+    const steers = this.pendingSteers.splice(0);
+    if (steers.length === 0) {
+      return assistantMessageId;
+    }
+    const conversationId = this.callbacks.conversation.id;
+    const events: AgentEventInput[] = [
+      {
+        eventId: randomUUID(),
+        conversationId,
+        kind: "assistant_message_end",
+        messageId: assistantMessageId,
+        stopReason: "steered",
+      },
+    ];
+    for (const steer of steers) {
+      const content = formatMidTurnSteer(steer.text);
+      events.push({
+        eventId: randomUUID(),
+        conversationId,
+        kind: "user_message",
+        messageId: steer.userMessageId,
+        content,
+        displayContent: `Steer: ${steer.text}`,
+      });
+      toolResultMessages.push({ role: "user", content });
+    }
+    await this.callbacks.appendEvents(events);
+    return `cesium-assistant-${randomUUID()}`;
+  }
+
+  /**
+   * Steers accepted but never shown to the model because the turn failed go
+   * back on the queue with steer framing. A stop drops them along with the
+   * rest of the queue, matching `cancelConversation`.
+   */
+  private async requeueUndeliveredSteers(): Promise<void> {
+    const leftover = this.pendingSteers.splice(0);
+    if (leftover.length === 0 || this.cancelled || this.disposed) {
+      return;
+    }
+    await this.callbacks
+      .updateConversation((current) => ({
+        ...current,
+        queuedPrompts: [
+          ...leftover.map((steer) => ({
+            id: randomUUID(),
+            text: steer.text,
+            delivery: "steer" as const,
+          })),
+          ...(current.queuedPrompts ?? []),
+        ],
+      }))
+      .catch(() => undefined);
   }
 
   /**
@@ -1527,6 +1643,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   async cancel(): Promise<void> {
     this.cancelled = true;
+    this.acceptingSteers = false;
+    this.pendingSteers = [];
     this.pausePhase = "none";
     this.resumeWaiter?.();
     this.resumeWaiter = null;

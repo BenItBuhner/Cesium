@@ -895,8 +895,26 @@ export interface AgentSessionHandle {
     cancelled?: boolean;
   }) => Promise<void>;
   answerQuestion?: (input: { questionId: string; answer: string }) => Promise<void>;
+  /**
+   * Inject `text` into the turn that is running right now so the model reads
+   * it before the turn ends. The handle persists the visible `user_message`
+   * event itself, at the point the model actually receives it. Resolves
+   * `false` when no running turn can take it; callers then queue it.
+   */
+  steer?: (input: { text: string; userMessageId: string }) => Promise<boolean>;
   dispose: () => Promise<void>;
 }
+
+/** How `AgentRuntimeManager.deliverPrompt` handed a message to a conversation. */
+export type AgentPromptDeliveryOutcome =
+  /** Injected into the running turn via the harness's native steer. */
+  | "mid_turn"
+  /** Conversation was busy; queued with steer framing for the next turn. */
+  | "queued_steer"
+  /** Conversation was busy; queued as the next turn. */
+  | "queued"
+  /** Conversation was idle; a turn started with this message. */
+  | "started";
 
 export interface AgentProvider {
   backend: AgentBackendInfo;

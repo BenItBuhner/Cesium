@@ -644,6 +644,46 @@ test("codex app server e2e: cancel interrupts the turn and keeps the cancelled s
   assert.deepEqual(statuses, ["cancelled"], "interrupted completion does not override the cancel");
 });
 
+test("codex app server e2e: steer injects into the active turn via turn/steer", async (t) => {
+  const harness = await createHarness();
+  const handle = await harness.provider.startSession(harness.callbacks);
+  t.after(() => handle.dispose());
+  assert.equal(
+    await handle.steer!({ text: "too early", userMessageId: "user-steer-idle" }),
+    false,
+    "no active turn means no steer"
+  );
+  const turn = handle.prompt({ text: "scenario:slow", userMessageId: "user-slow-steer" });
+  await waitFor(
+    () => eventsOfKind(harness.events, "assistant_message_chunk").length > 0,
+    5_000,
+    "streaming to begin"
+  );
+  assert.equal(
+    await handle.steer!({ text: "  also check the tests  ", userMessageId: "user-steer-1" }),
+    true
+  );
+  const steerRequest = await findClientMessage(harness, (message) => message.method === "turn/steer");
+  assert.ok(steerRequest, "turn/steer was sent");
+  const params = steerRequest?.params as Record<string, unknown>;
+  assert.equal(params.expectedTurnId, "turn_0001");
+  assert.ok(typeof params.threadId === "string" && params.threadId.length > 0);
+  assert.deepEqual(params.input, [{ type: "text", text: "also check the tests" }]);
+  const steerMessages = eventsOfKind(harness.events, "user_message").filter(
+    (event) => event.messageId === "user-steer-1"
+  );
+  assert.equal(steerMessages.length, 1);
+  assert.equal(steerMessages[0]?.content, "also check the tests");
+  assert.equal(steerMessages[0]?.displayContent, "Steer: also check the tests");
+  await handle.cancel();
+  await turn;
+  assert.equal(
+    await handle.steer!({ text: "after the turn", userMessageId: "user-steer-late" }),
+    false,
+    "a settled turn refuses steers so the runtime queues them"
+  );
+});
+
 test("codex app server e2e: cancelling while an approval is pending clears the permission and interrupts", async (t) => {
   const harness = await createHarness();
   const handle = await harness.provider.startSession(harness.callbacks);
