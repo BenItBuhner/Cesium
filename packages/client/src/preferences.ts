@@ -15,7 +15,7 @@ export type UserPreferences = {
   experimentalIpadResumeCache: boolean;
   /** Desktop-only Beta: enable VS Code extension marketplace/runtime surfaces. */
   vscodeExtensionsBeta: boolean;
-  /** Beta: Projects (an orchestrator chat that runs agents across repos and engines). Engines read the same flag. */
+  /** Beta, on by default: Projects (an orchestrator chat that runs agents across repos and engines). Engines read the same flag. */
   projects: boolean;
 };
 
@@ -25,7 +25,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   experimentalIpadWindowedTabInset: false,
   experimentalIpadResumeCache: false,
   vscodeExtensionsBeta: false,
-  projects: false,
+  projects: true,
 };
 
 /**
@@ -78,7 +78,10 @@ export function parseUserPreferences(raw: string | null): UserPreferences {
       vscodeExtensionsBeta: hasVscodeExtensionsBetaPreference
         ? parsed?.vscodeExtensionsBeta === true
         : false,
-      projects: parsed?.projects === true,
+      projects:
+        typeof parsed?.projects === "boolean"
+          ? parsed.projects
+          : DEFAULT_USER_PREFERENCES.projects,
     };
   } catch {
     return DEFAULT_USER_PREFERENCES;
@@ -150,7 +153,9 @@ export function mergeLegacyUserPreferences(
     experimentalIpadResumeCache:
       account.experimentalIpadResumeCache || legacy.experimentalIpadResumeCache,
     vscodeExtensionsBeta: account.vscodeExtensionsBeta || legacy.vscodeExtensionsBeta,
-    projects: account.projects || legacy.projects,
+    // Projects postdates the per-device document, so it can only reflect the
+    // default there, never a choice the account should inherit.
+    projects: account.projects,
   };
   return userPreferencesEqual(merged, account) ? account : merged;
 }

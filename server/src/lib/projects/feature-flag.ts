@@ -1,12 +1,17 @@
 import { getGlobalSettings } from "../global-settings-store.js";
 
 /**
- * Projects is a Beta: on when the account flag `features.projects` is set, or
- * when `CESIUM_PROJECTS_ENABLED=1` (tests and headless peer engines).
+ * Projects is a Beta that ships on: the account flag `features.projects`
+ * defaults to true and turns it off when cleared. `CESIUM_PROJECTS_ENABLED`
+ * overrides the account for headless engines and tests (`1` on, `0` off).
  */
 export async function isProjectsEnabled(): Promise<boolean> {
-  if (process.env.CESIUM_PROJECTS_ENABLED?.trim() === "1") {
+  const override = process.env.CESIUM_PROJECTS_ENABLED?.trim();
+  if (override === "1") {
     return true;
+  }
+  if (override === "0") {
+    return false;
   }
   try {
     return (await getGlobalSettings()).features.projects === true;
@@ -18,7 +23,7 @@ export async function isProjectsEnabled(): Promise<boolean> {
 export class ProjectsDisabledError extends Error {
   readonly code = "projects_disabled";
   constructor() {
-    super("Projects is disabled. Turn it on in Settings → Advanced → Beta.");
+    super("Projects is turned off. Turn it on in Settings → Advanced → Beta.");
     this.name = "ProjectsDisabledError";
   }
 }

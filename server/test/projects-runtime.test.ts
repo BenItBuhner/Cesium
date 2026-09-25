@@ -174,7 +174,8 @@ async function waitForTool(toolCallId: string) {
   return toolResult(snapshot.events, toolCallId);
 }
 
-test("Projects routes answer 404 projects_disabled while the Beta flag is off", async () => {
+test("Projects routes answer 404 projects_disabled while Projects is turned off", async () => {
+  process.env.CESIUM_PROJECTS_ENABLED = "0";
   const list = await api("GET", "/api/projects");
   assert.equal(list.status, 404);
   assert.equal(list.json.code, "projects_disabled");
@@ -182,7 +183,13 @@ test("Projects routes answer 404 projects_disabled while the Beta flag is off", 
   assert.equal(create.status, 404);
   assert.equal(create.json.code, "projects_disabled");
   await kickProjectWatcher();
-  process.env.CESIUM_PROJECTS_ENABLED = "1";
+  delete process.env.CESIUM_PROJECTS_ENABLED;
+});
+
+test("Projects is on by default when neither the account nor the env says otherwise", async () => {
+  const list = await api<{ projects: unknown[] }>("GET", "/api/projects");
+  assert.equal(list.status, 200, JSON.stringify(list.json));
+  assert.deepEqual(list.json.projects, []);
 });
 
 test("creating a multi-repo Project provisions a hidden cesium-agent orchestrator", async () => {

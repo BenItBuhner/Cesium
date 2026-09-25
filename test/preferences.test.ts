@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   DEFAULT_USER_PREFERENCES,
+  mergeLegacyUserPreferences,
   parseUserPreferences,
   serializeUserPreferences,
 } from "../src/lib/preferences.ts";
@@ -36,11 +37,19 @@ describe("user preferences", () => {
     );
   });
 
-  test("Projects defaults off and survives the boot cache round trip", () => {
-    assert.equal(DEFAULT_USER_PREFERENCES.projects, false);
-    assert.equal(parseUserPreferences("{}").projects, false);
-    const parsed = parseUserPreferences(JSON.stringify({ projects: true }));
-    assert.equal(parsed.projects, true);
-    assert.equal(JSON.parse(serializeUserPreferences(parsed)).projects, true);
+  test("Projects defaults on, can be turned off, and survives the boot cache round trip", () => {
+    assert.equal(DEFAULT_USER_PREFERENCES.projects, true);
+    assert.equal(parseUserPreferences("{}").projects, true);
+    const parsed = parseUserPreferences(JSON.stringify({ projects: false }));
+    assert.equal(parsed.projects, false);
+    assert.equal(JSON.parse(serializeUserPreferences(parsed)).projects, false);
+  });
+
+  test("a legacy per-device document never overrides the account's Projects choice", () => {
+    const account = { ...DEFAULT_USER_PREFERENCES, projects: false };
+    const legacy = parseUserPreferences(JSON.stringify({ vscodeExtensionsBeta: true }));
+    const merged = mergeLegacyUserPreferences(account, legacy);
+    assert.equal(merged.projects, false);
+    assert.equal(merged.vscodeExtensionsBeta, true);
   });
 });
