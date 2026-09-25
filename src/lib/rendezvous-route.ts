@@ -5,12 +5,23 @@ const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CIPHERTEXT_PATTERN = /^[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{32,4096}$/;
 const RECORD_TTL_SECONDS = 90;
+/**
+ * A found record may sit in the CDN for a few seconds: engines re-publish
+ * every 30 s (older installs 15 s) and clients poll no faster than every 10 s,
+ * so several devices of one user following the same engine collapse into one
+ * origin hit without anyone seeing an endpoint staler than the poll already
+ * allows. Misses (404) and every error stay uncached so a fresh publish is
+ * visible on the next lookup. Browsers never cache it (`max-age=0`); the
+ * lookup carries no Authorization header, so the CDN is allowed to.
+ */
+const RECORD_CDN_MAX_AGE_SECONDS = 5;
+const NO_STORE = "no-store, max-age=0";
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, cacheControl = NO_STORE): Response {
   return Response.json(body, {
     status,
     headers: {
-      "Cache-Control": "no-store, max-age=0",
+      "Cache-Control": cacheControl,
       "X-Content-Type-Options": "nosniff",
     },
   });
@@ -53,7 +64,11 @@ export async function handleRendezvousGet(
   if (!record || record.expiresAt <= now) {
     return json({ record: null }, 404);
   }
-  return json({ record });
+  return json(
+    { record },
+    200,
+    `public, max-age=0, s-maxage=${RECORD_CDN_MAX_AGE_SECONDS}`
+  );
 }
 
 export async function handleRendezvousPut(
