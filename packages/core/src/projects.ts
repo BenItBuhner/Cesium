@@ -44,6 +44,22 @@ export type ProjectEngineSummary = {
   lastSeenAt: number | null;
 };
 
+export type ProjectHarnessInfo = {
+  id: string;
+  label: string;
+  available: boolean;
+  defaultModelId: string;
+};
+
+export type ProjectWorkspaceInfo = { id: string; name: string; root: string };
+
+/** One engine as a Project sees it: bound repos, runnable harnesses, bindable workspaces. */
+export type ProjectEngineListing = ProjectEngineSummary & {
+  repos: Array<Pick<ProjectRepoBinding, "id" | "name" | "root">>;
+  harnesses: ProjectHarnessInfo[];
+  workspaces: ProjectWorkspaceInfo[];
+};
+
 /** A token this engine minted so another engine can run Project agents here. */
 export type ProjectPeerTokenSummary = {
   id: string;

@@ -7,7 +7,11 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
-import type { ProjectEngineSummary, ProjectSnapshot } from "@cesium/core/projects";
+import type {
+  ProjectEngineListing,
+  ProjectEngineSummary,
+  ProjectSnapshot,
+} from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
 import {
   messageText,
@@ -349,13 +353,24 @@ test("a Project binds repositories on both engines and lists the peer's harnesse
   assert.equal(unknownEngine.status, 400);
   assert.match(String(unknownEngine.json.error), /Unknown engine "nowhere"/);
 
-  const engines = await api<{
-    engines: Array<ProjectEngineSummary & { repos: Array<{ name: string }>; harnesses: Array<{ id: string }> }>;
-  }>("GET", `/api/projects/${project.id}/engines`);
+  const engines = await api<{ engines: ProjectEngineListing[] }>(
+    "GET",
+    `/api/projects/${project.id}/engines`
+  );
   const remote = engines.json.engines.find((engine) => engine.id === peerEngineId);
   assert.ok(remote);
   assert.deepEqual(remote.repos.map((repo) => repo.name), ["beta"]);
   assert.ok(remote.harnesses.some((harness) => harness.id === "cesium-agent"));
+  assert.ok(
+    remote.workspaces.some((workspace) => workspace.root === PEER_REPO_REAL),
+    "the peer's bindable workspaces are listed"
+  );
+  const home = engines.json.engines.find((engine) => engine.id === "home");
+  assert.ok(home?.workspaces.some((workspace) => workspace.name === "alpha"));
+  assert.ok(
+    home.workspaces.every((workspace) => !workspace.root.includes(`${path.sep}projects${path.sep}`)),
+    "Project context folders are not offered as repos"
+  );
 });
 
 test("the orchestrator runs agents on both engines and hears back from the remote one", async () => {

@@ -8,6 +8,7 @@ import {
   sortProjectChildren,
   type ProjectAgentDelivery,
   type ProjectChildSummary,
+  type ProjectEngineListing,
   type ProjectEngineSummary,
   type ProjectRepoBinding,
   type ProjectSettings,
@@ -22,6 +23,7 @@ import { isEngineManagedWorkspace } from "../standalone-chat-paths.js";
 import {
   ensureWorkspaceRegistered,
   getWorkspaceById,
+  listWorkspaces,
   removeWorkspace,
 } from "../workspace-registry.js";
 import {
@@ -897,16 +899,15 @@ export async function readProjectChildTranscript(
   return { agent: child.name, status: observation.status, transcript };
 }
 
-export type ProjectEngineListing = ProjectEngineSummary & {
-  repos: Array<Pick<ProjectRepoBinding, "id" | "name" | "root">>;
-  harnesses: Array<{ id: string; label: string; available: boolean; defaultModelId: string }>;
-};
-
 /** Every engine with its bound repos and the harnesses it can run right now (asks each peer). */
 export async function listProjectEngines(projectId: string): Promise<ProjectEngineListing[]> {
   const record = await requireProject(projectId);
   const harnessesByEngine = new Map<string, ProjectEngineListing["harnesses"]>();
-  const backends = await listAgentBackendsWithCache();
+  const workspacesByEngine = new Map<string, ProjectEngineListing["workspaces"]>();
+  const [backends, homeWorkspaces] = await Promise.all([
+    listAgentBackendsWithCache(),
+    listWorkspaces(),
+  ]);
   harnessesByEngine.set(
     PROJECT_HOME_ENGINE_ID,
     backends.map((backend) => ({
@@ -916,12 +917,19 @@ export async function listProjectEngines(projectId: string): Promise<ProjectEngi
       defaultModelId: backend.defaultModelId,
     }))
   );
+  workspacesByEngine.set(
+    PROJECT_HOME_ENGINE_ID,
+    homeWorkspaces
+      .filter((workspace) => !isEngineManagedWorkspace(workspace))
+      .map((workspace) => ({ id: workspace.id, name: workspace.name, root: workspace.root }))
+  );
   await Promise.all(
     (await listPeerEngines()).map(async (engine) => {
       const info = await callPeerEngine(engine.id, (client) =>
         client.info(ENGINE_INFO_TIMEOUT_MS)
       ).catch(() => null);
       harnessesByEngine.set(engine.id, info?.harnesses ?? []);
+      workspacesByEngine.set(engine.id, info?.workspaces ?? []);
     })
   );
   return (await listEngineSummaries()).map((engine) => ({
@@ -930,5 +938,6 @@ export async function listProjectEngines(projectId: string): Promise<ProjectEngi
       .filter((repo) => repo.engineId === engine.id)
       .map((repo) => ({ id: repo.id, name: repo.name, root: repo.root })),
     harnesses: (harnessesByEngine.get(engine.id) ?? []).filter((harness) => harness.available),
+    workspaces: workspacesByEngine.get(engine.id) ?? [],
   }));
 }
