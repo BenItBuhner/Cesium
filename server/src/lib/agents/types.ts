@@ -537,6 +537,13 @@ export type AgentQueuedChatPrompt = {
     targetModelName?: string;
   };
   hidden?: boolean;
+  /** Compact label shown in place of `text` (the model still receives `text`). */
+  displayContent?: string;
+  /**
+   * Machine notices sharing this key merge into one queued entry instead of
+   * stacking up while the conversation is busy.
+   */
+  coalesceKey?: string;
 };
 
 /**
@@ -606,6 +613,30 @@ export type AgentConversationOrigin =
       parentConversationId: string;
       /** Parent title at creation time, for chrome when the parent is unavailable. */
       parentTitle?: string;
+      createdAt: number;
+    }
+  | {
+      /**
+       * The orchestrator chat of a Project. Cesium harness only; it gets the
+       * fixed Project tool set regardless of mode or profile.
+       */
+      kind: "project-orchestrator";
+      projectId: string;
+      createdAt: number;
+    }
+  | {
+      /** A child agent created inside a Project, on this engine or a peer. */
+      kind: "project-child";
+      projectId: string;
+      childId: string;
+      /**
+       * Peer token that created the conversation on this engine. Peer routes
+       * only touch conversations whose origin carries their own token id.
+       * Null when the home engine created it for itself.
+       */
+      peerTokenId: string | null;
+      /** Home engine label, for chrome on peer engines. */
+      homeLabel?: string;
       createdAt: number;
     };
 

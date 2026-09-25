@@ -64,6 +64,12 @@ function originMergeKey(
   if (origin.kind === "side-chat") {
     return `side-chat:${origin.parentConversationId}`;
   }
+  if (origin.kind === "project-orchestrator") {
+    return `project-orchestrator:${origin.projectId}`;
+  }
+  if (origin.kind === "project-child") {
+    return `project-child:${origin.projectId}:${origin.childId}`;
+  }
   return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 

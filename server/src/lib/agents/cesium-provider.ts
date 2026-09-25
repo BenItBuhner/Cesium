@@ -42,7 +42,10 @@ import {
 } from "../global-settings-store.js";
 import { callMcpToolRich, refreshWorkspaceMcpMirror } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
-import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
+import {
+  resolveAgentPluginAttachments,
+  type AgentPluginAttachmentSnapshot,
+} from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
@@ -58,6 +61,12 @@ import {
   type SideChatReminderPayload,
 } from "./side-chat/side-chat-store.js";
 import { SideChatTail } from "./side-chat/side-chat-tail.js";
+import {
+  PROJECT_ORCHESTRATOR_BORROWED_TOOLS,
+  PROJECT_ORCHESTRATOR_SYSTEM_PROMPT,
+  PROJECT_ORCHESTRATOR_TOOLS,
+  PROJECT_ORCHESTRATOR_TOOL_NAMES,
+} from "../projects/orchestrator-tool-definitions.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   applyCesiumProfileExclusionsToModePolicy,
@@ -688,6 +697,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   /**
+   * Project id when this conversation is a Project orchestrator. Orchestrators
+   * are a distinct agent type: their own system prompt, only the Project tools
+   * (plus `ask_question`), and a Project-state reminder instead of the mode one.
+   */
+  private projectOrchestratorProjectId(): string | null {
+    const origin = this.callbacks.conversation.origin;
+    return origin?.kind === "project-orchestrator" ? origin.projectId : null;
+  }
+
+  /** Per-turn Project state (agents, notes, context files) plus the model roster for children. */
+  private async projectOrchestratorReminderText(
+    projectId: string,
+    context: { dateLabel: string; modelName: string }
+  ): Promise<string> {
+    // Loaded lazily: the Project service reaches back into the runtime manager.
+    const { buildProjectOrchestratorReminder } = await import(
+      "../projects/orchestrator-tools.js"
+    );
+    return [
+      await buildProjectOrchestratorReminder(projectId, context),
+      this.modelRosterText
+        ? `<available-models>\n${this.modelRosterText}\n</available-models>`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  /**
    * Profile-resolved base system prompt (persona + verbatim profile
    * instructions) with the session constants filled in. Model name and
    * workspace root only change on a model switch or relocation, so the prompt
@@ -695,6 +733,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * state, AGENTS.md, MCP, skills) travel in the reminder instead.
    */
   private profileSystemPrompt(): string {
+    if (this.projectOrchestratorProjectId()) {
+      return PROJECT_ORCHESTRATOR_SYSTEM_PROMPT;
+    }
     const modelId = this.currentModelId();
     return buildCesiumBaseSystemPrompt({
       base: this.activeProfile.prompt.base,
@@ -713,6 +754,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * recursively to every spawn depth.
    */
   private advertisedTools(): CesiumToolDefinition[] {
+    if (this.projectOrchestratorProjectId()) {
+      return [
+        ...PROJECT_ORCHESTRATOR_TOOLS,
+        ...this.harness.tools.filter((tool) =>
+          (PROJECT_ORCHESTRATOR_BORROWED_TOOLS as readonly string[]).includes(tool.name)
+        ),
+      ];
+    }
     const tools = filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
     if (!this.modelRosterText) {
       return tools;
@@ -851,28 +900,39 @@ class CesiumSessionHandle implements AgentSessionHandle {
             ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
             : undefined,
       });
-      await refreshWorkspaceMcpMirror({
-        workspaceId: this.callbacks.workspace.id,
-        workspaceRoot: this.callbacks.workspace.root,
-      }).catch(async (error) => {
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "system",
-            level: "warning",
-            text: `MCP server refresh failed before the model turn. ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          },
-        ]);
-      });
-      const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-      const pluginAttachments = await resolveAgentPluginAttachments({
-        workspaceId: this.callbacks.workspace.id,
-        workspaceRoot: this.callbacks.workspace.root,
-        backendId: "cesium-agent",
-      });
+      const orchestratorProjectId = this.projectOrchestratorProjectId();
+      // An orchestrator's workspace is the Project context folder and it has
+      // no MCP or skill tools, so the MCP and skills mirrors (which write
+      // folders into the workspace root) are skipped for it.
+      if (!orchestratorProjectId) {
+        await refreshWorkspaceMcpMirror({
+          workspaceId: this.callbacks.workspace.id,
+          workspaceRoot: this.callbacks.workspace.root,
+        }).catch(async (error) => {
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "system",
+              level: "warning",
+              text: `MCP server refresh failed before the model turn. ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            },
+          ]);
+        });
+      }
+      const summaries = orchestratorProjectId
+        ? []
+        : await getMcpSummariesForPrompt(this.callbacks.workspace.id);
+      const pluginAttachments: Pick<AgentPluginAttachmentSnapshot, "plugins" | "warnings"> =
+        orchestratorProjectId
+          ? { plugins: [], warnings: [] }
+          : await resolveAgentPluginAttachments({
+              workspaceId: this.callbacks.workspace.id,
+              workspaceRoot: this.callbacks.workspace.root,
+              backendId: "cesium-agent",
+            });
       if (pluginAttachments.warnings.length > 0) {
         await this.callbacks.appendEvents([
           {
@@ -886,33 +946,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ]);
       }
-      const skillsMirror = await refreshWorkspaceSkillsMirror({
-        workspaceRoot: this.callbacks.workspace.root,
-        pluginSkills: pluginAttachments.plugins.flatMap((plugin) =>
-          plugin.definition.skills.map((skill) => ({
-            id: skill.id,
-            title: skill.title,
-            description: skill.description,
-            body: skill.body,
-            triggerHints: skill.triggerHints,
-            pluginId: plugin.definition.pluginId,
-            pluginName: plugin.definition.displayName,
-          }))
-        ),
-      }).catch(async (error) => {
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "system",
-            level: "warning",
-            text: `Agent skills mirror refresh failed before the model turn. ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          },
-        ]);
-        return { skills: [], skillsList: "" };
-      });
+      const skillsMirror = orchestratorProjectId
+        ? { skills: [], skillsList: "" }
+        : await refreshWorkspaceSkillsMirror({
+            workspaceRoot: this.callbacks.workspace.root,
+            pluginSkills: pluginAttachments.plugins.flatMap((plugin) =>
+              plugin.definition.skills.map((skill) => ({
+                id: skill.id,
+                title: skill.title,
+                description: skill.description,
+                body: skill.body,
+                triggerHints: skill.triggerHints,
+                pluginId: plugin.definition.pluginId,
+                pluginName: plugin.definition.displayName,
+              }))
+            ),
+          }).catch(async (error) => {
+            await this.callbacks.appendEvents([
+              {
+                eventId: randomUUID(),
+                conversationId: this.callbacks.conversation.id,
+                kind: "system",
+                level: "warning",
+                text: `Agent skills mirror refresh failed before the model turn. ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              },
+            ]);
+            return { skills: [], skillsList: "" };
+          });
       const currentMode = this.currentMode();
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
@@ -991,8 +1053,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           .catch(() => undefined);
       }
       const featureReminder = harnessFeatureReminder(this.harness);
-      const memorySnapshot = await this.resolveMemorySnapshot();
-      const reminderText = [
+      const memorySnapshot = orchestratorProjectId ? null : await this.resolveMemorySnapshot();
+      const modeReminderText = [
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
@@ -1031,6 +1093,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]
         .filter(Boolean)
         .join("\n\n");
+      const reminderText = orchestratorProjectId
+        ? await this.projectOrchestratorReminderText(orchestratorProjectId, {
+            dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
+            modelName: promptContext.modelName ?? modelId,
+          })
+        : modeReminderText;
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -2469,6 +2537,32 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
   }
 
+  /** Runs the plugin `afterTool` hook and records the successful tool result. */
+  private async completeToolCall(
+    request: CesiumToolRequest,
+    title: string,
+    toolDefinition: CesiumToolDefinition | undefined,
+    output: string
+  ): Promise<string> {
+    const result = (await this.pluginRuntime?.afterTool(request, output)) ?? output;
+    const refinedTitle = this.refinedToolTitles.get(request.id);
+    this.refinedToolTitles.delete(request.id);
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "tool_call_update",
+        toolCallId: request.id,
+        title: refinedTitle ?? title,
+        toolKind: toolKind(request.name, toolDefinition),
+        status: "completed",
+        detail: result,
+        raw: { request, result },
+      },
+    ]);
+    return result;
+  }
+
   private async executeTool(request: CesiumToolRequest): Promise<string> {
     request = (await this.pluginRuntime?.beforeTool(request)) ?? request;
     const effectiveRequest =
@@ -2478,9 +2572,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
             arguments: normalizeCesiumToolRequestArguments(request.name, request.arguments),
           }
         : request;
-    const toolDefinition = this.harness.tools.find(
-      (tool) => tool.name === effectiveRequest.name
-    );
+    const orchestratorProjectId = this.projectOrchestratorProjectId();
+    const toolDefinition =
+      (orchestratorProjectId
+        ? PROJECT_ORCHESTRATOR_TOOLS.find((tool) => tool.name === effectiveRequest.name)
+        : undefined) ??
+      this.harness.tools.find((tool) => tool.name === effectiveRequest.name);
     const title = toolTitle(
       effectiveRequest.name,
       effectiveRequest.arguments,
@@ -2509,6 +2606,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
     };
     await this.callbacks.appendEvents([callEvent]);
     try {
+      if (orchestratorProjectId) {
+        if (PROJECT_ORCHESTRATOR_TOOL_NAMES.has(effectiveRequest.name)) {
+          const { executeProjectOrchestratorTool } = await import(
+            "../projects/orchestrator-tools.js"
+          );
+          const output = await executeProjectOrchestratorTool(
+            orchestratorProjectId,
+            effectiveRequest.name,
+            effectiveRequest.arguments
+          );
+          return await this.completeToolCall(effectiveRequest, title, toolDefinition, output);
+        }
+        if (
+          !(PROJECT_ORCHESTRATOR_BORROWED_TOOLS as readonly string[]).includes(
+            effectiveRequest.name
+          )
+        ) {
+          throw new Error(
+            `${effectiveRequest.name} is not available to a Project orchestrator. Delegate the work to a Project agent with project_create_agent or project_queue_agent.`
+          );
+        }
+      }
       let result: string;
       // Layer 1: hard capability boundary from the active profile (also gates
       // call_mcp_tool serverIds). Layer 2: mode posture policy.
@@ -2756,24 +2875,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
-      result =
-        (await this.pluginRuntime?.afterTool(effectiveRequest, result)) ?? result;
-      const refinedTitle = this.refinedToolTitles.get(effectiveRequest.id);
-      this.refinedToolTitles.delete(effectiveRequest.id);
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "tool_call_update",
-          toolCallId: effectiveRequest.id,
-          title: refinedTitle ?? title,
-          toolKind: toolKind(effectiveRequest.name, toolDefinition),
-          status: "completed",
-          detail: result,
-          raw: { request: effectiveRequest, result },
-        },
-      ]);
-      return result;
+      return await this.completeToolCall(effectiveRequest, title, toolDefinition, result);
     } catch (error) {
       await this.pluginRuntime?.toolError(effectiveRequest, error);
       this.refinedToolTitles.delete(effectiveRequest.id);

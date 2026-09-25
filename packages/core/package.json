@@ -33,6 +33,10 @@
     "./quick-actions": {
       "types": "./dist/quick-actions.d.ts",
       "import": "./dist/quick-actions.js"
+    },
+    "./projects": {
+      "types": "./dist/projects.d.ts",
+      "import": "./dist/projects.js"
     }
   },
   "scripts": {

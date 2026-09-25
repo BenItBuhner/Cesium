@@ -30,6 +30,7 @@ export * from "./watch-agent-contract";
 export * from "./orchestration-types";
 export * from "./phone-control";
 export * from "./quick-actions";
+export * from "./projects";
 export * from "./secret-envelope";
 export * from "./harness-auth-sync";
 export * from "./cesium-model-access";

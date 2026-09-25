@@ -6,7 +6,7 @@ import { getStorage } from "../storage/runtime.js";
 import { createWorkspaceId, normalizeWorkspaceRoot } from "./persistence.js";
 import {
   annotateWorkspaceKind,
-  isStandaloneChatWorkspace,
+  isEngineManagedWorkspace,
 } from "./standalone-chat-paths.js";
 
 export async function getHomeWorkspace(): Promise<WorkspaceRecord | null> {
@@ -83,7 +83,7 @@ export type WorkspaceRecord = {
   createdAt: number;
   updatedAt: number;
   lastOpenedAt: number;
-  kind?: "workspace" | "standalone-chat";
+  kind?: "workspace" | "standalone-chat" | "project";
 };
 
 export type WorkspaceProfileFile = {
@@ -217,8 +217,9 @@ export async function noteWorkspaceOpened(workspaceId: string): Promise<void> {
     updatedAt: now,
   });
 
-  // Standalone chat sandboxes should not pollute recent/default workspace lists.
-  if (isStandaloneChatWorkspace(annotated)) {
+  // Standalone chat sandboxes and Project context folders should not pollute
+  // recent/default workspace lists.
+  if (isEngineManagedWorkspace(annotated)) {
     await invalidateWorkspaceCaches(workspaceId);
     return;
   }
@@ -259,7 +260,7 @@ export async function resolveStartupWorkspace(): Promise<WorkspaceRecord | null>
     listWorkspaces(),
     getWorkspaceProfile(),
   ]);
-  const durable = workspaces.filter((workspace) => !isStandaloneChatWorkspace(workspace));
+  const durable = workspaces.filter((workspace) => !isEngineManagedWorkspace(workspace));
   if (durable.length === 0) {
     return null;
   }

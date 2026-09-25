@@ -140,6 +140,8 @@ export type GlobalSettings = {
   tools: Record<string, never>;
   features: {
     vscodeExtensionsBeta: boolean;
+    /** Beta: Projects (orchestrator chat plus child agents across engines). */
+    projects: boolean;
   };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
@@ -308,6 +310,7 @@ function createDefaultSettings(): GlobalSettings {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
+      projects: false,
     },
     keyboardShortcuts: {
       bindings: {},
@@ -1085,6 +1088,10 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : defaults.features.vscodeExtensionsBeta,
+      projects:
+        typeof (r as { features?: { projects?: unknown } }).features?.projects === "boolean"
+          ? (r as { features: { projects: boolean } }).features.projects
+          : defaults.features.projects,
     },
     keyboardShortcuts: {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts
