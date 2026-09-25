@@ -506,6 +506,42 @@ test("steer, queue, transcript and rename reach a remote agent", async () => {
   assert.equal((await peerObserve("builder")).json.title, "builder");
 });
 
+test("the peer checks models against its own keys: keyless creates fall back, keyless updates are refused", async () => {
+  script("keyless", text(["Keyless done."]));
+  const created = await api<{ agent: { engineId: string; modelId: string | null }; warning?: string }>(
+    "POST",
+    `/api/projects/${project.id}/agents`,
+    { name: "keyless", engine: peerEngineId, model: "302ai/claude_sonnet_4", instructions: "Say hi." }
+  );
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.equal(created.json.agent.engineId, peerEngineId);
+  assert.equal(created.json.agent.modelId, MODEL_ID);
+  assert.match(
+    created.json.warning ?? "",
+    /^Model "302ai\/claude_sonnet_4" cannot run on peer-engine: no API key is configured there for provider "302ai"\. The agent runs on projhost\/kimi-k3 \(the peer-engine default\) instead\. Models with credentials on peer-engine: projhost\/kimi-k3/
+  );
+  await waitFor("keyless reply", () => childRecord("keyless"), (child) => child.turnsCompleted === 1, 30_000);
+  assert.equal(
+    (requestsFor("keyless")[0] as { model?: string } | undefined)?.model,
+    "kimi-k3",
+    "the turn ran on the peer's credentialed provider"
+  );
+
+  const refused = await api("PATCH", `/api/projects/${project.id}/agents/keyless`, {
+    model: "anthropic/claude-sonnet-4-5",
+  });
+  assert.equal(refused.status, 400, JSON.stringify(refused.json));
+  assert.match(
+    String(refused.json.error),
+    /^Engine "peer-engine": Model "anthropic\/claude-sonnet-4-5" cannot run on peer-engine: no API key is configured there for provider "anthropic"\. Models with credentials on peer-engine: projhost\/kimi-k3/
+  );
+  const resolved = await api<{ agent: { modelId: string } }>("PATCH", `/api/projects/${project.id}/agents/keyless`, {
+    model: "kimi-k3",
+  });
+  assert.equal(resolved.status, 200, JSON.stringify(resolved.json));
+  assert.equal(resolved.json.agent.modelId, MODEL_ID, "a bare name resolves on the peer");
+});
+
 test("stopping a busy remote agent is silent", async () => {
   script("sleeper", toolCall("call_sleeper_wait", "wait", { seconds: 5, reason: "sleep" }));
   const created = await api("POST", `/api/projects/${project.id}/agents`, {

@@ -112,7 +112,7 @@ export async function executeProjectOrchestratorTool(
     case "project_list_engines":
       return json({ engines: await listProjectEngines(projectId) });
     case "project_create_agent": {
-      const child = await createProjectChild(
+      const { agent, warning } = await createProjectChild(
         projectId,
         {
           name: requiredArg(args, "name", name),
@@ -126,7 +126,8 @@ export async function executeProjectOrchestratorTool(
         "orchestrator"
       );
       return json({
-        created: compactChild(child),
+        created: compactChild(agent),
+        ...(warning ? { warning } : {}),
         note: `The agent is working on its first task. ${WAIT_FOR_UPDATES_NOTE}`,
       });
     }

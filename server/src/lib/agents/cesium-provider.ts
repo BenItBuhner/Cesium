@@ -811,6 +811,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
   /** Best-effort roster refresh; an unreachable catalog never blocks the turn. */
   private async refreshModelRoster(): Promise<void> {
     try {
+      const projectId = this.projectOrchestratorProjectId();
+      if (projectId) {
+        this.modelRosterText = await this.projectChildModelRoster(projectId);
+        return;
+      }
       const roster = await listCesiumAgentModelRoster({
         defaultModelId: this.currentModelId(),
       });
@@ -818,6 +823,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
     } catch {
       this.modelRosterText = "";
     }
+  }
+
+  /** What an orchestrator may pass as `project_create_agent.model` for agents on this engine. */
+  private async projectChildModelRoster(projectId: string): Promise<string> {
+    const [{ readProject }, { homeEngineLabel }] = await Promise.all([
+      import("../projects/project-store.js"),
+      import("../projects/engine-registry.js"),
+    ]);
+    const settings = (await readProject(projectId))?.settings;
+    const projectDefault =
+      (settings?.defaultChildBackendId || "cesium-agent") === "cesium-agent"
+        ? settings?.defaultChildModelId
+        : null;
+    const roster = await listCesiumAgentModelRoster({
+      credentialedOnly: true,
+      ...(projectDefault ? { defaultModelId: projectDefault } : {}),
+    });
+    return formatCesiumModelRoster(roster, {
+      heading:
+        `Cesium Agent models with credentials on ${homeEngineLabel()} (this engine), for project_create_agent.model. ` +
+        '"(current default)" marks the model agents get when you omit it; only pass a model when an agent needs a different one. ' +
+        "Other engines use their own keys and fall back to their default model.",
+    });
   }
 
   /** Whether the active profile exposes the curated `memory` tool. */
