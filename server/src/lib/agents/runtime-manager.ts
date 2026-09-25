@@ -4,6 +4,7 @@ import {
   appendConversationEventsAndPatchRecord,
   createConversationId,
   deleteConversationEvents,
+  deleteConversationFromStore,
   readConversationEvents,
   readConversationEventsBeforeMessage,
   readConversationEventsUpToMessage,
@@ -594,6 +595,7 @@ export class AgentRuntimeManager {
       clientEventId?: string;
       clientMessageId?: string;
       configOverride?: AgentQueuedChatPrompt["configOverride"];
+      displayContent?: string;
     }
   ): Promise<AgentConversationSnapshotHead> {
     const conversation = await this.createConversation(workspace, input);
@@ -606,6 +608,7 @@ export class AgentRuntimeManager {
         ...(prompt.clientEventId ? { clientEventId: prompt.clientEventId } : {}),
         ...(prompt.clientMessageId ? { clientMessageId: prompt.clientMessageId } : {}),
         ...(prompt.configOverride ? { configOverride: prompt.configOverride } : {}),
+        ...(prompt.displayContent ? { displayContent: prompt.displayContent } : {}),
       }
     );
   }
@@ -1400,6 +1403,7 @@ export class AgentRuntimeManager {
       clientTimezone?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
       hidden?: boolean;
+      displayContent?: string;
     }
   ): Promise<AgentConversationSnapshotHead> {
     // Serialize per conversation: two near-simultaneous prompts could both
@@ -1487,6 +1491,8 @@ export class AgentRuntimeManager {
       clientTimezone?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
       hidden?: boolean;
+      displayContent?: string;
+      coalesceKey?: string;
     },
     outcomeSink?: { value?: "queued" | "started" }
   ): Promise<AgentConversationSnapshotHead> {
@@ -1553,6 +1559,8 @@ export class AgentRuntimeManager {
           : {}),
         ...(options?.planHandoff ? { planHandoff: options.planHandoff } : {}),
         ...(options?.hidden ? { hidden: true } : {}),
+        ...(options?.displayContent ? { displayContent: options.displayContent } : {}),
+        ...(options?.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
       };
       await updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
@@ -1617,10 +1625,13 @@ export class AgentRuntimeManager {
       }
     }
 
+    const projectNamed =
+      record.origin?.kind === "project-orchestrator" || record.origin?.kind === "project-child";
     if (
-      record.title === "New chat" ||
-      record.lastEventSeq === 0 ||
-      isSideChatAwaitingFirstPrompt(record)
+      !projectNamed &&
+      (record.title === "New chat" ||
+        record.lastEventSeq === 0 ||
+        isSideChatAwaitingFirstPrompt(record))
     ) {
       void generateConversationTitle(workspace.id, conversationId, trimmed, {
         attachmentCount: attachments?.length ?? 0,
@@ -1689,13 +1700,15 @@ export class AgentRuntimeManager {
       workspace.root
     );
     const designMatch = trimmed.match(/`design:([^`]+)`/);
-    const displayContent = options?.planHandoff
-      ? `Build: ${options.planHandoff.planTitle ?? options.planHandoff.planPath}`
-      : delivery === "steer"
-        ? `Steer: ${trimmed}`
-        : designMatch
-          ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
-          : undefined;
+    const displayContent = options?.displayContent
+      ? options.displayContent
+      : options?.planHandoff
+        ? `Build: ${options.planHandoff.planTitle ?? options.planHandoff.planPath}`
+        : delivery === "steer"
+          ? `Steer: ${trimmed}`
+          : designMatch
+            ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
+            : undefined;
     const appended = await appendConversationEventsAndPatchRecord(
       workspace.id,
       conversationId,
@@ -1953,6 +1966,7 @@ export class AgentRuntimeManager {
           ...(item.configOverride ? { configOverride: item.configOverride } : {}),
           ...(item.planHandoff ? { planHandoff: item.planHandoff } : {}),
           ...(item.hidden ? { hidden: true } : {}),
+          ...(item.displayContent ? { displayContent: item.displayContent } : {}),
         }
       );
     });
@@ -1998,12 +2012,99 @@ export class AgentRuntimeManager {
             ...(head.configOverride ? { configOverride: head.configOverride } : {}),
             ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
             ...(head.hidden ? { hidden: true } : {}),
+            ...(head.displayContent ? { displayContent: head.displayContent } : {}),
           }
         );
       } catch (error) {
         console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
         await reinsertHead();
       }
+    });
+  }
+
+  /**
+   * Deliver an engine-authored notice (e.g. Project child updates). Starts a
+   * turn when the conversation is idle with an empty queue; otherwise folds
+   * into the queued entry with the same `coalesceKey`, or appends one. Runs
+   * under the prompt gate because `drainOneQueuedPrompt` writes back the queue
+   * it read, which would drop a merge made outside the gate.
+   */
+  async deliverNotice(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    input: {
+      coalesceKey: string;
+      compose: (existing: AgentQueuedChatPrompt | null) => { text: string; displayContent: string };
+    }
+  ): Promise<"started" | "queued" | "merged"> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record) {
+        throw new Error(`Unknown conversation: ${conversationId}`);
+      }
+      const queued = record.queuedPrompts ?? [];
+      if (!isConversationTurnInProgress(record.status) && queued.length === 0) {
+        const composed = input.compose(null);
+        await this.promptConversationLocked(workspace, conversationId, composed.text, undefined, {
+          displayContent: composed.displayContent,
+          coalesceKey: input.coalesceKey,
+        });
+        return "started";
+      }
+      let outcome: "queued" | "merged" = "queued";
+      await updateConversationRecord(workspace.id, conversationId, (current) => {
+        const currentQueue = current.queuedPrompts ?? [];
+        const index = currentQueue.findIndex((entry) => entry.coalesceKey === input.coalesceKey);
+        if (index >= 0) {
+          outcome = "merged";
+          const existing = currentQueue[index]!;
+          const composed = input.compose(existing);
+          const nextQueue = [...currentQueue];
+          nextQueue[index] = {
+            ...existing,
+            text: composed.text,
+            displayContent: composed.displayContent,
+          };
+          return { ...current, queuedPrompts: nextQueue };
+        }
+        outcome = "queued";
+        const composed = input.compose(null);
+        return {
+          ...current,
+          queuedPrompts: [
+            ...currentQueue,
+            {
+              id: randomUUID(),
+              text: composed.text,
+              displayContent: composed.displayContent,
+              coalesceKey: input.coalesceKey,
+            },
+          ],
+        };
+      });
+      return outcome;
+    });
+  }
+
+  /**
+   * Hard-delete a conversation: cancel any running turn, dispose its runtime,
+   * and remove its record and events. Only Project child deletion uses this.
+   */
+  async deleteConversation(workspace: WorkspaceRecord, conversationId: string): Promise<boolean> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record) {
+        return false;
+      }
+      const runtime = this.runtimes.get(conversationId);
+      if (runtime && isConversationTurnInProgress(record.status)) {
+        await runtime.handle.cancel().catch(() => undefined);
+      }
+      await this.disposeRuntime(conversationId);
+      this.retainedConversationCounts.delete(conversationId);
+      this.skipRecoverySeedOnce.delete(conversationId);
+      await deleteConversationFromStore(workspace.id, conversationId);
+      return true;
     });
   }
 

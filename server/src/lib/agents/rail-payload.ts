@@ -89,8 +89,12 @@ const PLACEHOLDER_CONVERSATION_TITLES = new Set([
 ]);
 
 function isRenderableRailConversation(conversation: AgentConversationRecord): boolean {
-  // Side chats belong to their parent chat's header, never to the rail.
-  if (conversation.origin?.kind === "side-chat") {
+  // Side chats belong to their parent chat's header, never to the rail; a
+  // Project orchestrator lives in the Projects view.
+  if (
+    conversation.origin?.kind === "side-chat" ||
+    conversation.origin?.kind === "project-orchestrator"
+  ) {
     return false;
   }
   return !(
@@ -311,6 +315,10 @@ function groupConversationSummaries(
 ): AgentConversationsAllPayload["groups"] {
   const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
   for (const workspace of workspaces) {
+    // A Project context folder only holds its orchestrator, which lives in the Projects view.
+    if (workspace.kind === "project") {
+      continue;
+    }
     groupMap.set(workspace.id, {
       workspace,
       repository: repositoryByWorkspaceId.get(workspace.id),
