@@ -241,6 +241,7 @@ import {
 import {
   createSubagentProgressBroadcaster,
   createSubagentToolset,
+  findPersistedSubagentTranscript,
   latestSubagentTranscriptActivity,
   pushRunningSubagentToolRow,
   runSubagentToolLoop,
@@ -1851,6 +1852,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
         isCancelled: () => this.cancelled || this.disposed,
         toolsetForAgent: (agentPath) => this.buildSubagentToolset(agentPath),
+        readPersistedTranscript: (subagentId) =>
+          this.readPersistedSubagentTranscript(subagentId),
       });
     }
     return this.subagentsV2;
@@ -4619,10 +4622,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Subagent ${subagentId} ${status}: ${resultText}`;
   }
 
+  /**
+   * Transcript of a subagent from the parent's persisted `subagent` cards. The
+   * in-memory maps only cover subagents this session handle ran itself; after
+   * a restart (or in a re-ensured handle) the persisted copy is the only one.
+   * Production readSnapshot() is a bounded head, so fall through to the full
+   * event log the same way buildHistory does.
+   */
+  private async readPersistedSubagentTranscript(
+    subagentId: string
+  ): Promise<AgentStoredEvent[] | null> {
+    const snapshot = await this.callbacks.readSnapshot().catch(() => null);
+    const fromSnapshot = findPersistedSubagentTranscript(snapshot?.events ?? [], subagentId);
+    if (fromSnapshot) {
+      return fromSnapshot;
+    }
+    const fullEvents = await readConversationEvents(
+      this.callbacks.workspace.id,
+      this.callbacks.conversation.id
+    ).catch(() => [] as AgentStoredEvent[]);
+    return findPersistedSubagentTranscript(fullEvents, subagentId);
+  }
+
   private async toolReadSubagentTranscript(args: Record<string, unknown>): Promise<string> {
     const subagentId = asString(args.subagentId);
     if (!subagentId) throw new Error("read_subagent_transcript.subagentId is required.");
-    const transcript = this.subagentTranscripts.get(subagentId);
+    const transcript =
+      this.subagentTranscripts.get(subagentId) ??
+      (await this.readPersistedSubagentTranscript(subagentId));
     if (!transcript) {
       if (this.isOrchestrationMode()) {
         const current = await this.resolveCurrentOrchestrationBoard();
