@@ -13,10 +13,13 @@ import {
 import {
   diffProjectChildren,
   isProjectChildRemote,
+  mergeProjectListings,
   projectChildChangeNotice,
   type ProjectChildChange,
   type ProjectChildMark,
   type ProjectChildSummary,
+  type ProjectListing,
+  type ProjectServerListing,
   type ProjectSnapshot,
   type ProjectSummary,
 } from "@cesium/core";
@@ -27,7 +30,9 @@ import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbenc
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
-import { fetchProject, listProjects } from "@/lib/server-api";
+import { resolveRailFetchServers } from "@/lib/rail-fetch";
+import { fetchProject, listProjects, toServerRequestContext } from "@/lib/server-api";
+import type { ServerConnection } from "@/lib/server-connections";
 
 const LIST_POLL_MS = 5_000;
 const SNAPSHOT_POLL_MS = 3_000;
@@ -36,11 +41,16 @@ const NOTICE_DISMISS_MS = 12_000;
 type ProjectOpenTarget = Pick<
   ProjectSummary,
   "id" | "name" | "orchestratorConversationId" | "orchestratorWorkspaceId" | "createdAt" | "updatedAt"
-> & { orchestratorStatus?: ProjectSummary["orchestratorStatus"] };
+> & {
+  orchestratorStatus?: ProjectSummary["orchestratorStatus"];
+  /** Engine the Project lives on; defaults to the one that listed it, then the active one. */
+  serverId?: string;
+};
 
 type ProjectsContextValue = {
   enabled: boolean;
-  projects: ProjectSummary[];
+  /** Projects from every connected engine, each tagged with the engine it lives on. */
+  projects: ProjectListing[];
   loaded: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -48,8 +58,12 @@ type ProjectsContextValue = {
   activeProjectId: string | null;
   openProject: (project: ProjectOpenTarget) => Promise<void>;
   openProjectById: (projectId: string) => Promise<void>;
-  /** Opens a child's own conversation; `server` targets the engine it runs on. */
+  /**
+   * Opens a child's own conversation. It runs on the Project's engine unless
+   * `server` names the peer engine it was placed on.
+   */
   openChildConversation: (
+    projectId: string,
     child: ProjectChildSummary,
     server?: { id: string; label: string }
   ) => Promise<void>;
@@ -98,9 +112,22 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Same engines the conversation rail reads, with the active one first so it wins duplicates. */
+function projectListServers(input: {
+  activeServer: ServerConnection;
+  onlineServers: ServerConnection[];
+  serverStatusById: Parameters<typeof resolveRailFetchServers>[0]["serverStatusById"];
+}): ServerConnection[] {
+  const servers = resolveRailFetchServers(input);
+  return [
+    ...servers.filter((server) => server.id === input.activeServer.id),
+    ...servers.filter((server) => server.id !== input.activeServer.id),
+  ];
+}
+
 export function ProjectsProvider({ children }: { children: ReactNode }) {
   const { projects: enabled } = useUserPreferences();
-  const { activeServer } = useServerConnections();
+  const { activeServer, servers, onlineServers, serverStatusById } = useServerConnections();
   const {
     openConversationSummary,
     selectedConversationId,
@@ -109,7 +136,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const editorBridgeRef = useEditorBridgeRef();
   const { pushNotification } = useWorkbenchNotifications();
 
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectListing[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<Record<string, ProjectSnapshot>>({});
@@ -121,14 +148,31 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     title: string;
   } | null>(null);
 
-  const serverKey = activeServer.id;
-  const serverKeyRef = useRef(serverKey);
+  // Opening a peer engine's conversation makes that engine active, so the list
+  // spans every connected engine instead of following the active one.
+  const listServers = useMemo(
+    () => projectListServers({ activeServer, onlineServers, serverStatusById }),
+    [activeServer, onlineServers, serverStatusById]
+  );
+  const listServersKey = listServers.map((server) => server.id).join("\n");
+  const listServersRef = useRef(listServers);
+  const serversRef = useRef(servers);
+  const activeServerRef = useRef(activeServer);
+  const listGenerationRef = useRef(0);
   const marksRef = useRef(new Map<string, Map<string, ProjectChildMark>>());
   const summaryTurnsRef = useRef(new Map<string, string>());
   const selectedConversationIdRef = useRef(selectedConversationId);
   const projectsRef = useRef(projects);
   const openProjectByIdRef = useRef<(projectId: string) => Promise<void>>(async () => {});
-  const openChildRef = useRef<(child: ProjectChildSummary) => Promise<void>>(async () => {});
+  const openChildRef = useRef<
+    (projectId: string, child: ProjectChildSummary) => Promise<void>
+  >(async () => {});
+
+  useEffect(() => {
+    listServersRef.current = listServers;
+    serversRef.current = servers;
+    activeServerRef.current = activeServer;
+  }, [activeServer, listServers, servers]);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
@@ -138,15 +182,18 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     projectsRef.current = projects;
   }, [projects]);
 
-  useEffect(() => {
-    serverKeyRef.current = serverKey;
-    marksRef.current = new Map();
-    summaryTurnsRef.current = new Map();
-    setProjects([]);
-    setSnapshots({});
-    setLoaded(false);
-    setError(null);
-  }, [serverKey]);
+  /** The engine a Project lives on: an explicit id, else whichever engine listed it, else the active one. */
+  const serverForProject = useCallback(
+    (projectId: string, serverId?: string): ServerConnection => {
+      const listedOn =
+        serverId ?? projectsRef.current.find((project) => project.id === projectId)?.serverId;
+      return (
+        (listedOn ? serversRef.current.find((server) => server.id === listedOn) : undefined) ??
+        activeServerRef.current
+      );
+    },
+    []
+  );
 
   const announce = useCallback(
     (snapshot: ProjectSnapshot, changes: ProjectChildChange[]) => {
@@ -181,7 +228,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
                   {
                     id: "open-agent",
                     label: "Open agent",
-                    onClick: () => void openChildRef.current(child),
+                    onClick: () => void openChildRef.current(snapshot.id, child),
                   },
                 ]),
           ],
@@ -208,51 +255,56 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
   const refreshProject = useCallback(
     async (projectId: string): Promise<ProjectSnapshot | null> => {
-      const requestedFor = serverKeyRef.current;
       try {
-        const snapshot = await fetchProject(projectId);
-        if (serverKeyRef.current !== requestedFor) {
-          return null;
-        }
+        const snapshot = await fetchProject(projectId, {
+          server: toServerRequestContext(serverForProject(projectId)),
+        });
         ingestSnapshot(snapshot);
         return snapshot;
       } catch {
         return null;
       }
     },
-    [ingestSnapshot]
+    [ingestSnapshot, serverForProject]
   );
 
   const refresh = useCallback(async () => {
     if (!enabled) {
       return;
     }
-    const requestedFor = serverKeyRef.current;
-    try {
-      const next = await listProjects();
-      if (serverKeyRef.current !== requestedFor) {
-        return;
-      }
-      setProjects(next);
-      setError(null);
-      const stale: string[] = [];
-      for (const project of next) {
-        const signature = `${project.turnsCompleted}:${project.attentionCount}`;
-        if (summaryTurnsRef.current.get(project.id) !== signature) {
-          summaryTurnsRef.current.set(project.id, signature);
-          stale.push(project.id);
+    const generation = ++listGenerationRef.current;
+    const results = await Promise.all(
+      listServersRef.current.map(async (server): Promise<ProjectServerListing> => {
+        try {
+          const listed = await listProjects({ server: toServerRequestContext(server) });
+          return { serverId: server.id, serverLabel: server.label, projects: listed };
+        } catch (caught) {
+          return {
+            serverId: server.id,
+            serverLabel: server.label,
+            projects: null,
+            error: errorMessage(caught),
+          };
         }
-      }
-      await Promise.all(stale.map((projectId) => refreshProject(projectId)));
-    } catch (caught) {
-      if (serverKeyRef.current === requestedFor) {
-        setError(errorMessage(caught));
-      }
-    } finally {
-      if (serverKeyRef.current === requestedFor) {
-        setLoaded(true);
+      })
+    );
+    if (generation !== listGenerationRef.current) {
+      return;
+    }
+    const merged = mergeProjectListings(projectsRef.current, results);
+    projectsRef.current = merged.projects;
+    setProjects(merged.projects);
+    setError(merged.error);
+    setLoaded(true);
+    const stale: string[] = [];
+    for (const project of merged.projects) {
+      const signature = `${project.turnsCompleted}:${project.attentionCount}`;
+      if (summaryTurnsRef.current.get(project.id) !== signature) {
+        summaryTurnsRef.current.set(project.id, signature);
+        stale.push(project.id);
       }
     }
+    await Promise.all(stale.map((projectId) => refreshProject(projectId)));
   }, [enabled, refreshProject]);
 
   useEffect(() => {
@@ -283,7 +335,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [enabled, refresh, serverKey]);
+  }, [enabled, refresh, listServersKey]);
 
   const watchedIds = useMemo(
     () => Object.keys(watchCounts).filter((projectId) => (watchCounts[projectId] ?? 0) > 0),
@@ -328,6 +380,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
   const openProject = useCallback(
     async (project: ProjectOpenTarget) => {
+      const server = serverForProject(project.id, project.serverId);
       setPendingTab({
         projectId: project.id,
         conversationId: project.orchestratorConversationId,
@@ -345,12 +398,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
               : "idle",
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
-          serverId: activeServer.id,
-          serverLabel: activeServer.label,
+          serverId: server.id,
+          serverLabel: server.label,
         })
       );
     },
-    [activeServer.id, activeServer.label, openConversationSummary]
+    [openConversationSummary, serverForProject]
   );
 
   const openProjectById = useCallback(
@@ -375,7 +428,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   );
 
   const openChildConversation = useCallback(
-    async (child: ProjectChildSummary, server?: { id: string; label: string }) => {
+    async (
+      projectId: string,
+      child: ProjectChildSummary,
+      peer?: { id: string; label: string }
+    ) => {
+      const server = peer ?? serverForProject(projectId);
       await openConversationSummary(
         conversationSummary({
           id: child.conversationId,
@@ -385,12 +443,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
           status: child.status === "unknown" ? "idle" : child.status,
           createdAt: child.createdAt,
           updatedAt: child.updatedAt ?? child.createdAt,
-          serverId: server?.id ?? activeServer.id,
-          serverLabel: server?.label ?? activeServer.label,
+          serverId: server.id,
+          serverLabel: server.label,
         })
       );
     },
-    [activeServer.id, activeServer.label, openConversationSummary]
+    [openConversationSummary, serverForProject]
   );
 
   useEffect(() => {

@@ -28,7 +28,15 @@ export function ProjectStatusDot({
   );
 }
 
-export function ProjectEngineBadge({ label, remote }: { label: string; remote: boolean }) {
+export function ProjectEngineBadge({
+  label,
+  remote,
+  title,
+}: {
+  label: string;
+  remote: boolean;
+  title?: string;
+}) {
   return (
     <span
       className={`inline-flex max-w-[140px] shrink-0 items-center truncate rounded-[4px] px-[5px] py-[0.5px] font-sans text-[10px] leading-[15px] ${
@@ -36,7 +44,7 @@ export function ProjectEngineBadge({ label, remote }: { label: string; remote: b
           ? "bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--accent)]"
           : "bg-[var(--bg-card)] text-[var(--text-secondary)]"
       }`}
-      title={remote ? `Runs on ${label}` : `Runs on ${label} (this engine)`}
+      title={title ?? (remote ? `Runs on ${label}` : `Runs on ${label} (this engine)`)}
     >
       {label}
     </span>
