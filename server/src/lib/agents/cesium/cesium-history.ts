@@ -1,5 +1,5 @@
 import type { AgentStoredEvent } from "../types.js";
-import { asRecord, asString, truncate } from "./cesium-coerce.js";
+import { asRecord, asString, truncate, truncateMiddle } from "./cesium-coerce.js";
 import {
   CESIUM_SYSTEM_PROMPT,
   CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
@@ -406,5 +406,8 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
         break;
     }
   }
-  return truncate(lines.join("\n"), 16_000);
+  // The compressed range runs oldest -> newest: the head carries the original
+  // task framing and the tail carries the latest work before the retained
+  // window. Head-only truncation dropped exactly the recent end.
+  return truncateMiddle(lines.join("\n"), 16_000);
 }

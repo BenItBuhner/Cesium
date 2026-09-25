@@ -207,6 +207,7 @@ import {
   parseCesiumWriteFileArgs,
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
+import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
 import {
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
@@ -249,6 +250,7 @@ import {
 import {
   createSubagentProgressBroadcaster,
   createSubagentToolset,
+  findPersistedSubagentTranscript,
   latestSubagentTranscriptActivity,
   pushRunningSubagentToolRow,
   runSubagentToolLoop,
@@ -345,7 +347,7 @@ type CesiumQuestionStep = {
 type TerminalRun = {
   id: string;
   process: ChildProcessWithoutNullStreams;
-  output: string;
+  output: BoundedTerminalOutput;
   startedAt: number;
   completedAt?: number;
   exitCode?: number | null;
@@ -2036,6 +2038,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
         isCancelled: () => this.cancelled || this.disposed,
         toolsetForAgent: (agentPath) => this.buildSubagentToolset(agentPath),
+        readPersistedTranscript: (subagentId) =>
+          this.readPersistedSubagentTranscript(subagentId),
       });
     }
     return this.subagentsV2;
@@ -3057,12 +3061,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const run: TerminalRun = {
       id,
       process: child,
-      output: "",
+      output: new BoundedTerminalOutput(TERMINAL_OUTPUT_CAP),
       startedAt: Date.now(),
     };
     this.terminalRuns.set(id, run);
     const append = (chunk: Buffer) => {
-      run.output = truncate(`${run.output}${chunk.toString("utf8")}`, TERMINAL_OUTPUT_CAP);
+      run.output.append(chunk.toString("utf8"));
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
@@ -3074,7 +3078,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.terminalRuns.delete(id);
     });
     child.on("error", (error: Error) => {
-      run.output = truncate(`${run.output}\n[spawn failed] ${error.message}`, TERMINAL_OUTPUT_CAP);
+      run.output.append(`\n[spawn failed] ${error.message}`);
       run.exitCode = -1;
       run.completedAt = Date.now();
       this.terminalRuns.delete(id);
@@ -3086,19 +3090,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return await new Promise<string>((resolve) => {
       const started = Date.now();
       const interval = setInterval(() => {
-        if (waitUntil === "pattern" && pattern && run.output.includes(pattern)) {
+        if (waitUntil === "pattern" && pattern && run.output.toString().includes(pattern)) {
           clearInterval(interval);
-          resolve(`Pattern matched for ${command}.\n${run.output}`);
+          resolve(`Pattern matched for ${command}.\n${run.output.toString()}`);
           return;
         }
         if (run.exitCode !== undefined) {
           clearInterval(interval);
-          resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output}`);
+          resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output.toString()}`);
           return;
         }
         if (Date.now() - started >= timeoutMs) {
           clearInterval(interval);
-          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output}`);
+          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output.toString()}`);
         }
       }, 250);
     });
@@ -4838,10 +4842,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Subagent ${subagentId} ${status}: ${resultText}`;
   }
 
+  /**
+   * Transcript of a subagent from the parent's persisted `subagent` cards. The
+   * in-memory maps only cover subagents this session handle ran itself; after
+   * a restart (or in a re-ensured handle) the persisted copy is the only one.
+   * Production readSnapshot() is a bounded head, so fall through to the full
+   * event log the same way buildHistory does.
+   */
+  private async readPersistedSubagentTranscript(
+    subagentId: string
+  ): Promise<AgentStoredEvent[] | null> {
+    const snapshot = await this.callbacks.readSnapshot().catch(() => null);
+    const fromSnapshot = findPersistedSubagentTranscript(snapshot?.events ?? [], subagentId);
+    if (fromSnapshot) {
+      return fromSnapshot;
+    }
+    const fullEvents = await readConversationEvents(
+      this.callbacks.workspace.id,
+      this.callbacks.conversation.id
+    ).catch(() => [] as AgentStoredEvent[]);
+    return findPersistedSubagentTranscript(fullEvents, subagentId);
+  }
+
   private async toolReadSubagentTranscript(args: Record<string, unknown>): Promise<string> {
     const subagentId = asString(args.subagentId);
     if (!subagentId) throw new Error("read_subagent_transcript.subagentId is required.");
-    const transcript = this.subagentTranscripts.get(subagentId);
+    const transcript =
+      this.subagentTranscripts.get(subagentId) ??
+      (await this.readPersistedSubagentTranscript(subagentId));
     if (!transcript) {
       if (this.isOrchestrationMode()) {
         const current = await this.resolveCurrentOrchestrationBoard();
