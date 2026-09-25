@@ -35,4 +35,12 @@ describe("user preferences", () => {
       true
     );
   });
+
+  test("Projects defaults off and survives the boot cache round trip", () => {
+    assert.equal(DEFAULT_USER_PREFERENCES.projects, false);
+    assert.equal(parseUserPreferences("{}").projects, false);
+    const parsed = parseUserPreferences(JSON.stringify({ projects: true }));
+    assert.equal(parsed.projects, true);
+    assert.equal(JSON.parse(serializeUserPreferences(parsed)).projects, true);
+  });
 });

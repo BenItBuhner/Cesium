@@ -1076,6 +1076,7 @@ function normalizeFeaturesSettings(raw: unknown): FeaturesSettingsState {
     experimentalIpadWindowedTabInset: flag("experimentalIpadWindowedTabInset"),
     experimentalIpadResumeCache: flag("experimentalIpadResumeCache"),
     vscodeExtensionsBeta: flag("vscodeExtensionsBeta"),
+    projects: flag("projects"),
   };
 }
 
