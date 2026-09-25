@@ -4,7 +4,6 @@ import {
   type ProjectPeerTokenSummary,
 } from "@cesium/core/projects";
 import { Hono, type Context } from "hono";
-import { listAgentBackendsWithCache } from "../lib/agents/providers.js";
 import { readConversationRecord } from "../lib/agents/session-store.js";
 import { asNumber, asRecord, asString } from "../lib/coerce.js";
 import { getEngineInstanceId } from "../lib/engine-instance.js";
@@ -17,9 +16,13 @@ import {
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
 import { ProjectError } from "../lib/projects/errors.js";
 import { isProjectsEnabled, ProjectsDisabledError } from "../lib/projects/feature-flag.js";
-import type { PeerHarnessInfo, PeerInfo, PeerWorkspaceInfo } from "../lib/projects/peer-client.js";
+import type { PeerInfo, PeerWorkspaceInfo } from "../lib/projects/peer-client.js";
 import { verifyPeerToken } from "../lib/projects/peer-tokens.js";
-import { clampTranscriptTurns, resolveHarness } from "../lib/projects/project-service.js";
+import {
+  clampTranscriptTurns,
+  listHomeHarnesses,
+  resolveHarness,
+} from "../lib/projects/project-service.js";
 import { isEngineManagedWorkspace } from "../lib/standalone-chat-paths.js";
 import {
   ensureWorkspaceRegistered,
@@ -150,16 +153,7 @@ async function resolvePlacement(value: unknown): Promise<ChildCreateInput["place
 projectPeerRoutes.get(
   "/api/projects/peer/info",
   guarded(async (c) => {
-    const [backends, workspaces] = await Promise.all([
-      listAgentBackendsWithCache(),
-      listWorkspaces(),
-    ]);
-    const harnesses: PeerHarnessInfo[] = backends.map((backend) => ({
-      id: backend.id,
-      label: backend.label,
-      available: backend.available,
-      defaultModelId: backend.defaultModelId,
-    }));
+    const [harnesses, workspaces] = await Promise.all([listHomeHarnesses(), listWorkspaces()]);
     return c.json({
       instanceId: getEngineInstanceId(),
       label: homeEngineLabel(),

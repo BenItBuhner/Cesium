@@ -251,12 +251,14 @@ test("minting a peer token needs a session on the peer; the peer API needs the t
   const info = await peer<{
     label: string;
     tokenId: string;
-    harnesses: Array<{ id: string; available: boolean }>;
+    harnesses: Array<{ id: string; available: boolean; defaultModelId: string }>;
   }>("GET", "/api/projects/peer/info", { token: peerToken });
   assert.equal(info.status, 200);
   assert.equal(info.json.label, "peer-engine");
   assert.equal(info.json.tokenId, peerTokenId);
-  assert.ok(info.json.harnesses.some((harness) => harness.id === "cesium-agent" && harness.available));
+  const peerCesium = info.json.harnesses.find((harness) => harness.id === "cesium-agent");
+  assert.equal(peerCesium?.available, true);
+  assert.equal(peerCesium.defaultModelId, MODEL_ID, "the settings default, not the registry's");
   const wrong = await peer("GET", "/api/projects/peer/info", { token: `${peerToken}x` });
   assert.equal(wrong.status, 401);
 
@@ -323,8 +325,15 @@ test("pairing verifies the token, refuses this engine itself, and seals the stor
     ["home", peerEngineId],
     "the detailed listing works before any Project exists"
   );
+  for (const engine of detailed.json.engines) {
+    assert.equal(
+      engine.harnesses.find((harness) => harness.id === "cesium-agent")?.defaultModelId,
+      MODEL_ID,
+      `${engine.id} reports the Cesium Agent's configured default model`
+    );
+  }
   const detailedPeer = detailed.json.engines.find((engine) => engine.id === peerEngineId);
-  assert.ok(detailedPeer?.harnesses.some((harness) => harness.id === "cesium-agent"));
+  assert.ok(detailedPeer);
   assert.deepEqual(detailedPeer.repos, []);
   assert.ok(Array.isArray(detailedPeer.workspaces));
   const enginesFile = path.join(HOME_DATA_DIR, "projects", "engines.json");

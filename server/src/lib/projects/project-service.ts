@@ -10,6 +10,7 @@ import {
   type ProjectChildSummary,
   type ProjectEngineListing,
   type ProjectEngineSummary,
+  type ProjectHarnessInfo,
   type ProjectRepoBinding,
   type ProjectSettings,
   type ProjectSnapshot,
@@ -19,6 +20,7 @@ import { listAgentBackendsWithCache } from "../agents/providers.js";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
 import { readConversationRecord } from "../agents/session-store.js";
 import type { AgentBackendId, AgentBackendInfo } from "../agents/types.js";
+import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { isEngineManagedWorkspace } from "../standalone-chat-paths.js";
 import {
   ensureWorkspaceRegistered,
@@ -903,6 +905,28 @@ export async function readProjectChildTranscript(
 }
 
 /**
+ * This engine's harnesses. The Cesium Agent's default model lives in its settings
+ * (env bootstrap or the user's pick), not in the static registry entry.
+ */
+export async function listHomeHarnesses(): Promise<ProjectHarnessInfo[]> {
+  const [backends, cesiumDefaultModelId] = await Promise.all([
+    listAgentBackendsWithCache(),
+    getCesiumAgentSettings()
+      .then((settings) => settings.defaultModelId)
+      .catch(() => null),
+  ]);
+  return backends.map((backend) => ({
+    id: backend.id,
+    label: backend.label,
+    available: backend.available,
+    defaultModelId:
+      backend.id === ORCHESTRATOR_BACKEND_ID && cesiumDefaultModelId
+        ? cesiumDefaultModelId
+        : backend.defaultModelId,
+  }));
+}
+
+/**
  * Every engine with its bound repos, the harnesses it can run right now and its
  * bindable workspaces (asks each peer); `null` lists them before a Project exists.
  */
@@ -913,19 +937,11 @@ export async function listProjectEngines(projectId: string | null): Promise<Proj
   }
   const harnessesByEngine = new Map<string, ProjectEngineListing["harnesses"]>();
   const workspacesByEngine = new Map<string, ProjectEngineListing["workspaces"]>();
-  const [backends, homeWorkspaces] = await Promise.all([
-    listAgentBackendsWithCache(),
+  const [homeHarnesses, homeWorkspaces] = await Promise.all([
+    listHomeHarnesses(),
     listWorkspaces(),
   ]);
-  harnessesByEngine.set(
-    PROJECT_HOME_ENGINE_ID,
-    backends.map((backend) => ({
-      id: backend.id,
-      label: backend.label,
-      available: backend.available,
-      defaultModelId: backend.defaultModelId,
-    }))
-  );
+  harnessesByEngine.set(PROJECT_HOME_ENGINE_ID, homeHarnesses);
   workspacesByEngine.set(
     PROJECT_HOME_ENGINE_ID,
     homeWorkspaces
