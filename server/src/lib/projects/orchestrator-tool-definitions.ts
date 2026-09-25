@@ -47,11 +47,13 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         },
         harness: {
           type: "string",
-          description: "Agent harness id (e.g. cesium-agent, codex-app-server). Default: Project default.",
+          description:
+            "Agent harness id available on the target engine (see project_list_engines), e.g. cesium-agent or codex-app-server. A harness that is not installed or has no credentials there is refused. Default: Project default.",
         },
         model: {
           type: "string",
-          description: "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere.",
+          description:
+            "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
         },
         mode: { type: "string", description: "Harness mode, e.g. agent or plan. Default: agent." },
       },
@@ -123,7 +125,11 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
       properties: {
         agent: AGENT_REF,
         name: { type: "string", description: "New handle." },
-        model: { type: "string" },
+        model: {
+          type: "string",
+          description:
+            "New model id. For cesium-agent it must have credentials on the agent's engine, otherwise the update is refused.",
+        },
         mode: { type: "string" },
       },
       additionalProperties: false,

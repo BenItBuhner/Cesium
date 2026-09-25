@@ -37,6 +37,7 @@ import {
   type ChildObservation,
   type ChildRef,
 } from "./child-host.js";
+import { chooseChildModel, requireRunnableChildModel } from "./child-model.js";
 import { seedProjectContext } from "./context-store.js";
 import {
   callPeerEngine,
@@ -575,9 +576,11 @@ function uniqueChildName(record: ProjectRecord, base: string, ignoreChildId?: st
   return name;
 }
 
+/** A harness counts as available only when it is installed and has credentials. */
 export async function resolveHarness(
   requested: string | null | undefined,
-  fallback: string | null
+  fallback: string | null,
+  engine: string = homeEngineLabel()
 ): Promise<AgentBackendInfo> {
   const backends = await listAgentBackendsWithCache();
   const wanted = (requested?.trim() || fallback || ORCHESTRATOR_BACKEND_ID).toLowerCase();
@@ -585,14 +588,15 @@ export async function resolveHarness(
     backends.find((entry) => entry.id === wanted) ??
     backends.find((entry) => entry.label.toLowerCase() === wanted);
   const usable = backends.filter((entry) => entry.available).map((entry) => entry.id);
+  const usableList = `Harnesses available on ${engine}: ${usable.join(", ") || "none"}.`;
   if (!backend) {
-    throw new ProjectError(
-      `Unknown harness "${requested}". Available on this engine: ${usable.join(", ") || "none"}.`
-    );
+    throw new ProjectError(`Unknown harness "${requested?.trim() || wanted}". ${usableList}`);
   }
   if (!backend.available) {
     throw new ProjectError(
-      `${backend.label} is not available on this engine. Available: ${usable.join(", ") || "none"}.`
+      `${backend.label} (${backend.id}) cannot run on ${engine}: it is not installed or has no credentials there. ${usableList}`,
+      400,
+      "harness_unavailable"
     );
   }
   return backend;
@@ -648,11 +652,17 @@ export type CreateChildInput = {
   mode?: string | null;
 };
 
+export type CreatedProjectChild = {
+  agent: ProjectChildSummary;
+  /** Set when the agent could not start on the requested or default model. */
+  warning: string | null;
+};
+
 export async function createProjectChild(
   projectId: string,
   input: CreateChildInput,
   createdBy: "orchestrator" | "user"
-): Promise<ProjectChildSummary> {
+): Promise<CreatedProjectChild> {
   const record = await requireProject(projectId);
   const baseName = normalizeProjectAgentName(input.name ?? "");
   if (!baseName) {
@@ -691,16 +701,22 @@ export async function createProjectChild(
   const engineId = repo?.engineId ?? requestedEngine ?? PROJECT_HOME_ENGINE_ID;
   const isHome = engineId === PROJECT_HOME_ENGINE_ID;
   const host = childHostFor(engineId);
-  // A peer validates the harness itself and reports what it has available.
+  const hostLabel = engineLabel(engineId, await listEngineSummaries());
+  // A peer validates the harness and model itself against its own credentials.
   const harness = isHome
     ? (await resolveHarness(input.harness, record.settings.defaultChildBackendId)).id
     : input.harness?.trim() || record.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
-  const modelId = resolveChildModelId({
-    requested: input.model,
-    isHome,
-    harness,
-    settings: record.settings,
-  });
+  const model = isHome
+    ? await chooseChildModel({
+        harness,
+        requested: input.model,
+        fallback: resolveChildModelId({ requested: null, isHome, harness, settings: record.settings }),
+        engineLabel: hostLabel,
+      })
+    : {
+        modelId: resolveChildModelId({ requested: input.model, isHome, harness, settings: record.settings }),
+        warning: null,
+      };
   const name = uniqueChildName(record, baseName);
   const childId = `pca_${randomHex(6)}`;
   const created = await host.create({
@@ -718,9 +734,10 @@ export async function createProjectChild(
       ? { kind: "workspace", workspaceId: repo.workspaceId }
       : { kind: "scratch", label: `${record.name} · ${name}` },
     backendId: harness as AgentBackendId,
-    modelId,
+    modelId: model.modelId,
     mode: input.mode?.trim() || null,
     homeLabel: homeEngineLabel(),
+    engineLabel: hostLabel,
   });
   const child: ProjectChildRecord = {
     id: childId,
@@ -749,7 +766,10 @@ export async function createProjectChild(
     ...existing,
     children: [...existing.children, child],
   }));
-  return summarizeChild(updated, child, await observeChild(child), await listEngineSummaries());
+  return {
+    agent: summarizeChild(updated, child, await observeChild(child), await listEngineSummaries()),
+    warning: model.warning ?? created.modelWarning ?? null,
+  };
 }
 
 export async function listProjectChildren(
@@ -868,14 +888,25 @@ export async function updateProjectChild(
     requestedName && requestedName !== child.name
       ? uniqueChildName(record, requestedName, child.id)
       : null;
-  const model = input.model?.trim() || undefined;
+  const requestedModel = input.model?.trim() || undefined;
   const mode = input.mode?.trim() || undefined;
-  if (!nextName && !model && !mode) {
+  if (!nextName && !requestedModel && !mode) {
     throw new ProjectError("Nothing to update: pass name, model or mode.");
   }
+  const isHome = child.engineId === PROJECT_HOME_ENGINE_ID;
+  const hostLabel = engineLabel(child.engineId, await listEngineSummaries());
+  // A peer checks the model against its own credentials.
+  const model =
+    requestedModel && isHome
+      ? await requireRunnableChildModel({
+          harness: child.backendId,
+          requested: requestedModel,
+          engineLabel: hostLabel,
+        })
+      : requestedModel;
   await childHostFor(child.engineId).update(childRef(child), {
     ...(nextName ? { title: nextName } : {}),
-    ...(model ? { modelId: model } : {}),
+    ...(model ? { modelId: model, engineLabel: hostLabel } : {}),
     ...(mode ? { mode } : {}),
   });
   const updated = await patchChild(projectId, child.id, () => ({
