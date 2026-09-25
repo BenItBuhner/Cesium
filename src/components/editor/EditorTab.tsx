@@ -26,6 +26,7 @@ const tabIconToKind: Record<EditorTabType["icon"], FileTypeIconKind> = {
   extension: "extension",
   pullRequest: "pullRequest",
   contextInspector: "contextInspector",
+  project: "project",
 };
 
 interface EditorTabProps {

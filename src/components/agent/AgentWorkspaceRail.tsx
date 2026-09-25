@@ -121,6 +121,7 @@ import {
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
 import { RailIconCustomizePanel } from "@/components/ui/RailIconCustomizePanel";
+import { ProjectsRailSection } from "@/components/projects/ProjectsRailSection";
 import {
   PINNED_CHATS_FOLDER_SCOPE,
   STANDALONE_CHATS_FOLDER_SCOPE,
@@ -330,8 +331,11 @@ export function AgentWorkspaceRail() {
     openWorkspaceById,
   } = useWorkspace();
   const editorBridgeRef = useEditorBridgeRef();
-  const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
-    useUserPreferences();
+  const {
+    experimentalIpadCustomButtons,
+    experimentalIpadWindowedTabInset,
+    projects: projectsEnabled,
+  } = useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
   const { rememberLastWorkspaceForServer } = useLastWorkspaceMemory();
   const dialogs = useWorkbenchDialogs();
@@ -3548,6 +3552,7 @@ export function AgentWorkspaceRail() {
           {!desktopRailCollapsed ? (
             <>
               <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
+          {projectsEnabled && !bulkSelectMode ? <ProjectsRailSection /> : null}
           {railLoading ? (
             <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
               <span>Loading chats...</span>

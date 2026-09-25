@@ -28,6 +28,7 @@ import {
   Terminal,
   Type,
   ListChecks,
+  Network,
 } from "lucide-react";
 
 export type FileTypeIconEntry = { Icon: LucideIcon; className: string };
@@ -135,6 +136,7 @@ export const fileTypeIcons = {
   kanban: { Icon: Table, className: "text-[#6aab73]" },
   pullRequest: { Icon: GitPullRequest, className: "text-[#6cb5f5]" },
   contextInspector: { Icon: Layers, className: "text-[#d97706]" },
+  project: { Icon: Network, className: "text-[var(--accent)]" },
   plan: { Icon: ListChecks, className: "text-[var(--plan-accent)]" },
   extension: { Icon: Blocks, className: "text-[#c084fc]" },
   agent: { Icon: Bot, className: "text-[var(--accent)]" },

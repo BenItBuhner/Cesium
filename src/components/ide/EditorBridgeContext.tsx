@@ -58,6 +58,8 @@ export type EditorBridge = {
     title: string;
     group?: EditorGroup;
   }) => void;
+  /** Projects Beta: the agents / notes / context / setup surface for one Project. */
+  openProjectTab: (input: { projectId: string; title: string; group?: EditorGroup }) => void;
   openExtensionSurfaceTab: (input: {
     extensionId: string;
     surfaceId: string;
