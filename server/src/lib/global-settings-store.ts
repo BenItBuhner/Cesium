@@ -310,7 +310,7 @@ function createDefaultSettings(): GlobalSettings {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      projects: false,
+      projects: true,
     },
     keyboardShortcuts: {
       bindings: {},
