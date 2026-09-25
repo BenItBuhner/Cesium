@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import {
   PROJECT_HOME_ENGINE_ID,
   isProjectChildBusy,
@@ -9,6 +8,7 @@ import {
   sortProjectChildren,
   type ProjectAgentDelivery,
   type ProjectChildSummary,
+  type ProjectEngineListing,
   type ProjectEngineSummary,
   type ProjectRepoBinding,
   type ProjectSettings,
@@ -19,12 +19,11 @@ import { listAgentBackendsWithCache } from "../agents/providers.js";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
 import { readConversationRecord } from "../agents/session-store.js";
 import type { AgentBackendId, AgentBackendInfo } from "../agents/types.js";
-import { getEngineInstanceId } from "../engine-instance.js";
 import { isEngineManagedWorkspace } from "../standalone-chat-paths.js";
-import { removeStandaloneChatWorkspace } from "../standalone-chats.js";
 import {
   ensureWorkspaceRegistered,
   getWorkspaceById,
+  listWorkspaces,
   removeWorkspace,
 } from "../workspace-registry.js";
 import {
@@ -37,6 +36,14 @@ import {
   type ChildRef,
 } from "./child-host.js";
 import { seedProjectContext } from "./context-store.js";
+import {
+  callPeerEngine,
+  homeEngineLabel,
+  listEngineSummaries,
+  listPeerEngines,
+  resolveEngineRef,
+} from "./engine-registry.js";
+import { ProjectError } from "./errors.js";
 import { assertProjectsEnabled } from "./feature-flag.js";
 import { getProjectContextDir, getProjectDir } from "./paths.js";
 import {
@@ -46,46 +53,30 @@ import {
   readProject,
   removeProjectFiles,
 } from "./project-store.js";
+import { PeerRequestError } from "./peer-client.js";
+import { RemoteChildHost } from "./remote-child-host.js";
 import {
   DEFAULT_PROJECT_SETTINGS,
   type ProjectChildRecord,
   type ProjectRecord,
 } from "./types.js";
 
-export class ProjectError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 | 409 = 400,
-    readonly code = "project_error"
-  ) {
-    super(message);
-    this.name = "ProjectError";
-  }
-}
+export { ProjectError };
 
 const ORCHESTRATOR_BACKEND_ID = "cesium-agent" as const;
-
-export function homeEngineLabel(): string {
-  return process.env.CESIUM_ENGINE_LABEL?.trim() || os.hostname() || "This engine";
-}
+const ENGINE_INFO_TIMEOUT_MS = 5_000;
 
 const localHost = new LocalChildHost(PROJECT_HOME_ENGINE_ID);
-let remoteHostResolver: ((engineId: string) => ChildHost | null) | null = null;
-
-/** Lets the cross-engine layer supply hosts for peer engine ids. */
-export function setRemoteChildHostResolver(
-  resolver: ((engineId: string) => ChildHost | null) | null
-): void {
-  remoteHostResolver = resolver;
-}
+const remoteHosts = new Map<string, RemoteChildHost>();
 
 export function childHostFor(engineId: string): ChildHost {
   if (engineId === PROJECT_HOME_ENGINE_ID) {
     return localHost;
   }
-  const remote = remoteHostResolver?.(engineId) ?? null;
+  let remote = remoteHosts.get(engineId);
   if (!remote) {
-    throw new ProjectError(`Engine "${engineId}" is not connected to this Project.`);
+    remote = new RemoteChildHost(engineId);
+    remoteHosts.set(engineId, remote);
   }
   return remote;
 }
@@ -105,21 +96,6 @@ export async function requireProject(projectId: string): Promise<ProjectRecord> 
     throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
   }
   return record;
-}
-
-function engineSummaries(): ProjectEngineSummary[] {
-  return [
-    {
-      id: PROJECT_HOME_ENGINE_ID,
-      label: homeEngineLabel(),
-      kind: "home",
-      baseUrl: null,
-      online: true,
-      error: null,
-      instanceId: getEngineInstanceId(),
-      lastSeenAt: Date.now(),
-    },
-  ];
 }
 
 function engineLabel(engineId: string, engines: ProjectEngineSummary[]): string {
@@ -183,7 +159,7 @@ export async function listProjectChildSummaries(
   record: ProjectRecord,
   options?: { includeDeleted?: boolean }
 ): Promise<ProjectChildSummary[]> {
-  const engines = engineSummaries();
+  const engines = await listEngineSummaries();
   const children = record.children.filter(
     (child) => options?.includeDeleted || child.deletedAt == null
   );
@@ -216,7 +192,7 @@ export async function buildProjectSnapshot(record: ProjectRecord): Promise<Proje
     },
     repos: record.repos,
     children,
-    engines: engineSummaries(),
+    engines: await listEngineSummaries(),
     settings: record.settings,
   };
 }
@@ -262,16 +238,12 @@ export type ProjectRepoInput = {
   engineId?: string | null;
 };
 
-async function resolveRepoBinding(
-  record: Pick<ProjectRecord, "repos">,
-  input: ProjectRepoInput
-): Promise<ProjectRepoBinding> {
-  const engineId = input.engineId?.trim() || PROJECT_HOME_ENGINE_ID;
-  if (engineId !== PROJECT_HOME_ENGINE_ID) {
-    throw new ProjectError(`Engine "${engineId}" is not connected to this Project.`);
-  }
-  const workspaceId = input.workspaceId?.trim();
-  const root = input.root?.trim();
+type RepoWorkspace = { id: string; name: string; root: string };
+
+async function resolveLocalRepoWorkspace(
+  workspaceId: string | undefined,
+  root: string | undefined
+): Promise<RepoWorkspace> {
   let workspace = workspaceId ? await getWorkspaceById(workspaceId) : null;
   if (workspaceId && !workspace) {
     throw new ProjectError(`Unknown workspace: ${workspaceId}`);
@@ -291,10 +263,57 @@ async function resolveRepoBinding(
   if (isEngineManagedWorkspace(workspace)) {
     throw new ProjectError("Chat sandboxes and Project folders cannot be added as repositories.");
   }
+  return workspace;
+}
+
+/** The peer validates the folder (allowed roots, not engine-managed) and registers it. */
+async function resolvePeerRepoWorkspace(
+  engineId: string,
+  workspaceId: string | undefined,
+  root: string | undefined
+): Promise<RepoWorkspace> {
+  try {
+    if (workspaceId) {
+      const info = await callPeerEngine(engineId, (client) => client.info(ENGINE_INFO_TIMEOUT_MS));
+      const workspace = info.workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) {
+        throw new ProjectError(`Unknown workspace on engine ${info.label}: ${workspaceId}`);
+      }
+      return workspace;
+    }
+    if (!root) {
+      throw new ProjectError("A repository needs a folder path or a workspace id.");
+    }
+    return await callPeerEngine(engineId, (client) => client.registerWorkspace(root));
+  } catch (error) {
+    if (error instanceof PeerRequestError && error.status >= 400 && error.status < 500) {
+      throw new ProjectError(error.message, 400, error.code);
+    }
+    throw error;
+  }
+}
+
+type ResolvedRepo = { engineId: string; workspace: RepoWorkspace; name: string | null };
+
+async function resolveRepo(input: ProjectRepoInput): Promise<ResolvedRepo> {
+  const engineId = await resolveEngineRef(input.engineId);
+  const workspaceId = input.workspaceId?.trim() || undefined;
+  const root = input.root?.trim() || undefined;
+  const workspace =
+    engineId === PROJECT_HOME_ENGINE_ID
+      ? await resolveLocalRepoWorkspace(workspaceId, root)
+      : await resolvePeerRepoWorkspace(engineId, workspaceId, root);
+  return { engineId, workspace, name: input.name?.trim() || null };
+}
+
+function bindRepo(
+  record: Pick<ProjectRecord, "repos">,
+  { engineId, workspace, name: requestedName }: ResolvedRepo
+): ProjectRepoBinding {
   if (record.repos.some((repo) => repo.engineId === engineId && repo.workspaceId === workspace.id)) {
     throw new ProjectError(`${workspace.name} is already part of this Project.`, 409);
   }
-  const baseName = input.name?.trim() || workspace.name;
+  const baseName = requestedName || workspace.name;
   let name = baseName;
   for (let suffix = 2; record.repos.some((repo) => repo.name.toLowerCase() === name.toLowerCase()); suffix += 1) {
     name = `${baseName}-${suffix}`;
@@ -330,7 +349,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectS
   try {
     const repos: ProjectRepoBinding[] = [];
     for (const repoInput of input.repos ?? []) {
-      repos.push(await resolveRepoBinding({ repos }, repoInput));
+      repos.push(bindRepo({ repos }, await resolveRepo(repoInput)));
     }
     const workspace = await ensureWorkspaceRegistered(contextDir, name, { trackOpen: false });
     orchestratorWorkspaceId = workspace.id;
@@ -436,19 +455,17 @@ export async function patchProject(
 }
 
 async function disposeChildResources(child: ProjectChildRecord): Promise<void> {
-  if (child.deletedAt == null) {
-    await childHostFor(child.engineId)
-      .delete(childRef(child))
-      .catch((error) => {
-        console.warn(
-          `[projects] could not delete child ${child.name}:`,
-          error instanceof Error ? error.message : error
-        );
-      });
+  if (child.deletedAt != null) {
+    return;
   }
-  if (child.engineId === PROJECT_HOME_ENGINE_ID && child.repoId == null) {
-    await removeStandaloneChatWorkspace(child.workspaceId).catch(() => undefined);
-  }
+  await childHostFor(child.engineId)
+    .delete(childRef(child))
+    .catch((error) => {
+      console.warn(
+        `[projects] could not delete child ${child.name}:`,
+        error instanceof Error ? error.message : error
+      );
+    });
 }
 
 /** Deletes the Project, its orchestrator chat and every child it created. */
@@ -479,9 +496,10 @@ export async function addProjectRepo(
   input: ProjectRepoInput
 ): Promise<ProjectSnapshot> {
   await requireProject(projectId);
-  const record = await mutateProject(projectId, async (existing) => ({
+  const resolved = await resolveRepo(input);
+  const record = await mutateProject(projectId, (existing) => ({
     ...existing,
-    repos: [...existing.repos, await resolveRepoBinding(existing, input)],
+    repos: [...existing.repos, bindRepo(existing, resolved)],
   }));
   return buildProjectSnapshot(record);
 }
@@ -552,7 +570,7 @@ function uniqueChildName(record: ProjectRecord, base: string, ignoreChildId?: st
   return name;
 }
 
-async function resolveHarness(
+export async function resolveHarness(
   requested: string | null | undefined,
   fallback: string | null
 ): Promise<AgentBackendInfo> {
@@ -640,18 +658,22 @@ export async function createProjectChild(
       `Unknown repository "${repoRef}". Repositories: ${record.repos.map((entry) => entry.name).join(", ") || "none"}.`
     );
   }
-  const requestedEngine = input.engine?.trim() || null;
+  const requestedEngine = input.engine?.trim() ? await resolveEngineRef(input.engine) : null;
   if (repo && requestedEngine && requestedEngine !== repo.engineId) {
     throw new ProjectError(
       `Repository ${repo.name} lives on engine "${repo.engineId}", not "${requestedEngine}".`
     );
   }
   const engineId = repo?.engineId ?? requestedEngine ?? PROJECT_HOME_ENGINE_ID;
+  const isHome = engineId === PROJECT_HOME_ENGINE_ID;
   const host = childHostFor(engineId);
-  const harness =
-    engineId === PROJECT_HOME_ENGINE_ID
-      ? (await resolveHarness(input.harness, record.settings.defaultChildBackendId)).id
-      : input.harness?.trim() || record.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
+  // A peer validates the harness itself and reports what it has available.
+  const harness = isHome
+    ? (await resolveHarness(input.harness, record.settings.defaultChildBackendId)).id
+    : input.harness?.trim() || record.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
+  // The Project default model names a provider configured on the home engine;
+  // peers fall back to their own default for the harness.
+  const modelId = input.model?.trim() || (isHome ? record.settings.defaultChildModelId : null);
   const name = uniqueChildName(record, baseName);
   const childId = `pca_${randomHex(6)}`;
   const created = await host.create({
@@ -669,7 +691,7 @@ export async function createProjectChild(
       ? { kind: "workspace", workspaceId: repo.workspaceId }
       : { kind: "scratch", label: `${record.name} · ${name}` },
     backendId: harness as AgentBackendId,
-    modelId: input.model?.trim() || record.settings.defaultChildModelId,
+    modelId,
     mode: input.mode?.trim() || null,
     homeLabel: homeEngineLabel(),
   });
@@ -700,7 +722,7 @@ export async function createProjectChild(
     ...existing,
     children: [...existing.children, child],
   }));
-  return summarizeChild(updated, child, await observeChild(child), engineSummaries());
+  return summarizeChild(updated, child, await observeChild(child), await listEngineSummaries());
 }
 
 export async function listProjectChildren(
@@ -716,7 +738,7 @@ export async function getProjectChild(
 ): Promise<ProjectChildSummary> {
   const record = await requireProject(projectId);
   const child = resolveProjectChild(record, agentRef, { includeDeleted: true });
-  return summarizeChild(record, child, await observeChild(child), engineSummaries());
+  return summarizeChild(record, child, await observeChild(child), await listEngineSummaries());
 }
 
 async function patchChild(
@@ -835,7 +857,7 @@ export async function updateProjectChild(
     ...(mode ? { mode } : {}),
   }));
   const next = updated.children.find((entry) => entry.id === child.id) ?? child;
-  return summarizeChild(updated, next, await observeChild(next), engineSummaries());
+  return summarizeChild(updated, next, await observeChild(next), await listEngineSummaries());
 }
 
 export async function deleteProjectChild(
@@ -877,26 +899,45 @@ export async function readProjectChildTranscript(
   return { agent: child.name, status: observation.status, transcript };
 }
 
-export type ProjectEngineListing = ProjectEngineSummary & {
-  repos: Array<Pick<ProjectRepoBinding, "id" | "name" | "root">>;
-  harnesses: Array<{ id: string; label: string; available: boolean; defaultModelId: string }>;
-};
-
+/** Every engine with its bound repos and the harnesses it can run right now (asks each peer). */
 export async function listProjectEngines(projectId: string): Promise<ProjectEngineListing[]> {
   const record = await requireProject(projectId);
-  const backends = await listAgentBackendsWithCache();
-  return engineSummaries().map((engine) => ({
+  const harnessesByEngine = new Map<string, ProjectEngineListing["harnesses"]>();
+  const workspacesByEngine = new Map<string, ProjectEngineListing["workspaces"]>();
+  const [backends, homeWorkspaces] = await Promise.all([
+    listAgentBackendsWithCache(),
+    listWorkspaces(),
+  ]);
+  harnessesByEngine.set(
+    PROJECT_HOME_ENGINE_ID,
+    backends.map((backend) => ({
+      id: backend.id,
+      label: backend.label,
+      available: backend.available,
+      defaultModelId: backend.defaultModelId,
+    }))
+  );
+  workspacesByEngine.set(
+    PROJECT_HOME_ENGINE_ID,
+    homeWorkspaces
+      .filter((workspace) => !isEngineManagedWorkspace(workspace))
+      .map((workspace) => ({ id: workspace.id, name: workspace.name, root: workspace.root }))
+  );
+  await Promise.all(
+    (await listPeerEngines()).map(async (engine) => {
+      const info = await callPeerEngine(engine.id, (client) =>
+        client.info(ENGINE_INFO_TIMEOUT_MS)
+      ).catch(() => null);
+      harnessesByEngine.set(engine.id, info?.harnesses ?? []);
+      workspacesByEngine.set(engine.id, info?.workspaces ?? []);
+    })
+  );
+  return (await listEngineSummaries()).map((engine) => ({
     ...engine,
     repos: record.repos
       .filter((repo) => repo.engineId === engine.id)
       .map((repo) => ({ id: repo.id, name: repo.name, root: repo.root })),
-    harnesses: backends
-      .filter((backend) => backend.available)
-      .map((backend) => ({
-        id: backend.id,
-        label: backend.label,
-        available: backend.available,
-        defaultModelId: backend.defaultModelId,
-      })),
+    harnesses: (harnessesByEngine.get(engine.id) ?? []).filter((harness) => harness.available),
+    workspaces: workspacesByEngine.get(engine.id) ?? [],
   }));
 }

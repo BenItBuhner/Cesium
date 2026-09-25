@@ -15,14 +15,18 @@ const [
   { digestEventsSince, formatProjectTranscript, lastAssistantReply },
   { composeProjectNotice, parseProjectNoticeBlocks },
   contextStore,
-  { getProjectContextDir, getProjectRecordPath, isProjectWorkspaceRoot },
+  { getProjectContextDir, getProjectRecordPath, getProjectsRootDir, isProjectWorkspaceRoot },
   { readProject },
+  { normalizePeerBaseUrl },
+  peerTokens,
 ] = await Promise.all([
   import("../src/lib/projects/child-host.js"),
   import("../src/lib/projects/notices.js"),
   import("../src/lib/projects/context-store.js"),
   import("../src/lib/projects/paths.js"),
   import("../src/lib/projects/project-store.js"),
+  import("../src/lib/projects/peer-client.js"),
+  import("../src/lib/projects/peer-tokens.js"),
 ]);
 
 after(async () => {
@@ -48,8 +52,8 @@ function user(content: string, extra: Record<string, unknown> = {}) {
 function chunk(text: string, messageId = "a") {
   return event({ kind: "assistant_message_chunk", messageId, text });
 }
-function end(messageId = "a") {
-  return event({ kind: "assistant_message_end", messageId });
+function end(messageId = "a", stopReason?: string) {
+  return event({ kind: "assistant_message_end", messageId, ...(stopReason ? { stopReason } : {}) });
 }
 function status(value: string, detail?: string) {
   return event({ kind: "status", status: value, ...(detail ? { detail } : {}) });
@@ -88,6 +92,45 @@ test("digest counts only visible user turns and replies inside the seq window", 
   const replyOnly = digestEventsSince(events, 5, 8);
   assert.equal(replyOnly.hadTurn, true);
   assert.equal(replyOnly.startedTurn, false, "a reply without its user message is not a new turn");
+  assert.equal(second.turnsEnded, 1);
+  assert.equal(trailing.turnsEnded, 0);
+});
+
+test("digest counts turns folded into one polling window, not steers", () => {
+  nextSeq = 1;
+  const cesium = [
+    user("build it"),
+    chunk("working", "a1"),
+    end("a1", "steered"),
+    user("Also cover edge cases.", { displayContent: "Steer: Also cover edge cases." }),
+    chunk("built with edge cases", "a2"),
+    end("a2", "end_turn"),
+    user("then write docs"),
+    chunk("docs written", "a3"),
+    end("a3", "end_turn"),
+  ];
+  const folded = digestEventsSince(cesium, 0, 100);
+  assert.equal(folded.turnsEnded, 2, "a steered turn plus the queued follow-up");
+  assert.equal(folded.replyPreview, "docs written");
+
+  nextSeq = 1;
+  const codex = [
+    user("build it"),
+    chunk("planning", "c1"),
+    end("c1", "completed"),
+    user("check tests", { displayContent: "Steer: check tests" }),
+    chunk("done", "c2"),
+    end("c2", "completed"),
+  ];
+  assert.equal(
+    digestEventsSince(codex, 0, 100).turnsEnded,
+    1,
+    "a steer after an intermediate Codex message stays inside the turn"
+  );
+
+  nextSeq = 1;
+  const unfinished = [user("go"), chunk("a", "u1"), end("u1"), user("next"), chunk("b", "u2")];
+  assert.equal(digestEventsSince(unfinished, 0, 100).turnsEnded, 1, "a streaming turn has not ended");
 });
 
 test("reply previews are truncated and prefer the last finished assistant message", () => {
@@ -239,4 +282,37 @@ test("project records from older builds normalize missing child fields", async (
   assert.equal(record.settings.maxActiveChildren, 3);
   assert.equal(record.settings.defaultChildBackendId, null);
   assert.equal(await readProject("not-a-project"), null);
+});
+
+test("peer engine URLs normalize to a bare http(s) base", () => {
+  assert.equal(normalizePeerBaseUrl(" http://10.0.0.5:9100/ "), "http://10.0.0.5:9100");
+  assert.equal(normalizePeerBaseUrl("https://engine.example.com/cesium//"), "https://engine.example.com/cesium");
+  assert.equal(normalizePeerBaseUrl("HTTP://Engine.Example.com:443"), "http://engine.example.com:443");
+  for (const bad of ["", "engine:9100", "ftp://engine", "http://user:pw@engine", "http://engine/?x=1", "http://engine/#h"]) {
+    assert.equal(normalizePeerBaseUrl(bad), null, bad);
+  }
+});
+
+test("peer tokens are stored as hashes, verify by secret, and stop working once revoked", async () => {
+  const { token, secret } = await peerTokens.mintPeerToken("  laptop  ");
+  assert.match(secret, /^cpk_[A-Za-z0-9_-]{43}$/);
+  assert.match(token.id, /^ptk_[0-9a-f]{8}$/);
+  assert.equal(token.label, "laptop");
+
+  const filePath = path.join(getProjectsRootDir(), "peer-tokens.json");
+  const stored = await fs.readFile(filePath, "utf8");
+  assert.ok(!stored.includes(secret), "the secret never reaches disk");
+  assert.equal((await fs.stat(filePath)).mode & 0o777, 0o600);
+
+  assert.equal((await peerTokens.verifyPeerToken(secret))?.id, token.id);
+  assert.equal(await peerTokens.verifyPeerToken(`${secret}x`), null);
+  assert.equal(await peerTokens.verifyPeerToken(secret.slice(4)), null, "the prefix is required");
+  assert.deepEqual(
+    (await peerTokens.listPeerTokens()).map((entry) => entry.id),
+    [token.id]
+  );
+
+  assert.equal(await peerTokens.revokePeerToken(token.id), true);
+  assert.equal(await peerTokens.revokePeerToken(token.id), false);
+  assert.equal(await peerTokens.verifyPeerToken(secret), null);
 });

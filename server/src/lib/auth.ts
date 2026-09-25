@@ -997,7 +997,10 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     pathname === "/api/oauth/callback" ||
     // Provider webhooks authenticate via per-provider HMAC signatures instead
     // of app sessions (external services cannot hold a Cesium session).
-    pathname.startsWith("/api/cloud-agents/webhooks/")
+    pathname.startsWith("/api/cloud-agents/webhooks/") ||
+    // Another engine driving Project agents here presents a peer token minted
+    // on this engine; the peer routes verify it on every request.
+    pathname.startsWith("/api/projects/peer/")
   ) {
     await next();
     return;

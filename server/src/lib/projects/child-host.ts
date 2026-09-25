@@ -11,7 +11,10 @@ import type {
   AgentConversationStatus,
   AgentStoredEvent,
 } from "../agents/types.js";
-import { createStandaloneChatWorkspace } from "../standalone-chats.js";
+import {
+  createStandaloneChatWorkspace,
+  removeStandaloneChatWorkspace,
+} from "../standalone-chats.js";
 import {
   ensureWorkspaceRegistered,
   getWorkspaceById,
@@ -54,6 +57,8 @@ export type ChildTurnDigest = {
   hadTurn: boolean;
   /** True when a visible user message (the start of a turn) landed inside the window. */
   startedTurn: boolean;
+  /** Turns that finished inside the window; several when polling folds turns together. */
+  turnsEnded: number;
   replyPreview: string | null;
 };
 
@@ -193,8 +198,34 @@ export function digestEventsSince(
   return {
     hadTurn,
     startedTurn,
+    turnsEnded: countTurnsEnded(fresh),
     replyPreview: reply ? truncate(reply, REPLY_PREVIEW_MAX_CHARS) : null,
   };
+}
+
+/**
+ * Steers never open a turn: harnesses label them `Steer: ` and some (Codex)
+ * close intermediate assistant messages mid-turn, so only a plain user
+ * message after a closed reply marks a turn boundary.
+ */
+function countTurnsEnded(events: readonly AgentStoredEvent[]): number {
+  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  let turnsEnded = 0;
+  let replyClosed = false;
+  for (const event of ordered) {
+    if (event.kind === "user_message") {
+      if (event.hidden || event.displayContent?.startsWith("Steer: ")) {
+        continue;
+      }
+      if (replyClosed) {
+        turnsEnded += 1;
+      }
+      replyClosed = false;
+    } else if (event.kind === "assistant_message_end" && event.stopReason !== "steered") {
+      replyClosed = true;
+    }
+  }
+  return replyClosed ? turnsEnded + 1 : turnsEnded;
 }
 
 /**
@@ -396,11 +427,13 @@ export class LocalChildHost implements ChildHost {
     });
   }
 
+  /** Deletes the conversation, and the scratch sandbox it was created in (a no-op for repos). */
   async delete(ref: ChildRef): Promise<void> {
     const workspace = await getWorkspaceById(ref.workspaceId);
     if (!workspace) {
       return;
     }
     await agentRuntimeManager.deleteConversation(workspace, ref.conversationId);
+    await removeStandaloneChatWorkspace(workspace.id);
   }
 }

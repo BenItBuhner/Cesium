@@ -31,6 +31,7 @@ import { cloudAgentRoutes } from "./routes/cloud-agents.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { publicAccessRoutes } from "./routes/public-access.js";
 import { metaRoutes } from "./routes/meta.js";
+import { projectPeerRoutes } from "./routes/project-peers.js";
 import { projectRoutes } from "./routes/projects.js";
 import { startProjectWatcher } from "./lib/projects/project-watcher.js";
 import { bootstrapStorage } from "./storage/index.js";
@@ -220,6 +221,7 @@ export function createCesiumApp(): Hono {
   app.route("/", cloudContextRoutes);
   app.route("/", artifactRoutes);
   app.route("/", orchestrationRoutes);
+  app.route("/", projectPeerRoutes);
   app.route("/", projectRoutes);
   app.route("/", cloudAgentRoutes);
   app.route("/", extensionRoutes);
