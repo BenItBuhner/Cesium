@@ -6,8 +6,9 @@ import {
   isProjectChildRemote,
   projectSummaryStatusLine,
   sortProjectChildren,
-  type ProjectSummary,
+  type ProjectListing,
 } from "@cesium/core";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { ProjectEngineBadge, ProjectStatusDot } from "./project-ui";
 import { useProjects, useProjectSnapshot } from "./ProjectsProvider";
 
@@ -48,7 +49,7 @@ function ProjectRailChildren({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() =>
-                void (remote ? openProjectById(projectId) : openChildConversation(child))
+                void (remote ? openProjectById(projectId) : openChildConversation(projectId, child))
               }
               className="flex h-[26px] w-full min-w-0 items-center gap-[7px] rounded-[var(--agent-control-radius)] pl-[28px] pr-[9px] text-left hover:bg-[var(--agent-card-bg)]"
               title={child.lastReplyPreview ?? child.name}
@@ -69,11 +70,13 @@ function ProjectRailChildren({ projectId }: { projectId: string }) {
 function ProjectRailRow({
   project,
   active,
+  onOtherEngine,
   expanded,
   onToggle,
 }: {
-  project: ProjectSummary;
+  project: ProjectListing;
   active: boolean;
+  onOtherEngine: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -119,6 +122,13 @@ function ProjectRailRow({
           >
             {project.name}
           </span>
+          {onOtherEngine ? (
+            <ProjectEngineBadge
+              label={project.serverLabel}
+              remote={false}
+              title={`Lives on ${project.serverLabel}; opening it switches to that engine`}
+            />
+          ) : null}
           {project.agentCount > 0 || busy ? (
             <span className="flex shrink-0 items-center gap-[5px] font-sans text-[11px] tabular-nums text-[var(--text-disabled)]">
               {project.workingCount > 0 ? `${project.workingCount}/${project.agentCount}` : project.agentCount}
@@ -135,6 +145,7 @@ function ProjectRailRow({
 /** Projects Beta: sits at the top of the workspace rail. */
 export function ProjectsRailSection() {
   const { enabled, projects, loaded, error, activeProjectId, setNewProjectOpen } = useProjects();
+  const { activeServer } = useServerConnections();
   const [collapsed, setCollapsed] = useState(false);
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -228,6 +239,7 @@ export function ProjectsRailSection() {
                 key={project.id}
                 project={project}
                 active={project.id === activeProjectId}
+                onOtherEngine={project.serverId !== activeServer.id}
                 expanded={expandedIds.has(project.id)}
                 onToggle={() =>
                   setExpandedIds((current) => {

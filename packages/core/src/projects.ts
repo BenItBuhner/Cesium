@@ -260,6 +260,53 @@ export function projectSummaryStatusLine(
   return parts.join(" · ");
 }
 
+/** A Project as listed by one of the engines the client is connected to. */
+export type ProjectListing = ProjectSummary & { serverId: string; serverLabel: string };
+
+/** One engine's answer to a Project list request; `projects` is null when the request failed. */
+export type ProjectServerListing = {
+  serverId: string;
+  serverLabel: string;
+  projects: readonly ProjectSummary[] | null;
+  error?: string | null;
+};
+
+/**
+ * Merges per-engine Project lists, newest first. An engine whose request failed
+ * keeps what it listed last time so one blip doesn't empty the sidebar, while an
+ * engine that wasn't asked drops out. The first engine to list an id owns it, so
+ * callers put the active engine first. The error only surfaces when no engine
+ * answered.
+ */
+export function mergeProjectListings(
+  previous: readonly ProjectListing[],
+  results: readonly ProjectServerListing[]
+): { projects: ProjectListing[]; error: string | null } {
+  const merged: ProjectListing[] = [];
+  const seen = new Set<string>();
+  let answered = false;
+  let error: string | null = null;
+  for (const result of results) {
+    const listed: readonly ProjectSummary[] = result.projects
+      ? result.projects
+      : previous.filter((project) => project.serverId === result.serverId);
+    if (result.projects) {
+      answered = true;
+    } else {
+      error ??= result.error?.trim() || `Could not load Projects from ${result.serverLabel}.`;
+    }
+    for (const project of listed) {
+      if (seen.has(project.id)) {
+        continue;
+      }
+      seen.add(project.id);
+      merged.push({ ...project, serverId: result.serverId, serverLabel: result.serverLabel });
+    }
+  }
+  merged.sort((a, b) => b.updatedAt - a.updatedAt);
+  return { projects: merged, error: answered ? null : error };
+}
+
 export type ProjectChildMark = { turnsCompleted: number; bucket: ProjectChildBucket };
 
 export type ProjectChildChange =
