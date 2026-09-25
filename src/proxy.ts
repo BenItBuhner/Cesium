@@ -48,6 +48,11 @@ if (posture.kind === "client-only") {
  *   `/setup`), so the network boundary must not bounce it first.
  * - `/api/releases` - powers the download page for signed-out visitors.
  * - `/~offline`, `/manifest.json` - PWA plumbing fetched without credentials.
+ *
+ * The machine-to-machine routes (`/api/rendezvous`, `/api/connect`) and
+ * `/manifest.json` are additionally excluded from `config.matcher` below, so
+ * the proxy never runs for them at all. They stay listed here as
+ * documentation and as a safety net should the matcher ever widen again.
  */
 const isPublicRoute = createRouteMatcher([
   "/",
@@ -100,11 +105,31 @@ function buildProxy() {
 
 export default buildProxy();
 
+/**
+ * Paths the proxy never runs for. On Vercel the Next.js 16 proxy is a
+ * Node.js Routing Middleware billed as a full Fluid function invocation
+ * (active CPU + provisioned memory) on every matched request, so anything
+ * that gets nothing from Clerk must be kept out of the matcher, not just
+ * whitelisted inside the handler:
+ * - `/api/rendezvous/*` - engines PUT a heartbeat every few seconds and
+ *   every open client polls it; the busiest route on the deployment and
+ *   always public (bearer secret, no browser session).
+ * - `/api/connect/*` - engine pairing register/poll, same shape.
+ * - Static files by extension (`.json` includes `/manifest.json`, `.txt`
+ *   `/robots.txt`, `.xml` `/sitemap.xml`, `.wasm` the browser-machine and
+ *   voice runtimes).
+ * No handler behind these paths calls Clerk's `auth()`, which is the only
+ * thing that requires clerkMiddleware() to have run for a request.
+ *
+ * Next.js reads `matcher` statically at build time, so the patterns must
+ * stay literal strings (no template literals or shared constants).
+ */
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static assets.
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
+    // Skip Next.js internals, the machine routes, and all static assets.
+    "/((?!_next|api/(?:rendezvous|connect)(?:/|$)|[^?]*\\.(?:html?|css|js(?!on)|json|mjs|map|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest|txt|xml|wasm|onnx)).*)",
+    // API routes regardless of their shape, minus the machine routes.
+    "/(api|trpc)((?!/(?:rendezvous|connect)(?:/|$)).*)",
     // Clerk frontend-API proxy routes.
     "/__clerk/(.*)",
   ],
