@@ -806,8 +806,11 @@ supervise() {
   local last_published_at=0
   local last_published_url=""
   local tunnel_health_failures=0
-  local interval="${CESIUM_RENDEZVOUS_INTERVAL:-15}"
-  [[ "$interval" =~ ^[0-9]+$ ]] || interval=15
+  # Rendezvous records live 90 s; publishing every 30 s survives two missed
+  # beats and halves the billed function invocations on the hosted web app
+  # compared with the old 15 s cadence.
+  local interval="${CESIUM_RENDEZVOUS_INTERVAL:-30}"
+  [[ "$interval" =~ ^[0-9]+$ ]] || interval=30
   ((interval >= 5)) || interval=5
 
   while true; do

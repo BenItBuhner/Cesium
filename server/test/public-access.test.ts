@@ -23,7 +23,9 @@ process.env.CESIUM_INSTANCE_ID = "cesium_public_access_test_instance";
 
 const fs = await import("node:fs/promises");
 const {
+  DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS,
   createPublicAccessManagerForTests,
+  defaultRendezvousHeartbeatIntervalMs,
   publicAccessManager,
 } = await import("../src/lib/public-access-manager.js");
 const { createCesiumApp } = await import("../src/app.js");
@@ -334,4 +336,16 @@ test("disable stops only the owned child and status redacts password and write s
   assert.equal(statusJson.includes("rendezvousWriteSecret"), false);
   assert.equal(statusJson.includes("managedAuthPassword"), false);
   assert.equal(disabled.publicUrl, null);
+});
+
+test("rendezvous heartbeat defaults to 30 s and honours CESIUM_RENDEZVOUS_INTERVAL", () => {
+  // Records live 90 s on the registry: 30 s survives two missed beats while
+  // halving the billed invocations of the old 15 s cadence.
+  assert.equal(DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, 30_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({}), 30_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "45" }), 45_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: " 15 " }), 15_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "1" }), 5_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "soon" }), 30_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "" }), 30_000);
 });

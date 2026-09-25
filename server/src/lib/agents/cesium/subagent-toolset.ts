@@ -290,6 +290,29 @@ export function settleSubagentToolRow(input: {
 }
 
 /** Most recent human-readable activity from a subagent transcript, for the collapsed card. */
+/**
+ * Transcript of a subagent as persisted in the parent conversation's event
+ * log. Every progress/terminal `subagent` card carries the full transcript, so
+ * the newest card for the id is the most complete copy - and it survives the
+ * in-memory runtime that produced it (restarts, session disposal).
+ */
+export function findPersistedSubagentTranscript(
+  events: AgentStoredEvent[],
+  subagentId: string
+): AgentStoredEvent[] | null {
+  let newest: Extract<AgentStoredEvent, { kind: "subagent" }> | null = null;
+  for (const event of events) {
+    if (
+      event.kind === "subagent" &&
+      event.subagentId === subagentId &&
+      (newest === null || event.seq > newest.seq)
+    ) {
+      newest = event;
+    }
+  }
+  return newest?.transcript ?? null;
+}
+
 export function latestSubagentTranscriptActivity(
   transcript: AgentStoredEvent[]
 ): string | null {

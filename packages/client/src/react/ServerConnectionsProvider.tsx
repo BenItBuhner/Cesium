@@ -37,6 +37,11 @@ import {
   type RendezvousBootstrap,
   type RendezvousLocator,
 } from "../rendezvous";
+import {
+  RENDEZVOUS_REFRESH_DEGRADED_MS,
+  rendezvousServerJustWentOffline,
+  shouldRefreshRendezvous,
+} from "../rendezvous-refresh";
 import { migrateStoredAuthServerBaseUrl, setStoredSessionToken } from "../auth-client";
 import {
   SERVER_CONNECTIONS_EVENT,
@@ -211,8 +216,11 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   const [serverStatusById, setServerStatusById] = useState<Record<string, ServerRuntimeStatus>>({});
   const healthRecoveryRanRef = useRef(false);
   const healthRefreshEpochRef = useRef(0);
+  const lastRendezvousRefreshAtRef = useRef(0);
   const serversRef = useRef<ServerConnection[]>(state.servers);
   serversRef.current = state.servers;
+  const serverStatusRef = useRef(serverStatusById);
+  serverStatusRef.current = serverStatusById;
 
   useEffect(() => {
     const sync = () => {
@@ -394,6 +402,10 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       (server): server is ServerConnection & { rendezvous: NonNullable<ServerConnection["rendezvous"]> } =>
         Boolean(server.rendezvous)
     );
+    if (rendezvousServers.length === 0) {
+      return;
+    }
+    lastRendezvousRefreshAtRef.current = Date.now();
     const resolved = await Promise.all(
       rendezvousServers.map(async (server) => {
         try {
@@ -435,12 +447,27 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     }
     void refreshRendezvousEndpoints();
     // Hidden tabs skip the periodic probe; a refresh runs on return instead.
+    // Visible tabs re-resolve on the slow cadence while every rendezvous
+    // server probes reachable and on the fast one while any is offline (see
+    // rendezvous-refresh.ts); the tick itself runs at the fast cadence so the
+    // switch is picked up promptly.
     const interval = window.setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      void refreshRendezvousEndpoints();
-    }, 10_000);
+      const healths = serversRef.current
+        .filter((server) => Boolean(server.rendezvous))
+        .map((server) => serverStatusRef.current[server.id]?.health);
+      if (
+        shouldRefreshRendezvous({
+          now: Date.now(),
+          lastRefreshAt: lastRendezvousRefreshAtRef.current,
+          healths,
+        })
+      ) {
+        void refreshRendezvousEndpoints();
+      }
+    }, RENDEZVOUS_REFRESH_DEGRADED_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void refreshRendezvousEndpoints();
@@ -466,6 +493,20 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     if (epoch !== healthRefreshEpochRef.current) {
       return next;
     }
+    // A tunnel-backed engine dropping offline is the usual first sign of a
+    // rotated public URL: look the new endpoint up right away instead of
+    // waiting for the slow registry cadence.
+    const rotated = servers.some(
+      (server) =>
+        server.rendezvous &&
+        rendezvousServerJustWentOffline(
+          serverStatusRef.current[server.id]?.health,
+          next[server.id]?.health
+        )
+    );
+    if (rotated) {
+      void refreshRendezvousEndpoints();
+    }
     setServerStatusById((current) => {
       const currentServers = new Map(serversRef.current.map((server) => [server.id, server.baseUrl]));
       const merged = Object.fromEntries(
@@ -484,7 +525,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       return mergeRuntimeStatusesIfChanged(current, merged);
     });
     return next;
-  }, []);
+  }, [refreshRendezvousEndpoints]);
 
   useEffect(() => {
     if (!ready) {
