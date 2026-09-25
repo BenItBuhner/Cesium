@@ -7,6 +7,7 @@ import {
   formatProjectNoticeDisplay,
   isProjectChildBusy,
   isProjectChildRemote,
+  mergeProjectListings,
   normalizeProjectAgentName,
   parseProjectNoticeNames,
   projectChildBucket,
@@ -17,6 +18,7 @@ import {
   sameProjectEngineUrl,
   sortProjectChildren,
   type ProjectChildSummary,
+  type ProjectSummary,
 } from "../packages/core/src/projects.ts";
 
 function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummary, "id">): ProjectChildSummary {
@@ -203,4 +205,92 @@ test("remote children, delivery labels and engine URL matching", () => {
   assert.equal(sameProjectEngineUrl("http://localhost:9101", "http://localhost:9100"), false);
   assert.equal(sameProjectEngineUrl(null, null), false);
   assert.equal(sameProjectEngineUrl("", ""), false);
+});
+
+function summary(overrides: Partial<ProjectSummary> & Pick<ProjectSummary, "id">): ProjectSummary {
+  return {
+    name: overrides.id,
+    icon: null,
+    createdAt: 1,
+    updatedAt: 1,
+    archivedAt: null,
+    orchestratorStatus: "idle",
+    orchestratorConversationId: `conv-${overrides.id}`,
+    orchestratorWorkspaceId: "ws",
+    repoCount: 1,
+    agentCount: 0,
+    workingCount: 0,
+    attentionCount: 0,
+    turnsCompleted: 0,
+    ...overrides,
+  };
+}
+
+test("mergeProjectListings lists every engine's Projects, newest first, tagged with their engine", () => {
+  const merged = mergeProjectListings(
+    [],
+    [
+      {
+        serverId: "home",
+        serverLabel: "Home",
+        projects: [summary({ id: "checkout", updatedAt: 30 }), summary({ id: "docs", updatedAt: 10 })],
+      },
+      { serverId: "box", serverLabel: "Build box", projects: [summary({ id: "infra", updatedAt: 20 })] },
+    ]
+  );
+  assert.equal(merged.error, null);
+  assert.deepEqual(
+    merged.projects.map((project) => `${project.id}@${project.serverId}:${project.serverLabel}`),
+    ["checkout@home:Home", "infra@box:Build box", "docs@home:Home"]
+  );
+});
+
+test("mergeProjectListings keeps a failed engine's last listing and drops engines it was not asked about", () => {
+  const previous = mergeProjectListings(
+    [],
+    [
+      { serverId: "home", serverLabel: "Home", projects: [summary({ id: "checkout", updatedAt: 5 })] },
+      { serverId: "box", serverLabel: "Build box", projects: [summary({ id: "infra", updatedAt: 4 })] },
+      { serverId: "laptop", serverLabel: "Laptop", projects: [summary({ id: "notes", updatedAt: 3 })] },
+    ]
+  ).projects;
+
+  const merged = mergeProjectListings(previous, [
+    { serverId: "box", serverLabel: "Build box", projects: [] },
+    { serverId: "home", serverLabel: "Home (renamed)", projects: null, error: "fetch failed" },
+  ]);
+  assert.equal(merged.error, null, "one engine answered, so the blip stays quiet");
+  assert.deepEqual(
+    merged.projects.map((project) => `${project.id}@${project.serverId}:${project.serverLabel}`),
+    ["checkout@home:Home (renamed)"]
+  );
+});
+
+test("mergeProjectListings gives a duplicated id to the first engine and reports errors only when nobody answered", () => {
+  const duplicated = mergeProjectListings(
+    [],
+    [
+      { serverId: "active", serverLabel: "Active", projects: [summary({ id: "same", name: "From active" })] },
+      { serverId: "alias", serverLabel: "Alias", projects: [summary({ id: "same", name: "From alias" })] },
+    ]
+  );
+  assert.deepEqual(
+    duplicated.projects.map((project) => `${project.name}@${project.serverId}`),
+    ["From active@active"]
+  );
+
+  const failed = mergeProjectListings(
+    [],
+    [
+      { serverId: "home", serverLabel: "Home", projects: null, error: "Projects is turned off." },
+      { serverId: "box", serverLabel: "Build box", projects: null },
+    ]
+  );
+  assert.deepEqual(failed, { projects: [], error: "Projects is turned off." });
+
+  assert.deepEqual(
+    mergeProjectListings([], [{ serverId: "box", serverLabel: "Build box", projects: null, error: " " }]),
+    { projects: [], error: "Could not load Projects from Build box." }
+  );
+  assert.deepEqual(mergeProjectListings([], []), { projects: [], error: null });
 });
