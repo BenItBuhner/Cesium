@@ -53,7 +53,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         model: {
           type: "string",
           description:
-            "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
+            "Model id for the harness. Default: the Project default on this engine, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
         },
         mode: { type: "string", description: "Harness mode, e.g. agent or plan. Default: agent." },
       },
