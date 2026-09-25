@@ -55,6 +55,7 @@ export type CesiumProfileToolPolicyDecision = {
 export const CESIUM_PROFILE_LOCKED_TOOLS: readonly string[] = [
   "read_file",
   "grep",
+  "glob",
   "ask_question",
   "todo",
   "wait",
@@ -72,7 +73,7 @@ export const CESIUM_PROFILE_TOOL_GROUPS: readonly CesiumProfileToolGroup[] = [
   {
     id: "workspace",
     label: "Workspace",
-    tools: ["read_file", "grep", "write_file", "edit_file", "terminal"],
+    tools: ["read_file", "grep", "glob", "write_file", "edit_file", "terminal"],
   },
   {
     id: "control",

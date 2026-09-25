@@ -33,6 +33,7 @@ export type CesiumSubagentToolset = {
 export const SUBAGENT_SHARED_HOST_TOOL_NAMES: readonly string[] = [
   "read_file",
   "grep",
+  "glob",
   "write_file",
   "edit_file",
   "terminal",
@@ -54,7 +55,7 @@ export const SUBAGENT_COLLABORATION_TOOL_NAMES: readonly string[] = [
 const SUBAGENT_SHARED_GUIDANCE =
   "You are an agent in a team of agents collaborating to complete a task. All agents are equally capable and share the same " +
   "workspace: the same filesystem and working directory, so edits made by one agent are immediately visible to all other agents. " +
-  "You have the parent agent's workspace tools (read_file, grep, write_file, edit_file, terminal, call_mcp_tool) and the built-in " +
+  "You have the parent agent's workspace tools (read_file, grep, glob, write_file, edit_file, terminal, call_mcp_tool) and the built-in " +
   "browser tools (browser_tabs, browser_navigate, browser_snapshot, browser_click, browser_type, browser_evaluate, browser_viewport, " +
   "browser_screenshot, browser_record, browser_events). Screenshots and demo recordings are saved under artifacts/browser/ in the " +
   "workspace - always list those exact file paths in your final summary so the parent agent and the user can open them. " +
