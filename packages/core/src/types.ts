@@ -393,8 +393,11 @@ export interface WorkspaceInfo {
   name: string;
 }
 
-/** Persistent project folder vs ephemeral per-chat sandbox. */
-export type WorkspaceKind = "workspace" | "standalone-chat";
+/**
+ * Persistent project folder, ephemeral per-chat sandbox, or the context folder
+ * a Project orchestrator runs in (never shown as an ordinary workspace).
+ */
+export type WorkspaceKind = "workspace" | "standalone-chat" | "project";
 
 export interface WorkspaceRecord {
   id: string;
@@ -425,6 +428,11 @@ export function isStandaloneChatWorkspace(
   }
   const normalized = workspace.root.replace(/\\/g, "/");
   return normalized.includes("/standalone-chats/");
+}
+
+/** True for a Project orchestrator's context-folder workspace. */
+export function isProjectWorkspace(workspace: Pick<WorkspaceRecord, "kind">): boolean {
+  return workspace.kind === "project";
 }
 
 export type GitBranchInfo = {
@@ -643,6 +651,9 @@ export type QueuedChatPrompt = {
   configOverride?: QueuedPromptConfigOverride;
   planHandoff?: PlanBuildHandoff;
   hidden?: boolean;
+  /** Compact label shown in place of `text` (the model still receives `text`). */
+  displayContent?: string;
+  coalesceKey?: string;
 };
 
 export interface ChatTab {

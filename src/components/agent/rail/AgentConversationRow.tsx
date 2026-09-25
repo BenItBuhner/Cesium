@@ -301,7 +301,11 @@ export const AgentConversationRow = memo(function AgentConversationRow({
           ? `Fired by scheduled trigger${origin.triggerName ? ` "${origin.triggerName}"` : ""}`
           : origin.kind === "side-chat"
             ? `Side chat of ${origin.parentTitle ?? "another chat"}`
-            : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
+            : origin.kind === "project-orchestrator"
+              ? "Project orchestrator"
+              : origin.kind === "project-child"
+                ? `Project agent${origin.homeLabel ? ` · managed from ${origin.homeLabel}` : ""}`
+                : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
     : undefined;
 
   const handleContextMenu = onContextMenu

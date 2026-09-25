@@ -561,6 +561,23 @@ export type AgentConversationOrigin =
       parentConversationId: string;
       parentTitle?: string;
       createdAt: number;
+    }
+  | {
+      /** The orchestrator chat of a Project (narrow agent-management tool set). */
+      kind: "project-orchestrator";
+      projectId: string;
+      createdAt: number;
+    }
+  | {
+      /** A child agent created inside a Project, possibly on a peer engine. */
+      kind: "project-child";
+      projectId: string;
+      childId: string;
+      /** Peer token that created it on this engine; null when created by the home engine. */
+      peerTokenId: string | null;
+      /** Home engine label, for chrome on peer engines. */
+      homeLabel?: string;
+      createdAt: number;
     };
 
 /**
