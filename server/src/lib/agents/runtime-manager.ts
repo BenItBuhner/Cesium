@@ -85,6 +85,7 @@ import type {
   AgentContextUsageSnapshot,
   AgentEventInput,
   AgentPromptAttachment,
+  AgentPromptDeliveryOutcome,
   AgentProvider,
   AgentQueuedChatPrompt,
   AgentStoredEvent,
@@ -1409,6 +1410,70 @@ export class AgentRuntimeManager {
     );
   }
 
+  /**
+   * Deliver a message and report how it landed. With `midTurnSteer`, a steer
+   * sent while a turn is running is handed to the harness's native in-turn
+   * injection first; everything else takes the ordinary prompt path (start
+   * a turn when idle, FIFO queue when busy).
+   */
+  async deliverPrompt(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    text: string,
+    options: {
+      delivery: "steer" | "queue";
+      midTurnSteer?: boolean;
+    }
+  ): Promise<{ outcome: AgentPromptDeliveryOutcome; head: AgentConversationSnapshotHead | null }> {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new Error("Message text is required.");
+    }
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record) {
+        throw new Error(`Unknown conversation: ${conversationId}`);
+      }
+      if (
+        options.delivery === "steer" &&
+        options.midTurnSteer &&
+        isConversationTurnInProgress(record.status)
+      ) {
+        const runtime = this.runtimes.get(conversationId);
+        if (runtime?.handle.steer && runtime.workspaceId === workspace.id) {
+          const accepted = await runtime.handle
+            .steer({ text: trimmed, userMessageId: randomUUID() })
+            .catch((error) => {
+              console.warn(
+                `[agent-runtime] mid-turn steer failed for ${conversationId}; queueing instead:`,
+                error instanceof Error ? error.message : error
+              );
+              return false;
+            });
+          if (accepted) {
+            return { outcome: "mid_turn" as const, head: null };
+          }
+        }
+      }
+      const sink: { value?: "queued" | "started" } = {};
+      const head = await this.promptConversationLocked(
+        workspace,
+        conversationId,
+        trimmed,
+        undefined,
+        options.delivery === "steer" ? { delivery: "steer" } : undefined,
+        sink
+      );
+      const outcome: AgentPromptDeliveryOutcome =
+        sink.value === "started"
+          ? "started"
+          : options.delivery === "steer"
+            ? "queued_steer"
+            : "queued";
+      return { outcome, head };
+    });
+  }
+
   private async promptConversationLocked(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -1422,7 +1487,8 @@ export class AgentRuntimeManager {
       clientTimezone?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
       hidden?: boolean;
-    }
+    },
+    outcomeSink?: { value?: "queued" | "started" }
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
@@ -1496,6 +1562,9 @@ export class AgentRuntimeManager {
             ? (current.queuedPrompts ?? [])
             : [...(current.queuedPrompts ?? []), entry],
       }));
+      if (outcomeSink) {
+        outcomeSink.value = "queued";
+      }
       const head = await readConversationSnapshotHead(workspace.id, conversationId);
       if (!head) {
         throw new Error("Conversation disappeared after queueing prompt.");
@@ -1665,6 +1734,9 @@ export class AgentRuntimeManager {
     );
     const appendedEvents = appended.events;
     const updatedRecord = appended.conversation;
+    if (outcomeSink) {
+      outcomeSink.value = "started";
+    }
 
     void (async () => {
       try {

@@ -819,6 +819,41 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     }
   }
 
+  async steer(input: { text: string; userMessageId: string }): Promise<boolean> {
+    const text = input.text.trim();
+    const turnId = this.pendingTurn?.turnId;
+    if (
+      !text ||
+      this.disposed ||
+      !turnId ||
+      !this.threadId ||
+      !this.transport ||
+      this.transport.isDisposed
+    ) {
+      return false;
+    }
+    try {
+      await this.transport.request("turn/steer", {
+        threadId: this.threadId,
+        expectedTurnId: turnId,
+        input: [{ type: "text", text }],
+      });
+    } catch {
+      return false;
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "user_message",
+        messageId: input.userMessageId,
+        content: text,
+        displayContent: `Steer: ${text}`,
+      },
+    ]);
+    return true;
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     this.clearTurnSettleTimer();
