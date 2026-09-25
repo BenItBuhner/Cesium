@@ -29,6 +29,43 @@ import { PROJECT_ORCHESTRATOR_TOOL_NAMES } from "./orchestrator-tool-definitions
 
 const NOTES_REMINDER_MAX_CHARS = 6_000;
 const PREVIEW_IN_TABLE_MAX_CHARS = 160;
+const REPEAT_CHECK_WINDOW_MS = 90_000;
+
+const WAIT_FOR_UPDATES_NOTE =
+  "Agents report back on their own with a <project_agent_updates> message, delivered after your turn ends and never during it. Do not check on them in the meantime: finish any other delegation, then end your turn.";
+
+type AgentCheck = { at: number; fingerprint: string; repeats: number };
+const lastAgentChecks = new Map<string, AgentCheck>();
+let repeatCheckWindowMs = REPEAT_CHECK_WINDOW_MS;
+
+/** Test hook: how long an unchanged repeat of project_list_agents gets the short answer; `null` restores it. */
+export function setProjectAgentCheckWindowForTests(ms: number | null): void {
+  repeatCheckWindowMs = ms ?? REPEAT_CHECK_WINDOW_MS;
+  lastAgentChecks.clear();
+}
+
+/**
+ * Nothing reaches the orchestrator mid-turn, so polling project_list_agents
+ * can never show progress. A repeat check that finds the same state within
+ * the window gets a short reminder to end the turn instead of the full list.
+ */
+function answerAgentCheck(key: string, payload: Record<string, unknown>): string {
+  const fingerprint = JSON.stringify(payload);
+  const now = Date.now();
+  const previous = lastAgentChecks.get(key);
+  if (previous && previous.fingerprint === fingerprint && now - previous.at < repeatCheckWindowMs) {
+    const secondsAgo = Math.max(1, Math.round((now - previous.at) / 1000));
+    previous.at = now;
+    previous.repeats += 1;
+    return json({
+      unchanged: true,
+      checksWithoutChange: previous.repeats,
+      note: `Nothing has changed since your last check ${secondsAgo}s ago, and nothing can change while your turn is running. ${WAIT_FOR_UPDATES_NOTE}`,
+    });
+  }
+  lastAgentChecks.set(key, { at: now, fingerprint, repeats: 0 });
+  return json(payload);
+}
 
 function arg(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key];
@@ -98,7 +135,7 @@ export async function executeProjectOrchestratorTool(
       return json({ engines: engines.map((engine) => compactEngine(engine, engines)) });
     }
     case "project_create_agent": {
-      const child = await createProjectChild(
+      const { agent, warning } = await createProjectChild(
         projectId,
         {
           name: requiredArg(args, "name", name),
@@ -112,19 +149,26 @@ export async function executeProjectOrchestratorTool(
         "orchestrator"
       );
       return json({
-        created: compactChild(child),
-        note: "The agent is working on its first task. You will get a <project_agent_updates> message when it reports back.",
+        created: compactChild(agent),
+        ...(warning ? { warning } : {}),
+        note: `The agent is working on its first task. ${WAIT_FOR_UPDATES_NOTE}`,
       });
     }
     case "project_list_agents": {
       const agent = arg(args, "agent");
       if (agent) {
-        return json({ agent: compactChild(await getProjectChild(projectId, agent)) });
+        const child = compactChild(await getProjectChild(projectId, agent));
+        return answerAgentCheck(`${projectId}:agent:${child.id}`, {
+          agent: child,
+          ...(child.bucket === "working" ? { note: WAIT_FOR_UPDATES_NOTE } : {}),
+        });
       }
-      const children = await listProjectChildren(projectId, {
-        includeDeleted: args.include_deleted === true,
+      const includeDeleted = args.include_deleted === true;
+      const agents = (await listProjectChildren(projectId, { includeDeleted })).map(compactChild);
+      return answerAgentCheck(`${projectId}:all:${includeDeleted}`, {
+        agents,
+        ...(agents.some((child) => child.bucket === "working") ? { note: WAIT_FOR_UPDATES_NOTE } : {}),
       });
-      return json({ agents: children.map(compactChild) });
     }
     case "project_steer_agent":
     case "project_queue_agent": {
@@ -134,7 +178,7 @@ export async function executeProjectOrchestratorTool(
         requiredArg(args, "message", name),
         name === "project_steer_agent" ? "steer" : "queue"
       );
-      return json(result);
+      return json({ ...result, note: WAIT_FOR_UPDATES_NOTE });
     }
     case "project_stop_agent":
       return json(await stopProjectChild(projectId, requiredArg(args, "agent", name)));
@@ -211,6 +255,9 @@ export async function buildProjectOrchestratorReminder(
     `Date: ${context.dateLabel}`,
     `Your model: ${context.modelName}`,
     `Agents working: ${working} of max ${record.settings.maxActiveChildren}`,
+    ...(working > 0
+      ? ["Working agents report back with <project_agent_updates> after this turn ends. Do not poll them."]
+      : []),
     "",
     "Engines (refer to them by these names):",
     ...engines.map(

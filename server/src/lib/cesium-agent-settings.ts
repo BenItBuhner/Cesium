@@ -1846,14 +1846,20 @@ export type CesiumAgentModelRosterEntry = {
  * Model access settings. The active default model always stays in the roster
  * (children inherit it even if it was later disabled in settings). Ordering:
  * default first, then user-described models, then the rest of the catalog.
+ * `credentialedOnly` also drops every model whose provider has no usable
+ * credential, the default included.
  */
 export async function listCesiumAgentModelRoster(options?: {
   defaultModelId?: string;
+  credentialedOnly?: boolean;
 }): Promise<CesiumAgentModelRosterEntry[]> {
   const [settings, catalog] = await Promise.all([
     getCesiumAgentSettings(),
     getCesiumModelCatalog(),
   ]);
+  const credentialedProviders = options?.credentialedOnly
+    ? await listCredentialedCesiumProviderIds(settings)
+    : null;
   const defaultModelId = options?.defaultModelId?.trim() || settings.defaultModelId;
   const entries = catalog
     .filter((model) => model.supportsTools)
@@ -1861,6 +1867,10 @@ export async function listCesiumAgentModelRoster(options?: {
       (model) =>
         model.modelId === defaultModelId ||
         isCesiumModelEnabled(model.modelId, settings.modelAccess)
+    )
+    .filter(
+      (model) =>
+        !credentialedProviders || credentialedProviders.has(normalizeProviderId(model.providerId))
     )
     .map((model): CesiumAgentModelRosterEntry => ({
       modelId: model.modelId,
@@ -1882,7 +1892,7 @@ export async function listCesiumAgentModelRoster(options?: {
  */
 export function formatCesiumModelRoster(
   roster: CesiumAgentModelRosterEntry[],
-  options?: { maxEntries?: number }
+  options?: { maxEntries?: number; heading?: string }
 ): string {
   if (roster.length === 0) {
     return "";
@@ -1904,12 +1914,11 @@ export function formatCesiumModelRoster(
     roster.length > visible.length
       ? `\n…and ${roster.length - visible.length} more enabled models (exact provider/model ids also work).`
       : "";
-  return (
+  const heading =
+    options?.heading ??
     "Models available to this agent and its subagents (spawned agents inherit the current model by default; " +
-    "set spawn_agent.modelId only when a different model genuinely fits the task):\n" +
-    lines.join("\n") +
-    overflow
-  );
+      "set spawn_agent.modelId only when a different model genuinely fits the task):";
+  return `${heading}\n${lines.join("\n")}${overflow}`;
 }
 
 /**

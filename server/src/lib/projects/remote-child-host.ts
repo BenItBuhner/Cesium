@@ -13,6 +13,13 @@ import { callPeerEngine } from "./engine-registry.js";
 import { ProjectError } from "./errors.js";
 import { PeerRequestError } from "./peer-client.js";
 
+/** A peer refusing bad input (4xx) is the caller's error, not an engine outage. */
+function asCallerError(error: unknown): unknown {
+  return error instanceof PeerRequestError && error.status >= 400 && error.status < 500
+    ? new ProjectError(error.message, error.status === 404 ? 404 : 400, error.code)
+    : error;
+}
+
 /** Children hosted by a peer engine, driven over its peer API. */
 export class RemoteChildHost implements ChildHost {
   constructor(readonly engineId: string) {}
@@ -27,10 +34,7 @@ export class RemoteChildHost implements ChildHost {
         client.createChild({ ...rest, placement })
       );
     } catch (error) {
-      if (error instanceof PeerRequestError && error.status >= 400 && error.status < 500) {
-        throw new ProjectError(error.message, 400, error.code);
-      }
-      throw error;
+      throw asCallerError(error);
     }
   }
 
@@ -61,8 +65,12 @@ export class RemoteChildHost implements ChildHost {
     return callPeerEngine(this.engineId, (client) => client.stop(ref));
   }
 
-  update(ref: ChildRef, patch: ChildUpdatePatch): Promise<void> {
-    return callPeerEngine(this.engineId, (client) => client.update(ref, patch));
+  async update(ref: ChildRef, patch: ChildUpdatePatch): Promise<void> {
+    try {
+      await callPeerEngine(this.engineId, (client) => client.update(ref, patch));
+    } catch (error) {
+      throw asCallerError(error);
+    }
   }
 
   async delete(ref: ChildRef): Promise<void> {

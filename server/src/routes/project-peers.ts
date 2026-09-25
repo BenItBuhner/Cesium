@@ -11,8 +11,10 @@ import {
   LocalChildHost,
   observeConversationRecord,
   type ChildCreateInput,
+  type ChildCreateResult,
   type ChildRef,
 } from "../lib/projects/child-host.js";
+import { chooseChildModel, requireRunnableChildModel } from "../lib/projects/child-model.js";
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
 import { ProjectError } from "../lib/projects/errors.js";
 import { isProjectsEnabled, ProjectsDisabledError } from "../lib/projects/feature-flag.js";
@@ -126,6 +128,11 @@ function requiredText(body: Record<string, unknown>, key: string, max: number): 
   return value;
 }
 
+/** This engine's name as the calling home knows it, for model and harness messages. */
+function hostLabel(body: Record<string, unknown>): string {
+  return asString(body.engineLabel)?.trim().slice(0, 80) || homeEngineLabel();
+}
+
 function safeId(body: Record<string, unknown>, key: string): string {
   const value = asString(body[key]) ?? "";
   if (!SAFE_ID.test(value)) {
@@ -196,7 +203,13 @@ projectPeerRoutes.post(
     if (!name) {
       throw new ProjectError("name is required (letters, digits and dashes).");
     }
-    const harness = await resolveHarness(asString(body.backendId), null);
+    const engine = hostLabel(body);
+    const harness = await resolveHarness(asString(body.backendId), null, engine);
+    const model = await chooseChildModel({
+      harness: harness.id,
+      requested: asString(body.modelId),
+      engineLabel: engine,
+    });
     const created = await host.create({
       projectId: safeId(body, "projectId"),
       childId: safeId(body, "childId"),
@@ -205,12 +218,12 @@ projectPeerRoutes.post(
       displayText: requiredText(body, "displayText", MAX_PROMPT_CHARS),
       placement: await resolvePlacement(body.placement),
       backendId: harness.id,
-      modelId: asString(body.modelId) ?? null,
+      modelId: model.modelId,
       mode: asString(body.mode) ?? null,
       peerTokenId: c.get("peerToken").id,
       ...(asString(body.homeLabel) ? { homeLabel: asString(body.homeLabel)!.slice(0, 80) } : {}),
     });
-    return c.json(created, 201);
+    return c.json({ ...created, modelWarning: model.warning } satisfies ChildCreateResult, 201);
   })
 );
 
@@ -272,9 +285,17 @@ projectPeerRoutes.patch(
   guarded(async (c) => {
     const ref = await scopedChild(c);
     const body = await jsonBody(c);
+    const requestedModel = asString(body.modelId);
+    const modelId = requestedModel
+      ? await requireRunnableChildModel({
+          harness: (await readConversationRecord(ref.workspaceId, ref.conversationId))?.config.backendId ?? "",
+          requested: requestedModel,
+          engineLabel: hostLabel(body),
+        })
+      : null;
     await host.update(ref, {
       ...(asString(body.title) ? { title: asString(body.title)!.slice(0, 120) } : {}),
-      ...(asString(body.modelId) ? { modelId: asString(body.modelId)! } : {}),
+      ...(modelId ? { modelId } : {}),
       ...(asString(body.mode) ? { mode: asString(body.mode)! } : {}),
     });
     return c.json({ ok: true });

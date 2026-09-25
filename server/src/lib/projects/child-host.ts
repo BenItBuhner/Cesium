@@ -79,18 +79,23 @@ export type ChildCreateInput = {
   mode?: string | null;
   peerTokenId?: string | null;
   homeLabel?: string;
+  /** The hosting engine's name as the Project's home knows it, for messages. */
+  engineLabel?: string;
 };
 
 export type ChildCreateResult = ChildRef & {
   backendId: string;
   modelId: string | null;
   mode: string;
+  /** Set by a peer that started the agent on another model than asked. */
+  modelWarning?: string | null;
 };
 
 export type ChildUpdatePatch = {
   title?: string;
   modelId?: string;
   mode?: string;
+  engineLabel?: string;
 };
 
 /** Everything the Project layer needs from an engine that hosts children. */

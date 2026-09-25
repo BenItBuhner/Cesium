@@ -47,11 +47,13 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         },
         harness: {
           type: "string",
-          description: "Agent harness id (e.g. cesium-agent, codex-app-server). Default: Project default.",
+          description:
+            "Agent harness id available on the target engine (see project_list_engines), e.g. cesium-agent or codex-app-server. A harness that is not installed or has no credentials there is refused. Default: Project default.",
         },
         model: {
           type: "string",
-          description: "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere.",
+          description:
+            "Model id for the harness. Default: the Project default on home, the engine's harness default elsewhere. For cesium-agent, pick from <available-models>: a model with no credentials on the target engine is replaced by the default, and the result carries a `warning` saying so.",
         },
         mode: { type: "string", description: "Harness mode, e.g. agent or plan. Default: agent." },
       },
@@ -63,7 +65,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     kind: KIND,
     title: (args) => (str(args, "agent") ? `Check ${str(args, "agent")}` : "List agents"),
     description:
-      "Live status of the Project's agents: status bucket, engine, harness, model, repo, queued messages, last reply preview, and anything waiting on a human. Pass `agent` for one agent.",
+      "Snapshot of the Project's agents: status bucket, engine, harness, model, repo, queued messages, last reply preview, and anything waiting on a human. Pass `agent` for one agent. Use it to plan or to answer the user, never to wait for work to finish: agents report back on their own with a <project_agent_updates> message after your turn ends, so nothing changes while you keep checking, and an unchanged repeat check returns only a reminder to end your turn.",
     parameters: {
       type: "object",
       properties: {
@@ -123,7 +125,11 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
       properties: {
         agent: AGENT_REF,
         name: { type: "string", description: "New handle." },
-        model: { type: "string" },
+        model: {
+          type: "string",
+          description:
+            "New model id. For cesium-agent it must have credentials on the agent's engine, otherwise the update is refused.",
+        },
         mode: { type: "string" },
       },
       additionalProperties: false,
@@ -212,7 +218,8 @@ export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
   "How you work:",
   "- Break the user's goal into well-scoped tasks and give each one to a child agent with project_create_agent. Instructions must stand on their own: the goal, where to work, constraints, what done means, and what to report back.",
   "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness. Engines have names (for example this engine's own name, or a paired machine's label): use those names in tool calls, notes and replies, never internal ids or URLs.",
-  "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages. Do not poll; end your turn and wait for them.",
+  "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages, and only between your turns: nothing new reaches you while your turn is running, so calling project_list_agents again cannot show progress.",
+  "- Do not poll. Once you have delegated, end your turn with a short reply to the user; the next <project_agent_updates> message starts your next turn.",
   "- Use project_steer_agent to correct a child that is working now (it lands mid-turn when the harness supports it). Use project_queue_agent to hand a child its next task.",
   "- Read a transcript with project_read_transcript when a reply preview is not enough to judge the work. Check claims before reporting them as done.",
   "- Stop children that go off track. Delete children whose work is finished and no longer needed.",

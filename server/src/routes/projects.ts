@@ -282,7 +282,7 @@ projectRoutes.post(
   "/api/projects/:id/agents",
   guarded(async (c) => {
     const body = await jsonBody(c);
-    const agent = await createProjectChild(
+    const { agent, warning } = await createProjectChild(
       param(c, "id"),
       {
         name: asString(body.name) ?? "",
@@ -295,7 +295,7 @@ projectRoutes.post(
       },
       "user"
     );
-    return c.json({ agent }, 201);
+    return c.json({ agent, ...(warning ? { warning } : {}) }, 201);
   })
 );
 
