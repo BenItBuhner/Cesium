@@ -198,6 +198,7 @@ import {
   parseCesiumWriteFileArgs,
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
+import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
 import {
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
@@ -336,7 +337,7 @@ type CesiumQuestionStep = {
 type TerminalRun = {
   id: string;
   process: ChildProcessWithoutNullStreams;
-  output: string;
+  output: BoundedTerminalOutput;
   startedAt: number;
   completedAt?: number;
   exitCode?: number | null;
@@ -2837,12 +2838,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const run: TerminalRun = {
       id,
       process: child,
-      output: "",
+      output: new BoundedTerminalOutput(TERMINAL_OUTPUT_CAP),
       startedAt: Date.now(),
     };
     this.terminalRuns.set(id, run);
     const append = (chunk: Buffer) => {
-      run.output = truncate(`${run.output}${chunk.toString("utf8")}`, TERMINAL_OUTPUT_CAP);
+      run.output.append(chunk.toString("utf8"));
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
@@ -2854,7 +2855,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.terminalRuns.delete(id);
     });
     child.on("error", (error: Error) => {
-      run.output = truncate(`${run.output}\n[spawn failed] ${error.message}`, TERMINAL_OUTPUT_CAP);
+      run.output.append(`\n[spawn failed] ${error.message}`);
       run.exitCode = -1;
       run.completedAt = Date.now();
       this.terminalRuns.delete(id);
@@ -2866,19 +2867,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return await new Promise<string>((resolve) => {
       const started = Date.now();
       const interval = setInterval(() => {
-        if (waitUntil === "pattern" && pattern && run.output.includes(pattern)) {
+        if (waitUntil === "pattern" && pattern && run.output.toString().includes(pattern)) {
           clearInterval(interval);
-          resolve(`Pattern matched for ${command}.\n${run.output}`);
+          resolve(`Pattern matched for ${command}.\n${run.output.toString()}`);
           return;
         }
         if (run.exitCode !== undefined) {
           clearInterval(interval);
-          resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output}`);
+          resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output.toString()}`);
           return;
         }
         if (Date.now() - started >= timeoutMs) {
           clearInterval(interval);
-          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output}`);
+          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output.toString()}`);
         }
       }, 250);
     });
