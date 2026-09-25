@@ -176,6 +176,7 @@ import type {
   AgentConversationRecord,
   AgentConversationStatus,
   AgentEventInput,
+  AgentPlanEntry,
   AgentQueuedChatPrompt,
   AgentPermissionCategory,
   AgentProvider,
@@ -199,6 +200,13 @@ import {
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
 import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
+import {
+  applyTodoPatch,
+  CESIUM_TODO_PLAN_ID,
+  latestTodoEntries,
+  parseTodoItems,
+  todoEntriesFromReplace,
+} from "./cesium/cesium-todo.js";
 import {
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
@@ -678,11 +686,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return this.callbacks.conversation.config.profileId?.trim() || null;
   }
 
-  /** Profile-resolved base system prompt (persona + verbatim profile instructions). */
+  /**
+   * Profile-resolved base system prompt (persona + verbatim profile
+   * instructions) with the session constants filled in. Model name and
+   * workspace root only change on a model switch or relocation, so the prompt
+   * prefix stays byte-stable across ordinary turns; per-turn facts (date, git
+   * state, AGENTS.md, MCP, skills) travel in the reminder instead.
+   */
   private profileSystemPrompt(): string {
+    const modelId = this.currentModelId();
     return buildCesiumBaseSystemPrompt({
       base: this.activeProfile.prompt.base,
       customInstructions: this.activeProfile.prompt.customInstructions,
+      modelName: resolveModelDisplayName(this.callbacks.conversation.config.modelName, modelId),
+      workspaceRoot: this.callbacks.workspace.root,
     });
   }
 
@@ -3347,52 +3364,32 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     if (action === "list") {
       const snapshot = await this.callbacks.readSnapshot();
-      const latest = [...(snapshot?.events ?? [])].reverse().find((event) => event.kind === "plan");
-      return latest?.kind === "plan"
-        ? latest.entries.map((entry) => `${entry.status}: ${entry.content}`).join("\n")
+      const latest = latestTodoEntries(snapshot?.events ?? []);
+      return latest
+        ? latest.map((entry) => `${entry.status}: ${entry.content}`).join("\n")
         : "No todos yet.";
     }
-    const entries = items.flatMap((item, index) => {
-      const record = asRecord(item);
-      const content =
-        asString(record?.content) ??
-        asString(record?.title) ??
-        asString(record?.text) ??
-        asString(record?.description) ??
-        asString(item);
-      if (!content) return [];
-      const rawStatus = asString(record?.status);
-      const normalizedStatus = rawStatus?.toLowerCase();
-      const status: "pending" | "in_progress" | "blocked" | "completed" =
-        normalizedStatus === "completed" || normalizedStatus === "done"
-          ? "completed"
-          : normalizedStatus === "blocked" || normalizedStatus === "stuck"
-            ? "blocked"
-            : normalizedStatus === "in_progress" ||
-                normalizedStatus === "in-progress" ||
-                normalizedStatus === "in progress" ||
-                normalizedStatus === "running"
-              ? "in_progress"
-              : "pending";
-      return [
-        {
-          id: asString(record?.id) ?? asString(record?.title) ?? `todo-${index + 1}`,
-          content,
-          status,
-        },
-      ];
-    });
+    const parsedItems = parseTodoItems(items);
+    let entries: AgentPlanEntry[];
+    if (action === "patch") {
+      const snapshot = await this.callbacks.readSnapshot();
+      entries = applyTodoPatch(latestTodoEntries(snapshot?.events ?? []) ?? [], parsedItems);
+    } else {
+      entries = todoEntriesFromReplace(parsedItems);
+    }
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         kind: "plan",
-        planId: "cesium-todos",
+        planId: CESIUM_TODO_PLAN_ID,
         entries,
         raw: args,
       },
     ]);
-    return `Stored ${entries.length} todo item${entries.length === 1 ? "" : "s"}.`;
+    return action === "patch"
+      ? `Patched ${parsedItems.length} todo item${parsedItems.length === 1 ? "" : "s"}; the list now has ${entries.length}.`
+      : `Stored ${entries.length} todo item${entries.length === 1 ? "" : "s"}.`;
   }
 
   private async toolAskQuestion(args: Record<string, unknown>): Promise<string> {
