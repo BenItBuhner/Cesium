@@ -108,6 +108,28 @@ type EnableResult = {
 };
 
 const CONFIG_FILE = path.join(DATA_DIR, "profile", "public-access.json");
+
+/**
+ * Rendezvous heartbeat cadence. A record lives 90 s on the registry, so a
+ * publish every 30 s survives two missed beats before clients see it expire.
+ * Every publish is a billed function invocation on the hosted web app
+ * (~86K a month per always-on engine at 30 s, ~173K at the old 15 s), which
+ * is why the default is not tighter. `CESIUM_RENDEZVOUS_INTERVAL` (seconds,
+ * the knob the installer writes into server.env for the legacy bash
+ * supervisor) overrides it; anything under 5 s is clamped.
+ */
+export const DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 30_000;
+const MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5_000;
+
+export function defaultRendezvousHeartbeatIntervalMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const raw = env.CESIUM_RENDEZVOUS_INTERVAL?.trim();
+  if (!raw || !/^\d+$/.test(raw)) {
+    return DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS;
+  }
+  return Math.max(MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, Number(raw) * 1000);
+}
 const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const LHR_URL_PATTERN = /https:\/\/[-a-z0-9]+\.lhr\.life/gi;
@@ -1229,7 +1251,7 @@ export class PublicAccessManager {
   }
 
   private get heartbeatIntervalMs(): number {
-    return this.deps.heartbeatIntervalMs ?? 15_000;
+    return this.deps.heartbeatIntervalMs ?? defaultRendezvousHeartbeatIntervalMs();
   }
 
   private get healthIntervalMs(): number {
