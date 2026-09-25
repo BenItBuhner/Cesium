@@ -619,6 +619,25 @@ export function buildChildBrief(input: {
   ].join("\n");
 }
 
+/**
+ * The Project default model belongs to the default harness on the home engine
+ * (it names a provider configured there), so another harness or a peer engine
+ * falls back to its own default unless a model is requested explicitly.
+ */
+export function resolveChildModelId(input: {
+  requested: string | null | undefined;
+  isHome: boolean;
+  harness: string;
+  settings: Pick<ProjectRecord["settings"], "defaultChildBackendId" | "defaultChildModelId">;
+}): string | null {
+  const requested = input.requested?.trim();
+  if (requested) {
+    return requested;
+  }
+  const defaultHarness = input.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
+  return input.isHome && input.harness === defaultHarness ? input.settings.defaultChildModelId : null;
+}
+
 export type CreateChildInput = {
   name: string;
   instructions: string;
@@ -676,9 +695,12 @@ export async function createProjectChild(
   const harness = isHome
     ? (await resolveHarness(input.harness, record.settings.defaultChildBackendId)).id
     : input.harness?.trim() || record.settings.defaultChildBackendId || ORCHESTRATOR_BACKEND_ID;
-  // The Project default model names a provider configured on the home engine;
-  // peers fall back to their own default for the harness.
-  const modelId = input.model?.trim() || (isHome ? record.settings.defaultChildModelId : null);
+  const modelId = resolveChildModelId({
+    requested: input.model,
+    isHome,
+    harness,
+    settings: record.settings,
+  });
   const name = uniqueChildName(record, baseName);
   const childId = `pca_${randomHex(6)}`;
   const created = await host.create({
