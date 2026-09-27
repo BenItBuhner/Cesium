@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   ExternalLink,
   FileText,
+  GitBranch,
   LoaderCircle,
   MessageSquarePlus,
   Pencil,
@@ -21,6 +24,7 @@ import {
   projectDeliveryLabel,
   sameProjectEngineUrl,
   sortProjectChildren,
+  type ProjectAgentIsolation,
   type ProjectChildSummary,
   type ProjectEngineListing,
   type ProjectEngineSummary,
@@ -30,6 +34,7 @@ import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvide
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { formatAgentRailRelativeTime } from "@/lib/agent-rail-status";
 import {
+  archiveProjectAgent,
   createProjectAgent,
   deleteProjectAgent,
   fetchProjectAgentTranscript,
@@ -56,30 +61,34 @@ import { useProjects } from "./ProjectsProvider";
 const TRANSCRIPT_TURN_CHOICES = [1, 3, 10] as const;
 
 export function ProjectAgentsSection({ snapshot }: { snapshot: ProjectSnapshot }) {
-  const [showDeleted, setShowDeleted] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const [creating, setCreating] = useState(false);
-  const deletedCount = snapshot.children.filter((child) => child.deletedAt != null).length;
+  const hiddenCount = snapshot.children.filter(
+    (child) => child.deletedAt != null || child.archivedAt != null
+  ).length;
   const children = useMemo(
     () =>
       sortProjectChildren(
-        snapshot.children.filter((child) => showDeleted || child.deletedAt == null)
+        snapshot.children.filter(
+          (child) => showHidden || (child.deletedAt == null && child.archivedAt == null)
+        )
       ),
-    [showDeleted, snapshot.children]
+    [showHidden, snapshot.children]
   );
 
   return (
     <div className="flex flex-col gap-[10px] px-[16px] py-[12px]">
       <div className="flex items-center gap-[10px]">
         <span className={`${projectSectionLabelClass} flex-1`}>Agents</span>
-        {deletedCount > 0 ? (
+        {hiddenCount > 0 ? (
           <label className="inline-flex cursor-pointer items-center gap-[5px] font-sans text-[11.5px] text-[var(--text-secondary)]">
             <input
               type="checkbox"
-              checked={showDeleted}
-              onChange={(event) => setShowDeleted(event.target.checked)}
+              checked={showHidden}
+              onChange={(event) => setShowHidden(event.target.checked)}
               className="accent-[var(--accent)]"
             />
-            Show deleted ({deletedCount})
+            Show archived and deleted ({hiddenCount})
           </label>
         ) : null}
         <button
@@ -132,6 +141,7 @@ function ProjectAgentCard({
 
   const remote = isProjectChildRemote(child);
   const deleted = child.deletedAt != null;
+  const archived = child.archivedAt != null;
   const busy = child.bucket === "working" || child.bucket === "needs_attention";
   const remoteServer = remote
     ? (servers.find((server) => sameProjectEngineUrl(server.baseUrl, engine?.baseUrl)) ?? null)
@@ -185,10 +195,19 @@ function ProjectAgentCard({
     });
   };
 
+  const toggleArchived = () =>
+    act("archive", async () => {
+      await archiveProjectAgent(projectId, child.id, !archived);
+      return archived ? "Restored." : "Archived. Its branch and conversation are kept.";
+    });
+
   const remove = async () => {
     const confirmed = await dialogs.confirm({
       title: `Delete ${child.name}?`,
-      message: "Stops the agent and deletes its conversation. It stays listed under deleted agents.",
+      message:
+        child.isolation === "worktree"
+          ? "Stops the agent, deletes its conversation and removes its worktree. Its branch and any pull request stay."
+          : "Stops the agent and deletes its conversation. It stays listed under deleted agents.",
       confirmLabel: "Delete agent",
       tone: "danger",
     });
@@ -221,7 +240,7 @@ function ProjectAgentCard({
             {child.name}
           </span>
           <span className="shrink-0 font-sans text-[11px] text-[var(--text-secondary)]">
-            {projectChildBucketLabel(child.bucket)}
+            {archived ? "Archived" : projectChildBucketLabel(child.bucket)}
           </span>
           <span className="flex-1" />
           <ProjectEngineBadge label={child.engineLabel} remote={remote} />
@@ -230,6 +249,14 @@ function ProjectAgentCard({
           <span>{child.backendId}</span>
           {model ? <code className="truncate font-mono text-[10.5px]">{model}</code> : null}
           <span>{child.repoName ?? "Scratch space"}</span>
+          {child.branch ? (
+            <span className="inline-flex min-w-0 items-center gap-[3px]" title={child.worktreePath ?? undefined}>
+              <GitBranch className="size-[11px] shrink-0" strokeWidth={1.7} aria-hidden />
+              <code className="truncate font-mono text-[10.5px]">{child.branch}</code>
+            </span>
+          ) : child.isolation === "checkout" ? (
+            <span>In the repository checkout</span>
+          ) : null}
           <span className="tabular-nums">
             {child.turnsCompleted} {child.turnsCompleted === 1 ? "turn" : "turns"}
           </span>
@@ -312,6 +339,22 @@ function ProjectAgentCard({
               title="Rename"
             >
               <Pencil className="size-[12px]" strokeWidth={1.7} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void toggleArchived()}
+              disabled={pendingAction != null}
+              className={projectButtonClass}
+              aria-label={archived ? `Restore ${child.name}` : `Archive ${child.name}`}
+              title={archived ? "Restore" : "Archive"}
+            >
+              {pendingAction === "archive" ? (
+                <LoaderCircle className="size-[12px] animate-spin" aria-hidden />
+              ) : archived ? (
+                <ArchiveRestore className="size-[12px]" strokeWidth={1.7} />
+              ) : (
+                <Archive className="size-[12px]" strokeWidth={1.7} />
+              )}
             </button>
             <button
               type="button"
@@ -511,6 +554,7 @@ function NewAgentForm({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone:
   );
   const [harness, setHarness] = useState("");
   const [model, setModel] = useState("");
+  const [isolation, setIsolation] = useState<Extract<ProjectAgentIsolation, "worktree" | "checkout">>("worktree");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -583,6 +627,7 @@ function NewAgentForm({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone:
         engine: placement?.engineId ?? null,
         harness: harness || null,
         model: model.trim() || null,
+        isolation: placement?.repoId ? isolation : null,
       });
       await refreshProject(snapshot.id);
       onDone();
@@ -628,6 +673,19 @@ function NewAgentForm({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone:
             ))}
           </select>
         </label>
+        {placement?.repoId ? (
+          <label className="flex flex-col gap-[4px] sm:col-span-2">
+            <span className={fieldLabel}>Works in</span>
+            <select
+              value={isolation}
+              onChange={(event) => setIsolation(event.target.value === "checkout" ? "checkout" : "worktree")}
+              className={projectSelectClass}
+            >
+              <option value="worktree">Its own worktree and branch (recommended)</option>
+              <option value="checkout">The repository checkout itself</option>
+            </select>
+          </label>
+        ) : null}
         <label className="flex flex-col gap-[4px]">
           <span className={fieldLabel}>Harness</span>
           <select

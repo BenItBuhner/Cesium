@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { McpServerConfig } from "@cesium/core/mcp";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { isWorkerWorktreeRoot } from "../projects/paths.js";
 import type { McpConnectionStatus } from "./types.js";
 
 const MAX_TOOL_MD_CHARS = 12_000;
@@ -143,6 +144,9 @@ export async function writeMcpWorkspaceMirror(input: {
 }
 
 export async function ensureMcpGitignore(workspaceRoot: string): Promise<void> {
+  if (isWorkerWorktreeRoot(workspaceRoot)) {
+    return;
+  }
   const gitignorePath = resolveMirrorPath(workspaceRoot, ".gitignore");
   try {
     const existing = await fs.readFile(gitignorePath, "utf8");

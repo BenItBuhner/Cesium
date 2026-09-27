@@ -1,5 +1,5 @@
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
-import type { ProjectAgentDelivery } from "@cesium/core/projects";
+import type { ProjectAgentDelivery, ProjectAgentIsolation } from "@cesium/core/projects";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
 import {
   readConversationRecord,
@@ -20,6 +20,20 @@ import {
   getWorkspaceById,
   type WorkspaceRecord,
 } from "../workspace-registry.js";
+import { ProjectError } from "./errors.js";
+import {
+  buildWorkerBrief,
+  type WorkerBriefInput,
+  type WorkerPlacementFacts,
+} from "./worker-brief.js";
+import {
+  WorkerIsolationError,
+  WorkerPlacementError,
+  createWorkerWorktree,
+  inspectWorkerRepo,
+  isWorkerWorktreeRoot,
+  removeWorkerWorktree,
+} from "./worktrees.js";
 
 export const TRANSCRIPT_DEFAULT_TURNS = 3;
 export const TRANSCRIPT_MAX_TURNS = 20;
@@ -62,18 +76,34 @@ export type ChildTurnDigest = {
   replyPreview: string | null;
 };
 
+export type ChildPlacement =
+  /** The repository checkout itself. */
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "root"; root: string }
+  | { kind: "scratch"; label: string }
+  /**
+   * A fresh worktree and branch from the repository's base branch. With
+   * `fallbackToCheckout`, a repository that is not a git repo is used as is.
+   */
+  | {
+      kind: "worktree";
+      workspaceId: string;
+      branch: string;
+      baseBranch: string | null;
+      fallbackToCheckout: boolean;
+    };
+
 export type ChildCreateInput = {
   projectId: string;
   childId: string;
   name: string;
-  /** Full first-turn text the model receives (brief plus instructions). */
-  promptText: string;
+  /** The worker contract; the hosting engine completes it with where the worker landed. */
+  brief?: WorkerBriefInput;
+  /** Prebuilt first-turn text, for callers that don't send a brief. */
+  promptText?: string;
   /** What the thread shows for the first turn. */
   displayText: string;
-  placement:
-    | { kind: "workspace"; workspaceId: string }
-    | { kind: "root"; root: string }
-    | { kind: "scratch"; label: string };
+  placement: ChildPlacement;
   backendId?: string | null;
   modelId?: string | null;
   mode?: string | null;
@@ -89,6 +119,13 @@ export type ChildCreateResult = ChildRef & {
   mode: string;
   /** Set by a peer that started the agent on another model than asked. */
   modelWarning?: string | null;
+  isolation: ProjectAgentIsolation;
+  branch: string | null;
+  baseRef: string | null;
+  baseSha: string | null;
+  worktreePath: string | null;
+  /** Placement caveat, e.g. a fetch that failed or a folder that is not a git repo. */
+  placementWarning?: string | null;
 };
 
 export type ChildUpdatePatch = {
@@ -336,43 +373,136 @@ export class LocalChildHost implements ChildHost {
     return workspace;
   }
 
-  private async resolvePlacement(input: ChildCreateInput): Promise<WorkspaceRecord> {
-    switch (input.placement.kind) {
+  private async checkoutPlacement(
+    workspace: WorkspaceRecord,
+    warning: string | null = null
+  ): Promise<{ workspace: WorkspaceRecord; facts: WorkerPlacementFacts; ownsWorkspace: boolean }> {
+    const git = await inspectWorkerRepo(workspace.root);
+    return {
+      workspace,
+      ownsWorkspace: false,
+      facts: {
+        isolation: "checkout",
+        root: workspace.root,
+        branch: null,
+        baseRef: null,
+        baseSha: null,
+        hasOrigin: git.hasOrigin,
+        setup: null,
+        warning,
+      },
+    };
+  }
+
+  private async place(
+    input: ChildCreateInput
+  ): Promise<{ workspace: WorkspaceRecord; facts: WorkerPlacementFacts; ownsWorkspace: boolean }> {
+    const placement = input.placement;
+    switch (placement.kind) {
       case "workspace": {
-        const workspace = await getWorkspaceById(input.placement.workspaceId);
+        const workspace = await getWorkspaceById(placement.workspaceId);
         if (!workspace) {
-          throw new Error(`Unknown workspace: ${input.placement.workspaceId}`);
+          throw new ProjectError(`Unknown workspace: ${placement.workspaceId}`);
         }
-        return workspace;
+        return this.checkoutPlacement(workspace);
       }
       case "root":
-        return ensureWorkspaceRegistered(input.placement.root, undefined, { trackOpen: false });
-      case "scratch":
-        return createStandaloneChatWorkspace(input.placement.label);
+        return this.checkoutPlacement(
+          await ensureWorkspaceRegistered(placement.root, undefined, { trackOpen: false })
+        );
+      case "scratch": {
+        const workspace = await createStandaloneChatWorkspace(placement.label);
+        return {
+          workspace,
+          ownsWorkspace: true,
+          facts: {
+            isolation: "scratch",
+            root: workspace.root,
+            branch: null,
+            baseRef: null,
+            baseSha: null,
+            hasOrigin: false,
+            setup: null,
+            warning: null,
+          },
+        };
+      }
+      case "worktree": {
+        const repoWorkspace = await getWorkspaceById(placement.workspaceId);
+        if (!repoWorkspace) {
+          throw new ProjectError(`Unknown workspace: ${placement.workspaceId}`);
+        }
+        try {
+          const worktree = await createWorkerWorktree({
+            projectId: input.projectId,
+            repoWorkspace,
+            branch: placement.branch,
+            baseBranch: placement.baseBranch,
+            label: `${repoWorkspace.name} · ${input.name}`,
+          });
+          return {
+            workspace: worktree.workspace,
+            ownsWorkspace: true,
+            facts: {
+              isolation: "worktree",
+              root: worktree.worktreePath,
+              branch: worktree.branch,
+              baseRef: worktree.baseRef,
+              baseSha: worktree.baseSha,
+              hasOrigin: worktree.hasOrigin,
+              setup: worktree.setup,
+              warning: worktree.warning,
+            },
+          };
+        } catch (error) {
+          if (error instanceof WorkerIsolationError) {
+            if (placement.fallbackToCheckout) {
+              return this.checkoutPlacement(repoWorkspace, `${error.message} It works in the folder itself.`);
+            }
+            throw new ProjectError(error.message);
+          }
+          if (error instanceof WorkerPlacementError) {
+            throw new ProjectError(error.message);
+          }
+          throw error;
+        }
+      }
     }
   }
 
   async create(input: ChildCreateInput): Promise<ChildCreateResult> {
-    const workspace = await this.resolvePlacement(input);
+    const { workspace, facts, ownsWorkspace } = await this.place(input);
     const modelId = input.modelId?.trim() || undefined;
-    const head = await agentRuntimeManager.createConversationWithPrompt(
-      workspace,
-      {
-        title: input.name,
-        ...(input.backendId ? { backendId: input.backendId as AgentBackendId } : {}),
-        ...(modelId ? { modelId, modelName: resolveModelDisplayName(null, modelId) } : {}),
-        ...(input.mode ? { mode: input.mode } : {}),
-        origin: {
-          kind: "project-child",
-          projectId: input.projectId,
-          childId: input.childId,
-          peerTokenId: input.peerTokenId ?? null,
-          ...(input.homeLabel ? { homeLabel: input.homeLabel } : {}),
-          createdAt: Date.now(),
+    const promptText = input.brief ? buildWorkerBrief(input.brief, facts) : input.promptText?.trim();
+    if (!promptText) {
+      throw new ProjectError("A Project agent needs a brief or prompt text.");
+    }
+    let head: Awaited<ReturnType<typeof agentRuntimeManager.createConversationWithPrompt>>;
+    try {
+      head = await agentRuntimeManager.createConversationWithPrompt(
+        workspace,
+        {
+          title: input.name,
+          ...(input.backendId ? { backendId: input.backendId as AgentBackendId } : {}),
+          ...(modelId ? { modelId, modelName: resolveModelDisplayName(null, modelId) } : {}),
+          ...(input.mode ? { mode: input.mode } : {}),
+          origin: {
+            kind: "project-child",
+            projectId: input.projectId,
+            childId: input.childId,
+            peerTokenId: input.peerTokenId ?? null,
+            ...(input.homeLabel ? { homeLabel: input.homeLabel } : {}),
+            createdAt: Date.now(),
+          },
         },
-      },
-      { text: input.promptText, displayContent: input.displayText }
-    );
+        { text: promptText, displayContent: input.displayText }
+      );
+    } catch (error) {
+      if (ownsWorkspace) {
+        await this.disposeWorkspace(workspace).catch(() => undefined);
+      }
+      throw error;
+    }
     const conversation = head.conversation;
     return {
       workspaceId: workspace.id,
@@ -380,7 +510,22 @@ export class LocalChildHost implements ChildHost {
       backendId: conversation.config.backendId,
       modelId: conversation.config.modelId || null,
       mode: conversation.config.mode,
+      isolation: facts.isolation,
+      branch: facts.branch,
+      baseRef: facts.baseRef,
+      baseSha: facts.baseSha,
+      worktreePath: facts.isolation === "worktree" ? facts.root : null,
+      placementWarning: facts.warning,
     };
+  }
+
+  /** Removes what the Project created for a child: its worktree or its scratch sandbox. */
+  private async disposeWorkspace(workspace: WorkspaceRecord): Promise<void> {
+    if (isWorkerWorktreeRoot(workspace.root)) {
+      await removeWorkerWorktree(workspace);
+      return;
+    }
+    await removeStandaloneChatWorkspace(workspace.id);
   }
 
   async observe(ref: ChildRef): Promise<ChildObservation> {
@@ -432,13 +577,17 @@ export class LocalChildHost implements ChildHost {
     });
   }
 
-  /** Deletes the conversation, and the scratch sandbox it was created in (a no-op for repos). */
+  /**
+   * Deletes the conversation and what the Project created for it: the worker's
+   * worktree (its branch stays) or its scratch sandbox. A repository checkout
+   * is never touched.
+   */
   async delete(ref: ChildRef): Promise<void> {
     const workspace = await getWorkspaceById(ref.workspaceId);
     if (!workspace) {
       return;
     }
     await agentRuntimeManager.deleteConversation(workspace, ref.conversationId);
-    await removeStandaloneChatWorkspace(workspace.id);
+    await this.disposeWorkspace(workspace);
   }
 }

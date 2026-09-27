@@ -19,9 +19,18 @@ import {
   projectSummaryStatusLine,
   sameProjectEngineUrl,
   sortProjectChildren,
+  isProjectAgentIsolation,
+  projectContextContentType,
+  projectContextKindFromPath,
+  projectSlug,
+  projectWorkerBranchName,
   type ProjectChildSummary,
   type ProjectSummary,
 } from "../packages/core/src/projects.ts";
+import {
+  isProjectAgentRailConversation,
+  isRenderableAgentRailConversation,
+} from "../packages/client/src/agent-rail.ts";
 
 function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummary, "id">): ProjectChildSummary {
   return {
@@ -47,6 +56,11 @@ function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummar
     createdAt: 1,
     updatedAt: null,
     deletedAt: null,
+    isolation: "scratch",
+    branch: null,
+    baseRef: null,
+    worktreePath: null,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -330,4 +344,61 @@ test("projectListingEngineName prefers the engine's own name over the connection
     "engines that predate engineLabel keep the connection label"
   );
   assert.equal(projectListingEngineName({ engineLabel: "  ", serverLabel: "Build box" }), "Build box");
+});
+
+test("worker branches are cesium/<project>/<agent>-<suffix> slugs", () => {
+  assert.equal(projectSlug("  Shop Launch: Q4!  "), "shop-launch-q4");
+  assert.equal(projectSlug("a".repeat(40)), "a".repeat(24));
+  assert.equal(projectSlug("Ends with dash - after cut".slice(0, 10)), "ends-with");
+  assert.equal(projectWorkerBranchName("Shop launch", "cart", "3f2a"), "cesium/shop-launch/cart-3f2a");
+  assert.equal(projectWorkerBranchName("!!!", "", "00ff"), "cesium/project/agent-00ff");
+  assert.equal(isProjectAgentIsolation("worktree"), true);
+  assert.equal(isProjectAgentIsolation("checkout"), true);
+  assert.equal(isProjectAgentIsolation("vm"), false);
+  assert.equal(isProjectAgentIsolation(undefined), false);
+});
+
+test("context files get a kind and a safe content type from their extension", () => {
+  assert.equal(projectContextKindFromPath("media/qa/shot.PNG"), "image");
+  assert.equal(projectContextKindFromPath("media/demo.webm"), "video");
+  assert.equal(projectContextKindFromPath("docs/plan.md"), "text");
+  assert.equal(projectContextKindFromPath("internal/run.log"), "text");
+  assert.equal(projectContextKindFromPath("internal/blob"), null, "unknown extensions are sniffed by the engine");
+  assert.equal(projectContextContentType("media/shot.png", "image"), "image/png");
+  assert.equal(projectContextContentType("media/demo.mp4", "video"), "video/mp4");
+  assert.equal(projectContextContentType("docs/page.html", "text"), "text/plain; charset=utf-8", "pages never render");
+  assert.equal(projectContextContentType("internal/blob", "binary"), "application/octet-stream");
+  assert.equal(projectContextContentType("internal/notes", "text"), "text/plain; charset=utf-8");
+});
+
+test("a Project's coordinator and agents never take a row in the rail", () => {
+  const base = {
+    id: "c1",
+    workspaceId: "ws",
+    title: "Real work",
+    createdAt: 1,
+    updatedAt: 2,
+    lastEventSeq: 3,
+    status: "idle",
+    archivedAt: null,
+    backendId: "cesium-agent",
+    mode: "agent",
+    experimental: false,
+    hasPendingPermission: false,
+    hasPendingQuestion: false,
+  } as const;
+  const worker = {
+    ...base,
+    origin: { kind: "project-child", projectId: "prj_1", childId: "pca_1", peerTokenId: null, createdAt: 1 },
+  } as const;
+  const coordinator = {
+    ...base,
+    origin: { kind: "project-orchestrator", projectId: "prj_1", createdAt: 1 },
+  } as const;
+  assert.equal(isProjectAgentRailConversation(worker), true);
+  assert.equal(isProjectAgentRailConversation(coordinator), true);
+  assert.equal(isProjectAgentRailConversation(base), false);
+  assert.equal(isRenderableAgentRailConversation(worker as never), false);
+  assert.equal(isRenderableAgentRailConversation(coordinator as never), false);
+  assert.equal(isRenderableAgentRailConversation(base as never), true);
 });

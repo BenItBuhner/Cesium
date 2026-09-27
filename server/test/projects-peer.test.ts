@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import type {
+  ProjectChildSummary,
   ProjectEngineListing,
   ProjectEngineSummary,
   ProjectSnapshot,
@@ -20,6 +21,7 @@ import {
   toolCall,
   waitFor,
 } from "./helpers/fake-chat-model.js";
+import { createRepoWithRemote, git } from "./helpers/git-fixtures.js";
 
 const SERVER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOME_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-projects-home-"));
@@ -446,7 +448,7 @@ test("the orchestrator runs agents on both engines and hears back from the remot
   assert.equal(observed.status, 200);
   assert.equal(observed.json.title, "remote");
   assert.equal(observed.json.backendId, "cesium-agent");
-  assert.match(messageText(requestsFor("remote")[0]!.messages.at(-1)), /Work in the "beta" repository/);
+  assert.match(messageText(requestsFor("remote")[0]!.messages.at(-1)), /work directly in the "beta" checkout/);
 
   const reminder = requestsFor("orchestrator")[0]!.messages.map(messageText).join("\n");
   assert.match(
@@ -652,6 +654,50 @@ test("another peer token cannot see or drive this engine's agents", async () => 
   });
   assert.equal(traversal.status, 404);
   assert.equal((await peerObserve("builder")).json.exists, true, "the real owner still reaches it");
+});
+
+test("an agent on a peer's git repository gets its own worktree and branch on that engine", async () => {
+  const peerGitRepo = path.join(PEER_DATA_DIR, "repos", "gamma");
+  await createRepoWithRemote({
+    repoDir: peerGitRepo,
+    remoteDir: path.join(PEER_DATA_DIR, "remotes", "gamma.git"),
+    files: { "index.js": "module.exports = 1;\n" },
+  });
+  const bound = await api<ProjectSnapshot>("POST", `/api/projects/${project.id}/repos`, {
+    engineId: peerEngineId,
+    root: peerGitRepo,
+  });
+  assert.equal(bound.status, 201, JSON.stringify(bound.json));
+  project = bound.json;
+  script("gamma-worker", text(["Gamma done."]));
+  const created = await api<{ agent: ProjectChildSummary }>("POST", `/api/projects/${project.id}/agents`, {
+    name: "gamma-worker",
+    repo: "gamma",
+    instructions: "Work on gamma.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const agent = created.json.agent;
+  assert.equal(agent.engineId, peerEngineId);
+  assert.equal(agent.isolation, "worktree");
+  assert.match(agent.branch ?? "", /^cesium\/fleet\/gamma-worker-[0-9a-f]{4}$/);
+  assert.equal(agent.baseRef, "origin/main");
+  const peerWorktrees = path.join(await fs.realpath(PEER_DATA_DIR), "projects", project.id, "worktrees");
+  assert.equal(path.dirname(agent.worktreePath ?? ""), peerWorktrees, "the worktree lives on the peer");
+  assert.equal(await git(agent.worktreePath!, ["rev-parse", "--abbrev-ref", "HEAD"]), agent.branch);
+  await waitFor(
+    "gamma report",
+    () => childRecord("gamma-worker"),
+    (child) => child.lastReplyPreview === "Gamma done.",
+    30_000
+  );
+  const brief = messageText(requestsFor("gamma-worker")[0]!.messages.at(-1));
+  assert.match(brief, /own git worktree at .+, on branch `cesium\/fleet\/gamma-worker-[0-9a-f]{4}`/);
+  assert.match(brief, /The Project context lives on engine home-engine and has no copy on this machine/);
+
+  const removed = await api("DELETE", `/api/projects/${project.id}/agents/gamma-worker`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.json));
+  await assert.rejects(fs.access(agent.worktreePath!), "the peer removed the worktree");
+  assert.equal(await git(peerGitRepo, ["branch", "--list", agent.branch!]), agent.branch, "the branch stays");
 });
 
 test("deleting a remote agent and then the Project cleans up on the peer", async () => {

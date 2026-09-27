@@ -7,7 +7,11 @@ import {
   getProjectsRootDir,
   isValidProjectId,
 } from "./paths.js";
-import { PROJECT_HOME_ENGINE_ID } from "@cesium/core/projects";
+import {
+  PROJECT_HOME_ENGINE_ID,
+  isProjectAgentIsolation,
+  type ProjectRepoBinding,
+} from "@cesium/core/projects";
 import {
   DEFAULT_PROJECT_SETTINGS,
   type ProjectChildRecord,
@@ -35,6 +39,10 @@ function emit(event: ProjectStoreEvent): void {
   emitter.emit("event", event);
 }
 
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
 function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -48,11 +56,12 @@ function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
   ) {
     return null;
   }
+  const repoId = typeof child.repoId === "string" ? child.repoId : null;
   return {
     id: child.id,
     name: child.name,
     engineId: typeof child.engineId === "string" ? child.engineId : PROJECT_HOME_ENGINE_ID,
-    repoId: typeof child.repoId === "string" ? child.repoId : null,
+    repoId,
     workspaceId: child.workspaceId,
     conversationId: child.conversationId,
     backendId: typeof child.backendId === "string" ? child.backendId : "cesium-agent",
@@ -61,6 +70,17 @@ function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
     createdBy: child.createdBy === "user" ? "user" : "orchestrator",
     createdAt: typeof child.createdAt === "number" ? child.createdAt : Date.now(),
     deletedAt: typeof child.deletedAt === "number" ? child.deletedAt : null,
+    archivedAt: typeof child.archivedAt === "number" ? child.archivedAt : null,
+    // Version-1 children ran in the bound repository itself (or a scratch folder).
+    isolation: isProjectAgentIsolation(child.isolation)
+      ? child.isolation
+      : repoId
+        ? "checkout"
+        : "scratch",
+    branch: nullableString(child.branch),
+    baseRef: nullableString(child.baseRef),
+    baseSha: nullableString(child.baseSha),
+    worktreePath: nullableString(child.worktreePath),
     lastStatus: typeof child.lastStatus === "string" ? child.lastStatus : "unknown",
     turnsCompleted: typeof child.turnsCompleted === "number" ? child.turnsCompleted : 0,
     lastReportedSeq: typeof child.lastReportedSeq === "number" ? child.lastReportedSeq : 0,
@@ -83,7 +103,7 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
     return null;
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: record.id,
     name: typeof record.name === "string" && record.name.trim() ? record.name : "Project",
     icon: typeof record.icon === "string" ? record.icon : null,
@@ -91,7 +111,12 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
     archivedAt: typeof record.archivedAt === "number" ? record.archivedAt : null,
     orchestrator: record.orchestrator,
-    repos: Array.isArray(record.repos) ? record.repos : [],
+    repos: Array.isArray(record.repos)
+      ? record.repos.map((repo: ProjectRepoBinding) => ({
+          ...repo,
+          baseBranch: nullableString(repo.baseBranch),
+        }))
+      : [],
     children: Array.isArray(record.children)
       ? record.children
           .map(normalizeChildRecord)

@@ -3,7 +3,7 @@ import {
   formatProjectNoticeDisplay,
 } from "@cesium/core/projects";
 
-export type ProjectNoticeEvent = "finished" | "failed" | "stopped" | "needs_attention";
+export type ProjectNoticeEvent = "finished" | "failed" | "stopped" | "needs_attention" | "adopted";
 
 export type ProjectNoticeUpdate = {
   name: string;

@@ -6,8 +6,10 @@ import {
   normalizeProjectAgentName,
   projectChildBucket,
   projectEngineName,
+  projectWorkerBranchName,
   sortProjectChildren,
   type ProjectAgentDelivery,
+  type ProjectAgentIsolation,
   type ProjectChildSummary,
   type ProjectEngineListing,
   type ProjectEngineSummary,
@@ -19,7 +21,11 @@ import {
 } from "@cesium/core/projects";
 import { listAgentBackendsWithCache } from "../agents/providers.js";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
-import { readConversationRecord } from "../agents/session-store.js";
+import {
+  listWorkspaceConversationRecords,
+  readConversationRecord,
+  updateConversationRecord,
+} from "../agents/session-store.js";
 import type { AgentBackendId, AgentBackendInfo } from "../agents/types.js";
 import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { isEngineManagedWorkspace } from "../standalone-chat-paths.js";
@@ -34,8 +40,10 @@ import {
   MISSING_CHILD_OBSERVATION,
   TRANSCRIPT_DEFAULT_TURNS,
   TRANSCRIPT_MAX_TURNS,
+  observeConversationRecord,
   type ChildHost,
   type ChildObservation,
+  type ChildPlacement,
   type ChildRef,
 } from "./child-host.js";
 import { chooseChildModel, requireRunnableChildModel } from "./child-model.js";
@@ -59,6 +67,7 @@ import {
 } from "./project-store.js";
 import { PeerRequestError } from "./peer-client.js";
 import { RemoteChildHost } from "./remote-child-host.js";
+import type { WorkerBriefInput } from "./worker-brief.js";
 import {
   DEFAULT_PROJECT_SETTINGS,
   type ProjectChildRecord,
@@ -156,16 +165,28 @@ export function summarizeChild(
     createdAt: child.createdAt,
     updatedAt: observation.updatedAt,
     deletedAt: child.deletedAt,
+    isolation: child.isolation,
+    branch: child.branch,
+    baseRef: child.baseRef,
+    worktreePath: child.worktreePath,
+    archivedAt: child.archivedAt,
   };
+}
+
+/** Children the Project counts as present: not deleted and not archived. */
+export function isLiveProjectChild(child: Pick<ProjectChildRecord, "deletedAt" | "archivedAt">): boolean {
+  return child.deletedAt == null && child.archivedAt == null;
 }
 
 export async function listProjectChildSummaries(
   record: ProjectRecord,
-  options?: { includeDeleted?: boolean }
+  options?: { includeDeleted?: boolean; includeArchived?: boolean }
 ): Promise<ProjectChildSummary[]> {
   const engines = await listEngineSummaries();
   const children = record.children.filter(
-    (child) => options?.includeDeleted || child.deletedAt == null
+    (child) =>
+      (options?.includeDeleted || child.deletedAt == null) &&
+      (options?.includeArchived || options?.includeDeleted || child.archivedAt == null)
   );
   const observations = await Promise.all(children.map(observeChild));
   return sortProjectChildren(
@@ -214,7 +235,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
         record.orchestrator.workspaceId,
         record.orchestrator.conversationId
       );
-      const live = record.children.filter((child) => child.deletedAt == null);
+      const live = record.children.filter(isLiveProjectChild);
       return {
         id: record.id,
         name: record.name,
@@ -371,7 +392,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectS
       origin: { kind: "project-orchestrator", projectId: id, createdAt: now },
     });
     record = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id,
       name,
       icon: input.icon?.trim() || null,
@@ -604,27 +625,6 @@ export async function resolveHarness(
   return backend;
 }
 
-export function buildChildBrief(input: {
-  projectName: string;
-  childName: string;
-  repoName: string | null;
-  instructions: string;
-}): string {
-  const where = input.repoName
-    ? `Work in the "${input.repoName}" repository (your workspace).`
-    : "You start in an empty scratch folder.";
-  return [
-    "<project_brief>",
-    `You are "${input.childName}", an agent in the Cesium Project "${input.projectName}". The Project orchestrator created you and directs your work: it reads your replies, may steer you mid-task, and may queue follow-up tasks.`,
-    `- ${where} Use your normal tools to do the task below.`,
-    "- End every turn with a short report: what you did, what changed (files, commands, results), and anything blocking.",
-    "- If you need a human decision, say so plainly in your report instead of guessing.",
-    "</project_brief>",
-    "",
-    input.instructions,
-  ].join("\n");
-}
-
 /**
  * The Project default model belongs to the default harness on the home engine
  * (it names a provider configured there), so another harness or a peer engine
@@ -652,7 +652,48 @@ export type CreateChildInput = {
   harness?: string | null;
   model?: string | null;
   mode?: string | null;
+  /** Default: `worktree` with a repository, else `scratch`. */
+  isolation?: ProjectAgentIsolation | null;
+  /** Branch a worktree starts from; default: the repo binding's base, else the remote default. */
+  base?: string | null;
 };
+
+const BASE_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+
+/** Where a new child goes, from its repo and requested isolation. */
+function childPlacement(input: {
+  record: ProjectRecord;
+  repo: ProjectRepoBinding | null;
+  name: string;
+  isolation: ProjectAgentIsolation | null;
+  base: string | null;
+}): ChildPlacement {
+  const { record, repo, name } = input;
+  if (input.base && !BASE_BRANCH_PATTERN.test(input.base)) {
+    throw new ProjectError(`"${input.base}" is not a branch name.`);
+  }
+  if (!repo) {
+    if (input.isolation === "worktree" || input.isolation === "checkout") {
+      throw new ProjectError(`isolation "${input.isolation}" needs a repository; pass repo.`);
+    }
+    return { kind: "scratch", label: `${record.name} · ${name}` };
+  }
+  switch (input.isolation) {
+    case "checkout":
+      return { kind: "workspace", workspaceId: repo.workspaceId };
+    case "scratch":
+      return { kind: "scratch", label: `${record.name} · ${name}` };
+    default:
+      return {
+        kind: "worktree",
+        workspaceId: repo.workspaceId,
+        branch: projectWorkerBranchName(record.name, name, randomHex(2)),
+        baseBranch: input.base || repo.baseBranch || null,
+        // Only an explicit request insists on a worktree; the default adapts to plain folders.
+        fallbackToCheckout: input.isolation !== "worktree",
+      };
+  }
+}
 
 export type CreatedProjectChild = {
   agent: ProjectChildSummary;
@@ -722,20 +763,31 @@ export async function createProjectChild(
       };
   const name = uniqueChildName(record, baseName);
   const childId = `pca_${randomHex(6)}`;
+  const placement = childPlacement({
+    record,
+    repo: repo ?? null,
+    name,
+    isolation: input.isolation ?? null,
+    base: input.base?.trim() || null,
+  });
+  const brief: WorkerBriefInput = {
+    projectName: record.name,
+    agentName: name,
+    instructions,
+    repoName: repo?.name ?? null,
+    contextDir: isHome ? getProjectContextDir(record.id) : null,
+    contextEngine: homeEngineLabel(),
+  };
+  if (isHome) {
+    await seedProjectContext(record.id, record.name);
+  }
   const created = await host.create({
     projectId,
     childId,
     name,
-    promptText: buildChildBrief({
-      projectName: record.name,
-      childName: name,
-      repoName: repo?.name ?? null,
-      instructions,
-    }),
+    brief,
     displayText: instructions,
-    placement: repo
-      ? { kind: "workspace", workspaceId: repo.workspaceId }
-      : { kind: "scratch", label: `${record.name} · ${name}` },
+    placement,
     backendId: harness as AgentBackendId,
     modelId: model.modelId,
     mode: input.mode?.trim() || null,
@@ -755,6 +807,12 @@ export async function createProjectChild(
     createdBy,
     createdAt: Date.now(),
     deletedAt: null,
+    archivedAt: null,
+    isolation: created.isolation ?? (placement.kind === "scratch" ? "scratch" : "checkout"),
+    branch: created.branch ?? null,
+    baseRef: created.baseRef ?? null,
+    baseSha: created.baseSha ?? null,
+    worktreePath: created.worktreePath ?? null,
     lastStatus: "running",
     turnsCompleted: 0,
     lastReportedSeq: 0,
@@ -769,15 +827,162 @@ export async function createProjectChild(
     ...existing,
     children: [...existing.children, child],
   }));
+  const warnings = [model.warning ?? created.modelWarning ?? null, created.placementWarning ?? null].filter(
+    (entry): entry is string => Boolean(entry)
+  );
   return {
     agent: summarizeChild(updated, child, await observeChild(child), await listEngineSummaries()),
-    warning: model.warning ?? created.modelWarning ?? null,
+    warning: warnings.length > 0 ? warnings.join(" ") : null,
   };
+}
+
+/**
+ * Archives a child: stops its turn and hides it from the Project's lists and
+ * the orchestrator's roster. Its conversation, worktree and branch stay, and
+ * unarchiving brings it back as it was.
+ */
+export async function setProjectChildArchived(
+  projectId: string,
+  agentRef: string,
+  archived: boolean
+): Promise<ProjectChildSummary> {
+  const record = await requireProject(projectId);
+  const child = resolveProjectChild(record, agentRef);
+  if (archived && child.archivedAt == null) {
+    const observation = await observeChild(child);
+    if (observation.exists && (isProjectChildBusy(observation.status) || observation.queued > 0)) {
+      await stopProjectChild(projectId, child.id);
+    }
+  }
+  const updated = await patchChild(projectId, child.id, (current) => {
+    if (archived) {
+      return current.archivedAt == null ? { archivedAt: Date.now() } : null;
+    }
+    return current.archivedAt != null ? { archivedAt: null } : null;
+  });
+  const next = updated.children.find((entry) => entry.id === child.id) ?? child;
+  return summarizeChild(updated, next, await observeChild(next), await listEngineSummaries());
+}
+
+export type AdoptChildInput = {
+  /** Conversation id on this engine, or its exact title. */
+  conversation: string;
+  name?: string | null;
+};
+
+/**
+ * Brings an existing chat on this engine into the Project as a worker: it
+ * keeps its workspace (checkout isolation, or scratch for a standalone chat),
+ * reports its turns to the orchestrator from now on, and the orchestrator is
+ * told it was adopted.
+ */
+export async function adoptProjectChild(
+  projectId: string,
+  input: AdoptChildInput
+): Promise<ProjectChildSummary> {
+  const record = await requireProject(projectId);
+  const ref = input.conversation?.trim();
+  if (!ref) {
+    throw new ProjectError("Which conversation? Pass its id or exact title.");
+  }
+  const target = await findAdoptableConversation(ref);
+  if (!target) {
+    throw new ProjectError(`No conversation "${ref}" on this engine.`, 404, "conversation_not_found");
+  }
+  const { workspace, conversation } = target;
+  if (conversation.origin?.kind === "project-orchestrator" || conversation.origin?.kind === "project-child") {
+    throw new ProjectError(`"${conversation.title}" already belongs to a Project.`, 409);
+  }
+  const baseName = normalizeProjectAgentName(input.name?.trim() || conversation.title) || "adopted";
+  const name = uniqueChildName(record, baseName);
+  const childId = `pca_${randomHex(6)}`;
+  const repo =
+    record.repos.find(
+      (entry) => entry.engineId === PROJECT_HOME_ENGINE_ID && entry.workspaceId === workspace.id
+    ) ?? null;
+  const adopted = await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+    ...current,
+    origin: {
+      kind: "project-child",
+      projectId: record.id,
+      childId,
+      peerTokenId: null,
+      createdAt: Date.now(),
+    },
+  }));
+  const observation = observeConversationRecord(adopted);
+  const child: ProjectChildRecord = {
+    id: childId,
+    name,
+    engineId: PROJECT_HOME_ENGINE_ID,
+    repoId: repo?.id ?? null,
+    workspaceId: workspace.id,
+    conversationId: conversation.id,
+    backendId: adopted.config.backendId,
+    modelId: adopted.config.modelId || null,
+    mode: adopted.config.mode,
+    createdBy: "user",
+    createdAt: Date.now(),
+    deletedAt: null,
+    archivedAt: null,
+    isolation: isEngineManagedWorkspace(workspace) ? "scratch" : "checkout",
+    branch: null,
+    baseRef: null,
+    baseSha: null,
+    worktreePath: null,
+    lastStatus: observation.status,
+    turnsCompleted: 0,
+    // Only turns after the adoption are reported.
+    lastReportedSeq: adopted.lastEventSeq,
+    suppressReports: false,
+    suppressedThroughSeq: null,
+    lastAttentionId: observation.attention?.id ?? null,
+    lastReplyPreview: null,
+    lastSeenAt: Date.now(),
+    lastError: adopted.lastError,
+  };
+  const updated = await mutateProject(projectId, (existing) => ({
+    ...existing,
+    children: [...existing.children, child],
+  }));
+  const { deliverProjectNotice } = await import("./project-watcher.js");
+  await deliverProjectNotice(updated, [
+    {
+      name,
+      event: "adopted",
+      status: observation.status,
+      detail: `The user added their conversation "${conversation.title}" to this Project as agent ${name} (${child.isolation === "checkout" ? `working in ${workspace.name}` : "in a scratch folder"}). Its future turns report here like any other agent's.`,
+    },
+  ]);
+  return summarizeChild(updated, child, observation, await listEngineSummaries());
+}
+
+const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+async function findAdoptableConversation(ref: string) {
+  const workspaces = await listWorkspaces();
+  if (CONVERSATION_ID_PATTERN.test(ref)) {
+    for (const workspace of workspaces) {
+      const direct = await readConversationRecord(workspace.id, ref).catch(() => null);
+      if (direct) {
+        return { workspace, conversation: direct };
+      }
+    }
+  }
+  const lowered = ref.toLowerCase();
+  for (const workspace of workspaces) {
+    const records = await listWorkspaceConversationRecords(workspace.id).catch(() => []);
+    const match = records.find((record) => record.title.trim().toLowerCase() === lowered);
+    if (match) {
+      return { workspace, conversation: match };
+    }
+  }
+  return null;
 }
 
 export async function listProjectChildren(
   projectId: string,
-  options?: { includeDeleted?: boolean }
+  options?: { includeDeleted?: boolean; includeArchived?: boolean }
 ): Promise<ProjectChildSummary[]> {
   return listProjectChildSummaries(await requireProject(projectId), options);
 }

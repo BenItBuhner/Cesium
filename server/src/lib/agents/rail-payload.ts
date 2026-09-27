@@ -88,12 +88,13 @@ const PLACEHOLDER_CONVERSATION_TITLES = new Set([
   "start a new chat",
 ]);
 
-function isRenderableRailConversation(conversation: AgentConversationRecord): boolean {
+export function isRenderableRailConversation(conversation: AgentConversationRecord): boolean {
   // Side chats belong to their parent chat's header, never to the rail; a
-  // Project orchestrator lives in the Projects view.
+  // Project's orchestrator and its agents live on the Project page.
   if (
     conversation.origin?.kind === "side-chat" ||
-    conversation.origin?.kind === "project-orchestrator"
+    conversation.origin?.kind === "project-orchestrator" ||
+    conversation.origin?.kind === "project-child"
   ) {
     return false;
   }

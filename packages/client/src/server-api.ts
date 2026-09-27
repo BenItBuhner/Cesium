@@ -24,6 +24,7 @@ import type {
   HarnessAuthSyncEngineState,
   HarnessAuthSyncId,
   ProjectAgentDelivery,
+  ProjectAgentIsolation,
   ProjectChildSummary,
   ProjectContextFile,
   ProjectEngineListing,
@@ -5562,6 +5563,8 @@ export type ProjectAgentCreateRequest = {
   harness?: string | null;
   model?: string | null;
   mode?: string | null;
+  isolation?: ProjectAgentIsolation | null;
+  base?: string | null;
 };
 
 export type ProjectAgentPatchRequest = {
@@ -5592,6 +5595,34 @@ function projectRequest<T>(
 
 function jsonInit(method: string, body?: unknown): RequestInit {
   return body === undefined ? { method } : { method, body: JSON.stringify(body) };
+}
+
+/** Authenticated request that hands back the raw response (uploads, media bytes). */
+async function projectRawRequest(
+  input: string,
+  init: RequestInit,
+  options: ProjectRequestOptions | undefined
+): Promise<Response> {
+  const { requestBaseUrl: baseUrl, authBaseUrl: serverBaseUrl } = captureServerRequestTarget(
+    options?.server
+  );
+  const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
+  const response = await engineFetch(baseUrl, input, {
+    ...init,
+    headers: Object.fromEntries(
+      attachSessionToken({ ...((init.headers as Record<string, string> | undefined) ?? {}) }, serverBaseUrl).entries()
+    ),
+    credentials: "include",
+    cache: "no-store",
+  });
+  syncAuthTokenFromResponse(response, serverBaseUrl);
+  if (response.status === 401 && hadSessionToken) {
+    clearStoredAuth(serverBaseUrl);
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return response;
 }
 
 export async function listProjects(options?: ProjectRequestOptions): Promise<ProjectSummary[]> {
@@ -5655,8 +5686,41 @@ export function removeProjectRepo(
 export function listProjectContextFiles(
   projectId: string,
   options?: ProjectRequestOptions
-): Promise<{ root: string; files: ProjectContextFile[] }> {
+): Promise<{ root: string; files: ProjectContextFile[]; folders?: string[] }> {
   return projectRequest(projectPath(projectId, "/context"), undefined, options);
+}
+
+/** Uploads any file (screenshot, recording, document) into the Project context. */
+export async function uploadProjectContextFile(
+  projectId: string,
+  path: string,
+  file: Blob,
+  options?: ProjectRequestOptions
+): Promise<ProjectContextFile> {
+  const response = await projectRawRequest(
+    projectPath(projectId, `/context/upload?path=${encodeURIComponent(path)}`),
+    {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    },
+    options
+  );
+  return ((await response.json()) as { written: ProjectContextFile }).written;
+}
+
+/** A context file's bytes, e.g. an image or video to preview with an object URL. */
+export async function fetchProjectContextBlob(
+  projectId: string,
+  path: string,
+  options?: ProjectRequestOptions
+): Promise<Blob> {
+  const response = await projectRawRequest(
+    projectPath(projectId, `/context/raw?path=${encodeURIComponent(path)}`),
+    { method: "GET" },
+    options
+  );
+  return response.blob();
 }
 
 export function readProjectContextFile(
@@ -5729,6 +5793,34 @@ export async function deleteProjectAgent(
   options?: ProjectRequestOptions
 ): Promise<void> {
   await projectRequest(projectAgentPath(projectId, agent), jsonInit("DELETE"), options);
+}
+
+export async function archiveProjectAgent(
+  projectId: string,
+  agent: string,
+  archived: boolean,
+  options?: ProjectRequestOptions
+): Promise<ProjectChildSummary> {
+  const result = await projectRequest<{ agent: ProjectChildSummary }>(
+    projectAgentPath(projectId, agent, "/archive"),
+    jsonInit("POST", { archived }),
+    options
+  );
+  return result.agent;
+}
+
+/** Adds an existing conversation on the Project's engine to the Project as an agent. */
+export async function adoptProjectConversation(
+  projectId: string,
+  input: { conversation: string; name?: string | null },
+  options?: ProjectRequestOptions
+): Promise<ProjectChildSummary> {
+  const result = await projectRequest<{ agent: ProjectChildSummary }>(
+    projectPath(projectId, "/agents/adopt"),
+    jsonInit("POST", input),
+    options
+  );
+  return result.agent;
 }
 
 export function messageProjectAgent(

@@ -30,7 +30,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     kind: KIND,
     title: (args) => `Create agent ${str(args, "name")}`.trim(),
     description:
-      "Create a child agent and start it on its first task immediately. Instructions must be self-contained: goal, constraints, where to work, what done means, and what to report. Omit engine/harness/model to use the Project defaults; give `repo` to work inside a bound repository (its engine is implied), otherwise the agent gets an empty scratch folder.",
+      "Create a worker agent and start it on its first task immediately. With `repo`, it gets its own git worktree on a fresh branch from the repo's base branch, so workers never collide; it is told to test, push, open a pull request and report. Instructions must be self-contained: goal, constraints, what done means, and what to report. Omit engine/harness/model to use the Project defaults; without `repo` the agent gets an empty scratch folder.",
     parameters: {
       type: "object",
       required: ["name", "instructions"],
@@ -41,6 +41,16 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
         },
         instructions: { type: "string", description: "The agent's first task, in full." },
         repo: { type: "string", description: "Repository name from project_list_engines." },
+        isolation: {
+          type: "string",
+          enum: ["worktree", "checkout", "scratch"],
+          description:
+            "worktree (default with a repo): its own worktree and branch. checkout: work directly in the repository checkout, only when the user asks for work on their machine as it is. scratch: an empty folder.",
+        },
+        base: {
+          type: "string",
+          description: "Branch the worktree starts from. Default: the repository's base branch (the remote default).",
+        },
         engine: {
           type: "string",
           description: "Engine name from project_list_engines, for scratch work on that machine. Default: this engine.",
@@ -70,7 +80,8 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
       type: "object",
       properties: {
         agent: AGENT_REF,
-        include_deleted: { type: "boolean", description: "Also list deleted agents." },
+        include_archived: { type: "boolean", description: "Also list archived agents." },
+        include_deleted: { type: "boolean", description: "Also list archived and deleted agents." },
       },
       additionalProperties: false,
     },
@@ -136,15 +147,48 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "project_archive_agent",
+    kind: KIND,
+    title: (args) =>
+      `${args.unarchive === true ? "Restore" : "Archive"} ${str(args, "agent")}`.trim(),
+    description:
+      "Archive an agent whose work is done: stops it and hides it from the roster while keeping its conversation, worktree, branch and pull request. Pass unarchive: true to bring it back.",
+    parameters: {
+      type: "object",
+      required: ["agent"],
+      properties: {
+        agent: AGENT_REF,
+        unarchive: { type: "boolean", description: "Restore an archived agent." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "project_delete_agent",
     kind: KIND,
     title: (args) => `Delete ${str(args, "agent")}`.trim(),
     description:
-      "Stop an agent and permanently delete its conversation. Use when its work is finished or abandoned; read its transcript first if you still need anything from it.",
+      "Stop an agent and permanently delete its conversation and worktree (its pushed branch and pull request stay). Prefer project_archive_agent; delete abandoned scratch work. Read its transcript first if you still need anything from it.",
     parameters: {
       type: "object",
       required: ["agent"],
       properties: { agent: AGENT_REF },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_adopt_agent",
+    kind: KIND,
+    title: "Adopt a conversation",
+    description:
+      "Bring an existing conversation on this engine into the Project as an agent (when the user asks you to take over one of their chats). It keeps its folder and reports its turns to you from then on.",
+    parameters: {
+      type: "object",
+      required: ["conversation"],
+      properties: {
+        conversation: { type: "string", description: "Conversation id or its exact title." },
+        name: { type: "string", description: "Agent handle; default: from its title." },
+      },
       additionalProperties: false,
     },
   },
@@ -217,6 +261,7 @@ export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
   "",
   "How you work:",
   "- Break the user's goal into well-scoped tasks and give each one to a child agent with project_create_agent. Instructions must stand on their own: the goal, where to work, constraints, what done means, and what to report back.",
+  "- A child created with a repo gets its own git worktree and branch, so independent tasks run in parallel without colliding. It is told to test, push its branch, open a pull request and report the link.",
   "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness. Engines have names (for example this engine's own name, or a paired machine's label): use those names in tool calls, notes and replies, never internal ids or URLs.",
   "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages, and only between your turns: nothing new reaches you while your turn is running, so calling project_list_agents again cannot show progress.",
   "- Do not poll. Once you have delegated, end your turn with a short reply to the user; the next <project_agent_updates> message starts your next turn.",

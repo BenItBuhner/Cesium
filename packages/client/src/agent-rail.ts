@@ -306,12 +306,21 @@ export function isSideChatAgentRailConversation(
   return conversation.origin?.kind === "side-chat";
 }
 
+/** A Project's coordinator and its agents live on the Project page, never in the rail. */
+export function isProjectAgentRailConversation(
+  conversation: Pick<AgentRailConversationSummary, "origin">
+): boolean {
+  const kind = conversation.origin?.kind;
+  return kind === "project-orchestrator" || kind === "project-child";
+}
+
 export function isRenderableAgentRailConversation(
   conversation: AgentRailConversationSummary
 ): boolean {
   return (
     !isPlaceholderAgentRailConversation(conversation) &&
-    !isSideChatAgentRailConversation(conversation)
+    !isSideChatAgentRailConversation(conversation) &&
+    !isProjectAgentRailConversation(conversation)
   );
 }
 

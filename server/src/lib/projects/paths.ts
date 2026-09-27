@@ -43,3 +43,18 @@ export function isProjectWorkspaceRoot(root: string): boolean {
   const prefix = base.endsWith("/") ? base : `${base}/`;
   return normalized.startsWith(prefix);
 }
+
+/**
+ * True for a Project worker's own worktree (`projects/<id>/worktrees/<name>`).
+ * Engine helpers must not edit tracked files such as `.gitignore` there: a
+ * worker commits everything it changes, so those edits would land in its PR.
+ */
+export function isWorkerWorktreeRoot(root: string): boolean {
+  if (!isProjectWorkspaceRoot(root)) {
+    return false;
+  }
+  const relative = path
+    .relative(getProjectsRootDir(), path.resolve(root))
+    .replace(/\\/g, "/");
+  return /^prj_[a-f0-9]{12}\/worktrees\/[^/]+$/.test(relative);
+}
