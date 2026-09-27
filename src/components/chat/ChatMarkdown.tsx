@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, memo, useMemo, type ReactNode } from "react";
+import { Check, Square } from "lucide-react";
 import {
   matchProjectContextEmbedLine,
   parseProjectContextHref,
@@ -471,12 +472,30 @@ const MarkdownBlockView = memo(
         }
         return (
           <ul className="space-y-[6px]">
-            {block.items.map((item, itemIndex) => (
-              <li key={itemIndex} className="flex items-start gap-[8px]">
-                <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
-                <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
-              </li>
-            ))}
+            {block.items.map((item, itemIndex) => {
+              const task = /^\[([ xX])\]\s+([\s\S]*)$/.exec(item);
+              if (task) {
+                const done = task[1] !== " ";
+                return (
+                  <li key={itemIndex} className="flex items-start gap-[8px]">
+                    {done ? (
+                      <Check className="mt-[4px] size-[14px] shrink-0 text-[var(--status-success)]" strokeWidth={2.2} aria-label="Done" />
+                    ) : (
+                      <Square className="mt-[4px] size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.8} aria-label="To do" />
+                    )}
+                    <span className={`min-w-0 flex-1 ${done ? "text-[var(--text-secondary)]" : ""}`}>
+                      {renderInlineWithBreaks(task[2] ?? "")}
+                    </span>
+                  </li>
+                );
+              }
+              return (
+                <li key={itemIndex} className="flex items-start gap-[8px]">
+                  <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
+                  <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
+                </li>
+              );
+            })}
           </ul>
         );
       case "hr":
