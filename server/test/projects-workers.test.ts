@@ -207,8 +207,15 @@ test("workers on one repository each get their own worktree and branch from the 
   assert.ok(brief.includes(`git push -u origin ${cart.json.agent.branch}`));
   assert.match(brief, /A pull request is open for `cesium\/shop-launch\/cart-[0-9a-f]{4}` against `main`, ready for review/);
   assert.ok(brief.includes(`- Folder: ${project.contextRoot}`));
-  assert.ok(brief.includes("internal/cart/ is for your handoffs"));
+  assert.ok(brief.includes("It is not part of any repository, and nothing in it is committed."));
+  assert.ok(brief.includes(`${project.contextRoot}/docs/ holds documents the user reads`), "Context paths are absolute, not the repo's docs/");
+  assert.ok(brief.includes(`${project.contextRoot}/internal/cart/ is for your handoffs`));
   assert.ok(brief.includes(`${project.contextRoot}/media/cart/`));
+  assert.ok(
+    brief.includes(
+      `If your task changes no code (research, an investigation, a plan), your findings go in ${project.contextRoot}/internal/cart/ and your report: don't commit them to the repository or open a pull request.`
+    )
+  );
   assert.match(brief, /the pull request URL, the evidence file paths/);
   assert.match(brief, /Fix the cart\.$/);
 
