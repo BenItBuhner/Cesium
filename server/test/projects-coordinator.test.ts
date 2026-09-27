@@ -170,6 +170,12 @@ function toolResult(events: AgentStoredEvent[], toolCallId: string): string {
   return update.detail ?? "";
 }
 
+function toolFinished(events: AgentStoredEvent[], toolCallId: string): boolean {
+  return eventsOfKind(events, "tool_call_update").some(
+    (event) => event.toolCallId === toolCallId && event.status !== "in_progress"
+  );
+}
+
 function gated(reply: Responder): { responder: Responder; release: () => void } {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -579,6 +585,35 @@ test("agents act without asking by default; with approvals on, a command waits f
     await api("PATCH", `/api/projects/${project.id}`, { settings: { autoApproveAgents: true } });
   }
   await orchestratorIdle("after the approval checks");
+});
+
+test("an agent writes into the Project context with its file tools; other paths outside its worktree stay refused", async () => {
+  const outside = path.join(TEST_DATA_DIR, "outside-the-worktree.txt");
+  script(
+    "scribe",
+    toolCall("call_findings", "write_file", {
+      path: path.join(project.contextRoot, "internal", "scribe", "findings.md"),
+      content: "The cart total needed quantities.\n",
+    }),
+    toolCall("call_outside", "write_file", { path: outside, content: "nope" }),
+    text(["Findings saved."])
+  );
+  await api("POST", `/api/projects/${project.id}/agents`, { name: "scribe", repo: "shop", instructions: "Save your findings." });
+  const scribe = await childRecord("scribe");
+  const done = await waitFor(
+    "the scribe's turn",
+    () => readConversationSnapshot(scribe.workspaceId, scribe.conversationId),
+    (snapshot) => snapshot.conversation.status === "idle" && toolFinished(snapshot.events, "call_outside"),
+    30_000
+  );
+  assert.equal(
+    await fs.readFile(path.join(project.contextRoot, "internal", "scribe", "findings.md"), "utf8"),
+    "The cart total needed quantities.\n"
+  );
+  assert.match(toolResult(done.events, "call_outside"), /Path escapes workspace/);
+  await assert.rejects(fs.access(outside));
+  await updateDelivered("scribe", /Findings saved/);
+  await orchestratorIdle("after the scribe");
 });
 
 test("a browser check runs an agent's branch, reports with evidence, and never takes the worktree with it", async () => {

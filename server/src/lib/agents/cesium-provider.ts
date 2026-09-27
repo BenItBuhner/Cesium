@@ -41,6 +41,7 @@ import {
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
 import { projectAgentActsWithoutAsking } from "./remembered-permissions.js";
+import { projectAgentContextDir } from "../projects/paths.js";
 import { callMcpToolRich, refreshWorkspaceMcpMirror } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import {
@@ -384,13 +385,16 @@ function updateConfigOption(options: AgentConfigOption[], id: string, value: str
   return options.map((option) => option.id === id ? { ...option, currentValue: value } : option);
 }
 
-function resolveWorkspacePath(workspaceRoot: string, inputPath: string): string {
+/** Relative paths resolve in the workspace; absolute ones may also point into `extraRoots`. */
+function resolveWorkspacePath(workspaceRoot: string, inputPath: string, extraRoots: readonly string[] = []): string {
   const resolved = path.resolve(workspaceRoot, inputPath);
-  const relative = path.relative(workspaceRoot, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Path escapes workspace: ${inputPath}`);
+  for (const root of [workspaceRoot, ...extraRoots]) {
+    const relative = path.relative(root, resolved);
+    if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return resolved;
+    }
   }
-  return resolved;
+  throw new Error(`Path escapes workspace: ${inputPath}`);
 }
 
 /** `null` when the file does not exist; other filesystem errors still throw. */
@@ -1445,6 +1449,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
       await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
+  }
+
+  /** A Project agent may also read and write its Project's context folder with the file tools. */
+  private projectContextRoots(): string[] {
+    const contextDir = projectAgentContextDir(this.callbacks.conversation.origin);
+    return contextDir ? [contextDir] : [];
   }
 
   async steer(input: { text: string; userMessageId: string; queuedPromptId?: string }): Promise<boolean> {
@@ -3076,7 +3086,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolReadFile(args: Record<string, unknown>): Promise<string> {
     const inputPath = asString(args.path);
     if (!inputPath) throw new Error("read_file.path is required.");
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath);
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, this.projectContextRoots());
     const imageMime = imageMimeTypeForPath(resolved);
     if (imageMime) {
       const buffer = await fs.readFile(resolved);
@@ -3115,7 +3125,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolGrep(args: Record<string, unknown>): Promise<string> {
     const pattern = asString(args.pattern);
     if (!pattern) throw new Error("grep.pattern is required.");
-    const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".");
+    const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".", this.projectContextRoots());
     const regex = new RegExp(pattern, "i");
     const context = Math.max(0, Math.min(20, Math.floor(asNumber(args.context) ?? 0)));
     const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
@@ -3154,7 +3164,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const pattern = asString(args.pattern);
     if (!pattern) throw new Error("glob.pattern is required.");
     const searchPath = asString(args.path) ?? ".";
-    const searchRoot = resolveWorkspacePath(this.callbacks.workspace.root, searchPath);
+    const searchRoot = resolveWorkspacePath(this.callbacks.workspace.root, searchPath, this.projectContextRoots());
     const stat = await fs.stat(searchRoot).catch(() => null);
     if (!stat?.isDirectory()) {
       throw new Error(`glob.path must be an existing directory inside the workspace: ${searchPath}`);
@@ -3174,7 +3184,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     title: string
   ): Promise<string> {
     const parsed = parseCesiumEditFileArgs(args);
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path);
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path, this.projectContextRoots());
     const before = await readWorkspaceFileIfExists(resolved);
     const outcome = applyCesiumFileEdit({
       path: parsed.path,
@@ -3213,7 +3223,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async toolWriteFile(args: Record<string, unknown>, toolCallId: string): Promise<string> {
     const parsed = parseCesiumWriteFileArgs(args);
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path);
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path, this.projectContextRoots());
     const before = await readWorkspaceFileIfExists(resolved);
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, parsed.content, "utf8");
