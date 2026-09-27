@@ -227,6 +227,8 @@ test("the coordinator's chat: messages as bubbles, updates as rows, its own text
     ...reply("a2", "Noted in notes.md."),
     event({ kind: "user_message", messageId: "u3", content: "What's running?" }),
     ...reply("a3", "cart-total is working on the total."),
+    event({ kind: "user_message", messageId: "u4", content: notice, displayContent: "Agent update · cart-total" }),
+    ...reply("a4", "Done. The total now sums price × quantity.\n\n![after the fix](context:media/cart-total/after.png)"),
   ];
   const calls = collectProjectMessageCalls(events);
   assert.deepEqual([...calls.keys()], ["t2"], "empty or failed messages are not bubbles");
@@ -258,6 +260,15 @@ test("the coordinator's chat: messages as bubbles, updates as rows, its own text
       { type: "activity-label", text: "Noted in notes.md." },
       { type: "user", text: "What's running?" },
       { type: "assistant", text: "cart-total is working on the total." },
+      {
+        type: "activity-label",
+        text: "Agent update · cart-total",
+        detail: "cart-total · finished\nTotal now multiplies by quantity.",
+      },
+      {
+        type: "assistant",
+        text: "Done. The total now sums price × quantity.\n\n![after the fix](context:media/cart-total/after.png)",
+      },
     ]
   );
   const footers = shaped.filter((entry) => entry.type === "turn-footer").length;

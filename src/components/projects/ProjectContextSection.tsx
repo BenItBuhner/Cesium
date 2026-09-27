@@ -374,8 +374,8 @@ function ContextTreeLevel({
                   onToggle={onToggle}
                 />
               ) : (
-                <p className="py-[2px] font-sans text-[11.5px] text-[var(--text-disabled)]" style={{ paddingLeft: 38 + depth * 14 }}>
-                  empty
+                <p className="py-[2px] font-sans text-[11.5px] italic text-[var(--text-disabled)]" style={{ paddingLeft: 38 + depth * 14 }}>
+                  No files yet
                 </p>
               )
             ) : null}

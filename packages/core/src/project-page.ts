@@ -498,6 +498,20 @@ function splitAroundMessages(message: ChatMessage, calls: ReadonlyMap<string, Pr
 }
 
 const STATUS_LABEL_MAX_CHARS = 140;
+const REPORT_MIN_CHARS = 280;
+
+/**
+ * Reply text that reads as a report for the user rather than a log line:
+ * it embeds Context evidence, or runs past a short note.
+ */
+function readsAsReport(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    /\]\(context:/.test(trimmed) ||
+    trimmed.length > REPORT_MIN_CHARS ||
+    trimmed.split("\n").filter((line) => line.trim()).length >= 3
+  );
+}
 
 function statusRow(message: ChatMessage): ChatMessage | null {
   const text = (message.content ?? "").trim();
@@ -520,8 +534,9 @@ function statusRow(message: ChatMessage): ChatMessage | null {
  * - `project_message_user` calls become its messages (assistant bubbles), in place;
  * - agent updates and external events become compact rows instead of user bubbles;
  * - its own reply text becomes a quiet status line whenever the turn spoke through
- *   messages or was opened by an update or event. A turn the user started that
- *   never called the tool keeps its reply as the message, so nothing goes unsaid.
+ *   messages or was opened by an update or event. So that nothing goes unsaid, a
+ *   turn that never called the tool keeps its reply as the message when the user
+ *   started it, or when (opened by an update or event) the reply reads as a report.
  */
 export function projectCoordinatorMessages(
   messages: readonly ChatMessage[],
@@ -555,9 +570,13 @@ export function projectCoordinatorMessages(
       } else if (message.type === "worked-session") {
         out.push(...splitAroundMessages(message, calls));
       } else if (message.type === "assistant" && (spoke || automatic)) {
-        const row = statusRow(message);
-        if (row) {
-          out.push(row);
+        if (!spoke && readsAsReport(message.content ?? "")) {
+          out.push(message);
+        } else {
+          const row = statusRow(message);
+          if (row) {
+            out.push(row);
+          }
         }
       } else if (!(message.type === "turn-footer" && automatic)) {
         out.push(message);
