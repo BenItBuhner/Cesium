@@ -544,6 +544,10 @@ class PermissionRefusedToolCallError extends Error {
   }
 }
 
+const COORDINATOR_ROSTER_CHECKS_BEFORE_TURN_ENDS = 3;
+const COORDINATOR_TURN_ENDS_NOTE =
+  "You checked on your agents three times in a row, so your turn ends here. Their reports and any Project events arrive as your next turn.";
+
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
 /** Model-facing framing for a steer injected into a running turn. */
@@ -615,6 +619,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * repeated id would merge distinct calls wherever events are keyed by it.
    */
   private readonly usedToolCallIds = new Set<string>();
+  /** Project coordinators: project_list_agents calls in a row this turn; any other tool resets it. */
+  private rosterChecksInARow = 0;
+  /** Set by a coordinator's third check in a row: the turn ends once this batch of tools is done. */
+  private endTurnAfterTools = false;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -924,6 +932,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.activeUserMessageId = input.userMessageId;
     this.pendingSteers = [];
     this.acceptingSteers = true;
+    this.rosterChecksInARow = 0;
+    this.endTurnAfterTools = false;
     let pluginOutcome: CesiumHarnessTurnOutcome = { status: "cancelled" };
     let assistantMessageId = `cesium-assistant-${randomUUID()}`;
     try {
@@ -1398,6 +1408,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (this.cancelled) {
           return;
         }
+        if (this.endTurnAfterTools) {
+          this.endTurnAfterTools = false;
+          this.acceptingSteers = false;
+          const steers = await this.takeDeliverableSteers();
+          if (steers.length === 0) {
+            await this.finishAssistant(assistantMessageId, result.raw);
+            pluginOutcome = { status: "completed" };
+            return;
+          }
+          // The user wrote meanwhile: answer them instead of ending the turn.
+          this.acceptingSteers = true;
+          assistantMessageId = await this.injectSteers(toolResultMessages, assistantMessageId, steers);
+          continue;
+        }
         if (this.pendingSteers.length > 0) {
           assistantMessageId = await this.injectSteers(
             toolResultMessages,
@@ -1456,6 +1480,33 @@ class CesiumSessionHandle implements AgentSessionHandle {
       await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
+  }
+
+  /**
+   * A coordinator that checks on its agents three times in a row is polling:
+   * their reports only arrive after its turn, so the turn ends after this
+   * batch of tools and the reports start the next one.
+   */
+  private afterCoordinatorTool(toolName: string, output: string): string {
+    if (toolName !== "project_list_agents") {
+      this.rosterChecksInARow = 0;
+      return output;
+    }
+    this.rosterChecksInARow += 1;
+    if (this.rosterChecksInARow < COORDINATOR_ROSTER_CHECKS_BEFORE_TURN_ENDS) {
+      return output;
+    }
+    this.rosterChecksInARow = 0;
+    this.endTurnAfterTools = true;
+    try {
+      const parsed = JSON.parse(output) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return JSON.stringify({ ...parsed, turnEnds: COORDINATOR_TURN_ENDS_NOTE }, null, 2);
+      }
+    } catch {
+      // Not JSON: the note goes after it.
+    }
+    return `${output}\n\n${COORDINATOR_TURN_ENDS_NOTE}`;
   }
 
   /** The model's id, or `<id>~2`, `<id>~3`… when this conversation already used it. */
@@ -2808,7 +2859,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
             effectiveRequest.name,
             effectiveRequest.arguments
           );
-          return await this.completeToolCall(effectiveRequest, title, toolDefinition, output);
+          return await this.completeToolCall(
+            effectiveRequest,
+            title,
+            toolDefinition,
+            this.afterCoordinatorTool(effectiveRequest.name, output)
+          );
         }
         if (
           !(PROJECT_ORCHESTRATOR_BORROWED_TOOLS as readonly string[]).includes(
