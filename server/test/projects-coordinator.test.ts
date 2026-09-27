@@ -473,11 +473,12 @@ test("the decision log's tail reaches the coordinator every turn", async () => {
   assert.match(reminder, /<project_decisions path="docs\/decisions\.md">\n# Decisions\n\n- 2026-09-27: Totals multiply price by quantity/);
 });
 
-test("a message typed while the coordinator is busy runs before queued agent updates", async () => {
-  const hold = gated(text(["Done holding."]));
+test("a message typed while the coordinator is busy reaches its running turn, ahead of queued agent updates", async () => {
+  const before = requestsFor("orchestrator").length;
+  const hold = gated(toolCall("call_hold", "project_list_agents", {}));
   script("orchestrator", hold.responder, text(["Prioritizing tests."]), text(["Update noted."]));
   await prompt("Hold on a second.");
-  await waitFor("coordinator busy", orchestrator, (value) => value.conversation.status === "running");
+  await waitFor("the coordinator at the model", async () => requestsFor("orchestrator"), (list) => list.length > before);
   await deliverProjectNotice((await readProject(project.id))!, [
     { name: "cart-total", event: "finished", status: "idle", detail: "Another pass done." },
   ]);
@@ -486,14 +487,55 @@ test("a message typed while the coordinator is busy runs before queued agent upd
   assert.deepEqual(
     queued.map((entry) => (entry.coalesceKey ? "notice" : entry.text)),
     ["Actually, prioritize the tests.", "notice"],
-    "the user's message jumps ahead of the queued update"
+    "the user's message waits in view, ahead of the queued update"
   );
   hold.release();
   const snapshot = await orchestratorIdle("queue drained");
-  const order = eventsOfKind(snapshot.events, "user_message")
-    .map((event) => event.displayContent ?? event.content)
-    .filter((entry) => entry === "Actually, prioritize the tests." || entry === "Agent update · cart-total");
-  assert.deepEqual(order.slice(-2), ["Actually, prioritize the tests.", "Agent update · cart-total"]);
+  const requests = requestsFor("orchestrator").slice(before);
+  assert.equal(requests.length, 3, "the held turn, its next step, and the update");
+  const nextStep = requests[1]!.messages;
+  assert.ok(nextStep.some((message) => message.role === "tool" && message.tool_call_id === "call_hold"));
+  assert.ok(
+    nextStep.some(
+      (message) =>
+        message.role === "user" &&
+        messageText(message).startsWith("[Steering message - sent while you were working on this turn]") &&
+        messageText(message).includes("Actually, prioritize the tests.")
+    ),
+    "the coordinator read it at its next step, in the same turn"
+  );
+  assert.ok(requests[2]!.messages.some((message) => messageText(message).includes("<project_agent_updates>")));
+  const users = eventsOfKind(snapshot.events, "user_message").map((event) => event.displayContent ?? event.content);
+  const at = users.indexOf("Actually, prioritize the tests.");
+  assert.equal(users.filter((entry) => entry === "Actually, prioritize the tests.").length, 1, "delivered once");
+  assert.deepEqual(users.slice(at - 1, at + 2), [
+    "Hold on a second.",
+    "Actually, prioritize the tests.",
+    "Agent update · cart-total",
+  ]);
+});
+
+test("a queued message the user removes before the coordinator's next step never reaches it", async () => {
+  const before = requestsFor("orchestrator").length;
+  const hold = gated(toolCall("call_hold_again", "project_list_agents", {}));
+  script("orchestrator", hold.responder, text(["Carrying on."]));
+  await prompt("Start something.");
+  await waitFor("the coordinator at the model", async () => requestsFor("orchestrator"), (list) => list.length > before);
+  await prompt("Never mind this one.");
+  const entry = (await orchestrator()).conversation.queuedPrompts.find((item) => item.text === "Never mind this one.");
+  assert.ok(entry, "it waits in the queue");
+  const workspace = await getWorkspaceById(project.orchestrator.workspaceId);
+  await agentRuntimeManager.removeQueuedPrompt(workspace!, project.orchestrator.conversationId, entry.id);
+  hold.release();
+  const snapshot = await orchestratorIdle("after the removed message");
+  const requests = requestsFor("orchestrator").slice(before);
+  assert.equal(requests.length, 2, "the turn went on without it, and it never ran on its own");
+  assert.ok(!requests.some((request) => request.messages.some((message) => messageText(message).includes("Never mind this one."))));
+  assert.ok(
+    !eventsOfKind(snapshot.events, "user_message").some((event) =>
+      (event.displayContent ?? event.content).includes("Never mind this one.")
+    )
+  );
 });
 
 test("a browser check runs an agent's branch, reports with evidence, and never takes the worktree with it", async () => {
@@ -520,6 +562,12 @@ test("a browser check runs an agent's branch, reports with evidence, and never t
   assert.ok(brief.includes(started.evidence), "evidence goes to the Project's media folder");
   await updateDelivered("browser-check", /Checked the cart/);
   await orchestratorIdle("after the browser check");
+  const rail = await buildAgentConversationsAllPayload({ limit: 200, offset: 0 });
+  assert.equal(
+    rail.groups.some((group) => group.conversations.some((conversation) => conversation.id === helper.conversationId)),
+    false,
+    "helpers stay out of the rail"
+  );
   const removed = await api("DELETE", `/api/projects/${project.id}/agents/browser-check`);
   assert.equal(removed.status, 200, JSON.stringify(removed.json));
   await fs.access(worker.worktreePath!);

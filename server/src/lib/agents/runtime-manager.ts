@@ -133,6 +133,25 @@ function enqueuePrompt(
 }
 
 /**
+ * A message the user types while a Project coordinator is working also goes
+ * into the running turn, so it is read at the coordinator's next step; it
+ * stays visible in the queue until then.
+ */
+function steersIntoRunningTurn(
+  conversation: Pick<AgentConversationRecord, "origin">,
+  entry: AgentQueuedChatPrompt
+): boolean {
+  return (
+    conversation.origin?.kind === "project-orchestrator" &&
+    !entry.coalesceKey &&
+    !entry.hidden &&
+    !entry.attachments?.length &&
+    !entry.configOverride &&
+    !entry.planHandoff
+  );
+}
+
+/**
  * Idle conversations run their queue. Engine notices (the only entries with a
  * `coalesceKey`) also run after a failed or interrupted turn, so Project reports
  * are not stranded; a turn the user stopped still waits for them.
@@ -1520,6 +1539,26 @@ export class AgentRuntimeManager {
     });
   }
 
+  /** Offers a queued prompt to the running turn; it leaves the queue once the model reads it. */
+  private async steerQueuedPrompt(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    entry: AgentQueuedChatPrompt
+  ): Promise<void> {
+    const runtime = this.runtimes.get(conversationId);
+    if (!runtime?.handle.steer || !runtime.handle.steersQueuedPrompts || runtime.workspaceId !== workspace.id) {
+      return;
+    }
+    await runtime.handle
+      .steer({ text: entry.text, userMessageId: entry.clientMessageId ?? entry.id, queuedPromptId: entry.id })
+      .catch((error) => {
+        console.warn(
+          `[agent-runtime] mid-turn steer failed for ${conversationId}; it stays queued:`,
+          error instanceof Error ? error.message : error
+        );
+      });
+  }
+
   private async promptConversationLocked(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -1614,6 +1653,9 @@ export class AgentRuntimeManager {
       }));
       if (outcomeSink) {
         outcomeSink.value = "queued";
+      }
+      if (steersIntoRunningTurn(record, entry)) {
+        await this.steerQueuedPrompt(workspace, conversationId, entry);
       }
       const head = await readConversationSnapshotHead(workspace.id, conversationId);
       if (!head) {
