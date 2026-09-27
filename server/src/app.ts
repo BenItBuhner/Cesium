@@ -33,7 +33,8 @@ import { publicAccessRoutes } from "./routes/public-access.js";
 import { metaRoutes } from "./routes/meta.js";
 import { projectPeerRoutes } from "./routes/project-peers.js";
 import { projectRoutes } from "./routes/projects.js";
-import { startProjectWatcher } from "./lib/projects/project-watcher.js";
+import { resumeProjectsCutOffByRestart, startProjectWatcher } from "./lib/projects/project-watcher.js";
+import type { AgentConversationRecord } from "./lib/agents/types.js";
 import { startProjectListening } from "./lib/projects/listening.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
@@ -291,9 +292,12 @@ export function startCesiumBackgroundServices(): void {
     // (runtimes are in-memory only); interrupt them so clients stop showing
     // an eternal "Working" state, then keep watching for runs whose provider
     // runtime dies without settling the turn.
-    void reconcileStaleAgentRunsOnBoot().catch((error) => {
-      console.error("[agent-reconcile] boot sweep failed:", error);
-    });
+    const interruptedOnBoot: AgentConversationRecord[] = [];
+    void reconcileStaleAgentRunsOnBoot({ onInterrupted: (record) => interruptedOnBoot.push(record) })
+      .catch((error) => {
+        console.error("[agent-reconcile] boot sweep failed:", error);
+      })
+      .then(() => resumeProjectsCutOffByRestart(interruptedOnBoot));
     startStaleAgentRunWatchdog();
   }
 }

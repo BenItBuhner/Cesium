@@ -1,6 +1,7 @@
 import { PROJECT_HOME_ENGINE_ID, isProjectChildBusy } from "@cesium/core/projects";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
-import { subscribeAgentStoreEvents } from "../agents/session-store.js";
+import { readConversationRecord, subscribeAgentStoreEvents } from "../agents/session-store.js";
+import type { AgentConversationRecord } from "../agents/types.js";
 import { getWorkspaceById } from "../workspace-registry.js";
 import {
   observeConversationRecord,
@@ -12,8 +13,9 @@ import {
   listEngineSummaries,
   listPeerEngines,
 } from "./engine-registry.js";
+import type { ProjectEvent } from "./events.js";
 import { isProjectsEnabled } from "./feature-flag.js";
-import { ensureWorkerPrSubscriptions } from "./listening.js";
+import { deliverProjectEvents, ensureWorkerPrSubscriptions } from "./listening.js";
 import { composeProjectNotice, type ProjectNoticeUpdate } from "./notices.js";
 import { childHostFor } from "./project-service.js";
 import { listProjectRecords, mutateProject, readProject } from "./project-store.js";
@@ -521,6 +523,47 @@ export async function kickProjectWatcher(): Promise<void> {
       await agentRuntimeManager
         .drainOneQueuedPrompt(workspace, record.orchestrator.conversationId)
         .catch(() => undefined);
+    }
+  }
+}
+
+const RESTART_EVENT: ProjectEvent = {
+  source: "engine",
+  attrs: { event: "restarted" },
+  body: "This engine restarted while you were in the middle of a turn, and that turn was cut off. Check where things stand (project_list_agents, notes.md) and carry on from there. Agents a restart stopped show as interrupted and continue when you message them.",
+  label: "Engine restarted",
+};
+
+/**
+ * After the boot sweep: a coordinator whose turn the restart cut off would
+ * wait for the user forever. It is told the engine restarted, which also
+ * starts anything queued for it. Only turns this boot interrupted are
+ * resumed, not ones left interrupted long ago.
+ */
+export async function resumeProjectsCutOffByRestart(interrupted: readonly AgentConversationRecord[]): Promise<void> {
+  if (!(await isProjectsEnabled().catch(() => false))) {
+    return;
+  }
+  for (const conversation of interrupted) {
+    const origin = conversation.origin;
+    if (origin?.kind !== "project-orchestrator") {
+      continue;
+    }
+    try {
+      const record = await readProject(origin.projectId);
+      if (!record || record.archivedAt != null || record.orchestrator.conversationId !== conversation.id) {
+        continue;
+      }
+      const current = await readConversationRecord(record.orchestrator.workspaceId, conversation.id);
+      if (current?.status !== "interrupted") {
+        continue;
+      }
+      await deliverProjectEvents(record, [RESTART_EVENT]);
+    } catch (error) {
+      console.warn(
+        `[projects] could not resume the coordinator of ${origin.projectId} after the restart:`,
+        error instanceof Error ? error.message : error
+      );
     }
   }
 }
