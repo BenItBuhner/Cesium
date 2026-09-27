@@ -10,7 +10,9 @@ import {
   type ReactNode,
 } from "react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useServerDisplayLabels } from "@/hooks/useServerDisplayLabels";
 import { fetchWorkspacesForServer } from "@/lib/server-api";
+import { relabelDirectoryWorkspaces } from "@/lib/server-display-labels";
 import type { AgentRailRepositoryInfo } from "@/lib/agent-types";
 import type { WorkspaceRecord } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
@@ -68,7 +70,12 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
   const { ready: serversReady, onlineServers } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [workspaces, setWorkspaces] = useState<DirectoryWorkspaceRecord[]>([]);
+  const [fetchedWorkspaces, setWorkspaces] = useState<DirectoryWorkspaceRecord[]>([]);
+  const serverDisplayLabels = useServerDisplayLabels();
+  const workspaces = useMemo(
+    () => relabelDirectoryWorkspaces(fetchedWorkspaces, serverDisplayLabels),
+    [fetchedWorkspaces, serverDisplayLabels]
+  );
 
   // Depends on the (identity-stable) online server list only. `onlineServers`
   // already excludes offline engines, and pulling `serverStatusById` in here

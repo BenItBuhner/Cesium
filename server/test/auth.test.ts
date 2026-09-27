@@ -70,6 +70,21 @@ async function loginAndGetToken(
   return { token, cookie: setCookie, ip };
 }
 
+async function withEngineLabel(
+  label: string | undefined,
+  run: () => Promise<void>
+): Promise<void> {
+  const saved = process.env.CESIUM_ENGINE_LABEL;
+  if (label === undefined) delete process.env.CESIUM_ENGINE_LABEL;
+  else process.env.CESIUM_ENGINE_LABEL = label;
+  try {
+    await run();
+  } finally {
+    if (saved === undefined) delete process.env.CESIUM_ENGINE_LABEL;
+    else process.env.CESIUM_ENGINE_LABEL = saved;
+  }
+}
+
 after(async () => {
   const fs = await import("node:fs/promises");
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true }).catch(() => {});
@@ -194,6 +209,42 @@ describe("auth status endpoint", () => {
     };
     assert.equal(body.enabled, true);
     assert.equal(body.authenticated, false);
+  });
+
+  test("GET /api/auth/status names the engine for an authenticated caller", async () => {
+    await withEngineLabel("  Build box  ", async () => {
+      const app = makeApp();
+      const { token, ip } = await loginAndGetToken(app);
+      const response = await app.request("/api/auth/status", {
+        headers: { [SESSION_TOKEN_HEADER]: token, "x-forwarded-for": ip },
+      });
+      const body = (await response.json()) as { engineName?: string };
+      assert.equal(body.engineName, "Build box");
+    });
+  });
+
+  test("GET /api/auth/status falls back to the hostname when no label is set", async () => {
+    await withEngineLabel(undefined, async () => {
+      const app = makeApp();
+      const { token, ip } = await loginAndGetToken(app);
+      const response = await app.request("/api/auth/status", {
+        headers: { [SESSION_TOKEN_HEADER]: token, "x-forwarded-for": ip },
+      });
+      const body = (await response.json()) as { engineName?: string };
+      assert.equal(body.engineName, os.hostname() || "This engine");
+    });
+  });
+
+  test("GET /api/auth/status hides the engine name from unauthenticated callers", async () => {
+    await withEngineLabel("Build box", async () => {
+      const app = makeApp();
+      const response = await app.request("/api/auth/status", {
+        headers: { "x-forwarded-for": nextUniqueIp() },
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+      assert.equal(body.authenticated, false);
+      assert.equal("engineName" in body, false);
+    });
   });
 });
 
@@ -417,6 +468,25 @@ describe("auth disabled passthrough", () => {
       };
       assert.equal(body.enabled, false);
       assert.equal(body.authenticated, true);
+    } finally {
+      process.env.OPENCURSOR_AUTH_USERNAME = savedUsername;
+      process.env.OPENCURSOR_AUTH_PASSWORD = savedPassword;
+    }
+  });
+
+  test("/api/auth/status names the engine when auth is disabled", async () => {
+    const savedUsername = process.env.OPENCURSOR_AUTH_USERNAME;
+    const savedPassword = process.env.OPENCURSOR_AUTH_PASSWORD;
+    delete process.env.OPENCURSOR_AUTH_USERNAME;
+    delete process.env.OPENCURSOR_AUTH_PASSWORD;
+
+    try {
+      await withEngineLabel("Home", async () => {
+        const app = makeApp();
+        const response = await app.request("/api/auth/status");
+        const body = (await response.json()) as { engineName?: string };
+        assert.equal(body.engineName, "Home");
+      });
     } finally {
       process.env.OPENCURSOR_AUTH_USERNAME = savedUsername;
       process.env.OPENCURSOR_AUTH_PASSWORD = savedPassword;

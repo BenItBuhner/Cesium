@@ -45,13 +45,18 @@ export function getServerRailAppearance(
   };
 }
 
+/**
+ * A rename the user gave the server wins, then the name the engine reports
+ * for itself, then the connection label it was saved under.
+ */
 export function getServerDisplayLabel(
   server: { id: string; label: string; baseUrl: string },
-  appearance?: Pick<ServerRailAppearance, "nickname">
+  appearance?: Pick<ServerRailAppearance, "nickname">,
+  engineName?: string | null
 ): string {
   if (isLocalDeviceServer(server)) {
     return LOCAL_DEVICE_SERVER_LABEL;
   }
   const nickname = appearance?.nickname?.trim();
-  return nickname || server.label;
+  return nickname || engineName?.trim() || server.label;
 }

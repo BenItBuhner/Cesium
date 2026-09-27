@@ -62,6 +62,13 @@ import {
   timeoutSignal,
   type ServerProbeResult,
 } from "../server-connection-health";
+import {
+  applyServerEngineNameProbes,
+  engineNamesForServers,
+  readStoredServerEngineNames,
+  writeStoredServerEngineNames,
+  type ServerEngineNames,
+} from "../server-engine-names";
 import { assertEngineServerUrlAllowed } from "../engine-url-policy";
 import { clientLocation, getClientPlatform } from "../platform";
 
@@ -70,6 +77,8 @@ type ServerConnectionsContextValue = {
   state: ServerConnectionsState;
   servers: ServerConnection[];
   serverStatusById: Record<string, ServerRuntimeStatus>;
+  /** Names engines reported for themselves, by server id; missing when unknown. */
+  engineNameById: Record<string, string>;
   onlineServers: ServerConnection[];
   activeServer: ServerConnection;
   /** False when the user has no saved engines (fresh account / account site). */
@@ -214,6 +223,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     readSurfaceServerConnectionsState()
   );
   const [serverStatusById, setServerStatusById] = useState<Record<string, ServerRuntimeStatus>>({});
+  const [engineNames, setEngineNames] = useState<ServerEngineNames>(() =>
+    readStoredServerEngineNames()
+  );
   const healthRecoveryRanRef = useRef(false);
   const healthRefreshEpochRef = useRef(0);
   const lastRendezvousRefreshAtRef = useRef(0);
@@ -483,16 +495,29 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   const refreshServerHealth = useCallback(async () => {
     const epoch = ++healthRefreshEpochRef.current;
     const servers = serversRef.current;
-    const entries = await Promise.all(
-      servers.map(async (server) => {
-        const probe = await probeServerBaseUrl(server.baseUrl);
-        return [server.id, statusFromProbe(server.baseUrl, probe)] as const;
-      })
+    const probes = await Promise.all(
+      servers.map(async (server) => ({
+        server,
+        probe: await probeServerBaseUrl(server.baseUrl),
+      }))
     );
-    const next = Object.fromEntries(entries);
+    const next = Object.fromEntries(
+      probes.map(({ server, probe }) => [server.id, statusFromProbe(server.baseUrl, probe)])
+    );
     if (epoch !== healthRefreshEpochRef.current) {
       return next;
     }
+    setEngineNames((current) => {
+      const updated = applyServerEngineNameProbes(
+        current,
+        probes.map(({ server, probe }) => ({ server, engineName: probe.engineName })),
+        serversRef.current
+      );
+      if (updated !== current) {
+        writeStoredServerEngineNames(updated);
+      }
+      return updated;
+    });
     // A tunnel-backed engine dropping offline is the usual first sign of a
     // rotated public URL: look the new endpoint up right away instead of
     // waiting for the slow registry cadence.
@@ -632,6 +657,11 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     return next;
   }, [dedupedServers, serverStatusById]);
 
+  const engineNameById = useMemo(
+    () => engineNamesForServers(engineNames, state.servers),
+    [engineNames, state.servers]
+  );
+
   const value = useMemo<ServerConnectionsContextValue>(() => {
     const selected =
       state.servers.find((server) => server.id === state.activeServerId) ??
@@ -654,6 +684,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       state,
       servers: state.servers,
       serverStatusById,
+      engineNameById,
       onlineServers,
       activeServer,
       hasServer,
@@ -668,6 +699,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     };
   }, [
     deleteServer,
+    engineNameById,
     onlineServers,
     ready,
     refreshServerHealth,
