@@ -4,10 +4,10 @@ import type { RendezvousRecord, RendezvousStore } from "./rendezvous-store";
 const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CIPHERTEXT_PATTERN = /^[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{32,4096}$/;
-const RECORD_TTL_SECONDS = 90;
+const RECORD_TTL_SECONDS = 15 * 60;
 /**
  * A found record may sit in the CDN for a few seconds: engines re-publish
- * every 30 s (older installs 15 s) and clients poll no faster than every 10 s,
+ * every 5 min (older installs 15-30 s) and legacy clients poll periodically,
  * so several devices of one user following the same engine collapse into one
  * origin hit without anyone seeing an endpoint staler than the poll already
  * allows. Misses (404) and every error stay uncached so a fresh publish is

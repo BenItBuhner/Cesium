@@ -46,7 +46,12 @@ class FakeChild extends EventEmitter {
   }
 }
 
-type FetchRequest = { url: string; authorization: string | null; body: unknown };
+type FetchRequest = {
+  url: string;
+  authorization: string | null;
+  protocolVersion: string | null;
+  body: unknown;
+};
 
 function makeFetch(requests: FetchRequest[] = []): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
@@ -63,10 +68,13 @@ function makeFetch(requests: FetchRequest[] = []): typeof fetch {
         }
       );
     }
-    if (href.includes("/api/rendezvous/")) {
+    if (href.includes("/rendezvous/")) {
       requests.push({
         url: href,
         authorization: new Headers(init?.headers).get("authorization"),
+        protocolVersion: new Headers(init?.headers).get(
+          "x-cesium-rendezvous-version"
+        ),
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       return new Response(JSON.stringify({ ok: true }), {
@@ -217,6 +225,7 @@ test("stable connect link contains read secret but excludes write secret", async
   assert.match(connectUrl, /^https:\/\/web\.example\/agent#cesiumConnect=/);
   const writeSecret = requests[0]?.authorization?.replace(/^Bearer /, "");
   assert.ok(writeSecret);
+  assert.equal(requests[0]?.protocolVersion, "2");
   const fragment = connectUrl.split("cesiumConnect=")[1];
   const decoded = JSON.parse(Buffer.from(fragment, "base64url").toString("utf8")) as {
     secret: string;
@@ -225,6 +234,59 @@ test("stable connect link contains read secret but excludes write secret", async
   assert.notEqual(decoded.secret, writeSecret);
   assert.equal(decoded.registryBaseUrl, "https://web.example");
   assert.equal(connectUrl.includes(writeSecret), false);
+  await manager.disable();
+});
+
+test("rendezvous failures do not restart or disable a healthy public tunnel", async () => {
+  const manager = makeManager({
+    fetch: (async (url: string | URL | Request) => {
+      const href = url instanceof Request ? url.url : String(url);
+      if (href.endsWith("/health")) {
+        return Response.json({
+          ok: true,
+          instanceId: process.env.CESIUM_INSTANCE_ID,
+        });
+      }
+      return Response.json({ error: "Account blocked" }, { status: 402 });
+    }) as typeof fetch,
+  });
+  const result = await manager.enable({ webAppUrl: "https://web.example" });
+  assert.equal(result.status.enabled, true);
+  assert.equal(result.status.tunnel.running, true);
+  assert.equal(result.status.rendezvous.lastPublishedAt, null);
+  assert.match(result.status.rendezvous.lastError ?? "", /Account blocked/);
+  await manager.disable();
+});
+
+test("engine publishes directly to a configured Convex rendezvous endpoint", async () => {
+  const requests: FetchRequest[] = [];
+  const manager = makeManager({ fetch: makeFetch(requests) });
+  const now = Date.now();
+  manager.replaceConfigForTests({
+    schemaVersion: 1,
+    enabled: false,
+    webAppUrl: "https://web.example",
+    rendezvousBaseUrl: "https://deployment.convex.site/rendezvous",
+    provider: "auto",
+    serverId: "server_1234567890abcdefghijklmnop",
+    rendezvousReadSecret: "read_secret_1234567890abcdefghijklmnopqrstuv",
+    rendezvousWriteSecret: "write_secret_1234567890abcdefghijklmnopqrstu",
+    managedAuthUsername: null,
+    managedAuthPassword: null,
+    credentialsManagerGenerated: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const result = await manager.enable();
+  assert.equal(
+    requests[0]?.url,
+    "https://deployment.convex.site/rendezvous/server_1234567890abcdefghijklmnop"
+  );
+  const fragment = result.status.connectUrl?.split("cesiumConnect=")[1] ?? "";
+  const decoded = JSON.parse(Buffer.from(fragment, "base64url").toString("utf8")) as {
+    registryBaseUrl: string;
+  };
+  assert.equal(decoded.registryBaseUrl, "https://deployment.convex.site");
   await manager.disable();
 });
 
@@ -338,14 +400,14 @@ test("disable stops only the owned child and status redacts password and write s
   assert.equal(disabled.publicUrl, null);
 });
 
-test("rendezvous heartbeat defaults to 30 s and honours CESIUM_RENDEZVOUS_INTERVAL", () => {
-  // Records live 90 s on the registry: 30 s survives two missed beats while
-  // halving the billed invocations of the old 15 s cadence.
-  assert.equal(DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, 30_000);
-  assert.equal(defaultRendezvousHeartbeatIntervalMs({}), 30_000);
+test("rendezvous heartbeat defaults to 5 min and honours CESIUM_RENDEZVOUS_INTERVAL", () => {
+  // Records live 15 min: five minutes survives two missed beats, and tunnel
+  // URL rotations publish immediately instead of waiting for this timer.
+  assert.equal(DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, 5 * 60_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({}), 5 * 60_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "45" }), 45_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: " 15 " }), 15_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "1" }), 5_000);
-  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "soon" }), 30_000);
-  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "" }), 30_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "soon" }), 5 * 60_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "" }), 5 * 60_000);
 });

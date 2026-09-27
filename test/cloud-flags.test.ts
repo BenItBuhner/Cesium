@@ -5,6 +5,7 @@ import {
   getClerkPublishableKey,
   getCloudMode,
   getConvexUrl,
+  getRendezvousHttpUrl,
   isCloudExplicitlyDisabled,
   isSignInRequired,
 } from "../src/lib/cloud/cloud-flags.ts";
@@ -20,6 +21,9 @@ const VARS = [
   "NEXT_PUBLIC_CONVEX_URL",
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN",
+  "NEXT_PUBLIC_CESIUM_RENDEZVOUS_URL",
+  "NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD",
+  "VERCEL_ENV",
 ] as const;
 
 function setEnv(values: Partial<Record<(typeof VARS)[number], string>>) {
@@ -36,19 +40,34 @@ function setEnv(values: Partial<Record<(typeof VARS)[number], string>>) {
 describe("cloud flags", () => {
   afterEach(() => setEnv({}));
 
-  test("default (no env) uses committed production clerk defaults", () => {
+  test("unconfigured dev and agent builds stay local-only", () => {
     setEnv({});
-    assert.equal(getCloudMode(), "clerk");
-    assert.equal(getConvexUrl(), CESIUM_CLOUD_DEFAULTS.convexUrl);
-    assert.equal(getClerkPublishableKey(), CESIUM_CLOUD_DEFAULTS.clerkPublishableKey);
+    assert.equal(getCloudMode(), "disabled");
+    assert.equal(getConvexUrl(), null);
+    assert.equal(getRendezvousHttpUrl(), null);
+    assert.equal(getClerkPublishableKey(), null);
     assert.equal(isSignInRequired(), false);
     assert.equal(isCloudExplicitlyDisabled(), false);
   });
 
-  test("convex url alone still uses the committed clerk default", () => {
+  test("convex url alone selects isolated device mode", () => {
     setEnv({ NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:3210" });
-    assert.equal(getCloudMode(), "clerk");
+    assert.equal(getCloudMode(), "device");
     assert.equal(isSignInRequired(), false);
+  });
+
+  test("Vercel production uses committed production defaults", () => {
+    setEnv({ NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD: "1" });
+    assert.equal(getCloudMode(), "clerk");
+    assert.equal(getConvexUrl(), CESIUM_CLOUD_DEFAULTS.convexUrl);
+    assert.equal(getRendezvousHttpUrl(), CESIUM_CLOUD_DEFAULTS.rendezvousHttpUrl);
+    assert.equal(getClerkPublishableKey(), CESIUM_CLOUD_DEFAULTS.clerkPublishableKey);
+  });
+
+  test("explicit cloud opt-in uses committed defaults outside Vercel", () => {
+    setEnv({ NEXT_PUBLIC_CESIUM_CLOUD: "1" });
+    assert.equal(getCloudMode(), "clerk");
+    assert.equal(getConvexUrl(), CESIUM_CLOUD_DEFAULTS.convexUrl);
   });
 
   test("explicit clerk off-value keeps device mode", () => {

@@ -9,6 +9,8 @@ import {
   parseConnectSessionHash,
   parseRendezvousBootstrapHash,
   resolveRendezvousEndpoint,
+  resolveRendezvousEndpoints,
+  RendezvousLookupError,
   type RendezvousLocator,
 } from "../packages/client/src/rendezvous.ts";
 
@@ -104,8 +106,12 @@ describe("rendezvous client protocol", () => {
 
   test("resolves a fresh encrypted registry record", async () => {
     const now = Date.now();
-    globalThis.fetch = async () =>
-      Response.json({
+    globalThis.fetch = async (_url, init) => {
+      assert.equal(
+        new Headers(init?.headers).get("x-cesium-rendezvous-version"),
+        "2"
+      );
+      return Response.json({
         record: {
           version: 1,
           serverId: locator.serverId,
@@ -117,10 +123,77 @@ describe("rendezvous client protocol", () => {
           expiresAt: now + 60_000,
         },
       });
+    };
 
     const endpoint = await resolveRendezvousEndpoint(locator);
     assert.equal(endpoint?.baseUrl, "https://current-tunnel.example");
     assert.equal(endpoint?.recordUpdatedAt, now);
+  });
+
+  test("resolves every saved server in one batched registry request", async () => {
+    const now = Date.now();
+    const second = {
+      ...locator,
+      serverId: "server_abcdefghijklmnopqrstuvwxyz12",
+    };
+    let calls = 0;
+    globalThis.fetch = async (_url, init) => {
+      calls += 1;
+      assert.equal(
+        new Headers(init?.headers).get("x-cesium-rendezvous-version"),
+        "2"
+      );
+      const body = JSON.parse(String(init?.body)) as { serverIds: string[] };
+      assert.deepEqual(body.serverIds, [locator.serverId, second.serverId]);
+      return Response.json({
+        records: [
+          {
+            version: 1,
+            serverId: locator.serverId,
+            ciphertext: encryptEndpoint({
+              baseUrl: "https://first.example",
+              issuedAt: now,
+            }),
+            updatedAt: now,
+            expiresAt: now + 60_000,
+          },
+          null,
+        ],
+      });
+    };
+    const endpoints = await resolveRendezvousEndpoints([locator, second]);
+    assert.equal(calls, 1);
+    assert.equal(endpoints.get(locator.serverId)?.baseUrl, "https://first.example");
+    assert.equal(endpoints.get(second.serverId), null);
+  });
+
+  test("uses Convex HTTP directly and classifies deployment backoff errors", async () => {
+    const convexLocator = {
+      ...locator,
+      registryBaseUrl: "https://example.convex.site",
+    };
+    let requestedUrl = "";
+    globalThis.fetch = async (url) => {
+      requestedUrl = String(url);
+      return Response.json(
+        { error: "Account blocked" },
+        { status: 402, headers: { "Retry-After": "120" } }
+      );
+    };
+    await assert.rejects(
+      resolveRendezvousEndpoint(convexLocator),
+      (error: unknown) => {
+        assert.ok(error instanceof RendezvousLookupError);
+        assert.equal(error.status, 402);
+        assert.equal(error.retryAfterMs, 120_000);
+        assert.equal(error.isGlobalFailure, true);
+        return true;
+      }
+    );
+    assert.equal(
+      requestedUrl,
+      `https://example.convex.site/rendezvous/${locator.serverId}`
+    );
   });
 
   test("rejects insecure registries and endpoints", async () => {

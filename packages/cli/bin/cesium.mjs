@@ -115,6 +115,13 @@ async function runInstall(args) {
   if (localOnly) {
     env.CESIUM_LOCAL_ONLY = "1";
     delete env.CESIUM_WEB_URL;
+  } else if (
+    !env.CESIUM_WEB_URL?.trim() &&
+    (env.CURSOR_AGENT?.trim() || env.CI?.trim())
+  ) {
+    // Unconfigured automation must never register throwaway engines against
+    // the production rendezvous service.
+    env.CESIUM_LOCAL_ONLY = "1";
   } else if (!env.CESIUM_WEB_URL?.trim()) {
     env.CESIUM_WEB_URL = DEFAULT_PRODUCTION_WEB_URL;
   }

@@ -36,6 +36,8 @@ import {
   isBrowserMachineOffered,
   isBrowserMachineUrl,
   isCesiumAccountSiteUrl,
+  publishCloudRendezvousSnapshot,
+  type EncryptedRendezvousRecord,
   type RendezvousLocator,
   type ServerConnection,
 } from "@cesium/client";
@@ -632,6 +634,32 @@ function CloudBridge({
   const identityReady = mode !== "device" || deviceKey !== null;
   const active = authReady && signedIn && identityReady;
 
+  const [pageVisible, setPageVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      setPageVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+  const readRendezvousServerIds = () =>
+    [...new Set(
+      readStoredServerConnectionsState(getConfiguredServerBaseUrl())
+        .servers.flatMap((server) => (server.rendezvous ? [server.rendezvous.serverId] : []))
+    )].sort();
+  const [rendezvousServerIds, setRendezvousServerIds] = useState<string[]>(
+    readRendezvousServerIds
+  );
+  useEffect(
+    () =>
+      getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, () => {
+        setRendezvousServerIds(readRendezvousServerIds());
+      }),
+    []
+  );
+
   const convex = useConvex();
   // Client clock captured once after mount (queries must stay deterministic,
   // so the server never reads its own clock). Only used to filter expired
@@ -648,6 +676,24 @@ function CloudBridge({
     api.context.bootstrap,
     active ? bootstrapArgs : "skip"
   ) as CloudBootstrap | null | undefined;
+  const rendezvousRecords = useQuery(
+    api.rendezvous.getBatch,
+    active && pageVisible && rendezvousServerIds.length > 0
+      ? { serverIds: rendezvousServerIds }
+      : "skip"
+  ) as Array<EncryptedRendezvousRecord | null> | undefined;
+  useEffect(() => {
+    if (!active) {
+      publishCloudRendezvousSnapshot(null);
+      return;
+    }
+    if (rendezvousRecords) {
+      publishCloudRendezvousSnapshot({
+        serverIds: rendezvousServerIds,
+        records: rendezvousRecords,
+      });
+    }
+  }, [active, rendezvousRecords, rendezvousServerIds]);
 
   // Separate from bootstrap: catalogs carry whole rail listings and change
   // on every agent turn somewhere, so they must not re-fire the bootstrap

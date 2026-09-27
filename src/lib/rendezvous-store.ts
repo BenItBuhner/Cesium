@@ -16,6 +16,7 @@ export type RendezvousWriteResult = "ok" | "forbidden";
 
 export interface RendezvousStore {
   get(serverId: string): Promise<RendezvousRecord | null>;
+  getMany(serverIds: string[]): Promise<Array<RendezvousRecord | null>>;
   claimAndPut(
     serverId: string,
     secretHash: string,
@@ -38,6 +39,10 @@ export class UpstashRendezvousStore implements RendezvousStore {
 
   async get(serverId: string): Promise<RendezvousRecord | null> {
     return (await this.redis.get<RendezvousRecord>(`cesium:rendezvous:record:${serverId}`)) ?? null;
+  }
+
+  async getMany(serverIds: string[]): Promise<Array<RendezvousRecord | null>> {
+    return await Promise.all(serverIds.map(async (serverId) => await this.get(serverId)));
   }
 
   async claimAndPut(
@@ -107,10 +112,9 @@ export class MemoryRateLimiter {
 }
 
 /**
- * Engines heartbeat every 30 s (older installs still every 15 s); a record
- * lives 90 s. Re-publishing the same (server, secret) within this window is
- * skipped so a fast-beating engine costs about half the Convex writes without
- * any client seeing a stale endpoint.
+ * Current engines heartbeat every five minutes (older installs still every
+ * 15-30 s). Re-publishing the same (server, secret) within this short window
+ * is skipped so old engines cost fewer Convex writes.
  */
 const CONVEX_PUBLISH_DEBOUNCE_MS = 20_000;
 
@@ -118,9 +122,9 @@ type StoredRendezvousRecord = Omit<RendezvousRecord, "version"> & { version: num
 
 type ConvexRendezvousClient = {
   query: (
-    name: typeof api.rendezvous.get,
-    args: { serverId: string; now?: number }
-  ) => Promise<StoredRendezvousRecord | null>;
+    name: typeof api.rendezvous.get | typeof api.rendezvous.getBatch,
+    args: { serverId: string; now?: number } | { serverIds: string[]; now?: number }
+  ) => Promise<StoredRendezvousRecord | null | Array<StoredRendezvousRecord | null>>;
   mutation: (
     name: typeof api.rendezvous.claimAndPut,
     args: { serverId: string; secretHash: string; ciphertext: string; ttlSeconds: number }
@@ -145,8 +149,19 @@ export class ConvexRendezvousStore implements RendezvousStore {
   }
 
   async get(serverId: string): Promise<RendezvousRecord | null> {
-    const record = await this.client.query(api.rendezvous.get, { serverId, now: this.now() });
+    const record = await this.client.query(api.rendezvous.get, {
+      serverId,
+      now: this.now(),
+    }) as StoredRendezvousRecord | null;
     return record ? { ...record, version: 1 } : null;
+  }
+
+  async getMany(serverIds: string[]): Promise<Array<RendezvousRecord | null>> {
+    const records = await this.client.query(api.rendezvous.getBatch, {
+      serverIds,
+      now: this.now(),
+    }) as Array<StoredRendezvousRecord | null>;
+    return records.map((record) => (record ? { ...record, version: 1 } : null));
   }
 
   async claimAndPut(

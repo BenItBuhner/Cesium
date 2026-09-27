@@ -37,13 +37,49 @@ export function isCloudExplicitlyDisabled(): boolean {
   return raw !== undefined && raw !== "" && OFF_VALUES.has(raw);
 }
 
+/**
+ * Production defaults must never make an unconfigured checkout contact the
+ * live account backend. Vercel production and packaged file:// apps opt in
+ * implicitly; dev, preview, CI and cloud-agent builds require explicit env.
+ */
+export function shouldUseCommittedCloudDefaults(): boolean {
+  const raw = process.env.NEXT_PUBLIC_CESIUM_CLOUD?.trim().toLowerCase();
+  if (raw && ON_VALUES.has(raw)) {
+    return true;
+  }
+  if (
+    process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD === "1" ||
+    process.env.VERCEL_ENV?.trim().toLowerCase() === "production"
+  ) {
+    return true;
+  }
+  return (
+    typeof window !== "undefined" &&
+    (window.location.protocol === "file:" || window.location.protocol === "capacitor:")
+  );
+}
+
 export function getConvexUrl(): string | null {
   if (isCloudExplicitlyDisabled()) {
     return null;
   }
+  const configured = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
   const url =
-    process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ||
-    CESIUM_CLOUD_DEFAULTS.convexUrl.trim();
+    configured ||
+    (shouldUseCommittedCloudDefaults() ? CESIUM_CLOUD_DEFAULTS.convexUrl.trim() : "");
+  return url ? url : null;
+}
+
+export function getRendezvousHttpUrl(): string | null {
+  if (isCloudExplicitlyDisabled()) {
+    return null;
+  }
+  const configured = process.env.NEXT_PUBLIC_CESIUM_RENDEZVOUS_URL?.trim();
+  const url =
+    configured ||
+    (shouldUseCommittedCloudDefaults()
+      ? CESIUM_CLOUD_DEFAULTS.rendezvousHttpUrl.trim()
+      : "");
   return url ? url : null;
 }
 
@@ -59,7 +95,9 @@ export function getClerkPublishableKey(): string | null {
     }
     return trimmed;
   }
-  const key = CESIUM_CLOUD_DEFAULTS.clerkPublishableKey.trim();
+  const key = shouldUseCommittedCloudDefaults()
+    ? CESIUM_CLOUD_DEFAULTS.clerkPublishableKey.trim()
+    : "";
   return key ? key : null;
 }
 

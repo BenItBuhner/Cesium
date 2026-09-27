@@ -2,6 +2,8 @@
 
 export const RENDEZVOUS_FRAGMENT_KEY = "cesiumConnect";
 export const CONNECT_SESSION_FRAGMENT_KEY = "cesiumSession";
+export const RENDEZVOUS_PROTOCOL_HEADER = "X-Cesium-Rendezvous-Version";
+export const RENDEZVOUS_PROTOCOL_VERSION = "2";
 
 export type RendezvousLocator = {
   version: 1;
@@ -24,19 +26,38 @@ export type ResolvedRendezvousEndpoint = {
   recordExpiresAt: number;
 };
 
+export type EncryptedRendezvousRecord = {
+  version: number;
+  serverId: string;
+  ciphertext: string;
+  updatedAt: number;
+  expiresAt: number;
+};
+
 type RendezvousRecordResponse = {
-  record?: {
-    version?: unknown;
-    serverId?: unknown;
-    ciphertext?: unknown;
-    updatedAt?: unknown;
-    expiresAt?: unknown;
-  } | null;
+  record?: Partial<EncryptedRendezvousRecord> | null;
   error?: string;
 };
 
 const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{24,80}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const MAX_BATCH_SIZE = 250;
+
+export class RendezvousLookupError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly retryAfterMs: number | null
+  ) {
+    super(message);
+    this.name = "RendezvousLookupError";
+  }
+
+  /** Deployment/account failures apply to every server using this registry. */
+  get isGlobalFailure(): boolean {
+    return this.status === 402 || this.status === 429 || this.status >= 500;
+  }
+}
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -79,6 +100,44 @@ function normalizeRegistryBaseUrl(value: string): string {
   url.search = "";
   url.hash = "";
   return url.origin;
+}
+
+function registryRecordUrl(registryBaseUrl: string, serverId: string): string {
+  const origin = normalizeRegistryBaseUrl(registryBaseUrl);
+  const hostname = new URL(origin).hostname;
+  const path = hostname.endsWith(".convex.site")
+    ? `/rendezvous/${encodeURIComponent(serverId)}`
+    : `/api/rendezvous/${encodeURIComponent(serverId)}`;
+  return new URL(path, origin).toString();
+}
+
+function registryBatchUrl(registryBaseUrl: string): string {
+  const origin = normalizeRegistryBaseUrl(registryBaseUrl);
+  const hostname = new URL(origin).hostname;
+  return new URL(
+    hostname.endsWith(".convex.site") ? "/rendezvous/batch" : "/api/rendezvous",
+    origin
+  ).toString();
+}
+
+function retryAfterMs(response: Response): number | null {
+  const raw = response.headers.get("retry-after")?.trim();
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
+}
+
+async function rendezvousError(response: Response, fallback: string): Promise<RendezvousLookupError> {
+  const payload = (await response.json().catch(() => ({}))) as { error?: unknown };
+  return new RendezvousLookupError(
+    typeof payload.error === "string" ? payload.error : `${fallback} (${response.status}).`,
+    response.status,
+    retryAfterMs(response)
+  );
 }
 
 export function normalizeRendezvousLocator(
@@ -247,21 +306,29 @@ export async function resolveRendezvousEndpoint(
   options?: { signal?: AbortSignal }
 ): Promise<ResolvedRendezvousEndpoint | null> {
   const response = await fetch(
-    `${normalizeRegistryBaseUrl(locator.registryBaseUrl)}/api/rendezvous/${encodeURIComponent(locator.serverId)}`,
+    registryRecordUrl(locator.registryBaseUrl, locator.serverId),
     {
       method: "GET",
       cache: "no-store",
+      headers: { [RENDEZVOUS_PROTOCOL_HEADER]: RENDEZVOUS_PROTOCOL_VERSION },
       signal: options?.signal,
     }
   );
   if (response.status === 404) {
     return null;
   }
-  const payload = (await response.json().catch(() => ({}))) as RendezvousRecordResponse;
   if (!response.ok) {
-    throw new Error(payload.error || `Rendezvous lookup failed (${response.status}).`);
+    throw await rendezvousError(response, "Rendezvous lookup failed");
   }
-  const record = payload.record;
+  const payload = (await response.json().catch(() => ({}))) as RendezvousRecordResponse;
+  return await resolveRendezvousRecord(locator, payload.record ?? null);
+}
+
+export async function resolveRendezvousRecord(
+  locator: RendezvousLocator,
+  record: Partial<EncryptedRendezvousRecord> | null,
+  now = Date.now()
+): Promise<ResolvedRendezvousEndpoint | null> {
   if (
     !record ||
     record.version !== 1 ||
@@ -269,7 +336,7 @@ export async function resolveRendezvousEndpoint(
     typeof record.ciphertext !== "string" ||
     typeof record.updatedAt !== "number" ||
     typeof record.expiresAt !== "number" ||
-    record.expiresAt <= Date.now()
+    record.expiresAt <= now
   ) {
     return null;
   }
@@ -279,4 +346,57 @@ export async function resolveRendezvousEndpoint(
     recordUpdatedAt: record.updatedAt,
     recordExpiresAt: record.expiresAt,
   };
+}
+
+/**
+ * Resolve every locator using one request per registry, not one request per
+ * server. Cesium Cloud locators all share one registry, so a tab performs one
+ * lookup regardless of account size.
+ */
+export async function resolveRendezvousEndpoints(
+  locators: RendezvousLocator[],
+  options?: { signal?: AbortSignal }
+): Promise<Map<string, ResolvedRendezvousEndpoint | null>> {
+  const results = new Map<string, ResolvedRendezvousEndpoint | null>();
+  const groups = new Map<string, RendezvousLocator[]>();
+  for (const locator of locators.slice(0, MAX_BATCH_SIZE)) {
+    const origin = normalizeRegistryBaseUrl(locator.registryBaseUrl);
+    const group = groups.get(origin) ?? [];
+    if (!group.some((candidate) => candidate.serverId === locator.serverId)) {
+      group.push(locator);
+    }
+    groups.set(origin, group);
+  }
+  await Promise.all(
+    [...groups.entries()].map(async ([origin, group]) => {
+      const response = await fetch(registryBatchUrl(origin), {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          [RENDEZVOUS_PROTOCOL_HEADER]: RENDEZVOUS_PROTOCOL_VERSION,
+        },
+        body: JSON.stringify({ serverIds: group.map((locator) => locator.serverId) }),
+        signal: options?.signal,
+      });
+      if (!response.ok) {
+        throw await rendezvousError(response, "Rendezvous batch lookup failed");
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        records?: Array<Partial<EncryptedRendezvousRecord> | null>;
+      };
+      if (!Array.isArray(payload.records) || payload.records.length !== group.length) {
+        throw new Error("Rendezvous batch lookup returned an invalid response.");
+      }
+      await Promise.all(
+        group.map(async (locator, index) => {
+          results.set(
+            locator.serverId,
+            await resolveRendezvousRecord(locator, payload.records?.[index] ?? null)
+          );
+        })
+      );
+    })
+  );
+  return results;
 }

@@ -146,6 +146,7 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$INSTALL_CWD}"
 PORT="${CESIUM_PORT:-$(existing_env_value PORT)}"
 PORT="${PORT:-9100}"
 DEFAULT_PRODUCTION_WEB_URL="${CESIUM_DEFAULT_WEB_URL:-https://cesium.techlitnow.com}"
+DEFAULT_PRODUCTION_RENDEZVOUS_URL="${CESIUM_DEFAULT_RENDEZVOUS_URL:-https://insightful-wolverine-140.convex.site/rendezvous}"
 LOCAL_ONLY="${CESIUM_LOCAL_ONLY:-0}"
 WEB_URL="${CESIUM_WEB_URL:-$(existing_env_value CESIUM_WEB_URL)}"
 AUTH_USERNAME="${CESIUM_AUTH_USERNAME:-$(existing_env_value OPENCURSOR_AUTH_USERNAME)}"
@@ -176,7 +177,8 @@ SKIP_AUTOSTART="${CESIUM_SKIP_AUTOSTART:-0}"
 INSTALL_BROWSER="${CESIUM_INSTALL_BROWSER:-$(existing_env_value CESIUM_INSTALL_BROWSER)}"
 INSTALL_BROWSER="${INSTALL_BROWSER:-0}"
 BROWSERS_DIR="$CESIUM_HOME/browsers"
-if [[ "$LOCAL_ONLY" == "1" ]]; then
+if [[ "$LOCAL_ONLY" == "1" ]] ||
+  { [[ -n "${CURSOR_AGENT:-}" || -n "${CI:-}" ]] && [[ -z "$WEB_URL" ]]; }; then
   WEB_URL=""
   SKIP_TUNNEL=1
 elif [[ -z "$WEB_URL" ]]; then
@@ -204,7 +206,11 @@ if [[ -n "$WEB_URL" ]]; then
   fi
 fi
 if [[ -z "$RENDEZVOUS_URL" && -n "$WEB_ORIGIN" ]]; then
-  RENDEZVOUS_URL="$WEB_ORIGIN/api/rendezvous"
+  if [[ "$WEB_ORIGIN" == "$DEFAULT_PRODUCTION_WEB_URL" ]]; then
+    RENDEZVOUS_URL="$DEFAULT_PRODUCTION_RENDEZVOUS_URL"
+  else
+    RENDEZVOUS_URL="$WEB_ORIGIN/api/rendezvous"
+  fi
 fi
 if [[ -n "$RENDEZVOUS_URL" ]]; then
   if [[ "$RENDEZVOUS_URL" =~ ^https://[^/]+(/.*)?$ ]] ||
@@ -509,7 +515,7 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_RENDEZVOUS_READ_SECRET "$RENDEZVOUS_READ_SECRET"
   write_env_value CESIUM_RENDEZVOUS_WRITE_SECRET "$RENDEZVOUS_WRITE_SECRET"
   write_env_value CESIUM_RENDEZVOUS_REQUIRED "$RENDEZVOUS_REQUIRED"
-  write_env_value CESIUM_RENDEZVOUS_INTERVAL "${CESIUM_RENDEZVOUS_INTERVAL:-30}"
+  write_env_value CESIUM_RENDEZVOUS_INTERVAL "${CESIUM_RENDEZVOUS_INTERVAL:-300}"
   write_env_value CESIUM_SERVICE_MANAGER "$SERVICE_MANAGER"
   write_env_value CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS "1"
   write_env_value CESIUM_TUNNEL_ENABLED "$TUNNEL_ENABLED"

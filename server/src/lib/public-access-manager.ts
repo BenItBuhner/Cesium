@@ -19,6 +19,8 @@ export type PublicAccessConfig = {
   schemaVersion: 1;
   enabled: boolean;
   webAppUrl: string;
+  /** Base URL ending in /rendezvous; may be Convex HTTP, not the web app. */
+  rendezvousBaseUrl?: string;
   provider: PublicAccessProvider;
   customPublicUrl?: string;
   serverId: string;
@@ -110,15 +112,14 @@ type EnableResult = {
 const CONFIG_FILE = path.join(DATA_DIR, "profile", "public-access.json");
 
 /**
- * Rendezvous heartbeat cadence. A record lives 90 s on the registry, so a
- * publish every 30 s survives two missed beats before clients see it expire.
- * Every publish is a billed function invocation on the hosted web app
- * (~86K a month per always-on engine at 30 s, ~173K at the old 15 s), which
- * is why the default is not tighter. `CESIUM_RENDEZVOUS_INTERVAL` (seconds,
+ * Rendezvous heartbeat cadence. A record lives 15 minutes and URL rotations
+ * publish immediately, so a 5-minute keepalive survives two missed beats.
+ * The heartbeat now goes directly to Convex, but keeping it sparse also
+ * protects Convex's function quota. `CESIUM_RENDEZVOUS_INTERVAL` (seconds,
  * the knob the installer writes into server.env for the legacy bash
  * supervisor) overrides it; anything under 5 s is clamped.
  */
-export const DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 30_000;
+export const DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 const MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5_000;
 
 export function defaultRendezvousHeartbeatIntervalMs(
@@ -172,6 +173,29 @@ function normalizeHttpOrigin(value: unknown, fieldName: string): string {
   url.search = "";
   url.hash = "";
   return url.origin;
+}
+
+function normalizeRendezvousBaseUrl(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new PublicAccessError(`${fieldName} is required.`);
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new PublicAccessError(`${fieldName} must be an absolute URL.`);
+  }
+  if (
+    url.username ||
+    url.password ||
+    (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalHttpHost(url.hostname)))
+  ) {
+    throw new PublicAccessError(`${fieldName} must use HTTPS, except local HTTP for development.`);
+  }
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/+$/, "");
 }
 
 function normalizePublicBaseUrl(value: unknown, fieldName: string): string {
@@ -299,6 +323,14 @@ function parsePersistedConfig(value: PublicAccessConfig | null): PublicAccessCon
     schemaVersion: 1,
     enabled: value.enabled === true,
     webAppUrl: normalizeHttpOrigin(value.webAppUrl, "webAppUrl"),
+    ...(value.rendezvousBaseUrl
+      ? {
+          rendezvousBaseUrl: normalizeRendezvousBaseUrl(
+            value.rendezvousBaseUrl,
+            "rendezvousBaseUrl"
+          ),
+        }
+      : {}),
     provider: normalizeProvider(value.provider),
     ...(value.customPublicUrl
       ? { customPublicUrl: normalizePublicBaseUrl(value.customPublicUrl, "customPublicUrl") }
@@ -334,7 +366,8 @@ export class PublicAccessManager {
   private lastTunnelError: string | null = null;
   private lastRendezvousError: string | null = null;
   private lastPublishedAt: number | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private rendezvousFailures = 0;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private runtimeAuthOwnedByManager = false;
@@ -526,6 +559,7 @@ export class PublicAccessManager {
     this.lastTunnelError = null;
     this.lastRendezvousError = null;
     this.lastPublishedAt = null;
+    this.rendezvousFailures = 0;
     this.runtimeAuthOwnedByManager = false;
   }
 
@@ -556,7 +590,17 @@ export class PublicAccessManager {
         await readJsonFile<PublicAccessConfig | null>(this.configFilePath, null)
       );
       this.config = persisted ?? this.bootstrapConfigFromEnv();
-      if (!persisted && this.config) {
+      const envRendezvousBaseUrl = process.env.CESIUM_RENDEZVOUS_URL?.trim();
+      const normalizedEnvRendezvousBaseUrl = envRendezvousBaseUrl
+        ? normalizeRendezvousBaseUrl(envRendezvousBaseUrl, "CESIUM_RENDEZVOUS_URL")
+        : null;
+      const rendezvousChanged =
+        Boolean(this.config && normalizedEnvRendezvousBaseUrl) &&
+        this.config?.rendezvousBaseUrl !== normalizedEnvRendezvousBaseUrl;
+      if (this.config && normalizedEnvRendezvousBaseUrl) {
+        this.config.rendezvousBaseUrl = normalizedEnvRendezvousBaseUrl;
+      }
+      if ((!persisted || rendezvousChanged) && this.config) {
         await this.persistConfig();
       }
       if (this.config?.credentialsManagerGenerated && !isAuthEnabled()) {
@@ -588,6 +632,14 @@ export class PublicAccessManager {
       schemaVersion: 1,
       enabled: process.env.CESIUM_TUNNEL_ENABLED?.trim() === "1",
       webAppUrl: normalizeHttpOrigin(webAppUrl, "CESIUM_WEB_URL"),
+      ...(process.env.CESIUM_RENDEZVOUS_URL?.trim()
+        ? {
+            rendezvousBaseUrl: normalizeRendezvousBaseUrl(
+              process.env.CESIUM_RENDEZVOUS_URL,
+              "CESIUM_RENDEZVOUS_URL"
+            ),
+          }
+        : {}),
       provider: normalizeProvider(process.env.CESIUM_TUNNEL_PROVIDER?.trim() || "auto"),
       ...(customPublicUrl
         ? { customPublicUrl: normalizePublicBaseUrl(customPublicUrl, "CESIUM_PUBLIC_URL") }
@@ -626,6 +678,16 @@ export class PublicAccessManager {
       schemaVersion: 1,
       enabled: enabling ? true : existing?.enabled === true,
       webAppUrl,
+      ...(existing?.rendezvousBaseUrl
+        ? { rendezvousBaseUrl: existing.rendezvousBaseUrl }
+        : process.env.CESIUM_RENDEZVOUS_URL?.trim()
+          ? {
+              rendezvousBaseUrl: normalizeRendezvousBaseUrl(
+                process.env.CESIUM_RENDEZVOUS_URL,
+                "CESIUM_RENDEZVOUS_URL"
+              ),
+            }
+          : {}),
       provider: input.provider !== undefined ? normalizeProvider(input.provider) : existing?.provider ?? "auto",
       ...(customPublicUrl ? { customPublicUrl } : {}),
       serverId: existing?.serverId ?? base64UrlRandom(24),
@@ -709,13 +771,13 @@ export class PublicAccessManager {
       this.activeProvider = "custom";
       await this.writePublicUrlFile(config.customPublicUrl);
       this.startTimers();
-      await this.publishRendezvous();
+      await this.publishRendezvousBestEffort();
       await this.writeDisabledMarker(false);
       return;
     }
     await this.startTunnel(config.provider);
     this.startTimers();
-    await this.publishRendezvous();
+    await this.publishRendezvousBestEffort();
     await this.writeDisabledMarker(false);
   }
 
@@ -766,7 +828,7 @@ export class PublicAccessManager {
       await this.requireHealthy(publicUrl);
       this.currentPublicUrl = publicUrl;
       await this.writePublicUrlFile(publicUrl);
-      await this.publishRendezvous();
+      await this.publishRendezvousBestEffort();
     } catch {
       // Keep the last known healthy URL until the new assignment proves healthy.
     }
@@ -957,25 +1019,50 @@ export class PublicAccessManager {
   }
 
   private startTimers(): void {
-    this.heartbeatTimer = setInterval(() => {
-      void this.publishRendezvous().catch((error) => {
-        this.lastRendezvousError = error instanceof Error ? error.message : String(error);
-      });
-    }, this.heartbeatIntervalMs);
+    this.rendezvousFailures = 0;
+    this.scheduleRendezvousHeartbeat(this.heartbeatIntervalMs);
     this.healthTimer = setInterval(() => {
       void this.checkPublicHealth();
     }, this.healthIntervalMs);
-    this.heartbeatTimer.unref?.();
     this.healthTimer.unref?.();
   }
 
+  private scheduleRendezvousHeartbeat(delayMs: number): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null;
+      void this.publishRendezvousBestEffort().finally(() => {
+        if (!this.config?.enabled) return;
+        const delay = this.rendezvousFailures === 0
+          ? this.heartbeatIntervalMs
+          : Math.min(
+              15 * 60_000,
+              this.heartbeatIntervalMs * 2 ** Math.min(this.rendezvousFailures, 10)
+            );
+        this.scheduleRendezvousHeartbeat(delay);
+      });
+    }, delayMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private async publishRendezvousBestEffort(): Promise<void> {
+    try {
+      await this.publishRendezvous();
+      this.rendezvousFailures = 0;
+    } catch (error) {
+      this.rendezvousFailures += 1;
+      this.lastRendezvousError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   private stopTimers(): void {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
     if (this.healthTimer) clearInterval(this.healthTimer);
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.heartbeatTimer = null;
     this.healthTimer = null;
     this.restartTimer = null;
+    this.rendezvousFailures = 0;
   }
 
   private async checkPublicHealth(): Promise<void> {
@@ -1033,12 +1120,16 @@ export class PublicAccessManager {
   private async publishRendezvous(): Promise<void> {
     if (!this.config?.enabled || !this.currentPublicUrl || !this.activeProvider) return;
     const config = this.config;
-    const endpoint = new URL(`/api/rendezvous/${encodeURIComponent(config.serverId)}`, config.webAppUrl);
+    const base =
+      config.rendezvousBaseUrl ??
+      new URL("/api/rendezvous", config.webAppUrl).toString().replace(/\/+$/, "");
+    const endpoint = new URL(`${base.replace(/\/+$/, "")}/${encodeURIComponent(config.serverId)}`);
     const response = await this.fetch(endpoint.toString(), {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${config.rendezvousWriteSecret}`,
         "Content-Type": "application/json",
+        "X-Cesium-Rendezvous-Version": "2",
       },
       body: JSON.stringify({
         version: 1,
@@ -1059,7 +1150,7 @@ export class PublicAccessManager {
         typeof payload?.error === "string"
           ? payload.error
           : `Rendezvous publish failed (${response.status}).`;
-      throw new PublicAccessError(this.lastRendezvousError, 502);
+      throw new PublicAccessError(this.lastRendezvousError, response.status);
     }
     this.lastRendezvousError = null;
     this.lastPublishedAt = this.now();
@@ -1097,11 +1188,14 @@ export class PublicAccessManager {
   }
 
   private buildConnectUrl(config: PublicAccessConfig, publicUrl: string): string {
+    const registryBaseUrl =
+      config.rendezvousBaseUrl ??
+      new URL("/api/rendezvous", config.webAppUrl).toString();
     const payload = {
       version: 1,
       serverId: config.serverId,
       secret: config.rendezvousReadSecret,
-      registryBaseUrl: new URL(config.webAppUrl).origin,
+      registryBaseUrl: new URL(registryBaseUrl).origin,
       initialBaseUrl: new URL(publicUrl).toString().replace(/\/+$/, ""),
       label: config.label || undefined,
     };
@@ -1143,7 +1237,9 @@ export class PublicAccessManager {
         lastError: this.lastTunnelError,
       },
       rendezvous: {
-        registryOrigin: config ? new URL(config.webAppUrl).origin : null,
+        registryOrigin: config
+          ? new URL(config.rendezvousBaseUrl ?? config.webAppUrl).origin
+          : null,
         lastPublishedAt: this.lastPublishedAt,
         lastError: this.lastRendezvousError,
       },
