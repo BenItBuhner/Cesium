@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import type { ProjectSnapshot, ProjectSummary } from "@cesium/core/projects";
-import type { AgentStoredEvent } from "../src/lib/agents/types.js";
+import type { AgentConversationRecord, AgentStoredEvent } from "../src/lib/agents/types.js";
 import {
   messageText,
   startFakeChatModel,
@@ -55,10 +55,10 @@ const MODEL_ID = "projhost/kimi-k3";
 const [
   { createCesiumApp },
   { agentRuntimeManager },
-  { readConversationRecord, readConversationSnapshot },
+  { readConversationRecord, readConversationSnapshot, updateConversationRecord },
   { startAgentPromptQueueDrainListener },
   { formatMidTurnSteer },
-  { startProjectWatcher, settleProjectWatcher, kickProjectWatcher },
+  { startProjectWatcher, settleProjectWatcher, kickProjectWatcher, resumeProjectsCutOffByRestart },
   { PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, PROJECT_ORCHESTRATOR_TOOLS },
   { readProject },
   { getWorkspaceById, listWorkspaces },
@@ -66,6 +66,7 @@ const [
   { createStandaloneChatWorkspace },
   { buildProjectOrchestratorReminder, executeProjectOrchestratorTool, setProjectAgentCheckWindowForTests },
   { setCompletionRetryDelaysForTests },
+  { reconcileStaleAgentRunsOnBoot },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -80,6 +81,7 @@ const [
   import("../src/lib/standalone-chats.js"),
   import("../src/lib/projects/orchestrator-tools.js"),
   import("../src/lib/agents/completion-retry.js"),
+  import("../src/lib/agents/stale-run-reconciler.js"),
 ]);
 
 setCompletionRetryDelaysForTests([20, 20, 20]);
@@ -760,6 +762,42 @@ test("the working-agent limit and bad agent input are rejected", async () => {
   const missing = await api("GET", `/api/projects/${project.id}/agents/ghost`);
   assert.equal(missing.status, 404);
   assert.equal(missing.json.code, "agent_not_found");
+});
+
+test("a coordinator cut off by an engine restart is told so and carries on, once", async () => {
+  await waitForOrchestratorIdle("orchestrator idle before the restart");
+  // A crash mid-turn: the record still says running, and no runtime survives.
+  await agentRuntimeManager.disposeRuntime(project.orchestrator.conversationId);
+  await updateConversationRecord(project.orchestrator.workspaceId, project.orchestrator.conversationId, (current) => ({
+    ...current,
+    status: "running",
+  }));
+  script("orchestrator", text(["Checked the agents after the restart."]));
+  const interrupted: AgentConversationRecord[] = [];
+  await reconcileStaleAgentRunsOnBoot({ onInterrupted: (record) => interrupted.push(record) });
+  assert.deepEqual(
+    interrupted.map((record) => record.id),
+    [project.orchestrator.conversationId]
+  );
+  assert.equal((await orchestratorSnapshot())?.conversation.status, "interrupted");
+
+  await resumeProjectsCutOffByRestart(interrupted);
+  const resumed = await waitFor("the coordinator's turn after the restart", orchestratorSnapshot, (value) =>
+    value.conversation.status === "idle" &&
+    eventsOfKind(value.events, "assistant_message_chunk").some((event) => event.text.includes("after the restart"))
+  );
+  const turn = eventsOfKind(resumed.events, "user_message").at(-1)!;
+  assert.equal(turn.displayContent, "Project event · Engine restarted");
+  assert.match(turn.content, /<system_notification source="engine" event="restarted">/);
+  const request = requestsFor("orchestrator").at(-1)!;
+  assert.match(request.messages.map(messageText).join("\n"), /that turn was cut off/);
+
+  const turns = eventsOfKind(resumed.events, "user_message").length;
+  await resumeProjectsCutOffByRestart(interrupted);
+  await settleProjectWatcher();
+  const after = (await orchestratorSnapshot())!;
+  assert.equal(eventsOfKind(after.events, "user_message").length, turns, "a coordinator no longer interrupted is left alone");
+  assert.equal(after.conversation.queuedPrompts.length, 0);
 });
 
 test("deleting the Project removes its orchestrator and children but keeps the repos", async () => {

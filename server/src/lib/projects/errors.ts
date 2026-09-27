@@ -1,7 +1,7 @@
 export class ProjectError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 403 | 404 | 409 | 502 = 400,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 502 = 400,
     readonly code = "project_error"
   ) {
     super(message);

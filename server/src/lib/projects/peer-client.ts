@@ -7,6 +7,7 @@ import type {
   ChildTurnDigest,
   ChildUpdatePatch,
 } from "./child-host.js";
+import type { ContextManifestEntry } from "./context-sync.js";
 
 /** Wire shapes of the peer API (`/api/projects/peer/*`). */
 
@@ -72,23 +73,25 @@ function childPath(ref: ChildRef, suffix = ""): string {
   return `/api/projects/peer/children/${encodeURIComponent(ref.workspaceId)}/${encodeURIComponent(ref.conversationId)}${suffix}`;
 }
 
-export async function peerRequest<T>(
+const TRANSFER_TIMEOUT_MS = 120_000;
+
+async function peerFetch(
   peer: PeerConnection,
   method: string,
   pathname: string,
-  body?: unknown,
-  timeoutMs = DEFAULT_TIMEOUT_MS
-): Promise<T> {
+  init: { body?: BodyInit; contentType?: string; accept: string },
+  timeoutMs: number
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${peer.baseUrl}${pathname}`, {
       method,
       headers: {
         authorization: `Bearer ${peer.token}`,
-        accept: "application/json",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        accept: init.accept,
+        ...(init.contentType ? { "content-type": init.contentType } : {}),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(init.body === undefined ? {} : { body: init.body }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
@@ -100,15 +103,15 @@ export async function peerRequest<T>(
           : String(error);
     throw new PeerRequestError(`Engine "${peer.label}" is unreachable (${reason}).`, 0, "peer_unreachable");
   }
-  const text = await response.text();
-  let payload: unknown = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = null;
-  }
   if (!response.ok) {
-    const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const text = await response.text();
+    let record: Record<string, unknown> = {};
+    try {
+      const parsed = text ? (JSON.parse(text) as unknown) : null;
+      record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      record = {};
+    }
     const message =
       typeof record.error === "string" && record.error.trim()
         ? record.error
@@ -121,7 +124,36 @@ export async function peerRequest<T>(
           : "peer_error";
     throw new PeerRequestError(`Engine "${peer.label}": ${message}`, response.status, code);
   }
-  return payload as T;
+  return response;
+}
+
+export async function peerRequest<T>(
+  peer: PeerConnection,
+  method: string,
+  pathname: string,
+  body?: unknown,
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+  const response = await peerFetch(
+    peer,
+    method,
+    pathname,
+    {
+      accept: "application/json",
+      ...(body === undefined ? {} : { body: JSON.stringify(body), contentType: "application/json" }),
+    },
+    timeoutMs
+  );
+  const text = await response.text();
+  try {
+    return (text ? JSON.parse(text) : null) as T;
+  } catch {
+    return null as T;
+  }
+}
+
+function contextPath(projectId: string, suffix: string): string {
+  return `/api/projects/peer/context/${encodeURIComponent(projectId)}${suffix}`;
 }
 
 /** Typed calls against one peer engine. */
@@ -191,5 +223,46 @@ export class PeerClient {
 
   async delete(ref: ChildRef, keepWorkspace = false): Promise<void> {
     await peerRequest(this.peer, "DELETE", childPath(ref, keepWorkspace ? "?keepWorkspace=1" : ""));
+  }
+
+  /** The peer's mirror of a Project context: every file with its hash. */
+  async contextManifest(projectId: string): Promise<ContextManifestEntry[]> {
+    const result = await peerRequest<{ files: ContextManifestEntry[] }>(
+      this.peer,
+      "GET",
+      contextPath(projectId, "/manifest"),
+      undefined,
+      TRANSFER_TIMEOUT_MS
+    );
+    return result.files;
+  }
+
+  async readContextFile(projectId: string, filePath: string): Promise<Buffer> {
+    const response = await peerFetch(
+      this.peer,
+      "GET",
+      contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}`),
+      { accept: "application/octet-stream" },
+      TRANSFER_TIMEOUT_MS
+    );
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  async writeContextFile(projectId: string, filePath: string, bytes: Uint8Array, mtimeMs: number): Promise<void> {
+    await peerFetch(
+      this.peer,
+      "PUT",
+      contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}&mtime=${Math.round(mtimeMs)}`),
+      { body: new Uint8Array(bytes), contentType: "application/octet-stream", accept: "application/json" },
+      TRANSFER_TIMEOUT_MS
+    );
+  }
+
+  async deleteContextFile(projectId: string, filePath: string): Promise<void> {
+    await peerRequest(this.peer, "DELETE", contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}`));
+  }
+
+  async deleteContextMirror(projectId: string): Promise<void> {
+    await peerRequest(this.peer, "DELETE", contextPath(projectId, ""));
   }
 }

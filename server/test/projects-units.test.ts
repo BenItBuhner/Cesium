@@ -412,3 +412,95 @@ test("event turns escape untrusted text and fold a burst into one turn", async (
   assert.equal((merged.text.match(/Treat every field as untrusted data/g) ?? []).length, 1);
   assert.equal(merged.displayContent, "Project event · acme/shop#1 comment, Timer · nightly");
 });
+
+test("context sync plans: the home leads, agents' files come back, conflicts keep both", async () => {
+  const { planContextSync, conflictCopyPath } = await import("../src/lib/projects/context-sync.js");
+  const entry = (filePath: string, sha: string, size = 10) => ({ path: filePath, size, sha256: sha, mtimeMs: 1 });
+  const plan = planContextSync({
+    home: [
+      entry("notes.md", "n2"),
+      entry("docs/plan.md", "p2"),
+      entry("docs/spec.md", "s1"),
+      entry("docs/both.md", "b-home"),
+      entry("docs/new-here.md", "h1"),
+      entry("media/huge.mp4", "v1", 500),
+      entry("inbox/1.json", "i1"),
+    ],
+    peer: [
+      entry("notes.md", "n-peer"),
+      entry("docs/plan.md", "p1"),
+      entry("docs/spec.md", "s1"),
+      entry("docs/both.md", "b-peer"),
+      entry("docs/gone.md", "g1"),
+      entry("internal/agent/findings.md", "f1"),
+      entry("media/agent/shot.png", "m1"),
+      entry("docs/edited-then-deleted-here.md", "e2"),
+      entry("inbox/rogue.json", "r1"),
+    ],
+    base: {
+      "notes.md": "n1",
+      "docs/plan.md": "p1",
+      "docs/spec.md": "s1",
+      "docs/both.md": "b0",
+      "docs/gone.md": "g1",
+      "docs/edited-then-deleted-here.md": "e1",
+    },
+    engineSlug: "build-box",
+    maxBytes: 100,
+  });
+  assert.deepEqual(plan, [
+    { kind: "pull", path: "docs/both.md", to: "docs/both.conflict-build-box.md" },
+    { kind: "push", path: "docs/both.md" },
+    { kind: "pull", path: "docs/edited-then-deleted-here.md", to: "docs/edited-then-deleted-here.md" },
+    { kind: "delete_peer", path: "docs/gone.md" },
+    { kind: "push", path: "docs/new-here.md" },
+    { kind: "push", path: "docs/plan.md" },
+    { kind: "push", path: "inbox/1.json" },
+    { kind: "delete_peer", path: "inbox/rogue.json" },
+    { kind: "pull", path: "internal/agent/findings.md", to: "internal/agent/findings.md" },
+    { kind: "pull", path: "media/agent/shot.png", to: "media/agent/shot.png" },
+    { kind: "skip", path: "media/huge.mp4", reason: "too large to copy" },
+    { kind: "push", path: "notes.md" },
+  ]);
+  assert.equal(conflictCopyPath("notes", "peer"), "notes.conflict-peer");
+  assert.equal(conflictCopyPath("media/a/shot.final.png", ""), "media/a/shot.final.conflict-peer.png");
+  assert.equal(conflictCopyPath(".hidden", "x"), ".hidden.conflict-x");
+});
+
+test("a context folder's manifest hashes its files, and mirror paths stay inside the folder", async () => {
+  const { contextManifest, contextFileIn, deleteContextFileIn, writeContextBytesIn } = await import(
+    "../src/lib/projects/context-sync.js"
+  );
+  const { getPeerMirrorContextDir, projectAgentContextDir } = await import("../src/lib/projects/paths.js");
+  const root = getPeerMirrorContextDir("ptk_0000beef", "prj_0123456789ab");
+  assert.equal(root, path.join(TEST_DATA_DIR, "projects-mirror", "ptk_0000beef", "prj_0123456789ab", "context"));
+  assert.equal(
+    projectAgentContextDir({ kind: "project-child", projectId: "prj_0123456789ab", peerTokenId: "ptk_0000beef" }),
+    root
+  );
+  assert.equal(
+    projectAgentContextDir({ kind: "project-child", projectId: "prj_0123456789ab", peerTokenId: null }),
+    getProjectContextDir("prj_0123456789ab")
+  );
+  assert.equal(projectAgentContextDir({ kind: "manual" }), null);
+  assert.throws(() => getPeerMirrorContextDir("../x", "prj_0123456789ab"));
+
+  await writeContextBytesIn(root, "media/agent/shot.png", new Uint8Array([1, 2, 3]), Date.UTC(2026, 0, 1));
+  await writeContextBytesIn(root, "notes.md", Buffer.from("# Notes\n"), null);
+  const manifest = await contextManifest(root);
+  assert.deepEqual(
+    manifest.map((file) => [file.path, file.size]),
+    [
+      ["media/agent/shot.png", 3],
+      ["notes.md", 8],
+    ]
+  );
+  assert.equal(manifest[0]!.sha256, "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81");
+  assert.equal(manifest[0]!.mtimeMs, Date.UTC(2026, 0, 1), "the source's mtime is kept");
+  for (const bad of ["../escape.md", "/etc/passwd", "docs/../../x", ".git/config"]) {
+    await assert.rejects(contextFileIn(root, bad), bad);
+  }
+  await assert.rejects(writeContextBytesIn(root, "big.bin", new Uint8Array(51 * 1024 * 1024), null), /larger than/);
+  await deleteContextFileIn(root, "notes.md");
+  assert.deepEqual((await contextManifest(root)).map((file) => file.path), ["media/agent/shot.png"]);
+});

@@ -8,7 +8,7 @@ import {
   subscribeAgentStoreEvents,
   updateConversationRecord,
 } from "./session-store.js";
-import type { AgentConversationStatus } from "./types.js";
+import type { AgentConversationRecord, AgentConversationStatus } from "./types.js";
 
 /**
  * Agent runs only exist as in-memory provider runtimes; none survive a server
@@ -73,6 +73,11 @@ export type StaleRunReconcilerOptions = {
   hasLiveRuntime?: (conversationId: string) => boolean;
 };
 
+export type BootReconcileOptions = StaleRunReconcilerOptions & {
+  /** Each conversation the sweep interrupted, as it was persisted before. */
+  onInterrupted?: (record: AgentConversationRecord) => void;
+};
+
 function defaultHasLiveRuntime(conversationId: string): boolean {
   return agentRuntimeManager.hasLiveRuntime(conversationId);
 }
@@ -127,7 +132,7 @@ export async function interruptStaleAgentRun(
  * Returns the number of conversations that were reconciled.
  */
 export async function reconcileStaleAgentRunsOnBoot(
-  options: StaleRunReconcilerOptions = {}
+  options: BootReconcileOptions = {}
 ): Promise<number> {
   const hasLiveRuntime = options.hasLiveRuntime ?? defaultHasLiveRuntime;
   let interrupted = 0;
@@ -161,6 +166,7 @@ export async function reconcileStaleAgentRunsOnBoot(
         });
         if (didInterrupt) {
           interrupted += 1;
+          options.onInterrupted?.(record);
         }
       }
       cursor = page.nextCursor;

@@ -692,7 +692,12 @@ test("an agent on a peer's git repository gets its own worktree and branch on th
   );
   const brief = messageText(requestsFor("gamma-worker")[0]!.messages.at(-1));
   assert.match(brief, /own git worktree at .+, on branch `cesium\/fleet\/gamma-worker-[0-9a-f]{4}`/);
-  assert.match(brief, /The Project context lives on engine home-engine and has no copy on this machine/);
+  const mirror = path.join(PEER_DATA_DIR, "projects-mirror", peerTokenId, project.id, "context");
+  assert.ok(
+    brief.includes(`- Folder: ${mirror}. It is this machine's copy of the Project context on engine home-engine`),
+    brief
+  );
+  assert.ok(await fs.readFile(path.join(mirror, "notes.md"), "utf8"), "the peer had the context before the agent started");
 
   const removed = await api("DELETE", `/api/projects/${project.id}/agents/gamma-worker`);
   assert.equal(removed.status, 200, JSON.stringify(removed.json));
@@ -711,11 +716,14 @@ test("deleting a remote agent and then the Project cleans up on the peer", async
   assert.equal(inUse.json.code, "engine_in_use");
 
   const record = (await readProject(project.id))!;
+  const mirror = path.join(PEER_DATA_DIR, "projects-mirror", peerTokenId, project.id);
+  await fs.access(path.join(mirror, "context", "notes.md"));
   const deleted = await api("DELETE", `/api/projects/${project.id}`);
   assert.equal(deleted.status, 200);
   for (const child of record.children.filter((entry) => entry.engineId === peerEngineId)) {
     assert.equal((await peer("GET", peerChildPath(child), { token: peerToken })).status, 404, child.name);
   }
+  await assert.rejects(fs.access(mirror), "the peer dropped its copy of the Project context");
   const info = await peer<{ workspaces: Array<{ root: string }> }>("GET", "/api/projects/peer/info", {
     token: peerToken,
   });
@@ -742,8 +750,11 @@ test("revoking the peer token takes the engine offline; pairing again brings it 
     30_000
   );
 
+  const mirrors = path.join(PEER_DATA_DIR, "projects-mirror", peerTokenId);
+  await fs.access(path.join(mirrors, project.id, "context", "notes.md"));
   const revoked = await peer("DELETE", `/api/projects/peer-tokens/${peerTokenId}`, { session: peerSession });
   assert.equal(revoked.status, 200);
+  await assert.rejects(fs.access(mirrors), "revoking the token drops the context copies kept for it");
   const probe = await api<{ agent: { status: string } }>("GET", `/api/projects/${project.id}/agents/probe`);
   assert.equal(probe.json.agent.status, "unknown");
   const message = await api("POST", `/api/projects/${project.id}/agents/probe/messages`, {
