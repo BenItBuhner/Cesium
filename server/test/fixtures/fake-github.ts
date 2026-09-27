@@ -213,7 +213,16 @@ export async function startFakeGithub(input: {
         send(req, res, 404, { message: "Not Found" }, record);
         return;
       }
-      send(req, res, 200, { ahead_by: Number(ahead), status: Number(ahead) > 0 ? "ahead" : "identical" }, record);
+      const log = await tryGitOutput(repo.bareDir, ["log", "--reverse", "--format=%H%x1f%B%x1e", `refs/heads/${base}..refs/heads/${head}`]);
+      const commits = (log ?? "")
+        .split("\x1e")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [sha, message] = entry.split("\x1f");
+          return { sha, commit: { message: (message ?? "").trim() } };
+        });
+      send(req, res, 200, { ahead_by: Number(ahead), status: Number(ahead) > 0 ? "ahead" : "identical", commits }, record);
       return;
     }
     if (rest === "/pulls" && method === "GET") {

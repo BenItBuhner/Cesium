@@ -609,6 +609,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private pendingSteers: PendingSteer[] = [];
   private acceptingSteers = false;
+  /**
+   * Tool call ids already stored in this conversation. Some models number
+   * their calls per response (kimi-k3 sends `read_file:0` every time), and a
+   * repeated id would merge distinct calls wherever events are keyed by it.
+   */
+  private readonly usedToolCallIds = new Set<string>();
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -1306,6 +1312,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error("Cesium streaming adapter did not produce a result.");
         }
         result = (await this.pluginRuntime?.afterModel(result)) ?? result;
+        result = { ...result, toolRequests: result.toolRequests.map((request) => this.withUniqueToolCallId(request)) };
         if (result.toolRequests.length === 0) {
           if (isEmptyCesiumAdapterResult(result)) {
             throw emptyModelResponseError(`${modelProviderId}/${modelPart(modelId)}`, result.raw);
@@ -1449,6 +1456,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
       await this.pluginRuntime?.turnEnd(pluginOutcome);
       this.activeUserMessageId = null;
     }
+  }
+
+  /** The model's id, or `<id>~2`, `<id>~3`… when this conversation already used it. */
+  private withUniqueToolCallId(request: CesiumToolRequest): CesiumToolRequest {
+    let id = request.id;
+    for (let copy = 2; this.usedToolCallIds.has(id); copy += 1) {
+      id = `${request.id}~${copy}`;
+    }
+    this.usedToolCallIds.add(id);
+    return id === request.id ? request : { ...request, id };
   }
 
   /** A Project agent may also read and write its Project's context folder with the file tools. */
@@ -2423,6 +2440,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.conversation.id
     ).catch(() => snapshotEvents);
     const events = fullEvents.length > snapshotEvents.length ? fullEvents : snapshotEvents;
+    for (const event of events) {
+      if (event.kind === "tool_call") {
+        this.usedToolCallIds.add(event.toolCallId);
+      }
+    }
     const visibleUserTurns = events.filter(
       (event) => event.kind === "user_message" && !event.hidden
     ).length;

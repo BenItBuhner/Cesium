@@ -97,9 +97,14 @@ export async function patchChildPullRequest(
   );
 }
 
-function prTitle(child: ProjectChildRecord): string {
-  const firstLine = (child.task ?? "").split("\n").map((line) => line.trim()).find(Boolean) ?? child.name;
-  const title = firstLine.replace(/\s+/g, " ");
+/**
+ * The subject of the branch's first commit, as GitHub suggests; the agent's
+ * task only when there are none (its first line is often a heading such as
+ * "Repository: …").
+ */
+function prTitle(child: ProjectChildRecord, commitMessages: readonly string[]): string {
+  const firstLine = (text: string) => text.split("\n").map((line) => line.trim()).find(Boolean);
+  const title = (firstLine(commitMessages[0] ?? "") ?? firstLine(child.task ?? "") ?? child.name).replace(/\s+/g, " ");
   return title.length > PR_TITLE_MAX_CHARS ? `${title.slice(0, PR_TITLE_MAX_CHARS - 1)}…` : title;
 }
 
@@ -141,10 +146,11 @@ export async function trackWorkerPullRequest(
   if (!pull && options?.allowCreate && record.settings.autoCreatePr) {
     const head = await client.getBranchHead(repo, child.branch);
     const base = child.baseRef?.replace(/^origin\//, "") || "main";
-    if (head && (await client.aheadBy(repo, base, child.branch)) > 0) {
+    const comparison = head ? await client.compare(repo, base, child.branch) : null;
+    if (comparison && comparison.aheadBy > 0) {
       try {
         pull = await client.createPull(repo, {
-          title: prTitle(child),
+          title: prTitle(child, comparison.commitMessages),
           head: child.branch,
           base,
           body: prBody(record, child),

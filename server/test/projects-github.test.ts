@@ -231,7 +231,7 @@ test("a worker that pushes without a PR gets one opened by the Project, which th
   assert.equal(create.body?.head, created.json.agent.branch);
   assert.equal(create.body?.base, "main");
   assert.equal(create.body?.draft, false, "PRs open ready for review");
-  assert.equal(create.body?.title, "Fix the cart total.");
+  assert.equal(create.body?.title, "Multiply by quantity", "the title is the branch's commit subject, not the task's first line");
   assert.match(String(create.body?.body), /Opened by the Cesium Project "Storefront" for agent `cart`/);
 
   const child = await childRecord("cart");
@@ -341,7 +341,7 @@ test("merging needs the user's own words; the Project squash-merges green PRs an
   assert.equal(merged.merged.pr, "acme/shop#1");
   assert.equal(merged.merged.state, "merged");
   assert.equal(github.pull("acme/shop", 1).merged, true);
-  assert.equal(await git(SHOP_REMOTE, ["log", "-1", "--format=%s", "main"]), "Fix the cart total. (#1)");
+  assert.equal(await git(SHOP_REMOTE, ["log", "-1", "--format=%s", "main"]), "Multiply by quantity (#1)");
   assert.equal(await git(SHOP_REMOTE, ["rev-parse", "main"]), merged.commit);
   const child = await childRecord("cart");
   assert.equal(child.pr?.state, "merged");

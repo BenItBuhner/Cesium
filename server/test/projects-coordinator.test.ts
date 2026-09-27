@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { collectProjectMessageCalls } from "@cesium/core";
 import { parseProjectNoticeNames, type ProjectSnapshot } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
 import {
@@ -614,6 +615,41 @@ test("an agent writes into the Project context with its file tools; other paths 
   await assert.rejects(fs.access(outside));
   await updateDelivered("scribe", /Findings saved/);
   await orchestratorIdle("after the scribe");
+});
+
+test("tool call ids a model repeats across rounds and turns stay distinct, so every message reaches the page", async () => {
+  // kimi-k3 numbers calls per response: the same id comes back every round.
+  script(
+    "orchestrator",
+    toolCall("project_message_user:0", "project_message_user", { message: "First update." }),
+    toolCall("project_message_user:0", "project_message_user", { message: "Second update." }),
+    text(["Sent two updates."])
+  );
+  await prompt("Give me two updates.");
+  await orchestratorIdle("the turn with a repeated id");
+  script(
+    "orchestrator",
+    toolCall("project_message_user:0", "project_message_user", { message: "Third update." }),
+    text(["Sent a third."])
+  );
+  await prompt("And one more.");
+  const snapshot = await orchestratorIdle("the next turn with the same id");
+  const ids = eventsOfKind(snapshot.events, "tool_call")
+    .filter((event) => event.toolCallId.startsWith("project_message_user:0"))
+    .map((event) => event.toolCallId);
+  assert.deepEqual(ids, ["project_message_user:0", "project_message_user:0~2", "project_message_user:0~3"]);
+  assert.deepEqual(
+    [...collectProjectMessageCalls(snapshot.events).values()].map((call) => call.message).slice(-3),
+    ["First update.", "Second update.", "Third update."]
+  );
+  const history = requestsFor("orchestrator").at(-1)!.messages;
+  const called = history.flatMap((message) =>
+    Array.isArray(message.tool_calls) ? (message.tool_calls as Array<{ id?: string }>).map((call) => call.id) : []
+  );
+  const answered = history.filter((message) => message.role === "tool").map((message) => message.tool_call_id);
+  for (const id of ids) {
+    assert.ok(called.includes(id) && answered.includes(id), `the model sees ${id} called and answered`);
+  }
 });
 
 test("a browser check runs an agent's branch, reports with evidence, and never takes the worktree with it", async () => {
