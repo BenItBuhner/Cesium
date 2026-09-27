@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, FolderGit2, KeyRound, Link2, LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { Check, Copy, FolderGit2, GitBranch, KeyRound, Link2, LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import {
   PROJECT_HOME_ENGINE_ID,
   sameProjectEngineUrl,
   type ProjectEngineListing,
+  type ProjectMergePolicy,
   type ProjectPeerTokenSummary,
+  type ProjectPrMode,
+  type ProjectSettings,
   type ProjectSnapshot,
 } from "@cesium/core";
 import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
@@ -20,10 +23,13 @@ import {
   mintProjectPeerToken,
   pairProjectEngine,
   patchProject,
+  patchProjectRepo,
+  readProjectPreferences,
   removeProjectEngine,
   removeProjectRepo,
   revokeProjectPeerToken,
   toServerRequestContext,
+  writeProjectPreferences,
 } from "@/lib/server-api";
 import {
   projectButtonClass,
@@ -71,7 +77,9 @@ export function ProjectSetupSection({ snapshot }: { snapshot: ProjectSnapshot })
   return (
     <div className="flex flex-col gap-[20px] px-[16px] py-[12px]">
       <RepositoriesBlock snapshot={snapshot} engines={engines} onChanged={bump} />
+      <WorkflowBlock snapshot={snapshot} />
       <DefaultsBlock snapshot={snapshot} engines={engines} />
+      <PreferencesBlock />
       <EnginesBlock snapshot={snapshot} onChanged={bump} />
       <PeerTokensBlock />
       {error ? <p className={projectErrorTextClass}>{error}</p> : null}
@@ -141,6 +149,41 @@ function RepositoriesBlock({
     }
   };
 
+  const editBranching = async (repo: ProjectSnapshot["repos"][number]) => {
+    const baseBranch = await dialogs.prompt({
+      title: `Base branch for ${repo.name}`,
+      message: "Workers branch off it and open their pull requests against it. Leave empty for the remote's default branch.",
+      defaultValue: repo.baseBranch ?? "",
+      placeholder: "main",
+      confirmLabel: "Next",
+      monospace: true,
+      allowEmpty: true,
+    });
+    if (baseBranch == null) {
+      return;
+    }
+    const githubRepo = await dialogs.prompt({
+      title: `GitHub repository for ${repo.name}`,
+      message: "owner/repo that pull requests go to. Leave empty to read it from the origin remote.",
+      defaultValue: repo.githubRepo ?? "",
+      placeholder: "owner/repo",
+      confirmLabel: "Save",
+      monospace: true,
+      allowEmpty: true,
+      validate: (value) =>
+        value.trim() && !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(value.trim()) ? "Use owner/repo." : null,
+    });
+    if (githubRepo == null) {
+      return;
+    }
+    await run(() =>
+      patchProjectRepo(snapshot.id, repo.id, {
+        baseBranch: baseBranch.trim() || null,
+        githubRepo: githubRepo.trim() || null,
+      })
+    );
+  };
+
   return (
     <section className="flex flex-col gap-[6px]">
       <span className={projectSectionLabelClass}>Repositories</span>
@@ -158,10 +201,24 @@ function RepositoriesBlock({
                 <p className="truncate font-mono text-[10.5px] text-[var(--text-disabled)]" title={repo.root}>
                   {repo.root}
                 </p>
+                <p className="truncate font-sans text-[10.5px] text-[var(--text-secondary)]">
+                  Branches from {repo.baseBranch ?? "the remote's default"} ·{" "}
+                  {repo.githubRepo ? `PRs to ${repo.githubRepo}` : "GitHub repo from origin"}
+                </p>
               </div>
               <span className="shrink-0 rounded-[4px] bg-[var(--bg-card)] px-[6px] py-[1px] font-sans text-[10.5px] text-[var(--text-secondary)]">
                 {engineLabel(repo.engineId)}
               </span>
+              <button
+                type="button"
+                onClick={() => void editBranching(repo)}
+                disabled={pending}
+                className={projectIconButtonClass}
+                aria-label={`Base branch and GitHub repository for ${repo.name}`}
+                title="Base branch and GitHub repository"
+              >
+                <GitBranch className="size-[13px]" strokeWidth={1.7} />
+              </button>
               <button
                 type="button"
                 onClick={() => void remove(repo.id, repo.name)}
@@ -249,6 +306,159 @@ function RepositoriesBlock({
   );
 }
 
+const fieldLabelClass = "font-sans text-[11.5px] font-medium text-[var(--text-secondary)]";
+
+/** How the Project handles pull requests: who may merge, how PRs open, what gets followed. */
+function WorkflowBlock({ snapshot }: { snapshot: ProjectSnapshot }) {
+  const { refreshProject } = useProjects();
+  const [pending, setPending] = useState<keyof ProjectSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const settings = snapshot.settings;
+
+  const save = async (patch: Partial<ProjectSettings>) => {
+    setPending(Object.keys(patch)[0] as keyof ProjectSettings);
+    setError(null);
+    try {
+      await patchProject(snapshot.id, { settings: patch });
+      await refreshProject(snapshot.id);
+    } catch (caught) {
+      setError(projectErrorMessage(caught));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-[8px]">
+      <span className={projectSectionLabelClass}>Pull requests and merging</span>
+      <div className="grid grid-cols-1 gap-[8px] sm:grid-cols-2">
+        <label className="flex flex-col gap-[4px]">
+          <span className={fieldLabelClass}>Who merges</span>
+          <select
+            value={settings.mergePolicy}
+            disabled={pending != null}
+            onChange={(event) => void save({ mergePolicy: event.target.value as ProjectMergePolicy })}
+            className={projectSelectClass}
+          >
+            <option value="ask">Only when I say so</option>
+            <option value="when_green">The coordinator, once CI is green</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-[4px]">
+          <span className={fieldLabelClass}>New pull requests open as</span>
+          <select
+            value={settings.prMode}
+            disabled={pending != null}
+            onChange={(event) => void save({ prMode: event.target.value as ProjectPrMode })}
+            className={projectSelectClass}
+          >
+            <option value="ready">Ready for review</option>
+            <option value="draft">Drafts</option>
+          </select>
+        </label>
+      </div>
+      <label className="flex items-start gap-[8px] font-sans text-[12.5px] text-[var(--text-primary)]">
+        <input
+          type="checkbox"
+          checked={settings.autoCreatePr}
+          disabled={pending != null}
+          onChange={(event) => void save({ autoCreatePr: event.target.checked })}
+          className="mt-[3px] accent-[var(--accent)]"
+        />
+        <span>
+          Open a pull request for an agent that pushed its branch without one
+        </span>
+      </label>
+      <label className="flex items-start gap-[8px] font-sans text-[12.5px] text-[var(--text-primary)]">
+        <input
+          type="checkbox"
+          checked={settings.autoSubscribe}
+          disabled={pending != null}
+          onChange={(event) => void save({ autoSubscribe: event.target.checked })}
+          className="mt-[3px] accent-[var(--accent)]"
+        />
+        <span>
+          Follow every agent pull request and its CI, so reviews, failures and merges wake the coordinator
+        </span>
+      </label>
+      {error ? <p className={projectErrorTextClass}>{error}</p> : null}
+    </section>
+  );
+}
+
+/** The engine's lasting preferences: every Project's coordinator and every agent brief get them. */
+function PreferencesBlock() {
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    readProjectPreferences().then(
+      (result) => {
+        if (!cancelled) {
+          setSaved(result.markdown);
+          setDraft(result.markdown);
+        }
+      },
+      (caught: unknown) => {
+        if (!cancelled) {
+          setError(projectErrorMessage(caught));
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await writeProjectPreferences(draft);
+      setSaved(result.markdown);
+      setDraft(result.markdown);
+    } catch (caught) {
+      setError(projectErrorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-[6px]">
+      <span className={projectSectionLabelClass}>Your preferences</span>
+      <p className={projectHintTextClass}>
+        Shared by every Project and every agent on this engine, one per “- ” line. The coordinator adds a
+        line when you say how you always want things done.
+      </p>
+      <textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        disabled={saved == null}
+        placeholder={saved == null ? "Loading…" : "- Always write tests with node:test."}
+        aria-label="Preferences"
+        spellCheck={false}
+        className={`${projectInputClass} min-h-[96px] resize-y font-mono text-[12px] leading-[1.5]`}
+      />
+      <div className="flex items-center justify-end gap-[8px]">
+        {error ? <p className={`${projectErrorTextClass} flex-1`}>{error}</p> : null}
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saved == null || draft === saved || pending}
+          className={projectPrimaryButtonClass}
+        >
+          {pending ? <LoaderCircle className="size-[12px] animate-spin" aria-hidden /> : null}
+          Save
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function DefaultsBlock({
   snapshot,
   engines,
@@ -302,14 +512,12 @@ function DefaultsBlock({
     }
   };
 
-  const fieldLabel = "font-sans text-[11.5px] font-medium text-[var(--text-secondary)]";
-
   return (
     <section className="flex flex-col gap-[6px]">
       <span className={projectSectionLabelClass}>Defaults for new agents</span>
       <div className="grid grid-cols-1 gap-[8px] sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px]">
         <label className="flex flex-col gap-[4px]">
-          <span className={fieldLabel}>Harness</span>
+          <span className={fieldLabelClass}>Harness</span>
           <select
             value={harness}
             onChange={(event) => setHarness(event.target.value)}
@@ -327,7 +535,7 @@ function DefaultsBlock({
           </select>
         </label>
         <label className="flex flex-col gap-[4px]">
-          <span className={fieldLabel}>Model</span>
+          <span className={fieldLabelClass}>Model</span>
           <input
             value={model}
             onChange={(event) => setModel(event.target.value)}
@@ -338,7 +546,7 @@ function DefaultsBlock({
           />
         </label>
         <label className="flex flex-col gap-[4px]">
-          <span className={fieldLabel}>Max working</span>
+          <span className={fieldLabelClass}>Max working</span>
           <input
             type="number"
             min={1}
@@ -351,7 +559,7 @@ function DefaultsBlock({
       </div>
       <div className="flex items-center gap-[8px]">
         <p className={`${projectHintTextClass} flex-1`}>
-          The orchestrator uses these unless it picks a harness or model itself. The model applies to
+          The coordinator uses these unless it picks a harness or model itself. The model applies to
           agents on this engine.
         </p>
         {savedNotice && !dirty ? (

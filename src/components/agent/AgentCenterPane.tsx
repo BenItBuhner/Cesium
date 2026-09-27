@@ -89,7 +89,13 @@ import { CesiumProfileToggle } from "./CesiumProfileToggle";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useAuroraMood } from "@/hooks/useAuroraMood";
 import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
-import { pickAvailableBackend } from "@cesium/core";
+import { pickAvailableBackend, projectCoordinatorMessages } from "@cesium/core";
+import { ProjectContextMediaProvider } from "@/components/projects/ProjectContextMedia";
+import {
+  ProjectCoordinatorDock,
+  ProjectCoordinatorWelcome,
+} from "@/components/projects/ProjectCoordinatorDock";
+import { useOptionalProjects } from "@/components/projects/ProjectsProvider";
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
 const EMPTY_THREAD_EVENTS: never[] = [];
@@ -249,16 +255,21 @@ export function AgentCenterPane() {
     [conversation?.status, deferredThreadEvents]
   );
 
-  const threadMessages = useMemo(
-    () =>
-      conversation
-        ? projectAgentEventsToChatMessages(deferredThreadEvents, {
-            backendId: conversation.config.backendId,
-            workspaceRoot: workspaceInfo?.root ?? null,
-          })
-        : [],
-    [conversation, deferredThreadEvents, workspaceInfo?.root]
-  );
+  const coordinatorProjectId =
+    conversation?.origin?.kind === "project-orchestrator" ? conversation.origin.projectId : null;
+  const projects = useOptionalProjects();
+  const projectPageId = projects?.enabled ? coordinatorProjectId : null;
+  const threadMessages = useMemo(() => {
+    if (!conversation) {
+      return [];
+    }
+    const projected = projectAgentEventsToChatMessages(deferredThreadEvents, {
+      backendId: conversation.config.backendId,
+      workspaceRoot: workspaceInfo?.root ?? null,
+    });
+    // A Project's coordinator talks through project_message_user; its chat reads that way.
+    return coordinatorProjectId ? projectCoordinatorMessages(projected, deferredThreadEvents) : projected;
+  }, [conversation, coordinatorProjectId, deferredThreadEvents, workspaceInfo?.root]);
   const dockedAsk = useMemo(
     () =>
       findDockedAskQuestion({
@@ -1340,6 +1351,7 @@ export function AgentCenterPane() {
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
+            <ProjectContextMediaProvider projectId={projectPageId} openInContext={projects?.openContextFile}>
             <MessageList
               key={visibleConversationView.conversationId}
               messages={visibleConversationView.messages}
@@ -1383,6 +1395,29 @@ export function AgentCenterPane() {
               bottomDockVisible={!composerHiddenForExpanded && !showConversationTransitionState}
               bottomDockHeightPx={bottomDockHeightPx}
             />
+            </ProjectContextMediaProvider>
+            {projectPageId &&
+            visibleConversationView.messages.length === 0 &&
+            !visibleConversationView.conversationBusy &&
+            !showConversationTransitionState ? (
+              <div
+                className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center"
+                style={{ bottom: bottomDockHeightPx }}
+              >
+                <div className="pointer-events-auto">
+                  <ProjectCoordinatorWelcome
+                    name={
+                      projects?.snapshots[projectPageId]?.name ??
+                      projects?.projects.find((project) => project.id === projectPageId)?.name ??
+                      "Project"
+                    }
+                    onExample={(text) =>
+                      upsertComposerDraft(composerDraftId, { title: composerDraftTitle, content: text })
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : showConversationTransitionState || optimisticTurn ? (
           // Mid-transition (selection pending / history loading / optimistic
@@ -1432,6 +1467,13 @@ export function AgentCenterPane() {
                       onBuild={(request) => void buildFromPlan(dockedPlan, request)}
                       onDismiss={dismissLatestPlan}
                     />
+                  </div>
+                </div>
+              ) : null}
+              {projectPageId && !showConversationTransitionState ? (
+                <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
+                  <div className={AGENT_CENTER_CONTENT_CLASS}>
+                    <ProjectCoordinatorDock projectId={projectPageId} />
                   </div>
                 </div>
               ) : null}

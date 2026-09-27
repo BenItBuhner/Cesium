@@ -3,6 +3,8 @@
 import { PanelLeftClose, PanelRightClose } from "lucide-react";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { ProjectSidePane } from "@/components/projects/ProjectSidePane";
+import { useOptionalProjects } from "@/components/projects/ProjectsProvider";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
@@ -21,6 +23,8 @@ export function AgentSidePane() {
   const sideColumnsSwapped = settings.general.sideColumnsSwapped && !isMobile;
   const isDesktopApp = useIsCesiumDesktopApp();
   const electronTrailingChrome = isDesktopApp && !isMobile;
+  // On a Project page the side pane holds the Project (agents, pull requests, Context, setup).
+  const activeProjectId = useOptionalProjects()?.activeProjectId ?? null;
 
   return (
     <div className="agent-side-pane aurora-shell-panel relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
@@ -44,14 +48,18 @@ export function AgentSidePane() {
         </button>
       ) : null}
       <div className="mobile-safe-top-content h-full min-h-0 w-full overflow-hidden">
-        <EditorPanel
-          key={sidePaneScopeId}
-          session={sidePaneEditorSession}
-          onSessionChange={updateSidePaneEditorSession}
-          expandedComposerDraftId={expandedComposerDraftId}
-          setExpandedComposerDraft={setExpandedComposerDraft}
-          reserveTrailingPaneCloseSlot
-        />
+        {activeProjectId ? (
+          <ProjectSidePane key={activeProjectId} projectId={activeProjectId} />
+        ) : (
+          <EditorPanel
+            key={sidePaneScopeId}
+            session={sidePaneEditorSession}
+            onSessionChange={updateSidePaneEditorSession}
+            expandedComposerDraftId={expandedComposerDraftId}
+            setExpandedComposerDraft={setExpandedComposerDraft}
+            reserveTrailingPaneCloseSlot
+          />
+        )}
       </div>
       <style jsx global>{`
         .agent-side-pane button[aria-label="Split editor to the right"],

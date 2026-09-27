@@ -223,7 +223,7 @@ function NewProjectDialog({ onClose }: { onClose: () => void }) {
                 New Project
               </h2>
               <p className={dialogMessageClass}>
-                One orchestrator chat plans the work and runs agents for you, across these
+                One coordinator chat plans the work and runs agents for you, across these
                 repositories and any engine you pair.
               </p>
             </div>
@@ -345,14 +345,14 @@ function NewProjectDialog({ onClose }: { onClose: () => void }) {
           {enginesError ? <p className={dialogInputErrorClass}>{enginesError}</p> : null}
 
           <label className={fieldLabelClass} htmlFor={`${titleId}-prompt`}>
-            First message to the orchestrator
+            First message to the coordinator
           </label>
           <textarea
             id={`${titleId}-prompt`}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             rows={4}
-            placeholder="What should this Project get done? The orchestrator starts planning right away."
+            placeholder="What should this Project get done? The coordinator starts planning right away."
             className={`${dialogInputClass} mt-[6px] resize-y leading-[1.45]`}
           />
 

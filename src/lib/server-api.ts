@@ -425,12 +425,14 @@ export {
   patchProject,
   patchProjectAgent,
   readProjectContextFile,
+  readProjectPreferences,
   removeProjectEngine,
   removeProjectRepo,
   revokeProjectPeerToken,
   stopProjectAgent,
   uploadProjectContextFile,
   writeProjectContextFile,
+  writeProjectPreferences,
 } from "@cesium/client";
 export type {
   ProjectAgentCreateRequest,

@@ -62,9 +62,7 @@ const PullRequestView = lazyPanel(() =>
 const ContextInspectorView = lazyPanel(() =>
   import("./ContextInspectorView").then((m) => m.ContextInspectorView)
 );
-const ProjectPanel = lazyPanel(() =>
-  import("@/components/projects/ProjectPanel").then((m) => m.ProjectPanel)
-);
+import { ProjectTabRedirect } from "@/components/projects/ProjectTabRedirect";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
@@ -1351,14 +1349,6 @@ export function EditorPanel({
           group: input.group,
         });
       },
-      openProjectTab: (input) => {
-        dispatch({
-          type: "OPEN_PROJECT_TAB",
-          projectId: input.projectId,
-          title: input.title,
-          group: input.group,
-        });
-      },
       openExtensionSurfaceTab: (input) => {
         dispatch({
           type: "OPEN_EXTENSION_SURFACE_TAB",
@@ -2038,7 +2028,13 @@ export function EditorPanel({
       );
     }
     if (tab.kind === "project" && tab.project) {
-      return <ProjectPanel key={tab.id} projectId={tab.project.projectId} />;
+      return (
+        <ProjectTabRedirect
+          key={tab.id}
+          projectId={tab.project.projectId}
+          onDone={() => requestCloseTab(group, tab.id)}
+        />
+      );
     }
     if (tab.extensionSurface) {
       if (!vscodeExtensionsBeta) {
