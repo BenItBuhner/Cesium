@@ -1,4 +1,5 @@
 import {
+  isProjectAgentIsolation,
   projectChildBucketLabel,
   projectEngineName,
   type ProjectChildSummary,
@@ -12,6 +13,7 @@ import {
 } from "./context-store.js";
 import {
   ProjectError,
+  adoptProjectChild,
   createProjectChild,
   deleteProjectChild,
   getProjectChild,
@@ -21,6 +23,7 @@ import {
   messageProjectChild,
   readProjectChildTranscript,
   requireProject,
+  setProjectChildArchived,
   stopProjectChild,
   updateProjectChild,
 } from "./project-service.js";
@@ -91,11 +94,15 @@ function compactChild(child: ProjectChildSummary) {
     model: child.modelId,
     mode: child.mode,
     repo: child.repoName,
+    isolation: child.isolation,
+    ...(child.branch ? { branch: child.branch, base: child.baseRef } : {}),
+    ...(child.worktreePath ? { worktree: child.worktreePath } : {}),
     queued: child.queued,
     turnsCompleted: child.turnsCompleted,
     needs: child.attention ? `${child.attention.kind}: ${child.attention.title}` : null,
     lastReply: child.lastReplyPreview,
     lastError: child.lastError,
+    ...(child.archivedAt != null ? { archivedAt: new Date(child.archivedAt).toISOString() } : {}),
     ...(child.deletedAt != null ? { deletedAt: new Date(child.deletedAt).toISOString() } : {}),
   };
 }
@@ -145,6 +152,8 @@ export async function executeProjectOrchestratorTool(
           harness: arg(args, "harness") ?? null,
           model: arg(args, "model") ?? null,
           mode: arg(args, "mode") ?? null,
+          isolation: isProjectAgentIsolation(args.isolation) ? args.isolation : null,
+          base: arg(args, "base") ?? null,
         },
         "orchestrator"
       );
@@ -164,8 +173,11 @@ export async function executeProjectOrchestratorTool(
         });
       }
       const includeDeleted = args.include_deleted === true;
-      const agents = (await listProjectChildren(projectId, { includeDeleted })).map(compactChild);
-      return answerAgentCheck(`${projectId}:all:${includeDeleted}`, {
+      const includeArchived = args.include_archived === true;
+      const agents = (await listProjectChildren(projectId, { includeDeleted, includeArchived })).map(
+        compactChild
+      );
+      return answerAgentCheck(`${projectId}:all:${includeDeleted}:${includeArchived}`, {
         agents,
         ...(agents.some((child) => child.bucket === "working") ? { note: WAIT_FOR_UPDATES_NOTE } : {}),
       });
@@ -192,6 +204,18 @@ export async function executeProjectOrchestratorTool(
     }
     case "project_delete_agent":
       return json(await deleteProjectChild(projectId, requiredArg(args, "agent", name)));
+    case "project_archive_agent": {
+      const archived = args.unarchive !== true;
+      const child = await setProjectChildArchived(projectId, requiredArg(args, "agent", name), archived);
+      return json({ [archived ? "archived" : "restored"]: compactChild(child) });
+    }
+    case "project_adopt_agent": {
+      const child = await adoptProjectChild(projectId, {
+        conversation: requiredArg(args, "conversation", name),
+        name: arg(args, "name") ?? null,
+      });
+      return json({ adopted: compactChild(child) });
+    }
     case "project_read_transcript": {
       const result = await readProjectChildTranscript(
         projectId,
@@ -276,7 +300,7 @@ export async function buildProjectOrchestratorReminder(
     ...(children.length > 0
       ? children.map(
           (child) =>
-            `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
+            `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.branch ? ` · branch ${child.branch}` : child.isolation === "checkout" ? " · in the repo checkout" : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
         )
       : ["- none yet"]),
     "</project>",

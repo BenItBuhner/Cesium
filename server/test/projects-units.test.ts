@@ -220,7 +220,7 @@ test("notices fold updates per agent, keep order, and defang child markup", () =
 test("context paths stay inside the Project folder and refuse hidden or escaping paths", async () => {
   const projectId = "prj_aaaaaaaaaaaa";
   await contextStore.seedProjectContext(projectId, "Units");
-  for (const bad of ["../x.md", "/etc/passwd", ".cesium/mirror.md", "a/../../b.md", "C:/x.md", "", "a/b/c/d/e/f/g.md"]) {
+  for (const bad of ["../x.md", "/etc/passwd", ".cesium/mirror.md", "a/../../b.md", "C:/x.md", "", "a/b/c/d/e/f/g/h/i.md"]) {
     assert.throws(() => contextStore.resolveContextPath(projectId, bad), contextStore.ProjectContextError, bad);
   }
   assert.equal(contextStore.resolveContextPath(projectId, "./docs//plan.md").relative, "docs/plan.md");

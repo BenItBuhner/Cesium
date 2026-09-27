@@ -295,7 +295,7 @@ test("the orchestrator gets only the Project tools, its own prompt and the Proje
   assert.match(allText, /<project_notes path="notes.md">\n# Launch/);
   assert.equal(snapshot.conversation.title, "Launch", "title generation leaves the Project name alone");
   const files = await fs.readdir(project.contextRoot);
-  assert.deepEqual(files.sort(), ["notes.md"], "no skills mirror in the Project folder");
+  assert.deepEqual(files.sort(), ["docs", "internal", "media", "notes.md"], "the standard context folders and no skills mirror");
 });
 
 test("orchestrator calls to ordinary tools are refused", async () => {
@@ -357,7 +357,7 @@ test("a child created by the orchestrator runs in its repo and reports back as a
   assert.equal(child.lastReportedSeq, conversation.conversation.lastEventSeq);
   const firstUser = eventsOfKind(conversation.events, "user_message")[0]!;
   assert.equal(firstUser.displayContent, "Scaffold the API.");
-  assert.match(firstUser.content, /<project_brief>[\s\S]*You are "api"[\s\S]*Scaffold the API\.$/);
+  assert.match(firstUser.content, /<project_worker_brief>[\s\S]*You are "api", a worker agent[\s\S]*Scaffold the API\.$/);
 });
 
 test("steer lands mid-turn on a busy child and queued work runs as its next turn", async () => {

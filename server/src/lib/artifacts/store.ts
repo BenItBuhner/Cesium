@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { isWorkerWorktreeRoot } from "../projects/paths.js";
 
 /**
  * Agent-generated artifacts (charts, HTML pages, mini web projects) live under
@@ -99,6 +100,9 @@ export function resolveArtifactFilePath(
 
 /** Append `.cesium/` to the workspace .gitignore when missing (same policy as worktrees). */
 export async function ensureCesiumDirGitignored(workspaceRoot: string): Promise<void> {
+  if (isWorkerWorktreeRoot(workspaceRoot)) {
+    return;
+  }
   const gitignorePath = path.join(workspaceRoot, ".gitignore");
   let current = "";
   try {

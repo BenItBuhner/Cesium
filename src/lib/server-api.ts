@@ -396,6 +396,8 @@ export type {
 } from "@cesium/client";
 export {
   addProjectRepo,
+  adoptProjectConversation,
+  archiveProjectAgent,
   createProject,
   createProjectAgent,
   deleteProject,
@@ -403,6 +405,7 @@ export {
   deleteProjectContextFile,
   fetchProject,
   fetchProjectAgentTranscript,
+  fetchProjectContextBlob,
   listProjectContextFiles,
   listProjectEngineDetails,
   listProjectEngineListings,
@@ -419,6 +422,7 @@ export {
   removeProjectRepo,
   revokeProjectPeerToken,
   stopProjectAgent,
+  uploadProjectContextFile,
   writeProjectContextFile,
 } from "@cesium/client";
 export type {

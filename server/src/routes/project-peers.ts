@@ -15,6 +15,7 @@ import {
   type ChildRef,
 } from "../lib/projects/child-host.js";
 import { chooseChildModel, requireRunnableChildModel } from "../lib/projects/child-model.js";
+import type { WorkerBriefInput } from "../lib/projects/worker-brief.js";
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
 import { ProjectError } from "../lib/projects/errors.js";
 import { isProjectsEnabled, ProjectsDisabledError } from "../lib/projects/feature-flag.js";
@@ -141,20 +142,63 @@ function safeId(body: Record<string, unknown>, key: string): string {
   return value;
 }
 
+const BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+
+async function repoWorkspace(value: unknown): Promise<WorkspaceRecord> {
+  const workspaceId = asString(value) ?? "";
+  const workspace = SAFE_ID.test(workspaceId) ? await getWorkspaceById(workspaceId) : null;
+  if (!workspace || isEngineManagedWorkspace(workspace)) {
+    throw new ProjectError(`Unknown repository workspace on this engine: ${workspaceId}`);
+  }
+  return workspace;
+}
+
 async function resolvePlacement(value: unknown): Promise<ChildCreateInput["placement"]> {
   const placement = asRecord(value) ?? {};
   if (placement.kind === "scratch") {
     return { kind: "scratch", label: (asString(placement.label) ?? "Project agent").slice(0, 120) };
   }
   if (placement.kind === "workspace") {
-    const workspaceId = asString(placement.workspaceId) ?? "";
-    const workspace = SAFE_ID.test(workspaceId) ? await getWorkspaceById(workspaceId) : null;
-    if (!workspace || isEngineManagedWorkspace(workspace)) {
-      throw new ProjectError(`Unknown repository workspace on this engine: ${workspaceId}`);
-    }
-    return { kind: "workspace", workspaceId: workspace.id };
+    return { kind: "workspace", workspaceId: (await repoWorkspace(placement.workspaceId)).id };
   }
-  throw new ProjectError('placement.kind must be "workspace" or "scratch".');
+  if (placement.kind === "worktree") {
+    const branch = asString(placement.branch) ?? "";
+    const baseBranch = asString(placement.baseBranch)?.trim() || null;
+    if (!BRANCH_PATTERN.test(branch) || (baseBranch && !BRANCH_PATTERN.test(baseBranch))) {
+      throw new ProjectError("placement.branch and placement.baseBranch must be plain branch names.");
+    }
+    return {
+      kind: "worktree",
+      workspaceId: (await repoWorkspace(placement.workspaceId)).id,
+      branch,
+      baseBranch,
+      fallbackToCheckout: placement.fallbackToCheckout === true,
+    };
+  }
+  throw new ProjectError('placement.kind must be "worktree", "workspace" or "scratch".');
+}
+
+/** The home's worker brief. The Project context has no copy on a peer, so its folder is dropped. */
+function briefInput(value: unknown, name: string): WorkerBriefInput | undefined {
+  const brief = asRecord(value);
+  if (!brief) {
+    return undefined;
+  }
+  const instructions = typeof brief.instructions === "string" ? brief.instructions : "";
+  if (!instructions.trim()) {
+    throw new ProjectError("brief.instructions is required.");
+  }
+  if (instructions.length > MAX_PROMPT_CHARS) {
+    throw new ProjectError(`brief.instructions is too long (max ${MAX_PROMPT_CHARS} characters).`);
+  }
+  return {
+    projectName: (asString(brief.projectName) ?? "Project").slice(0, 120),
+    agentName: name,
+    instructions,
+    repoName: asString(brief.repoName)?.slice(0, 120) ?? null,
+    contextDir: null,
+    contextEngine: (asString(brief.contextEngine) ?? "the Project's home engine").slice(0, 80),
+  };
 }
 
 projectPeerRoutes.get(
@@ -210,11 +254,12 @@ projectPeerRoutes.post(
       requested: asString(body.modelId),
       engineLabel: engine,
     });
+    const brief = briefInput(body.brief, name);
     const created = await host.create({
       projectId: safeId(body, "projectId"),
       childId: safeId(body, "childId"),
       name,
-      promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS),
+      ...(brief ? { brief } : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
       displayText: requiredText(body, "displayText", MAX_PROMPT_CHARS),
       placement: await resolvePlacement(body.placement),
       backendId: harness.id,

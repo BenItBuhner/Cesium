@@ -33,7 +33,9 @@ function ProjectRailChildren({ projectId }: { projectId: string }) {
       </p>
     );
   }
-  const children = sortProjectChildren(snapshot.children.filter((child) => child.deletedAt == null));
+  const children = sortProjectChildren(
+    snapshot.children.filter((child) => child.deletedAt == null && child.archivedAt == null)
+  );
   if (children.length === 0) {
     return (
       <p className="py-[3px] pl-[30px] font-sans text-[11.5px] text-[var(--text-disabled)]">

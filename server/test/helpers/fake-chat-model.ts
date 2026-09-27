@@ -45,7 +45,7 @@ export function projectScriptKey(request: ChatRequest): string {
     return "orchestrator";
   }
   for (const text of texts) {
-    const match = text.match(/You are "([^"]+)", an agent in the Cesium Project/);
+    const match = text.match(/You are "([^"]+)", (?:a worker agent|an agent) in the Cesium Project/);
     if (match) {
       return match[1]!;
     }

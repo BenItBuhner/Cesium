@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isWorkerWorktreeRoot } from "../projects/paths.js";
 import {
   discoverWorkspaceSkills,
   type WorkspaceSkillCatalogEntry,
@@ -204,6 +205,9 @@ export async function writeAgentSkillsWorkspaceMirror(input: {
 }
 
 export async function ensureAgentSkillsGitignore(workspaceRoot: string): Promise<void> {
+  if (isWorkerWorktreeRoot(workspaceRoot)) {
+    return;
+  }
   const gitignorePath = resolveMirrorPath(workspaceRoot, ".gitignore");
   try {
     const existing = await fs.readFile(gitignorePath, "utf8");

@@ -1,4 +1,5 @@
 import type {
+  ProjectAgentIsolation,
   ProjectRepoBinding,
   ProjectSettings,
 } from "@cesium/core/projects";
@@ -6,6 +7,7 @@ import type { AgentConversationStatus } from "../agents/types.js";
 
 export type {
   ProjectAgentDelivery,
+  ProjectAgentIsolation,
   ProjectChildAttention,
   ProjectChildBucket,
   ProjectChildSummary,
@@ -31,6 +33,13 @@ export type ProjectChildRecord = {
   createdBy: "orchestrator" | "user";
   createdAt: number;
   deletedAt: number | null;
+  /** Hidden from the Project's lists; stopped when archived, and restorable. */
+  archivedAt: number | null;
+  isolation: ProjectAgentIsolation;
+  branch: string | null;
+  baseRef: string | null;
+  baseSha: string | null;
+  worktreePath: string | null;
   /** Last status the watcher observed. */
   lastStatus: AgentConversationStatus | "unknown";
   turnsCompleted: number;
@@ -52,7 +61,7 @@ export type ProjectChildRecord = {
 };
 
 export type ProjectRecord = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   name: string;
   icon: string | null;

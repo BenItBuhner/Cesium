@@ -25,12 +25,31 @@ export type ProjectChildBucket =
 /** How a steer or queued message actually landed on a child. */
 export type ProjectAgentDelivery = "mid_turn" | "queued_steer" | "queued" | "started";
 
+/**
+ * Where a worker's files live: its own git worktree on its own branch (the
+ * default for a repository), the repository checkout itself (only on request),
+ * or an empty scratch folder (no repository).
+ */
+export type ProjectAgentIsolation = "worktree" | "checkout" | "scratch";
+
+export const PROJECT_AGENT_ISOLATIONS: readonly ProjectAgentIsolation[] = [
+  "worktree",
+  "checkout",
+  "scratch",
+];
+
+export function isProjectAgentIsolation(value: unknown): value is ProjectAgentIsolation {
+  return typeof value === "string" && (PROJECT_AGENT_ISOLATIONS as readonly string[]).includes(value);
+}
+
 export type ProjectRepoBinding = {
   id: string;
   name: string;
   engineId: string;
   workspaceId: string;
   root: string;
+  /** Branch workers start from; null means the remote's default branch. */
+  baseBranch?: string | null;
 };
 
 export type ProjectEngineSummary = {
@@ -118,6 +137,13 @@ export type ProjectChildSummary = {
   createdAt: number;
   updatedAt: number | null;
   deletedAt: number | null;
+  isolation: ProjectAgentIsolation;
+  /** The worker's own branch (worktree isolation), else null. */
+  branch: string | null;
+  /** Ref the branch was created from, e.g. `origin/main`. */
+  baseRef: string | null;
+  worktreePath: string | null;
+  archivedAt: number | null;
 };
 
 export type ProjectOrchestratorSummary = {
@@ -170,11 +196,104 @@ export type ProjectSnapshot = {
   settings: ProjectSettings;
 };
 
+export type ProjectContextFileKind = "text" | "image" | "video" | "binary";
+
 export type ProjectContextFile = {
   path: string;
   size: number;
   updatedAt: number;
+  kind: ProjectContextFileKind;
 };
+
+/** Folders every Project's Context starts with, next to `notes.md`. */
+export const PROJECT_CONTEXT_FOLDERS = ["docs", "internal", "media"] as const;
+
+const CONTEXT_IMAGE_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  svg: "image/svg+xml",
+};
+
+const CONTEXT_VIDEO_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  ogv: "video/ogg",
+};
+
+const CONTEXT_TEXT_TYPES: Record<string, string> = {
+  md: "text/markdown; charset=utf-8",
+  markdown: "text/markdown; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  log: "text/plain; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  jsonl: "application/x-ndjson; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  yaml: "text/yaml; charset=utf-8",
+  yml: "text/yaml; charset=utf-8",
+  html: "text/plain; charset=utf-8",
+  diff: "text/plain; charset=utf-8",
+  patch: "text/plain; charset=utf-8",
+};
+
+function contextExtension(filePath: string): string {
+  const base = filePath.split("/").pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Kind by extension; `null` when only the bytes can tell (unknown extensions). */
+export function projectContextKindFromPath(filePath: string): ProjectContextFileKind | null {
+  const ext = contextExtension(filePath);
+  if (ext in CONTEXT_IMAGE_TYPES) {
+    return "image";
+  }
+  if (ext in CONTEXT_VIDEO_TYPES) {
+    return "video";
+  }
+  if (ext in CONTEXT_TEXT_TYPES) {
+    return "text";
+  }
+  return null;
+}
+
+/**
+ * Content type a Context file is served with. HTML is served as plain text so
+ * an uploaded page can never run in the engine's origin.
+ */
+export function projectContextContentType(filePath: string, kind: ProjectContextFileKind): string {
+  const ext = contextExtension(filePath);
+  return (
+    CONTEXT_IMAGE_TYPES[ext] ??
+    CONTEXT_VIDEO_TYPES[ext] ??
+    CONTEXT_TEXT_TYPES[ext] ??
+    (kind === "text" ? "text/plain; charset=utf-8" : "application/octet-stream")
+  );
+}
+
+/** Lowercase dash slug, for branch and folder names. */
+export function projectSlug(raw: string, max = 24): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, max)
+    .replace(/-+$/g, "");
+}
+
+/** `cesium/<project>/<agent>-<suffix>`: every worker's own branch. */
+export function projectWorkerBranchName(projectName: string, agentName: string, suffix: string): string {
+  const project = projectSlug(projectName) || "project";
+  const agent = projectSlug(agentName, 40) || "agent";
+  return `cesium/${project}/${agent}-${suffix}`;
+}
 
 const BUSY_STATUSES = new Set<string>([
   "running",
