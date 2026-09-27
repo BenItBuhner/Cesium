@@ -579,7 +579,7 @@ test("stopping a busy child is silent, and a human turn in the child reports aga
   assert.equal(resumed.suppressedThroughSeq, null);
 });
 
-test("the orchestrator is told to wait for reports, and repeat checks of an unchanged roster come back short", async () => {
+test("the orchestrator is told to wait for reports, repeat checks come back short, and a third check in a row ends its turn", async () => {
   await waitForOrchestratorIdle("idle before polling");
   script(
     "poller",
@@ -607,8 +607,6 @@ test("the orchestrator is told to wait for reports, and repeat checks of an unch
     onceThePollerWaits(toolCall("call_poll_1", "project_list_agents", {})),
     toolCall("call_poll_2", "project_list_agents", {}),
     toolCall("call_poll_3", "project_list_agents", { agent: "poller" }),
-    toolCall("call_poll_4", "project_list_agents", { agent: "poller" }),
-    text(["Poller started; I will wait for its report."]),
     toolCall("call_after_report", "project_list_agents", { agent: "poller" }),
     text(["Poller finished."])
   );
@@ -627,12 +625,12 @@ test("the orchestrator is told to wait for reports, and repeat checks of an unch
   assert.equal(second.unchanged, true);
   assert.equal(second.checksWithoutChange, 1);
   assert.equal(second.agents, undefined, "the unchanged roster is not repeated");
-  assert.match(String(second.note), /^Nothing has changed since your last check \d+s ago, and nothing can change while your turn is running\./);
+  assert.match(String(second.note), /^Nothing has changed since your last check \d+s ago\. Checking again won't bring their reports sooner\./);
 
-  const single = JSON.parse(await waitForTool("call_poll_3")) as { agent: { name: string }; note?: string };
+  const single = JSON.parse(await waitForTool("call_poll_3")) as { agent: { name: string }; note?: string; turnEnds?: string };
   assert.equal(single.agent.name, "poller", "a check of one agent is tracked on its own");
   assert.match(single.note ?? "", /never during it/);
-  assert.equal((JSON.parse(await waitForTool("call_poll_4")) as Record<string, unknown>).unchanged, true);
+  assert.match(single.turnEnds ?? "", /three times in a row, so your turn ends here/);
 
   const reported = await waitFor(
     "poller report turn",
@@ -643,6 +641,17 @@ test("the orchestrator is told to wait for reports, and repeat checks of an unch
         (event) => event.toolCallId === "call_after_report" && event.status !== "in_progress"
       )
   );
+  const polledAt = reported.events.findIndex(
+    (event) => event.kind === "tool_call_update" && event.toolCallId === "call_poll_3" && event.status !== "in_progress"
+  );
+  const reportAt = reported.events.findIndex(
+    (event, index) => index > polledAt && event.kind === "user_message" && event.displayContent === "Agent update · poller"
+  );
+  const between = reported.events.slice(polledAt + 1, reportAt);
+  assert.ok(polledAt >= 0 && reportAt > polledAt, "the report opened a turn of its own");
+  assert.equal(between.filter((event) => event.kind === "tool_call").length, 0, "no more checks after the third");
+  assert.ok(between.some((event) => event.kind === "status" && event.status === "idle"), "the polling turn ended");
+
   const afterReport = JSON.parse(toolResult(reported.events, "call_after_report")) as {
     agent: { bucket: string; lastReply: string };
     unchanged?: boolean;

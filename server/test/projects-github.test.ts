@@ -495,3 +495,38 @@ test("the coordinator follows another PR by URL, hears its new commits, and unsu
   assert.match(reminder, /Merge policy: merge only when the user explicitly says so/);
   assert.match(reminder, /Listening:\n- hourly · every hour \[sub_/);
 });
+
+test("a review a bot posts before the first poll of an agent's PR still reaches the coordinator", async () => {
+  await orchestratorIdle("idle before the banner agent");
+  const banner = gatedResponder("Added the banner and pushed.");
+  script("banner", banner.responder);
+  script("orchestrator", text(["banner has a PR open; waiting."]));
+  const created = await api<{ agent: { branch: string; worktreePath: string } }>("POST", `/api/projects/${project.id}/agents`, {
+    name: "banner",
+    repo: "shop",
+    instructions: "Add a free-shipping banner.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  await commitAndPush(
+    created.json.agent.worktreePath,
+    created.json.agent.branch,
+    "src/banner.js",
+    "export const banner = 'Free shipping over $50';\n",
+    "Add a free-shipping banner"
+  );
+  banner.release();
+  const child = await waitFor("the banner PR", () => childRecord("banner"), (value) => value.pr != null, 30_000);
+  // Review bots answer within seconds, before Listening has polled the new PR once.
+  github.addReview("acme/shop", child.pr!.number, "bugbot[bot]", "COMMENTED", "banner.js hard-codes the $50 threshold.");
+  await orchestratorIdle("after the banner update");
+
+  const before = (await eventTurns()).length;
+  script("orchestrator", text(["Sent the bot's review to banner."]));
+  await tick();
+  const turns = await waitFor("the review turn", eventTurns, (list) => list.length === before + 1);
+  assert.match(turns.at(-1)!.content, /action="review" sender="bugbot\[bot\]" reviewState="commented" agent="banner"/);
+  assert.match(turns.at(-1)!.content, /hard-codes the \$50 threshold/);
+  await orchestratorIdle("after the review turn");
+  await tick();
+  assert.equal((await eventTurns()).length, before + 1, "the review is delivered once");
+});
