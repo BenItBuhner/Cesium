@@ -13,7 +13,7 @@ export type ProjectNoticeUpdate = {
 };
 
 const INTRO =
-  "Automatic update from your Project agents. Previews are truncated; use project_read_transcript for the full picture.";
+  "Automatic update from your Project agents. Previews are truncated; use project_read_transcript for the full picture. Tell the user about outcomes with project_message_user: your reply text is only a log line.";
 
 const BLOCK_PATTERN = /<agent name="([^"]+)" event="([^"]+)" status="([^"]*)">\n?([\s\S]*?)\n?<\/agent>/g;
 
