@@ -257,6 +257,18 @@ function ProjectAgentCard({
           ) : child.isolation === "checkout" ? (
             <span>In the repository checkout</span>
           ) : null}
+          {child.pr ? (
+            <a
+              href={child.pr.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-[3px] rounded-[4px] bg-[var(--bg-card)] px-[5px] font-mono text-[10.5px] text-[var(--text-primary)] hover:underline"
+              title={child.pr.title}
+            >
+              PR #{child.pr.number} · {child.pr.draft && child.pr.state === "open" ? "draft" : child.pr.state}
+              {child.pr.ci ? ` · CI ${child.pr.ci === "failure" ? "failing" : child.pr.ci === "success" ? "green" : "running"}` : ""}
+            </a>
+          ) : null}
           <span className="tabular-nums">
             {child.turnsCompleted} {child.turnsCompleted === 1 ? "turn" : "turns"}
           </span>

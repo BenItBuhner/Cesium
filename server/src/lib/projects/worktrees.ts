@@ -8,6 +8,7 @@ import {
   removeWorkspace,
   type WorkspaceRecord,
 } from "../workspace-registry.js";
+import { parseGithubRepo } from "./github/repo-identity.js";
 import { getProjectDir, isWorkerWorktreeRoot } from "./paths.js";
 
 export { isWorkerWorktreeRoot };
@@ -52,18 +53,21 @@ export type WorkerRepoGit = {
   isGitRepo: boolean;
   repoRoot: string | null;
   hasOrigin: boolean;
+  /** `owner/repo` when `origin` is on GitHub. The raw URL is never kept (it may carry a token). */
+  githubRepo: string | null;
 };
 
 export async function inspectWorkerRepo(root: string): Promise<WorkerRepoGit> {
   const top = await tryGit(root, ["rev-parse", "--show-toplevel"]);
   if (!top) {
-    return { isGitRepo: false, repoRoot: null, hasOrigin: false };
+    return { isGitRepo: false, repoRoot: null, hasOrigin: false, githubRepo: null };
   }
-  const origin = await tryGit(root, ["remote", "get-url", "origin"]);
+  const origin = (await tryGit(root, ["remote", "get-url", "origin"]))?.stdout.trim() ?? "";
   return {
     isGitRepo: true,
     repoRoot: top.stdout.trim() || root,
-    hasOrigin: Boolean(origin?.stdout.trim()),
+    hasOrigin: Boolean(origin),
+    githubRepo: parseGithubRepo(origin),
   };
 }
 
@@ -148,6 +152,7 @@ export type WorkerWorktree = {
   baseRef: string;
   baseSha: string;
   hasOrigin: boolean;
+  githubRepo: string | null;
   /** Set when the remote could not be fetched and the worker starts from the last fetched copy. */
   warning: string | null;
   setup: WorkerSetupPlan | null;
@@ -214,6 +219,7 @@ export async function createWorkerWorktree(input: {
     baseRef,
     baseSha: sha,
     hasOrigin: git.hasOrigin,
+    githubRepo: git.githubRepo,
     warning,
     setup: await readWorkerSetupPlan(created.path, repoRoot),
   };

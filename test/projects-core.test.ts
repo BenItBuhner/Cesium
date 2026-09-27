@@ -20,6 +20,8 @@ import {
   sameProjectEngineUrl,
   sortProjectChildren,
   isProjectAgentIsolation,
+  formatProjectEventDisplay,
+  isProjectEventDisplay,
   projectContextContentType,
   projectContextKindFromPath,
   projectSlug,
@@ -61,6 +63,8 @@ function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummar
     baseRef: null,
     worktreePath: null,
     archivedAt: null,
+    githubRepo: null,
+    pr: null,
     ...overrides,
   };
 }
@@ -401,4 +405,16 @@ test("a Project's coordinator and agents never take a row in the rail", () => {
   assert.equal(isRenderableAgentRailConversation(worker as never), false);
   assert.equal(isRenderableAgentRailConversation(coordinator as never), false);
   assert.equal(isRenderableAgentRailConversation(base as never), true);
+});
+
+test("event turns are labelled for the chat and recognizable", () => {
+  assert.equal(formatProjectEventDisplay(["acme/shop#1 merged"]), "Project event · acme/shop#1 merged");
+  assert.equal(
+    formatProjectEventDisplay(["a", "b", "a", "c", "d", "e", "f"]),
+    "Project event · a, b, c, d +2 more",
+    "duplicates collapse and long bursts are summarized"
+  );
+  assert.equal(isProjectEventDisplay("Project event · CI failed on x"), true);
+  assert.equal(isProjectEventDisplay("Agent update · cart"), false);
+  assert.equal(isProjectEventDisplay(null), false);
 });

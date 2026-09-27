@@ -1,7 +1,9 @@
-import type {
-  ProjectAgentIsolation,
-  ProjectRepoBinding,
-  ProjectSettings,
+import {
+  DEFAULT_PROJECT_SETTINGS_VALUES,
+  type ProjectAgentIsolation,
+  type ProjectPullRequest,
+  type ProjectRepoBinding,
+  type ProjectSettings,
 } from "@cesium/core/projects";
 import type { AgentConversationStatus } from "../agents/types.js";
 
@@ -14,9 +16,11 @@ export type {
   ProjectContextFile,
   ProjectEngineSummary,
   ProjectOrchestratorSummary,
+  ProjectPullRequest,
   ProjectRepoBinding,
   ProjectSettings,
   ProjectSnapshot,
+  ProjectSubscriptionSummary,
   ProjectSummary,
 } from "@cesium/core/projects";
 
@@ -40,6 +44,11 @@ export type ProjectChildRecord = {
   baseRef: string | null;
   baseSha: string | null;
   worktreePath: string | null;
+  /** `owner/repo` the worker's branch goes to on GitHub, if known. */
+  githubRepo: string | null;
+  pr: ProjectPullRequest | null;
+  /** The worker's first task (clipped), for PR titles and summaries. */
+  task: string | null;
   /** Last status the watcher observed. */
   lastStatus: AgentConversationStatus | "unknown";
   turnsCompleted: number;
@@ -79,8 +88,4 @@ export type ProjectRecord = {
   settings: ProjectSettings;
 };
 
-export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  defaultChildBackendId: null,
-  defaultChildModelId: null,
-  maxActiveChildren: 8,
-};
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = { ...DEFAULT_PROJECT_SETTINGS_VALUES };

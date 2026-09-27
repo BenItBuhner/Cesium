@@ -68,6 +68,9 @@ import {
 import { PeerRequestError } from "./peer-client.js";
 import { RemoteChildHost } from "./remote-child-host.js";
 import type { WorkerBriefInput } from "./worker-brief.js";
+import { isGithubRepoSlug } from "./github/repo-identity.js";
+import { readProjectSubscriptions, summarizeSubscription } from "./subscriptions-store.js";
+import { inspectWorkerRepo } from "./worktrees.js";
 import {
   DEFAULT_PROJECT_SETTINGS,
   type ProjectChildRecord,
@@ -170,6 +173,8 @@ export function summarizeChild(
     baseRef: child.baseRef,
     worktreePath: child.worktreePath,
     archivedAt: child.archivedAt,
+    githubRepo: child.githubRepo,
+    pr: child.pr,
   };
 }
 
@@ -195,9 +200,10 @@ export async function listProjectChildSummaries(
 }
 
 export async function buildProjectSnapshot(record: ProjectRecord): Promise<ProjectSnapshot> {
-  const [orchestrator, children] = await Promise.all([
+  const [orchestrator, children, subscriptions] = await Promise.all([
     readConversationRecord(record.orchestrator.workspaceId, record.orchestrator.conversationId),
     listProjectChildSummaries(record, { includeDeleted: true }),
+    readProjectSubscriptions(record.id).catch(() => []),
   ]);
   return {
     id: record.id,
@@ -219,6 +225,10 @@ export async function buildProjectSnapshot(record: ProjectRecord): Promise<Proje
     children,
     engines: await listEngineSummaries(),
     settings: record.settings,
+    subscriptions: subscriptions
+      .filter((entry) => entry.closedAt == null)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((entry) => summarizeSubscription(entry, record.children)),
   };
 }
 
@@ -452,6 +462,18 @@ function normalizeSettingsPatch(
   if (typeof patch.maxActiveChildren === "number" && Number.isFinite(patch.maxActiveChildren)) {
     next.maxActiveChildren = Math.min(32, Math.max(1, Math.floor(patch.maxActiveChildren)));
   }
+  if (patch.mergePolicy === "ask" || patch.mergePolicy === "when_green") {
+    next.mergePolicy = patch.mergePolicy;
+  }
+  if (patch.prMode === "ready" || patch.prMode === "draft") {
+    next.prMode = patch.prMode;
+  }
+  if (typeof patch.autoCreatePr === "boolean") {
+    next.autoCreatePr = patch.autoCreatePr;
+  }
+  if (typeof patch.autoSubscribe === "boolean") {
+    next.autoSubscribe = patch.autoSubscribe;
+  }
   return next;
 }
 
@@ -530,6 +552,53 @@ export async function addProjectRepo(
     ...existing,
     repos: [...existing.repos, bindRepo(existing, resolved)],
   }));
+  return buildProjectSnapshot(record);
+}
+
+export type PatchProjectRepoInput = {
+  baseBranch?: string | null;
+  githubRepo?: string | null;
+};
+
+/** Sets a repository's base branch (what workers start from) and its GitHub `owner/repo`. */
+export async function updateProjectRepo(
+  projectId: string,
+  repoId: string,
+  patch: PatchProjectRepoInput
+): Promise<ProjectSnapshot> {
+  await requireProject(projectId);
+  if (patch.baseBranch && !BASE_BRANCH_PATTERN.test(patch.baseBranch.trim())) {
+    throw new ProjectError(`"${patch.baseBranch}" is not a branch name.`);
+  }
+  if (patch.githubRepo && !isGithubRepoSlug(patch.githubRepo.trim())) {
+    throw new ProjectError(`"${patch.githubRepo}" is not a GitHub owner/repo.`);
+  }
+  const record = await mutateProject(projectId, (existing) => {
+    if (!existing.repos.some((repo) => repo.id === repoId)) {
+      throw new ProjectError(`Unknown repository: ${repoId}`, 404);
+    }
+    return {
+      ...existing,
+      repos: existing.repos.map((repo) =>
+        repo.id === repoId
+          ? {
+              ...repo,
+              ...(patch.baseBranch !== undefined ? { baseBranch: patch.baseBranch?.trim() || null } : {}),
+              ...(patch.githubRepo !== undefined ? { githubRepo: patch.githubRepo?.trim() || null } : {}),
+            }
+          : repo
+      ),
+      // Workers on this repo push to the same place.
+      children:
+        patch.githubRepo !== undefined
+          ? existing.children.map((child) =>
+              child.repoId === repoId
+                ? { ...child, githubRepo: patch.githubRepo?.trim() || child.githubRepo }
+                : child
+            )
+          : existing.children,
+    };
+  });
   return buildProjectSnapshot(record);
 }
 
@@ -659,6 +728,7 @@ export type CreateChildInput = {
 };
 
 const BASE_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+const CHILD_TASK_MAX_CHARS = 2_000;
 
 /** Where a new child goes, from its repo and requested isolation. */
 function childPlacement(input: {
@@ -813,6 +883,9 @@ export async function createProjectChild(
     baseRef: created.baseRef ?? null,
     baseSha: created.baseSha ?? null,
     worktreePath: created.worktreePath ?? null,
+    githubRepo: repo?.githubRepo ?? created.githubRepo ?? null,
+    pr: null,
+    task: instructions.slice(0, CHILD_TASK_MAX_CHARS),
     lastStatus: "running",
     turnsCompleted: 0,
     lastReportedSeq: 0,
@@ -930,6 +1003,9 @@ export async function adoptProjectChild(
     baseRef: null,
     baseSha: null,
     worktreePath: null,
+    githubRepo: repo?.githubRepo ?? (await inspectWorkerRepo(workspace.root)).githubRepo,
+    pr: null,
+    task: null,
     lastStatus: observation.status,
     turnsCompleted: 0,
     // Only turns after the adoption are reported.

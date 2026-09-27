@@ -50,7 +50,76 @@ export type ProjectRepoBinding = {
   root: string;
   /** Branch workers start from; null means the remote's default branch. */
   baseBranch?: string | null;
+  /** `owner/repo` on GitHub; null means derived from each worker's `origin` remote. */
+  githubRepo?: string | null;
 };
+
+export type ProjectPullRequestState = "open" | "closed" | "merged";
+export type ProjectPullRequestCi = "pending" | "success" | "failure";
+export type ProjectPullRequestReview = "approved" | "changes_requested" | "commented";
+
+/** A pull request a Project tracks: a worker's own, or one it was told to follow. */
+export type ProjectPullRequest = {
+  /** `owner/repo`. */
+  repo: string;
+  number: number;
+  url: string;
+  title: string;
+  state: ProjectPullRequestState;
+  draft: boolean;
+  headRef: string;
+  baseRef: string;
+  headSha: string | null;
+  ci: ProjectPullRequestCi | null;
+  failedChecks: string[];
+  review: ProjectPullRequestReview | null;
+  mergeable: boolean | null;
+  /** True when the Project opened it for a worker that pushed without one. */
+  openedByProject: boolean;
+  updatedAt: number;
+};
+
+/** A PR row for lists: which agent owns it, if any. */
+export type ProjectPullRequestListing = ProjectPullRequest & { agent: string | null };
+
+/** `ask`: merge only on the user's explicit word. `when_green`: the coordinator may merge green PRs. */
+export type ProjectMergePolicy = "ask" | "when_green";
+export type ProjectPrMode = "ready" | "draft";
+
+export type ProjectSubscriptionKind = "github_pr" | "github_ci" | "timer";
+
+/** An event source the coordinator listens to (the "Listening" list). */
+export type ProjectSubscriptionSummary = {
+  id: string;
+  kind: ProjectSubscriptionKind;
+  label: string;
+  detail: string | null;
+  createdBy: "coordinator" | "auto" | "user";
+  /** Agent that owns what is watched (its PR or branch). */
+  agent: string | null;
+  createdAt: number;
+  expiresAt: number;
+  nextFireAt: number | null;
+  lastEventAt: number | null;
+  closedAt: number | null;
+  closedReason: string | null;
+};
+
+/** `displayContent` prefix of an orchestrator turn that carries external events. */
+export const PROJECT_EVENT_DISPLAY_PREFIX = "Project event · ";
+
+const EVENT_LABELS_SHOWN = 4;
+
+export function formatProjectEventDisplay(labels: readonly string[]): string {
+  const unique = [...new Set(labels.map((label) => label.trim()).filter(Boolean))];
+  const shown = unique.slice(0, EVENT_LABELS_SHOWN);
+  const more = unique.length - shown.length;
+  return `${PROJECT_EVENT_DISPLAY_PREFIX}${shown.join(", ")}${more > 0 ? ` +${more} more` : ""}`;
+}
+
+export function isProjectEventDisplay(displayContent: string | null | undefined): boolean {
+  return Boolean(displayContent?.startsWith(PROJECT_EVENT_DISPLAY_PREFIX));
+}
 
 export type ProjectEngineSummary = {
   id: string;
@@ -144,6 +213,9 @@ export type ProjectChildSummary = {
   baseRef: string | null;
   worktreePath: string | null;
   archivedAt: number | null;
+  /** `owner/repo` its branch is pushed to, when that is GitHub. */
+  githubRepo: string | null;
+  pr: ProjectPullRequest | null;
 };
 
 export type ProjectOrchestratorSummary = {
@@ -159,6 +231,22 @@ export type ProjectSettings = {
   defaultChildBackendId: string | null;
   defaultChildModelId: string | null;
   maxActiveChildren: number;
+  mergePolicy: ProjectMergePolicy;
+  prMode: ProjectPrMode;
+  /** Open a PR for a worker that pushed its branch without one. */
+  autoCreatePr: boolean;
+  /** Follow every worker PR and its CI without being asked. */
+  autoSubscribe: boolean;
+};
+
+export const DEFAULT_PROJECT_SETTINGS_VALUES: ProjectSettings = {
+  defaultChildBackendId: null,
+  defaultChildModelId: null,
+  maxActiveChildren: 8,
+  mergePolicy: "ask",
+  prMode: "ready",
+  autoCreatePr: true,
+  autoSubscribe: true,
 };
 
 export type ProjectSummary = {
@@ -194,6 +282,8 @@ export type ProjectSnapshot = {
   children: ProjectChildSummary[];
   engines: ProjectEngineSummary[];
   settings: ProjectSettings;
+  /** Open subscriptions (the Listening list). */
+  subscriptions: ProjectSubscriptionSummary[];
 };
 
 export type ProjectContextFileKind = "text" | "image" | "video" | "binary";

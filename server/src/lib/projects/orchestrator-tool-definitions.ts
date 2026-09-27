@@ -210,6 +210,84 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "project_list_prs",
+    kind: KIND,
+    title: "List pull requests",
+    description:
+      "The pull requests this Project tracks (each agent's own, plus PRs you follow): state, draft, CI result and failed checks, review decision, mergeability, and the owning agent.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "project_merge_pr",
+    kind: KIND,
+    title: (args) => `Merge ${str(args, "pr")}`.trim(),
+    description:
+      "Squash-merge a tracked pull request as `PR title (#N)`, keeping its branch. Only when the user has explicitly told you to merge: pass their words as user_quote (it must appear in their recent messages). It needs an open, ready PR with green CI and no requested changes.",
+    parameters: {
+      type: "object",
+      required: ["pr"],
+      properties: {
+        pr: { type: "string", description: "PR number, owner/repo#N, its URL, or the owning agent's name." },
+        user_quote: {
+          type: "string",
+          description: "The user's own words authorizing this merge, copied from their message.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_subscribe",
+    kind: KIND,
+    title: (args) => `Listen: ${str(args, "kind") || "subscription"}`,
+    description:
+      "Start listening for events that wake you in a new turn. github_pr: comments, reviews, review comments, merge/close of one PR (closes itself when it merges). github_ci: one result per commit on a branch (failures always; a pass only first or after a failure). timer: runs your prompt on a cron schedule, every N minutes, or once after N minutes. Agents' own PRs and their CI are followed automatically. After subscribing, say what you are waiting for and end your turn.",
+    parameters: {
+      type: "object",
+      required: ["kind"],
+      properties: {
+        kind: { type: "string", enum: ["github_pr", "github_ci", "timer"] },
+        pr: { type: "string", description: "github_pr: owner/repo#N or the PR URL." },
+        repo: { type: "string", description: "github_ci: owner/repo." },
+        branch: { type: "string", description: "github_ci: branch to watch." },
+        name: { type: "string", description: "timer: short unique name (a timer with the same name is replaced)." },
+        prompt: { type: "string", description: "timer: what to do when it fires." },
+        cron: { type: "string", description: 'timer: 5-field cron in the engine\'s local time, e.g. "0 8 * * *".' },
+        every_minutes: { type: "number", description: "timer: repeat every N minutes (at least 1)." },
+        in_minutes: { type: "number", description: "timer: fire once after N minutes." },
+        keep_after_close: {
+          type: "boolean",
+          description: "github_pr: keep watching after it merges or closes (only if the user asked).",
+        },
+        expires_in_days: { type: "number", description: "Stop listening after this many days (default 90, max 180)." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_list_subscriptions",
+    kind: KIND,
+    title: "List subscriptions",
+    description: "What this Project is listening to (the Listening list), with ids for project_unsubscribe.",
+    parameters: {
+      type: "object",
+      properties: { include_closed: { type: "boolean", description: "Also list recently closed ones." } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_unsubscribe",
+    kind: KIND,
+    title: (args) => `Stop listening ${str(args, "id")}`.trim(),
+    description: "Stop one subscription by id.",
+    parameters: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "project_context_list",
     kind: KIND,
     title: "List Project context",
@@ -262,6 +340,8 @@ export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
   "How you work:",
   "- Break the user's goal into well-scoped tasks and give each one to a child agent with project_create_agent. Instructions must stand on their own: the goal, where to work, constraints, what done means, and what to report back.",
   "- A child created with a repo gets its own git worktree and branch, so independent tasks run in parallel without colliding. It is told to test, push its branch, open a pull request and report the link.",
+  "- The Project follows every agent's pull request and its CI on its own, and opens the PR itself when an agent pushed without one. Review comments, CI results, merges and timers arrive as <project_events> turns: assess them, route a failure or review comment to the owning agent with project_queue_agent, and stay quiet when nothing needs the user.",
+  "- Merge a pull request with project_merge_pr only when the user has told you to, quoting their words. Use project_subscribe for anything else to watch (another PR, a branch's CI, a schedule).",
   "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness. Engines have names (for example this engine's own name, or a paired machine's label): use those names in tool calls, notes and replies, never internal ids or URLs.",
   "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages, and only between your turns: nothing new reaches you while your turn is running, so calling project_list_agents again cannot show progress.",
   "- Do not poll. Once you have delegated, end your turn with a short reply to the user; the next <project_agent_updates> message starts your next turn.",

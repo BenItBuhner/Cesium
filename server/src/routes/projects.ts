@@ -47,8 +47,24 @@ import {
   setProjectChildArchived,
   stopProjectChild,
   updateProjectChild,
+  updateProjectRepo,
   type ProjectRepoInput,
 } from "../lib/projects/project-service.js";
+import {
+  ensureWorkerPrSubscriptions,
+  listProjectSubscriptionSummaries,
+  runProjectListeningTick,
+  subscribeProject,
+  unsubscribeProject,
+  type SubscribeInput,
+} from "../lib/projects/listening.js";
+import {
+  listProjectPullRequests,
+  mergeProjectPullRequest,
+  trackWorkerPullRequest,
+} from "../lib/projects/pull-requests.js";
+import { summarizeSubscription } from "../lib/projects/subscriptions-store.js";
+import { GithubApiError } from "../lib/projects/github/client.js";
 
 export const projectRoutes = new Hono();
 
@@ -63,6 +79,9 @@ function errorResponse(c: Context, error: unknown): Response {
     return c.json({ error: error.message, code: "project_context_invalid" }, 400);
   }
   if (error instanceof PeerRequestError) {
+    return c.json({ error: error.message, code: error.code }, 502);
+  }
+  if (error instanceof GithubApiError) {
     return c.json({ error: error.message, code: error.code }, 502);
   }
   throw error;
@@ -231,6 +250,12 @@ projectRoutes.patch(
                 ...(asNumber(settings.maxActiveChildren) !== undefined
                   ? { maxActiveChildren: asNumber(settings.maxActiveChildren) }
                   : {}),
+                ...(settings.mergePolicy === "ask" || settings.mergePolicy === "when_green"
+                  ? { mergePolicy: settings.mergePolicy }
+                  : {}),
+                ...(settings.prMode === "ready" || settings.prMode === "draft" ? { prMode: settings.prMode } : {}),
+                ...(typeof settings.autoCreatePr === "boolean" ? { autoCreatePr: settings.autoCreatePr } : {}),
+                ...(typeof settings.autoSubscribe === "boolean" ? { autoSubscribe: settings.autoSubscribe } : {}),
               },
             }
           : {}),
@@ -257,6 +282,109 @@ projectRoutes.post(
 projectRoutes.delete(
   "/api/projects/:id/repos/:repoId",
   guarded(async (c) => c.json(await removeProjectRepo(param(c, "id"), param(c, "repoId"))))
+);
+
+projectRoutes.patch(
+  "/api/projects/:id/repos/:repoId",
+  guarded(async (c) => {
+    const body = await jsonBody(c);
+    return c.json(
+      await updateProjectRepo(param(c, "id"), param(c, "repoId"), {
+        ...(Object.hasOwn(body, "baseBranch") ? { baseBranch: asString(body.baseBranch) ?? null } : {}),
+        ...(Object.hasOwn(body, "githubRepo") ? { githubRepo: asString(body.githubRepo) ?? null } : {}),
+      })
+    );
+  })
+);
+
+projectRoutes.get(
+  "/api/projects/:id/prs",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    return c.json({ prs: await listProjectPullRequests(project.id) });
+  })
+);
+
+/** The user merging from the Project page: their click is the authorization. */
+projectRoutes.post(
+  "/api/projects/:id/prs/merge",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    const body = await jsonBody(c);
+    return c.json(await mergeProjectPullRequest(project.id, { pr: asString(body.pr) ?? "", byUser: true }));
+  })
+);
+
+/** Re-checks every worker's PR and polls the Project's subscriptions now. */
+projectRoutes.post(
+  "/api/projects/:id/prs/refresh",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    for (const child of project.children) {
+      if (child.deletedAt == null && child.branch && child.githubRepo) {
+        const tracked = await trackWorkerPullRequest(project.id, child.id).catch(() => null);
+        if (tracked) {
+          await ensureWorkerPrSubscriptions(project.id, child.id, tracked.pr).catch(() => undefined);
+        }
+      }
+    }
+    await runProjectListeningTick({ projectId: project.id, force: true });
+    return c.json({ prs: await listProjectPullRequests(project.id) });
+  })
+);
+
+projectRoutes.get(
+  "/api/projects/:id/subscriptions",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    return c.json({
+      subscriptions: await listProjectSubscriptionSummaries(project.id, {
+        includeClosed: c.req.query("includeClosed") === "1",
+      }),
+    });
+  })
+);
+
+projectRoutes.post(
+  "/api/projects/:id/subscriptions",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    const body = await jsonBody(c);
+    const input: SubscribeInput =
+      body.kind === "github_pr"
+        ? {
+            kind: "github_pr",
+            repo: asString(body.repo) ?? "",
+            number: asNumber(body.number) ?? 0,
+            keepAfterClose: body.keepAfterClose === true,
+          }
+        : body.kind === "github_ci"
+          ? { kind: "github_ci", repo: asString(body.repo) ?? "", branch: asString(body.branch) ?? "" }
+          : body.kind === "timer"
+            ? {
+                kind: "timer",
+                name: asString(body.name) ?? "",
+                prompt: asString(body.prompt) ?? "",
+                cron: asString(body.cron) ?? null,
+                intervalSeconds: asNumber(body.everyMinutes) != null ? Math.round(asNumber(body.everyMinutes)! * 60) : null,
+                delaySeconds: asNumber(body.inMinutes) != null ? Math.round(asNumber(body.inMinutes)! * 60) : null,
+                once: !asString(body.cron) && asNumber(body.everyMinutes) == null,
+              }
+            : (() => {
+                throw new ProjectError('kind must be "github_pr", "github_ci" or "timer".');
+              })();
+    const { subscription } = await subscribeProject(project.id, input, "user");
+    return c.json({ subscription: summarizeSubscription(subscription, project.children) }, 201);
+  })
+);
+
+projectRoutes.delete(
+  "/api/projects/:id/subscriptions/:subscriptionId",
+  guarded(async (c) => {
+    const project = await requireProject(param(c, "id"));
+    const closed = await unsubscribeProject(project.id, param(c, "subscriptionId"));
+    return c.json({ subscription: summarizeSubscription(closed, project.children) });
+  })
 );
 
 projectRoutes.get(

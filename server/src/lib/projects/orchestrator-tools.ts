@@ -4,7 +4,17 @@ import {
   projectEngineName,
   type ProjectChildSummary,
   type ProjectEngineListing,
+  type ProjectPullRequestListing,
 } from "@cesium/core/projects";
+import {
+  listProjectSubscriptionSummaries,
+  subscribeProject,
+  unsubscribeProject,
+  type SubscribeInput,
+} from "./listening.js";
+import { listProjectPullRequests, mergeProjectPullRequest } from "./pull-requests.js";
+import { readProjectSubscriptions, summarizeSubscription } from "./subscriptions-store.js";
+import type { ProjectRecord } from "./types.js";
 import {
   PROJECT_NOTES_FILE,
   listContextFiles,
@@ -127,6 +137,81 @@ function json(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function compactPullRequest(pr: ProjectPullRequestListing) {
+  return {
+    pr: `${pr.repo}#${pr.number}`,
+    url: pr.url,
+    title: pr.title,
+    agent: pr.agent,
+    state: pr.draft && pr.state === "open" ? "draft" : pr.state,
+    ci: pr.ci,
+    ...(pr.failedChecks.length > 0 ? { failedChecks: pr.failedChecks } : {}),
+    review: pr.review,
+    mergeable: pr.mergeable,
+    branch: pr.headRef,
+    base: pr.baseRef,
+    ...(pr.openedByProject ? { openedByProject: true } : {}),
+  };
+}
+
+/** `owner/repo#N`, a PR URL, or `#N` when the Project's agents push to one GitHub repo. */
+function parsePrRef(record: ProjectRecord, raw: string): { repo: string; number: number } {
+  const url = raw.match(/\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/);
+  if (url) {
+    return { repo: url[1]!, number: Number(url[2]) };
+  }
+  const slug = raw.match(/^([^/\s#]+\/[^/\s#]+)#(\d+)$/);
+  if (slug) {
+    return { repo: slug[1]!, number: Number(slug[2]) };
+  }
+  const bare = raw.match(/^#?(\d+)$/);
+  const repos = [
+    ...new Set(
+      [...record.repos.map((repo) => repo.githubRepo), ...record.children.map((child) => child.githubRepo)].filter(
+        (entry): entry is string => Boolean(entry)
+      )
+    ),
+  ];
+  if (bare && repos.length === 1) {
+    return { repo: repos[0]!, number: Number(bare[1]) };
+  }
+  throw new ProjectError(`Pass the PR as owner/repo#N or its URL (got "${raw}").`);
+}
+
+function subscribeInputFromArgs(record: ProjectRecord, args: Record<string, unknown>): SubscribeInput {
+  switch (args.kind) {
+    case "github_pr": {
+      const ref = parsePrRef(record, requiredArg(args, "pr", "project_subscribe"));
+      return { kind: "github_pr", ...ref, keepAfterClose: args.keep_after_close === true };
+    }
+    case "github_ci":
+      return {
+        kind: "github_ci",
+        repo: requiredArg(args, "repo", "project_subscribe"),
+        branch: requiredArg(args, "branch", "project_subscribe"),
+      };
+    case "timer": {
+      const everyMinutes = typeof args.every_minutes === "number" ? args.every_minutes : null;
+      const inMinutes = typeof args.in_minutes === "number" ? args.in_minutes : null;
+      const cron = arg(args, "cron") ?? null;
+      if (!cron && everyMinutes == null && inMinutes == null) {
+        throw new ProjectError("A timer needs cron, every_minutes or in_minutes.");
+      }
+      return {
+        kind: "timer",
+        name: requiredArg(args, "name", "project_subscribe"),
+        prompt: requiredArg(args, "prompt", "project_subscribe"),
+        cron,
+        intervalSeconds: everyMinutes != null ? Math.round(everyMinutes * 60) : null,
+        delaySeconds: inMinutes != null ? Math.max(1, Math.round(inMinutes * 60)) : null,
+        once: !cron && everyMinutes == null,
+      };
+    }
+    default:
+      throw new ProjectError('kind must be "github_pr", "github_ci" or "timer".');
+  }
+}
+
 /** Dispatches one orchestrator tool call. Throws on bad input; the harness reports it. */
 export async function executeProjectOrchestratorTool(
   projectId: string,
@@ -224,6 +309,51 @@ export async function executeProjectOrchestratorTool(
       );
       return `Agent ${result.agent} (status: ${result.status})\n\n${result.transcript}`;
     }
+    case "project_list_prs": {
+      await requireProject(projectId);
+      const prs = await listProjectPullRequests(projectId);
+      return json({
+        prs: prs.map(compactPullRequest),
+        ...(prs.length === 0
+          ? { note: "No pull requests yet. Agents' PRs appear here once they push and open one." }
+          : {}),
+      });
+    }
+    case "project_merge_pr": {
+      await requireProject(projectId);
+      const result = await mergeProjectPullRequest(projectId, {
+        pr: requiredArg(args, "pr", name),
+        userQuote: arg(args, "user_quote") ?? null,
+      });
+      return json({ merged: compactPullRequest(result.pr), commit: result.sha });
+    }
+    case "project_subscribe": {
+      const record = await requireProject(projectId);
+      const input = subscribeInputFromArgs(record, args);
+      const expiresInDays = typeof args.expires_in_days === "number" ? args.expires_in_days : null;
+      const { subscription, created } = await subscribeProject(
+        projectId,
+        { ...input, expiresInMs: expiresInDays ? expiresInDays * 86_400_000 : null },
+        "coordinator"
+      );
+      return json({
+        [created ? "subscribed" : "alreadySubscribed"]: summarizeSubscription(subscription, record.children),
+        note: "Events arrive as <project_events> turns. Say what you are waiting for and end your turn.",
+      });
+    }
+    case "project_list_subscriptions": {
+      await requireProject(projectId);
+      return json({
+        subscriptions: await listProjectSubscriptionSummaries(projectId, {
+          includeClosed: args.include_closed === true,
+        }),
+      });
+    }
+    case "project_unsubscribe": {
+      const record = await requireProject(projectId);
+      const closed = await unsubscribeProject(projectId, requiredArg(args, "id", name));
+      return json({ unsubscribed: summarizeSubscription(closed, record.children) });
+    }
     case "project_context_list": {
       await requireProject(projectId);
       return json({ files: await listContextFiles(projectId) });
@@ -266,12 +396,14 @@ export async function buildProjectOrchestratorReminder(
   context: { dateLabel: string; modelName: string }
 ): Promise<string> {
   const record = await requireProject(projectId);
-  const [children, files, notes, engines] = await Promise.all([
+  const [children, files, notes, engines, subscriptions] = await Promise.all([
     listProjectChildSummaries(record),
     listContextFiles(projectId).catch(() => []),
     readContextFile(projectId, PROJECT_NOTES_FILE).catch(() => null),
     listEngineSummaries(),
+    readProjectSubscriptions(projectId).catch(() => []),
   ]);
+  const prs = await listProjectPullRequests(projectId).catch(() => []);
   const working = children.filter((child) => child.bucket === "working").length;
   const lines: string[] = [
     "<project>",
@@ -303,6 +435,26 @@ export async function buildProjectOrchestratorReminder(
             `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.branch ? ` · branch ${child.branch}` : child.isolation === "checkout" ? " · in the repo checkout" : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
         )
       : ["- none yet"]),
+    "",
+    `Merge policy: ${record.settings.mergePolicy === "when_green" ? "you may merge green PRs" : "merge only when the user explicitly says so (quote them in project_merge_pr)"}`,
+    "",
+    "Pull requests:",
+    ...(prs.length > 0
+      ? prs.map(
+          (pr) =>
+            `- ${pr.repo}#${pr.number} ${pr.draft && pr.state === "open" ? "draft" : pr.state}${pr.agent ? ` · agent ${pr.agent}` : ""} · CI ${pr.ci ?? "unknown"}${pr.failedChecks.length ? ` (${pr.failedChecks.join(", ")})` : ""}${pr.review ? ` · review ${pr.review.replace(/_/g, " ")}` : ""} · ${oneLine(pr.title, PREVIEW_IN_TABLE_MAX_CHARS)} ${pr.url}`
+        )
+      : ["- none yet"]),
+    "",
+    "Listening:",
+    ...(subscriptions.some((entry) => entry.closedAt == null)
+      ? subscriptions
+          .filter((entry) => entry.closedAt == null)
+          .map((entry) => {
+            const summary = summarizeSubscription(entry, record.children);
+            return `- ${summary.label}${summary.agent ? ` (agent ${summary.agent})` : ""} [${summary.id}]`;
+          })
+      : ["- nothing"]),
     "</project>",
   ];
   if (notes) {
