@@ -106,8 +106,12 @@ describe("rendezvous client protocol", () => {
 
   test("resolves a fresh encrypted registry record", async () => {
     const now = Date.now();
-    globalThis.fetch = async () =>
-      Response.json({
+    globalThis.fetch = async (_url, init) => {
+      assert.equal(
+        new Headers(init?.headers).get("x-cesium-rendezvous-version"),
+        "2"
+      );
+      return Response.json({
         record: {
           version: 1,
           serverId: locator.serverId,
@@ -119,6 +123,7 @@ describe("rendezvous client protocol", () => {
           expiresAt: now + 60_000,
         },
       });
+    };
 
     const endpoint = await resolveRendezvousEndpoint(locator);
     assert.equal(endpoint?.baseUrl, "https://current-tunnel.example");
@@ -134,6 +139,10 @@ describe("rendezvous client protocol", () => {
     let calls = 0;
     globalThis.fetch = async (_url, init) => {
       calls += 1;
+      assert.equal(
+        new Headers(init?.headers).get("x-cesium-rendezvous-version"),
+        "2"
+      );
       const body = JSON.parse(String(init?.body)) as { serverIds: string[] };
       assert.deepEqual(body.serverIds, [locator.serverId, second.serverId]);
       return Response.json({

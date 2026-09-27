@@ -46,7 +46,12 @@ class FakeChild extends EventEmitter {
   }
 }
 
-type FetchRequest = { url: string; authorization: string | null; body: unknown };
+type FetchRequest = {
+  url: string;
+  authorization: string | null;
+  protocolVersion: string | null;
+  body: unknown;
+};
 
 function makeFetch(requests: FetchRequest[] = []): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
@@ -67,6 +72,9 @@ function makeFetch(requests: FetchRequest[] = []): typeof fetch {
       requests.push({
         url: href,
         authorization: new Headers(init?.headers).get("authorization"),
+        protocolVersion: new Headers(init?.headers).get(
+          "x-cesium-rendezvous-version"
+        ),
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       return new Response(JSON.stringify({ ok: true }), {
@@ -217,6 +225,7 @@ test("stable connect link contains read secret but excludes write secret", async
   assert.match(connectUrl, /^https:\/\/web\.example\/agent#cesiumConnect=/);
   const writeSecret = requests[0]?.authorization?.replace(/^Bearer /, "");
   assert.ok(writeSecret);
+  assert.equal(requests[0]?.protocolVersion, "2");
   const fragment = connectUrl.split("cesiumConnect=")[1];
   const decoded = JSON.parse(Buffer.from(fragment, "base64url").toString("utf8")) as {
     secret: string;

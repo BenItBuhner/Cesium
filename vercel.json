@@ -3,5 +3,21 @@
   "framework": "nextjs",
   "installCommand": "npm install --ignore-scripts",
   "buildCommand": "node scripts/vercel-build.mjs",
-  "ignoreCommand": "bash scripts/vercel-ignore-build.sh"
+  "ignoreCommand": "bash scripts/vercel-ignore-build.sh",
+  "routes": [
+    {
+      "src": "/api/rendezvous(?:/.*)?",
+      "methods": ["GET", "POST", "PUT"],
+      "missing": [
+        {
+          "type": "header",
+          "key": "x-cesium-rendezvous-version",
+          "value": "2"
+        }
+      ],
+      "mitigate": {
+        "action": "deny"
+      }
+    }
+  ]
 }

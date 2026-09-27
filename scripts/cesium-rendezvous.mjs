@@ -77,6 +77,7 @@ async function publish(publicUrl, tunnelProvider) {
     headers: {
       Authorization: `Bearer ${writeSecret}`,
       "Content-Type": "application/json",
+      "X-Cesium-Rendezvous-Version": "2",
     },
     body: JSON.stringify({
       version: 1,
