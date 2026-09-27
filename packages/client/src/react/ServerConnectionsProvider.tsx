@@ -426,7 +426,24 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       if (!active) {
         return;
       }
+      const now = Date.now();
+      if (!shouldAttemptServer(serverProbeRetryByIdRef.current.get(active.id), now)) {
+        return;
+      }
       const activeProbe = await probeServerBaseUrl(active.baseUrl);
+      serverProbeRetryByIdRef.current.set(
+        active.id,
+        nextServerRetryState({
+          previous: serverProbeRetryByIdRef.current.get(active.id),
+          now,
+          reachable: activeProbe.ok,
+          healthyIntervalMs: 30_000,
+        })
+      );
+      writeRetryStates(
+        SERVER_PROBE_RETRY_STORAGE_KEY,
+        serverProbeRetryByIdRef.current
+      );
       setServerStatusById((current) =>
         upsertRuntimeStatusIfChanged(current, active.id, statusFromProbe(active.baseUrl, activeProbe))
       );
@@ -435,10 +452,29 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       }
       const candidates = [...current.servers].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
       for (const candidate of candidates) {
-        if (candidate.id === active.id) {
+        if (
+          candidate.id === active.id ||
+          !shouldAttemptServer(
+            serverProbeRetryByIdRef.current.get(candidate.id),
+            Date.now()
+          )
+        ) {
           continue;
         }
         const probe = await probeServerBaseUrl(candidate.baseUrl);
+        serverProbeRetryByIdRef.current.set(
+          candidate.id,
+          nextServerRetryState({
+            previous: serverProbeRetryByIdRef.current.get(candidate.id),
+            now: Date.now(),
+            reachable: probe.ok,
+            healthyIntervalMs: 30_000,
+          })
+        );
+        writeRetryStates(
+          SERVER_PROBE_RETRY_STORAGE_KEY,
+          serverProbeRetryByIdRef.current
+        );
         setServerStatusById((current) =>
           upsertRuntimeStatusIfChanged(
             current,
