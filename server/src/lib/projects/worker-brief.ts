@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ProjectAgentIsolation } from "@cesium/core/projects";
 import type { WorkerSetupPlan } from "./worktrees.js";
 
@@ -68,10 +69,11 @@ function contextLines(brief: WorkerBriefInput): string[] {
     brief.contextIsMirror
       ? `- Folder: ${dir}. It is this machine's copy of the Project context on engine ${brief.contextEngine}: what you write there is copied back after each of your turns.`
       : `- Folder: ${dir}`,
-    "- notes.md is the coordinator's live status board. Read it first; don't edit it.",
-    "- docs/ holds documents the user reads. Read what is relevant to you; write there only when your deliverable is a document.",
-    `- internal/${brief.agentName}/ is for your handoffs, findings and working notes for other agents.`,
-    `- media/${brief.agentName}/ is for your screenshots, recordings and other evidence.`,
+    "- It is not part of any repository, and nothing in it is committed.",
+    `- ${path.join(dir, "notes.md")} is the coordinator's live status board. Read it first; don't edit it.`,
+    `- ${path.join(dir, "docs/")} holds documents the user reads. Read what is relevant to you; write there only when your deliverable is a document.`,
+    `- ${path.join(dir, "internal", `${brief.agentName}/`)} is for your handoffs, findings and working notes for other agents.`,
+    `- ${path.join(dir, "media", `${brief.agentName}/`)} is for your screenshots, recordings and other evidence.`,
   ];
 }
 
@@ -81,6 +83,10 @@ function doneLines(facts: WorkerPlacementFacts, brief: WorkerBriefInput): string
   if (facts.isolation === "worktree") {
     if (facts.hasOrigin) {
       const base = facts.baseRef?.replace(/^origin\//, "") ?? "the base branch";
+      const findings = brief.contextDir ? path.join(brief.contextDir, "internal", `${brief.agentName}/`) : null;
+      lines.push(
+        `- If your task changes no code (research, an investigation, a plan), your findings go in ${findings ? `${findings} and ` : ""}your report: don't commit them to the repository or open a pull request.`
+      );
       lines.push(
         `- Your commits are on \`${facts.branch}\` and pushed: \`git push -u origin ${facts.branch}\`.`,
         `- A pull request is open for \`${facts.branch}\` against \`${base}\`, ready for review, with a description that says what changed, how you verified it and where the evidence is. Use \`gh pr create\` when it is available; if you cannot open one, push and say so in your report.`
