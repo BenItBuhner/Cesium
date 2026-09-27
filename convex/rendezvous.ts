@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 
 /**
  * Convex-backed rendezvous registry.
@@ -28,6 +29,31 @@ const recordValidator = v.object({
   updatedAt: v.number(),
   expiresAt: v.number(),
 });
+const MAX_BATCH_SIZE = 250;
+
+async function readRecord(
+  ctx: QueryCtx,
+  serverId: string,
+  now: number | undefined
+) {
+  if (!SERVER_ID_PATTERN.test(serverId)) {
+    return null;
+  }
+  const row = await ctx.db
+    .query("rendezvousRecords")
+    .withIndex("by_server", (q) => q.eq("serverId", serverId))
+    .unique();
+  if (!row || (typeof now === "number" && row.expiresAt <= now)) {
+    return null;
+  }
+  return {
+    version: row.version,
+    serverId: row.serverId,
+    ciphertext: row.ciphertext,
+    updatedAt: row.updatedAt,
+    expiresAt: row.expiresAt,
+  };
+}
 
 function safeEqual(left: string, right: string): boolean {
   if (left.length !== right.length) {
@@ -43,27 +69,25 @@ function safeEqual(left: string, right: string): boolean {
 export const get = query({
   args: { serverId: v.string(), now: v.optional(v.number()) },
   returns: v.union(v.null(), recordValidator),
+  handler: async (ctx, args) => await readRecord(ctx, args.serverId, args.now),
+});
+
+/**
+ * One reactive subscription per client, regardless of how many engines are
+ * saved on the account. Convex invalidates this query when any selected
+ * record changes, replacing the old N HTTP polls through Vercel.
+ */
+export const getBatch = query({
+  args: {
+    serverIds: v.array(v.string()),
+    now: v.optional(v.number()),
+  },
+  returns: v.array(v.union(v.null(), recordValidator)),
   handler: async (ctx, args) => {
-    if (!SERVER_ID_PATTERN.test(args.serverId)) {
-      return null;
-    }
-    const row = await ctx.db
-      .query("rendezvousRecords")
-      .withIndex("by_server", (q) => q.eq("serverId", args.serverId))
-      .unique();
-    if (!row) {
-      return null;
-    }
-    if (typeof args.now === "number" && row.expiresAt <= args.now) {
-      return null;
-    }
-    return {
-      version: row.version,
-      serverId: row.serverId,
-      ciphertext: row.ciphertext,
-      updatedAt: row.updatedAt,
-      expiresAt: row.expiresAt,
-    };
+    const serverIds = [...new Set(args.serverIds)].slice(0, MAX_BATCH_SIZE);
+    return await Promise.all(
+      serverIds.map(async (serverId) => await readRecord(ctx, serverId, args.now))
+    );
   },
 });
 

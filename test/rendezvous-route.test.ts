@@ -26,6 +26,10 @@ class MemoryRendezvousStore implements RendezvousStore {
     return this.records.get(serverId) ?? null;
   }
 
+  async getMany(serverIds: string[]): Promise<Array<RendezvousRecord | null>> {
+    return serverIds.map((serverId) => this.records.get(serverId) ?? null);
+  }
+
   async claimAndPut(
     serverId: string,
     secretHash: string,
@@ -83,7 +87,7 @@ describe("rendezvous route", () => {
     assert.equal(get.headers.get("cache-control"), "public, max-age=0, s-maxage=5");
     const payload = (await get.json()) as { record: RendezvousRecord };
     assert.equal(payload.record.ciphertext, CIPHERTEXT);
-    assert.equal(payload.record.expiresAt, now + 90_000);
+    assert.equal(payload.record.expiresAt, now + 15 * 60_000);
   });
 
   test("rejects missing credentials and identity takeover", async () => {

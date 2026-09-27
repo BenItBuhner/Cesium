@@ -5,6 +5,7 @@ export * from "./server-connections";
 export * from "./server-connections-provider-shared";
 export * from "./resolve-server-base-url";
 export * from "./rendezvous";
+export * from "./rendezvous-subscription";
 export * from "./server-connection-health";
 export * from "./server-engine-names";
 export * from "./auth-client";

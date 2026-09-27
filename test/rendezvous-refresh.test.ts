@@ -3,19 +3,57 @@ import { describe, test } from "node:test";
 import {
   RENDEZVOUS_REFRESH_DEGRADED_MS,
   RENDEZVOUS_REFRESH_HEALTHY_MS,
+  RENDEZVOUS_DEAD_SERVER_CUTOFF_MS,
   isRendezvousServerReachable,
+  nextServerRetryState,
   rendezvousServerJustWentOffline,
+  shouldAttemptServer,
   shouldRefreshRendezvous,
 } from "../packages/client/src/rendezvous-refresh.ts";
 
 describe("rendezvous refresh cadence", () => {
   test("the healthy cadence is a small fraction of the engine's publish rate", () => {
-    // Engines publish every 30 s into a 90 s TTL; one lookup a minute follows a
-    // rotation well before the record can expire, and a tab that stays
-    // visible all month costs ~43K lookups instead of ~260K at 10 s.
-    assert.equal(RENDEZVOUS_REFRESH_HEALTHY_MS, 60_000);
-    assert.equal(RENDEZVOUS_REFRESH_DEGRADED_MS, 10_000);
+    // Convex pushes production changes; legacy/custom registries use one
+    // batched lookup every five minutes while healthy.
+    assert.equal(RENDEZVOUS_REFRESH_HEALTHY_MS, 5 * 60_000);
+    assert.equal(RENDEZVOUS_REFRESH_DEGRADED_MS, 30_000);
     assert.ok(RENDEZVOUS_REFRESH_DEGRADED_MS < RENDEZVOUS_REFRESH_HEALTHY_MS);
+  });
+
+  test("unreachable servers back off exponentially and stop after one day", () => {
+    const startedAt = 1_000_000;
+    const first = nextServerRetryState({
+      now: startedAt,
+      reachable: false,
+    });
+    assert.equal(first.nextAttemptAt, startedAt + 30_000);
+    assert.equal(shouldAttemptServer(first, startedAt + 29_999), false);
+    assert.equal(shouldAttemptServer(first, startedAt + 30_000), true);
+
+    const second = nextServerRetryState({
+      previous: first,
+      now: first.nextAttemptAt,
+      reachable: false,
+    });
+    assert.equal(second.nextAttemptAt, first.nextAttemptAt + 60_000);
+    assert.equal(
+      shouldAttemptServer(second, startedAt + RENDEZVOUS_DEAD_SERVER_CUTOFF_MS),
+      false
+    );
+    assert.equal(
+      shouldAttemptServer(second, startedAt + RENDEZVOUS_DEAD_SERVER_CUTOFF_MS, true),
+      true,
+      "a user-triggered refresh can revive a stale server"
+    );
+  });
+
+  test("Retry-After extends the global exponential delay", () => {
+    const state = nextServerRetryState({
+      now: 10_000,
+      reachable: false,
+      retryAfterMs: 120_000,
+    });
+    assert.equal(state.nextAttemptAt, 130_000);
   });
 
   test("no rendezvous servers means nothing to refresh", () => {

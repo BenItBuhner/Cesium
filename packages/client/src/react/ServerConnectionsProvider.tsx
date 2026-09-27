@@ -33,15 +33,24 @@ import {
   parseConnectSessionHash,
   parseRendezvousBootstrapHash,
   resolveRendezvousEndpoint,
+  resolveRendezvousEndpoints,
+  resolveRendezvousRecord,
   stripRendezvousBootstrapFromLocation,
+  RendezvousLookupError,
   type RendezvousBootstrap,
   type RendezvousLocator,
 } from "../rendezvous";
 import {
   RENDEZVOUS_REFRESH_DEGRADED_MS,
+  nextServerRetryState,
   rendezvousServerJustWentOffline,
-  shouldRefreshRendezvous,
+  shouldAttemptServer,
+  type ServerRetryState,
 } from "../rendezvous-refresh";
+import {
+  subscribeCloudRendezvousSnapshot,
+  type CloudRendezvousSnapshot,
+} from "../rendezvous-subscription";
 import { migrateStoredAuthServerBaseUrl, setStoredSessionToken } from "../auth-client";
 import {
   SERVER_CONNECTIONS_EVENT,
@@ -228,7 +237,11 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   );
   const healthRecoveryRanRef = useRef(false);
   const healthRefreshEpochRef = useRef(0);
-  const lastRendezvousRefreshAtRef = useRef(0);
+  const rendezvousRefreshInFlightRef = useRef(false);
+  const rendezvousRetryByServerRef = useRef(new Map<string, ServerRetryState>());
+  const serverProbeRetryByIdRef = useRef(new Map<string, ServerRetryState>());
+  const globalRendezvousRetryRef = useRef<ServerRetryState>();
+  const cloudRendezvousServerIdsRef = useRef(new Set<string>());
   const serversRef = useRef<ServerConnection[]>(state.servers);
   serversRef.current = state.servers;
   const serverStatusRef = useRef(serverStatusById);
@@ -409,76 +422,152 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     };
   }, [ready]);
 
-  const refreshRendezvousEndpoints = useCallback(async () => {
+  const applyResolvedRendezvousEndpoints = useCallback(
+    (resolved: Map<string, Awaited<ReturnType<typeof resolveRendezvousRecord>>>) => {
+      for (const [serverId, endpoint] of resolved) {
+        if (!endpoint) continue;
+        setState((current) => {
+          const existing = current.servers.find(
+            (server) => server.rendezvous?.serverId === serverId
+          );
+          if (!existing || existing.baseUrl === endpoint.baseUrl) {
+            return current;
+          }
+          migrateStoredAuthServerBaseUrl(existing.baseUrl, endpoint.baseUrl);
+          const next = updateRendezvousServerEndpoint(current, {
+            serverId,
+            baseUrl: endpoint.baseUrl,
+            label: endpoint.label,
+          });
+          if (next !== current) {
+            writeStoredServerConnectionsState(next);
+          }
+          return next;
+        });
+      }
+    },
+    []
+  );
+
+  const refreshRendezvousEndpoints = useCallback(async (force = false) => {
+    if (
+      rendezvousRefreshInFlightRef.current ||
+      (typeof document !== "undefined" && document.visibilityState === "hidden")
+    ) {
+      return;
+    }
+    const now = Date.now();
+    if (!shouldAttemptServer(globalRendezvousRetryRef.current, now, force)) {
+      return;
+    }
     const rendezvousServers = serversRef.current.filter(
       (server): server is ServerConnection & { rendezvous: NonNullable<ServerConnection["rendezvous"]> } =>
-        Boolean(server.rendezvous)
+        Boolean(server.rendezvous) &&
+        !cloudRendezvousServerIdsRef.current.has(server.rendezvous!.serverId) &&
+        shouldAttemptServer(
+          rendezvousRetryByServerRef.current.get(server.rendezvous!.serverId),
+          now,
+          force
+        )
     );
     if (rendezvousServers.length === 0) {
       return;
     }
-    lastRendezvousRefreshAtRef.current = Date.now();
-    const resolved = await Promise.all(
-      rendezvousServers.map(async (server) => {
-        try {
-          const endpoint = await resolveRendezvousEndpoint(server.rendezvous, {
-            signal: timeoutSignal(RENDEZVOUS_RESOLVE_TIMEOUT_MS),
-          });
-          return endpoint ? { endpoint, serverId: server.rendezvous.serverId } : null;
-        } catch {
-          return null;
-        }
-      })
-    );
-    for (const result of resolved) {
-      if (!result) continue;
-      setState((current) => {
-        const existing = current.servers.find(
-          (server) => server.rendezvous?.serverId === result.serverId
+    rendezvousRefreshInFlightRef.current = true;
+    try {
+      const resolved = await resolveRendezvousEndpoints(
+        rendezvousServers.map((server) => server.rendezvous),
+        { signal: timeoutSignal(RENDEZVOUS_RESOLVE_TIMEOUT_MS) }
+      );
+      globalRendezvousRetryRef.current = undefined;
+      for (const server of rendezvousServers) {
+        const serverId = server.rendezvous.serverId;
+        rendezvousRetryByServerRef.current.set(
+          serverId,
+          nextServerRetryState({
+            previous: rendezvousRetryByServerRef.current.get(serverId),
+            now,
+            reachable: Boolean(resolved.get(serverId)),
+          })
         );
-        if (!existing || existing.baseUrl === result.endpoint.baseUrl) {
-          return current;
-        }
-        migrateStoredAuthServerBaseUrl(existing.baseUrl, result.endpoint.baseUrl);
-        const next = updateRendezvousServerEndpoint(current, {
-          serverId: result.serverId,
-          baseUrl: result.endpoint.baseUrl,
-          label: result.endpoint.label,
+      }
+      applyResolvedRendezvousEndpoints(resolved);
+    } catch (error) {
+      const retryAfterMs =
+        error instanceof RendezvousLookupError ? error.retryAfterMs : null;
+      for (const server of rendezvousServers) {
+        const serverId = server.rendezvous.serverId;
+        rendezvousRetryByServerRef.current.set(
+          serverId,
+          nextServerRetryState({
+            previous: rendezvousRetryByServerRef.current.get(serverId),
+            now,
+            reachable: false,
+            retryAfterMs,
+          })
+        );
+      }
+      if (!(error instanceof RendezvousLookupError) || error.isGlobalFailure) {
+        globalRendezvousRetryRef.current = nextServerRetryState({
+          previous: globalRendezvousRetryRef.current,
+          now,
+          reachable: false,
+          retryAfterMs,
         });
-        if (next !== current) {
-          writeStoredServerConnectionsState(next);
-        }
-        return next;
-      });
+      }
+    } finally {
+      rendezvousRefreshInFlightRef.current = false;
     }
-  }, []);
+  }, [applyResolvedRendezvousEndpoints]);
+
+  useEffect(() => {
+    return subscribeCloudRendezvousSnapshot((snapshot: CloudRendezvousSnapshot | null) => {
+      cloudRendezvousServerIdsRef.current = new Set(snapshot?.serverIds ?? []);
+      if (!snapshot) {
+        return;
+      }
+      const currentByServerId = new Map(
+        serversRef.current.flatMap((server) =>
+          server.rendezvous ? [[server.rendezvous.serverId, server] as const] : []
+        )
+      );
+      void (async () => {
+        const resolved = new Map<
+          string,
+          Awaited<ReturnType<typeof resolveRendezvousRecord>>
+        >();
+        await Promise.all(
+          snapshot.serverIds.map(async (serverId, index) => {
+            const server = currentByServerId.get(serverId);
+            if (!server?.rendezvous) return;
+            try {
+              resolved.set(
+                serverId,
+                await resolveRendezvousRecord(
+                  server.rendezvous,
+                  snapshot.records[index] ?? null
+                )
+              );
+            } catch {
+              resolved.set(serverId, null);
+            }
+          })
+        );
+        applyResolvedRendezvousEndpoints(resolved);
+      })();
+    });
+  }, [applyResolvedRendezvousEndpoints]);
 
   useEffect(() => {
     if (!ready) {
       return;
     }
     void refreshRendezvousEndpoints();
-    // Hidden tabs skip the periodic probe; a refresh runs on return instead.
-    // Visible tabs re-resolve on the slow cadence while every rendezvous
-    // server probes reachable and on the fast one while any is offline (see
-    // rendezvous-refresh.ts); the tick itself runs at the fast cadence so the
-    // switch is picked up promptly.
+    // The tick only evaluates per-server/global retry deadlines. Hidden tabs
+    // make no requests; Convex-backed servers are updated by the one batched
+    // reactive subscription and are excluded from this HTTP fallback.
     const interval = window.setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-      const healths = serversRef.current
-        .filter((server) => Boolean(server.rendezvous))
-        .map((server) => serverStatusRef.current[server.id]?.health);
-      if (
-        shouldRefreshRendezvous({
-          now: Date.now(),
-          lastRefreshAt: lastRendezvousRefreshAtRef.current,
-          healths,
-        })
-      ) {
-        void refreshRendezvousEndpoints();
-      }
+      void refreshRendezvousEndpoints();
     }, RENDEZVOUS_REFRESH_DEGRADED_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
@@ -492,18 +581,35 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     };
   }, [ready, refreshRendezvousEndpoints]);
 
-  const refreshServerHealth = useCallback(async () => {
+  const runServerHealthRefresh = useCallback(async (force = false) => {
     const epoch = ++healthRefreshEpochRef.current;
-    const servers = serversRef.current;
+    const now = Date.now();
+    const servers = serversRef.current.filter((server) =>
+      shouldAttemptServer(serverProbeRetryByIdRef.current.get(server.id), now, force)
+    );
     const probes = await Promise.all(
       servers.map(async (server) => ({
         server,
         probe: await probeServerBaseUrl(server.baseUrl),
       }))
     );
-    const next = Object.fromEntries(
-      probes.map(({ server, probe }) => [server.id, statusFromProbe(server.baseUrl, probe)])
-    );
+    for (const { server, probe } of probes) {
+      serverProbeRetryByIdRef.current.set(
+        server.id,
+        nextServerRetryState({
+          previous: serverProbeRetryByIdRef.current.get(server.id),
+          now,
+          reachable: probe.ok,
+          healthyIntervalMs: 30_000,
+        })
+      );
+    }
+    const next = {
+      ...serverStatusRef.current,
+      ...Object.fromEntries(
+        probes.map(({ server, probe }) => [server.id, statusFromProbe(server.baseUrl, probe)])
+      ),
+    };
     if (epoch !== healthRefreshEpochRef.current) {
       return next;
     }
@@ -552,22 +658,27 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     return next;
   }, [refreshRendezvousEndpoints]);
 
+  const refreshServerHealth = useCallback(
+    async () => await runServerHealthRefresh(true),
+    [runServerHealthRefresh]
+  );
+
   useEffect(() => {
     if (!ready) {
       return;
     }
-    void refreshServerHealth().catch(() => undefined);
+    void runServerHealthRefresh().catch(() => undefined);
     // Hidden tabs skip health probes (N servers × 30s adds up); a probe runs
     // immediately on return so statuses never look stale to the user.
     const interval = window.setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      void refreshServerHealth().catch(() => undefined);
+      void runServerHealthRefresh().catch(() => undefined);
     }, 30_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void refreshServerHealth().catch(() => undefined);
+        void runServerHealthRefresh().catch(() => undefined);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -575,7 +686,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [ready, refreshServerHealth]);
+  }, [ready, runServerHealthRefresh]);
 
   const setActiveServer = useCallback((serverId: string) => {
     setState((current) => {
