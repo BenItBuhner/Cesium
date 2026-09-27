@@ -72,9 +72,10 @@ export function setProjectAgentCheckWindowForTests(ms: number | null): void {
 }
 
 /**
- * Nothing reaches the orchestrator mid-turn, so polling project_list_agents
- * can never show progress. A repeat check that finds the same state within
- * the window gets a short reminder to end the turn instead of the full list.
+ * Agents' reports only reach the orchestrator after its turn, so polling
+ * project_list_agents never brings them sooner. A repeat check that finds the
+ * same state within the window gets a short reminder to end the turn instead
+ * of the full list (and the third check in a row ends the turn).
  */
 function answerAgentCheck(key: string, payload: Record<string, unknown>): string {
   const fingerprint = JSON.stringify(payload);
@@ -87,7 +88,7 @@ function answerAgentCheck(key: string, payload: Record<string, unknown>): string
     return json({
       unchanged: true,
       checksWithoutChange: previous.repeats,
-      note: `Nothing has changed since your last check ${secondsAgo}s ago, and nothing can change while your turn is running. ${WAIT_FOR_UPDATES_NOTE}`,
+      note: `Nothing has changed since your last check ${secondsAgo}s ago. Checking again won't bring their reports sooner. ${WAIT_FOR_UPDATES_NOTE}`,
     });
   }
   lastAgentChecks.set(key, { at: now, fingerprint, repeats: 0 });
