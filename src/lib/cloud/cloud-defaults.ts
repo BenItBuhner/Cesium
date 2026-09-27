@@ -1,8 +1,7 @@
 /**
- * Committed production cloud defaults - the single place that makes every
- * packaged client (Vercel web, Electron on macOS/Windows/Linux, Android and
- * iOS mobile) default to production cloud behavior without any build-time
- * environment variables.
+ * Committed production cloud defaults. cloud-flags.ts only consumes these in
+ * a real production deployment or a packaged file:// client; local dev,
+ * previews, CI and agent builds stay local-only unless explicitly configured.
  *
  * Both values are public-safe by design: the Convex deployment URL and the
  * Clerk *publishable* key ship in client bundles on every platform. Secrets
@@ -19,5 +18,6 @@
  */
 export const CESIUM_CLOUD_DEFAULTS = {
   convexUrl: "https://insightful-wolverine-140.convex.cloud",
+  rendezvousHttpUrl: "https://insightful-wolverine-140.convex.site",
   clerkPublishableKey: "pk_live_Y2xlcmsuY2VzaXVtLnRlY2hsaXRub3cuY29tJA",
 } as const;

@@ -19,6 +19,7 @@ const VARS = [
   "NEXT_PUBLIC_CONVEX_URL",
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN",
+  "NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD",
   "CLERK_SECRET_KEY",
 ] as const;
 
@@ -36,19 +37,23 @@ function setEnv(values: Partial<Record<(typeof VARS)[number], string>>) {
 describe("clerk server posture", () => {
   afterEach(() => setEnv({}));
 
-  test("bare self-hosted next start (no Clerk env) is client-only, not ready", () => {
+  test("bare self-hosted next start (no Clerk env) stays cloud-off", () => {
     setEnv({});
     const posture = resolveClerkServerPosture();
-    assert.deepEqual(posture, {
-      kind: "client-only",
-      publishableKey: CESIUM_CLOUD_DEFAULTS.clerkPublishableKey,
-      signInRequired: false,
-    });
+    assert.deepEqual(posture, { kind: "off" });
     assert.equal(selectClerkProxyBehavior(posture), "passthrough");
   });
 
-  test("secret key alone completes the committed publishable default", () => {
+  test("secret key alone does not opt a self-hosted build into production", () => {
     setEnv({ CLERK_SECRET_KEY: "sk_test_secret" });
+    assert.deepEqual(resolveClerkServerPosture(), { kind: "off" });
+  });
+
+  test("production build secret completes the committed publishable default", () => {
+    setEnv({
+      NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD: "1",
+      CLERK_SECRET_KEY: "sk_test_secret",
+    });
     const posture = resolveClerkServerPosture();
     // The secret itself is never surfaced: Clerk reads CLERK_SECRET_KEY from
     // env, and passing it as a middleware option would require
@@ -73,7 +78,10 @@ describe("clerk server posture", () => {
   });
 
   test("whitespace-only secret counts as missing", () => {
-    setEnv({ CLERK_SECRET_KEY: "   " });
+    setEnv({
+      NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD: "1",
+      CLERK_SECRET_KEY: "   ",
+    });
     assert.equal(getClerkSecretKey(), null);
     assert.equal(resolveClerkServerPosture().kind, "client-only");
   });
@@ -95,7 +103,10 @@ describe("clerk server posture", () => {
   });
 
   test("gated deployment without a secret fails closed instead of opening up", () => {
-    setEnv({ NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN: "1" });
+    setEnv({
+      NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD: "1",
+      NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN: "1",
+    });
     const posture = resolveClerkServerPosture();
     assert.equal(posture.kind, "client-only");
     assert.equal(posture.kind === "client-only" && posture.signInRequired, true);
@@ -103,7 +114,11 @@ describe("clerk server posture", () => {
   });
 
   test("gated deployment with a secret runs clerk", () => {
-    setEnv({ NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN: "1", CLERK_SECRET_KEY: "sk_test_secret" });
+    setEnv({
+      NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD: "1",
+      NEXT_PUBLIC_CESIUM_REQUIRE_SIGN_IN: "1",
+      CLERK_SECRET_KEY: "sk_test_secret",
+    });
     assert.equal(selectClerkProxyBehavior(resolveClerkServerPosture()), "clerk");
   });
 });

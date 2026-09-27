@@ -805,12 +805,13 @@ supervise() {
 
   local last_published_at=0
   local last_published_url=""
+  local rendezvous_failures=0
+  local next_rendezvous_attempt_at=0
   local tunnel_health_failures=0
-  # Rendezvous records live 90 s; publishing every 30 s survives two missed
-  # beats and halves the billed function invocations on the hosted web app
-  # compared with the old 15 s cadence.
-  local interval="${CESIUM_RENDEZVOUS_INTERVAL:-30}"
-  [[ "$interval" =~ ^[0-9]+$ ]] || interval=30
+  # Rendezvous records live 15 minutes; URL rotations publish immediately and
+  # a five-minute keepalive survives two missed beats without wasting quota.
+  local interval="${CESIUM_RENDEZVOUS_INTERVAL:-300}"
+  [[ "$interval" =~ ^[0-9]+$ ]] || interval=300
   ((interval >= 5)) || interval=5
 
   while true; do
@@ -849,13 +850,22 @@ supervise() {
         fi
       fi
     fi
-    if [[ -n "$remote" ]] &&
+    if [[ -n "$remote" ]] && ((now >= next_rendezvous_attempt_at)) &&
       { [[ "$remote" != "$last_published_url" ]] || ((now - last_published_at >= interval)); }; then
       if publish_rendezvous; then
         last_published_url="$remote"
         last_published_at="$now"
-      elif [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" == "1" ]]; then
-        printf '%s Rendezvous publish failed; retrying.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
+        rendezvous_failures=0
+        next_rendezvous_attempt_at=$((now + interval))
+      else
+        rendezvous_failures=$((rendezvous_failures + 1))
+        local retry_delay=$((interval * (1 << (rendezvous_failures > 10 ? 10 : rendezvous_failures))))
+        ((retry_delay <= 900)) || retry_delay=900
+        next_rendezvous_attempt_at=$((now + retry_delay))
+        if [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" == "1" ]]; then
+          printf '%s Rendezvous publish failed; retrying in %ss.\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$retry_delay" >>"$RENDEZVOUS_LOG"
+        fi
       fi
     fi
     sleep 5

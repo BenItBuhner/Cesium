@@ -2,18 +2,67 @@
  * Cadence for re-resolving tunnel-backed engines through the rendezvous
  * registry (`GET /api/rendezvous/<serverId>` on the web deployment).
  *
- * The engine re-publishes its record every 30 s and a record lives 90 s, so a
- * connection that probes healthy only needs to look for a URL rotation about
- * once a minute. A rotated tunnel URL shows up first as the old endpoint
- * failing its health probe; from that moment the registry is re-checked on
- * the fast cadence (and once immediately) until the engine is reachable again.
+ * Current clients receive Convex record updates reactively. These cadences
+ * only govern legacy/custom HTTP registries: healthy servers refresh every
+ * five minutes; unreachable ones back off exponentially and stop after a day.
  *
- * Every registry lookup is a billed function invocation on the hosted web app,
- * so the healthy cadence is deliberately slow: at 10 s a single always-visible
- * tab was ~260K invocations a month on its own.
+ * Every fallback lookup may be a billed hosted-web invocation, so all server
+ * ids are batched and deployment-level errors apply a global backoff.
  */
-export const RENDEZVOUS_REFRESH_HEALTHY_MS = 60_000;
-export const RENDEZVOUS_REFRESH_DEGRADED_MS = 10_000;
+export const RENDEZVOUS_REFRESH_HEALTHY_MS = 5 * 60_000;
+export const RENDEZVOUS_REFRESH_DEGRADED_MS = 30_000;
+export const RENDEZVOUS_REFRESH_MAX_BACKOFF_MS = 15 * 60_000;
+export const RENDEZVOUS_DEAD_SERVER_CUTOFF_MS = 24 * 60 * 60_000;
+
+export type ServerRetryState = {
+  failures: number;
+  firstFailureAt: number | null;
+  nextAttemptAt: number;
+};
+
+export function nextServerRetryState(input: {
+  previous?: ServerRetryState;
+  now: number;
+  reachable: boolean;
+  healthyIntervalMs?: number;
+  retryAfterMs?: number | null;
+}): ServerRetryState {
+  if (input.reachable) {
+    return {
+      failures: 0,
+      firstFailureAt: null,
+      nextAttemptAt: input.now + (input.healthyIntervalMs ?? RENDEZVOUS_REFRESH_HEALTHY_MS),
+    };
+  }
+  const failures = (input.previous?.failures ?? 0) + 1;
+  const exponential = Math.min(
+    RENDEZVOUS_REFRESH_MAX_BACKOFF_MS,
+    RENDEZVOUS_REFRESH_DEGRADED_MS * 2 ** Math.min(failures - 1, 10)
+  );
+  return {
+    failures,
+    firstFailureAt: input.previous?.firstFailureAt ?? input.now,
+    nextAttemptAt:
+      input.now + Math.max(exponential, input.retryAfterMs ?? 0),
+  };
+}
+
+export function shouldAttemptServer(
+  state: ServerRetryState | undefined,
+  now: number,
+  force = false
+): boolean {
+  if (force || !state) {
+    return true;
+  }
+  if (
+    state.firstFailureAt !== null &&
+    now - state.firstFailureAt >= RENDEZVOUS_DEAD_SERVER_CUTOFF_MS
+  ) {
+    return false;
+  }
+  return now >= state.nextAttemptAt;
+}
 
 export type RendezvousRefreshHealth =
   | "unknown"

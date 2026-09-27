@@ -142,6 +142,7 @@ describe("/api/connect/pairings facade", () => {
 describe("rendezvous store fallbacks", () => {
   test("Upstash wins when configured; otherwise Convex; otherwise none", () => {
     const previous = process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+    const previousProduction = process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD;
     try {
       assert.equal(
         resolveRendezvousBackend({ UPSTASH_REDIS_REST_URL: "https://r", UPSTASH_REDIS_REST_TOKEN: "t" }),
@@ -152,6 +153,7 @@ describe("rendezvous store fallbacks", () => {
         "upstash"
       );
       delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+      process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD = "1";
       assert.equal(resolveRendezvousBackend({}), "convex");
       process.env.NEXT_PUBLIC_CESIUM_CLOUD = "0";
       assert.equal(resolveRendezvousBackend({}), "none");
@@ -160,6 +162,11 @@ describe("rendezvous store fallbacks", () => {
         delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
       } else {
         process.env.NEXT_PUBLIC_CESIUM_CLOUD = previous;
+      }
+      if (previousProduction === undefined) {
+        delete process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD;
+      } else {
+        process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD = previousProduction;
       }
     }
   });
