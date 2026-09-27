@@ -124,6 +124,8 @@ export type ChildCreateResult = ChildRef & {
   baseRef: string | null;
   baseSha: string | null;
   worktreePath: string | null;
+  /** `owner/repo` of the worker's `origin` when it is on GitHub. */
+  githubRepo?: string | null;
   /** Placement caveat, e.g. a fetch that failed or a folder that is not a git repo. */
   placementWarning?: string | null;
 };
@@ -361,6 +363,14 @@ export function formatProjectTranscript(
   return `[…earlier transcript truncated]\n${text.slice(text.length - maxChars)}`;
 }
 
+type Placement = {
+  workspace: WorkspaceRecord;
+  facts: WorkerPlacementFacts;
+  /** True when the Project created the workspace (a worktree or sandbox) and must clean it up. */
+  ownsWorkspace: boolean;
+  githubRepo: string | null;
+};
+
 /** Children hosted by this engine, driven through the local runtime manager. */
 export class LocalChildHost implements ChildHost {
   constructor(readonly engineId: string) {}
@@ -376,11 +386,12 @@ export class LocalChildHost implements ChildHost {
   private async checkoutPlacement(
     workspace: WorkspaceRecord,
     warning: string | null = null
-  ): Promise<{ workspace: WorkspaceRecord; facts: WorkerPlacementFacts; ownsWorkspace: boolean }> {
+  ): Promise<Placement> {
     const git = await inspectWorkerRepo(workspace.root);
     return {
       workspace,
       ownsWorkspace: false,
+      githubRepo: git.githubRepo,
       facts: {
         isolation: "checkout",
         root: workspace.root,
@@ -394,9 +405,7 @@ export class LocalChildHost implements ChildHost {
     };
   }
 
-  private async place(
-    input: ChildCreateInput
-  ): Promise<{ workspace: WorkspaceRecord; facts: WorkerPlacementFacts; ownsWorkspace: boolean }> {
+  private async place(input: ChildCreateInput): Promise<Placement> {
     const placement = input.placement;
     switch (placement.kind) {
       case "workspace": {
@@ -415,6 +424,7 @@ export class LocalChildHost implements ChildHost {
         return {
           workspace,
           ownsWorkspace: true,
+          githubRepo: null,
           facts: {
             isolation: "scratch",
             root: workspace.root,
@@ -443,6 +453,7 @@ export class LocalChildHost implements ChildHost {
           return {
             workspace: worktree.workspace,
             ownsWorkspace: true,
+            githubRepo: worktree.githubRepo,
             facts: {
               isolation: "worktree",
               root: worktree.worktreePath,
@@ -471,7 +482,7 @@ export class LocalChildHost implements ChildHost {
   }
 
   async create(input: ChildCreateInput): Promise<ChildCreateResult> {
-    const { workspace, facts, ownsWorkspace } = await this.place(input);
+    const { workspace, facts, ownsWorkspace, githubRepo } = await this.place(input);
     const modelId = input.modelId?.trim() || undefined;
     const promptText = input.brief ? buildWorkerBrief(input.brief, facts) : input.promptText?.trim();
     if (!promptText) {
@@ -515,6 +526,7 @@ export class LocalChildHost implements ChildHost {
       baseRef: facts.baseRef,
       baseSha: facts.baseSha,
       worktreePath: facts.isolation === "worktree" ? facts.root : null,
+      githubRepo,
       placementWarning: facts.warning,
     };
   }

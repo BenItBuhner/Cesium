@@ -8,9 +8,11 @@ import {
 } from "./child-host.js";
 import { callPeerEngine, isPeerEngineReachable, listPeerEngines } from "./engine-registry.js";
 import { isProjectsEnabled } from "./feature-flag.js";
+import { ensureWorkerPrSubscriptions } from "./listening.js";
 import { composeProjectNotice, type ProjectNoticeUpdate } from "./notices.js";
 import { childHostFor } from "./project-service.js";
 import { listProjectRecords, mutateProject, readProject } from "./project-store.js";
+import { trackWorkerPullRequest } from "./pull-requests.js";
 import type { ProjectChildRecord, ProjectRecord } from "./types.js";
 
 type PendingObservation = {
@@ -173,7 +175,7 @@ async function processChild(entry: PendingObservation): Promise<void> {
   if (Object.keys(patch).length === 0 && !update) {
     return;
   }
-  const updated = await mutateProject(
+  let updated = await mutateProject(
     entry.projectId,
     (current) => ({
       ...current,
@@ -185,8 +187,56 @@ async function processChild(entry: PendingObservation): Promise<void> {
     }),
     { touch: false }
   );
+  if (update && (update.event === "finished" || update.event === "failed") && child.branch && child.githubRepo) {
+    const line = await followWorkerPullRequest(entry.projectId, child.id, update.event === "finished");
+    if (line) {
+      update.detail = `${update.detail ?? ""}\n${line}`.trim();
+      updated = (await readProject(entry.projectId)) ?? updated;
+    }
+  }
   if (update) {
     await deliverProjectNotice(updated, [update]);
+  }
+}
+
+const PR_TRACKING_TIMEOUT_MS = 10_000;
+
+/**
+ * After a worker's turn: find its PR (or open one when it pushed without one)
+ * and follow it, so the orchestrator hears about the PR in the same update.
+ */
+async function followWorkerPullRequest(projectId: string, childId: string, allowCreate: boolean): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const tracked = await Promise.race([
+      trackWorkerPullRequest(projectId, childId, { allowCreate }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), PR_TRACKING_TIMEOUT_MS);
+      }),
+    ]);
+    if (!tracked) {
+      return null;
+    }
+    await ensureWorkerPrSubscriptions(projectId, childId, tracked.pr);
+    const { pr } = tracked;
+    const how = tracked.created
+      ? "opened by the Project because the agent pushed without one"
+      : pr.state === "open"
+        ? pr.draft
+          ? "open, draft"
+          : "open"
+        : pr.state;
+    return `Pull request: ${pr.repo}#${pr.number} (${how}) ${pr.url}`;
+  } catch (error) {
+    console.warn(
+      `[projects] could not check the pull request for child ${childId}:`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 }
 

@@ -26,6 +26,8 @@ import type {
   ProjectAgentDelivery,
   ProjectAgentIsolation,
   ProjectChildSummary,
+  ProjectPullRequestListing,
+  ProjectSubscriptionSummary,
   ProjectContextFile,
   ProjectEngineListing,
   ProjectEngineSummary,
@@ -5793,6 +5795,96 @@ export async function deleteProjectAgent(
   options?: ProjectRequestOptions
 ): Promise<void> {
   await projectRequest(projectAgentPath(projectId, agent), jsonInit("DELETE"), options);
+}
+
+export async function patchProjectRepo(
+  projectId: string,
+  repoId: string,
+  patch: { baseBranch?: string | null; githubRepo?: string | null },
+  options?: ProjectRequestOptions
+): Promise<ProjectSnapshot> {
+  return projectRequest(
+    projectPath(projectId, `/repos/${encodeURIComponent(repoId)}`),
+    jsonInit("PATCH", patch),
+    options
+  );
+}
+
+export async function listProjectPullRequests(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectPullRequestListing[]> {
+  const result = await projectRequest<{ prs: ProjectPullRequestListing[] }>(
+    projectPath(projectId, "/prs"),
+    undefined,
+    options
+  );
+  return result.prs;
+}
+
+/** Re-checks every agent's PR and polls the Project's subscriptions now. */
+export async function refreshProjectPullRequests(
+  projectId: string,
+  options?: ProjectRequestOptions
+): Promise<ProjectPullRequestListing[]> {
+  const result = await projectRequest<{ prs: ProjectPullRequestListing[] }>(
+    projectPath(projectId, "/prs/refresh"),
+    jsonInit("POST"),
+    options
+  );
+  return result.prs;
+}
+
+/** The user merging a tracked PR (squash, `title (#N)`, branch kept). */
+export function mergeProjectPullRequest(
+  projectId: string,
+  pr: string,
+  options?: ProjectRequestOptions
+): Promise<{ pr: ProjectPullRequestListing; sha: string | null }> {
+  return projectRequest(projectPath(projectId, "/prs/merge"), jsonInit("POST", { pr }), options);
+}
+
+export async function listProjectSubscriptions(
+  projectId: string,
+  input?: { includeClosed?: boolean },
+  options?: ProjectRequestOptions
+): Promise<ProjectSubscriptionSummary[]> {
+  const result = await projectRequest<{ subscriptions: ProjectSubscriptionSummary[] }>(
+    projectPath(projectId, `/subscriptions${input?.includeClosed ? "?includeClosed=1" : ""}`),
+    undefined,
+    options
+  );
+  return result.subscriptions;
+}
+
+export type ProjectSubscriptionCreateRequest =
+  | { kind: "github_pr"; repo: string; number: number; keepAfterClose?: boolean }
+  | { kind: "github_ci"; repo: string; branch: string }
+  | { kind: "timer"; name: string; prompt: string; cron?: string | null; everyMinutes?: number | null; inMinutes?: number | null };
+
+export async function createProjectSubscription(
+  projectId: string,
+  input: ProjectSubscriptionCreateRequest,
+  options?: ProjectRequestOptions
+): Promise<ProjectSubscriptionSummary> {
+  const result = await projectRequest<{ subscription: ProjectSubscriptionSummary }>(
+    projectPath(projectId, "/subscriptions"),
+    jsonInit("POST", input),
+    options
+  );
+  return result.subscription;
+}
+
+export async function deleteProjectSubscription(
+  projectId: string,
+  subscriptionId: string,
+  options?: ProjectRequestOptions
+): Promise<void> {
+  await projectRequest(
+    projectPath(projectId, `/subscriptions/${encodeURIComponent(subscriptionId)}`),
+    jsonInit("DELETE"),
+    options
+  );
 }
 
 export async function archiveProjectAgent(

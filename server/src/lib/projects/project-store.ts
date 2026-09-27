@@ -10,7 +10,9 @@ import {
 import {
   PROJECT_HOME_ENGINE_ID,
   isProjectAgentIsolation,
+  type ProjectPullRequest,
   type ProjectRepoBinding,
+  type ProjectSettings,
 } from "@cesium/core/projects";
 import {
   DEFAULT_PROJECT_SETTINGS,
@@ -41,6 +43,54 @@ function emit(event: ProjectStoreEvent): void {
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+function normalizePullRequest(raw: unknown): ProjectPullRequest | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const pr = raw as Partial<ProjectPullRequest>;
+  if (typeof pr.repo !== "string" || typeof pr.number !== "number" || typeof pr.url !== "string") {
+    return null;
+  }
+  return {
+    repo: pr.repo,
+    number: pr.number,
+    url: pr.url,
+    title: typeof pr.title === "string" ? pr.title : `#${pr.number}`,
+    state: pr.state === "merged" || pr.state === "closed" ? pr.state : "open",
+    draft: pr.draft === true,
+    headRef: typeof pr.headRef === "string" ? pr.headRef : "",
+    baseRef: typeof pr.baseRef === "string" ? pr.baseRef : "",
+    headSha: nullableString(pr.headSha),
+    ci: pr.ci === "pending" || pr.ci === "success" || pr.ci === "failure" ? pr.ci : null,
+    failedChecks: Array.isArray(pr.failedChecks)
+      ? pr.failedChecks.filter((name): name is string => typeof name === "string")
+      : [],
+    review:
+      pr.review === "approved" || pr.review === "changes_requested" || pr.review === "commented"
+        ? pr.review
+        : null,
+    mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : null,
+    openedByProject: pr.openedByProject === true,
+    updatedAt: typeof pr.updatedAt === "number" ? pr.updatedAt : 0,
+  };
+}
+
+export function normalizeProjectSettings(raw: unknown): ProjectSettings {
+  const settings = (raw && typeof raw === "object" ? raw : {}) as Partial<ProjectSettings>;
+  return {
+    defaultChildBackendId: nullableString(settings.defaultChildBackendId),
+    defaultChildModelId: nullableString(settings.defaultChildModelId),
+    maxActiveChildren:
+      typeof settings.maxActiveChildren === "number" && Number.isFinite(settings.maxActiveChildren)
+        ? Math.min(32, Math.max(1, Math.floor(settings.maxActiveChildren)))
+        : DEFAULT_PROJECT_SETTINGS.maxActiveChildren,
+    mergePolicy: settings.mergePolicy === "when_green" ? "when_green" : "ask",
+    prMode: settings.prMode === "draft" ? "draft" : "ready",
+    autoCreatePr: settings.autoCreatePr !== false,
+    autoSubscribe: settings.autoSubscribe !== false,
+  };
 }
 
 function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
@@ -81,6 +131,9 @@ function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
     baseRef: nullableString(child.baseRef),
     baseSha: nullableString(child.baseSha),
     worktreePath: nullableString(child.worktreePath),
+    githubRepo: nullableString(child.githubRepo),
+    pr: normalizePullRequest(child.pr),
+    task: nullableString(child.task),
     lastStatus: typeof child.lastStatus === "string" ? child.lastStatus : "unknown",
     turnsCompleted: typeof child.turnsCompleted === "number" ? child.turnsCompleted : 0,
     lastReportedSeq: typeof child.lastReportedSeq === "number" ? child.lastReportedSeq : 0,
@@ -115,6 +168,7 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
       ? record.repos.map((repo: ProjectRepoBinding) => ({
           ...repo,
           baseBranch: nullableString(repo.baseBranch),
+          githubRepo: nullableString(repo.githubRepo),
         }))
       : [],
     children: Array.isArray(record.children)
@@ -122,7 +176,7 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
           .map(normalizeChildRecord)
           .filter((child): child is ProjectChildRecord => child !== null)
       : [],
-    settings: { ...DEFAULT_PROJECT_SETTINGS, ...(record.settings ?? {}) },
+    settings: normalizeProjectSettings(record.settings),
   };
 }
 

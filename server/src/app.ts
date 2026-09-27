@@ -34,6 +34,7 @@ import { metaRoutes } from "./routes/meta.js";
 import { projectPeerRoutes } from "./routes/project-peers.js";
 import { projectRoutes } from "./routes/projects.js";
 import { startProjectWatcher } from "./lib/projects/project-watcher.js";
+import { startProjectListening } from "./lib/projects/listening.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
@@ -259,6 +260,9 @@ export function startCesiumBackgroundServices(): void {
   }
   startAgentPromptQueueDrainListener();
   startProjectWatcher();
+  if (process.env.NODE_ENV !== "test") {
+    startProjectListening();
+  }
   startCloudAgentTaskSyncListener();
   startUpdateAutoCheck();
   if (process.env.NODE_ENV !== "test") {
