@@ -114,12 +114,32 @@ function isConversationTurnInProgress(status: AgentConversationStatus): boolean 
 }
 
 /**
+ * A Project coordinator hears its user before queued agent updates and
+ * events (engine notices, the entries with a `coalesceKey`): a message typed
+ * while it is busy runs as its very next turn. Other chats queue in order.
+ */
+function enqueuePrompt(
+  conversation: Pick<AgentConversationRecord, "origin" | "queuedPrompts">,
+  entry: AgentQueuedChatPrompt
+): AgentQueuedChatPrompt[] {
+  const queue = conversation.queuedPrompts ?? [];
+  if (conversation.origin?.kind !== "project-orchestrator" || entry.coalesceKey) {
+    return [...queue, entry];
+  }
+  const firstNotice = queue.findIndex((queued) => Boolean(queued.coalesceKey));
+  return firstNotice < 0
+    ? [...queue, entry]
+    : [...queue.slice(0, firstNotice), entry, ...queue.slice(firstNotice)];
+}
+
+/**
  * Idle conversations run their queue. Engine notices (the only entries with a
  * `coalesceKey`) also run after a failed or interrupted turn, so Project reports
  * are not stranded; a turn the user stopped still waits for them.
  */
 export function canStartQueuedPrompt(
-  conversation: Pick<AgentConversationRecord, "status" | "queuedPrompts">
+  conversation: Pick<AgentConversationRecord, "status" | "queuedPrompts"> &
+    Partial<Pick<AgentConversationRecord, "origin">>
 ): boolean {
   const head = conversation.queuedPrompts?.[0];
   if (!head) {
@@ -128,9 +148,10 @@ export function canStartQueuedPrompt(
   if (conversation.status === "idle") {
     return true;
   }
+  // A coordinator's queue holds its user's messages ahead of notices; neither may strand.
   return (
     (conversation.status === "failed" || conversation.status === "interrupted") &&
-    Boolean(head.coalesceKey)
+    (Boolean(head.coalesceKey) || conversation.origin?.kind === "project-orchestrator")
   );
 }
 
@@ -1589,7 +1610,7 @@ export class AgentRuntimeManager {
           clientEventId &&
           (current.queuedPrompts ?? []).some((queued) => queued.clientEventId === clientEventId)
             ? (current.queuedPrompts ?? [])
-            : [...(current.queuedPrompts ?? []), entry],
+            : enqueuePrompt(current, entry),
       }));
       if (outcomeSink) {
         outcomeSink.value = "queued";
