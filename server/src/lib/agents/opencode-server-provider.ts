@@ -2014,6 +2014,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     const toolLabel = permission.title ?? "OpenCode permission";
     const resolved = await resolveRememberedPermissionDecision({
       workspaceId: this.callbacks.workspace.id,
+      origin: this.callbacks.conversation.origin,
       backendId: this.backend.id,
       toolKey,
       options: permission.options,

@@ -90,6 +90,7 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
     prMode: settings.prMode === "draft" ? "draft" : "ready",
     autoCreatePr: settings.autoCreatePr !== false,
     autoSubscribe: settings.autoSubscribe !== false,
+    autoApproveAgents: settings.autoApproveAgents !== false,
   };
 }
 

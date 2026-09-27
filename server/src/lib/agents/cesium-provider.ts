@@ -40,6 +40,7 @@ import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
+import { projectAgentActsWithoutAsking } from "./remembered-permissions.js";
 import { callMcpToolRich, refreshWorkspaceMcpMirror } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import {
@@ -2607,6 +2608,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
           kind: "status",
           status: "running",
           detail: `Used remembered permission for ${remembered.toolLabel}.`,
+        },
+      ]);
+      return;
+    }
+
+    if (projectAgentActsWithoutAsking(this.callbacks.conversation.origin)) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Allowed ${input.title}: this Project's agents act without asking.`,
         },
       ]);
       return;

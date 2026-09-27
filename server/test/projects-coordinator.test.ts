@@ -538,6 +538,49 @@ test("a queued message the user removes before the coordinator's next step never
   );
 });
 
+test("agents act without asking by default; with approvals on, a command waits for the user", async () => {
+  script("runner", toolCall("call_ls", "terminal", { command: "ls" }), text(["Listed the files."]));
+  const created = await api("POST", `/api/projects/${project.id}/agents`, {
+    name: "runner",
+    repo: "shop",
+    instructions: "List the files.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const runner = await childRecord("runner");
+  const ran = await waitFor(
+    "the runner's command to run",
+    () => readConversationSnapshot(runner.workspaceId, runner.conversationId),
+    (snapshot) =>
+      snapshot.conversation.status === "idle" &&
+      eventsOfKind(snapshot.events, "tool_call_update").some(
+        (event) => event.toolCallId === "call_ls" && event.status === "completed"
+      ),
+    30_000
+  );
+  assert.equal(eventsOfKind(ran.events, "permission_request").length, 0, "nobody was asked");
+  assert.ok(
+    eventsOfKind(ran.events, "status").some((event) => /this Project's agents act without asking/.test(event.detail ?? ""))
+  );
+  await updateDelivered("runner", /Listed the files/);
+
+  assert.equal((await api("PATCH", `/api/projects/${project.id}`, { settings: { autoApproveAgents: false } })).status, 200);
+  try {
+    script("careful", toolCall("call_ls_careful", "terminal", { command: "ls" }), text(["Done."]));
+    await api("POST", `/api/projects/${project.id}/agents`, { name: "careful", repo: "shop", instructions: "List the files." });
+    const careful = await childRecord("careful");
+    await waitFor(
+      "the command to wait for the user",
+      () => readConversationRecord(careful.workspaceId, careful.conversationId),
+      (record) => record.status === "awaiting_permission"
+    );
+    await updateDelivered("careful", /Permission request/);
+    assert.equal((await api("DELETE", `/api/projects/${project.id}/agents/careful`)).status, 200);
+  } finally {
+    await api("PATCH", `/api/projects/${project.id}`, { settings: { autoApproveAgents: true } });
+  }
+  await orchestratorIdle("after the approval checks");
+});
+
 test("a browser check runs an agent's branch, reports with evidence, and never takes the worktree with it", async () => {
   script("browser-check", text(["Checked the cart: total 5 for 2+3 items. Screenshot: media/browser-check/cart.png"]));
   script("orchestrator", text(["The browser check passed."]));

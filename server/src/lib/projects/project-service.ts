@@ -477,6 +477,9 @@ function normalizeSettingsPatch(
   if (typeof patch.autoSubscribe === "boolean") {
     next.autoSubscribe = patch.autoSubscribe;
   }
+  if (typeof patch.autoApproveAgents === "boolean") {
+    next.autoApproveAgents = patch.autoApproveAgents;
+  }
   return next;
 }
 
@@ -923,6 +926,7 @@ export async function createProjectChild(
       mode: input.mode?.trim() || null,
       homeLabel: homeEngineLabel(),
       engineLabel: hostLabel,
+      autoApprove: record.settings.autoApproveAgents,
     });
     const child: ProjectChildRecord = {
       id: childId,

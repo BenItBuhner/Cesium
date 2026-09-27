@@ -243,6 +243,8 @@ export type ProjectSettings = {
   autoCreatePr: boolean;
   /** Follow every worker PR and its CI without being asked. */
   autoSubscribe: boolean;
+  /** New agents run commands, edit files and use tools in their own folder without asking. */
+  autoApproveAgents: boolean;
 };
 
 export const DEFAULT_PROJECT_SETTINGS_VALUES: ProjectSettings = {
@@ -253,6 +255,7 @@ export const DEFAULT_PROJECT_SETTINGS_VALUES: ProjectSettings = {
   prMode: "ready",
   autoCreatePr: true,
   autoSubscribe: true,
+  autoApproveAgents: true,
 };
 
 export type ProjectSummary = {

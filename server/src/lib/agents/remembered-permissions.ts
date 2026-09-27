@@ -10,10 +10,16 @@ import {
   providerOptionIdForRememberedPermission,
 } from "./permission-options.js";
 import type {
+  AgentConversationOrigin,
   AgentPermissionCategory,
   AgentPermissionOption,
   RememberedAgentPermissionMatchStyle,
 } from "./types.js";
+
+/** A Project agent whose Project lets it act without asking (the setting when it was created). */
+export function projectAgentActsWithoutAsking(origin: AgentConversationOrigin | null | undefined): boolean {
+  return origin?.kind === "project-child" && origin.autoApprove === true;
+}
 
 /**
  * Stable opaque tool key for harnesses whose native permission payloads are not
@@ -90,7 +96,8 @@ export type ResolvedRememberedPermission =
 
 /**
  * Shared gate used by every harness before surfacing a permission card.
- * Remembered rules win; then the global auto-accept toggle; otherwise prompt.
+ * Remembered rules win; then a Project agent allowed to act without asking;
+ * then the global auto-accept toggle; otherwise prompt.
  */
 export async function resolveRememberedPermissionDecision(input: {
   workspaceId: string;
@@ -98,6 +105,7 @@ export async function resolveRememberedPermissionDecision(input: {
   toolKey: string;
   permissionCategory?: AgentPermissionCategory;
   options?: AgentPermissionOption[];
+  origin?: AgentConversationOrigin | null;
 }): Promise<ResolvedRememberedPermission> {
   // One retry: a transient settings-load failure must not cause a stored
   // "always" decision to silently fall back to prompting mid-conversation.
@@ -124,7 +132,7 @@ export async function resolveRememberedPermissionDecision(input: {
         : undefined,
     };
   }
-  if (settings.agents.autoAcceptAllAgentPermissions) {
+  if (projectAgentActsWithoutAsking(input.origin) || settings.agents.autoAcceptAllAgentPermissions) {
     return {
       kind: "auto_accept",
       decision: "allow",

@@ -330,7 +330,22 @@ function WorkflowBlock({ snapshot }: { snapshot: ProjectSnapshot }) {
 
   return (
     <section className="flex flex-col gap-[8px]">
-      <span className={projectSectionLabelClass}>Pull requests and merging</span>
+      <span className={projectSectionLabelClass}>Autonomy, pull requests and merging</span>
+      <label className="flex items-start gap-[8px] font-sans text-[12.5px] text-[var(--text-primary)]">
+        <input
+          type="checkbox"
+          checked={settings.autoApproveAgents}
+          disabled={pending != null}
+          onChange={(event) => void save({ autoApproveAgents: event.target.checked })}
+          className="mt-[3px] accent-[var(--accent)]"
+        />
+        <span>
+          Agents run commands, edit files and use tools in their own worktree without asking
+          <span className="block font-sans text-[11.5px] text-[var(--text-disabled)]">
+            Applies to agents started from now on. Off: each command waits for you in the agent&apos;s chat.
+          </span>
+        </span>
+      </label>
       <div className="grid grid-cols-1 gap-[8px] sm:grid-cols-2">
         <label className="flex flex-col gap-[4px]">
           <span className={fieldLabelClass}>Who merges</span>

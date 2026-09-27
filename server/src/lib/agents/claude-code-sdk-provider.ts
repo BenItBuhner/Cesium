@@ -2512,6 +2512,7 @@ export class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     if (!isPlanApproval) {
       const resolved = await resolveRememberedPermissionDecision({
         workspaceId: this.callbacks.workspace.id,
+        origin: this.callbacks.conversation.origin,
         backendId: this.backend.id,
         toolKey,
         permissionCategory,
