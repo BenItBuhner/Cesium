@@ -1129,6 +1129,7 @@ export class PublicAccessManager {
       headers: {
         Authorization: `Bearer ${config.rendezvousWriteSecret}`,
         "Content-Type": "application/json",
+        "X-Cesium-Rendezvous-Version": "2",
       },
       body: JSON.stringify({
         version: 1,

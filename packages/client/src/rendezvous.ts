@@ -2,6 +2,8 @@
 
 export const RENDEZVOUS_FRAGMENT_KEY = "cesiumConnect";
 export const CONNECT_SESSION_FRAGMENT_KEY = "cesiumSession";
+export const RENDEZVOUS_PROTOCOL_HEADER = "X-Cesium-Rendezvous-Version";
+export const RENDEZVOUS_PROTOCOL_VERSION = "2";
 
 export type RendezvousLocator = {
   version: 1;
@@ -308,6 +310,7 @@ export async function resolveRendezvousEndpoint(
     {
       method: "GET",
       cache: "no-store",
+      headers: { [RENDEZVOUS_PROTOCOL_HEADER]: RENDEZVOUS_PROTOCOL_VERSION },
       signal: options?.signal,
     }
   );
@@ -369,7 +372,10 @@ export async function resolveRendezvousEndpoints(
       const response = await fetch(registryBatchUrl(origin), {
         method: "POST",
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          [RENDEZVOUS_PROTOCOL_HEADER]: RENDEZVOUS_PROTOCOL_VERSION,
+        },
         body: JSON.stringify({ serverIds: group.map((locator) => locator.serverId) }),
         signal: options?.signal,
       });

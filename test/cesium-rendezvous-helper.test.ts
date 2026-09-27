@@ -14,7 +14,12 @@ const READ_SECRET = "read_secret_1234567890abcdefghijklmnopqrstuv";
 const WRITE_SECRET = "write_secret_1234567890abcdefghijklmnopqrstu";
 let registryBaseUrl = "";
 let lastRequest:
-  | { authorization: string | undefined; body: { version: number; ciphertext: string }; url: string }
+  | {
+      authorization: string | undefined;
+      protocolVersion: string | undefined;
+      body: { version: number; ciphertext: string };
+      url: string;
+    }
   | null = null;
 
 const server = createServer((request, response) => {
@@ -23,6 +28,9 @@ const server = createServer((request, response) => {
   request.on("end", () => {
     lastRequest = {
       authorization: request.headers.authorization,
+      protocolVersion: request.headers["x-cesium-rendezvous-version"] as
+        | string
+        | undefined,
       body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
         version: number;
         ciphertext: string;
@@ -76,6 +84,7 @@ describe("installed rendezvous helper", () => {
     );
     assert.ok(lastRequest);
     assert.equal(lastRequest.authorization, `Bearer ${WRITE_SECRET}`);
+    assert.equal(lastRequest.protocolVersion, "2");
     assert.equal(lastRequest.url, `/api/rendezvous/${SERVER_ID}`);
     assert.equal(lastRequest.body.version, 1);
     const decrypted = await decryptRendezvousCiphertext(
