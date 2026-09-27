@@ -11,6 +11,7 @@
 import type * as catalogs from "../catalogs.js";
 import type * as context from "../context.js";
 import type * as github from "../github.js";
+import type * as http from "../http.js";
 import type * as lib_clerkGithub from "../lib/clerkGithub.js";
 import type * as lib_codespaceBootstrap from "../lib/codespaceBootstrap.js";
 import type * as lib_githubApi from "../lib/githubApi.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   catalogs: typeof catalogs;
   context: typeof context;
   github: typeof github;
+  http: typeof http;
   "lib/clerkGithub": typeof lib_clerkGithub;
   "lib/codespaceBootstrap": typeof lib_codespaceBootstrap;
   "lib/githubApi": typeof lib_githubApi;

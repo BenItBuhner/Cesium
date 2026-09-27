@@ -85,13 +85,6 @@ const publicAssetCacheHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  env: {
-    // Browser bundles cannot read VERCEL_ENV directly. Inline only this
-    // boolean so committed cloud defaults activate on the production deploy,
-    // never in local/preview/CI/agent builds.
-    NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD:
-      process.env.VERCEL_ENV === "production" ? "1" : "0",
-  },
   // The React Compiler is currently crashing Next.js during page compilation
   // in this deployment. Keep it off so production and dev builds can complete.
   reactCompiler: false,
@@ -131,6 +124,11 @@ const nextConfig: NextConfig = {
   agentRules: false,
   env: {
     NEXT_PUBLIC_ENABLE_NEXT_PWA: pwaEnabled ? "1" : "0",
+    // Browser bundles cannot read VERCEL_ENV directly. Inline only this
+    // boolean so committed cloud defaults activate on the production deploy,
+    // never in local/preview/CI/agent builds.
+    NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD:
+      process.env.VERCEL_ENV === "production" ? "1" : "0",
   },
   /** Dev: stop the browser from keeping old `/_next/static` after HMR / restart (ChunkLoadError on wrong content-hash). */
   async headers() {

@@ -156,8 +156,10 @@ describe("rendezvous route", () => {
 
   test("falls back to the Cesium Cloud registry, failing closed only with cloud off", () => {
     const previous = process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+    const previousProduction = process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD;
     try {
       delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
+      process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD = "1";
       assert.ok(createRendezvousStoreFromEnv({}) instanceof ConvexRendezvousStore);
       process.env.NEXT_PUBLIC_CESIUM_CLOUD = "0";
       assert.throws(() => createRendezvousStoreFromEnv({}), /Attach Upstash Redis/);
@@ -166,6 +168,11 @@ describe("rendezvous route", () => {
         delete process.env.NEXT_PUBLIC_CESIUM_CLOUD;
       } else {
         process.env.NEXT_PUBLIC_CESIUM_CLOUD = previous;
+      }
+      if (previousProduction === undefined) {
+        delete process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD;
+      } else {
+        process.env.NEXT_PUBLIC_CESIUM_PRODUCTION_BUILD = previousProduction;
       }
     }
   });

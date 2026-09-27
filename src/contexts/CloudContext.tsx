@@ -646,7 +646,7 @@ function CloudBridge({
   }, []);
   const readRendezvousServerIds = () =>
     [...new Set(
-      readStoredServerConnectionsState()
+      readStoredServerConnectionsState(getConfiguredServerBaseUrl())
         .servers.flatMap((server) => (server.rendezvous ? [server.rendezvous.serverId] : []))
     )].sort();
   const [rendezvousServerIds, setRendezvousServerIds] = useState<string[]>(

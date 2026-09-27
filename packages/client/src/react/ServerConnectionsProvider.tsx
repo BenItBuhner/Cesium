@@ -79,7 +79,7 @@ import {
   type ServerEngineNames,
 } from "../server-engine-names";
 import { assertEngineServerUrlAllowed } from "../engine-url-policy";
-import { clientLocation, getClientPlatform } from "../platform";
+import { clientKeyValueStore, clientLocation, getClientPlatform } from "../platform";
 
 type ServerConnectionsContextValue = {
   ready: boolean;
@@ -112,6 +112,49 @@ const ServerConnectionsContext = createContext<ServerConnectionsContextValue | n
 
 /** Registry lookups must never block app readiness or pile up between polls. */
 const RENDEZVOUS_RESOLVE_TIMEOUT_MS = 8_000;
+const RENDEZVOUS_RETRY_STORAGE_KEY = "cesium-rendezvous-retry-v1";
+const SERVER_PROBE_RETRY_STORAGE_KEY = "cesium-server-probe-retry-v1";
+
+function readRetryStates(storageKey: string): Map<string, ServerRetryState> {
+  try {
+    const parsed: unknown = JSON.parse(clientKeyValueStore().getItem(storageKey) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return new Map();
+    }
+    const states = new Map<string, ServerRetryState>();
+    for (const [key, value] of Object.entries(parsed)) {
+      if (
+        value &&
+        typeof value === "object" &&
+        "failures" in value &&
+        "firstFailureAt" in value &&
+        "nextAttemptAt" in value &&
+        typeof value.failures === "number" &&
+        (value.firstFailureAt === null || typeof value.firstFailureAt === "number") &&
+        typeof value.nextAttemptAt === "number"
+      ) {
+        states.set(key, {
+          failures: value.failures,
+          firstFailureAt: value.firstFailureAt,
+          nextAttemptAt: value.nextAttemptAt,
+        });
+      }
+    }
+    return states;
+  } catch {
+    return new Map();
+  }
+}
+
+function writeRetryStates(
+  storageKey: string,
+  states: Map<string, ServerRetryState>
+): void {
+  clientKeyValueStore().setItem(
+    storageKey,
+    JSON.stringify(Object.fromEntries(states))
+  );
+}
 
 export type ServerRuntimeHealth = "unknown" | "online" | "offline" | "auth_required" | "degraded";
 
@@ -238,9 +281,13 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   const healthRecoveryRanRef = useRef(false);
   const healthRefreshEpochRef = useRef(0);
   const rendezvousRefreshInFlightRef = useRef(false);
-  const rendezvousRetryByServerRef = useRef(new Map<string, ServerRetryState>());
-  const serverProbeRetryByIdRef = useRef(new Map<string, ServerRetryState>());
-  const globalRendezvousRetryRef = useRef<ServerRetryState>();
+  const rendezvousRetryByServerRef = useRef(
+    readRetryStates(RENDEZVOUS_RETRY_STORAGE_KEY)
+  );
+  const serverProbeRetryByIdRef = useRef(
+    readRetryStates(SERVER_PROBE_RETRY_STORAGE_KEY)
+  );
+  const globalRendezvousRetryRef = useRef<ServerRetryState | undefined>(undefined);
   const cloudRendezvousServerIdsRef = useRef(new Set<string>());
   const serversRef = useRef<ServerConnection[]>(state.servers);
   serversRef.current = state.servers;
@@ -491,6 +538,10 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           })
         );
       }
+      writeRetryStates(
+        RENDEZVOUS_RETRY_STORAGE_KEY,
+        rendezvousRetryByServerRef.current
+      );
       applyResolvedRendezvousEndpoints(resolved);
     } catch (error) {
       const retryAfterMs =
@@ -507,6 +558,10 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           })
         );
       }
+      writeRetryStates(
+        RENDEZVOUS_RETRY_STORAGE_KEY,
+        rendezvousRetryByServerRef.current
+      );
       if (!(error instanceof RendezvousLookupError) || error.isGlobalFailure) {
         globalRendezvousRetryRef.current = nextServerRetryState({
           previous: globalRendezvousRetryRef.current,
@@ -552,6 +607,19 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
               resolved.set(serverId, null);
             }
           })
+        );
+        const now = Date.now();
+        for (const [serverId, endpoint] of resolved) {
+          if (endpoint) {
+            rendezvousRetryByServerRef.current.set(
+              serverId,
+              nextServerRetryState({ now, reachable: true })
+            );
+          }
+        }
+        writeRetryStates(
+          RENDEZVOUS_RETRY_STORAGE_KEY,
+          rendezvousRetryByServerRef.current
         );
         applyResolvedRendezvousEndpoints(resolved);
       })();
@@ -602,6 +670,12 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           reachable: probe.ok,
           healthyIntervalMs: 30_000,
         })
+      );
+    }
+    if (probes.length > 0) {
+      writeRetryStates(
+        SERVER_PROBE_RETRY_STORAGE_KEY,
+        serverProbeRetryByIdRef.current
       );
     }
     const next = {
