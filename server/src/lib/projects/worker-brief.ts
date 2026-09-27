@@ -11,6 +11,10 @@ export type WorkerBriefInput = {
   contextDir: string | null;
   /** Name of the engine that holds the Project context. */
   contextEngine: string;
+  /** Set by the home when it synced the Project context to the engine that runs the worker. */
+  contextSync?: boolean;
+  /** `contextDir` is that engine's synced copy rather than the Project context itself. */
+  contextIsMirror?: boolean;
   /** The user's lasting preferences (shared by every Project). */
   preferences?: string[];
 };
@@ -61,7 +65,9 @@ function contextLines(brief: WorkerBriefInput): string[] {
   }
   const dir = brief.contextDir;
   return [
-    `- Folder: ${dir}`,
+    brief.contextIsMirror
+      ? `- Folder: ${dir}. It is this machine's copy of the Project context on engine ${brief.contextEngine}: what you write there is copied back after each of your turns.`
+      : `- Folder: ${dir}`,
     "- notes.md is the coordinator's live status board. Read it first; don't edit it.",
     "- docs/ holds documents the user reads. Read what is relevant to you; write there only when your deliverable is a document.",
     `- internal/${brief.agentName}/ is for your handoffs, findings and working notes for other agents.`,

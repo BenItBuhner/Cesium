@@ -3,6 +3,8 @@ import {
   normalizeProjectAgentName,
   type ProjectPeerTokenSummary,
 } from "@cesium/core/projects";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { Hono, type Context } from "hono";
 import { readConversationRecord } from "../lib/agents/session-store.js";
 import { asNumber, asRecord, asString } from "../lib/coerce.js";
@@ -15,6 +17,16 @@ import {
   type ChildRef,
 } from "../lib/projects/child-host.js";
 import { chooseChildModel, requireRunnableChildModel } from "../lib/projects/child-model.js";
+import { ProjectContextError } from "../lib/projects/context-store.js";
+import {
+  CONTEXT_SYNC_FILE_MAX_BYTES,
+  contextFileIn,
+  contextManifest,
+  deleteContextFileIn,
+  forgetContextHashes,
+  writeContextBytesIn,
+} from "../lib/projects/context-sync.js";
+import { getPeerMirrorContextDir } from "../lib/projects/paths.js";
 import type { WorkerBriefInput } from "../lib/projects/worker-brief.js";
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
 import { ProjectError } from "../lib/projects/errors.js";
@@ -178,8 +190,12 @@ async function resolvePlacement(value: unknown): Promise<ChildCreateInput["place
   throw new ProjectError('placement.kind must be "worktree", "workspace" or "scratch".');
 }
 
-/** The home's worker brief. The Project context has no copy on a peer, so its folder is dropped. */
-function briefInput(value: unknown, name: string): WorkerBriefInput | undefined {
+/**
+ * The home's worker brief. Its context folder is the home's; when the home
+ * has synced the Project context here (`contextSync`), the agent works in
+ * this engine's mirror of it instead, else it has no copy.
+ */
+function briefInput(value: unknown, name: string, mirrorDir: string | null): WorkerBriefInput | undefined {
   const brief = asRecord(value);
   if (!brief) {
     return undefined;
@@ -196,7 +212,8 @@ function briefInput(value: unknown, name: string): WorkerBriefInput | undefined 
     agentName: name,
     instructions,
     repoName: asString(brief.repoName)?.slice(0, 120) ?? null,
-    contextDir: null,
+    contextDir: brief.contextSync === true ? mirrorDir : null,
+    contextIsMirror: brief.contextSync === true && mirrorDir != null,
     contextEngine: (asString(brief.contextEngine) ?? "the Project's home engine").slice(0, 80),
     preferences: Array.isArray(brief.preferences)
       ? brief.preferences
@@ -260,9 +277,14 @@ projectPeerRoutes.post(
       requested: asString(body.modelId),
       engineLabel: engine,
     });
-    const brief = briefInput(body.brief, name);
+    const projectId = safeId(body, "projectId");
+    const mirrorDir = getPeerMirrorContextDir(c.get("peerToken").id, projectId);
+    const brief = briefInput(body.brief, name, mirrorDir);
+    if (brief?.contextDir) {
+      await fs.mkdir(brief.contextDir, { recursive: true });
+    }
     const created = await host.create({
-      projectId: safeId(body, "projectId"),
+      projectId,
       childId: safeId(body, "childId"),
       name,
       ...(brief ? { brief } : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
@@ -276,6 +298,84 @@ projectPeerRoutes.post(
       autoApprove: body.autoApprove === true,
     });
     return c.json({ ...created, modelWarning: model.warning } satisfies ChildCreateResult, 201);
+  })
+);
+
+const CONTEXT_PATH = "/api/projects/peer/context/:projectId";
+
+/** This token's mirror of the named Project's context. */
+function mirrorRoot(c: Context<PeerEnv>): string {
+  const projectId = c.req.param("projectId") ?? "";
+  if (!SAFE_ID.test(projectId)) {
+    throw new ProjectError("Invalid project id.", 400);
+  }
+  return getPeerMirrorContextDir(c.get("peerToken").id, projectId);
+}
+
+function contextError(error: unknown): never {
+  if (error instanceof ProjectContextError) {
+    throw new ProjectError(error.message, 400);
+  }
+  throw error;
+}
+
+projectPeerRoutes.get(
+  `${CONTEXT_PATH}/manifest`,
+  guarded(async (c) => {
+    const root = mirrorRoot(c);
+    await fs.mkdir(root, { recursive: true });
+    return c.json({ files: await contextManifest(root) });
+  })
+);
+
+projectPeerRoutes.get(
+  `${CONTEXT_PATH}/file`,
+  guarded(async (c) => {
+    const root = mirrorRoot(c);
+    const { absolute, relative } = await contextFileIn(root, c.req.query("path") ?? "").catch(contextError);
+    const stat = await fs.stat(absolute).catch(() => null);
+    if (!stat?.isFile()) {
+      throw new ProjectError(`No file at ${relative} in the mirror.`, 404);
+    }
+    return new Response(new Uint8Array(await fs.readFile(absolute)), {
+      headers: { "content-type": "application/octet-stream", "content-length": String(stat.size) },
+    });
+  })
+);
+
+projectPeerRoutes.put(
+  `${CONTEXT_PATH}/file`,
+  guarded(async (c) => {
+    const root = mirrorRoot(c);
+    const declared = Number(c.req.header("content-length") ?? "0");
+    if (declared > CONTEXT_SYNC_FILE_MAX_BYTES) {
+      throw new ProjectError(`Files over ${CONTEXT_SYNC_FILE_MAX_BYTES} bytes are not synced.`, 413);
+    }
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    const mtime = Number(c.req.query("mtime"));
+    await writeContextBytesIn(root, c.req.query("path") ?? "", bytes, Number.isFinite(mtime) ? mtime : null).catch(
+      contextError
+    );
+    return c.json({ ok: true, size: bytes.byteLength });
+  })
+);
+
+projectPeerRoutes.delete(
+  `${CONTEXT_PATH}/file`,
+  guarded(async (c) => {
+    await deleteContextFileIn(mirrorRoot(c), c.req.query("path") ?? "").catch(contextError);
+    return c.json({ ok: true });
+  })
+);
+
+/** The home deleted the Project: drop this token's whole copy of its context. */
+projectPeerRoutes.delete(
+  CONTEXT_PATH,
+  guarded(async (c) => {
+    const root = mirrorRoot(c);
+    await fs.rm(path.dirname(root), { recursive: true, force: true });
+    forgetContextHashes(root);
+    return c.json({ ok: true });
   })
 );
 

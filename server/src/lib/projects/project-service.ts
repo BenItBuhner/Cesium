@@ -551,6 +551,11 @@ export async function deleteProject(projectId: string): Promise<void> {
   for (const [index, child] of ordered.entries()) {
     await disposeChildResources(child, ordered.slice(index + 1));
   }
+  const { dropProjectContextMirrors } = await import("./context-sync.js");
+  await dropProjectContextMirrors(
+    projectId,
+    marked.children.map((child) => child.engineId)
+  );
   const workspace = await getWorkspaceById(record.orchestrator.workspaceId);
   if (workspace) {
     await agentRuntimeManager
@@ -672,6 +677,25 @@ export function resolveProjectChild(
     404,
     "agent_not_found"
   );
+}
+
+/**
+ * Copies the Project context to a peer before an agent starts there. An
+ * engine without context sync (or one that fails it) just gets no copy; the
+ * agent is told so.
+ */
+async function syncContextToPeer(projectId: string, engineId: string): Promise<boolean> {
+  try {
+    const { syncProjectContextWithPeer } = await import("./context-sync.js");
+    await syncProjectContextWithPeer(projectId, engineId);
+    return true;
+  } catch (error) {
+    console.warn(
+      `[projects] could not copy the context of ${projectId} to engine ${engineId}:`,
+      error instanceof Error ? error.message : error
+    );
+    return false;
+  }
 }
 
 /** Names of children being created right now; the record lists a child only once it has started. */
@@ -911,8 +935,9 @@ export async function createProjectChild(
       contextEngine: homeEngineLabel(),
       preferences: listPreferenceLines(await readPreferences()),
     };
-    if (isHome) {
-      await seedProjectContext(record.id, record.name);
+    await seedProjectContext(record.id, record.name);
+    if (!isHome) {
+      brief.contextSync = await syncContextToPeer(record.id, engineId);
     }
     const created = await host.create({
       projectId,

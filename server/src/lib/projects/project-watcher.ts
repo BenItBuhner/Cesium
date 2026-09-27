@@ -6,7 +6,12 @@ import {
   observeConversationRecord,
   type ChildObservation,
 } from "./child-host.js";
-import { callPeerEngine, isPeerEngineReachable, listPeerEngines } from "./engine-registry.js";
+import {
+  callPeerEngine,
+  isPeerEngineReachable,
+  listEngineSummaries,
+  listPeerEngines,
+} from "./engine-registry.js";
 import { isProjectsEnabled } from "./feature-flag.js";
 import { ensureWorkerPrSubscriptions } from "./listening.js";
 import { composeProjectNotice, type ProjectNoticeUpdate } from "./notices.js";
@@ -194,6 +199,13 @@ async function processChild(entry: PendingObservation): Promise<void> {
       updated = (await readProject(entry.projectId)) ?? updated;
     }
   }
+  if (update && child.engineId !== PROJECT_HOME_ENGINE_ID && update.event !== "needs_attention") {
+    // Bring back what the agent wrote in its engine's copy of the context before the coordinator looks.
+    const line = await syncPeerContext(entry.projectId, child.engineId);
+    if (line) {
+      update.detail = `${update.detail ?? ""}\n${line}`.trim();
+    }
+  }
   if (update) {
     if (child.kind === "helper" && update.event !== "needs_attention") {
       // Save the answer first, so the file the update points to exists when the orchestrator reads it.
@@ -208,6 +220,68 @@ async function processChild(entry: PendingObservation): Promise<void> {
       }
     }
     await deliverProjectNotice(updated, [update]);
+  }
+}
+
+const CONTEXT_SYNC_TIMEOUT_MS = 60_000;
+const CONTEXT_SYNC_INTERVAL_MS = 60_000;
+const contextSyncAttemptAt = new Map<string, number>();
+
+async function runPeerContextSync(projectId: string, engineId: string): Promise<void> {
+  contextSyncAttemptAt.set(`${projectId}:${engineId}`, Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { syncProjectContextWithPeer } = await import("./context-sync.js");
+    await Promise.race([
+      syncProjectContextWithPeer(projectId, engineId),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, CONTEXT_SYNC_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn(
+      `[projects] could not sync the context of ${projectId} with engine ${engineId}:`,
+      error instanceof Error ? error.message : error
+    );
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/**
+ * Syncs a Project's context with a peer after one of its agents' turns and
+ * returns a line for the coordinator naming everything that came back since
+ * it was last told (periodic syncs during the turn included).
+ */
+async function syncPeerContext(projectId: string, engineId: string): Promise<string | null> {
+  await runPeerContextSync(projectId, engineId);
+  const { describeContextSync, takeUnreportedContextSync } = await import("./context-sync.js");
+  const engines = await listEngineSummaries();
+  return describeContextSync(
+    takeUnreportedContextSync(projectId, engineId),
+    engines.find((engine) => engine.id === engineId)?.label ?? engineId
+  );
+}
+
+/** Keeps peers' copies of the context current (notes.md, docs) while their agents work. */
+async function syncPeerContextsDue(records: readonly ProjectRecord[]): Promise<void> {
+  const { contextSyncedAt } = await import("./context-sync.js");
+  const now = Date.now();
+  for (const record of records) {
+    const engines = new Set(
+      record.children
+        .filter((child) => child.deletedAt == null && child.archivedAt == null && child.engineId !== PROJECT_HOME_ENGINE_ID)
+        .map((child) => child.engineId)
+    );
+    for (const engineId of engines) {
+      const key = `${record.id}:${engineId}`;
+      const last = Math.max(contextSyncedAt(record.id, engineId), contextSyncAttemptAt.get(key) ?? 0);
+      if (isPeerEngineReachable(engineId) && now - last >= CONTEXT_SYNC_INTERVAL_MS) {
+        void runPeerContextSync(record.id, engineId);
+      }
+    }
   }
 }
 
@@ -400,7 +474,8 @@ export async function pollProjectPeerChildren(options?: { force?: boolean }): Pr
   }
   const force = options?.force === true;
   const polls: Promise<void>[] = [];
-  for (const record of await listProjectRecords()) {
+  const records = await listProjectRecords();
+  for (const record of records) {
     for (const child of record.children) {
       if (child.deletedAt != null || child.engineId === PROJECT_HOME_ENGINE_ID) {
         continue;
@@ -411,6 +486,7 @@ export async function pollProjectPeerChildren(options?: { force?: boolean }): Pr
     }
   }
   await Promise.all(polls);
+  await syncPeerContextsDue(records);
 }
 
 /** Refreshes every peer's online status so polling resumes once it answers again. */

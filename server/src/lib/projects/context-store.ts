@@ -34,6 +34,14 @@ export function resolveContextPath(projectId: string, relativePath: string): {
   absolute: string;
   relative: string;
 } {
+  return resolveContextPathIn(getProjectContextDir(projectId), relativePath);
+}
+
+/** `resolveContextPath` for any context folder (a peer's mirror of one, say). */
+export function resolveContextPathIn(root: string, relativePath: string): {
+  absolute: string;
+  relative: string;
+} {
   const raw = relativePath.trim().replace(/\\/g, "/");
   if (!raw) {
     throw new ProjectContextError("Context path is required.");
@@ -53,7 +61,6 @@ export function resolveContextPath(projectId: string, relativePath: string): {
       throw new ProjectContextError(`Context path is not allowed: ${relativePath}`);
     }
   }
-  const root = getProjectContextDir(projectId);
   const relative = segments.join("/");
   const absolute = path.resolve(root, relative);
   const check = path.relative(root, absolute);
@@ -64,7 +71,12 @@ export function resolveContextPath(projectId: string, relativePath: string): {
 }
 
 async function assertNoSymlinkEscape(projectId: string, absolute: string): Promise<void> {
-  const root = await fs.realpath(getProjectContextDir(projectId));
+  await assertNoSymlinkEscapeIn(getProjectContextDir(projectId), absolute);
+}
+
+/** The nearest existing ancestor of `absolute` must really be inside `contextRoot`. */
+export async function assertNoSymlinkEscapeIn(contextRoot: string, absolute: string): Promise<void> {
+  const root = await fs.realpath(contextRoot);
   let probe = absolute;
   // Walk up to the nearest existing ancestor; its real path must stay inside.
   for (;;) {
@@ -152,7 +164,12 @@ async function walk(
 export async function listContextEntries(
   projectId: string
 ): Promise<{ files: ProjectContextFile[]; folders: string[] }> {
-  const root = getProjectContextDir(projectId);
+  return listContextEntriesIn(getProjectContextDir(projectId));
+}
+
+export async function listContextEntriesIn(
+  root: string
+): Promise<{ files: ProjectContextFile[]; folders: string[] }> {
   const out = { files: [] as ProjectContextFile[], folders: [] as string[] };
   await walk(root, root, 1, out);
   return out;
@@ -215,7 +232,7 @@ export async function statContextFile(
   };
 }
 
-async function assertTotalFits(projectId: string, relative: string, nextBytes: number): Promise<void> {
+export async function assertTotalFits(projectId: string, relative: string, nextBytes: number): Promise<void> {
   const files = await listContextFiles(projectId);
   const otherBytes = files
     .filter((file) => file.path !== relative)

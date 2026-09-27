@@ -3,9 +3,12 @@ import {
   type ProjectEngineSummary,
   type ProjectPeerTokenSummary,
 } from "@cesium/core/projects";
+import { promises as fs } from "node:fs";
+import { forgetContextHashes } from "./context-sync.js";
 import { listEngineSummaries, registerPeerEngine, removePeerEngine } from "./engine-registry.js";
 import { ProjectError } from "./errors.js";
 import { assertProjectsEnabled } from "./feature-flag.js";
+import { getPeerMirrorsDir } from "./paths.js";
 import { listPeerTokens, mintPeerToken, revokePeerToken } from "./peer-tokens.js";
 import { listProjectRecords } from "./project-store.js";
 
@@ -65,5 +68,16 @@ export async function revokeProjectPeerToken(tokenId: string): Promise<void> {
   await assertProjectsEnabled();
   if (!(await revokePeerToken(tokenId))) {
     throw new ProjectError(`Unknown peer token: ${tokenId}`, 404, "peer_token_not_found");
+  }
+  // No home can reach the Project context copies kept for this token any more.
+  try {
+    const mirrors = getPeerMirrorsDir(tokenId);
+    await fs.rm(mirrors, { recursive: true, force: true });
+    forgetContextHashes(mirrors);
+  } catch (error) {
+    console.warn(
+      `[projects] could not remove the context copies kept for peer token ${tokenId}:`,
+      error instanceof Error ? error.message : error
+    );
   }
 }
