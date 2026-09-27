@@ -142,6 +142,73 @@ export async function readWorkerSetupPlan(
   return null;
 }
 
+/**
+ * The commit a worker starts from: the requested (or default) branch, fetched
+ * fresh from `origin` when there is one, else the local branch.
+ */
+async function resolveWorkerBase(input: {
+  repoRoot: string;
+  hasOrigin: boolean;
+  requested: string | null;
+  repoName: string;
+}): Promise<{ baseBranch: string; baseRef: string; sha: string; warning: string | null }> {
+  const baseBranch = input.requested?.trim() || (await defaultBaseBranch(input.repoRoot, input.hasOrigin));
+  let baseRef = baseBranch;
+  let warning: string | null = null;
+  if (input.hasOrigin) {
+    try {
+      await runGit(input.repoRoot, ["fetch", "--quiet", "origin", baseBranch], FETCH_TIMEOUT_MS);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      warning = `Could not fetch origin/${baseBranch} (${reason}); the branch starts from the last fetched copy.`;
+    }
+    if (await tryGit(input.repoRoot, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${baseBranch}`])) {
+      baseRef = `origin/${baseBranch}`;
+    }
+  }
+  const sha = (await tryGit(input.repoRoot, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`]))?.stdout.trim();
+  if (!sha) {
+    throw new WorkerPlacementError(`Base branch "${baseBranch}" does not exist in ${input.repoName}.`);
+  }
+  return { baseBranch, baseRef, sha, warning };
+}
+
+/**
+ * A throwaway checkout of the base commit (no branch) for a read-only helper,
+ * so questions about the code are answered from the current remote state
+ * without touching the user's checkout.
+ */
+export async function createDetachedWorktree(input: {
+  projectId: string;
+  repoWorkspace: WorkspaceRecord;
+  baseBranch: string | null;
+  name: string;
+  /** A base already fetched and resolved for this repository (a batch of helpers shares one fetch). */
+  resolvedBase?: { baseRef: string; sha: string } | null;
+}): Promise<{ workspace: WorkspaceRecord; path: string; baseRef: string; sha: string } | null> {
+  const git = await inspectWorkerRepo(input.repoWorkspace.root);
+  if (!git.isGitRepo || !git.repoRoot) {
+    return null;
+  }
+  const { baseRef, sha } =
+    input.resolvedBase ??
+    (await resolveWorkerBase({
+      repoRoot: git.repoRoot,
+      hasOrigin: git.hasOrigin,
+      requested: input.baseBranch,
+      repoName: input.repoWorkspace.name,
+    }));
+  const dir = getProjectWorktreesDir(input.projectId);
+  await fs.mkdir(dir, { recursive: true });
+  const target = path.join(dir, input.name);
+  await runGit(git.repoRoot, ["worktree", "add", "--detach", target, sha], FETCH_TIMEOUT_MS);
+  await excludeEngineFolders(target);
+  const workspace = await ensureWorkspaceRegistered(target, `${input.repoWorkspace.name} · ${input.name}`, {
+    trackOpen: false,
+  });
+  return { workspace, path: workspace.root, baseRef, sha };
+}
+
 export type WorkerWorktree = {
   workspace: WorkspaceRecord;
   worktreePath: string;
@@ -178,24 +245,12 @@ export async function createWorkerWorktree(input: {
     );
   }
   const repoRoot = git.repoRoot;
-  const baseBranch = input.baseBranch?.trim() || (await defaultBaseBranch(repoRoot, git.hasOrigin));
-  let baseRef = baseBranch;
-  let warning: string | null = null;
-  if (git.hasOrigin) {
-    try {
-      await runGit(repoRoot, ["fetch", "--quiet", "origin", baseBranch], FETCH_TIMEOUT_MS);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
-      warning = `Could not fetch origin/${baseBranch} (${reason}); the branch starts from the last fetched copy.`;
-    }
-    if (await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${baseBranch}`])) {
-      baseRef = `origin/${baseBranch}`;
-    }
-  }
-  const sha = (await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`]))?.stdout.trim();
-  if (!sha) {
-    throw new WorkerPlacementError(`Base branch "${baseBranch}" does not exist in ${input.repoWorkspace.name}.`);
-  }
+  const { baseBranch, baseRef, sha, warning } = await resolveWorkerBase({
+    repoRoot,
+    hasOrigin: git.hasOrigin,
+    requested: input.baseBranch,
+    repoName: input.repoWorkspace.name,
+  });
   const dir = getProjectWorktreesDir(input.projectId);
   await fs.mkdir(dir, { recursive: true });
   const targetPath = path.join(dir, input.branch.split("/").pop() || "worker");

@@ -73,9 +73,9 @@ export class RemoteChildHost implements ChildHost {
     }
   }
 
-  async delete(ref: ChildRef): Promise<void> {
+  async delete(ref: ChildRef, options?: { keepWorkspace?: boolean }): Promise<void> {
     try {
-      await callPeerEngine(this.engineId, (client) => client.delete(ref));
+      await callPeerEngine(this.engineId, (client) => client.delete(ref, options?.keepWorkspace === true));
     } catch (error) {
       if (error instanceof PeerRequestError && error.status === 404) {
         return;

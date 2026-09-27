@@ -148,7 +148,8 @@ export interface ChildHost {
   message(ref: ChildRef, text: string, delivery: "steer" | "queue"): Promise<ProjectAgentDelivery>;
   stop(ref: ChildRef): Promise<void>;
   update(ref: ChildRef, patch: ChildUpdatePatch): Promise<void>;
-  delete(ref: ChildRef): Promise<void>;
+  /** `keepWorkspace`: another agent still works in the same folder, so only the conversation goes. */
+  delete(ref: ChildRef, options?: { keepWorkspace?: boolean }): Promise<void>;
 }
 
 export const MISSING_CHILD_OBSERVATION: ChildObservation = {
@@ -594,12 +595,14 @@ export class LocalChildHost implements ChildHost {
    * worktree (its branch stays) or its scratch sandbox. A repository checkout
    * is never touched.
    */
-  async delete(ref: ChildRef): Promise<void> {
+  async delete(ref: ChildRef, options?: { keepWorkspace?: boolean }): Promise<void> {
     const workspace = await getWorkspaceById(ref.workspaceId);
     if (!workspace) {
       return;
     }
     await agentRuntimeManager.deleteConversation(workspace, ref.conversationId);
-    await this.disposeWorkspace(workspace);
+    if (!options?.keepWorkspace) {
+      await this.disposeWorkspace(workspace);
+    }
   }
 }

@@ -65,6 +65,8 @@ function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummar
     archivedAt: null,
     githubRepo: null,
     pr: null,
+    kind: "worker",
+    helperKind: null,
     ...overrides,
   };
 }

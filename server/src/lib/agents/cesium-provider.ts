@@ -542,6 +542,8 @@ class PermissionRefusedToolCallError extends Error {
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
 /** Model-facing framing for a steer injected into a running turn. */
+type PendingSteer = { text: string; userMessageId: string; queuedPromptId?: string };
+
 export function formatMidTurnSteer(text: string): string {
   return [
     "[Steering message - sent while you were working on this turn]",
@@ -555,6 +557,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   readonly sessionId: string;
   configOptions: AgentConfigOption[];
   readonly capabilities: AgentBackendInfo["capabilities"];
+  readonly steersQueuedPrompts = true;
 
   private disposed = false;
   private cancelled = false;
@@ -599,7 +602,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * to finishing, so a steer is either injected into this turn or refused
    * (and queued by the runtime) - never silently dropped.
    */
-  private pendingSteers: Array<{ text: string; userMessageId: string }> = [];
+  private pendingSteers: PendingSteer[] = [];
   private acceptingSteers = false;
 
   constructor(
@@ -1303,16 +1306,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
             throw emptyModelResponseError(`${modelProviderId}/${modelPart(modelId)}`, result.raw);
           }
           this.acceptingSteers = false;
-          if (this.pendingSteers.length > 0) {
+          const steers = await this.takeDeliverableSteers();
+          if (steers.length > 0) {
             // A steer arrived while the model was writing its answer: keep the
             // answer in context, hand the model the steer, and keep going.
             this.acceptingSteers = true;
             if (result.text.trim()) {
               toolResultMessages.push({ role: "assistant", content: result.text.trim() });
             }
-            assistantMessageId = await this.injectPendingSteers(
+            assistantMessageId = await this.injectSteers(
               toolResultMessages,
-              assistantMessageId
+              assistantMessageId,
+              steers
             );
             continue;
           }
@@ -1382,9 +1387,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
           return;
         }
         if (this.pendingSteers.length > 0) {
-          assistantMessageId = await this.injectPendingSteers(
+          assistantMessageId = await this.injectSteers(
             toolResultMessages,
-            assistantMessageId
+            assistantMessageId,
+            await this.takeDeliverableSteers()
           );
         }
       }
@@ -1440,26 +1446,64 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
   }
 
-  async steer(input: { text: string; userMessageId: string }): Promise<boolean> {
+  async steer(input: { text: string; userMessageId: string; queuedPromptId?: string }): Promise<boolean> {
     const text = input.text.trim();
     if (!text || this.disposed || this.cancelled || !this.acceptingSteers) {
       return false;
     }
-    this.pendingSteers.push({ text, userMessageId: input.userMessageId });
+    this.pendingSteers.push({
+      text,
+      userMessageId: input.userMessageId,
+      ...(input.queuedPromptId ? { queuedPromptId: input.queuedPromptId } : {}),
+    });
     return true;
   }
 
   /**
-   * Hand every pending steer to the model at the current position: close the
+   * Takes the pending steers that can be delivered now. One that mirrors a
+   * queued prompt leaves the queue here, with the entry's current text; if
+   * the entry is gone (the user removed it) the steer is dropped.
+   */
+  private async takeDeliverableSteers(): Promise<PendingSteer[]> {
+    const steers = this.pendingSteers.splice(0);
+    if (!steers.some((steer) => steer.queuedPromptId)) {
+      return steers;
+    }
+    const claimed = new Map<string, string>();
+    await this.callbacks
+      .updateConversation((current) => {
+        const queued = current.queuedPrompts ?? [];
+        for (const steer of steers) {
+          const entry = steer.queuedPromptId ? queued.find((item) => item.id === steer.queuedPromptId) : undefined;
+          if (entry) {
+            claimed.set(entry.id, entry.text);
+          }
+        }
+        return claimed.size === 0
+          ? current
+          : { ...current, queuedPrompts: queued.filter((item) => !claimed.has(item.id)) };
+      })
+      .catch(() => undefined);
+    return steers.flatMap((steer) => {
+      if (!steer.queuedPromptId) {
+        return [steer];
+      }
+      const text = claimed.get(steer.queuedPromptId)?.trim();
+      return text ? [{ ...steer, text }] : [];
+    });
+  }
+
+  /**
+   * Hand these steers to the model at the current position: close the
    * assistant message streamed so far, persist each steer as a visible user
    * message right here (so rebuilt history matches what the model saw), and
    * return a fresh assistant message id for the rest of the turn.
    */
-  private async injectPendingSteers(
+  private async injectSteers(
     toolResultMessages: CesiumHistoryMessage[],
-    assistantMessageId: string
+    assistantMessageId: string,
+    steers: PendingSteer[]
   ): Promise<string> {
-    const steers = this.pendingSteers.splice(0);
     if (steers.length === 0) {
       return assistantMessageId;
     }
@@ -1481,7 +1525,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         kind: "user_message",
         messageId: steer.userMessageId,
         content,
-        displayContent: `Steer: ${steer.text}`,
+        // A queued message the user typed shows as typed; an explicit steer says so.
+        displayContent: steer.queuedPromptId ? steer.text : `Steer: ${steer.text}`,
       });
       toolResultMessages.push({ role: "user", content });
     }
@@ -1495,7 +1540,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * rest of the queue, matching `cancelConversation`.
    */
   private async requeueUndeliveredSteers(): Promise<void> {
-    const leftover = this.pendingSteers.splice(0);
+    // A steer mirroring a queued prompt never left the queue.
+    const leftover = this.pendingSteers.splice(0).filter((steer) => !steer.queuedPromptId);
     if (leftover.length === 0 || this.cancelled || this.disposed) {
       return;
     }

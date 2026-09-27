@@ -931,8 +931,14 @@ export interface AgentSessionHandle {
    * it before the turn ends. The handle persists the visible `user_message`
    * event itself, at the point the model actually receives it. Resolves
    * `false` when no running turn can take it; callers then queue it.
+   *
+   * With `queuedPromptId` the steer mirrors a prompt that is already queued
+   * (and visible there): delivering it takes the entry off the queue, using
+   * its current text, and an entry that is gone by then (removed by the user)
+   * is not delivered. Only handles with `steersQueuedPrompts` honor it.
    */
-  steer?: (input: { text: string; userMessageId: string }) => Promise<boolean>;
+  steer?: (input: { text: string; userMessageId: string; queuedPromptId?: string }) => Promise<boolean>;
+  steersQueuedPrompts?: boolean;
   dispose: () => Promise<void>;
 }
 

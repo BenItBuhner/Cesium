@@ -189,7 +189,7 @@ export class PeerClient {
     await peerRequest(this.peer, "PATCH", childPath(ref), patch);
   }
 
-  async delete(ref: ChildRef): Promise<void> {
-    await peerRequest(this.peer, "DELETE", childPath(ref));
+  async delete(ref: ChildRef, keepWorkspace = false): Promise<void> {
+    await peerRequest(this.peer, "DELETE", childPath(ref, keepWorkspace ? "?keepWorkspace=1" : ""));
   }
 }

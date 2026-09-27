@@ -114,12 +114,51 @@ function isConversationTurnInProgress(status: AgentConversationStatus): boolean 
 }
 
 /**
+ * A Project coordinator hears its user before queued agent updates and
+ * events (engine notices, the entries with a `coalesceKey`): a message typed
+ * while it is busy runs as its very next turn. Other chats queue in order.
+ */
+function enqueuePrompt(
+  conversation: Pick<AgentConversationRecord, "origin" | "queuedPrompts">,
+  entry: AgentQueuedChatPrompt
+): AgentQueuedChatPrompt[] {
+  const queue = conversation.queuedPrompts ?? [];
+  if (conversation.origin?.kind !== "project-orchestrator" || entry.coalesceKey) {
+    return [...queue, entry];
+  }
+  const firstNotice = queue.findIndex((queued) => Boolean(queued.coalesceKey));
+  return firstNotice < 0
+    ? [...queue, entry]
+    : [...queue.slice(0, firstNotice), entry, ...queue.slice(firstNotice)];
+}
+
+/**
+ * A message the user types while a Project coordinator is working also goes
+ * into the running turn, so it is read at the coordinator's next step; it
+ * stays visible in the queue until then.
+ */
+function steersIntoRunningTurn(
+  conversation: Pick<AgentConversationRecord, "origin">,
+  entry: AgentQueuedChatPrompt
+): boolean {
+  return (
+    conversation.origin?.kind === "project-orchestrator" &&
+    !entry.coalesceKey &&
+    !entry.hidden &&
+    !entry.attachments?.length &&
+    !entry.configOverride &&
+    !entry.planHandoff
+  );
+}
+
+/**
  * Idle conversations run their queue. Engine notices (the only entries with a
  * `coalesceKey`) also run after a failed or interrupted turn, so Project reports
  * are not stranded; a turn the user stopped still waits for them.
  */
 export function canStartQueuedPrompt(
-  conversation: Pick<AgentConversationRecord, "status" | "queuedPrompts">
+  conversation: Pick<AgentConversationRecord, "status" | "queuedPrompts"> &
+    Partial<Pick<AgentConversationRecord, "origin">>
 ): boolean {
   const head = conversation.queuedPrompts?.[0];
   if (!head) {
@@ -128,9 +167,10 @@ export function canStartQueuedPrompt(
   if (conversation.status === "idle") {
     return true;
   }
+  // A coordinator's queue holds its user's messages ahead of notices; neither may strand.
   return (
     (conversation.status === "failed" || conversation.status === "interrupted") &&
-    Boolean(head.coalesceKey)
+    (Boolean(head.coalesceKey) || conversation.origin?.kind === "project-orchestrator")
   );
 }
 
@@ -1499,6 +1539,26 @@ export class AgentRuntimeManager {
     });
   }
 
+  /** Offers a queued prompt to the running turn; it leaves the queue once the model reads it. */
+  private async steerQueuedPrompt(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    entry: AgentQueuedChatPrompt
+  ): Promise<void> {
+    const runtime = this.runtimes.get(conversationId);
+    if (!runtime?.handle.steer || !runtime.handle.steersQueuedPrompts || runtime.workspaceId !== workspace.id) {
+      return;
+    }
+    await runtime.handle
+      .steer({ text: entry.text, userMessageId: entry.clientMessageId ?? entry.id, queuedPromptId: entry.id })
+      .catch((error) => {
+        console.warn(
+          `[agent-runtime] mid-turn steer failed for ${conversationId}; it stays queued:`,
+          error instanceof Error ? error.message : error
+        );
+      });
+  }
+
   private async promptConversationLocked(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -1589,10 +1649,13 @@ export class AgentRuntimeManager {
           clientEventId &&
           (current.queuedPrompts ?? []).some((queued) => queued.clientEventId === clientEventId)
             ? (current.queuedPrompts ?? [])
-            : [...(current.queuedPrompts ?? []), entry],
+            : enqueuePrompt(current, entry),
       }));
       if (outcomeSink) {
         outcomeSink.value = "queued";
+      }
+      if (steersIntoRunningTurn(record, entry)) {
+        await this.steerQueuedPrompt(workspace, conversationId, entry);
       }
       const head = await readConversationSnapshotHead(workspace.id, conversationId);
       if (!head) {

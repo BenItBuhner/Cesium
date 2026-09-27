@@ -19,8 +19,11 @@ import {
   PROJECT_NOTES_FILE,
   listContextFiles,
   readContextFile,
+  statContextFile,
   writeContextFile,
 } from "./context-store.js";
+import { exploreProjectRepo, startBrowserCheck } from "./helpers.js";
+import { addPreference, listPreferenceLines, readPreferences, removePreference } from "./preferences.js";
 import {
   ProjectError,
   adoptProjectChild,
@@ -41,8 +44,19 @@ import { listEngineSummaries } from "./engine-registry.js";
 import { PROJECT_ORCHESTRATOR_TOOL_NAMES } from "./orchestrator-tool-definitions.js";
 
 const NOTES_REMINDER_MAX_CHARS = 6_000;
+const DECISIONS_REMINDER_MAX_CHARS = 3_000;
+const DECISIONS_FILE = "docs/decisions.md";
+const MESSAGE_MAX_CHARS = 20_000;
 const PREVIEW_IN_TABLE_MAX_CHARS = 160;
 const REPEAT_CHECK_WINDOW_MS = 90_000;
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 const WAIT_FOR_UPDATES_NOTE =
   "Agents report back on their own with a <project_agent_updates> message, delivered after your turn ends and never during it. Do not check on them in the meantime: finish any other delegation, then end your turn.";
@@ -93,6 +107,19 @@ function requiredArg(args: Record<string, unknown>, key: string, tool: string): 
   return value;
 }
 
+/** `questions`, tolerating a single `question` string from a model that ignored the schema. */
+function exploreQuestions(args: Record<string, unknown>): string[] {
+  const listed = Array.isArray(args.questions) ? args.questions : [args.questions];
+  const questions = [...listed, args.question]
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (questions.length === 0) {
+    throw new ProjectError("project_explore.questions is required: one to four separate questions.");
+  }
+  return questions;
+}
+
 function compactChild(child: ProjectChildSummary) {
   return {
     name: child.name,
@@ -103,6 +130,7 @@ function compactChild(child: ProjectChildSummary) {
     harness: child.backendId,
     model: child.modelId,
     mode: child.mode,
+    ...(child.kind === "helper" ? { helper: child.helperKind } : {}),
     repo: child.repoName,
     isolation: child.isolation,
     ...(child.branch ? { branch: child.branch, base: child.baseRef } : {}),
@@ -309,6 +337,71 @@ export async function executeProjectOrchestratorTool(
       );
       return `Agent ${result.agent} (status: ${result.status})\n\n${result.transcript}`;
     }
+    case "project_message_user": {
+      await requireProject(projectId);
+      const message = typeof args.message === "string" ? args.message.trim() : "";
+      if (!message) {
+        throw new ProjectError("project_message_user.message is required.");
+      }
+      if (message.length > MESSAGE_MAX_CHARS) {
+        throw new ProjectError(`Keep a message under ${MESSAGE_MAX_CHARS} characters; put longer material in docs/.`);
+      }
+      const missing: string[] = [];
+      for (const match of message.matchAll(/context:([^\s)"'<>\]]+)/g)) {
+        const ref = match[1]!;
+        await statContextFile(projectId, safeDecode(ref)).catch(() => missing.push(ref));
+      }
+      return json({
+        delivered: true,
+        ...(missing.length > 0
+          ? { missingMedia: missing, note: "These context files don't exist, so the user sees broken embeds. Check the paths with project_context_list." }
+          : {}),
+      });
+    }
+    case "project_explore": {
+      const results = await exploreProjectRepo(projectId, {
+        repo: requiredArg(args, "repo", name),
+        questions: exploreQuestions(args),
+      });
+      const asked = (question: string) => (results.length > 1 ? ` "${question}"` : "");
+      const parts = results.map((result) => {
+        if (!result.helper) {
+          return `No explorer could start for "${result.question}": ${result.error ?? "unknown error"}`;
+        }
+        if (result.answer == null) {
+          return `Explorer ${result.helper}${asked(result.question)} is still working; its answer arrives as an agent update.`;
+        }
+        return `Explorer ${result.helper} answered${asked(result.question)}${result.savedTo ? ` (saved to ${result.savedTo})` : ""}:\n\n${result.answer}`;
+      });
+      if (results.some((result) => result.helper && result.answer == null)) {
+        parts.push(WAIT_FOR_UPDATES_NOTE);
+      }
+      return parts.join("\n\n---\n\n");
+    }
+    case "project_browser_check": {
+      const result = await startBrowserCheck(projectId, {
+        what: requiredArg(args, "what", name),
+        agent: arg(args, "agent") ?? null,
+        url: arg(args, "url") ?? null,
+      });
+      return json({
+        started: result.helper,
+        evidence: result.mediaDir,
+        note: `It reports back as an agent update. ${WAIT_FOR_UPDATES_NOTE}`,
+      });
+    }
+    case "project_preferences": {
+      const action = args.action;
+      if (action === "add") {
+        const markdown = await addPreference(requiredArg(args, "text", name));
+        return json({ preferences: listPreferenceLines(markdown) });
+      }
+      if (action === "remove") {
+        const result = await removePreference(requiredArg(args, "text", name));
+        return json({ removed: result.removed, preferences: listPreferenceLines(result.markdown) });
+      }
+      return json({ preferences: listPreferenceLines(await readPreferences()) });
+    }
     case "project_list_prs": {
       await requireProject(projectId);
       const prs = await listProjectPullRequests(projectId);
@@ -396,12 +489,14 @@ export async function buildProjectOrchestratorReminder(
   context: { dateLabel: string; modelName: string }
 ): Promise<string> {
   const record = await requireProject(projectId);
-  const [children, files, notes, engines, subscriptions] = await Promise.all([
+  const [children, files, notes, engines, subscriptions, decisions, preferences] = await Promise.all([
     listProjectChildSummaries(record),
     listContextFiles(projectId).catch(() => []),
     readContextFile(projectId, PROJECT_NOTES_FILE).catch(() => null),
     listEngineSummaries(),
     readProjectSubscriptions(projectId).catch(() => []),
+    readContextFile(projectId, DECISIONS_FILE).catch(() => null),
+    readPreferences().catch(() => ""),
   ]);
   const prs = await listProjectPullRequests(projectId).catch(() => []);
   const working = children.filter((child) => child.bucket === "working").length;
@@ -432,7 +527,7 @@ export async function buildProjectOrchestratorReminder(
     ...(children.length > 0
       ? children.map(
           (child) =>
-            `- ${child.name}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.branch ? ` · branch ${child.branch}` : child.isolation === "checkout" ? " · in the repo checkout" : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
+            `- ${child.name}${child.kind === "helper" ? ` (${child.helperKind ?? "helper"} helper)` : ""}: ${projectChildBucketLabel(child.bucket)} (${child.status}) · ${child.backendId}${child.modelId ? ` / ${child.modelId}` : ""} · engine ${child.engineLabel}${child.repoName ? ` · repo ${child.repoName}` : ""}${child.branch ? ` · branch ${child.branch}` : child.isolation === "checkout" ? " · in the repo checkout" : ""}${child.queued ? ` · ${child.queued} queued` : ""}${child.attention ? ` · NEEDS ${child.attention.kind}: ${child.attention.title}` : ""} · last reply: ${oneLine(child.lastReplyPreview, PREVIEW_IN_TABLE_MAX_CHARS)}`
         )
       : ["- none yet"]),
     "",
@@ -457,6 +552,17 @@ export async function buildProjectOrchestratorReminder(
       : ["- nothing"]),
     "</project>",
   ];
+  const preferenceLines = listPreferenceLines(preferences);
+  if (preferenceLines.length > 0) {
+    lines.push("", "<user_preferences>", ...preferenceLines.map((line) => `- ${line}`), "</user_preferences>");
+  }
+  if (decisions?.content.trim()) {
+    const tail =
+      decisions.content.length > DECISIONS_REMINDER_MAX_CHARS
+        ? `[…earlier decisions in ${DECISIONS_FILE}]\n${decisions.content.slice(-DECISIONS_REMINDER_MAX_CHARS)}`
+        : decisions.content;
+    lines.push("", `<project_decisions path="${DECISIONS_FILE}">`, tail.trim(), "</project_decisions>");
+  }
   if (notes) {
     const body =
       notes.content.length > NOTES_REMINDER_MAX_CHARS

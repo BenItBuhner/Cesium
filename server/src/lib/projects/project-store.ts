@@ -134,6 +134,8 @@ function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
     githubRepo: nullableString(child.githubRepo),
     pr: normalizePullRequest(child.pr),
     task: nullableString(child.task),
+    kind: child.kind === "helper" ? "helper" : "worker",
+    helperKind: child.helperKind === "explore" || child.helperKind === "browser" ? child.helperKind : null,
     lastStatus: typeof child.lastStatus === "string" ? child.lastStatus : "unknown",
     turnsCompleted: typeof child.turnsCompleted === "number" ? child.turnsCompleted : 0,
     lastReportedSeq: typeof child.lastReportedSeq === "number" ? child.lastReportedSeq : 0,

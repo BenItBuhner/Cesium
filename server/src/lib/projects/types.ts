@@ -1,5 +1,7 @@
 import {
   DEFAULT_PROJECT_SETTINGS_VALUES,
+  type ProjectAgentKind,
+  type ProjectHelperKind,
   type ProjectAgentIsolation,
   type ProjectPullRequest,
   type ProjectRepoBinding,
@@ -49,6 +51,8 @@ export type ProjectChildRecord = {
   pr: ProjectPullRequest | null;
   /** The worker's first task (clipped), for PR titles and summaries. */
   task: string | null;
+  kind: ProjectAgentKind;
+  helperKind: ProjectHelperKind | null;
   /** Last status the watcher observed. */
   lastStatus: AgentConversationStatus | "unknown";
   turnsCompleted: number;

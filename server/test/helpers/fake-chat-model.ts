@@ -17,7 +17,7 @@ export type ChatTool = { function?: { name?: string } };
 export type ChatRequest = { messages: ChatMessage[]; tools?: ChatTool[]; stream?: boolean };
 export type Responder = (request: ChatRequest, res: ServerResponse) => Promise<void>;
 
-export const ORCHESTRATOR_MARKER = "You are the orchestrator of a Cesium Project";
+export const ORCHESTRATOR_MARKER = "You are the coordinator of a Cesium Project";
 
 export function messageText(message: ChatMessage | undefined): string {
   if (!message) {
@@ -45,7 +45,7 @@ export function projectScriptKey(request: ChatRequest): string {
     return "orchestrator";
   }
   for (const text of texts) {
-    const match = text.match(/You are "([^"]+)", (?:a worker agent|an agent) in the Cesium Project/);
+    const match = text.match(/You are "([^"]+)", (?:a worker agent|a helper agent|an agent) in the Cesium Project/);
     if (match) {
       return match[1]!;
     }
