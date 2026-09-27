@@ -216,7 +216,13 @@ export type ProjectChildSummary = {
   /** `owner/repo` its branch is pushed to, when that is GitHub. */
   githubRepo: string | null;
   pr: ProjectPullRequest | null;
+  /** Workers do the Project's work; helpers are short typed errands (code search, browser checks). */
+  kind: ProjectAgentKind;
+  helperKind: ProjectHelperKind | null;
 };
+
+export type ProjectAgentKind = "worker" | "helper";
+export type ProjectHelperKind = "explore" | "browser";
 
 export type ProjectOrchestratorSummary = {
   conversationId: string;

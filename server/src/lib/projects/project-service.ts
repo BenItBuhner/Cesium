@@ -70,6 +70,7 @@ import { RemoteChildHost } from "./remote-child-host.js";
 import type { WorkerBriefInput } from "./worker-brief.js";
 import { isGithubRepoSlug } from "./github/repo-identity.js";
 import { readProjectSubscriptions, summarizeSubscription } from "./subscriptions-store.js";
+import { listPreferenceLines, readPreferences } from "./preferences.js";
 import { inspectWorkerRepo } from "./worktrees.js";
 import {
   DEFAULT_PROJECT_SETTINGS,
@@ -97,11 +98,11 @@ export function childHostFor(engineId: string): ChildHost {
   return remote;
 }
 
-function childRef(child: Pick<ProjectChildRecord, "workspaceId" | "conversationId">): ChildRef {
+export function childRef(child: Pick<ProjectChildRecord, "workspaceId" | "conversationId">): ChildRef {
   return { workspaceId: child.workspaceId, conversationId: child.conversationId };
 }
 
-function randomHex(bytes: number): string {
+export function randomHex(bytes: number): string {
   return randomBytes(bytes).toString("hex");
 }
 
@@ -175,6 +176,8 @@ export function summarizeChild(
     archivedAt: child.archivedAt,
     githubRepo: child.githubRepo,
     pr: child.pr,
+    kind: child.kind,
+    helperKind: child.helperKind,
   };
 }
 
@@ -505,12 +508,23 @@ export async function patchProject(
   return buildProjectSnapshot(record);
 }
 
-async function disposeChildResources(child: ProjectChildRecord): Promise<void> {
+export async function disposeChildResources(
+  child: ProjectChildRecord,
+  siblings: readonly ProjectChildRecord[] = []
+): Promise<void> {
   if (child.deletedAt != null) {
     return;
   }
+  // Never remove a folder another live agent in this Project still works in.
+  const shared = siblings.some(
+    (other) =>
+      other.id !== child.id &&
+      other.deletedAt == null &&
+      other.engineId === child.engineId &&
+      other.workspaceId === child.workspaceId
+  );
   await childHostFor(child.engineId)
-    .delete(childRef(child))
+    .delete(childRef(child), { keepWorkspace: shared })
     .catch((error) => {
       console.warn(
         `[projects] could not delete child ${child.name}:`,
@@ -529,8 +543,10 @@ export async function deleteProject(projectId: string): Promise<void> {
       suppressReports: true,
     })),
   }));
-  for (const child of marked.children) {
-    await disposeChildResources(child);
+  // Helpers first: they may share a worker's folder that the worker's deletion removes.
+  const ordered = [...marked.children].sort((a, b) => Number(b.kind === "helper") - Number(a.kind === "helper"));
+  for (const [index, child] of ordered.entries()) {
+    await disposeChildResources(child, ordered.slice(index + 1));
   }
   const workspace = await getWorkspaceById(record.orchestrator.workspaceId);
   if (workspace) {
@@ -655,17 +671,58 @@ export function resolveProjectChild(
   );
 }
 
-function uniqueChildName(record: ProjectRecord, base: string, ignoreChildId?: string): string {
-  const taken = new Set(
-    record.children
-      .filter((child) => child.deletedAt == null && child.id !== ignoreChildId)
-      .map((child) => child.name)
-  );
+/** Names of children being created right now; the record lists a child only once it has started. */
+const claimedChildNames = new Map<string, Set<string>>();
+
+/**
+ * A name no agent of the Project has had, deleted ones included: names key
+ * evidence folders (media/<name>/), explorer notes and the coordinator's
+ * update history, so they are never reused.
+ */
+function uniqueChildName(record: ProjectRecord, base: string): string {
+  const taken = new Set(record.children.map((child) => child.name));
+  for (const claimed of claimedChildNames.get(record.id) ?? []) {
+    taken.add(claimed);
+  }
   let name = base;
   for (let suffix = 2; taken.has(name); suffix += 1) {
     name = `${base.slice(0, 44)}-${suffix}`;
   }
   return name;
+}
+
+export type ChildNameClaim = { name: string; release: () => void };
+
+/**
+ * Claims a unique name for a child about to be created, against the latest
+ * record, so creations that overlap (the coordinator and the UI, a batch of
+ * explorers) never pick the same one. Release it once the child is in the
+ * record, or the creation failed.
+ */
+export async function claimChildName(projectId: string, base: string): Promise<ChildNameClaim> {
+  let name = base;
+  await mutateProject(projectId, (current) => {
+    name = uniqueChildName(current, base);
+    const claimed = claimedChildNames.get(projectId) ?? new Set<string>();
+    claimed.add(name);
+    claimedChildNames.set(projectId, claimed);
+    return current;
+  });
+  let released = false;
+  return {
+    name,
+    release: () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      const claimed = claimedChildNames.get(projectId);
+      claimed?.delete(name);
+      if (claimed?.size === 0) {
+        claimedChildNames.delete(projectId);
+      }
+    },
+  };
 }
 
 /** A harness counts as available only when it is installed and has credentials. */
@@ -831,82 +888,92 @@ export async function createProjectChild(
         modelId: resolveChildModelId({ requested: input.model, isHome, harness, settings: record.settings }),
         warning: null,
       };
-  const name = uniqueChildName(record, baseName);
-  const childId = `pca_${randomHex(6)}`;
-  const placement = childPlacement({
-    record,
-    repo: repo ?? null,
-    name,
-    isolation: input.isolation ?? null,
-    base: input.base?.trim() || null,
-  });
-  const brief: WorkerBriefInput = {
-    projectName: record.name,
-    agentName: name,
-    instructions,
-    repoName: repo?.name ?? null,
-    contextDir: isHome ? getProjectContextDir(record.id) : null,
-    contextEngine: homeEngineLabel(),
-  };
-  if (isHome) {
-    await seedProjectContext(record.id, record.name);
+  const claim = await claimChildName(projectId, baseName);
+  try {
+    const { name } = claim;
+    const childId = `pca_${randomHex(6)}`;
+    const placement = childPlacement({
+      record,
+      repo: repo ?? null,
+      name,
+      isolation: input.isolation ?? null,
+      base: input.base?.trim() || null,
+    });
+    const brief: WorkerBriefInput = {
+      projectName: record.name,
+      agentName: name,
+      instructions,
+      repoName: repo?.name ?? null,
+      contextDir: isHome ? getProjectContextDir(record.id) : null,
+      contextEngine: homeEngineLabel(),
+      preferences: listPreferenceLines(await readPreferences()),
+    };
+    if (isHome) {
+      await seedProjectContext(record.id, record.name);
+    }
+    const created = await host.create({
+      projectId,
+      childId,
+      name,
+      brief,
+      displayText: instructions,
+      placement,
+      backendId: harness as AgentBackendId,
+      modelId: model.modelId,
+      mode: input.mode?.trim() || null,
+      homeLabel: homeEngineLabel(),
+      engineLabel: hostLabel,
+    });
+    const child: ProjectChildRecord = {
+      id: childId,
+      name,
+      engineId,
+      repoId: repo?.id ?? null,
+      workspaceId: created.workspaceId,
+      conversationId: created.conversationId,
+      backendId: created.backendId,
+      modelId: created.modelId,
+      mode: created.mode,
+      createdBy,
+      createdAt: Date.now(),
+      deletedAt: null,
+      archivedAt: null,
+      isolation: created.isolation ?? (placement.kind === "scratch" ? "scratch" : "checkout"),
+      branch: created.branch ?? null,
+      baseRef: created.baseRef ?? null,
+      baseSha: created.baseSha ?? null,
+      worktreePath: created.worktreePath ?? null,
+      githubRepo: repo?.githubRepo ?? created.githubRepo ?? null,
+      pr: null,
+      task: instructions.slice(0, CHILD_TASK_MAX_CHARS),
+      kind: "worker",
+      helperKind: null,
+      lastStatus: "running",
+      turnsCompleted: 0,
+      lastReportedSeq: 0,
+      suppressReports: false,
+      suppressedThroughSeq: null,
+      lastAttentionId: null,
+      lastReplyPreview: null,
+      lastSeenAt: Date.now(),
+      lastError: null,
+    };
+    const updated = await mutateProject(projectId, (existing) => ({
+      ...existing,
+      children: [...existing.children, child],
+    }));
+    const { observeNewProjectChild } = await import("./project-watcher.js");
+    observeNewProjectChild(projectId, childId);
+    const warnings = [model.warning ?? created.modelWarning ?? null, created.placementWarning ?? null].filter(
+      (entry): entry is string => Boolean(entry)
+    );
+    return {
+      agent: summarizeChild(updated, child, await observeChild(child), await listEngineSummaries()),
+      warning: warnings.length > 0 ? warnings.join(" ") : null,
+    };
+  } finally {
+    claim.release();
   }
-  const created = await host.create({
-    projectId,
-    childId,
-    name,
-    brief,
-    displayText: instructions,
-    placement,
-    backendId: harness as AgentBackendId,
-    modelId: model.modelId,
-    mode: input.mode?.trim() || null,
-    homeLabel: homeEngineLabel(),
-    engineLabel: hostLabel,
-  });
-  const child: ProjectChildRecord = {
-    id: childId,
-    name,
-    engineId,
-    repoId: repo?.id ?? null,
-    workspaceId: created.workspaceId,
-    conversationId: created.conversationId,
-    backendId: created.backendId,
-    modelId: created.modelId,
-    mode: created.mode,
-    createdBy,
-    createdAt: Date.now(),
-    deletedAt: null,
-    archivedAt: null,
-    isolation: created.isolation ?? (placement.kind === "scratch" ? "scratch" : "checkout"),
-    branch: created.branch ?? null,
-    baseRef: created.baseRef ?? null,
-    baseSha: created.baseSha ?? null,
-    worktreePath: created.worktreePath ?? null,
-    githubRepo: repo?.githubRepo ?? created.githubRepo ?? null,
-    pr: null,
-    task: instructions.slice(0, CHILD_TASK_MAX_CHARS),
-    lastStatus: "running",
-    turnsCompleted: 0,
-    lastReportedSeq: 0,
-    suppressReports: false,
-    suppressedThroughSeq: null,
-    lastAttentionId: null,
-    lastReplyPreview: null,
-    lastSeenAt: Date.now(),
-    lastError: null,
-  };
-  const updated = await mutateProject(projectId, (existing) => ({
-    ...existing,
-    children: [...existing.children, child],
-  }));
-  const warnings = [model.warning ?? created.modelWarning ?? null, created.placementWarning ?? null].filter(
-    (entry): entry is string => Boolean(entry)
-  );
-  return {
-    agent: summarizeChild(updated, child, await observeChild(child), await listEngineSummaries()),
-    warning: warnings.length > 0 ? warnings.join(" ") : null,
-  };
 }
 
 /**
@@ -967,60 +1034,72 @@ export async function adoptProjectChild(
     throw new ProjectError(`"${conversation.title}" already belongs to a Project.`, 409);
   }
   const baseName = normalizeProjectAgentName(input.name?.trim() || conversation.title) || "adopted";
-  const name = uniqueChildName(record, baseName);
-  const childId = `pca_${randomHex(6)}`;
   const repo =
     record.repos.find(
       (entry) => entry.engineId === PROJECT_HOME_ENGINE_ID && entry.workspaceId === workspace.id
     ) ?? null;
-  const adopted = await updateConversationRecord(workspace.id, conversation.id, (current) => ({
-    ...current,
-    origin: {
-      kind: "project-child",
-      projectId: record.id,
-      childId,
-      peerTokenId: null,
+  const githubRepo = repo?.githubRepo ?? (await inspectWorkerRepo(workspace.root)).githubRepo;
+  const claim = await claimChildName(projectId, baseName);
+  const { name } = claim;
+  const childId = `pca_${randomHex(6)}`;
+  let child: ProjectChildRecord;
+  let observation: ReturnType<typeof observeConversationRecord>;
+  let updated: ProjectRecord;
+  try {
+    const adopted = await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+      ...current,
+      origin: {
+        kind: "project-child",
+        projectId: record.id,
+        childId,
+        peerTokenId: null,
+        createdAt: Date.now(),
+      },
+    }));
+    observation = observeConversationRecord(adopted);
+    child = {
+      id: childId,
+      name,
+      engineId: PROJECT_HOME_ENGINE_ID,
+      repoId: repo?.id ?? null,
+      workspaceId: workspace.id,
+      conversationId: conversation.id,
+      backendId: adopted.config.backendId,
+      modelId: adopted.config.modelId || null,
+      mode: adopted.config.mode,
+      createdBy: "user",
       createdAt: Date.now(),
-    },
-  }));
-  const observation = observeConversationRecord(adopted);
-  const child: ProjectChildRecord = {
-    id: childId,
-    name,
-    engineId: PROJECT_HOME_ENGINE_ID,
-    repoId: repo?.id ?? null,
-    workspaceId: workspace.id,
-    conversationId: conversation.id,
-    backendId: adopted.config.backendId,
-    modelId: adopted.config.modelId || null,
-    mode: adopted.config.mode,
-    createdBy: "user",
-    createdAt: Date.now(),
-    deletedAt: null,
-    archivedAt: null,
-    isolation: isEngineManagedWorkspace(workspace) ? "scratch" : "checkout",
-    branch: null,
-    baseRef: null,
-    baseSha: null,
-    worktreePath: null,
-    githubRepo: repo?.githubRepo ?? (await inspectWorkerRepo(workspace.root)).githubRepo,
-    pr: null,
-    task: null,
-    lastStatus: observation.status,
-    turnsCompleted: 0,
-    // Only turns after the adoption are reported.
-    lastReportedSeq: adopted.lastEventSeq,
-    suppressReports: false,
-    suppressedThroughSeq: null,
-    lastAttentionId: observation.attention?.id ?? null,
-    lastReplyPreview: null,
-    lastSeenAt: Date.now(),
-    lastError: adopted.lastError,
-  };
-  const updated = await mutateProject(projectId, (existing) => ({
-    ...existing,
-    children: [...existing.children, child],
-  }));
+      deletedAt: null,
+      archivedAt: null,
+      isolation: isEngineManagedWorkspace(workspace) ? "scratch" : "checkout",
+      branch: null,
+      baseRef: null,
+      baseSha: null,
+      worktreePath: null,
+      githubRepo,
+      pr: null,
+      task: null,
+      kind: "worker",
+      helperKind: null,
+      lastStatus: observation.status,
+      turnsCompleted: 0,
+      // Only turns after the adoption are reported.
+      lastReportedSeq: adopted.lastEventSeq,
+      suppressReports: false,
+      suppressedThroughSeq: null,
+      lastAttentionId: observation.attention?.id ?? null,
+      lastReplyPreview: null,
+      lastSeenAt: Date.now(),
+      lastError: adopted.lastError,
+    };
+    const entry = child;
+    updated = await mutateProject(projectId, (existing) => ({
+      ...existing,
+      children: [...existing.children, entry],
+    }));
+  } finally {
+    claim.release();
+  }
   const { deliverProjectNotice } = await import("./project-watcher.js");
   await deliverProjectNotice(updated, [
     {
@@ -1072,7 +1151,7 @@ export async function getProjectChild(
   return summarizeChild(record, child, await observeChild(child), await listEngineSummaries());
 }
 
-async function patchChild(
+export async function patchChild(
   projectId: string,
   childId: string,
   patch: (child: ProjectChildRecord) => Partial<ProjectChildRecord> | null
@@ -1168,15 +1247,26 @@ export async function updateProjectChild(
   if (input.name != null && !requestedName) {
     throw new ProjectError("Agent name must contain letters or digits.");
   }
-  const nextName =
-    requestedName && requestedName !== child.name
-      ? uniqueChildName(record, requestedName, child.id)
-      : null;
   const requestedModel = input.model?.trim() || undefined;
   const mode = input.mode?.trim() || undefined;
-  if (!nextName && !requestedModel && !mode) {
+  const rename = requestedName && requestedName !== child.name ? requestedName : null;
+  if (!rename && !requestedModel && !mode) {
     throw new ProjectError("Nothing to update: pass name, model or mode.");
   }
+  const claim = rename ? await claimChildName(projectId, rename) : null;
+  try {
+    return await applyChildUpdate(projectId, child, { name: claim?.name ?? null, model: requestedModel, mode });
+  } finally {
+    claim?.release();
+  }
+}
+
+async function applyChildUpdate(
+  projectId: string,
+  child: ProjectChildRecord,
+  input: { name: string | null; model: string | undefined; mode: string | undefined }
+): Promise<ProjectChildSummary> {
+  const { name: nextName, model: requestedModel, mode } = input;
   const isHome = child.engineId === PROJECT_HOME_ENGINE_ID;
   const hostLabel = engineLabel(child.engineId, await listEngineSummaries());
   // A peer checks the model against its own credentials.
@@ -1214,7 +1304,7 @@ export async function deleteProjectChild(
     suppressReports: true,
     lastStatus: observation.exists ? observation.status : child.lastStatus,
   }));
-  await disposeChildResources(child);
+  await disposeChildResources(child, record.children);
   return { agent: child.name, deleted: true };
 }
 

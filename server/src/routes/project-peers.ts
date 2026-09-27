@@ -198,6 +198,12 @@ function briefInput(value: unknown, name: string): WorkerBriefInput | undefined 
     repoName: asString(brief.repoName)?.slice(0, 120) ?? null,
     contextDir: null,
     contextEngine: (asString(brief.contextEngine) ?? "the Project's home engine").slice(0, 80),
+    preferences: Array.isArray(brief.preferences)
+      ? brief.preferences
+          .filter((line): line is string => typeof line === "string")
+          .map((line) => line.slice(0, 500))
+          .slice(0, 50)
+      : [],
   };
 }
 
@@ -350,7 +356,7 @@ projectPeerRoutes.patch(
 projectPeerRoutes.delete(
   CHILD_PATH,
   guarded(async (c) => {
-    await host.delete(await scopedChild(c));
+    await host.delete(await scopedChild(c), { keepWorkspace: c.req.query("keepWorkspace") === "1" });
     return c.json({ ok: true });
   })
 );

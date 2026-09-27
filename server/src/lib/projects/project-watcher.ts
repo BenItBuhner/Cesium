@@ -195,6 +195,18 @@ async function processChild(entry: PendingObservation): Promise<void> {
     }
   }
   if (update) {
+    if (child.kind === "helper" && update.event !== "needs_attention") {
+      // Save the answer first, so the file the update points to exists when the orchestrator reads it.
+      const { afterHelperReported } = await import("./helpers.js");
+      const savedTo = await afterHelperReported(entry.projectId, child.id).catch((error) => {
+        console.warn(`[projects] could not finish helper ${child.name}:`, error instanceof Error ? error.message : error);
+        return null;
+      });
+      if (savedTo) {
+        update.detail = `${update.detail ?? ""}\nFull answer: ${savedTo} in the Project context.`.trim();
+        updated = (await readProject(entry.projectId)) ?? updated;
+      }
+    }
     await deliverProjectNotice(updated, [update]);
   }
 }
@@ -240,6 +252,19 @@ async function followWorkerPullRequest(projectId: string, childId: string, allow
   }
 }
 
+/** Runs `task` after everything already queued for the child. `task` must not throw. */
+function enqueueChildTask(key: string, task: () => Promise<void>): Promise<void> {
+  const previous = chains.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  chains.set(key, next);
+  void next.finally(() => {
+    if (chains.get(key) === next) {
+      chains.delete(key);
+    }
+  });
+  return next;
+}
+
 /** Serializes processing per child and keeps only the newest pending observation. */
 export function scheduleProjectChildObservation(
   projectId: string,
@@ -252,29 +277,62 @@ export function scheduleProjectChildObservation(
   if (alreadyQueued) {
     return chains.get(key) ?? Promise.resolve();
   }
-  const previous = chains.get(key) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(async () => {
-      const entry = pending.get(key);
-      pending.delete(key);
-      if (!entry) {
-        return;
-      }
-      await processChild(entry).catch((error) => {
-        console.warn(
-          `[projects] could not process an update for child ${childId}:`,
-          error instanceof Error ? error.message : error
-        );
-      });
-    });
-  chains.set(key, next);
-  void next.finally(() => {
-    if (chains.get(key) === next) {
-      chains.delete(key);
+  return enqueueChildTask(key, async () => {
+    const entry = pending.get(key);
+    pending.delete(key);
+    if (!entry) {
+      return;
     }
+    await processChild(entry).catch((error) => {
+      console.warn(
+        `[projects] could not process an update for child ${childId}:`,
+        error instanceof Error ? error.message : error
+      );
+    });
   });
-  return next;
+}
+
+/**
+ * Looks at a child just added to its Project: its first turn starts before
+ * the record lists it, and events from before then were ignored.
+ */
+export function observeNewProjectChild(projectId: string, childId: string): void {
+  void scheduleProjectChildObservation(projectId, childId, null);
+}
+
+/**
+ * Turns reports back on for a child whose caller stopped waiting for it, and
+ * reports what it did after `fromSeq`, including a turn that ended while
+ * reports were off. Runs in the child's slot so that an observation already
+ * in flight cannot swallow that turn.
+ */
+export async function resumeProjectChildReports(projectId: string, childId: string, fromSeq: number): Promise<void> {
+  let observed: Promise<void> = Promise.resolve();
+  await enqueueChildTask(`${projectId}:${childId}`, async () => {
+    try {
+      await mutateProject(
+        projectId,
+        (current) => ({
+          ...current,
+          children: current.children.map((candidate) =>
+            candidate.id === childId
+              ? {
+                  ...candidate,
+                  suppressReports: false,
+                  suppressedThroughSeq: null,
+                  lastReportedSeq: Math.min(candidate.lastReportedSeq, fromSeq),
+                }
+              : candidate
+          ),
+        }),
+        { touch: false }
+      );
+    } catch (error) {
+      console.warn(`[projects] could not resume reports for child ${childId}:`, error instanceof Error ? error.message : error);
+    }
+    observed = scheduleProjectChildObservation(projectId, childId, null);
+  });
+  await observed;
 }
 
 /** Resolves once every scheduled observation has been processed. */

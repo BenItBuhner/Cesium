@@ -11,6 +11,8 @@ export type WorkerBriefInput = {
   contextDir: string | null;
   /** Name of the engine that holds the Project context. */
   contextEngine: string;
+  /** The user's lasting preferences (shared by every Project). */
+  preferences?: string[];
 };
 
 /** Where the worker actually landed; the hosting engine fills this in. */
@@ -109,6 +111,9 @@ export function buildWorkerBrief(brief: WorkerBriefInput, facts: WorkerPlacement
     "Project context (shared with the coordinator and every agent in this Project)",
     ...contextLines(brief),
     "",
+    ...(brief.preferences && brief.preferences.length > 0
+      ? ["The user's preferences (follow them)", ...brief.preferences.map((line) => `- ${line}`), ""]
+      : []),
     "Done means",
     ...doneLines(facts, brief),
     "",

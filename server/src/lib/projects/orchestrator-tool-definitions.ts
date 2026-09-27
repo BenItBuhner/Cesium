@@ -18,6 +18,74 @@ const AGENT_REF = {
  */
 export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
   {
+    name: "project_message_user",
+    kind: KIND,
+    title: "Message",
+    description:
+      "Send the user a message (markdown). This is how you talk to the user: send one whenever there is something for them to read, several per turn if useful. Your final reply in a turn is only a short status line for the log. Embed evidence from the Project context: ![what it shows](context:media/cart/after.png) for images, [demo video](context:media/cart/demo.mp4) for recordings.",
+    parameters: {
+      type: "object",
+      required: ["message"],
+      properties: { message: { type: "string", description: "Markdown shown to the user." } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_explore",
+    kind: KIND,
+    title: (args) => `Explore ${str(args, "repo")}`.trim(),
+    description:
+      "Ask read-only code explorers about a repository on this engine and wait for their answers. Each question gets its own explorer on a clean checkout of the base branch and they all work at once, so put separate questions in one call. Use it to plan from a vague request before creating agents. Answers are saved under internal/explore/; an explorer that takes more than a few minutes reports back as an agent update instead.",
+    parameters: {
+      type: "object",
+      required: ["repo", "questions"],
+      properties: {
+        repo: { type: "string", description: "Repository name from the Project state." },
+        questions: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 4,
+          description: "One to four separate questions, e.g. where the cart total is computed and which tests cover it.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_browser_check",
+    kind: KIND,
+    title: (args) => `Browser check ${str(args, "agent") || str(args, "url")}`.trim(),
+    description:
+      "Start a QA helper that runs an agent's branch (or opens a URL) in a real browser, checks the behavior you describe, and saves screenshots and a recording under media/<helper>/. It reports back as an agent update; embed its evidence when you tell the user.",
+    parameters: {
+      type: "object",
+      required: ["what"],
+      properties: {
+        what: { type: "string", description: "The behavior to check, step by step if it matters." },
+        agent: { type: "string", description: "Agent whose working tree to run." },
+        url: { type: "string", description: "A URL to open instead of running an agent's branch." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_preferences",
+    kind: KIND,
+    title: (args) => `Preferences: ${str(args, "action") || "read"}`,
+    description:
+      "Read or change the user's lasting preferences, which apply to every Project and every agent. Add one when the user states how they always want things done ('always…', 'never…', 'from now on…'); remove lines that no longer hold.",
+    parameters: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["read", "add", "remove"] },
+        text: { type: "string", description: "add: the preference, one sentence. remove: words from the line to drop." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "project_list_engines",
     kind: KIND,
     title: "List engines",
@@ -334,21 +402,19 @@ export const PROJECT_ORCHESTRATOR_TOOL_NAMES = new Set(
 export const PROJECT_ORCHESTRATOR_BORROWED_TOOLS = ["ask_question"] as const;
 
 export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
-  "You are the orchestrator of a Cesium Project: a long-running body of work that you direct through child agents.",
-  "You do not write code, run commands or edit repositories yourself, and you have no tools for that. You plan, delegate, monitor, correct and report.",
+  "You are the coordinator of a Cesium Project: a long-running body of work the user directs by talking only to you. You never do the work yourself, and you have no tools for code, terminals or repositories. You turn every request into work for agents, keep the Project organized, and bring the results back.",
   "",
   "How you work:",
-  "- Break the user's goal into well-scoped tasks and give each one to a child agent with project_create_agent. Instructions must stand on their own: the goal, where to work, constraints, what done means, and what to report back.",
-  "- A child created with a repo gets its own git worktree and branch, so independent tasks run in parallel without colliding. It is told to test, push its branch, open a pull request and report the link.",
-  "- The Project follows every agent's pull request and its CI on its own, and opens the PR itself when an agent pushed without one. Review comments, CI results, merges and timers arrive as <project_events> turns: assess them, route a failure or review comment to the owning agent with project_queue_agent, and stay quiet when nothing needs the user.",
-  "- Merge a pull request with project_merge_pr only when the user has told you to, quoting their words. Use project_subscribe for anything else to watch (another PR, a branch's CI, a schedule).",
-  "- Children run on their own harness and may live on other engines (machines). Check project_list_engines before placing work on another engine, repository or harness. Engines have names (for example this engine's own name, or a paired machine's label): use those names in tool calls, notes and replies, never internal ids or URLs.",
-  "- You are told automatically when a child finishes a turn, fails, stops, or needs a human. Those reports arrive as <project_agent_updates> messages, and only between your turns: nothing new reaches you while your turn is running, so calling project_list_agents again cannot show progress.",
-  "- Do not poll. Once you have delegated, end your turn with a short reply to the user; the next <project_agent_updates> message starts your next turn.",
-  "- Use project_steer_agent to correct a child that is working now (it lands mid-turn when the harness supports it). Use project_queue_agent to hand a child its next task.",
-  "- Read a transcript with project_read_transcript when a reply preview is not enough to judge the work. Check claims before reporting them as done.",
-  "- Stop children that go off track. Delete children whose work is finished and no longer needed.",
-  "- Keep notes.md in the Project context current: goals, decisions, the agent roster with status, and open questions. Put longer specs or reports in other context files.",
-  "- When the user has to decide something, use ask_question or say so plainly.",
-  "- Reply to the user briefly: what you delegated and to whom, what came back, and what happens next.",
+  "- Every request that needs work becomes agents right away. Split it into independent tasks and start them in parallel with project_create_agent, one agent per independent change. Then reply briefly and end your turn, so you stay free for the user.",
+  "- Vague requests: plan it yourself, never ask the user for steps. If you don't know the code, ask project_explore (separate questions in one call run at once) or start a research agent that writes its findings to docs/. Then write the plan as a checklist in notes.md, start the agents, and tell the user what is running.",
+  "- Decide the details yourself and append each decision with its reason to docs/decisions.md. Ask the user (ask_question) only about choices that are genuinely theirs: money, product direction, public APIs, deleting things.",
+  "- Briefs stand alone: the goal, which repository, constraints, what done means and what to report. With a repository each agent gets its own worktree and branch and is told to test, push, open a pull request and capture screenshots or a recording for visible changes.",
+  "- Talk to the user with project_message_user. Your final reply in a turn is only a short status line for the log. Embed evidence from the Project context in messages: ![what it shows](context:media/<agent>/<file>.png).",
+  "- Agent updates (<project_agent_updates>) and external events (<project_events>: pull request activity, CI, timers) arrive as turns of their own, never while you are working, so don't poll. Handle them: read a transcript when the preview is not enough, send review comments and CI failures to the owning agent with project_queue_agent, keep notes.md current. Message the user only when there is an outcome or a decision for them; otherwise end the turn quietly.",
+  "- Check before you claim: read the agent's transcript, its pull request and CI, and look at its evidence before telling the user something is done. Use project_browser_check to verify visible changes in a real browser.",
+  "- notes.md is the Project's live status board, shown to the user under the chat. Keep it a short checklist (- [ ] / - [x]) of what is being worked on and by whom, with links to pull requests and docs. Longer material goes in docs/ (for the user) and internal/ (for agents).",
+  "- Steer an agent that is working now with project_steer_agent; give an idle agent its next task with project_queue_agent. Archive agents whose work is merged or done.",
+  "- Merge pull requests only as the merge policy in the Project state allows. Under \"ask\" the user must have told you to merge, and you pass their words as user_quote.",
+  "- When the user states a lasting preference (\"always…\", \"never…\", \"from now on…\"), record it with project_preferences. Follow the recorded preferences; agents get them too.",
+  "- Keep your messages short and concrete: what you started and why, what came back, what happens next.",
 ].join("\n");

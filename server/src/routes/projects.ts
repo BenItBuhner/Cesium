@@ -23,7 +23,8 @@ import {
   mintProjectPeerToken,
   revokeProjectPeerToken,
 } from "../lib/projects/engine-service.js";
-import { ProjectsDisabledError } from "../lib/projects/feature-flag.js";
+import { ProjectsDisabledError, assertProjectsEnabled } from "../lib/projects/feature-flag.js";
+import { listPreferenceLines, readPreferences, replacePreferences } from "../lib/projects/preferences.js";
 import { getProjectContextDir } from "../lib/projects/paths.js";
 import { PeerRequestError } from "../lib/projects/peer-client.js";
 import {
@@ -200,6 +201,25 @@ projectRoutes.delete(
   guarded(async (c) => {
     await revokeProjectPeerToken(param(c, "tokenId"));
     return c.json({ ok: true });
+  })
+);
+
+projectRoutes.get(
+  "/api/projects/preferences",
+  guarded(async (c) => {
+    await assertProjectsEnabled();
+    const markdown = await readPreferences();
+    return c.json({ markdown, lines: listPreferenceLines(markdown) });
+  })
+);
+
+projectRoutes.put(
+  "/api/projects/preferences",
+  guarded(async (c) => {
+    await assertProjectsEnabled();
+    const body = await jsonBody(c);
+    const markdown = await replacePreferences(typeof body.markdown === "string" ? body.markdown : "");
+    return c.json({ markdown, lines: listPreferenceLines(markdown) });
   })
 );
 
