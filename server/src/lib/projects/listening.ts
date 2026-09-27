@@ -310,6 +310,24 @@ function ownerOf(record: ProjectRecord, subscription: ProjectSubscriptionRecord,
   );
 }
 
+/** Allowance for clock skew with GitHub when deciding what predates a subscription. */
+const PRIMING_GRACE_MS = 60_000;
+
+/**
+ * Before this moment, comments and reviews are history the first poll only
+ * records. On an agent's own PR everything is news to the coordinator; on
+ * any other PR, only what came after the Project started following it (a
+ * bot reviewing within seconds of the PR opening must not be swallowed).
+ */
+function primingCutoff(subscription: ProjectSubscriptionRecord): number {
+  return subscription.childId ? 0 : subscription.createdAt - PRIMING_GRACE_MS;
+}
+
+function postedBefore(at: string | null | undefined, cutoff: number): boolean {
+  const time = at ? Date.parse(at) : Number.NaN;
+  return !Number.isFinite(time) || time < cutoff;
+}
+
 function newIds<T extends { id: number }>(items: readonly T[], seen: readonly number[] | undefined): T[] {
   const known = new Set(seen ?? []);
   return items.filter((item) => !known.has(item.id));
@@ -343,6 +361,17 @@ async function pollPullRequest(
     );
   }
   const decided = reviews.filter((entry) => entry.state?.toUpperCase() !== "PENDING");
+  const primed = subscription.state.primed === true;
+  const cutoff = primingCutoff(subscription);
+  const seenCommentIds = primed
+    ? subscription.state.seenCommentIds
+    : comments.filter((comment) => postedBefore(comment.created_at, cutoff)).map((comment) => comment.id);
+  const seenReviewIds = primed
+    ? subscription.state.seenReviewIds
+    : decided.filter((entry) => postedBefore(entry.submitted_at, cutoff)).map((entry) => entry.id);
+  const seenReviewCommentIds = primed
+    ? subscription.state.seenReviewCommentIds
+    : reviewComments.filter((comment) => postedBefore(comment.created_at, cutoff)).map((comment) => comment.id);
   const nextState: ProjectSubscriptionState = {
     ...subscription.state,
     primed: true,
@@ -354,9 +383,6 @@ async function pollPullRequest(
     seenReviewCommentIds: keepIds(subscription.state.seenReviewCommentIds, reviewComments),
     ...(owner ? {} : { pr: snapshot }),
   };
-  if (!subscription.state.primed) {
-    return { events: [], state: nextState };
-  }
   const agent = owner?.name;
   const attrs = (action: string, extra: Record<string, string | number | undefined> = {}) => ({
     pr: pull.html_url,
@@ -368,7 +394,7 @@ async function pollPullRequest(
   });
   const ref = `${spec.repo}#${spec.number}`;
   const events: ProjectEvent[] = [];
-  for (const comment of newIds(comments, subscription.state.seenCommentIds)) {
+  for (const comment of newIds(comments, seenCommentIds)) {
     events.push({
       source: "github",
       attrs: attrs("comment", { sender: comment.user?.login, commentUrl: comment.html_url }),
@@ -376,7 +402,7 @@ async function pollPullRequest(
       label: `${ref} comment`,
     });
   }
-  for (const entry of newIds(decided, subscription.state.seenReviewIds)) {
+  for (const entry of newIds(decided, seenReviewIds)) {
     const state = entry.state.toLowerCase();
     events.push({
       source: "github",
@@ -385,7 +411,7 @@ async function pollPullRequest(
       label: `${ref} review`,
     });
   }
-  for (const comment of newIds(reviewComments, subscription.state.seenReviewCommentIds)) {
+  for (const comment of newIds(reviewComments, seenReviewCommentIds)) {
     events.push({
       source: "github",
       attrs: attrs("review_comment", {
@@ -397,6 +423,10 @@ async function pollPullRequest(
       body: `${comment.user?.login ?? "Someone"} commented on ${comment.path ?? "the diff"}${comment.line ? `:${comment.line}` : ""}:\n${excerpt(comment.body)}`,
       label: `${ref} review comment`,
     });
+  }
+  if (!primed) {
+    // The first poll sets the baseline for the PR's state, head and draft flag.
+    return { events, state: nextState };
   }
   // A worker's own pushes are its business; only report pushes to PRs nobody here owns.
   if (!subscription.childId && subscription.state.headSha && subscription.state.headSha !== pull.head.sha && prState === "open") {
