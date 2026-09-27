@@ -123,6 +123,8 @@ import {
   filterGroupsByWorkspaceScope,
   getRepositoryGroupingKey,
 } from "@/lib/multi-server-workspaces";
+import { relabelRailGroups } from "@/lib/server-display-labels";
+import { useServerDisplayLabels } from "@/hooks/useServerDisplayLabels";
 import {
   collectAttentionConversations,
   collectRunningConversations,
@@ -546,6 +548,7 @@ export function AgentShellStateProvider({
     setActiveServer,
     ready: connectionsReady,
   } = useServerConnections();
+  const serverDisplayLabels = useServerDisplayLabels();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const cloud = useCloudContext();
@@ -1191,9 +1194,14 @@ export function AgentShellStateProvider({
     return () => clearTimeout(timer);
   }, [groups, refreshConversationGroupsWithState]);
 
+  const labeledGroups = useMemo(
+    () => relabelRailGroups(groups, serverDisplayLabels),
+    [groups, serverDisplayLabels]
+  );
+
   const visibleMachineGroups = useMemo(
-    () => filterGroupsByMachine(groups, settings.general.agentRail.hiddenServerIds),
-    [groups, settings.general.agentRail.hiddenServerIds]
+    () => filterGroupsByMachine(labeledGroups, settings.general.agentRail.hiddenServerIds),
+    [labeledGroups, settings.general.agentRail.hiddenServerIds]
   );
 
   const scopedMachineGroups = useMemo(

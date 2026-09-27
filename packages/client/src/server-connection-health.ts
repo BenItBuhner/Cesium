@@ -2,14 +2,35 @@ import { engineFetch } from "./browser-machine";
 import { attachSessionToken } from "./auth-client";
 import { normalizeServerBaseUrl } from "./server-connections";
 import { resolveServerRequestBaseUrlForCurrentWindow } from "./resolve-server-base-url";
+import { sanitizeEngineName } from "./server-engine-names";
 
 export type ServerProbeResult = {
   ok: boolean;
   healthOk: boolean;
   authEnabled: boolean | null;
   authenticated: boolean | null;
+  /**
+   * The engine's own name. `null` when it answered without one (older
+   * engines); absent when it could not say (offline, not signed in).
+   */
+  engineName?: string | null;
   error: string | null;
 };
+
+type AuthStatusProbePayload = {
+  enabled?: boolean;
+  authenticated?: boolean;
+  engineName?: unknown;
+};
+
+function probedEngineName(payload: AuthStatusProbePayload): string | null | undefined {
+  const name = sanitizeEngineName(payload.engineName);
+  if (name) {
+    return name;
+  }
+  // Engines only name themselves to callers they let in.
+  return payload.enabled !== true || payload.authenticated === true ? null : undefined;
+}
 
 export function timeoutSignal(timeoutMs: number): AbortSignal {
   if (typeof AbortSignal.timeout === "function") {
@@ -61,16 +82,14 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
           error: null,
         };
       }
-      const payload = (await authResponse.json()) as {
-        enabled?: boolean;
-        authenticated?: boolean;
-      };
+      const payload = (await authResponse.json()) as AuthStatusProbePayload;
       return {
         ok: true,
         healthOk: true,
         authEnabled: payload.enabled === true,
         authenticated:
           typeof payload.authenticated === "boolean" ? payload.authenticated : null,
+        engineName: probedEngineName(payload),
         error: null,
       };
     } catch {

@@ -13,6 +13,7 @@ import {
   authenticateRequest,
   recordFailedLoginRateLimit,
 } from "../lib/auth.js";
+import { getEngineName } from "../lib/engine-instance.js";
 
 export const authRoutes = new Hono();
 
@@ -52,7 +53,10 @@ authRoutes.get("/api/auth/status", async (c) => {
   });
   const payload = getAuthStatusPayload(auth);
 
-  const response = c.json(payload);
+  // The name is usually the hostname, so only callers already allowed in see it.
+  const response = c.json(
+    payload.authenticated ? { ...payload, engineName: getEngineName() } : payload
+  );
   c.res = response;
   c.header("cache-control", "no-store");
   c.header("x-opencursor-auth-enabled", payload.enabled ? "1" : "0");

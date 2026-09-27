@@ -1,13 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   PROJECT_HOME_ENGINE_ID,
   projectEngineName,
   type ProjectEngineSummary,
 } from "@cesium/core/projects";
-import { getEngineInstanceId } from "../engine-instance.js";
+import { getEngineInstanceId, getEngineName } from "../engine-instance.js";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { openSecretSync, sealSecretSync } from "../secret-envelope-node.js";
 import { getSecretWrappingKeySync } from "../secret-wrapping-key.js";
@@ -150,7 +149,7 @@ export async function callPeerEngine<T>(
 }
 
 export function homeEngineLabel(): string {
-  return process.env.CESIUM_ENGINE_LABEL?.trim() || os.hostname() || "This engine";
+  return getEngineName();
 }
 
 export function homeEngineSummary(): ProjectEngineSummary {

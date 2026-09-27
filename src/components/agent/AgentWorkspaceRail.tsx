@@ -87,11 +87,8 @@ import type {
   WorkspaceSortMode,
 } from "@/lib/global-settings";
 import { isStandaloneChatWorkspace } from "@/lib/types";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-} from "@/lib/server-rail-appearance";
 import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
+import { useServerDisplayLabels } from "@/hooks/useServerDisplayLabels";
 import {
   createWorkspaceGitWorktree,
   forkAgentConversation,
@@ -404,17 +401,14 @@ export function AgentWorkspaceRail() {
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingWorkspaceKey, setEditingWorkspaceKey] = useState<string | null>(null);
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
-  const serverRailAppearances = settings.general.serverRailAppearances;
+  const serverDisplayLabels = useServerDisplayLabels();
   const machineOptions = useMemo(
     () =>
-      servers.map((server, index) => ({
+      servers.map((server) => ({
         id: server.id,
-        label: getServerDisplayLabel(
-          server,
-          getServerRailAppearance(serverRailAppearances, server.id, index)
-        ),
+        label: serverDisplayLabels.get(server.id) ?? server.label,
       })),
-    [serverRailAppearances, servers]
+    [serverDisplayLabels, servers]
   );
   const codespaces = useCodespaces();
   const codespaceServerIds = useMemo(

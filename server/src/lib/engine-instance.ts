@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DATA_DIR } from "./persistence.js";
 
@@ -47,4 +48,9 @@ export function getEngineInstanceId(): string {
   cachedInstanceId = `cesium_${randomBytes(16).toString("hex")}`;
   persistInstanceId(cachedInstanceId);
   return cachedInstanceId;
+}
+
+/** The name this engine goes by: `CESIUM_ENGINE_LABEL`, else the machine's hostname. */
+export function getEngineName(): string {
+  return process.env.CESIUM_ENGINE_LABEL?.trim() || os.hostname() || "This engine";
 }
