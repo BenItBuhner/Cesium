@@ -276,6 +276,7 @@ projectRoutes.patch(
                 ...(settings.prMode === "ready" || settings.prMode === "draft" ? { prMode: settings.prMode } : {}),
                 ...(typeof settings.autoCreatePr === "boolean" ? { autoCreatePr: settings.autoCreatePr } : {}),
                 ...(typeof settings.autoSubscribe === "boolean" ? { autoSubscribe: settings.autoSubscribe } : {}),
+                ...(typeof settings.autoApproveAgents === "boolean" ? { autoApproveAgents: settings.autoApproveAgents } : {}),
               },
             }
           : {}),

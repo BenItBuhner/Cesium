@@ -10,27 +10,32 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
+  applyProjectPageSearch,
   diffProjectChildren,
   isProjectChildRemote,
   mergeProjectListings,
+  parseProjectPageSearch,
   projectChildChangeNotice,
   type ProjectChildChange,
   type ProjectChildMark,
   type ProjectChildSummary,
   type ProjectListing,
+  type ProjectPageTab,
   type ProjectServerListing,
   type ProjectSnapshot,
   type ProjectSummary,
 } from "@cesium/core";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
-import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
+import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import { resolveRailFetchServers } from "@/lib/rail-fetch";
+import { safeReplaceLocationSearchParams, safeWindowLocationUrl } from "@/lib/safe-url";
 import { fetchProject, listProjects, toServerRequestContext } from "@/lib/server-api";
 import type { ServerConnection } from "@/lib/server-connections";
 
@@ -54,10 +59,17 @@ type ProjectsContextValue = {
   loaded: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  /** Project whose orchestrator is the selected conversation. */
+  /** Project whose coordinator is the selected conversation: the Project page is showing. */
   activeProjectId: string | null;
-  openProject: (project: ProjectOpenTarget) => Promise<void>;
-  openProjectById: (projectId: string) => Promise<void>;
+  /** Tab of the Project page's side pane. */
+  projectTab: ProjectPageTab;
+  /** Shows a tab of the Project page, opening the side pane. */
+  setProjectTab: (tab: ProjectPageTab) => void;
+  /** Context file the Context tab shows (set by links to Context files). */
+  focusedContextPath: string | null;
+  openContextFile: (path: string) => void;
+  openProject: (project: ProjectOpenTarget, options?: { tab?: ProjectPageTab }) => Promise<void>;
+  openProjectById: (projectId: string, options?: { tab?: ProjectPageTab }) => Promise<void>;
   /**
    * Opens a child's own conversation. It runs on the Project's engine unless
    * `server` names the peer engine it was placed on.
@@ -129,12 +141,14 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const { projects: enabled } = useUserPreferences();
   const { activeServer, servers, onlineServers, serverStatusById } = useServerConnections();
   const {
+    isMobile,
     openConversationSummary,
     selectedConversationId,
     setRightPaneOpen,
   } = useAgentShellState();
-  const editorBridgeRef = useEditorBridgeRef();
+  const { conversationsById } = useAgentConversations();
   const { pushNotification } = useWorkbenchNotifications();
+  const searchParams = useSearchParams();
 
   const [projects, setProjects] = useState<ProjectListing[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -142,11 +156,11 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const [snapshots, setSnapshots] = useState<Record<string, ProjectSnapshot>>({});
   const [watchCounts, setWatchCounts] = useState<Record<string, number>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [pendingTab, setPendingTab] = useState<{
-    projectId: string;
-    conversationId: string;
-    title: string;
-  } | null>(null);
+  // A Project page in the URL at boot, opened once the Project list says which engine has it.
+  const deepLinkRef = useRef(parseProjectPageSearch(searchParams));
+  const [projectTab, setProjectTabState] = useState<ProjectPageTab>(
+    () => deepLinkRef.current?.tab ?? "agents"
+  );
 
   // Opening a peer engine's conversation makes that engine active, so the list
   // spans every connected engine instead of following the active one.
@@ -379,13 +393,15 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openProject = useCallback(
-    async (project: ProjectOpenTarget) => {
+    async (project: ProjectOpenTarget, options?: { tab?: ProjectPageTab }) => {
       const server = serverForProject(project.id, project.serverId);
-      setPendingTab({
-        projectId: project.id,
-        conversationId: project.orchestratorConversationId,
-        title: project.name,
-      });
+      if (options?.tab) {
+        setProjectTabState(options.tab);
+      }
+      // On a phone the page opens on the chat; the tabs are a swipe away.
+      if (!isMobile) {
+        setRightPaneOpen(true);
+      }
       await openConversationSummary(
         conversationSummary({
           id: project.orchestratorConversationId,
@@ -403,26 +419,29 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         })
       );
     },
-    [openConversationSummary, serverForProject]
+    [isMobile, openConversationSummary, serverForProject, setRightPaneOpen]
   );
 
   const openProjectById = useCallback(
-    async (projectId: string) => {
+    async (projectId: string, options?: { tab?: ProjectPageTab }) => {
       const known = projectsRef.current.find((project) => project.id === projectId);
       if (known) {
-        await openProject(known);
+        await openProject(known, options);
         return;
       }
       const snapshot = await fetchProject(projectId);
-      await openProject({
-        id: snapshot.id,
-        name: snapshot.name,
-        orchestratorConversationId: snapshot.orchestrator.conversationId,
-        orchestratorWorkspaceId: snapshot.orchestrator.workspaceId,
-        orchestratorStatus: snapshot.orchestrator.status,
-        createdAt: snapshot.createdAt,
-        updatedAt: snapshot.updatedAt,
-      });
+      await openProject(
+        {
+          id: snapshot.id,
+          name: snapshot.name,
+          orchestratorConversationId: snapshot.orchestrator.conversationId,
+          orchestratorWorkspaceId: snapshot.orchestrator.workspaceId,
+          orchestratorStatus: snapshot.orchestrator.status,
+          createdAt: snapshot.createdAt,
+          updatedAt: snapshot.updatedAt,
+        },
+        options
+      );
     },
     [openProject]
   );
@@ -456,29 +475,80 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     openChildRef.current = openChildConversation;
   }, [openChildConversation, openProjectById]);
 
-  // The side pane's editor remounts per conversation, so the Project tab opens
-  // once the orchestrator is the selected conversation and its editor exists.
-  useEffect(() => {
-    if (!pendingTab || selectedConversationId !== pendingTab.conversationId) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      editorBridgeRef.current?.openProjectTab({
-        projectId: pendingTab.projectId,
-        title: pendingTab.title,
-      });
-      setRightPaneOpen(true);
-      setPendingTab(null);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [editorBridgeRef, pendingTab, selectedConversationId, setRightPaneOpen]);
-
+  const selectedOrigin = selectedConversationId
+    ? conversationsById[selectedConversationId]?.origin
+    : undefined;
+  const selectedCoordinatorOf =
+    selectedOrigin?.kind === "project-orchestrator" ? selectedOrigin.projectId : null;
   const activeProjectId = useMemo(
     () =>
-      projects.find((project) => project.orchestratorConversationId === selectedConversationId)
-        ?.id ?? null,
-    [projects, selectedConversationId]
+      enabled
+        ? (selectedCoordinatorOf ??
+          projects.find((project) => project.orchestratorConversationId === selectedConversationId)
+            ?.id ??
+          null)
+        : null,
+    [enabled, projects, selectedConversationId, selectedCoordinatorOf]
   );
+
+  const setProjectTab = useCallback(
+    (tab: ProjectPageTab) => {
+      setProjectTabState(tab);
+      setRightPaneOpen(true);
+    },
+    [setRightPaneOpen]
+  );
+
+  const [focusedContextPath, setFocusedContextPath] = useState<string | null>(null);
+  const openContextFile = useCallback(
+    (path: string) => {
+      setFocusedContextPath(path);
+      setProjectTab("context");
+    },
+    [setProjectTab]
+  );
+  useEffect(() => {
+    setFocusedContextPath(null);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    const target = deepLinkRef.current;
+    if (!target || !enabled) {
+      return;
+    }
+    if (activeProjectId === target.projectId) {
+      deepLinkRef.current = null;
+      return;
+    }
+    if (!loaded) {
+      return;
+    }
+    deepLinkRef.current = null;
+    void openProjectById(target.projectId, { tab: target.tab }).catch((caught) => {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "warning",
+        title: "Project not found",
+        message: errorMessage(caught),
+        autoDismissMs: NOTICE_DISMISS_MS,
+        compact: true,
+      });
+    });
+  }, [activeProjectId, enabled, loaded, openProjectById, pushNotification]);
+
+  // The URL names the Project page while its coordinator is selected, so it can be reloaded or
+  // shared. Re-applied whenever the URL changes (closing Settings clears `view`).
+  useEffect(() => {
+    if (deepLinkRef.current || !loaded) {
+      return;
+    }
+    if (safeWindowLocationUrl()?.searchParams.get("view") === "settings") {
+      return;
+    }
+    safeReplaceLocationSearchParams((params) =>
+      applyProjectPageSearch(params, activeProjectId ? { projectId: activeProjectId, tab: projectTab } : null)
+    );
+  }, [activeProjectId, loaded, projectTab, searchParams]);
 
   const value = useMemo<ProjectsContextValue>(
     () => ({
@@ -488,6 +558,10 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       activeProjectId,
+      projectTab,
+      setProjectTab,
+      focusedContextPath,
+      openContextFile,
       openProject,
       openProjectById,
       openChildConversation,
@@ -501,14 +575,18 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       activeProjectId,
       enabled,
       error,
+      focusedContextPath,
       loaded,
       newProjectOpen,
       openChildConversation,
+      openContextFile,
       openProject,
       openProjectById,
+      projectTab,
       projects,
       refresh,
       refreshProject,
+      setProjectTab,
       snapshots,
       watchProject,
     ]
@@ -523,6 +601,11 @@ export function useProjects(): ProjectsContextValue {
     throw new Error("useProjects must be used within ProjectsProvider");
   }
   return context;
+}
+
+/** For shell components that also render outside the agent layout. */
+export function useOptionalProjects(): ProjectsContextValue | null {
+  return useContext(ProjectsContext);
 }
 
 /** Subscribes to one Project's snapshot for as long as the caller is mounted. */

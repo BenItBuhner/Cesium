@@ -19,6 +19,7 @@ import { safeWindowLocationUrl } from "@/lib/safe-url";
 import {
   WORKBENCH_VIEW_SEARCH_PARAM,
   consumeDefaultShellViewOnNextLaunch,
+  isProjectPageViewParam,
   workbenchViewFromSearchParam,
 } from "@/lib/workbench-view";
 
@@ -36,7 +37,7 @@ const ShellViewContext = createContext<ShellViewContextValue | null>(null);
 function applyShellViewToUrl(url: URL, next: WorkbenchShellView) {
   if (next === "settings") {
     url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "settings");
-  } else {
+  } else if (!isProjectPageViewParam(url.searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM))) {
     url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
   }
 }
@@ -144,7 +145,7 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
     const curParam = url.searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
 
     if (wantsParam === null) {
-      if (curParam != null) {
+      if (curParam != null && !isProjectPageViewParam(curParam)) {
         url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
         const nextUrl = `${url.pathname}${url.search}${url.hash}`;
         const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;

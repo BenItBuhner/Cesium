@@ -5810,6 +5810,20 @@ export async function patchProjectRepo(
   );
 }
 
+/** The engine's lasting preferences, shared by every Project and agent on it. */
+export function readProjectPreferences(
+  options?: ProjectRequestOptions
+): Promise<{ markdown: string; lines: string[] }> {
+  return projectRequest("/api/projects/preferences", undefined, options);
+}
+
+export function writeProjectPreferences(
+  markdown: string,
+  options?: ProjectRequestOptions
+): Promise<{ markdown: string; lines: string[] }> {
+  return projectRequest("/api/projects/preferences", jsonInit("PUT", { markdown }), options);
+}
+
 export async function listProjectPullRequests(
   projectId: string,
   options?: ProjectRequestOptions

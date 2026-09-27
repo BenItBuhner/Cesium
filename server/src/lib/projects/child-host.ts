@@ -111,6 +111,8 @@ export type ChildCreateInput = {
   homeLabel?: string;
   /** The hosting engine's name as the Project's home knows it, for messages. */
   engineLabel?: string;
+  /** Lets the agent run commands, edit files and use tools without asking. */
+  autoApprove?: boolean;
 };
 
 export type ChildCreateResult = ChildRef & {
@@ -504,6 +506,7 @@ export class LocalChildHost implements ChildHost {
             childId: input.childId,
             peerTokenId: input.peerTokenId ?? null,
             ...(input.homeLabel ? { homeLabel: input.homeLabel } : {}),
+            ...(input.autoApprove ? { autoApprove: true } : {}),
             createdAt: Date.now(),
           },
         },

@@ -168,3 +168,42 @@ test("shared remembered permission helper builds stable keys and resolves auto-a
     assert.equal(remembered.providerOptionId, "allow");
   }
 });
+
+test("a Project agent allowed to act without asking is auto-accepted; a remembered deny still wins", async () => {
+  const {
+    buildRememberedPermissionToolKey,
+    persistRememberedPermissionChoice,
+    resolveRememberedPermissionDecision,
+  } = await import("../src/lib/agents/remembered-permissions.js");
+  await store.clearRememberedAgentPermissionRules();
+  const options = [
+    { optionId: "allow", name: "Allow", kind: "allow_once" as const },
+    { optionId: "allow_always", name: "Allow Always", kind: "allow_always" as const },
+    { optionId: "deny", name: "Deny", kind: "reject_once" as const },
+  ];
+  const origin = {
+    kind: "project-child" as const,
+    projectId: "prj_0123456789ab",
+    childId: "pca_000001",
+    peerTokenId: null,
+    autoApprove: true,
+    createdAt: 1,
+  };
+  const toolKey = buildRememberedPermissionToolKey("codex-app-server", "Run", "npm test");
+  const input = { workspaceId: "workspace-project", backendId: "codex-app-server", toolKey, options };
+
+  assert.deepEqual(await resolveRememberedPermissionDecision({ ...input, origin }), {
+    kind: "auto_accept",
+    decision: "allow",
+    providerOptionId: "allow",
+  });
+  assert.equal((await resolveRememberedPermissionDecision({ ...input, origin: { ...origin, autoApprove: false } })).kind, "prompt");
+  assert.equal((await resolveRememberedPermissionDecision({ ...input, origin: null })).kind, "prompt");
+
+  await persistRememberedPermissionChoice({ ...input, toolLabel: "Run npm test", optionId: "reject_always" });
+  const denied = await resolveRememberedPermissionDecision({ ...input, origin });
+  assert.equal(denied.kind, "remembered");
+  if (denied.kind === "remembered") {
+    assert.equal(denied.decision, "reject");
+  }
+});

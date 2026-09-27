@@ -75,6 +75,8 @@ export function ProjectAgentsSection({ snapshot }: { snapshot: ProjectSnapshot }
       ),
     [showHidden, snapshot.children]
   );
+  const workers = children.filter((child) => child.kind !== "helper");
+  const helpers = children.filter((child) => child.kind === "helper");
 
   return (
     <div className="flex flex-col gap-[10px] px-[16px] py-[12px]">
@@ -102,13 +104,13 @@ export function ProjectAgentsSection({ snapshot }: { snapshot: ProjectSnapshot }
         </button>
       </div>
       {creating ? <NewAgentForm snapshot={snapshot} onDone={() => setCreating(false)} /> : null}
-      {children.length === 0 ? (
+      {workers.length === 0 ? (
         <p className={`${projectHintTextClass} py-[8px]`}>
-          No agents yet. Ask the orchestrator to split up the work, or start one here.
+          No agents yet. Tell the coordinator what you want done and it starts them, or start one here.
         </p>
       ) : (
         <ul className="flex flex-col gap-[8px]" data-testid="project-agent-list">
-          {children.map((child) => (
+          {workers.map((child) => (
             <ProjectAgentCard
               key={child.id}
               projectId={snapshot.id}
@@ -118,6 +120,25 @@ export function ProjectAgentsSection({ snapshot }: { snapshot: ProjectSnapshot }
           ))}
         </ul>
       )}
+      {helpers.length > 0 ? (
+        <>
+          <span className={`${projectSectionLabelClass} pt-[6px]`}>Helpers</span>
+          <p className={projectHintTextClass}>
+            Short errands the coordinator runs: code explorers and browser checks. Explorers are removed
+            once they answer; their answers stay under internal/explore/.
+          </p>
+          <ul className="flex flex-col gap-[8px]" data-testid="project-helper-list">
+            {helpers.map((child) => (
+              <ProjectAgentCard
+                key={child.id}
+                projectId={snapshot.id}
+                child={child}
+                engine={snapshot.engines.find((engine) => engine.id === child.engineId) ?? null}
+              />
+            ))}
+          </ul>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -179,7 +200,7 @@ function ProjectAgentCard({
   const rename = async () => {
     const name = await dialogs.prompt({
       title: "Rename agent",
-      message: "Handles are lowercase letters, digits and dashes; the orchestrator uses them to address agents.",
+      message: "Handles are lowercase letters, digits and dashes; the coordinator uses them to address agents.",
       defaultValue: child.name,
       confirmLabel: "Rename",
       monospace: true,

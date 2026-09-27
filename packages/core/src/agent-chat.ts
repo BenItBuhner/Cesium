@@ -1675,7 +1675,7 @@ function summarizeWorkedToolBucket(
   }
 }
 
-function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
+export function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
   const tools = entries.filter(
     (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
   );

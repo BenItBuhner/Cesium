@@ -637,6 +637,8 @@ export type AgentConversationOrigin =
       peerTokenId: string | null;
       /** Home engine label, for chrome on peer engines. */
       homeLabel?: string;
+      /** The Project lets it run commands, edit files and use tools without asking (set at creation). */
+      autoApprove?: boolean;
       createdAt: number;
     };
 

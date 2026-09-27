@@ -33,6 +33,43 @@ export function getProjectContextDir(projectId: string): string {
   return path.join(getProjectDir(projectId), "context");
 }
 
+const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** On a peer engine: every Project context mirror held for one peer token. */
+export function getPeerMirrorsDir(peerTokenId: string): string {
+  if (!SAFE_SEGMENT.test(peerTokenId)) {
+    throw new Error("Invalid peer token id for a context mirror.");
+  }
+  return path.join(DATA_DIR, "projects-mirror", peerTokenId);
+}
+
+/**
+ * On a peer engine: the copy of a home engine's Project context that its
+ * agents here read and write, one per peer token so homes never share one.
+ */
+export function getPeerMirrorContextDir(peerTokenId: string, projectId: string): string {
+  if (!SAFE_SEGMENT.test(projectId)) {
+    throw new Error("Invalid project id for a context mirror.");
+  }
+  return path.join(getPeerMirrorsDir(peerTokenId), projectId, "context");
+}
+
+/** The Project context folder a Project agent may use with its file tools, if any. */
+export function projectAgentContextDir(
+  origin: { kind: string; projectId?: string; peerTokenId?: string | null } | null | undefined
+): string | null {
+  if (origin?.kind !== "project-child" || !origin.projectId) {
+    return null;
+  }
+  try {
+    return origin.peerTokenId
+      ? getPeerMirrorContextDir(origin.peerTokenId, origin.projectId)
+      : getProjectContextDir(origin.projectId);
+  } catch {
+    return null;
+  }
+}
+
 /** True when `root` sits inside the Projects tree (context folders live there). */
 export function isProjectWorkspaceRoot(root: string): boolean {
   const normalized = path.resolve(root).replace(/\\/g, "/");

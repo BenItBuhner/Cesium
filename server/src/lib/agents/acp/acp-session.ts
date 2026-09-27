@@ -2021,6 +2021,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
       });
       const resolved = await resolveRememberedPermissionDecision({
         workspaceId: this.callbacks.workspace.id,
+        origin: this.callbacks.conversation.origin,
         backendId: this.backend.id,
         toolKey: permissionSignature.toolKey,
         options: normalizedOptions,

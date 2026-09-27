@@ -1,7 +1,14 @@
 "use client";
 
 import { Fragment, memo, useMemo, type ReactNode } from "react";
+import { Check, Square } from "lucide-react";
+import {
+  matchProjectContextEmbedLine,
+  parseProjectContextHref,
+  type ProjectContextEmbed,
+} from "@cesium/core";
 import { matchArtifactEmbedLine } from "@/lib/artifact-embed";
+import { ProjectContextEmbedView, ProjectContextInlineLink } from "@/components/projects/ProjectContextMedia";
 import { ArtifactCard } from "./ArtifactCard";
 
 type MarkdownBlock =
@@ -12,7 +19,8 @@ type MarkdownBlock =
   | { type: "hr" }
   | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "blockquote"; lines: string[] }
-  | { type: "artifact"; artifactId: string };
+  | { type: "artifact"; artifactId: string }
+  | { type: "context-embed"; embed: ProjectContextEmbed };
 
 function isHorizontalRule(line: string): boolean {
   return /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line);
@@ -75,6 +83,13 @@ function parseMarkdown(source: string): MarkdownBlock[] {
     const artifactId = matchArtifactEmbedLine(trimmed);
     if (artifactId) {
       blocks.push({ type: "artifact", artifactId });
+      index += 1;
+      continue;
+    }
+
+    const contextEmbed = matchProjectContextEmbedLine(trimmed);
+    if (contextEmbed) {
+      blocks.push({ type: "context-embed", embed: contextEmbed });
       index += 1;
       continue;
     }
@@ -203,7 +218,8 @@ function parseMarkdown(source: string): MarkdownBlock[] {
         isHorizontalRule(candidateTrimmed) ||
         /^\s*>\s?/.test(candidate) ||
         /^\s*((?:[-*+])|(?:\d+\.))\s+/.test(candidate) ||
-        matchArtifactEmbedLine(candidateTrimmed) !== null
+        matchArtifactEmbedLine(candidateTrimmed) !== null ||
+        matchProjectContextEmbedLine(candidateTrimmed) !== null
       ) {
         break;
       }
@@ -226,7 +242,7 @@ function parseMarkdown(source: string): MarkdownBlock[] {
 function renderInline(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern =
-    /(\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\)|`[^`]+`|\*\*\*[^*]+?\*\*\*|\*\*[^*]+?\*\*|__[^_]+?__|~~[^~]+?~~|\*[^*\n]+?\*|_[^_\n]+?_)/;
+    /(!?\[[^\]]*\]\(context:[^)\s]+\)|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\)|`[^`]+`|\*\*\*[^*]+?\*\*\*|\*\*[^*]+?\*\*|__[^_]+?__|~~[^~]+?~~|\*[^*\n]+?\*|_[^_\n]+?_)/;
   let remaining = text;
   let key = 0;
 
@@ -244,7 +260,20 @@ function renderInline(text: string): ReactNode[] {
     }
 
     const token = match[0];
-    if (token.startsWith("[") && token.includes("](") && token.endsWith(")")) {
+    const contextLink = /^!?\[([^\]]*)\]\((context:[^)\s]+)\)$/.exec(token);
+    const contextPath = contextLink ? parseProjectContextHref(contextLink[2]!) : null;
+    if (contextLink) {
+      const label = contextLink[1]?.trim() || contextPath || token;
+      nodes.push(
+        contextPath ? (
+          <ProjectContextInlineLink key={key++} path={contextPath}>
+            {label}
+          </ProjectContextInlineLink>
+        ) : (
+          <Fragment key={key++}>{label}</Fragment>
+        )
+      );
+    } else if (token.startsWith("[") && token.includes("](") && token.endsWith(")")) {
       const linkMatch = token.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)]+)\)$/);
       if (linkMatch) {
         nodes.push(
@@ -393,6 +422,13 @@ function markdownBlocksEqual(a: MarkdownBlock, b: MarkdownBlock): boolean {
       );
     case "artifact":
       return b.type === "artifact" && a.artifactId === b.artifactId;
+    case "context-embed":
+      return (
+        b.type === "context-embed" &&
+        a.embed.path === b.embed.path &&
+        a.embed.label === b.embed.label &&
+        a.embed.kind === b.embed.kind
+      );
     default:
       return false;
   }
@@ -436,12 +472,30 @@ const MarkdownBlockView = memo(
         }
         return (
           <ul className="space-y-[6px]">
-            {block.items.map((item, itemIndex) => (
-              <li key={itemIndex} className="flex items-start gap-[8px]">
-                <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
-                <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
-              </li>
-            ))}
+            {block.items.map((item, itemIndex) => {
+              const task = /^\[([ xX])\]\s+([\s\S]*)$/.exec(item);
+              if (task) {
+                const done = task[1] !== " ";
+                return (
+                  <li key={itemIndex} className="flex items-start gap-[8px]">
+                    {done ? (
+                      <Check className="mt-[4px] size-[14px] shrink-0 text-[var(--status-success)]" strokeWidth={2.2} aria-label="Done" />
+                    ) : (
+                      <Square className="mt-[4px] size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.8} aria-label="To do" />
+                    )}
+                    <span className={`min-w-0 flex-1 ${done ? "text-[var(--text-secondary)]" : ""}`}>
+                      {renderInlineWithBreaks(task[2] ?? "")}
+                    </span>
+                  </li>
+                );
+              }
+              return (
+                <li key={itemIndex} className="flex items-start gap-[8px]">
+                  <span className="mt-[10px] size-[4px] shrink-0 rounded-full bg-[var(--text-secondary)]" />
+                  <span className="min-w-0 flex-1">{renderInlineWithBreaks(item)}</span>
+                </li>
+              );
+            })}
           </ul>
         );
       case "hr":
@@ -494,6 +548,8 @@ const MarkdownBlockView = memo(
         );
       case "artifact":
         return <ArtifactCard artifactId={block.artifactId} />;
+      case "context-embed":
+        return <ProjectContextEmbedView embed={block.embed} />;
       default:
         return null;
     }
@@ -516,6 +572,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({ source }: { source: str
           const occurrence = artifactOccurrence.get(block.artifactId) ?? 0;
           artifactOccurrence.set(block.artifactId, occurrence + 1);
           key = `artifact-${block.artifactId}-${occurrence}`;
+        } else if (block.type === "context-embed") {
+          const occurrenceKey = `context:${block.embed.path}`;
+          const occurrence = artifactOccurrence.get(occurrenceKey) ?? 0;
+          artifactOccurrence.set(occurrenceKey, occurrence + 1);
+          key = `context-${block.embed.path}-${occurrence}`;
         }
         return <MarkdownBlockView key={key} block={block} />;
       })}

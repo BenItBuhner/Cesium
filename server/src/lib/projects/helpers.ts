@@ -270,6 +270,8 @@ async function startExplorer(input: {
         modelId: record.settings.defaultChildModelId ?? record.orchestrator.modelId,
         mode: "ask",
         homeLabel: homeEngineLabel(),
+        // Read-only by its mode, so its searches never wait for a person.
+        autoApprove: true,
       });
     } catch (error) {
       if (checkout) {
@@ -470,6 +472,7 @@ export async function startBrowserCheck(
         modelId: record.settings.defaultChildModelId ?? record.orchestrator.modelId,
         mode: "agent",
         homeLabel: homeEngineLabel(),
+        autoApprove: record.settings.autoApproveAgents,
       });
     } catch (error) {
       await fs.rmdir(mediaDir).catch(() => undefined);

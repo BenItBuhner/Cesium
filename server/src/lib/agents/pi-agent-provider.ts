@@ -547,6 +547,7 @@ class PiAgentSessionHandle implements AgentSessionHandle {
 
     const remembered = await resolveRememberedPermissionDecision({
       workspaceId: this.callbacks.workspace.id,
+      origin: this.callbacks.conversation.origin,
       backendId: this.backend.id,
       toolKey,
       permissionCategory: category,

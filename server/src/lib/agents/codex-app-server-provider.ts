@@ -2506,6 +2506,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     {
       const resolved = await resolveRememberedPermissionDecision({
         workspaceId: this.callbacks.workspace.id,
+        origin: this.callbacks.conversation.origin,
         backendId: this.backend.id,
         toolKey,
         options: event.options,

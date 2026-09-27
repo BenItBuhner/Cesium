@@ -3,15 +3,13 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Network, Plus } from "lucide-react";
 import {
-  isProjectChildRemote,
   projectListingEngineName,
   projectSummaryStatusLine,
-  sortProjectChildren,
   type ProjectListing,
 } from "@cesium/core";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { ProjectEngineBadge, ProjectStatusDot } from "./project-ui";
-import { useProjects, useProjectSnapshot } from "./ProjectsProvider";
+import { useProjects } from "./ProjectsProvider";
 
 const COLLAPSED_KEY = "cesium.projects.railCollapsed";
 
@@ -23,65 +21,14 @@ function readCollapsed(): boolean {
   }
 }
 
-function ProjectRailChildren({ projectId }: { projectId: string }) {
-  const snapshot = useProjectSnapshot(projectId);
-  const { openChildConversation, openProjectById } = useProjects();
-  if (!snapshot) {
-    return (
-      <p className="py-[3px] pl-[30px] font-sans text-[11.5px] text-[var(--text-disabled)]">
-        Loading agents…
-      </p>
-    );
-  }
-  const children = sortProjectChildren(
-    snapshot.children.filter((child) => child.deletedAt == null && child.archivedAt == null)
-  );
-  if (children.length === 0) {
-    return (
-      <p className="py-[3px] pl-[30px] font-sans text-[11.5px] text-[var(--text-disabled)]">
-        No agents yet
-      </p>
-    );
-  }
-  return (
-    <ul className="flex flex-col">
-      {children.map((child) => {
-        const remote = isProjectChildRemote(child);
-        return (
-          <li key={child.id}>
-            <button
-              type="button"
-              onClick={() =>
-                void (remote ? openProjectById(projectId) : openChildConversation(projectId, child))
-              }
-              className="flex h-[26px] w-full min-w-0 items-center gap-[7px] rounded-[var(--agent-control-radius)] pl-[28px] pr-[9px] text-left hover:bg-[var(--agent-card-bg)]"
-              title={child.lastReplyPreview ?? child.name}
-            >
-              <ProjectStatusDot bucket={child.bucket} />
-              <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-[var(--text-secondary)]">
-                {child.name}
-              </span>
-              {remote ? <ProjectEngineBadge label={child.engineLabel} remote /> : null}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 function ProjectRailRow({
   project,
   active,
   onOtherEngine,
-  expanded,
-  onToggle,
 }: {
   project: ProjectListing;
   active: boolean;
   onOtherEngine: boolean;
-  expanded: boolean;
-  onToggle: () => void;
 }) {
   const { openProject } = useProjects();
   const engineName = projectListingEngineName(project);
@@ -90,87 +37,64 @@ function ProjectRailRow({
     project.attentionCount > 0 ? "needs_attention" : busy ? "working" : "idle";
   return (
     <li>
-      <div
-        className={`group/project flex h-[var(--agent-rail-row-height)] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] ${
+      <button
+        type="button"
+        onClick={() => void openProject(project)}
+        className={`flex h-[var(--agent-rail-row-height)] w-full min-w-0 items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left ${
           active ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
         }`}
+        title={projectSummaryStatusLine(project)}
+        aria-current={active ? "page" : undefined}
       >
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex h-full w-[26px] shrink-0 items-center justify-center text-[var(--text-disabled)] hover:text-[var(--text-primary)]"
-          aria-label={expanded ? `Hide agents in ${project.name}` : `Show agents in ${project.name}`}
-          aria-expanded={expanded}
+        <Network
+          className={`size-[14px] shrink-0 ${active ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"}`}
+          strokeWidth={1.6}
+          aria-hidden
+        />
+        <span
+          className={`min-w-0 flex-1 truncate font-sans text-[14px] ${
+            active ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+          }`}
         >
-          <ChevronRight
-            className={`size-[12px] transition-transform ${expanded ? "rotate-90" : ""}`}
-            strokeWidth={2}
+          {project.name}
+        </span>
+        {onOtherEngine ? (
+          <ProjectEngineBadge
+            label={engineName}
+            remote={false}
+            title={`Lives on ${engineName}; opening it switches to that engine`}
           />
-        </button>
-        <button
-          type="button"
-          onClick={() => void openProject(project)}
-          className="flex h-full min-w-0 flex-1 items-center gap-[8px] pr-[9px] text-left"
-          title={projectSummaryStatusLine(project)}
-          aria-current={active ? "true" : undefined}
-        >
-          <Network
-            className={`size-[14px] shrink-0 ${active ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"}`}
-            strokeWidth={1.6}
-            aria-hidden
-          />
-          <span
-            className={`min-w-0 flex-1 truncate font-sans text-[14px] ${
-              active ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
-            }`}
-          >
-            {project.name}
+        ) : null}
+        {project.agentCount > 0 || busy ? (
+          <span className="flex shrink-0 items-center gap-[5px] font-sans text-[11px] tabular-nums text-[var(--text-disabled)]">
+            {project.workingCount > 0 ? `${project.workingCount}/${project.agentCount}` : project.agentCount}
+            <ProjectStatusDot bucket={bucket} />
           </span>
-          {onOtherEngine ? (
-            <ProjectEngineBadge
-              label={engineName}
-              remote={false}
-              title={`Lives on ${engineName}; opening it switches to that engine`}
-            />
-          ) : null}
-          {project.agentCount > 0 || busy ? (
-            <span className="flex shrink-0 items-center gap-[5px] font-sans text-[11px] tabular-nums text-[var(--text-disabled)]">
-              {project.workingCount > 0 ? `${project.workingCount}/${project.agentCount}` : project.agentCount}
-              <ProjectStatusDot bucket={bucket} />
-            </span>
-          ) : null}
-        </button>
-      </div>
-      {expanded ? <ProjectRailChildren projectId={project.id} /> : null}
+        ) : null}
+      </button>
     </li>
   );
 }
 
-/** Projects Beta: sits at the top of the workspace rail. */
+/** Projects at the top of the workspace rail; each row opens its Project page. */
 export function ProjectsRailSection() {
   const { enabled, projects, loaded, error, activeProjectId, setNewProjectOpen } = useProjects();
   const { activeServer } = useServerConnections();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     setCollapsed(readCollapsed());
   }, []);
 
-  useEffect(() => {
-    if (!activeProjectId) {
-      return;
-    }
-    setExpandedIds((current) =>
-      current.has(activeProjectId) ? current : new Set([...current, activeProjectId])
-    );
-  }, [activeProjectId]);
-
   if (!enabled) {
     return null;
   }
 
-  const visible = projects.filter((project) => project.archivedAt == null);
+  const archivedCount = projects.filter((project) => project.archivedAt != null).length;
+  const visible = projects.filter(
+    (project) => project.archivedAt == null || showArchived || project.id === activeProjectId
+  );
   const toggleCollapsed = () => {
     setCollapsed((current) => {
       const next = !current;
@@ -208,6 +132,17 @@ export function ProjectsRailSection() {
             Projects
           </span>
         </button>
+        {archivedCount > 0 && !collapsed ? (
+          <button
+            type="button"
+            onClick={() => setShowArchived((current) => !current)}
+            className="shrink-0 rounded-[var(--agent-control-radius)] px-[5px] font-sans text-[10.5px] text-[var(--text-disabled)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            aria-pressed={showArchived}
+            title={showArchived ? "Hide archived Projects" : "Show archived Projects"}
+          >
+            {showArchived ? "Hide archived" : `Archived (${archivedCount})`}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setNewProjectOpen(true)}
@@ -244,18 +179,6 @@ export function ProjectsRailSection() {
                 project={project}
                 active={project.id === activeProjectId}
                 onOtherEngine={project.serverId !== activeServer.id}
-                expanded={expandedIds.has(project.id)}
-                onToggle={() =>
-                  setExpandedIds((current) => {
-                    const next = new Set(current);
-                    if (next.has(project.id)) {
-                      next.delete(project.id);
-                    } else {
-                      next.add(project.id);
-                    }
-                    return next;
-                  })
-                }
               />
             ))}
           </ul>

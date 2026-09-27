@@ -1,3 +1,4 @@
+import { PROJECT_PAGE_VIEW } from "@cesium/core";
 import type { WorkbenchShellView } from "@/lib/workspace-session";
 
 /** Primary workbench route (agent shell). Legacy `/workspace` redirects here. */
@@ -5,6 +6,14 @@ export const WORKSPACE_ROUTE = "/agent";
 
 /** Query key for workbench layout on the agent route (`?view=settings`). Agent default omits the param. */
 export const WORKBENCH_VIEW_SEARCH_PARAM = "view";
+
+/**
+ * `?view=project` is the Project page: the agent shell showing a Project's
+ * coordinator, kept in the URL by the Projects provider rather than here.
+ */
+export function isProjectPageViewParam(raw: string | null): boolean {
+  return raw === PROJECT_PAGE_VIEW;
+}
 
 /** Resolve `view` search param to a shell view, or `"default"` when absent / unknown. */
 export function workbenchViewFromSearchParam(
