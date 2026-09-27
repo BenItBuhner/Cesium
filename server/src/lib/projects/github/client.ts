@@ -234,12 +234,16 @@ export class GithubClient {
     }
   }
 
-  async aheadBy(repo: string, base: string, head: string): Promise<number> {
-    const result = await this.request<{ ahead_by?: number }>(
+  /** How far `head` is ahead of `base`, with its commit messages oldest first. */
+  async compare(repo: string, base: string, head: string): Promise<{ aheadBy: number; commitMessages: string[] }> {
+    const result = await this.request<{ ahead_by?: number; commits?: Array<{ commit?: { message?: string } }> }>(
       "GET",
       `/repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`
     );
-    return typeof result?.ahead_by === "number" ? result.ahead_by : 0;
+    return {
+      aheadBy: typeof result?.ahead_by === "number" ? result.ahead_by : 0,
+      commitMessages: (result?.commits ?? []).map((entry) => entry.commit?.message?.trim() ?? "").filter(Boolean),
+    };
   }
 
   async listCheckRuns(repo: string, sha: string): Promise<GithubCheckRun[]> {
