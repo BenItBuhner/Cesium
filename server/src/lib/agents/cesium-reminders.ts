@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { McpServerSummary } from "@cesium/core/mcp";
 import type { OrchestrationBoardSnapshot } from "../orchestration/types.js";
 import { formatConversationTitleReminderLine } from "./cesium/cesium-conversation-tools.js";
@@ -53,7 +54,55 @@ function mcpSummaryText(summaries: McpServerSummary[]): string {
     .join("\n");
 }
 
-export function buildCesiumTurnReminder(input: CesiumTurnReminderInput): string {
+/** One independently versioned block of turn context (instructions, skills, MCP, memory, ...). */
+export type CesiumReminderSection = { id: string; text: string };
+
+/**
+ * Context that rarely changes between turns. The first turn (and the first
+ * turn after a compaction) sends every section; later turns send only the
+ * sections whose content changed, so reminders stay small and every earlier
+ * one keeps its bytes.
+ */
+export function buildCesiumContextSections(
+  input: CesiumTurnReminderInput & { harnessFeatures?: string | null }
+): CesiumReminderSection[] {
+  const agentsMarkdown =
+    input.agentsMarkdown?.trim() ||
+    "(No AGENTS.md or CLAUDE.md file is present in this workspace.)";
+  const skillsList = input.skillsList?.trim() || "(No skills are currently exposed in this workspace.)";
+  return [
+    ...(input.sideChat
+      ? [{ id: "side_chat", text: buildCesiumSideChatReminderSection(input.sideChat) }]
+      : []),
+    {
+      id: "memory",
+      text: input.memorySnapshot?.trim()
+        ? `## Curated Memory\n\nRecent saved memory entries (manage them with the \`memory\` tool; forget entries that are wrong or stale):\n\n${input.memorySnapshot.trim()}`
+        : "## Curated Memory\n\n(No saved memory entries.)",
+    },
+    {
+      id: "mcp",
+      text: `## MCP Servers\n\n${mcpSummaryText(input.mcpSummaries)}\n\nWhen using MCP tools, read the mirrored server metadata and exact tool schema before calling a tool.`,
+    },
+    {
+      id: "instructions",
+      text: `## Project Instruction Files\n\n\`\`\`markdown\n${agentsMarkdown}\n\`\`\``,
+    },
+    {
+      id: "skills",
+      text: `## Skills\n\n${skillsList}\n\nWhen using skills, read \`agent-skills/_index.md\` and the relevant \`agent-skills/<skill-id>/SKILL.md\` before following them - the same discover-then-read pattern as \`mcp-servers/\`.`,
+    },
+    {
+      id: "harness_features",
+      text: input.harnessFeatures?.trim()
+        ? `<harness-features>\n${input.harnessFeatures.trim()}\n</harness-features>`
+        : "",
+    },
+  ];
+}
+
+/** Per-turn facts: environment, change notices, the plan to implement, goal/workflow/board state. */
+export function buildCesiumTurnFacts(input: CesiumTurnReminderInput): string {
   const board = input.orchestrationBoard;
   const boardLines = board
     ? [
@@ -68,47 +117,72 @@ export function buildCesiumTurnReminder(input: CesiumTurnReminderInput): string 
     input.goalSummary ? input.goalSummary : null,
     input.workflowRunSummary ? input.workflowRunSummary : null,
   ].filter(Boolean).join("\n");
-  const agentsMarkdown =
-    input.agentsMarkdown?.trim() ||
-    "(No AGENTS.md or CLAUDE.md file is present in this workspace.)";
-  const skillsList = input.skillsList?.trim() || "(No skills are currently exposed in this workspace.)";
+  return [
+    input.handoffPlanPath
+      ? `Implement the ${input.handoffPlanPath} plan that we created end-to-end, ensuring it hits all requirements as given by the user and the plan.`
+      : null,
+    `## Current Environment\n\n- Workspace root: ${input.workspaceRoot}\n- Date: ${input.dateLabel}\n- Repository: ${input.gitSummary}\n- Model: ${input.modelName?.trim() || "configured model"}${
+      input.conversationTitle?.trim()
+        ? `\n${formatConversationTitleReminderLine(
+            input.conversationTitle,
+            Boolean(input.conversationTitleFollow)
+          )}`
+        : ""
+    }`,
+    input.environmentChangeNotice?.trim()
+      ? `### Environment Changes Since Last Turn\n\n${input.environmentChangeNotice.trim()}`
+      : null,
+    input.mcpChangeNotice?.trim()
+      ? `### MCP Changes Since Last Turn\n\n${input.mcpChangeNotice.trim()}`
+      : null,
+    planLines ? `## Active Plan, Goal, And Workflow\n\n${planLines}` : null,
+    boardLines ? `## Orchestration Board\n\n${boardLines}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
 
-  return `<system-reminder>
-${input.handoffPlanPath ? `Implement the ${input.handoffPlanPath} plan that we created end-to-end, ensuring it hits all requirements as given by the user and the plan.\n\n` : ""}## Current Environment
+export function hashCesiumReminderSections(
+  sections: CesiumReminderSection[]
+): Record<string, string> {
+  return Object.fromEntries(
+    sections.map((section) => [
+      section.id,
+      createHash("sha256").update(section.text).digest("hex").slice(0, 16),
+    ])
+  );
+}
 
-- Workspace root: ${input.workspaceRoot}
-- Date: ${input.dateLabel}
-- Repository: ${input.gitSummary}
-- Model: ${input.modelName?.trim() || "configured model"}${
-    input.conversationTitle?.trim()
-      ? `\n${formatConversationTitleReminderLine(
-          input.conversationTitle,
-          Boolean(input.conversationTitleFollow)
-        )}`
-      : ""
+/** Sections to send this turn: all of them without a baseline, otherwise the changed ones. */
+export function changedCesiumReminderSections(
+  sections: CesiumReminderSection[],
+  previousHashes: Record<string, string> | null
+): CesiumReminderSection[] {
+  if (!previousHashes) {
+    return sections;
   }
+  const hashes = hashCesiumReminderSections(sections);
+  return sections.filter((section) => previousHashes[section.id] !== hashes[section.id]);
+}
 
-${input.environmentChangeNotice?.trim() ? `### Environment Changes Since Last Turn\n\n${input.environmentChangeNotice.trim()}\n\n` : ""}${input.sideChat ? `${buildCesiumSideChatReminderSection(input.sideChat)}\n\n` : ""}${planLines ? `## Active Plan, Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}${
-    input.memorySnapshot?.trim()
-      ? `## Curated Memory\n\nRecent saved memory entries (manage them with the \`memory\` tool; forget entries that are wrong or stale):\n\n${input.memorySnapshot.trim()}\n\n`
-      : ""
-  }## MCP Servers
+export function renderCesiumTurnReminder(input: {
+  facts: string;
+  sections: CesiumReminderSection[];
+}): string {
+  return [
+    "<system-reminder>",
+    input.facts,
+    ...input.sections.map((section) => section.text).filter((text) => text.trim()),
+    "</system-reminder>",
+  ].join("\n\n");
+}
 
-${mcpSummaryText(input.mcpSummaries)}
-
-${input.mcpChangeNotice?.trim() ? `### MCP Changes Since Last Turn\n\n${input.mcpChangeNotice.trim()}\n\n` : ""}
-When using MCP tools, read the mirrored server metadata and exact tool schema before calling a tool.
-
-## Project Instruction Files
-
-\`\`\`markdown
-${agentsMarkdown}
-\`\`\`
-
-## Skills
-
-${skillsList}
-
-When using skills, read \`agent-skills/_index.md\` and the relevant \`agent-skills/<skill-id>/SKILL.md\` before following them - the same discover-then-read pattern as \`mcp-servers/\`.
-</system-reminder>`;
+/** The complete reminder: every fact and every context section. */
+export function buildCesiumTurnReminder(
+  input: CesiumTurnReminderInput & { harnessFeatures?: string | null }
+): string {
+  return renderCesiumTurnReminder({
+    facts: buildCesiumTurnFacts(input),
+    sections: buildCesiumContextSections(input),
+  });
 }

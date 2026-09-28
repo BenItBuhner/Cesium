@@ -106,31 +106,45 @@ function toolCallFromStoredEvent(event: Extract<AgentStoredEvent, { kind: "tool_
 const MISSING_TOOL_RESULT_MESSAGE =
   "Tool call did not complete or was interrupted before returning a result.";
 
-function flushPendingToolCalls(
-  messages: CesiumHistoryMessage[],
-  pending: PendingHistoryToolCall[]
-): void {
+type HistoryBuildState = {
+  messages: CesiumHistoryMessage[];
+  pending: PendingHistoryToolCall[];
+  /** Assistant text streamed before this batch of tool calls; the live turn sends it with them. */
+  pendingContent: string;
+  /** Model-facing tool output budget, reset per turn exactly like the live loop. */
+  usedToolResultChars: number;
+};
+
+function flushPendingToolCalls(state: HistoryBuildState): void {
+  const { messages, pending } = state;
   if (pending.length === 0) {
     return;
   }
-  const resolved = pending.map((call) => ({
-    ...call,
-    result: call.result?.trim() ? call.result : MISSING_TOOL_RESULT_MESSAGE,
-  }));
   messages.push({
     role: "assistant",
-    content: "",
-    toolCalls: resolved.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
+    content: state.pendingContent,
+    toolCalls: pending.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
   });
-  for (const call of resolved) {
+  for (const call of pending) {
+    let content = MISSING_TOOL_RESULT_MESSAGE;
+    if (call.result?.trim()) {
+      const normalized = normalizeCesiumToolResultForModel({
+        toolName: call.name,
+        result: call.result,
+        usedToolResultChars: state.usedToolResultChars,
+      });
+      state.usedToolResultChars = normalized.usedToolResultChars;
+      content = normalized.content;
+    }
     messages.push({
       role: "tool",
       toolCallId: call.id,
       name: call.name,
-      content: call.result!,
+      content,
     });
   }
   pending.length = 0;
+  state.pendingContent = "";
 }
 
 export function satisfyOpenAiToolProtocol(messages: CesiumHistoryMessage[]): CesiumHistoryMessage[] {
@@ -166,36 +180,117 @@ export function satisfyOpenAiToolProtocol(messages: CesiumHistoryMessage[]): Ces
   return out;
 }
 
-function systemRemindersByTargetMessageId(
+type SystemReminderEvent = Extract<AgentStoredEvent, { kind: "system_reminder" }>;
+
+/** Reason of the per-turn context reminder; each one stays on its own user message. */
+export const CESIUM_TURN_CONTEXT_REMINDER_REASON = "context";
+
+const LEGACY_DYNAMIC_REMINDER_REASONS = new Set(["mode", "plan_handoff", "other"]);
+
+/** Reminders that open a turn (as opposed to inline mid-turn context). */
+export function isTurnReminder(event: AgentStoredEvent): event is SystemReminderEvent {
+  return (
+    event.kind === "system_reminder" &&
+    event.placement !== "inline" &&
+    Boolean(event.targetMessageId) &&
+    (event.reason === CESIUM_TURN_CONTEXT_REMINDER_REASON ||
+      LEGACY_DYNAMIC_REMINDER_REASONS.has(event.reason))
+  );
+}
+
+/**
+ * Targeted reminders merged onto their user messages. Per-turn context
+ * reminders are append-only: each stays byte-identical on the message it
+ * opened, so a turn never rewrites earlier context. Reminders written before
+ * that scheme (one full block per turn, of which only the newest was
+ * replayed) keep their newest-only rule until the first context reminder
+ * supersedes them all.
+ */
+export function selectTargetedReminders(
   events: AgentStoredEvent[]
-): Map<string, string[]> {
-  const reminders = new Map<string, string[]>();
-  const latestDynamicReminderSeq = new Map<string, number>();
+): Map<string, SystemReminderEvent[]> {
+  const hasContextReminders = events.some(
+    (event) =>
+      event.kind === "system_reminder" && event.reason === CESIUM_TURN_CONTEXT_REMINDER_REASON
+  );
+  const latestLegacySeq = new Map<string, number>();
   for (const event of events) {
-    if (event.kind !== "system_reminder") {
-      continue;
+    if (event.kind === "system_reminder" && LEGACY_DYNAMIC_REMINDER_REASONS.has(event.reason)) {
+      latestLegacySeq.set(event.reason, Math.max(latestLegacySeq.get(event.reason) ?? -1, event.seq));
     }
-    if (event.reason !== "mode" && event.reason !== "plan_handoff" && event.reason !== "other") {
-      continue;
-    }
-    latestDynamicReminderSeq.set(
-      event.reason,
-      Math.max(latestDynamicReminderSeq.get(event.reason) ?? -1, event.seq)
-    );
   }
+  const reminders = new Map<string, SystemReminderEvent[]>();
   for (const event of events) {
     if (event.kind !== "system_reminder" || !event.targetMessageId || !event.text.trim()) {
       continue;
     }
-    const latestSeq = latestDynamicReminderSeq.get(event.reason);
-    if (latestSeq != null && event.seq !== latestSeq) {
-      continue;
+    if (LEGACY_DYNAMIC_REMINDER_REASONS.has(event.reason)) {
+      if (hasContextReminders || latestLegacySeq.get(event.reason) !== event.seq) {
+        continue;
+      }
     }
     const existing = reminders.get(event.targetMessageId) ?? [];
-    existing.push(event.text.trim());
+    existing.push(event);
     reminders.set(event.targetMessageId, existing);
   }
   return reminders;
+}
+
+/**
+ * Section hashes of the newest context reminder, provided the window still
+ * holds a full one: deltas only make sense on top of a full reminder the
+ * model can see. Null means the next reminder must be full.
+ */
+export function latestContextReminderBaseline(
+  windowEvents: AgentStoredEvent[]
+): Record<string, string> | null {
+  let sawFull = false;
+  let baseline: Record<string, string> | null = null;
+  for (const event of [...windowEvents].sort((a, b) => a.seq - b.seq)) {
+    if (event.kind !== "system_reminder" || event.reason !== CESIUM_TURN_CONTEXT_REMINDER_REASON) {
+      continue;
+    }
+    const raw = asRecord(event.raw);
+    if (raw?.contextReminder === "full") {
+      sawFull = true;
+    }
+    const hashes = asRecord(raw?.contextSectionHashes);
+    if (sawFull && hashes) {
+      baseline = Object.fromEntries(
+        Object.entries(hashes).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      );
+    }
+  }
+  return baseline;
+}
+
+/**
+ * The slice of the log the model sees: everything after the newest
+ * compaction summary's source range. The summary itself opens the window, so
+ * a compacted prefix stays fixed until the next compaction.
+ */
+export function selectHistoryWindow(events: AgentStoredEvent[]): {
+  summary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null;
+  events: AgentStoredEvent[];
+} {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  let summary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null = null;
+  for (const event of sorted) {
+    if (event.kind === "compression_summary" && event.sourceRange) {
+      summary = event;
+    }
+  }
+  if (!summary?.sourceRange) {
+    return { summary: null, events: sorted };
+  }
+  const toSeq = summary.sourceRange.toSeq;
+  return {
+    summary,
+    events: sorted.filter(
+      (event) =>
+        event.seq > toSeq && !(event.kind === "compression_summary" && event.sourceRange)
+    ),
+  };
 }
 
 export function normalizeEventsToHistory(
@@ -203,16 +298,23 @@ export function normalizeEventsToHistory(
   systemPrompt: string = CESIUM_SYSTEM_PROMPT
 ): CesiumHistoryMessage[] {
   const messages: CesiumHistoryMessage[] = [{ role: "system", content: systemPrompt }];
+  const state: HistoryBuildState = {
+    messages,
+    pending: [],
+    pendingContent: "",
+    usedToolResultChars: 0,
+  };
   const assistantTextById = new Map<string, string>();
-  const pendingToolCalls: PendingHistoryToolCall[] = [];
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
-  const remindersByMessageId = systemRemindersByTargetMessageId(sorted);
+  const remindersByMessageId = selectTargetedReminders(sorted);
   for (const event of sorted) {
     switch (event.kind) {
       case "user_message":
-        flushPendingToolCalls(messages, pendingToolCalls);
+        flushPendingToolCalls(state);
         {
-          const reminders = remindersByMessageId.get(event.messageId) ?? [];
+          const reminders = (remindersByMessageId.get(event.messageId) ?? []).map((reminder) =>
+            reminder.text.trim()
+          );
           const content = reminders.length
             ? `${reminders.join("\n\n")}\n\n${event.content}`
             : event.content;
@@ -238,13 +340,16 @@ export function normalizeEventsToHistory(
         }
         break;
       case "system_reminder":
+        if (isTurnReminder(event)) {
+          state.usedToolResultChars = 0;
+        }
         // Targeted reminders were merged onto their user message above. Inline
         // reminders (context that landed between tool iterations, or a seed
         // written before the first prompt) replay as their own user-role
         // message at exactly this position, after the tool results that
         // preceded them - the same shape the model saw live, byte for byte.
         if (event.placement === "inline" && event.text.trim()) {
-          flushPendingToolCalls(messages, pendingToolCalls);
+          flushPendingToolCalls(state);
           messages.push({ role: "user", content: event.text });
         }
         break;
@@ -252,7 +357,7 @@ export function normalizeEventsToHistory(
         assistantTextById.set(event.messageId, `${assistantTextById.get(event.messageId) ?? ""}${event.text}`);
         break;
       case "assistant_message_end": {
-        flushPendingToolCalls(messages, pendingToolCalls);
+        flushPendingToolCalls(state);
         const text = assistantTextById.get(event.messageId)?.trim();
         if (text) {
           messages.push({ role: "assistant", content: text });
@@ -260,21 +365,29 @@ export function normalizeEventsToHistory(
         assistantTextById.delete(event.messageId);
         break;
       }
+      // Reasoning is not replayed: the live loop never sends it back within a
+      // turn, and re-sending stale chain-of-thought on later turns only costs
+      // tokens and rewrites the cached prefix.
       case "reasoning":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        if (event.text.trim()) {
-          messages.push({ role: "assistant", content: `[Reasoning]\n${event.text.trim()}` });
-        }
         break;
       case "tool_call":
-        pendingToolCalls.push(toolCallFromStoredEvent(event));
+        if (state.pending.length === 0) {
+          // Text streamed before this batch belongs to the batch's assistant
+          // message, as in the live request; the message end keeps only the rest.
+          const streamed = [...assistantTextById.values()].join("").trim();
+          assistantTextById.clear();
+          state.pendingContent = streamed;
+        }
+        state.pending.push(toolCallFromStoredEvent(event));
         break;
       case "tool_call_update":
         if (event.status === "completed" || event.status === "failed") {
-          const detail =
-            event.detail?.trim() ??
-            (event.status === "failed" ? "Tool call failed." : "Tool call completed with no output.");
-          const pending = pendingToolCalls.find((call) => call.id === event.toolCallId);
+          const detail = event.detail?.trim()
+            ? event.detail
+            : event.status === "failed"
+              ? "Tool call failed."
+              : "Tool call completed with no output.";
+          const pending = state.pending.find((call) => call.id === event.toolCallId);
           if (pending) {
             pending.result = detail;
           } else {
@@ -285,7 +398,7 @@ export function normalizeEventsToHistory(
               inferCesiumToolNameFromTitle(event.title) ??
               (event.title ?? "tool").split(" ")[0] ??
               "tool";
-            pendingToolCalls.push({
+            state.pending.push({
               id: event.toolCallId,
               name,
               arguments: serializeToolCallArguments(name, request?.arguments, event.detail),
@@ -295,28 +408,32 @@ export function normalizeEventsToHistory(
         }
         break;
       case "plan":
-        flushPendingToolCalls(messages, pendingToolCalls);
+        // A todo or plan-file tool writes its plan while the call is still
+        // pending; the tool result already told the model what happened.
+        if (state.pending.length > 0) {
+          break;
+        }
         messages.push({
           role: "assistant",
           content: event.entries.map((entry) => `- [${entry.status}] ${entry.content}`).join("\n"),
         });
         break;
       case "compression_summary":
-        flushPendingToolCalls(messages, pendingToolCalls);
+        flushPendingToolCalls(state);
         messages.push({
           role: "user",
           content: `[Compressed earlier conversation]\n${event.summary}`,
         });
         break;
       case "agent_handoff":
-        flushPendingToolCalls(messages, pendingToolCalls);
+        flushPendingToolCalls(state);
         messages.push({
           role: "assistant",
           content: `[Handoff from ${event.fromAgent} to ${event.toAgent}]`,
         });
         break;
       case "chat_fork":
-        flushPendingToolCalls(messages, pendingToolCalls);
+        flushPendingToolCalls(state);
         messages.push({
           role: "user",
           content: `[Forked chat]\n${event.transcript}`,
@@ -326,7 +443,7 @@ export function normalizeEventsToHistory(
         break;
     }
   }
-  flushPendingToolCalls(messages, pendingToolCalls);
+  flushPendingToolCalls(state);
   for (const text of assistantTextById.values()) {
     if (text.trim()) {
       messages.push({ role: "assistant", content: text.trim() });
