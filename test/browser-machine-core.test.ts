@@ -240,19 +240,38 @@ describe("browser machine reminder", () => {
       updatedAt: 0,
       lastOpenedAt: 0,
     };
-    const reminder = buildBrowserMachineReminder({
+    const input = {
       workspace,
-      mode: "agent",
       modelName: "Kimi K3",
       gitSummary: formatGitSummary({ isGitRepo: true, branch: "main", dirty: false }),
       shellCommands: ["ls", "cat", "git", "node", "npm"],
       installedPacks: ["Python (Pyodide) (python, pip)"],
       dateLabel: "Monday, Aug 31, 2026",
-    });
-    assert.match(reminder, /<system-reminder>/);
-    assert.match(reminder, /INSIDE the user's web browser tab/);
-    assert.match(reminder, /on branch main/);
-    assert.match(reminder, /Python \(Pyodide\)/);
-    assert.match(reminder, /serve <dir>/);
+    };
+    const first = buildBrowserMachineReminder(input);
+    assert.equal(first.includesEnvironment, true);
+    assert.match(first.text, /<system-reminder>/);
+    assert.match(first.text, /INSIDE the user's web browser tab/);
+    assert.match(first.text, /on branch main/);
+    assert.match(first.text, /Python \(Pyodide\)/);
+    assert.match(first.text, /serve <dir>/);
+
+    // Later turns carry only the facts until the environment itself changes.
+    const next = buildBrowserMachineReminder(
+      { ...input, dateLabel: "Tuesday, Sep 1, 2026" },
+      first.environmentHash
+    );
+    assert.equal(next.includesEnvironment, false);
+    assert.match(next.text, /Tuesday, Sep 1, 2026/);
+    assert.match(next.text, /on branch main/);
+    assert.doesNotMatch(next.text, /INSIDE the user's web browser tab/);
+    assert.ok(next.text.length < 400, `delta reminder is small (${next.text.length} chars)`);
+
+    const withNewPack = buildBrowserMachineReminder(
+      { ...input, installedPacks: [...input.installedPacks, "Ruby (ruby.wasm)"] },
+      first.environmentHash
+    );
+    assert.equal(withNewPack.includesEnvironment, true);
+    assert.match(withNewPack.text, /Ruby \(ruby\.wasm\)/);
   });
 });
