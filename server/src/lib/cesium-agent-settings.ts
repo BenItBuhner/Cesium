@@ -23,22 +23,7 @@ import {
   type CesiumHarnessSettings,
   type CesiumSubagentsVersion,
 } from "./agents/cesium/features/index.js";
-import {
-  CESIUM_DEFAULT_ENABLED_PROFILES,
-  CESIUM_DEFAULT_PROFILE_ID,
-  CESIUM_PROFILE_LOCKED_TOOLS,
-  CESIUM_PROFILE_TOOL_GROUPS,
-  listCesiumEnabledProfiles,
-  listCesiumProfileCatalog,
-  normalizeCesiumDefaultProfileId,
-  normalizeCesiumEnabledProfiles,
-  normalizeCesiumProfiles,
-  type CesiumAgentProfile,
-  type CesiumProfileToolGroup,
-} from "./agents/cesium-profiles.js";
 import { asNumber, asRecord, asString } from "./coerce.js";
-
-export type { CesiumAgentProfile } from "./agents/cesium-profiles.js";
 
 export type CesiumModeId =
   | "agent"
@@ -183,15 +168,6 @@ export type CesiumAgentSettings = {
   toolPermissions: CesiumToolPermissions;
   /** Per-model allowlist + notes governing the primary agent and subagents. */
   modelAccess: CesiumModelAccessSettings;
-  /** Custom capability profiles only; built-in Code/Work presets live in code. */
-  profiles: CesiumAgentProfile[];
-  /**
-   * Which catalog profiles appear in the new-chat toggle and config option.
-   * Built-ins always stay in `profileCatalog` so Settings can flip them.
-   */
-  enabledProfiles: Record<string, boolean>;
-  /** Profile applied to new conversations when none is selected. */
-  defaultProfileId: string;
   providerKeys: CesiumProviderKey[];
   customProviders: CesiumCustomProvider[];
 };
@@ -207,12 +183,6 @@ export type CesiumAgentSettingsPublic = Omit<CesiumAgentSettings, "providerKeys"
   oauthProviders: import("./cesium-oauth.js").CesiumOAuthProviderStatus[];
   harnessCatalog: ReturnType<typeof getCesiumFeatureCatalog>;
   modeCatalog: CesiumModeDefinition[];
-  /** Built-in presets plus custom profiles, in picker order. */
-  profileCatalog: CesiumAgentProfile[];
-  /** Grouped tool inventory for profile editors (single source: cesium-profiles.ts). */
-  profileToolGroups: CesiumProfileToolGroup[];
-  /** Tools every profile keeps regardless of allowlist. */
-  profileLockedTools: string[];
 };
 
 export type CesiumModelCatalogEntry = {
@@ -681,9 +651,6 @@ function defaultSettings(): CesiumAgentSettings {
       switchMode: "ask",
     },
     modelAccess: { entries: {} },
-    profiles: [],
-    enabledProfiles: { ...CESIUM_DEFAULT_ENABLED_PROFILES },
-    defaultProfileId: CESIUM_DEFAULT_PROFILE_ID,
     providerKeys: [],
     customProviders: [],
   };
@@ -819,11 +786,6 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
   const compression = asRecord(record.compression);
   const orchestration = asRecord(record.orchestration);
   const toolPermissions = asRecord(record.toolPermissions);
-  const profiles = normalizeCesiumProfiles(
-    record.profiles,
-    getCesiumFeatureCatalog().flatMap((plugin) => plugin.toolNames)
-  );
-  const enabledProfiles = normalizeCesiumEnabledProfiles(record.enabledProfiles, profiles);
   return {
     schemaVersion: 1,
     updatedAt: asNumber(record.updatedAt) ?? defaults.updatedAt,
@@ -879,13 +841,6 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
           : defaults.toolPermissions.switchMode,
     },
     modelAccess: normalizeCesiumModelAccess(record.modelAccess),
-    profiles,
-    enabledProfiles,
-    defaultProfileId: normalizeCesiumDefaultProfileId(
-      record.defaultProfileId,
-      profiles,
-      enabledProfiles
-    ),
     providerKeys: dedupeProviderKeys(
       Array.isArray(record.providerKeys)
         ? record.providerKeys
@@ -1022,12 +977,6 @@ export async function getCesiumAgentSettingsPublic(): Promise<CesiumAgentSetting
     oauthProviders,
     harnessCatalog: getCesiumFeatureCatalog(),
     modeCatalog: [...CESIUM_MODE_DEFINITIONS],
-    profileCatalog: listCesiumProfileCatalog(settings.profiles),
-    profileToolGroups: CESIUM_PROFILE_TOOL_GROUPS.map((group) => ({
-      ...group,
-      tools: [...group.tools],
-    })),
-    profileLockedTools: [...CESIUM_PROFILE_LOCKED_TOOLS],
   };
 }
 
@@ -1152,21 +1101,8 @@ export async function patchCesiumAgentSettings(input: {
     >;
   };
   customProviders?: CesiumCustomProvider[];
-  /** Full replacement list of custom profiles (built-ins are never persisted). */
-  profiles?: CesiumAgentProfile[];
-  /** Partial merge of profile-visibility flags (omitted ids stay as-is). */
-  enabledProfiles?: Record<string, boolean>;
-  defaultProfileId?: string;
 }): Promise<CesiumAgentSettingsPublic> {
   const settings = await getCesiumAgentSettings();
-  const nextProfiles = input.profiles ?? settings.profiles;
-  const nextEnabledProfiles = normalizeCesiumEnabledProfiles(
-    {
-      ...settings.enabledProfiles,
-      ...(input.enabledProfiles ?? {}),
-    },
-    nextProfiles
-  );
   await saveCesiumAgentSettings({
     ...settings,
     defaultProviderKeyId:
@@ -1204,13 +1140,6 @@ export async function patchCesiumAgentSettings(input: {
       ? mergeCesiumModelAccess(settings.modelAccess, input.modelAccess)
       : settings.modelAccess,
     customProviders: input.customProviders ?? settings.customProviders,
-    profiles: nextProfiles,
-    enabledProfiles: nextEnabledProfiles,
-    defaultProfileId: normalizeCesiumDefaultProfileId(
-      input.defaultProfileId ?? settings.defaultProfileId,
-      nextProfiles,
-      nextEnabledProfiles
-    ),
   });
   return getCesiumAgentSettingsPublic();
 }
@@ -1774,10 +1703,6 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
   const enabledModes = CESIUM_MODE_DEFINITIONS.filter(
     (mode) => settings.modes.enabled[mode.id]
   );
-  const profileCatalog = listCesiumEnabledProfiles(
-    settings.profiles,
-    settings.enabledProfiles
-  );
   return [
     {
       id: "mode",
@@ -1788,23 +1713,6 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
         value: mode.id,
         name: mode.label,
         description: mode.description,
-      })),
-    },
-    {
-      id: "profile",
-      name: "Profile",
-      category: "other",
-      currentValue:
-        profileCatalog.find((profile) => profile.id === settings.defaultProfileId)?.id ??
-        CESIUM_DEFAULT_PROFILE_ID,
-      options: profileCatalog.map((profile) => ({
-        value: profile.id,
-        name: profile.name,
-        description: profile.description,
-        metadata: {
-          builtIn: String(profile.builtIn),
-          promptBase: profile.prompt.base,
-        },
       })),
     },
     {

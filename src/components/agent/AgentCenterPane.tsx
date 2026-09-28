@@ -52,7 +52,6 @@ import {
   resolveLastUsedDraftModel,
   updateComposerDraftDefault,
   updateComposerDraftMode,
-  updateComposerDraftProfile,
 } from "@/lib/chat-draft-defaults";
 import { useComposerDefaults } from "@/hooks/useComposerDefaults";
 import { useOpenSideChat } from "@/hooks/useOpenSideChat";
@@ -77,15 +76,12 @@ import {
 } from "@/components/chat/composer-split-animation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
-import { useCesiumProfileCatalog } from "@/hooks/useCesiumProfileCatalog";
-import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
 import { SideChatStrip } from "@/components/chat/SideChatStrip";
 import { VoiceSessionDock } from "@/components/voice/VoiceSessionDock";
 import { AuroraBackdrop } from "./AuroraBackdrop";
 import { useAuroraScene } from "./AuroraSceneContext";
-import { CesiumProfileToggle } from "./CesiumProfileToggle";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useAuroraMood } from "@/hooks/useAuroraMood";
 import type { AuroraPlacement } from "@/lib/aurora/aurora-renderer";
@@ -420,54 +416,6 @@ export function AgentCenterPane() {
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
   const composerMode = composerState?.mode ?? draftMode;
   const modeLocked = isOrchestrationModeLocked();
-
-  // Capability-profile toggle. Hard rule: it renders ONLY on the brand-new
-  // chat landing (never inside an existing conversation, so the transcript
-  // top stays clean) and only when the Cesium agent harness is the draft
-  // backend. The pick is remembered account-wide in the composer defaults and
-  // binds at conversation creation.
-  const { openSettingsView } = useShellView();
-  const isCesiumDraft = !conversation && draftBackend?.id === "cesium-agent";
-  const cesiumProfileCatalog = useCesiumProfileCatalog(isCesiumDraft);
-  const profileToggleOptions = useMemo(
-    () =>
-      cesiumProfileCatalog.catalog.map((profile) => ({
-        value: profile.id,
-        name: profile.name,
-        description: profile.description,
-        builtIn: profile.builtIn,
-      })),
-    [cesiumProfileCatalog.catalog]
-  );
-  const requestedProfileId = composer.profileId?.trim();
-  const draftProfileId =
-    (requestedProfileId &&
-    profileToggleOptions.some((option) => option.value === requestedProfileId)
-      ? requestedProfileId
-      : null) ||
-    cesiumProfileCatalog.defaultProfileId;
-  const handleProfileToggle = useCallback(
-    (next: string) => {
-      updateComposer((current) => updateComposerDraftProfile(current, next));
-    },
-    [updateComposer]
-  );
-  const handleManageProfiles = useCallback(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: { ...current.settingsView, activeNav: "agents" },
-    }));
-    openSettingsView();
-  }, [openSettingsView, updateWorkspaceSession]);
-  const profileToggleEl =
-    isCesiumDraft && profileToggleOptions.length > 1 ? (
-      <CesiumProfileToggle
-        options={profileToggleOptions}
-        activeId={draftProfileId}
-        onChange={handleProfileToggle}
-        onManage={handleManageProfiles}
-      />
-    ) : null;
 
   const getRedoComposerSeed = useCallback(() => {
     if (!conversation || !selectedConversationId) {
@@ -894,9 +842,6 @@ export function AgentCenterPane() {
             mode: draftMode,
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
-            ...(backend.id === "cesium-agent" && draftProfileId
-              ? { profileId: draftProfileId }
-              : {}),
           },
           text,
           attachments
@@ -945,7 +890,6 @@ export function AgentCenterPane() {
       draftModel.id,
       draftModel.modelValue,
       draftModel.name,
-      draftProfileId,
       pendingConfigByConversationId,
       promptConversation,
       refreshConversationGroups,
@@ -1334,7 +1278,6 @@ export function AgentCenterPane() {
       )}
       {showLanding ? (
       <>
-      {profileToggleEl}
       <div className="relative z-10 min-h-0 min-w-0 flex-1">
         <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
         <VoiceSessionDock wrapperClassName="pointer-events-none absolute inset-x-0 bottom-[20px] z-30 flex justify-center px-[12px]" />

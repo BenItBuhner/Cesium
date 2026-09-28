@@ -51,7 +51,6 @@ test("client-owned top-level slices survive a save/read round-trip", async () =>
     lastModelByBackend: {
       "cesium-agent": { id: "techlit/kimi-k3", name: "Kimi K3", backendId: "cesium-agent" },
     },
-    profileId: "work",
     statusBarVisibility: { repo: false, branch: true, goal: true, context: false },
     pillsVisibility: { attach: true, web: false },
   };

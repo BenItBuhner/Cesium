@@ -626,7 +626,6 @@ export class AgentRuntimeManager {
         mode: input.mode ?? backend.defaultMode,
         modelId: input.modelId ?? defaultModel.modelId,
         modelName: input.modelName ?? defaultModel.modelName,
-        ...(input.profileId?.trim() ? { profileId: input.profileId.trim() } : {}),
         ...(input.executionTarget === "cloud" ? { executionTarget: "cloud" as const } : {}),
       },
       providerSessionId: null,
@@ -1000,7 +999,7 @@ export class AgentRuntimeManager {
 
   /**
    * Open a side chat: a durable child conversation attached to `parentConversationId`
-   * that inherits the parent's backend/mode/model/profile and is seeded with the
+   * that inherits the parent's backend/mode/model and is seeded with the
    * parent's recent transcript as hidden reference context. Unlike `forkConversation`
    * this works while the parent is still running - the seed is a snapshot and later
    * parent activity reaches the child as deltas.
@@ -2849,16 +2848,6 @@ export class AgentRuntimeManager {
         );
       }
     }
-    const profileOption = nextOptions.find((o) => o.id === "profile");
-    const nextProfileId = nextConfig.profileId;
-    if (profileOption && nextProfileId) {
-      if (profileOption.options.some((o) => o.value === nextProfileId)) {
-        nextOptions = nextOptions.map((o) =>
-          o.id === profileOption.id ? { ...o, currentValue: nextProfileId } : o
-        );
-      }
-    }
-
     return {
       ...current,
       ...(nextTitle !== undefined ? { title: nextTitle } : {}),
@@ -2919,16 +2908,6 @@ export class AgentRuntimeManager {
         patch.modelId
       ) {
         await handle.setConfigOption(modelOption.id, patch.modelId);
-      }
-    }
-
-    if (patch.profileId) {
-      const profileOption = handle.configOptions.find((option) => option.id === "profile");
-      const value = profileOption?.options.find(
-        (option) => option.value === patch.profileId
-      )?.value;
-      if (profileOption && value) {
-        await handle.setConfigOption(profileOption.id, value);
       }
     }
 

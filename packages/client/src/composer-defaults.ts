@@ -40,12 +40,6 @@ export type ComposerDefaultsState = {
    * instead of snapping back to the harness default.
    */
   lastModelByBackend: Record<string, ModelInfo>;
-  /**
-   * Cesium capability profile for new chats ("code", "work", or a custom
-   * profile id). Persisted conversations bind their profile via config
-   * options; this only seeds the draft.
-   */
-  profileId?: string;
   /** Composer footer defaults: repo / branch / goal progress / context. */
   statusBarVisibility: ComposerStatusBarVisibility;
   /** Composer quick-action pill defaults. */
@@ -236,16 +230,11 @@ export function normalizeComposerDefaults(
   const record = raw as Record<string, unknown>;
   const backendId = normalizeComposerBackendId(record.backendId) ?? defaults.backendId;
   const model = normalizeComposerModelInfo(record.model) ?? defaults.model;
-  const profileId =
-    typeof record.profileId === "string" && record.profileId.trim()
-      ? record.profileId.trim().slice(0, 120)
-      : undefined;
   return {
     backendId,
     mode: normalizeMode(record.mode, defaults.mode),
     model,
     lastModelByBackend: normalizeLastModelByBackend(record.lastModelByBackend),
-    ...(profileId ? { profileId } : {}),
     statusBarVisibility: normalizeComposerStatusBarVisibility(record.statusBarVisibility),
     pillsVisibility: normalizeComposerPillsVisibility(record.pillsVisibility),
     updatedAt:
@@ -337,25 +326,6 @@ export function updateComposerDraftMode(
   return current.mode === mode ? current : { ...current, mode, updatedAt: now };
 }
 
-/** Set the Cesium capability profile for new chats (no-op when unchanged). */
-export function updateComposerDraftProfile(
-  current: ComposerDefaultsState,
-  profileId: string | null | undefined,
-  now: number = Date.now()
-): ComposerDefaultsState {
-  const next = profileId?.trim() || undefined;
-  if ((current.profileId ?? undefined) === next) {
-    return current;
-  }
-  const rest: ComposerDefaultsState = { ...current, updatedAt: now };
-  if (next) {
-    rest.profileId = next;
-  } else {
-    delete rest.profileId;
-  }
-  return rest;
-}
-
 /**
  * Resolve the model a new-chat draft should show for `backend` from the
  * user's last-used choices: the current draft model when it belongs to this
@@ -418,7 +388,7 @@ export function resolveLastUsedDraftModel(
  * any session the client loads so an upgraded install keeps its last picks.
  */
 export type LegacyChatComposerFields = Partial<
-  Pick<ComposerDefaultsState, "backendId" | "mode" | "model" | "lastModelByBackend" | "profileId">
+  Pick<ComposerDefaultsState, "backendId" | "mode" | "model" | "lastModelByBackend">
 > & {
   statusBarVisibility?: ComposerStatusBarVisibility;
   pillsVisibility?: ComposerPillsVisibility;
@@ -446,9 +416,6 @@ export function extractLegacyComposerFieldsFromChatSession(
   const lastModelByBackend = normalizeLastModelByBackend(record.lastModelByBackend);
   if (Object.keys(lastModelByBackend).length > 0) {
     out.lastModelByBackend = lastModelByBackend;
-  }
-  if (typeof record.profileId === "string" && record.profileId.trim()) {
-    out.profileId = record.profileId.trim().slice(0, 120);
   }
   if (record.composerStatusBarVisibility && typeof record.composerStatusBarVisibility === "object") {
     out.statusBarVisibility = normalizeComposerStatusBarVisibility(
@@ -497,7 +464,7 @@ export function adoptLegacyComposerFields(
   let next = current;
   let changed = false;
   const hasLegacySelection = Boolean(
-    legacy.backendId || legacy.model || legacy.lastModelByBackend || legacy.mode || legacy.profileId
+    legacy.backendId || legacy.model || legacy.lastModelByBackend || legacy.mode
   );
   if (hasLegacySelection && composerHasNoModelSelection(current)) {
     next = {
@@ -506,7 +473,6 @@ export function adoptLegacyComposerFields(
       mode: legacy.mode ?? next.mode,
       model: legacy.model ?? next.model,
       lastModelByBackend: { ...next.lastModelByBackend, ...(legacy.lastModelByBackend ?? {}) },
-      ...(legacy.profileId ? { profileId: legacy.profileId } : {}),
     };
     changed = true;
   }

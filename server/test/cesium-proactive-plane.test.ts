@@ -37,11 +37,6 @@ const [
     updateAuthoredSkill,
   },
   { parseSkillFrontmatter },
-  {
-    CESIUM_WORK_PROFILE,
-    CESIUM_PROFILE_TOOL_GROUPS,
-    filterCesiumToolsForProfile,
-  },
   { resolveCesiumTools },
   { resolveCesiumModeToolPolicy },
 ] = await Promise.all([
@@ -49,7 +44,6 @@ const [
   import("../src/lib/agents/cesium-triggers.js"),
   import("../src/lib/agents/cesium-skill-authoring.js"),
   import("../src/lib/agents/workspace-skills.js"),
-  import("../src/lib/agents/cesium-profiles.js"),
   import("../src/lib/agents/cesium/cesium-tools.js"),
   import("../src/lib/agents/cesium-mode-policy.js"),
 ]);
@@ -158,7 +152,6 @@ test("trigger CRUD round-trip with fire bookkeeping", async () => {
     name: "Morning briefing",
     prompt: "Summarize what changed overnight.",
     schedule: { kind: "interval", everyMs: CESIUM_TRIGGER_MIN_INTERVAL_MS },
-    profileId: "work",
     mode: "agent",
     modelId: "techlit/kimi-k3",
     modelName: "Techlit/Kimi K3",
@@ -170,7 +163,6 @@ test("trigger CRUD round-trip with fire bookkeeping", async () => {
 
   const listed = await listCesiumTriggers(workspaceId);
   assert.equal(listed.length, 1);
-  assert.equal(listed[0]!.profileId, "work");
   // Model pinning survives the persistence round-trip so scheduled fires
   // reuse the creating conversation's provider instead of a static default.
   assert.equal(listed[0]!.modelId, "techlit/kimi-k3");
@@ -424,29 +416,14 @@ test("skill validation clamps and rejects empty fields", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Profile / policy wiring
+// Tool / policy wiring
 // ---------------------------------------------------------------------------
 
-test("skill and schedule are first-class tools in the Work envelope", () => {
-  assert.ok(CESIUM_WORK_PROFILE.tools.allowed !== "all");
-  const allowed = new Set(CESIUM_WORK_PROFILE.tools.allowed as string[]);
-  assert.ok(allowed.has("skill"));
-  assert.ok(allowed.has("schedule"));
-
-  const groups = new Map(CESIUM_PROFILE_TOOL_GROUPS.map((group) => [group.id, group.tools]));
-  assert.deepEqual(groups.get("skills"), ["skill"]);
-  assert.deepEqual(groups.get("automation"), ["schedule"]);
-
+test("skill and schedule are first-class harness tools", () => {
   const harness = resolveCesiumTools({ features: { subagents: { version: 1 } } });
   const names = new Set(harness.tools.map((tool) => tool.name));
   assert.ok(names.has("skill"));
   assert.ok(names.has("schedule"));
-
-  const advertised = new Set(
-    filterCesiumToolsForProfile(harness.tools, CESIUM_WORK_PROFILE).map((tool) => tool.name)
-  );
-  assert.ok(advertised.has("skill"));
-  assert.ok(advertised.has("schedule"));
 });
 
 test("mode policy: skill/schedule blocked in ask mode, allowed in agent and orchestration", () => {

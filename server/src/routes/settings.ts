@@ -516,9 +516,6 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       >;
     };
     customProviders?: CesiumCustomProvider[];
-    profiles?: unknown[];
-    enabledProfiles?: Record<string, boolean>;
-    defaultProfileId?: string;
   }>();
   for (const [modelId, entry] of Object.entries(body.modelAccess?.entries ?? {})) {
     const description = entry?.description;
@@ -588,19 +585,6 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       : {}),
     ...(body.modelAccess ? { modelAccess: body.modelAccess } : {}),
     ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
-    ...(Array.isArray(body.profiles)
-      ? {
-          profiles: body.profiles as Parameters<
-            typeof patchCesiumAgentSettings
-          >[0]["profiles"],
-        }
-      : {}),
-    ...(body.enabledProfiles && typeof body.enabledProfiles === "object"
-      ? { enabledProfiles: body.enabledProfiles }
-      : {}),
-    ...(typeof body.defaultProfileId === "string"
-      ? { defaultProfileId: body.defaultProfileId }
-      : {}),
   });
   return c.json({ ok: true, settings });
 });

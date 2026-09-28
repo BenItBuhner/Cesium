@@ -361,7 +361,7 @@ export type GlobalSettingsState = GlobalAppSettingsSlice & {
   keyboardShortcuts: KeyboardShortcutsSettingsState;
   /** Animated aurora backdrop behind the workbench and settings. */
   aurora: AuroraSettingsState;
-  /** Account-wide new-chat defaults: last-used harness / mode / model, profile, composer chrome. */
+  /** Account-wide new-chat defaults: last-used harness / mode / model, composer chrome. */
   composer: ComposerDefaultsState;
 };
 

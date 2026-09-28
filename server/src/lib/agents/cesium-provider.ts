@@ -71,25 +71,13 @@ import {
 } from "../projects/orchestrator-tool-definitions.js";
 import { isProjectsEnabled } from "../projects/feature-flag.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
-import {
-  applyCesiumProfileExclusionsToModePolicy,
-  buildCesiumModeReminder,
-} from "./cesium-mode-reminders.js";
+import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
 import {
   normalizeCesiumMode,
   normalizeCesiumToolName,
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
 } from "./cesium-mode-policy.js";
-import {
-  CESIUM_CODE_PROFILE,
-  filterCesiumToolsForProfile,
-  listCesiumProfileExcludedTools,
-  resolveCesiumProfile,
-  resolveCesiumProfileToolPolicy,
-  summarizeCesiumProfileToolSurface,
-  type CesiumAgentProfile,
-} from "./cesium-profiles.js";
 import {
   forgetCesiumMemoryEntry,
   formatCesiumMemoryEntry,
@@ -588,8 +576,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private harnessSignature = "";
   private pluginRuntime: CesiumHarnessPluginRuntime | null = null;
-  /** Active capability profile (Code by default); refreshed with the harness each turn. */
-  private activeProfile: CesiumAgentProfile = CESIUM_CODE_PROFILE;
   private subagentsV2: SubagentsV2Runtime | null = null;
   /**
    * Model access roster (enabled models + user notes) advertised to the
@@ -644,23 +630,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (mode) {
       this.configOptions = updateConfigOption(this.configOptions, "mode", mode);
     }
-    // Conversations created before capability profiles existed have no
-    // "profile" config option; backfill it from the current catalog so the
-    // picker and setConfigOption("profile", …) work on resumed sessions.
-    if (!this.configOptions.some((option) => option.id === "profile")) {
-      const freshOptions = await createCesiumAgentConfigOptions().catch(() => null);
-      const profileOption = freshOptions?.find((option) => option.id === "profile");
-      if (profileOption) {
-        const modeIndex = this.configOptions.findIndex((option) => option.id === "mode");
-        const next = [...this.configOptions];
-        next.splice(modeIndex >= 0 ? modeIndex + 1 : next.length, 0, profileOption);
-        this.configOptions = next;
-      }
-    }
-    const profileId = this.callbacks.conversation.config.profileId?.trim();
-    if (profileId) {
-      this.configOptions = updateConfigOption(this.configOptions, "profile", profileId);
-    }
+    // Conversations saved while agent profiles existed still carry a
+    // "profile" config option; drop it so no picker is offered for it.
+    this.configOptions = this.configOptions.filter((option) => option.id !== "profile");
     await this.refreshHarnessFromSettings();
     await this.callbacks.updateConversation((current) => ({
       ...current,
@@ -733,15 +705,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return normalizeCesiumMode(String(raw));
   }
 
-  /** Profile id selected on this conversation, or null to use the settings default. */
-  private currentProfileId(): string | null {
-    const raw = this.configOptions.find((option) => option.id === "profile")?.currentValue;
-    if (typeof raw === "string" && raw.trim()) {
-      return raw.trim();
-    }
-    return this.callbacks.conversation.config.profileId?.trim() || null;
-  }
-
   /**
    * Project id when this conversation is a Project orchestrator. Orchestrators
    * are a distinct agent type: their own system prompt, only the Project tools
@@ -772,32 +735,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   /**
-   * Profile-resolved base system prompt (persona + verbatim profile
-   * instructions) with the session constants filled in. Model name and
+   * Base system prompt with the session constants filled in. Model name and
    * workspace root only change on a model switch or relocation, so the prompt
    * prefix stays byte-stable across ordinary turns; per-turn facts (date, git
    * state, AGENTS.md, MCP, skills) travel in the reminder instead.
    */
-  private profileSystemPrompt(): string {
+  private baseSystemPrompt(): string {
     if (this.projectOrchestratorProjectId()) {
       return PROJECT_ORCHESTRATOR_SYSTEM_PROMPT;
     }
     const modelId = this.currentModelId();
     return buildCesiumBaseSystemPrompt({
-      base: this.activeProfile.prompt.base,
-      customInstructions: this.activeProfile.prompt.customInstructions,
       modelName: resolveModelDisplayName(this.callbacks.conversation.config.modelName, modelId),
       workspaceRoot: this.callbacks.workspace.root,
     });
   }
 
   /**
-   * Tool schemas advertised to the model: the resolved harness filtered to the
-   * active profile envelope. Unlike mode policy, excluded tools are hidden
-   * from the model entirely. Subagent-spawning tools carry the live Model
-   * access roster in their descriptions (Codex spawn_agent parity) - and
-   * because children receive these same definitions, the roster propagates
-   * recursively to every spawn depth.
+   * Tool schemas advertised to the model: the full resolved harness.
+   * Subagent-spawning tools carry the live Model access roster in their
+   * descriptions (Codex spawn_agent parity) - and because children receive
+   * these same definitions, the roster propagates recursively to every spawn
+   * depth.
    */
   private advertisedTools(): CesiumToolDefinition[] {
     if (this.projectOrchestratorProjectId()) {
@@ -808,7 +767,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ),
       ];
     }
-    const tools = filterCesiumToolsForProfile(this.harness.tools, this.activeProfile);
+    const tools = this.harness.tools;
     if (!this.modelRosterText) {
       return tools;
     }
@@ -870,17 +829,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
-  /** Whether the active profile exposes the curated `memory` tool. */
-  private profileIncludesMemory(): boolean {
-    return (
-      this.activeProfile.tools.allowed === "all" ||
-      this.activeProfile.tools.allowed.includes("memory")
-    );
-  }
-
-  /** Curated-memory snapshot for the per-turn reminder, or null when hidden/empty. */
+  /** Curated-memory snapshot for the per-turn reminder, or null when empty. */
   private async resolveMemorySnapshot(): Promise<string | null> {
-    if (!this.profileIncludesMemory()) {
+    if (!this.harness.tools.some((tool) => tool.name === "memory")) {
       return null;
     }
     try {
@@ -1106,8 +1057,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           timeZone,
           modelId,
           modelName: promptContext.modelName,
-          profileId: this.activeProfile.id,
-          profileName: this.activeProfile.name,
         },
         previousUserMessageAt: previousUserMessageCreatedAt(
           previousEvents,
@@ -1134,9 +1083,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
-          profileName: this.activeProfile.name,
-          profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
-          profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
           memorySnapshot,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
           dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
@@ -1197,8 +1143,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
               timeZone,
               modelId,
               modelName: promptContext.modelName,
-              profileId: this.activeProfile.id,
-              profileName: this.activeProfile.name,
             },
           },
         },
@@ -2021,7 +1965,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.configOptions = updateConfigOption(this.configOptions, configId, value);
     const modelOption = this.configOptions.find((option) => option.id === "model");
     const modeOption = this.configOptions.find((option) => option.id === "mode");
-    const profileOption = this.configOptions.find((option) => option.id === "profile");
     await this.callbacks.updateConversation((current) => ({
       ...current,
       configOptions: this.configOptions,
@@ -2035,10 +1978,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           configId === "mode"
             ? value
             : (modeOption?.currentValue ?? current.config.mode),
-        profileId:
-          configId === "profile"
-            ? value
-            : (profileOption?.currentValue ?? current.config.profileId),
       },
     }));
   }
@@ -2184,11 +2123,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.workspace.root
     );
     const settings = await getCesiumAgentSettings();
-    this.activeProfile = resolveCesiumProfile({
-      profileId: this.currentProfileId(),
-      customProfiles: settings.profiles,
-      defaultProfileId: settings.defaultProfileId,
-    });
     const signature = JSON.stringify({
       harness: settings.harness,
       registryRevision: CESIUM_FEATURE_REGISTRY.revision(),
@@ -2233,8 +2167,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     await this.refreshModelRoster();
     this.activeSystemPrompt =
-      (await this.pluginRuntime?.transformSystemPrompt(this.profileSystemPrompt())) ??
-      this.profileSystemPrompt();
+      (await this.pluginRuntime?.transformSystemPrompt(this.baseSystemPrompt())) ??
+      this.baseSystemPrompt();
     if (this.harness.subagentsVersion === 2) {
       const runtime = this.ensureSubagentsV2();
       runtime.updateLimits(this.harness.settings.limits);
@@ -2300,8 +2234,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private buildSubagentToolset(agentPath: string | null): CesiumSubagentToolset {
     const includeCollaboration = agentPath != null && this.harness.subagentsVersion === 2;
-    // Children inherit the parent profile's capability envelope: a Work parent
-    // cannot spawn a terminal-wielding child.
     const definitions = subagentToolDefinitions({
       hostTools: this.advertisedTools(),
       includeCollaboration,
@@ -2323,16 +2255,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // Direct browser tools are policy/permission-equivalent to calling the
     // built-in browser MCP server through call_mcp_tool.
     const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
-    const profilePolicy = resolveCesiumProfileToolPolicy({
-      profile: this.activeProfile,
-      toolName: name,
-      arguments: args,
-    });
-    if (!profilePolicy.allowed) {
-      throw new Error(
-        profilePolicy.reason ?? `Tool ${name} is blocked by the active agent profile.`
-      );
-    }
     const policy = resolveCesiumModeToolPolicy({
       mode: this.currentMode(),
       toolName: policyToolName,
@@ -2618,27 +2540,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
     }
 
-    // Profile permission overrides beat settings-level toolPermissions: deny
-    // hard-blocks, allow skips the prompt, absent falls through to the cascade.
-    const profileOverride = this.activeProfile.permissionOverrides[input.permission];
-    if (profileOverride === "deny") {
-      throw new Error(
-        `${input.title} blocked by the active "${this.activeProfile.name}" agent profile.`
-      );
-    }
-    if (profileOverride === "allow") {
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "status",
-          status: "running",
-          detail: `Allowed ${input.title} by the "${this.activeProfile.name}" agent profile.`,
-        },
-      ]);
-      return;
-    }
-
     const [settings, globalSettings] = await Promise.all([
       getCesiumAgentSettings(),
       getGlobalSettings().catch(() => null),
@@ -2877,18 +2778,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }
       }
       let result: string;
-      // Layer 1: hard capability boundary from the active profile (also gates
-      // call_mcp_tool serverIds). Layer 2: mode posture policy.
-      const profilePolicy = resolveCesiumProfileToolPolicy({
-        profile: this.activeProfile,
-        toolName: request.name,
-        arguments: effectiveRequest.arguments,
-      });
-      if (!profilePolicy.allowed) {
-        throw new Error(
-          profilePolicy.reason ?? `Tool ${request.name} is blocked by the active agent profile.`
-        );
-      }
       const currentMode = this.currentMode();
       const allowedModes = toolDefinition?.allowedModes;
       if (
@@ -3868,20 +3757,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const reason = asString(args.reason)?.trim() || undefined;
     await this.setConfigOption("mode", targetMode);
-    const policy = applyCesiumProfileExclusionsToModePolicy(
-      summarizeCesiumModeToolPolicy(targetMode),
-      listCesiumProfileExcludedTools(this.activeProfile),
-      this.activeProfile.name
-    );
+    const policy = summarizeCesiumModeToolPolicy(targetMode);
     const reminderText = buildCesiumModeReminder({
       mode: targetMode,
       modelName: resolveModelDisplayName(
         this.callbacks.conversation.config.modelName,
         this.callbacks.conversation.config.modelId || "configured model"
       ),
-      profileName: this.activeProfile.name,
-      profileSummary: summarizeCesiumProfileToolSurface(this.activeProfile),
-      profileExcludedTools: listCesiumProfileExcludedTools(this.activeProfile),
       workspaceRoot: this.callbacks.workspace.root,
       dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
@@ -3969,7 +3851,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       workspaceRoot: this.callbacks.workspace.root,
     });
     const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-    this.activeSystemPrompt = this.profileSystemPrompt();
+    this.activeSystemPrompt = this.baseSystemPrompt();
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
   }
 
@@ -5436,8 +5318,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           name,
           prompt,
           schedule: parseScheduleArgs(),
-          profileId:
-            asString(args.profileId)?.trim() || this.currentProfileId() || undefined,
           mode: asString(args.mode)?.trim() || undefined,
           // Pin the creating conversation's model so scheduled fires never
           // fall back to an unconfigured provider default.
@@ -5471,9 +5351,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           patch: {
             ...(asString(args.name)?.trim() ? { name: asString(args.name)!.trim() } : {}),
             ...(asString(args.prompt)?.trim() ? { prompt: asString(args.prompt)!.trim() } : {}),
-            ...(asString(args.profileId) !== undefined
-              ? { profileId: asString(args.profileId)?.trim() }
-              : {}),
             ...(asString(args.mode) !== undefined ? { mode: asString(args.mode)?.trim() } : {}),
             ...(asNumber(args.maxRuns) != null ? { maxRuns: asNumber(args.maxRuns)! } : {}),
             ...(hasScheduleInput ? { schedule: parseScheduleArgs() } : {}),
@@ -5523,7 +5400,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           {
             backendId: "cesium-agent",
             ...(trigger.mode ? { mode: trigger.mode } : {}),
-            ...(trigger.profileId ? { profileId: trigger.profileId } : {}),
             ...(trigger.modelId ? { modelId: trigger.modelId } : {}),
             ...(trigger.modelName ? { modelName: trigger.modelName } : {}),
             title: `⏰ ${trigger.name}`,

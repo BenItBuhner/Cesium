@@ -8,7 +8,6 @@ import {
   resolveLastUsedDraftModel,
   updateComposerDraftDefault,
   updateComposerDraftMode,
-  updateComposerDraftProfile,
   type ComposerDefaultsState,
 } from "../src/lib/chat-draft-defaults.ts";
 import { NO_MODEL_PLACEHOLDER } from "../packages/core/src/agent-chat.ts";
@@ -178,19 +177,13 @@ describe("composer draft defaults", () => {
 
     assert.equal(next, composer);
     assert.equal(updateComposerDraftMode(composer, composer.mode), composer);
-    assert.equal(updateComposerDraftProfile(composer, undefined), composer);
   });
 
-  test("mode and profile setters stamp updatedAt and drop empty profiles", () => {
+  test("mode setter stamps updatedAt", () => {
     const composer = createDefaultComposerDefaults();
     const plan = updateComposerDraftMode(composer, "plan", 42);
     assert.equal(plan.mode, "plan");
     assert.equal(plan.updatedAt, 42);
-    const work = updateComposerDraftProfile(plan, "work", 43);
-    assert.equal(work.profileId, "work");
-    const cleared = updateComposerDraftProfile(work, "  ", 44);
-    assert.equal("profileId" in cleared, false);
-    assert.equal(cleared.updatedAt, 44);
   });
 });
 
@@ -381,7 +374,7 @@ describe("composer defaults normalization", () => {
     assert.equal("selected" in normalized.model, false);
     assert.equal("variantParameters" in normalized.model, false);
     assert.deepEqual(Object.keys(normalized.lastModelByBackend), ["opencode-server"]);
-    assert.equal(normalized.profileId, "work");
+    assert.equal("profileId" in normalized, false);
     assert.equal(normalized.statusBarVisibility.repo, false);
     assert.equal(normalized.statusBarVisibility.branch, true);
     assert.equal(normalized.pillsVisibility.work, false);
@@ -426,7 +419,7 @@ describe("legacy per-workspace draft migration", () => {
     assert.equal(legacy.mode, "plan");
     assert.equal(legacy.model?.id, "gemini-2.5-pro");
     assert.equal(legacy.lastModelByBackend?.["cesium-agent"]?.id, "techlit/kimi-k3");
-    assert.equal(legacy.profileId, "work");
+    assert.equal("profileId" in legacy, false);
     assert.equal(legacy.statusBarVisibility?.repo, false);
     assert.equal(legacy.pillsVisibility?.diff, false);
     assert.equal(extractLegacyComposerFieldsFromChatSession({ tabs: [], scrollTopByTabId: {} }), null);
@@ -439,7 +432,7 @@ describe("legacy per-workspace draft migration", () => {
     assert.equal(adopted.backendId, "google-antigravity-cli");
     assert.equal(adopted.model.id, "gemini-2.5-pro");
     assert.equal(adopted.lastModelByBackend["cesium-agent"]?.id, "techlit/kimi-k3");
-    assert.equal(adopted.profileId, "work");
+    assert.equal("profileId" in adopted, false);
     assert.equal(adopted.statusBarVisibility.repo, false);
     assert.equal(adopted.pillsVisibility.diff, false);
     assert.equal(adopted.updatedAt, 99);

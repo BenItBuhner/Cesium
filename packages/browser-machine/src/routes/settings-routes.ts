@@ -126,31 +126,6 @@ async function buildCesiumAgentPayload(settings: SettingsStore): Promise<Record<
     providerKeys: keyedProviders.map(providerKeyStatus),
     oauthProviders: [],
     customProviders: stored.providers.map(customProviderPayload),
-    profiles: [],
-    enabledProfiles: { code: true, work: true },
-    defaultProfileId: "code",
-    profileCatalog: [
-      {
-        id: "code",
-        name: "Code",
-        description: "Software engineering profile.",
-        builtIn: true,
-        prompt: { base: "code", customInstructions: "" },
-        tools: { allowed: "all", mcpServers: "all" },
-        permissionOverrides: {},
-      },
-      {
-        id: "work",
-        name: "Work",
-        description: "General productivity profile.",
-        builtIn: true,
-        prompt: { base: "work", customInstructions: "" },
-        tools: { allowed: "all", mcpServers: "all" },
-        permissionOverrides: {},
-      },
-    ],
-    profileToolGroups: [],
-    profileLockedTools: ["read_file", "grep", "todo", "ask_question"],
   };
 }
 

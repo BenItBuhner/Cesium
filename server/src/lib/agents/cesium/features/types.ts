@@ -214,7 +214,7 @@ export type CesiumFeatureDefinition = {
   dependencies?: readonly CesiumHarnessFeatureId[];
   optionalDependencies?: readonly CesiumHarnessFeatureId[];
   failureMode?: CesiumHarnessPluginFailureMode;
-  /** Union of tool names contributed by any version, for profile editors. */
+  /** Union of tool names contributed by any version. */
   toolNames?: readonly string[];
 };
 

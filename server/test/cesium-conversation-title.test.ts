@@ -4,11 +4,6 @@ import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
 import { resolveCesiumModeToolPolicy } from "../src/lib/agents/cesium-mode-policy.js";
 import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
 import {
-  CESIUM_PROFILE_TOOL_GROUPS,
-  CESIUM_WORK_PROFILE,
-  filterCesiumToolsForProfile,
-} from "../src/lib/agents/cesium-profiles.js";
-import {
   applyConversationTitleAction,
   formatConversationTitleReminderLine,
   normalizeConversationTitle,
@@ -36,14 +31,6 @@ test("conversation_title is a first-party history tool advertised to Code and Wo
     toolTitle("conversation_title", { action: "rename", title: "Fix login retry" }),
     "Rename conversation to Fix login retry"
   );
-
-  const history = CESIUM_PROFILE_TOOL_GROUPS.find((group) => group.id === "history");
-  assert.ok(history?.tools.includes("conversation_title"));
-  assert.ok((CESIUM_WORK_PROFILE.tools.allowed as string[]).includes("conversation_title"));
-  const workNames = new Set(
-    filterCesiumToolsForProfile(harness.tools, CESIUM_WORK_PROFILE).map((tool) => tool.name)
-  );
-  assert.ok(workNames.has("conversation_title"));
 });
 
 test("conversation_title is allowed in ask and orchestration (conversation metadata, not workspace writes)", () => {
@@ -157,11 +144,8 @@ test("mode reminder shows the current title and follow hint only when armed", ()
   assert.match(following, /follow on — update via conversation_title/);
 });
 
-test("code and work system prompts mention conversation_title without making it the job", () => {
-  const code = buildCesiumBaseSystemPrompt({ base: "code" });
-  const work = buildCesiumBaseSystemPrompt({ base: "work" });
-  for (const prompt of [code, work]) {
-    assert.match(prompt, /conversation_title/);
-    assert.match(prompt, /Do not rename unprompted/);
-  }
+test("the system prompt mentions conversation_title without making it the job", () => {
+  const prompt = buildCesiumBaseSystemPrompt();
+  assert.match(prompt, /conversation_title/);
+  assert.match(prompt, /Do not rename unprompted/);
 });

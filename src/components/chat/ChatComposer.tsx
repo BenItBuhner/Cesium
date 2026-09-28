@@ -1116,9 +1116,8 @@ export function ChatComposer({
   const shortcutPlatform = detectShortcutPlatform();
   const hasHardwareKeyboard = useHardwareKeyboard();
 
-  // The Cesium capability-profile toggle renders at the top of the agent
-  // center pane (CesiumProfileToggle); the composer only hides the raw
-  // "profile" config option so it does not render as a generic dropdown.
+  // Conversations saved while Cesium agent profiles existed still carry a
+  // "profile" config option; it has no effect anymore and is never rendered.
   const isCesiumBackend = backendId === "cesium-agent";
   /**
    * No connected server / backend means no model catalog. Render no model
@@ -4550,7 +4549,6 @@ const handleNativeComposerKeyDown = useCallback(
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-[8px]">
               {sessionConfigOptions
-                // The profile option renders as the center-pane CesiumProfileToggle.
                 .filter((opt) => !(isCesiumBackend && opt.id === "profile"))
                 .map((opt) => (
                   <SessionConfigOptionDropdown

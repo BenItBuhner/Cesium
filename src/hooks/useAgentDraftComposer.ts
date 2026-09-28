@@ -276,10 +276,6 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         return false;
       }
 
-      // Capability profile (Code / Work / custom presets) rides along for the
-      // built-in agent only; other backends do not understand profile ids.
-      const draftProfileId =
-        backend.id === "cesium-agent" ? composer.profileId?.trim() || undefined : undefined;
       // Cloud execution rides along only when the pinned backend actually
       // advertises it (the pseudo-device pins the composer to such backends).
       const cloudExecution = Boolean(
@@ -292,7 +288,6 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
             mode: draftMode,
             modelId: draftModel.modelValue ?? draftModel.id,
             modelName: draftModel.name,
-            ...(draftProfileId ? { profileId: draftProfileId } : {}),
             ...(cloudExecution ? { executionTarget: "cloud" as const } : {}),
           },
           text,
@@ -343,7 +338,6 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
         mode: draftMode,
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
-        ...(draftProfileId ? { profileId: draftProfileId } : {}),
         ...(cloudExecution ? { executionTarget: "cloud" as const } : {}),
       };
       if (onInstantSubmit) {
@@ -382,7 +376,6 @@ export function useAgentDraftComposer(options?: AgentDraftComposerOptions) {
       refreshConversationGroups,
       setSelectedConversationId,
       setStandaloneDraftActive,
-      composer.profileId,
       composerDraftId,
       resetComposerDraft,
     ]

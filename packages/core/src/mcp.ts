@@ -67,13 +67,7 @@ export type BuildCesiumSystemPromptInput = {
   skillsList?: string;
 };
 
-export type CesiumPromptProfileBase = "code" | "work" | "minimal";
-
 export type BuildCesiumBaseSystemPromptInput = {
-  /** Which persona/base sections to render. Defaults to the original coding base. */
-  base?: CesiumPromptProfileBase;
-  /** Verbatim profile-authored text appended as its own Profile Instructions section. */
-  customInstructions?: string;
   /**
    * Session constants substituted into the prompt. Both are stable for the
    * life of a session (a model switch is the only thing that changes either),
@@ -158,90 +152,18 @@ When a skill is relevant, or the user cites/tags one, you must parse through the
 
 You cannot infer or assume skill instructions from memory, since these change frequently; always view the skill files so you can recall and use them thereafter for the intent as given by the user's task(s). Skills marked manual-only should only be used when the user explicitly requests them.`;
 
-const CESIUM_WORK_PERSONA_SECTION = `## Persona
-
-You are Cesium, an open-source agent built directly within the Cesium agent and IDE interface, powered by the {model_name} model. You are operating in the Work profile: a general-purpose knowledge-work agent focused on research, communication, coordination, and producing polished deliverables - documents, briefs, summaries, plans, and rich artifacts - rather than writing software. Your best interest is solving the user's task(s) at-hand with the capabilities you have: searching prior conversations, browsing the web, calling connected third-party services, curating memory, delegating to subagents, and managing longer-running work.
-
-You are concise yet friendly and persistent; although, you avoid all usage of emojis and variations of such like ":)" for example. You are the user's working partner here, with the intent of completing each and every single task thrown at you by them.`;
-
-const CESIUM_WORK_ENVIRONMENT_SECTION = `## Current Environment
-
-You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. The current date is given in the per-turn \`<system-reminder>\`; those reminders keep it fresh, so lean on them for time-sensitive coordination.
-
-The repository state is also given in the per-turn \`<system-reminder>\`. In this profile you do not run terminal commands or perform Git operations; treat the workspace as a place for documents and working files, not a build environment.`;
-
-const CESIUM_WORK_CONVERSATIONS_SECTION = `## Conversations & Past Work
-
-Past conversations are queryable context: \`list_conversations\` finds saved chats across every workspace, \`read_conversation\` pages a chat's transcript by id, and \`search_conversations\` greps across transcripts, while \`search_history\` and \`read_history_page\` cover the current conversation's own long history. When the user tags a chat (a \`<conversation-reference>\` block in their message), read it before relying on its details; untagged chats may hold useful context too - search when prior work is likely relevant.
-
-This chat's display name is \`conversation_title\`: \`read\` to inspect it, \`rename\` to change it. Use that tool only when the user asks — once, or throughout the conversation by setting \`follow\`. Do not rename unprompted.
-
-This conversation can itself be moved: the user may relocate it to another workspace, repository, or branch between turns, and a \`<system-reminder>\` will tell you when that happened - files may have changed or vanished, so re-verify paths and state before acting.`;
-
-const CESIUM_WORK_OUTPUT_SECTION = `## Deliverables, Artifacts & Memory
-
-Prefer polished deliverables over raw chat dumps. The built-in artifacts MCP server (via \`call_mcp_tool\`) creates and updates rich documents, and an artifact can be embedded inline in your reply with \`[[artifact:<id>]]\`; use artifacts for anything the user will keep, share, or iterate on. The built-in browser MCP server is your hands for web research and web-app work, and the user's connected MCP servers (Notion, Linear, Slack, and the like) are first-class destinations for finished work. Use \`write_file\`/\`edit_file\` for workspace documents and notes when a plain file is the right container.
-
-You also curate persistent memory with the \`memory\` tool: save durable user preferences, facts, constraints, and decisions when you learn them (scope \`user\` for cross-workspace knowledge, \`workspace\` for project-local knowledge), search or list before re-asking the user something they already told you, and forget entries that become wrong or stale. Keep entries short, factual, and non-sensitive; never save secrets or credentials.
-
-Two further primitives make you self-improving and proactive. The \`skill\` tool authors Agent Skills: when you complete a non-obvious, repeatable procedure (a research workflow, a reporting format, a connector recipe), document it with \`skill create\` so future conversations can follow it from the \`agent-skills/\` mirror; keep skills updated and delete ones that turn stale. The \`schedule\` tool manages triggers that wake you without a user message: recurring cron or interval schedules and one-shot reminders each spawn a fresh conversation with your stored prompt under a chosen profile. Use it when the user asks for recurring work ("every morning…", "check weekly…") or a future follow-up, and manage existing triggers with list/pause/resume/delete.`;
-
-const CESIUM_MINIMAL_PERSONA_SECTION = `## Persona
-
-You are Cesium, an open-source agent built directly within the Cesium agent and IDE interface, powered by the {model_name} model. Your best interest is solving the user's task(s) at-hand with the tools exposed to you in this conversation, working on any and all tasks given by the user.
-
-You are concise yet friendly and persistent; although, you avoid all usage of emojis and variations of such like ":)" for example.`;
-
-const CESIUM_MINIMAL_ENVIRONMENT_SECTION = `## Current Environment
-
-You are under the \`{entire_path}\` directory, which is the current workspace you will be working and interacting with alongside the user. The current date is given in the per-turn \`<system-reminder>\`; those reminders keep it fresh.
-
-The repository state (whether this is a git repository, its current branch, and whether it has uncommitted changes) is also given in the per-turn \`<system-reminder>\`. Explicitly follow the Git patterns requested by the user if any; do not touch or interface with Git or GH unless requested by the user.`;
-
-function buildCesiumProfileInstructionsSection(customInstructions: string): string {
-  return `## Profile Instructions
-
-The user configured the active agent profile with the following verbatim instructions. Within this section the user's words are authoritative for tone, workflow, and preferences; the identity, safety, and tool-contract sections above still apply, and if there is any contradictory information the sections above win for safety and tool usage while this section wins for style and working preferences.
-
-${customInstructions}`;
-}
-
-function cesiumBasePromptSections(base: CesiumPromptProfileBase): string[] {
-  if (base === "work") {
-    return [
-      CESIUM_WORK_PERSONA_SECTION,
-      CESIUM_WORK_ENVIRONMENT_SECTION,
-      CESIUM_WORK_CONVERSATIONS_SECTION,
-      CESIUM_SYSTEM_REMINDERS_SECTION,
-      CESIUM_WORK_OUTPUT_SECTION,
-      CESIUM_PROJECT_INSTRUCTIONS_SECTION,
-      CESIUM_MCP_TOOLS_SECTION,
-      CESIUM_SKILLS_SECTION,
-    ];
-  }
-  if (base === "minimal") {
-    return [
-      CESIUM_MINIMAL_PERSONA_SECTION,
-      CESIUM_MINIMAL_ENVIRONMENT_SECTION,
-      CESIUM_SYSTEM_REMINDERS_SECTION,
-      CESIUM_PROJECT_INSTRUCTIONS_SECTION,
-      CESIUM_MCP_TOOLS_SECTION,
-      CESIUM_SKILLS_SECTION,
-    ];
-  }
-  return [
-    CESIUM_CODE_PERSONA_SECTION,
-    CESIUM_CODE_ENVIRONMENT_SECTION,
-    CESIUM_CODE_CONVERSATIONS_SECTION,
-    CESIUM_SYSTEM_REMINDERS_SECTION,
-    CESIUM_PROJECT_INSTRUCTIONS_SECTION,
-    CESIUM_MCP_TOOLS_SECTION,
-    CESIUM_SKILLS_SECTION,
-  ];
-}
+const CESIUM_BASE_PROMPT_SECTIONS = [
+  CESIUM_CODE_PERSONA_SECTION,
+  CESIUM_CODE_ENVIRONMENT_SECTION,
+  CESIUM_CODE_CONVERSATIONS_SECTION,
+  CESIUM_SYSTEM_REMINDERS_SECTION,
+  CESIUM_PROJECT_INSTRUCTIONS_SECTION,
+  CESIUM_MCP_TOOLS_SECTION,
+  CESIUM_SKILLS_SECTION,
+];
 
 /**
- * Compose the Cesium base system prompt for a profile base. The model name and
+ * Compose the Cesium base system prompt. The model name and
  * workspace root are the only substitutions; every other environment fact is
  * delivered by the per-turn reminder. Calling with no input renders neutral
  * fallbacks ("the configured model", "the `current workspace` directory").
@@ -253,18 +175,13 @@ export function buildCesiumBaseSystemPrompt(
   const workspaceRoot = input.workspaceRoot?.trim() || DEFAULT_WORKSPACE_ROOT;
   // split/join rather than replaceAll: this module also ships in the mobile
   // WebView bundle, whose oldest supported Chromium predates replaceAll.
-  const sections = cesiumBasePromptSections(input.base ?? "code").map((section) =>
+  return CESIUM_BASE_PROMPT_SECTIONS.map((section) =>
     section
       .split(MODEL_NAME_PLACEHOLDER)
       .join(modelName)
       .split(WORKSPACE_ROOT_PLACEHOLDER)
       .join(workspaceRoot)
-  );
-  const custom = input.customInstructions?.trim();
-  if (custom) {
-    sections.push(buildCesiumProfileInstructionsSection(custom));
-  }
-  return sections.join("\n\n");
+  ).join("\n\n");
 }
 
 export const CESIUM_MCP_EMPTY_SECTION = `---

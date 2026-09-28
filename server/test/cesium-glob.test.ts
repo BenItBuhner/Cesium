@@ -24,7 +24,6 @@ const [
   { globToRegExp, globWorkspaceEntries },
   { resolveCesiumTools, toolKind, toolTitle, resolveCesiumToolPermissionCategory },
   { resolveCesiumModeToolPolicy, summarizeCesiumModeToolPolicy },
-  { CESIUM_PROFILE_LOCKED_TOOLS },
   { SUBAGENT_SHARED_HOST_TOOL_NAMES },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
@@ -32,7 +31,6 @@ const [
   import("../src/lib/agents/cesium/cesium-glob.js"),
   import("../src/lib/agents/cesium/cesium-tools.js"),
   import("../src/lib/agents/cesium-mode-policy.js"),
-  import("../src/lib/agents/cesium-profiles.js"),
   import("../src/lib/agents/cesium/subagent-toolset.js"),
 ]);
 
@@ -232,6 +230,5 @@ test("glob is advertised as a read-only workspace tool in every mode and profile
   // Orchestration mode blocks direct workspace tools, glob included.
   assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "glob" }).allowed, false);
 
-  assert.ok(CESIUM_PROFILE_LOCKED_TOOLS.includes("glob"), "every profile keeps glob like read_file/grep");
   assert.ok(SUBAGENT_SHARED_HOST_TOOL_NAMES.includes("glob"), "subagents share glob with the parent");
 });
