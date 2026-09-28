@@ -8,7 +8,7 @@ import { serve } from "@hono/node-server";
 import type { ProjectEngineSummary, ProjectSnapshot } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
 import { messageText, startFakeChatModel, text, toolCall, waitFor } from "./helpers/fake-chat-model.js";
-import { createRepoWithRemote } from "./helpers/git-fixtures.js";
+import { createRepoWithRemote, git } from "./helpers/git-fixtures.js";
 import { mintPeerToken, startPeerEngine } from "./helpers/peer-engine.js";
 
 const HOME_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-sync-home-"));
@@ -62,12 +62,16 @@ const [
   { startAgentPromptQueueDrainListener },
   { startProjectWatcher, settleProjectWatcher, pollProjectPeerChildren },
   { syncProjectContextWithPeer },
+  { executeProjectOrchestratorTool },
+  { readProject },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/session-store.js"),
   import("../src/lib/agents/prompt-queue-drain.js"),
   import("../src/lib/projects/project-watcher.js"),
   import("../src/lib/projects/context-sync.js"),
+  import("../src/lib/projects/orchestrator-tools.js"),
+  import("../src/lib/projects/project-store.js"),
 ]);
 
 const app = createCesiumApp();
@@ -104,6 +108,7 @@ const PNG = Buffer.from(
 
 let project: ProjectSnapshot;
 let peerEngineId = "";
+let homeToken = { secret: "", id: "" };
 let mirror = "";
 
 function homeContext(relative: string): string {
@@ -114,8 +119,36 @@ function mirrorFile(relative: string): string {
   return path.join(mirror, relative);
 }
 
+/** The coordinator's turn (or queued notice) about `name` once `ready` holds, polling the peer meanwhile. */
+function coordinatorNotice(name: string, ready: (content: string) => boolean): Promise<string> {
+  return waitFor(
+    `the update from ${name}`,
+    async () => {
+      await pollProjectPeerChildren({ force: true });
+      await settleProjectWatcher();
+      const snapshot = await readConversationSnapshot(project.orchestrator.workspaceId, project.orchestrator.conversationId);
+      const texts = [
+        ...(snapshot?.events ?? [])
+          .filter((event): event is Extract<AgentStoredEvent, { kind: "user_message" }> => event.kind === "user_message")
+          .map((event) => event.content),
+        ...(snapshot?.conversation.queuedPrompts ?? []).map((entry) => entry.text),
+      ];
+      return texts.find((content) => content.includes(`name="${name}"`) && ready(content)) ?? null;
+    },
+    () => true,
+    60_000
+  );
+}
+
+async function childNamed(name: string) {
+  const child = (await readProject(project.id))?.children.find((entry) => entry.name === name);
+  assert.ok(child, `child ${name} exists`);
+  return child;
+}
+
 test("an agent on a peer works in a synced copy of the Project context, and what it writes comes home", async () => {
-  const token = await mintPeerToken(peer, "home-engine");
+  homeToken = await mintPeerToken(peer, "home-engine");
+  const token = homeToken;
   const paired = await api<{ engine: ProjectEngineSummary }>("POST", "/api/projects/engines", {
     baseUrl: peer.url,
     token: token.secret,
@@ -173,23 +206,7 @@ test("an agent on a peer works in a synced copy of the Project context, and what
     brief
   );
 
-  const noticeWithCopies = await waitFor(
-    "the builder's update with its files copied back",
-    async () => {
-      await pollProjectPeerChildren({ force: true });
-      await settleProjectWatcher();
-      const snapshot = await readConversationSnapshot(project.orchestrator.workspaceId, project.orchestrator.conversationId);
-      const texts = [
-        ...(snapshot?.events ?? [])
-          .filter((event): event is Extract<AgentStoredEvent, { kind: "user_message" }> => event.kind === "user_message")
-          .map((event) => event.content),
-        ...(snapshot?.conversation.queuedPrompts ?? []).map((entry) => entry.text),
-      ];
-      return texts.find((content) => content.includes('name="builder"')) ?? null;
-    },
-    (content) => content.includes("Copied back"),
-    60_000
-  );
+  const noticeWithCopies = await coordinatorNotice("builder", (content) => content.includes("Copied back"));
   assert.match(
     noticeWithCopies,
     /Copied back to the Project context from build-box: internal\/builder\/findings\.md, media\/builder\/shot\.png\./
@@ -246,6 +263,106 @@ test("the peer's context routes only reach that token's mirror, inside it", asyn
   }
   const noToken = await fetch(`${peer.url}/api/projects/peer/context/${project.id}/manifest`);
   assert.equal(noToken.status, 401);
+});
+
+test("an explorer reads a clean checkout of a peer's repository there, and its answer is saved at home", async () => {
+  const head = await git(path.join(PEER_DATA_DIR, "repos", "shop"), ["rev-parse", "origin/main"]);
+  script("explore", text(["The entry point is index.js:1 and it exports 1."]));
+  const output = await executeProjectOrchestratorTool(project.id, "project_explore", {
+    repo: "shop",
+    questions: ["Where is the entry point?"],
+  });
+  assert.equal(output, "Explorer explore answered (saved to internal/explore/explore.md):\n\nThe entry point is index.js:1 and it exports 1.");
+  const explorer = await childNamed("explore");
+  assert.equal(explorer.engineId, peerEngineId, "it ran on the engine that holds the repository");
+  assert.equal(explorer.baseSha, head);
+  assert.equal(path.dirname(explorer.worktreePath!), path.join(PEER_DATA_DIR, "projects", project.id, "worktrees"));
+  assert.equal(typeof explorer.deletedAt, "number", "one-shot: it is removed after answering");
+  await assert.rejects(fs.access(explorer.worktreePath!), "its checkout on the peer is gone");
+  const gone = await fetch(`${peer.url}/api/projects/peer/children/${explorer.workspaceId}/${explorer.conversationId}`, {
+    headers: { authorization: `Bearer ${homeToken.secret}` },
+  });
+  assert.equal(gone.status, 404, "and so is its conversation there");
+
+  const [request] = requestsFor("explore");
+  const brief = request!.messages.map(messageText).join("\n");
+  assert.ok(brief.includes(`The code is at ${explorer.worktreePath}, a clean checkout of origin/main (${head.slice(0, 12)})`), brief);
+  const tools = (request!.tools ?? []).map((tool) => tool.function?.name);
+  assert.ok(tools.includes("read_file") && tools.includes("grep"), "it can read and search");
+  for (const mutating of ["write_file", "edit_file", "terminal", "call_mcp_tool"]) {
+    assert.equal(tools.includes(mutating), false, `read-only on the peer too: no ${mutating}`);
+  }
+  const saved = await fs.readFile(homeContext("internal/explore/explore.md"), "utf8");
+  assert.match(saved, new RegExp(`Repository: shop at origin/main \\(${head.slice(0, 12)}\\)`));
+  assert.match(saved, /The entry point is index\.js:1 and it exports 1\./);
+});
+
+test("a browser check on a peer agent runs in its working tree there, and its evidence comes home", async () => {
+  const builder = await childNamed("builder");
+  const media = mirrorFile("media/browser-check");
+  script(
+    "browser-check",
+    toolCall("t_shot", "terminal", {
+      command: `echo '${PNG.toString("base64")}' | base64 -d > '${path.join(media, "home.png")}'`,
+    }),
+    text(["Checked the home page: it renders. Screenshot: media/browser-check/home.png"])
+  );
+  const started = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_browser_check", {
+      agent: "builder",
+      what: "The home page renders.",
+    })
+  ) as { started: string; engine: string; evidence: string };
+  assert.deepEqual([started.started, started.engine], ["browser-check", "build-box"]);
+  assert.equal(started.evidence, homeContext("media/browser-check"), "the evidence lands in the Project context here");
+  const helper = await childNamed("browser-check");
+  assert.equal(helper.engineId, peerEngineId);
+  assert.equal(helper.workspaceId, builder.workspaceId, "it runs in the builder's working tree on the peer");
+
+  const [request] = await waitFor("the browser check's first request", async () => requestsFor("browser-check"), (list) => list.length > 0);
+  const brief = request!.messages.map(messageText).join("\n");
+  assert.ok(brief.includes(`agent builder's working tree at ${builder.worktreePath} (branch \`${builder.branch}\`)`), brief);
+  assert.ok(brief.includes(`copy every one you make into ${media} and list the paths`), brief);
+  const notice = await coordinatorNotice("browser-check", (content) => content.includes("Copied back"));
+  assert.match(notice, /Checked the home page: it renders\./);
+  assert.match(notice, /Copied back to the Project context from build-box: media\/browser-check\/home\.png\./);
+  assert.deepEqual(await fs.readFile(homeContext("media/browser-check/home.png")), PNG);
+});
+
+test("a peer places a helper only in the folder of an agent created with the same token", async () => {
+  const builder = await childNamed("builder");
+  const other = await mintPeerToken(peer, "not-the-home");
+  const create = (secret: string, placement: Json) =>
+    fetch(`${peer.url}/api/projects/peer/children`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        childId: "pca_0123456789ab",
+        name: "intruder",
+        promptText: "Look around.",
+        displayText: "Look around.",
+        placement,
+      }),
+    });
+  const intruding = await create(other.secret, { kind: "agent", workspaceId: builder.workspaceId, conversationId: builder.conversationId });
+  assert.equal(intruding.status, 404);
+  assert.match(((await intruding.json()) as { error: string }).error, /No Project agent with that id was created here with this token/);
+  const escaping = await create(homeToken.secret, {
+    kind: "snapshot",
+    workspaceId: project.repos[0]!.workspaceId,
+    baseBranch: null,
+    name: "../../escape",
+  });
+  assert.equal(escaping.status, 400);
+  const badBase = await create(homeToken.secret, {
+    kind: "snapshot",
+    workspaceId: project.repos[0]!.workspaceId,
+    baseBranch: null,
+    name: "explore-9-ab12",
+    base: { baseRef: "origin/main", sha: "HEAD; rm -rf /" },
+  });
+  assert.equal(badBase.status, 400);
 });
 
 test("deleting the Project mid-sync stops syncing it, and neither engine keeps a copy", async () => {
