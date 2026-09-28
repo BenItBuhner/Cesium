@@ -637,6 +637,8 @@ export type AgentConversationOrigin =
       homeLabel?: string;
       /** The Project lets it run commands, edit files and use tools without asking (set at creation). */
       autoApprove?: boolean;
+      /** A read-only helper (explorer): Cesium offers it only tools that change nothing. */
+      readOnly?: boolean;
       createdAt: number;
     };
 

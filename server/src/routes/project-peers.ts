@@ -296,6 +296,7 @@ projectPeerRoutes.post(
       peerTokenId: c.get("peerToken").id,
       ...(asString(body.homeLabel) ? { homeLabel: asString(body.homeLabel)!.slice(0, 80) } : {}),
       autoApprove: body.autoApprove === true,
+      readOnly: body.readOnly === true,
     });
     return c.json({ ...created, modelWarning: model.warning } satisfies ChildCreateResult, 201);
   })

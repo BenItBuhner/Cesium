@@ -278,7 +278,11 @@ test("a vague request: the coordinator asks an explorer, then starts parallel wo
   const explorer = record!.children.find((child) => child.name === "explore")!;
   assert.equal(explorer.kind, "helper");
   assert.equal(explorer.helperKind, "explore");
-  assert.equal(explorer.mode, "ask", "the explorer is read-only");
+  const explorerTools = (requestsFor("explore")[0]?.tools ?? []).map((tool) => tool.function?.name);
+  assert.ok(explorerTools.includes("read_file") && explorerTools.includes("grep"), "the explorer can read and search");
+  for (const mutating of ["edit_file", "write_file", "terminal", "call_mcp_tool"]) {
+    assert.equal(explorerTools.includes(mutating), false, `the explorer is read-only: no ${mutating}`);
+  }
   assert.equal(explorer.baseSha, SHOP_HEAD, "it read a clean checkout of the remote base");
   assert.equal(typeof explorer.deletedAt, "number", "one-shot: the explorer is removed after answering");
   await assert.rejects(fs.access(explorer.worktreePath!), "its checkout is gone");

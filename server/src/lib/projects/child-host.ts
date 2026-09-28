@@ -113,6 +113,8 @@ export type ChildCreateInput = {
   engineLabel?: string;
   /** Lets the agent run commands, edit files and use tools without asking. */
   autoApprove?: boolean;
+  /** A read-only helper: the Cesium harness offers it only tools that change nothing. */
+  readOnly?: boolean;
 };
 
 export type ChildCreateResult = ChildRef & {
@@ -507,6 +509,7 @@ export class LocalChildHost implements ChildHost {
             peerTokenId: input.peerTokenId ?? null,
             ...(input.homeLabel ? { homeLabel: input.homeLabel } : {}),
             ...(input.autoApprove ? { autoApprove: true } : {}),
+            ...(input.readOnly ? { readOnly: true } : {}),
             createdAt: Date.now(),
           },
         },

@@ -544,6 +544,27 @@ export function formatMidTurnSteer(text: string): string {
   ].join("\n");
 }
 
+/** Tools a read-only Project helper keeps; subagents it spawns inherit the same set. */
+const READ_ONLY_HELPER_TOOLS: ReadonlySet<string> = new Set([
+  "read_file",
+  "grep",
+  "glob",
+  "wait",
+  "search_history",
+  "read_history_page",
+  "list_conversations",
+  "read_conversation",
+  "search_conversations",
+  "subagent",
+  "read_subagent_transcript",
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "list_agents",
+]);
+
 class CesiumSessionHandle implements AgentSessionHandle {
   readonly sessionId: string;
   configOptions: AgentConfigOption[];
@@ -722,6 +743,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
+  /** A Project explorer: only tools that read or delegate read-only work. */
+  private isReadOnlyHelper(): boolean {
+    const origin = this.callbacks.conversation.origin;
+    return origin?.kind === "project-child" && origin.readOnly === true;
+  }
+
   /**
    * Tool schemas advertised to the model: the full resolved harness.
    * Subagent-spawning tools carry the live Model access roster in their
@@ -738,7 +765,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ),
       ];
     }
-    const tools = this.harness.tools;
+    const tools = this.isReadOnlyHelper()
+      ? this.harness.tools.filter((tool) => READ_ONLY_HELPER_TOOLS.has(tool.name))
+      : this.harness.tools;
     if (!this.modelRosterText) {
       return tools;
     }
@@ -2214,6 +2243,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     definitions: CesiumToolDefinition[]
   ): Promise<string> {
     const callerPath = agentPath ?? "/root (ephemeral subagent)";
+    if (this.isReadOnlyHelper() && !READ_ONLY_HELPER_TOOLS.has(name)) {
+      throw new Error(`${name} is not available to a read-only explorer's subagents.`);
+    }
     const isBrowserTool = name.startsWith("browser_");
     // Direct browser tools are permission-equivalent to calling the built-in
     // browser MCP server through call_mcp_tool.
@@ -2727,6 +2759,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
             `${effectiveRequest.name} is not available to a Project orchestrator. Delegate the work to a Project agent with project_create_agent or project_queue_agent.`
           );
         }
+      }
+      if (this.isReadOnlyHelper() && !READ_ONLY_HELPER_TOOLS.has(effectiveRequest.name)) {
+        throw new Error(
+          `${effectiveRequest.name} is not available to a read-only explorer. Read and search, then answer the question.`
+        );
       }
       let result: string;
       const permissionCategory = resolveCesiumToolPermissionCategory(

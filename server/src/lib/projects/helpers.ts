@@ -268,9 +268,9 @@ async function startExplorer(input: {
         placement,
         backendId: "cesium-agent" as AgentBackendId,
         modelId: record.settings.defaultChildModelId ?? record.orchestrator.modelId,
-        mode: "ask",
         homeLabel: homeEngineLabel(),
-        // Read-only by its mode, so its searches never wait for a person.
+        // It only gets tools that change nothing, so its searches never wait for a person.
+        readOnly: true,
         autoApprove: true,
       });
     } catch (error) {
