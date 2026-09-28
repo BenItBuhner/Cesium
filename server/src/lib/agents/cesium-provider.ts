@@ -31,9 +31,8 @@ import {
   resolveCesiumModelContextWindow,
   resolveCesiumAuth,
   resolveCesiumSpawnModelId,
-  CESIUM_MODE_DEFINITIONS,
-  type CesiumModeId,
   type CesiumProviderKind,
+  type CesiumToolPermissionCategory,
 } from "../cesium-agent-settings.js";
 import {
   findMatchingRememberedPermissionRule,
@@ -71,13 +70,7 @@ import {
 } from "../projects/orchestrator-tool-definitions.js";
 import { isProjectsEnabled } from "../projects/feature-flag.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
-import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
-import {
-  normalizeCesiumMode,
-  normalizeCesiumToolName,
-  resolveCesiumModeToolPolicy,
-  summarizeCesiumModeToolPolicy,
-} from "./cesium-mode-policy.js";
+import { buildCesiumTurnReminder } from "./cesium-reminders.js";
 import {
   forgetCesiumMemoryEntry,
   formatCesiumMemoryEntry,
@@ -142,7 +135,7 @@ import {
   seedJournalFromPriorRun,
   upsertWorkflowRun,
 } from "./workflow-store.js";
-import { formatWorkflowRunForModel } from "./workflow-types.js";
+import { formatWorkflowRunForModel, isWorkflowRunActive } from "./workflow-types.js";
 import type { WorkflowAgentSpawnRequest, WorkflowRunRecord } from "./workflow-types.js";
 import {
   addOrchestrationComment,
@@ -150,6 +143,7 @@ import {
   deleteOrchestrationIssue,
   findOrchestrationAssignmentForConversation,
   readOrchestrationBoardSnapshot,
+  findOrchestrationBoardForHeadConversation,
   resolveOrCreateOrchestrationBoardForHeadConversation,
   upsertOrchestrationAssignment,
   upsertOrchestrationIssue,
@@ -159,7 +153,6 @@ import type {
   OrchestrationAssignmentPermissionPolicy,
   OrchestrationAssignmentStatus,
   OrchestrationBoardSnapshot,
-  OrchestrationColumnId,
 } from "../orchestration/types.js";
 import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
@@ -229,6 +222,7 @@ import {
 import {
   cesiumPermissionToolKey,
   normalizeCallMcpToolArgs,
+  normalizeCesiumToolName,
   normalizeCesiumToolRequestArguments,
   parseWaitToolArgs,
   permissionDecisionFromOption,
@@ -626,13 +620,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (modelId) {
       this.configOptions = updateConfigOption(this.configOptions, "model", modelId);
     }
-    const mode = this.callbacks.conversation.config.mode?.trim();
-    if (mode) {
-      this.configOptions = updateConfigOption(this.configOptions, "mode", mode);
-    }
-    // Conversations saved while agent profiles existed still carry a
-    // "profile" config option; drop it so no picker is offered for it.
-    this.configOptions = this.configOptions.filter((option) => option.id !== "profile");
+    // Conversations saved while Cesium had operating modes and agent profiles
+    // still carry "mode" and "profile" config options; neither exists anymore.
+    this.configOptions = this.configOptions.filter(
+      (option) => option.id !== "mode" && option.id !== "profile"
+    );
     await this.refreshHarnessFromSettings();
     await this.callbacks.updateConversation((current) => ({
       ...current,
@@ -682,27 +674,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       agentsMarkdown,
       skillsList: skillsList?.trim() || undefined,
     };
-  }
-
-  private isOrchestrationMode(): boolean {
-    return this.currentMode() === "orchestration";
-  }
-
-  private isGoalMode(): boolean {
-    return this.currentMode() === "goal";
-  }
-
-  private isWorkflowMode(): boolean {
-    return this.currentMode() === "workflow";
-  }
-
-  private currentMode(): string {
-    const raw = optionValue(
-      this.configOptions,
-      "mode",
-      this.callbacks.conversation.config.mode ?? "agent"
-    );
-    return normalizeCesiumMode(String(raw));
   }
 
   /**
@@ -856,11 +827,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
+  /** The conversation's Goal while it is still open (not complete or cancelled). */
+  private async readOpenGoal() {
+    const goal = await readGoalForConversation({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    }).catch(() => null);
+    return goal && goal.status !== "complete" && goal.status !== "cancelled" ? goal : null;
+  }
+
   private async resolveCurrentOrchestrationBoard() {
     return resolveOrCreateOrchestrationBoardForHeadConversation({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
-      title: this.callbacks.conversation.title || "Orchestration Mode",
+      title: this.callbacks.conversation.title || "Orchestration",
       allowedBackendIds: ["cesium-agent"],
     });
   }
@@ -1002,23 +982,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
             ]);
             return { skills: [], skillsList: "" };
           });
-      const currentMode = this.currentMode();
-      const board = this.isOrchestrationMode()
-        ? await this.resolveCurrentOrchestrationBoard()
-        : null;
-      const goalState = this.isGoalMode()
-        ? await ensureGoalForConversation({
-            workspace: this.callbacks.workspace,
-            conversationId: this.callbacks.conversation.id,
-            objective: input.text,
-          })
-        : null;
-      const workflowState = this.isWorkflowMode()
-        ? await readLatestWorkflowRunForConversation({
+      const board = orchestratorProjectId
+        ? null
+        : await findOrchestrationBoardForHeadConversation(
+            this.callbacks.workspace.id,
+            this.callbacks.conversation.id
+          ).catch(() => null);
+      const goalState = orchestratorProjectId ? null : await this.readOpenGoal();
+      const workflowState = orchestratorProjectId
+        ? null
+        : await readLatestWorkflowRunForConversation({
             workspaceId: this.callbacks.workspace.id,
             conversationId: this.callbacks.conversation.id,
           })
-        : null;
+            .then((run) => (run && isWorkflowRunActive(run.status) ? run : null))
+            .catch(() => null);
       const sideChatTurn = await this.beginSideChatTurn();
       const promptContext = await this.resolveSystemPromptContext(
         summaries,
@@ -1079,9 +1057,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
       const featureReminder = harnessFeatureReminder(this.harness);
       const memorySnapshot = orchestratorProjectId ? null : await this.resolveMemorySnapshot();
-      const modeReminderText = [
-        buildCesiumModeReminder({
-          mode: currentMode,
+      const turnReminderText = [
+        buildCesiumTurnReminder({
           modelName: promptContext.modelName,
           memorySnapshot,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
@@ -1120,7 +1097,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
             modelName: promptContext.modelName ?? modelId,
           })
-        : modeReminderText;
+        : turnReminderText;
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -1131,7 +1108,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           reason: input.planHandoff ? "plan_handoff" : "mode",
           text: reminderText,
           raw: {
-            mode: currentMode,
             planHandoff: input.planHandoff,
             modelId,
             modelName: promptContext.modelName,
@@ -1384,13 +1360,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           : String(error);
       pluginOutcome = { status: "failed", error: message };
       console.warn("[cesium-agent] turn failed:", message);
-      if (this.isGoalMode()) {
-        await pauseGoal({
-          workspace: this.callbacks.workspace,
-          conversationId: this.callbacks.conversation.id,
-          reason: `Provider error: ${message}`,
-        }).catch(() => undefined);
-      }
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -1964,7 +1933,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
   async setConfigOption(configId: string, value: string): Promise<void> {
     this.configOptions = updateConfigOption(this.configOptions, configId, value);
     const modelOption = this.configOptions.find((option) => option.id === "model");
-    const modeOption = this.configOptions.find((option) => option.id === "mode");
     await this.callbacks.updateConversation((current) => ({
       ...current,
       configOptions: this.configOptions,
@@ -1974,10 +1942,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         modelName:
           modelOption?.options.find((option) => option.value === modelOption.currentValue)?.name ??
           current.config.modelName,
-        mode:
-          configId === "mode"
-            ? value
-            : (modeOption?.currentValue ?? current.config.mode),
       },
     }));
   }
@@ -2139,7 +2103,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           conversationId: this.callbacks.conversation.id,
           workspaceId: this.callbacks.workspace.id,
           workspaceRoot: this.callbacks.workspace.root,
-          mode: this.currentMode(),
           modelId: String(
             optionValue(
               this.configOptions,
@@ -2227,7 +2190,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * share the parent's workspace tools (files, terminal, MCP, browser) and -
    * for V2 collaborative children - the collaboration tools themselves, with
    * spawn depth enforced by the runtime. Every gated call flows through the
-   * same mode policy and permission cascade as the parent agent.
+   * same permission cascade as the parent agent.
    *
    * `agentPath` is the child's canonical path for V2 children, or null for
    * the legacy single-shot `subagent` tool (no collaboration surface).
@@ -2252,16 +2215,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   ): Promise<string> {
     const callerPath = agentPath ?? "/root (ephemeral subagent)";
     const isBrowserTool = name.startsWith("browser_");
-    // Direct browser tools are policy/permission-equivalent to calling the
-    // built-in browser MCP server through call_mcp_tool.
-    const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
-    const policy = resolveCesiumModeToolPolicy({
-      mode: this.currentMode(),
-      toolName: policyToolName,
-    });
-    if (!policy.allowed) {
-      throw new Error(policy.reason ?? `Tool ${name} is blocked in the active mode.`);
-    }
+    // Direct browser tools are permission-equivalent to calling the built-in
+    // browser MCP server through call_mcp_tool.
     const permissionCategory = isBrowserTool
       ? resolveCesiumToolPermissionCategory(this.harness.tools, "call_mcp_tool")
       : resolveCesiumToolPermissionCategory(definitions, name);
@@ -2482,14 +2437,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         (event) => event.kind !== "user_message" || !event.hidden
       );
       const history = this.normalizeEventsToHistory(visibleRetained);
-      if (this.isGoalMode()) {
-        const goal = await readGoalForConversation({
-          workspace: this.callbacks.workspace,
-          conversationId: this.callbacks.conversation.id,
-        });
-        if (goal) {
-          history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
-        }
+      const goal = await this.readOpenGoal();
+      if (goal) {
+        history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
       }
       return history;
     }
@@ -2544,7 +2494,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       getCesiumAgentSettings(),
       getGlobalSettings().catch(() => null),
     ]);
-    let policy = settings.toolPermissions[input.permission];
+    let policy =
+      settings.toolPermissions[input.permission as CesiumToolPermissionCategory] ?? "ask";
     if (input.permission === "mcpCall" && globalSettings?.agents.mcpProt) {
       policy = "ask";
     }
@@ -2778,26 +2729,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }
       }
       let result: string;
-      const currentMode = this.currentMode();
-      const allowedModes = toolDefinition?.allowedModes;
-      if (
-        Array.isArray(allowedModes) &&
-        !allowedModes.map((mode) => normalizeCesiumMode(mode)).includes(currentMode)
-      ) {
-        throw new Error(
-          `Tool ${effectiveRequest.name} is not enabled in ${currentMode} mode.`
-        );
-      }
-      const policy =
-        allowedModes === "read-only" && currentMode === "ask"
-          ? { allowed: true }
-          : resolveCesiumModeToolPolicy({
-              mode: currentMode,
-              toolName: effectiveRequest.name,
-            });
-      if (!policy.allowed) {
-        throw new Error(policy.reason ?? `Tool ${request.name} is blocked in the active mode.`);
-      }
       const permissionCategory = resolveCesiumToolPermissionCategory(
         this.harness.tools,
         effectiveRequest.name
@@ -2853,9 +2784,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
-          break;
-        case "switch_mode":
-          result = await this.toolSwitchMode(request.arguments, request.id);
           break;
         case "wait":
           result = await this.toolWait(request.arguments);
@@ -3554,75 +3482,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolTodo(args: Record<string, unknown>): Promise<string> {
     const action = asString(args.action) ?? "list";
     const items = Array.isArray(args.items) ? args.items : [];
-    if (this.isOrchestrationMode()) {
-      const snapshot = await this.resolveCurrentOrchestrationBoard();
-      if (action === "list") {
-        const lines = snapshot.issues.map(
-          (issue) =>
-            `${issue.columnId}: ${issue.title}${
-              issue.acceptanceCriteria.length
-                ? ` (${issue.acceptanceCriteria.length} acceptance criteria)`
-                : ""
-            }`
-        );
-        return lines.length
-          ? lines.join("\n")
-          : "No orchestration issues yet. Use orchestration_create_issue or provide todo items to create board issues.";
-      }
-
-      const parsedItems = items.flatMap((item) => {
-        const record = asRecord(item);
-        const content =
-          asString(record?.content) ??
-          asString(record?.title) ??
-          asString(record?.text) ??
-          asString(record?.description) ??
-          asString(item);
-        if (!content) return [];
-        const status = asString(record?.status)?.toLowerCase();
-        const columnId: OrchestrationColumnId =
-          status === "completed"
-            ? "done"
-            : status === "blocked"
-              ? "blocked"
-              : status === "in_progress" || status === "in-progress"
-                ? "in_progress"
-                : "backlog";
-        return [{ content, columnId }];
-      });
-      let current = snapshot;
-      const touchedIssues: string[] = [];
-      for (const item of parsedItems) {
-        const existing = current.issues.find(
-          (issue) => issue.title.trim().toLowerCase() === item.content.trim().toLowerCase()
-        );
-        if (existing) {
-          current = await upsertOrchestrationIssue(
-            current.board.id,
-            { id: existing.id, columnId: item.columnId },
-            { type: "head_agent", conversationId: this.callbacks.conversation.id }
-          );
-          touchedIssues.push(existing.id);
-          continue;
-        }
-        current = await createOrchestrationIssue({
-          boardId: current.board.id,
-          title: item.content,
-          columnId: item.columnId,
-          actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
-        });
-        const created = current.issues[current.issues.length - 1];
-        if (created) {
-          touchedIssues.push(created.id);
-        }
-      }
-      return safeJson({
-        boardId: current.board.id,
-        message:
-          "Mapped todo items onto orchestration board issues. Continue managing work with orchestration_* issue tools.",
-        issueIds: touchedIssues,
-      });
-    }
     if (action === "list") {
       const snapshot = await this.callbacks.readSnapshot();
       const latest = latestTodoEntries(snapshot?.events ?? []);
@@ -3707,16 +3566,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     permission: AgentPermissionCategory,
     args: Record<string, unknown>
   ): string {
-    if (permission === "switchMode") {
-      const target =
-        asString(args.target_mode)?.trim() ||
-        asString(args.targetMode)?.trim() ||
-        "unknown";
-      const reason = asString(args.reason)?.trim();
-      return reason
-        ? `Switch conversation mode to ${target}.\nReason: ${reason}`
-        : `Switch conversation mode to ${target}.`;
-    }
     if (permission === "mcpCall") {
       const serverId = asString(args.serverId) ?? "";
       const toolName = asString(args.toolName) ?? "";
@@ -3726,95 +3575,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return safeJson(args);
   }
 
-  private async toolSwitchMode(
-    args: Record<string, unknown>,
-    toolCallId: string
-  ): Promise<string> {
-    const rawTarget =
-      asString(args.target_mode)?.trim().toLowerCase() ||
-      asString(args.targetMode)?.trim().toLowerCase() ||
-      "";
-    if (!rawTarget) {
-      throw new Error("switch_mode.target_mode is required.");
-    }
-    const normalizedTarget = normalizeCesiumMode(rawTarget);
-    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === normalizedTarget);
-    if (!knownMode) {
-      throw new Error(
-        `Unknown mode "${rawTarget}". Allowed modes: ${CESIUM_MODE_DEFINITIONS.map((mode) => mode.id).join(", ")}.`
-      );
-    }
-    const targetMode = knownMode.id as CesiumModeId;
-    const settings = await getCesiumAgentSettings();
-    if (!settings.modes.enabled[targetMode]) {
-      throw new Error(
-        `Mode "${targetMode}" is disabled in Cesium Agent settings. Enable it under Settings → Agents → Cesium Agent → Modes.`
-      );
-    }
-    const previousMode = this.currentMode();
-    if (previousMode === targetMode) {
-      return `Already in ${targetMode} mode. No switch needed.`;
-    }
-    const reason = asString(args.reason)?.trim() || undefined;
-    await this.setConfigOption("mode", targetMode);
-    const policy = summarizeCesiumModeToolPolicy(targetMode);
-    const reminderText = buildCesiumModeReminder({
-      mode: targetMode,
-      modelName: resolveModelDisplayName(
-        this.callbacks.conversation.config.modelName,
-        this.callbacks.conversation.config.modelId || "configured model"
-      ),
-      workspaceRoot: this.callbacks.workspace.root,
-      dateLabel: formatCesiumDateLabel(new Date()),
-      gitSummary: "unchanged since last reminder",
-      mcpSummaries: [],
-      conversationTitle: this.callbacks.conversation.title,
-      conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
-    });
-    const targetMessageId = this.activeUserMessageId;
-    if (targetMessageId) {
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "system_reminder",
-          reminderId: `mode-switch-${toolCallId}`,
-          targetMessageId,
-          reason: "mode",
-          text: reminderText,
-          raw: {
-            mode: targetMode,
-            previousMode,
-            switchedByTool: true,
-            toolCallId,
-            reason,
-          },
-        },
-      ]);
-    }
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "status",
-        status: "running",
-        detail: `Switched mode from ${previousMode} to ${targetMode}.`,
-      },
-    ]);
-    return [
-      `Switched conversation mode from ${previousMode} to ${targetMode}.`,
-      reason ? `Reason: ${reason}` : null,
-      `Allowed tools: ${policy.allowed.join(", ")}`,
-      `Restricted: ${policy.restricted.join(", ")}`,
-      `Blocked: ${policy.blocked.join(", ")}`,
-      "Follow this mode for the rest of this turn and subsequent turns until switched again.",
-      "",
-      reminderText,
-    ]
-      .filter((line): line is string => line != null)
-      .join("\n");
-  }
-
   private async toolCallMcp(args: Record<string, unknown>): Promise<string> {
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
@@ -3822,9 +3582,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const toolArgs = normalized.arguments;
     if (!serverId || !toolName) {
       throw new Error("call_mcp_tool requires serverId and toolName.");
-    }
-    if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
-      throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
     const rich = await callMcpToolRich({
       workspaceId: this.callbacks.workspace.id,
@@ -4040,7 +3797,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         : undefined;
     const { agentRuntimeManager } = await import("./runtime-manager.js");
     const promptText = [
-      `You are assigned to Orchestration Mode issue "${issue.title}".`,
+      `You are assigned to orchestration issue "${issue.title}".`,
       "",
       issue.description ? `Description:\n${issue.description}` : "",
       issue.acceptanceCriteria.length
@@ -4217,7 +3974,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error("orchestration_control_agent steer requires instructions.");
         }
         const steerText = [
-          issue ? `Steering update for Orchestration Mode issue "${issue.title}".` : "Steering update.",
+          issue ? `Steering update for orchestration issue "${issue.title}".` : "Steering update.",
           reason ? `Reason: ${reason}` : "",
           "",
           instructions,
@@ -5020,8 +4777,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.subagentTranscripts.get(subagentId) ??
       (await this.readPersistedSubagentTranscript(subagentId));
     if (!transcript) {
-      if (this.isOrchestrationMode()) {
-        const current = await this.resolveCurrentOrchestrationBoard();
+      const current = await findOrchestrationBoardForHeadConversation(
+        this.callbacks.workspace.id,
+        this.callbacks.conversation.id
+      ).catch(() => null);
+      if (current) {
         const assignment = current.assignments.find(
           (candidate) =>
             candidate.id === subagentId || candidate.conversationId === subagentId
@@ -5032,7 +4792,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           );
         }
       }
-      return `No ephemeral subagent transcript found for ${subagentId}. In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents assigned via orchestration_assign_agent.`;
+      return `No ephemeral subagent transcript found for ${subagentId}. For kanban child agents assigned via orchestration_assign_agent, use orchestration_read_agent_transcript.`;
     }
     const offset = Math.max(0, Math.floor(asNumber(args.offset) ?? 0));
     const limit = Math.max(1, Math.min(200, Math.floor(asNumber(args.limit) ?? 50)));

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
+import { buildCesiumTurnReminder } from "../src/lib/agents/cesium-reminders.js";
 import {
   CESIUM_TIME_GAP_REMINDER_MS,
   cesiumEnvironmentChangeNotice,
@@ -114,9 +114,8 @@ test("mcpReminderChangeNotice no longer fires on every dateLabel tick", () => {
   assert.equal(mcpReminderChangeNotice(previous, current), null);
 });
 
-test("buildCesiumModeReminder includes environment change notices and model", () => {
-  const reminder = buildCesiumModeReminder({
-    mode: "agent",
+test("buildCesiumTurnReminder includes environment change notices and model", () => {
+  const reminder = buildCesiumTurnReminder({
     modelName: "Anthropic/Claude Opus 5",
     workspaceRoot: "/tmp/workspace",
     dateLabel: "Tuesday, July 28, 2026 at 12:00 AM",

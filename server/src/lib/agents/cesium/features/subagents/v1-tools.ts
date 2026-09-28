@@ -23,7 +23,7 @@ export const SUBAGENTS_V1_TOOLS: CesiumToolDefinition[] = [
   {
     name: "read_subagent_transcript",
     description:
-      "Read the transcript of an ephemeral subagent started with the subagent tool (subagentId from that card). In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents assigned via orchestration_assign_agent.",
+      "Read the transcript of an ephemeral subagent started with the subagent tool (subagentId from that card). For kanban child agents assigned via orchestration_assign_agent, use orchestration_read_agent_transcript.",
     parameters: {
       type: "object",
       properties: {
@@ -47,7 +47,7 @@ export function createSubagentsV1Module(): CesiumFeatureModule {
     tools: SUBAGENTS_V1_TOOLS,
     toolNames: [...SUBAGENTS_V1_TOOL_NAMES],
     reminder:
-      "Subagents V1 is active. Use `subagent` for ephemeral research children and `read_subagent_transcript` to inspect their cards. For durable kanban children use Orchestration Mode tools. " +
+      "Subagents V1 is active. Use `subagent` for ephemeral research children and `read_subagent_transcript` to inspect their cards. For durable kanban children use the orchestration_* tools. " +
       "When delegated or parallel work must touch files, isolate each workstream on its own worktree branch (`create_worktree`), drive it via terminal against that path, then merge verified branches back and clean up.",
   };
 }

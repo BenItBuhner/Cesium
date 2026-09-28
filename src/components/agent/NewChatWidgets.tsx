@@ -18,6 +18,8 @@ import {
   type ReactNode,
 } from "react";
 import {
+  buildDraftModeOptionsForBackend,
+  getModeTone,
   isQuickActionVisibleInContext,
   type AgentRailConversationSummary,
   type QuickActionDefinition,
@@ -28,6 +30,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useComposerDefaults } from "@/hooks/useComposerDefaults";
 import { useWorkspaceInsights, requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
 import type { NewChatWidgetId } from "@/lib/global-settings";
 import {
@@ -223,12 +226,22 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
     updateWorkspaceSession,
   } = useWorkspace();
   const {
+    backends,
     groups,
     pinnedRailConversations,
     openConversationSummary,
     setRightPaneOpen,
     setStandaloneDraftActive,
   } = useAgentShellState();
+  const { composer } = useComposerDefaults();
+  // "Plan new idea" switches the draft into its harness's plan mode; harnesses
+  // without one (Cesium Agent) get no pill.
+  const draftBackend = backends.find((backend) => backend.id === composer.backendId);
+  const draftHasPlanMode =
+    !draftBackend ||
+    buildDraftModeOptionsForBackend(draftBackend).some(
+      (option) => getModeTone(option.id) === "plan"
+    );
   const { activeServer } = useServerConnections();
   const { effectiveActions, loaded: actionsLoaded } = useQuickActionsConfig();
   const runCommand = useIDECommandRunner();
@@ -441,6 +454,7 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
 
   // ── Tile renderers (uniform look, no titles) ───────────────────────────────
   const shortcutPills: ReactNode[] = [
+    draftHasPlanMode ? (
     <button
       key="shortcut-plan"
       type="button"
@@ -453,7 +467,8 @@ export function NewChatWidgets({ noWorkspaceDraft }: { noWorkspaceDraft: boolean
         Plan new idea{" "}
         <span className="text-[var(--text-secondary)]">({planShortcutHint})</span>
       </span>
-    </button>,
+    </button>
+    ) : null,
     <button
       key="shortcut-voice"
       type="button"

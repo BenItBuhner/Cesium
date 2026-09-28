@@ -111,13 +111,12 @@ orchestrationRoutes.post("/api/orchestration/start", async (c) => {
     description?: unknown;
     prompt?: unknown;
   }>();
-  const title = asString(body.title) ?? "Orchestration Mode";
+  const title = asString(body.title) ?? "Orchestration";
   const backends = await listAgentBackendsWithCache();
   const cesium = backends.find((backend) => backend.id === "cesium-agent");
   const headConversation = await agentRuntimeManager.createConversation(workspace, {
     title,
     backendId: "cesium-agent",
-    mode: "orchestration",
     ...(cesium?.defaultModelId
       ? { modelId: cesium.defaultModelId, modelName: cesium.defaultModelName }
       : {}),

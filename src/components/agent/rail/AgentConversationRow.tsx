@@ -282,8 +282,6 @@ export const AgentConversationRow = memo(function AgentConversationRow({
       compact={effectiveDetail === "compact"}
     />
   );
-  const isOrchestrationMode =
-    String(conversation.mode).trim().toLowerCase() === "orchestration";
   const origin = conversation.origin;
   // Imported conversations render exactly like native ones - no badge.
   // Provenance stays discoverable via the hover title only.
@@ -369,11 +367,6 @@ export const AgentConversationRow = memo(function AgentConversationRow({
       {showMachineBadge && conversation.serverLabel ? (
         <span className="max-w-[72px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[4px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
           {conversation.serverLabel}
-        </span>
-      ) : null}
-      {isOrchestrationMode ? (
-        <span className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--orchestration-accent)_35%,transparent)] bg-[var(--orchestration-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--orchestration-accent)]">
-          ORCH
         </span>
       ) : null}
       {originProviderId ? (

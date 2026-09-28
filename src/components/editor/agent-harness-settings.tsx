@@ -1325,9 +1325,6 @@ function CesiumAgentHarnessSettings() {
     (selectedProvider.custom ||
       selectedProvider.apiKind === "openai-compatible" ||
       !selectedProvider.baseUrl);
-  const enabledModeCount = settings
-    ? Object.values(settings.modes.enabled).filter(Boolean).length
-    : 0;
 
   // Terse per-layer rollups shown while a section is collapsed.
   const modelAccessSummary = useMemo(
@@ -1349,9 +1346,7 @@ function CesiumAgentHarnessSettings() {
     ? `${settings.defaultModelId} · ${modelAccessSummary.enabled}/${modelAccessSummary.total} models on`
     : "";
   const behaviorSummary = settings
-    ? `${enabledModeCount}/${settings.modeCatalog.length} modes · compression ${
-        settings.compression.enabled ? "on" : "off"
-      }`
+    ? `compression ${settings.compression.enabled ? "on" : "off"}`
     : "";
   const triggersSummary = settings
     ? `${triggers?.length ?? 0} trigger${(triggers?.length ?? 0) === 1 ? "" : "s"}`
@@ -1760,57 +1755,6 @@ function CesiumAgentHarnessSettings() {
             />
           </HarnessDetailBlock>
 
-          <HarnessDetailBlock>
-            <SettingsSubsectionHeading>Mode cycle</SettingsSubsectionHeading>
-            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-              Choose which Cesium modes appear in the picker, slash menu, and Shift+Tab cycle.
-              The active mode stays visible until you switch away from it.
-            </p>
-            <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
-              {settings.modeCatalog.map((mode) => {
-                const enabled = settings.modes.enabled[mode.id];
-                const labelId = `cesium-mode-${mode.id}`;
-                return (
-                  <div
-                    key={mode.id}
-                    className="flex items-center justify-between gap-[16px] py-[10px] first:pt-0 last:pb-0"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p
-                        id={labelId}
-                        className="font-sans text-[13px] font-medium text-[var(--text-primary)]"
-                      >
-                        {mode.label}
-                      </p>
-                      <p className="mt-[3px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                        {mode.description}
-                      </p>
-                    </div>
-                    <ToggleSwitch
-                      checked={enabled}
-                      labelledBy={labelId}
-                      onChange={(nextEnabled) => {
-                        if (!nextEnabled && enabledModeCount <= 1) {
-                          setMessage("At least one Cesium mode must remain enabled.");
-                          return;
-                        }
-                        void patchSettings({
-                          modes: {
-                            enabled: {
-                              ...settings.modes.enabled,
-                              [mode.id]: nextEnabled,
-                            },
-                          },
-                        });
-                      }}
-                      size="md"
-                      variant="green"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </HarnessDetailBlock>
           </div>
           </SettingsDisclosure>
 
@@ -2270,25 +2214,6 @@ function CesiumAgentHarnessSettings() {
                     })
                   }
                   ariaLabel="MCP call permission"
-                  className="w-full max-w-none"
-                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
-                  disabled={busy}
-                />
-              </label>
-              <label className="flex flex-col gap-[5px]">
-                <SettingsFieldLabel>Switch mode</SettingsFieldLabel>
-                <SettingsThemeSelect
-                  value={settings.toolPermissions.switchMode ?? "ask"}
-                  options={[...TOOL_PERMISSION_OPTIONS]}
-                  onChange={(value) =>
-                    void patchSettings({
-                      toolPermissions: {
-                        ...settings.toolPermissions,
-                        switchMode: value as "ask" | "allow" | "deny",
-                      },
-                    })
-                  }
-                  ariaLabel="Switch mode permission"
                   className="w-full max-w-none"
                   triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
                   disabled={busy}

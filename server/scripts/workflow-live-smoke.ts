@@ -1,6 +1,6 @@
 /**
  * Live smoke: execute a Cesium Workflow script using the AGENTS.md inference proxy.
- * Run: bun ./scripts/workflow-mode-live-smoke.ts
+ * Run: bun ./scripts/workflow-live-smoke.ts
  */
 import { executeWorkflowRun } from "../src/lib/agents/workflow-runtime.js";
 import {

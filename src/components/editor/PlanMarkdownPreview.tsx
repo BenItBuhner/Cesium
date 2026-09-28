@@ -156,7 +156,6 @@ export function PlanMarkdownPreview({
             dispatchPlanEvent("opencursor:plan-build", {
               path,
               title,
-              mode: request.mode,
               modelChoice: request.modelChoice,
             })
           }

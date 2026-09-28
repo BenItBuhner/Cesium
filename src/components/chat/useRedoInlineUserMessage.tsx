@@ -20,7 +20,6 @@ import {
 } from "@/lib/agent-chat";
 import {
   DEFAULT_MODE_OPTIONS,
-  isOrchestrationModeLocked,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import type { GlobalSettingsState } from "@/lib/global-settings";
@@ -420,7 +419,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
         String(redoMessageDraft.mode),
         modeOptionPool
       ) as EditorMode;
-      const redoModeLocked = isOrchestrationModeLocked();
 
       const resolvedComposerBackendId =
         targetBackend?.id ??
@@ -436,9 +434,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
             key={`redo-${redoMessageDraft.messageId}`}
             mode={redoMode}
             onModeChange={(next) => {
-              if (isOrchestrationModeLocked()) {
-                return;
-              }
               setRedoMessageDraft((current) =>
                 current && current.messageId === redoMessageDraft.messageId
                   ? { ...current, mode: next }
@@ -487,7 +482,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
             }
             busy={false}
             configLocked={false}
-            modeLocked={redoModeLocked}
             onSubmit={(text, attachments) => submitRedoMessageDraft(text, attachments)}
             layout="empty-top"
             variant="docked"

@@ -2,23 +2,20 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Infinity, Layers, PackageOpen } from "lucide-react";
+import { Check, ChevronDown, PackageOpen } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import {
   popoverMenuFixedPanelClass,
-  popoverMenuIconItemClass,
   popoverMenuItemClass,
   popoverMenuListClass,
   popoverMenuSectionLabelClass,
 } from "@/components/ui/popover-menu-ui";
 import type { ModelInfo } from "@/lib/types";
 
-export type PlanBuildMode = "agent" | "orchestration" | "goal";
 export type PlanBuildModelChoice = "inherit" | string;
 
 export type PlanBuildRequest = {
-  mode: PlanBuildMode;
   modelChoice: PlanBuildModelChoice;
 };
 
@@ -47,10 +44,6 @@ function labelForModelChoice(
   return found?.name ?? choice;
 }
 
-function modeLabel(mode: PlanBuildMode): string {
-  return mode === "orchestration" ? "Orchestration" : mode === "goal" ? "Goal" : "Agent";
-}
-
 function menuStyle(position: ReturnType<typeof usePopover>["position"]) {
   return {
     ...(position.top != null ? { top: position.top } : { bottom: position.bottom }),
@@ -68,35 +61,20 @@ export function PlanBuildControls({
   compact = false,
 }: PlanBuildControlsProps) {
   const [modelOpen, setModelOpen] = useState(false);
-  const [buildOpen, setBuildOpen] = useState(false);
   const closeModel = useCallback(() => setModelOpen(false), []);
-  const closeBuild = useCallback(() => setBuildOpen(false), []);
   const {
     triggerRef: modelTriggerRef,
     popoverRef: modelPopoverRef,
     position: modelPosition,
     ready: modelReady,
   } = usePopover(modelOpen, { placement: "above" });
-  const {
-    triggerRef: buildTriggerRef,
-    popoverRef: buildPopoverRef,
-    position: buildPosition,
-    ready: buildReady,
-  } = usePopover(buildOpen, { placement: "above" });
 
   useClickOutside(modelTriggerRef, closeModel, modelOpen, [modelPopoverRef]);
-  useClickOutside(buildTriggerRef, closeBuild, buildOpen, [buildPopoverRef]);
 
   const visibleModels = useMemo(() => models.slice(0, 60), [models]);
   const modelLabel = labelForModelChoice(modelChoice, models, currentModel);
 
-  const build = useCallback(
-    (mode: PlanBuildMode) => {
-      setBuildOpen(false);
-      onBuild({ mode, modelChoice });
-    },
-    [modelChoice, onBuild]
-  );
+  const build = useCallback(() => onBuild({ modelChoice }), [modelChoice, onBuild]);
 
   return (
     <div className="flex min-w-0 items-center justify-end gap-[6px]">
@@ -167,68 +145,15 @@ export function PlanBuildControls({
           )}
       </div>
 
-      <div
-        ref={buildTriggerRef}
-        className="flex overflow-hidden rounded-[var(--radius-tab)] bg-[var(--plan-accent)] text-[var(--bg-panel)]"
+      <button
+        type="button"
+        onClick={build}
+        className={`rounded-[var(--radius-tab)] bg-[var(--plan-accent)] px-[11px] font-sans text-[11px] font-medium text-[var(--bg-panel)] transition-opacity hover:opacity-90 ${
+          compact ? "h-[26px]" : "h-[30px]"
+        }`}
       >
-        <button
-          type="button"
-          onClick={() => build("agent")}
-          className={`px-[11px] font-sans text-[11px] font-medium transition-opacity hover:opacity-90 ${
-            compact ? "h-[26px]" : "h-[30px]"
-          }`}
-        >
-          Build
-        </button>
-        <button
-          type="button"
-          onClick={() => setBuildOpen((open) => !open)}
-          className={`border-l border-black/10 px-[7px] transition-opacity hover:opacity-90 ${
-            compact ? "h-[26px]" : "h-[30px]"
-          }`}
-          aria-label="Build mode options"
-        >
-          <ChevronDown className="size-[11px]" strokeWidth={2.2} />
-        </button>
-        {buildOpen &&
-          createPortal(
-            <div
-              ref={buildPopoverRef}
-              className={`${popoverMenuFixedPanelClass} w-[230px] transition-opacity ${
-                buildReady ? "opacity-100" : "opacity-0"
-              }`}
-              style={menuStyle(buildPosition)}
-              data-ide-input-sink
-              data-ide-composer-floating-popover
-              onPointerDown={(event) => event.stopPropagation()}
-              onWheel={(event) => event.stopPropagation()}
-            >
-              <div className={popoverMenuListClass}>
-                <p className={popoverMenuSectionLabelClass}>Build mode</p>
-                <button
-                  type="button"
-                  className={popoverMenuIconItemClass}
-                  onClick={() => build("agent")}
-                >
-                  <Infinity className="size-[14px] shrink-0 text-[var(--accent)]" strokeWidth={1.5} />
-                  <span className="min-w-0 flex-1 truncate">Build with {modeLabel("agent")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={popoverMenuIconItemClass}
-                  onClick={() => build("orchestration")}
-                >
-                  <Layers
-                    className="size-[14px] shrink-0 text-[var(--orchestration-accent)]"
-                    strokeWidth={1.5}
-                  />
-                  <span className="min-w-0 flex-1 truncate">Build with Orchestration</span>
-                </button>
-              </div>
-            </div>,
-            document.body
-          )}
-      </div>
+        Build
+      </button>
     </div>
   );
 }

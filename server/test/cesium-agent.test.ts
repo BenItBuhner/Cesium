@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import type { AgentConversationRecord } from "../src/lib/agents/types.js";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -52,21 +53,21 @@ const [
   },
   { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, createCesiumAssistantStreamSink, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
-  { normalizeCesiumMode, resolveCesiumModeToolPolicy },
+  { normalizeConversationRecord },
   { parsePlanEntriesFromMarkdown },
   { createGoalRecord, formatGoalForModel, validateGoalSnapshotSummary },
   { goalCompactionRecoveryContext, goalContinuationContext },
-  { buildCesiumModeReminder },
+  { buildCesiumTurnReminder },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/cesium-agent-settings.js"),
   import("../src/lib/agents/cesium-provider.js"),
   import("@cesium/core/mcp"),
-  import("../src/lib/agents/cesium-mode-policy.js"),
+  import("../src/lib/agents/conversation-normalize.js"),
   import("../src/lib/agents/cesium-plan-files.js"),
   import("../src/lib/agents/goal-store.js"),
   import("../src/lib/agents/goal-steering.js"),
-  import("../src/lib/agents/cesium-mode-reminders.js"),
+  import("../src/lib/agents/cesium-reminders.js"),
 ]);
 
 after(async () => {
@@ -98,18 +99,6 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("mcpCall", { serverId: "browser", toolName: "browser_click" }),
     "cesium:mcp:browser:browser_click"
-  );
-  assert.equal(
-    cesiumPermissionToolKey("switchMode", { target_mode: "plan" }),
-    "cesium:switch_mode:plan"
-  );
-  assert.equal(
-    cesiumPermissionToolKey("switchMode", { targetMode: "Ask" }),
-    "cesium:switch_mode:ask"
-  );
-  assert.equal(
-    cesiumPermissionToolKey("switchMode", { target_mode: "burn" }),
-    "cesium:switch_mode:goal"
   );
 });
 
@@ -786,7 +775,7 @@ test("Cesium resume is a no-op until the session reaches paused", async () => {
   assert.equal(conversation.status, "pause_requested");
 });
 
-test("Cesium session initialize preserves orchestration mode in configOptions", async () => {
+test("Cesium session initialize drops legacy mode and profile config options", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });
   let conversation = {
@@ -805,7 +794,22 @@ test("Cesium session initialize preserves orchestration mode in configOptions", 
       modelName: "GPT-5.1",
     },
     providerSessionId: null,
-    configOptions: [],
+    configOptions: [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode" as const,
+        currentValue: "orchestration",
+        options: [{ value: "orchestration", name: "Orchestration" }],
+      },
+      {
+        id: "profile",
+        name: "Profile",
+        category: "other" as const,
+        currentValue: "work",
+        options: [{ value: "work", name: "Work" }],
+      },
+    ],
     capabilities: backend.capabilities,
     pendingPermission: null,
     pendingQuestion: null,
@@ -826,53 +830,69 @@ test("Cesium session initialize preserves orchestration mode in configOptions", 
       return conversation;
     },
   });
-  assert.equal(conversation.config.mode, "orchestration");
-  assert.equal(
-    conversation.configOptions.find((option) => option.id === "mode")?.currentValue,
-    "orchestration"
+  assert.deepEqual(
+    conversation.configOptions.filter((option) => option.id === "mode" || option.id === "profile"),
+    []
   );
 });
 
-test("Cesium config options include dynamic prompt modes", async () => {
-  const options = await createCesiumAgentConfigOptions();
-  const modeOption = options.find((option) => option.id === "mode");
-  assert.equal(modeOption?.options.some((option) => option.value === "ask"), true);
-  assert.equal(modeOption?.options.some((option) => option.value === "plan"), true);
-  assert.deepEqual(modeOption?.options.map((option) => option.value), [
-    "agent",
-    "plan",
-    "orchestration",
-    "goal",
-    "workflow",
-    "ask",
-  ]);
-  assert.equal(modeOption?.options.some((option) => option.value === "goal"), true);
-  assert.equal(modeOption?.options.some((option) => option.value === "workflow"), true);
+test("stored Cesium records with legacy modes and profiles normalize to a mode-less chat", () => {
+  const normalized = normalizeConversationRecord({
+    schemaVersion: 1,
+    id: "legacy-goal",
+    workspaceId: "ws-1",
+    title: "Legacy goal chat",
+    createdAt: 1,
+    updatedAt: 1,
+    lastEventSeq: 3,
+    status: "idle",
+    config: {
+      backendId: "cesium-agent",
+      mode: "goal",
+      modelId: "openai/gpt-5.1",
+      modelName: "GPT-5.1",
+      profileId: "work",
+    } as AgentConversationRecord["config"],
+    providerSessionId: null,
+    configOptions: [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        currentValue: "goal",
+        options: [{ value: "goal", name: "Goal" }],
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "openai/gpt-5.1",
+        options: [{ value: "openai/gpt-5.1", name: "GPT-5.1" }],
+      },
+    ],
+    capabilities: AGENT_BACKENDS["cesium-agent"].capabilities,
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 3,
+    queuedPrompts: [],
+  });
+  assert.equal(normalized.config.mode, "agent");
+  assert.equal("profileId" in normalized.config, false);
+  assert.deepEqual(
+    normalized.configOptions.map((option) => option.id),
+    ["model"]
+  );
 });
 
-test("Cesium mode preferences remove disabled modes from the live catalog", async () => {
-  await patchCesiumAgentSettings({
-    modes: {
-      enabled: {
-        plan: false,
-        goal: false,
-      },
-    },
-  });
+test("Cesium config options carry no mode or profile option", async () => {
   const options = await createCesiumAgentConfigOptions();
-  const modeIds = options
-    .find((option) => option.id === "mode")
-    ?.options.map((option) => option.value);
-  assert.deepEqual(modeIds, ["agent", "orchestration", "workflow", "ask"]);
-
-  await patchCesiumAgentSettings({
-    modes: {
-      enabled: {
-        plan: true,
-        goal: true,
-      },
-    },
-  });
+  assert.deepEqual(
+    options.map((option) => option.id),
+    ["model", "api_kind"]
+  );
 });
 
 test("Goal records start in planning with durable milestones and todos", () => {
@@ -1060,7 +1080,7 @@ test("Goal model summary includes snapshot freshness and recent history", () => 
   assert.match(summary, /Summary view is underway/);
 });
 
-test("Cesium base prompt and tool schema are stable across dynamic modes", () => {
+test("Cesium base prompt and tool schema are stable", () => {
   const base = buildCesiumBaseSystemPrompt();
   assert.equal(base, buildCesiumBaseSystemPrompt());
   assert.doesNotMatch(base, /current mode is \*\*/i);
@@ -1076,40 +1096,30 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("workflow_status"), true);
   assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
-  assert.equal(names.includes("switch_mode"), true);
-  const switchMode = tools.find((tool) => tool.function.name === "switch_mode");
-  const switchModeParameters = switchMode?.function.parameters as {
-    properties?: { target_mode?: { enum?: string[] } };
-  };
-  assert.deepEqual(switchModeParameters.properties?.target_mode?.enum, [
-    "agent",
-    "plan",
-    "orchestration",
-    "goal",
-    "workflow",
-    "ask",
-  ]);
+  assert.equal(names.includes("switch_mode"), false);
   assert.equal(names.includes("goal_update_plan"), false);
   assert.equal(names.includes("goal_update_progress"), false);
   assert.equal(names.includes("goal_summarize_state"), false);
   assert.equal(names.includes("goal_resume"), false);
 });
 
-test("Cesium Goal reminder uses Goal tools instead of generic goal state phrases", () => {
-  const reminder = buildCesiumModeReminder({
-    mode: "goal",
+test("Goal, Workflow, Plan and Orchestration guidance lives in the stable system prompt", () => {
+  const base = buildCesiumBaseSystemPrompt();
+  assert.match(base, /goal_set/);
+  assert.match(base, /goal_summarize/);
+  assert.match(base, /goal_complete/);
+  assert.match(base, /not every turn/);
+  assert.match(base, /workflow_run/);
+  assert.match(base, /create_plan/);
+  assert.match(base, /orchestration_\*/);
+  assert.doesNotMatch(base, /switch_mode/);
+  const reminder = buildCesiumTurnReminder({
     workspaceRoot: TEST_DATA_DIR,
     dateLabel: "today",
     gitSummary: "clean",
     mcpSummaries: [],
   });
-  assert.match(reminder, /goal_set/);
-  assert.match(reminder, /goal_summarize/);
-  assert.match(reminder, /goal_complete/);
-  assert.match(reminder, /latest summary is missing or materially stale/);
-  assert.match(reminder, /Do not call it every turn/);
-  assert.match(reminder, /durable execution profile/);
-  assert.match(reminder, /Workflow tools remain available as a capability/);
+  assert.doesNotMatch(reminder, /\bmode\b/i);
   assert.doesNotMatch(reminder, /GOAL_STATE:/);
 });
 
@@ -1122,7 +1132,7 @@ test("Cesium system reminders are injected into targeted user turns", () => {
       createdAt: 1,
       kind: "user_message",
       messageId: "m1",
-      content: "What mode am I in?",
+      content: "Where am I working?",
     },
     {
       seq: 2,
@@ -1133,50 +1143,24 @@ test("Cesium system reminders are injected into targeted user turns", () => {
       reminderId: "mode-m1",
       targetMessageId: "m1",
       reason: "mode",
-      text: "<system-reminder>You are now in **ask mode**.</system-reminder>",
+      text: "<system-reminder>Workspace root: /tmp/ws</system-reminder>",
     },
   ] as never);
   const user = history.find((message) => message.role === "user");
   assert.match(user?.content as string, /system-reminder/);
-  assert.match(user?.content as string, /What mode am I in/);
+  assert.match(user?.content as string, /Where am I working/);
 });
 
-test("Cesium mode policy blocks write tools in Ask and permits plan tools in Plan", () => {
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "edit_file" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "read_file" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "wait" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "switch_mode" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "create_plan" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "wait" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "switch_mode" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "wait" }).allowed, true);
-  assert.equal(
-    resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "switch_mode" }).allowed,
-    true
-  );
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "wait" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "switch_mode" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "goal_set" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, true);
-  assert.equal(normalizeCesiumMode("burn"), "goal");
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
-});
-
-test("Cesium switch_mode tool is registered with switchMode permission metadata", async () => {
-  const { resolveCesiumTools, resolveCesiumToolPermissionCategory, toolTitle } = await import(
+test("Cesium tools carry their permission categories", async () => {
+  const { resolveCesiumTools, resolveCesiumToolPermissionCategory } = await import(
     "../src/lib/agents/cesium/cesium-tools.js"
   );
   const harness = resolveCesiumTools();
-  const switchMode = harness.tools.find((tool) => tool.name === "switch_mode");
-  assert.ok(switchMode);
-  assert.equal(switchMode?.requiresPermission, "switchMode");
+  assert.equal(harness.tools.some((tool) => tool.name === "switch_mode"), false);
   assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "edit_file"), "editFile");
   assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "terminal"), "terminal");
   assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "call_mcp_tool"), "mcpCall");
-  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "switch_mode"), "switchMode");
   assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "read_file"), undefined);
-  assert.equal(toolTitle("switch_mode", { target_mode: "plan" }), "Switch to plan mode");
 });
 
 test("Cesium wait tool parses seconds, caps duration, and formats titles", async () => {
@@ -1285,21 +1269,21 @@ test("Cesium plan markdown parser projects checklist statuses", () => {
   assert.equal(entries[0]?.content, "Discover files");
 });
 
-test("Cesium setConfigOption does not clobber orchestration mode when changing model", async () => {
+test("Cesium setConfigOption updates the conversation model", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });
   let conversation = {
     schemaVersion: 1 as const,
-    id: "cesium-orchestration-model",
+    id: "cesium-model-switch",
     workspaceId: "ws-1",
-    title: "Orchestration model",
+    title: "Model switch",
     createdAt: 1,
     updatedAt: 1,
     lastEventSeq: 0,
     status: "idle" as const,
     config: {
       backendId: "cesium-agent" as const,
-      mode: "orchestration",
+      mode: "agent",
       modelId: "openai/gpt-5.1",
       modelName: "GPT-5.1",
     },
@@ -1326,7 +1310,7 @@ test("Cesium setConfigOption does not clobber orchestration mode when changing m
     },
   });
   await handle.setConfigOption!("model", "anthropic/claude-sonnet-4-5-20250929");
-  assert.equal(conversation.config.mode, "orchestration");
+  assert.equal(conversation.config.modelId, "anthropic/claude-sonnet-4-5-20250929");
 });
 
 test("Cesium cancel always emits cancelled status", async () => {

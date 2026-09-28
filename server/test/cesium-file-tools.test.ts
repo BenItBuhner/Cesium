@@ -12,7 +12,6 @@ import {
   toolKind,
   toolTitle,
 } from "../src/lib/agents/cesium/cesium-tools.js";
-import { resolveCesiumModeToolPolicy } from "../src/lib/agents/cesium-mode-policy.js";
 
 test("write_file is registered with editFile permission and edit tool kind", () => {
   const harness = resolveCesiumTools();
@@ -22,13 +21,6 @@ test("write_file is registered with editFile permission and edit tool kind", () 
   assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "write_file"), "editFile");
   assert.equal(toolKind("write_file"), "edit");
   assert.equal(toolTitle("write_file", { path: "src/new-file.ts" }), "Write src/new-file.ts");
-});
-
-test("write_file is blocked in Ask and Plan modes but allowed in Agent mode", () => {
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "write_file" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "write_file" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "write_file" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "write_file" }).allowed, true);
 });
 
 test("parseCesiumWriteFileArgs validates path and content", () => {

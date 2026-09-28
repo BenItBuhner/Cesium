@@ -1,14 +1,13 @@
 /**
  * Per-turn <system-reminder> describing the browser machine environment.
  * This is the browser-specific analog of the engine's
- * `buildCesiumModeReminder()`: it tells the model exactly how shallow (and
+ * `buildCesiumTurnReminder()`: it tells the model exactly how shallow (and
  * how capable) this environment is so it can plan around it.
  */
 import type { WorkspaceRecord } from "@cesium/core";
 
 export type BrowserReminderInput = {
   workspace: WorkspaceRecord;
-  mode: string;
   modelName: string;
   gitSummary: string;
   shellCommands: string[];
@@ -23,7 +22,7 @@ export function buildBrowserMachineReminder(input: BrowserReminderInput): string
       : "none installed (JS/TS toolchain is built in)";
   return [
     "<system-reminder>",
-    `Current mode: ${input.mode}. Model: ${input.modelName}. Date: ${input.dateLabel}.`,
+    `Model: ${input.modelName}. Date: ${input.dateLabel}.`,
     `Workspace root: ${input.workspace.root} (name: ${input.workspace.name}).`,
     `Git: ${input.gitSummary}.`,
     "",

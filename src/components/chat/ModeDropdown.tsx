@@ -18,7 +18,7 @@ import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
 } from "@/lib/keyboard-shortcuts";
-import { DEFAULT_MODE_OPTIONS, ensureCurrentModeOption, getModeTone, isOrchestrationMode } from "@/lib/chat-modes";
+import { DEFAULT_MODE_OPTIONS, ensureCurrentModeOption, getModeTone } from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode } from "@/lib/types";
 
 interface ModeOption {
@@ -35,9 +35,6 @@ const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
-  goal: { text: "var(--goal-accent)", bg: "var(--goal-accent-bg)" },
-  workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
-  orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
 interface ModeDropdownProps {
@@ -135,7 +132,7 @@ export function ModeDropdown({
   const colors = modeColors[current?.tone ?? "agent"];
   const TriggerIcon = current.icon;
   const modeMenuInteractive = !disabled && !modeLocked;
-  const showModeLabel = showLabelExpanded || isOrchestrationMode(mode);
+  const showModeLabel = showLabelExpanded;
 
   useLayoutEffect(() => {
     const node = labelMeasureRef.current;

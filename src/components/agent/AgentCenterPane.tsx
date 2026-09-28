@@ -56,7 +56,7 @@ import {
 import { useComposerDefaults } from "@/hooks/useComposerDefaults";
 import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
-import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
+import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
@@ -415,7 +415,6 @@ export function AgentCenterPane() {
 
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
   const composerMode = composerState?.mode ?? draftMode;
-  const modeLocked = isOrchestrationModeLocked();
 
   const getRedoComposerSeed = useCallback(() => {
     if (!conversation || !selectedConversationId) {
@@ -612,7 +611,7 @@ export function AgentCenterPane() {
     }));
   }, [latestPlanFile, selectedConversationId, updateWorkspaceSession]);
   const buildFromPlan = useCallback(
-    async (plan: DockedPlanFile, request: PlanBuildRequest = { mode: "agent", modelChoice: "inherit" }) => {
+    async (plan: DockedPlanFile, request: PlanBuildRequest = { modelChoice: "inherit" }) => {
       if (!selectedConversationId) {
         return;
       }
@@ -622,7 +621,7 @@ export function AgentCenterPane() {
         planBuildCurrentModel
       );
       const configOverride = {
-        mode: request.mode as EditorMode,
+        mode: "agent" as EditorMode,
         ...(selectedModel
           ? {
               modelId: selectedModel.modelValue ?? selectedModel.id,
@@ -640,7 +639,7 @@ export function AgentCenterPane() {
         {
           planPath: plan.path,
           planTitle: plan.title,
-          targetMode: request.mode as EditorMode,
+          targetMode: "agent" as EditorMode,
           ...(selectedModel
             ? {
                 targetModelId: selectedModel.modelValue ?? selectedModel.id,
@@ -665,7 +664,6 @@ export function AgentCenterPane() {
   useEffect(() => {
     const handleBuild = (event: Event) => {
       const detail = (event as CustomEvent).detail as Partial<DockedPlanFile> & {
-        mode?: string;
         modelChoice?: PlanBuildModelChoice;
       };
       if (!detail?.path) return;
@@ -674,15 +672,7 @@ export function AgentCenterPane() {
           path: detail.path,
           title: detail.title ?? detail.path.split("/").pop() ?? detail.path,
         },
-        {
-          mode:
-            detail.mode === "orchestration"
-              ? "orchestration"
-              : detail.mode === "goal"
-                ? "goal"
-                : "agent",
-          modelChoice: detail.modelChoice ?? planBuildModelChoice,
-        }
+        { modelChoice: detail.modelChoice ?? planBuildModelChoice }
       );
     };
     window.addEventListener("opencursor:plan-build", handleBuild);
@@ -994,9 +984,6 @@ export function AgentCenterPane() {
       title: composerDraftTitle,
       mode: composerMode,
       onModeChange: (next: EditorMode) => {
-        if (isOrchestrationModeLocked()) {
-          return;
-        }
         if (selectedConversationId) {
           updateComposer((current) =>
             updateComposerDraftDefault(current, {
@@ -1041,7 +1028,6 @@ export function AgentCenterPane() {
       goalProgress,
       busy: composerState?.busy ?? false,
       configLocked: false,
-      modeLocked,
     };
   }, [
     backends,
@@ -1061,7 +1047,6 @@ export function AgentCenterPane() {
     handleComposerBackendChange,
     handleComposerModelChange,
     handleSubmit,
-    modeLocked,
     selectedConversationId,
     setPendingConfigForConversation,
     setConversationConfigOption,
@@ -1473,9 +1458,6 @@ export function AgentCenterPane() {
                     key={composerDraftId}
                     mode={composerMode}
                     onModeChange={(next) => {
-                      if (isOrchestrationModeLocked()) {
-                        return;
-                      }
                       if (selectedConversationId) {
                         updateComposer((current) =>
                           updateComposerDraftDefault(current, {
@@ -1530,7 +1512,6 @@ export function AgentCenterPane() {
                     agentShellDockHeightExpand
                     busy={composerState?.busy ?? false}
                     configLocked={false}
-                    modeLocked={modeLocked}
                     onSubmit={handleSubmit}
                     onRequestSideChat={openSideChat}
                     onCancel={() =>

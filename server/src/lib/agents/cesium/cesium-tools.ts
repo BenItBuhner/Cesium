@@ -10,13 +10,19 @@ import {
   type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./features/index.js";
-import { normalizeCesiumMode } from "../cesium-mode-policy.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { GLOB_DEFAULT_RESULTS, GLOB_MAX_RESULTS } from "./cesium-glob.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
 
 export type { CesiumToolDefinition, ResolvedCesiumHarness };
+
+/** Canonicalize pre-Goal tool names from persisted transcripts and older clients. */
+export function normalizeCesiumToolName(name: string): string {
+  return name.startsWith("burn_goal_")
+    ? `goal_${name.slice("burn_goal_".length)}`
+    : name;
+}
 
 export type ParsedWaitToolArgs = {
   seconds: number;
@@ -182,30 +188,6 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "switch_mode",
-    description:
-      "Switch this conversation into another Cesium operating profile (agent, plan, ask, orchestration, goal, or workflow). " +
-      "Requires user approval by default; the user can Always allow a specific target mode. " +
-      "Use when the task needs a different operating policy; do not switch merely to access Workflow tools already available in Agent or Goal mode.",
-    requiresPermission: "switchMode",
-    parameters: {
-      type: "object",
-      properties: {
-        target_mode: {
-          type: "string",
-          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
-          description: "Mode to switch into. Must be enabled in Cesium Agent settings.",
-        },
-        reason: {
-          type: "string",
-          description: "Short explanation shown to the user in the permission prompt.",
-        },
-      },
-      required: ["target_mode"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "wait",
     description:
       "Pause this agent for a fixed number of seconds before continuing. Use for timed delays (seconds, minutes, or hours) when you do not need to poll terminals, spawn subagents, or wait on orchestration board conditions. Prefer this over shell sleep. Cancel stops the wait early.",
@@ -301,7 +283,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "goal_set",
     description:
-      "Set or refresh canonical state for the active Goal profile. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution. Goal controls require Goal mode because that mode activates durable continuation.",
+      "Set or refresh canonical state for this conversation's Goal, creating it when none exists. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
     parameters: {
       type: "object",
       properties: {
@@ -370,7 +352,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_run",
     description:
-      "Compile and execute a JavaScript orchestration workflow from Agent, Goal, or Workflow mode. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal). After that declaration, write top-level workflow statements and `return` the final value directly; NEVER export a default function or import modules. The body may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+      "Compile and execute a JavaScript orchestration workflow. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal). After that declaration, write top-level workflow statements and `return` the final value directly; NEVER export a default function or import modules. The body may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
     parameters: {
       type: "object",
       properties: {
@@ -733,7 +715,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "orchestration_board_snapshot",
-    description: "Read the current Orchestration Mode board snapshot.",
+    description: "Read the current orchestration board snapshot.",
     parameters: {
       type: "object",
       properties: {
@@ -1162,14 +1144,8 @@ export function cesiumPermissionToolKey(
       return `cesium:terminal:${asString(args.command) ?? ""}`;
     case "mcpCall":
       return `cesium:mcp:${asString(args.serverId) ?? ""}:${asString(args.toolName) ?? ""}`;
-    case "switchMode": {
-      const rawTarget =
-        asString(args.target_mode)?.trim().toLowerCase() ||
-        asString(args.targetMode)?.trim().toLowerCase() ||
-        "";
-      const target = rawTarget ? normalizeCesiumMode(rawTarget) : "";
-      return `cesium:switch_mode:${target}`;
-    }
+    default:
+      return `cesium:${permission}`;
   }
 }
 export function toolTitle(
@@ -1192,12 +1168,6 @@ export function toolTitle(
       return `Write ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
-    case "switch_mode": {
-      const rawTarget =
-        asString(args.target_mode)?.trim() || asString(args.targetMode)?.trim() || "";
-      const target = rawTarget ? normalizeCesiumMode(rawTarget) : "mode";
-      return `Switch to ${target} mode`;
-    }
     case "wait": {
       const seconds = typeof args.seconds === "number" ? args.seconds : Number(args.seconds);
       const reason = asString(args.reason);

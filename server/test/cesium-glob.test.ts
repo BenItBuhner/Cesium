@@ -23,14 +23,12 @@ const [
   { createCesiumAgentProvider },
   { globToRegExp, globWorkspaceEntries },
   { resolveCesiumTools, toolKind, toolTitle, resolveCesiumToolPermissionCategory },
-  { resolveCesiumModeToolPolicy, summarizeCesiumModeToolPolicy },
   { SUBAGENT_SHARED_HOST_TOOL_NAMES },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/cesium-provider.js"),
   import("../src/lib/agents/cesium/cesium-glob.js"),
   import("../src/lib/agents/cesium/cesium-tools.js"),
-  import("../src/lib/agents/cesium-mode-policy.js"),
   import("../src/lib/agents/cesium/subagent-toolset.js"),
 ]);
 
@@ -207,7 +205,7 @@ test("glob tool returns sorted workspace-relative paths and rejects paths outsid
   }
 });
 
-test("glob is advertised as a read-only workspace tool in every mode and profile", () => {
+test("glob is advertised as a read-only workspace tool", () => {
   const advertised = resolveCesiumTools().tools.find((tool) => tool.name === "glob");
   assert.ok(advertised, "glob must be in the base tool set");
   assert.equal(advertised!.requiresPermission, undefined, "listing files needs no permission");
@@ -216,19 +214,6 @@ test("glob is advertised as a read-only workspace tool in every mode and profile
   assert.equal(toolTitle("glob", { pattern: "*", path: "src" }), "Glob * in src");
   assert.equal(toolTitle("glob", { pattern: "**/*.ts" }), "Glob **/*.ts");
 
-  for (const mode of ["ask", "plan", "agent", "goal", "workflow"]) {
-    assert.equal(
-      resolveCesiumModeToolPolicy({ mode, toolName: "glob" }).allowed,
-      true,
-      `glob should be allowed in ${mode} mode (it is read-only)`
-    );
-    assert.ok(
-      summarizeCesiumModeToolPolicy(mode).allowed.includes("glob"),
-      `${mode} mode reminder should list glob as allowed`
-    );
-  }
-  // Orchestration mode blocks direct workspace tools, glob included.
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "glob" }).allowed, false);
 
   assert.ok(SUBAGENT_SHARED_HOST_TOOL_NAMES.includes("glob"), "subagents share glob with the parent");
 });

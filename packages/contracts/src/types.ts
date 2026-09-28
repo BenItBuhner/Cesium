@@ -430,14 +430,6 @@ export type CesiumAgentSettingsPublic = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
-  modes: {
-    enabled: Record<string, boolean>;
-  };
-  modeCatalog: Array<{
-    id: string;
-    label: string;
-    description: string;
-  }>;
   harness: {
     features: Record<
       string,
@@ -474,7 +466,7 @@ export type CesiumAgentSettingsPublic = {
       description: string;
     }>;
   }>;
-  toolPermissions: Record<"editFile" | "terminal" | "mcpCall" | "switchMode", "ask" | "allow" | "deny">;
+  toolPermissions: Record<"editFile" | "terminal" | "mcpCall", "ask" | "allow" | "deny">;
   /**
    * Per-model access filter and user notes (≤ 250 chars) surfaced to the
    * primary agent and subagents. Models without an entry stay enabled.

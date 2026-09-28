@@ -19,11 +19,6 @@ export type CesiumToolDefinition = {
   kind?: string;
   /** Optional static or argument-aware title used in tool-call events. */
   title?: string | ((args: Record<string, unknown>) => string);
-  /**
-   * Modes where this tool may execute. "all" follows the normal mode policy,
-   * while "read-only" additionally permits Ask mode.
-   */
-  allowedModes?: "all" | "read-only" | readonly string[];
 };
 
 /** Versioned harness feature ids that can be swapped independently. */
@@ -85,7 +80,6 @@ export type CesiumHarnessPluginContext = {
   conversationId: string;
   workspaceId: string;
   workspaceRoot: string;
-  mode: string;
   modelId: string;
   pluginId: string;
   pluginVersion: number;
