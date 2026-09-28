@@ -281,6 +281,8 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
         | "linked_conversation"
         | "other";
       /** `inline` reminders become their own user-role history message at their seq position. */
+      /** Tool-produced images the live turn attached to this inline reminder's user message. */
+      images?: Array<{ mimeType: string; data: string }>;
       placement?: "inline";
       text: string;
       raw?: unknown;
