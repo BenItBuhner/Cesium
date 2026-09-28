@@ -228,6 +228,35 @@ describe("browser machine harness history", () => {
     assert.equal(final.role, "assistant");
     assert.match(String(final.content), /Done: a\.txt/);
   });
+
+  test("tool calls from separate model responses stay separate assistant messages", () => {
+    let seq = 0;
+    const event = (partial: Record<string, unknown>): AgentStoredEvent =>
+      ({ seq: ++seq, eventId: `e${seq}`, conversationId: "c1", createdAt: seq, ...partial }) as AgentStoredEvent;
+    const call = (id: string, responseId: string, result: string): AgentStoredEvent[] => [
+      event({
+        kind: "tool_call",
+        toolCallId: `t-${id}`,
+        title: id,
+        toolKind: "read",
+        status: "in_progress",
+        raw: { callId: id, name: "read_file", argsJson: "{}", responseId },
+      }),
+      event({ kind: "tool_call_update", toolCallId: `t-${id}`, status: "completed", raw: { callId: id, result } }),
+    ];
+    const firstResponse = [
+      event({ kind: "user_message", messageId: "m1", content: "read two files" }),
+      ...call("call_a", "resp-1", "A"),
+    ];
+    const before = buildHistoryFromEvents({ events: firstResponse, systemPrompt: "S", supportsImages: false });
+    const after = buildHistoryFromEvents({
+      events: [...firstResponse, ...call("call_b", "resp-2", "B")],
+      systemPrompt: "S",
+      supportsImages: false,
+    });
+    assert.deepEqual(after.slice(0, before.length), before, "the second response only appends");
+    assert.equal(after.filter((message) => message.role === "assistant").length, 2);
+  });
 });
 
 describe("browser machine reminder", () => {

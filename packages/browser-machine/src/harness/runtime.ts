@@ -415,6 +415,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
             id: toolCall.id,
             name: toolCall.name,
             argsJson: toolCall.argsJson,
+            responseId: assistantMessageId,
           });
           if (!executed) {
             // Permission rejected turn continues so the model can adapt; a
@@ -496,7 +497,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
     workspace: WorkspaceRecord,
     conversationId: string,
     turn: TurnState,
-    toolCall: { id: string; name: string; argsJson: string }
+    toolCall: { id: string; name: string; argsJson: string; responseId: string }
   ): Promise<boolean> {
     const append = (events: Parameters<ConversationStore["appendEvents"]>[2]) =>
       this.deps.conversations.appendEvents(workspace.id, conversationId, events);
@@ -518,7 +519,12 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         toolKind: this.toolKind(toolCall.name),
         status: "in_progress",
         detail: this.toolDetail(toolCall.name, args),
-        raw: { callId: toolCall.id, name: toolCall.name, argsJson: toolCall.argsJson },
+        raw: {
+          callId: toolCall.id,
+          name: toolCall.name,
+          argsJson: toolCall.argsJson,
+          responseId: toolCall.responseId,
+        },
       },
     ]);
 
