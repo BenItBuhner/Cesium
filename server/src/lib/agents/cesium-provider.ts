@@ -1047,9 +1047,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         promptContext.modelName ?? this.callbacks.conversation.config.modelName,
         modelId
       );
-      const compactedThisTurn = orchestratorProjectId
-        ? false
-        : await this.compactHistoryIfNeeded(await this.readHistoryEvents());
+      const compactedThisTurn = await this.compactHistoryIfNeeded(await this.readHistoryEvents());
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const previousEvents = previousSnapshot?.events ?? [];
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
