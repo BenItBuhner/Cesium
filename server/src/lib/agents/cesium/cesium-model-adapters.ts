@@ -206,11 +206,24 @@ function toDataUrl(mimeType: string, data: string): string {
   return `data:${mimeType || "image/png"};base64,${trimmed}`;
 }
 
+/**
+ * OpenAI routes requests with the same key to the same prompt cache. Only the
+ * first-party API gets it: strict OpenAI-compatible hosts reject unknown fields.
+ */
+function openAiPromptCacheKey(
+  providerId: string,
+  promptCacheKey: string | undefined
+): Record<string, string> {
+  return promptCacheKey && providerId === "openai" ? { prompt_cache_key: promptCacheKey } : {};
+}
+
 function openAiChatRequestBody(
   input: {
     model: string;
+    providerId?: string;
     messages: CesiumHistoryMessage[];
     tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+    promptCacheKey?: string;
   },
   stream: boolean
 ): Record<string, unknown> {
@@ -221,6 +234,7 @@ function openAiChatRequestBody(
     messages: openAiMessages(input.messages),
     ...(tools ? { tools, tool_choice: "auto" as const } : {}),
     max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    ...openAiPromptCacheKey(input.providerId ?? "", input.promptCacheKey),
     ...(stream ? { stream: true } : {}),
   };
 }
@@ -259,6 +273,7 @@ async function fetchOpenAiChat(input: {
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
+  promptCacheKey?: string;
   stream: boolean;
 }): Promise<Response> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
@@ -402,6 +417,7 @@ async function* streamOpenAiChat(input: {
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
+  promptCacheKey?: string;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const response = await fetchOpenAiChat({ ...input, stream: true });
   if (!response.ok) {
@@ -518,6 +534,7 @@ async function* streamOpenAiResponses(input: {
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
+  promptCacheKey?: string;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const isCodex = input.oauth?.providerId === "openai-codex";
   const tools = optionalProviderTools(input.tools, responseTools);
@@ -536,7 +553,7 @@ async function* streamOpenAiResponses(input: {
         "openai-beta": "responses=experimental",
         accept: "text/event-stream",
         "content-type": "application/json",
-        session_id: randomUUID(),
+        session_id: input.promptCacheKey ?? randomUUID(),
       },
       input.oauth?.headers
     );
@@ -548,6 +565,7 @@ async function* streamOpenAiResponses(input: {
       store: false,
       stream: true,
       include: ["reasoning.encrypted_content"],
+      ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {}),
     };
   } else {
     const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
@@ -564,6 +582,7 @@ async function* streamOpenAiResponses(input: {
       input: openAiResponsesInput(input.messages, { includeSystem: true }),
       ...(tools ? { tools } : {}),
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      ...openAiPromptCacheKey(input.providerId, input.promptCacheKey),
       stream: true,
     };
   }
@@ -804,6 +823,46 @@ function anthropicMessagesUrl(baseUrl: string | undefined): string {
   return `${normalized}/v1/messages`;
 }
 
+/**
+ * Anthropic caches only up to explicit breakpoints: mark the system prompt,
+ * the last tool schema, and the newest message so each turn reuses the
+ * previous turn's prefix instead of re-billing it in full.
+ */
+function withAnthropicCacheBreakpoints(body: {
+  system: string | Array<Record<string, unknown>>;
+  messages: Array<{ role: string; content: unknown }>;
+  tools?: Array<Record<string, unknown>>;
+}): typeof body {
+  const ephemeral = { type: "ephemeral" };
+  const systemBlocks =
+    typeof body.system === "string" ? [{ type: "text", text: body.system }] : [...body.system];
+  const lastSystem = systemBlocks.length - 1;
+  if (lastSystem >= 0) {
+    systemBlocks[lastSystem] = { ...systemBlocks[lastSystem], cache_control: ephemeral };
+  }
+  const tools = body.tools?.map((tool, index, all) =>
+    index === all.length - 1 ? { ...tool, cache_control: ephemeral } : tool
+  );
+  const messages = body.messages.map((message, index, all) => {
+    if (index !== all.length - 1) {
+      return message;
+    }
+    const blocks: Array<Record<string, unknown>> =
+      typeof message.content === "string"
+        ? [{ type: "text", text: message.content }]
+        : Array.isArray(message.content)
+          ? [...(message.content as Array<Record<string, unknown>>)]
+          : [];
+    const lastBlock = blocks.length - 1;
+    if (lastBlock < 0) {
+      return message;
+    }
+    blocks[lastBlock] = { ...blocks[lastBlock], cache_control: ephemeral };
+    return { ...message, content: blocks };
+  });
+  return { system: systemBlocks, messages, ...(tools ? { tools } : {}) };
+}
+
 async function runAnthropic(input: {
   apiKey: string;
   baseUrl?: string;
@@ -811,6 +870,7 @@ async function runAnthropic(input: {
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
+  promptCacheKey?: string;
 }): Promise<CesiumAdapterResult> {
   const tools = optionalProviderTools(input.tools, anthropicTools);
   const isAnthropicOAuth = input.oauth?.providerId === "anthropic";
@@ -855,15 +915,20 @@ async function runAnthropic(input: {
         { type: "text", text: systemPrompt },
       ]
     : systemPrompt;
+  const promptParts = {
+    system,
+    messages: anthropicMessages(input.messages),
+    ...(tools ? { tools: tools as Array<Record<string, unknown>> } : {}),
+  };
   const payload = await fetchJson(anthropicMessagesUrl(input.baseUrl), {
     method: "POST",
     headers,
     body: JSON.stringify({
       model: input.model,
-      system,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      messages: anthropicMessages(input.messages),
-      ...(tools ? { tools } : {}),
+      ...(input.promptCacheKey && !isCopilot
+        ? withAnthropicCacheBreakpoints(promptParts)
+        : promptParts),
     }),
   });
   const root = asRecord(payload);
@@ -982,6 +1047,8 @@ export type RunAdapterInput = {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   /** Present when the request is backed by an OAuth subscription account. */
   oauth?: CesiumOAuthAdapterAuth;
+  /** Stable per-conversation key so providers route every turn to the same prompt cache. */
+  promptCacheKey?: string;
 };
 
 async function* streamStaticResult(
@@ -1015,6 +1082,7 @@ export async function* streamAdapter(
         messages: input.messages,
         tools: input.tools,
         oauth: input.oauth,
+        promptCacheKey: input.promptCacheKey,
       });
       return;
     case "openai-realtime":
@@ -1034,6 +1102,7 @@ export async function* streamAdapter(
           messages: input.messages,
           tools: input.tools,
           oauth: input.oauth,
+          promptCacheKey: input.promptCacheKey,
         })
       );
       return;
@@ -1059,6 +1128,7 @@ export async function* streamAdapter(
         messages: input.messages,
         tools: input.tools,
         oauth: input.oauth,
+        promptCacheKey: input.promptCacheKey,
       });
       return;
   }

@@ -70,7 +70,13 @@ import {
 } from "../projects/orchestrator-tool-definitions.js";
 import { isProjectsEnabled } from "../projects/feature-flag.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
-import { buildCesiumTurnReminder } from "./cesium-reminders.js";
+import {
+  buildCesiumContextSections,
+  buildCesiumTurnFacts,
+  changedCesiumReminderSections,
+  hashCesiumReminderSections,
+  renderCesiumTurnReminder,
+} from "./cesium-reminders.js";
 import {
   forgetCesiumMemoryEntry,
   formatCesiumMemoryEntry,
@@ -255,18 +261,21 @@ import {
   type CesiumSubagentToolset,
 } from "./cesium/subagent-toolset.js";
 import {
+  CESIUM_TURN_CONTEXT_REMINDER_REASON,
   cesiumEnvironmentChangeNotice,
   cesiumRelocationChangeNotice,
   estimateHistoryTokens,
   formatCesiumDateLabel,
   isEmptyCesiumAdapterResult,
   latestCesiumEnvironmentReminderSnapshot,
+  latestContextReminderBaseline,
   latestMcpReminderSnapshot,
   mcpReminderChangeNotice,
   mcpReminderSnapshot,
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
   previousUserMessageCreatedAt,
+  selectHistoryWindow,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
@@ -1038,6 +1047,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         promptContext.modelName ?? this.callbacks.conversation.config.modelName,
         modelId
       );
+      const compactedThisTurn = await this.compactHistoryIfNeeded(await this.readHistoryEvents());
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const previousEvents = previousSnapshot?.events ?? [];
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
@@ -1084,59 +1094,67 @@ class CesiumSessionHandle implements AgentSessionHandle {
           .updateConversation((current) => ({ ...current, pendingRelocation: null }))
           .catch(() => undefined);
       }
-      const featureReminder = harnessFeatureReminder(this.harness);
       const memorySnapshot = orchestratorProjectId ? null : await this.resolveMemorySnapshot();
-      const turnReminderText = [
-        buildCesiumTurnReminder({
-          modelName: promptContext.modelName,
-          memorySnapshot,
-          workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
-          dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
-          gitSummary: promptContext.gitSummary ?? "not a git repository",
-          agentsMarkdown: promptContext.agentsMarkdown,
-          skillsList: skillsMirror.skillsList,
-          mcpSummaries: summaries,
-          mcpChangeNotice,
-          environmentChangeNotice,
-          orchestrationBoard: board,
-          handoffPlanPath: input.planHandoff?.planPath,
-          goalSummary: goalState ? formatGoalForModel(goalState) : null,
-          workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
-          conversationTitle: this.callbacks.conversation.title,
-          conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
-          sideChat: sideChatTurn
-            ? {
-                parentConversationId: sideChatTurn.origin.parentConversationId,
-                parentTitle:
-                  sideChatTurn.parent?.title ?? sideChatTurn.origin.parentTitle ?? "Primary chat",
-              }
-            : null,
-        }),
-        featureReminder
-          ? `<harness-features>\n${featureReminder}\n</harness-features>`
-          : "",
-        this.modelRosterText
-          ? `<available-models>\n${this.modelRosterText}\n</available-models>`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+      const reminderInput = {
+        modelName: promptContext.modelName,
+        memorySnapshot,
+        workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
+        dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
+        gitSummary: promptContext.gitSummary ?? "not a git repository",
+        agentsMarkdown: promptContext.agentsMarkdown,
+        skillsList: skillsMirror.skillsList,
+        mcpSummaries: summaries,
+        mcpChangeNotice,
+        environmentChangeNotice,
+        orchestrationBoard: board,
+        handoffPlanPath: input.planHandoff?.planPath,
+        goalSummary: goalState
+          ? compactedThisTurn
+            ? goalCompactionRecoveryContext(goalState)
+            : formatGoalForModel(goalState)
+          : null,
+        workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
+        conversationTitle: this.callbacks.conversation.title,
+        conversationTitleFollow: this.callbacks.conversation.config.titleFollow,
+        sideChat: sideChatTurn
+          ? {
+              parentConversationId: sideChatTurn.origin.parentConversationId,
+              parentTitle:
+                sideChatTurn.parent?.title ?? sideChatTurn.origin.parentTitle ?? "Primary chat",
+            }
+          : null,
+        harnessFeatures: harnessFeatureReminder(this.harness),
+      };
+      const contextSections = buildCesiumContextSections(reminderInput);
+      const contextSectionHashes = hashCesiumReminderSections(contextSections);
+      const contextBaseline = orchestratorProjectId
+        ? null
+        : latestContextReminderBaseline(selectHistoryWindow(await this.readHistoryEvents()).events);
       const reminderText = orchestratorProjectId
         ? await this.projectOrchestratorReminderText(orchestratorProjectId, {
             dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
             modelName: promptContext.modelName ?? modelId,
           })
-        : turnReminderText;
+        : renderCesiumTurnReminder({
+            facts: buildCesiumTurnFacts(reminderInput),
+            sections: changedCesiumReminderSections(contextSections, contextBaseline),
+          });
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
           kind: "system_reminder",
-          reminderId: `mode-${input.userMessageId}`,
+          reminderId: `${orchestratorProjectId ? "mode" : "context"}-${input.userMessageId}`,
           targetMessageId: input.userMessageId,
-          reason: input.planHandoff ? "plan_handoff" : "mode",
+          reason: orchestratorProjectId ? "mode" : CESIUM_TURN_CONTEXT_REMINDER_REASON,
           text: reminderText,
           raw: {
+            ...(orchestratorProjectId
+              ? {}
+              : {
+                  contextReminder: contextBaseline ? "delta" : "full",
+                  contextSectionHashes,
+                }),
             planHandoff: input.planHandoff,
             modelId,
             modelName: promptContext.modelName,
@@ -1171,7 +1189,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           detail: `Cesium is connecting to ${modelProviderId}…`,
         },
       ]);
-      const history = await this.buildHistory(input.userMessageId);
+      const { messages: history, currentUserContent } = await this.buildHistory(
+        input.userMessageId
+      );
       const promptImages = (input.attachments ?? [])
         .filter(
           (attachment) =>
@@ -1182,7 +1202,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           data: attachment.data,
           name: attachment.name,
         }));
-      if (!history.some((message) => message.role === "user" && message.content === input.text)) {
+      // The stored user message already carries what the user typed; only a
+      // provider-side wrapper (handoff, fork, session recovery) adds a message.
+      if (currentUserContent?.trim() !== input.text.trim()) {
         history.push({
           role: "user",
           content: input.text,
@@ -1256,6 +1278,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               modelId: modelRequest.modelId,
               messages: modelRequest.messages,
               tools: modelRequest.tools,
+              promptCacheKey: this.callbacks.conversation.id,
             },
             iteration,
             {
@@ -2392,7 +2415,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
-  private async buildHistory(currentUserMessageId: string): Promise<CesiumHistoryMessage[]> {
+  /** Every stored event of this conversation (the snapshot head can be truncated). */
+  private async readHistoryEvents(): Promise<AgentStoredEvent[]> {
     const snapshot = await this.callbacks.readSnapshot();
     const snapshotEvents = snapshot?.events ?? [];
     const fullEvents = await readConversationEvents(
@@ -2405,10 +2429,38 @@ class CesiumSessionHandle implements AgentSessionHandle {
         this.usedToolCallIds.add(event.toolCallId);
       }
     }
-    const visibleUserTurns = events.filter(
+    return events;
+  }
+
+  /**
+   * The model's view of the log: system prompt, the newest compaction summary
+   * (if any), then every visible event after it. Nothing inside the window is
+   * dropped or reordered between turns, so each request extends the last.
+   */
+  private renderHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
+    const window = selectHistoryWindow(events);
+    const visible = window.events.filter(
+      (event) => event.kind !== "user_message" || !event.hidden
+    );
+    return [
+      { role: "system", content: this.activeSystemPrompt },
+      ...(window.summary
+        ? [{ role: "user" as const, content: `[Compressed earlier conversation]\n${window.summary.summary}` }]
+        : []),
+      ...normalizeEventsToHistory(visible).slice(1),
+    ];
+  }
+
+  /**
+   * Compacts once the window outgrows its turn or token budget: the newest
+   * turns stay verbatim and a summary replaces the rest. The window then stays
+   * fixed until it outgrows the budget again, instead of sliding every turn.
+   */
+  private async compactHistoryIfNeeded(events: AgentStoredEvent[]): Promise<boolean> {
+    const window = selectHistoryWindow(events);
+    const visibleUserTurns = window.events.filter(
       (event) => event.kind === "user_message" && !event.hidden
     ).length;
-    const currentMessages = this.normalizeEventsToHistory(events);
     const contextWindow = await resolveCesiumModelContextWindow(
       optionValue(
         this.configOptions,
@@ -2416,76 +2468,71 @@ class CesiumSessionHandle implements AgentSessionHandle {
         this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
       )
     ).catch(() => 100_000);
-    const estimatedTokensBefore = estimateHistoryTokens(currentMessages);
-    const shouldCompact =
-      visibleUserTurns > HISTORY_TURN_LIMIT ||
-      estimatedTokensBefore >= contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO;
-    if (shouldCompact) {
-      const sorted = [...events].sort((a, b) => a.seq - b.seq);
-      let retainedUsers = 0;
-      let splitIndex = 0;
-      for (let index = sorted.length - 1; index >= 0; index -= 1) {
-        const event = sorted[index]!;
-        if (event.kind === "user_message" && !event.hidden) {
-          retainedUsers += 1;
-          splitIndex = index;
-          if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
-            break;
-          }
+    const estimatedTokensBefore = estimateHistoryTokens(this.renderHistory(events));
+    if (
+      visibleUserTurns <= HISTORY_TURN_LIMIT &&
+      estimatedTokensBefore < contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO
+    ) {
+      return false;
+    }
+    let retainedUsers = 0;
+    let splitIndex = 0;
+    for (let index = window.events.length - 1; index >= 0; index -= 1) {
+      const event = window.events[index]!;
+      if (event.kind === "user_message" && !event.hidden) {
+        retainedUsers += 1;
+        splitIndex = index;
+        if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
+          break;
         }
       }
-      const compressed = sorted.slice(0, splitIndex);
-      const retained = sorted.slice(splitIndex);
-      const compressedFromSeq = compressed[0]?.seq ?? 0;
-      const compressedToSeq = compressed[compressed.length - 1]?.seq ?? 0;
-      const latestSummary = [...sorted].reverse().find(
-        (event): event is Extract<AgentStoredEvent, { kind: "compression_summary" }> =>
-          event.kind === "compression_summary"
-      );
-      const latestSummaryToSeq = latestSummary?.sourceRange?.toSeq ?? 0;
-      if (compressed.length > 0 && compressedToSeq > latestSummaryToSeq) {
-        await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
-        const retainedMessages = this.normalizeEventsToHistory(retained);
-        const estimatedTokensAfter = estimateHistoryTokens(retainedMessages);
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "compression_summary",
-            messageId: `cesium-compression-${randomUUID()}`,
-            summary: summarizeForCompression(compressed),
-            retainedTurnCount: retainedUsers,
-            compressedTurnCount: compressed.filter(
-              (event) => event.kind === "user_message" && !event.hidden
-            ).length,
-            sourceRange: { fromSeq: compressedFromSeq, toSeq: compressedToSeq },
-            estimatedTokensBefore,
-            estimatedTokensAfter,
-            generation: (latestSummary?.generation ?? 0) + 1,
-          },
-        ]);
-      }
-      const visibleRetained = retained.filter(
-        (event) => event.kind !== "user_message" || !event.hidden
-      );
-      const history = this.normalizeEventsToHistory(visibleRetained);
-      const goal = await this.readOpenGoal();
-      if (goal) {
-        history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
-      }
-      return history;
     }
-    return this.normalizeEventsToHistory(
-      events.filter((event) =>
-        event.kind !== "user_message" ||
-        (!event.hidden && (event.messageId !== currentUserMessageId || event.seq > 0))
-      )
+    if (splitIndex <= 0) {
+      return false;
+    }
+    const splitSeq = window.events[splitIndex]!.seq;
+    const sorted = [...events].sort((a, b) => a.seq - b.seq);
+    const compressed = sorted.filter(
+      (event) => event.seq < splitSeq && event.kind !== "compression_summary"
     );
+    const retained = sorted.filter(
+      (event) => event.seq >= splitSeq && event.kind !== "compression_summary"
+    );
+    await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "compression_summary",
+        messageId: `cesium-compression-${randomUUID()}`,
+        summary: summarizeForCompression(compressed),
+        retainedTurnCount: retainedUsers,
+        compressedTurnCount: compressed.filter(
+          (event) => event.kind === "user_message" && !event.hidden
+        ).length,
+        sourceRange: {
+          fromSeq: compressed[0]?.seq ?? 0,
+          toSeq: window.events[splitIndex - 1]!.seq,
+        },
+        estimatedTokensBefore,
+        estimatedTokensAfter: estimateHistoryTokens(this.renderHistory(retained)),
+        generation: (window.summary?.generation ?? 0) + 1,
+      },
+    ]);
+    return true;
   }
 
-  private normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
-    const base = normalizeEventsToHistory(events);
-    return [{ role: "system", content: this.activeSystemPrompt }, ...base.slice(1)];
+  private async buildHistory(currentUserMessageId: string): Promise<{
+    messages: CesiumHistoryMessage[];
+    /** The current turn's stored user text, when it is part of the rendered window. */
+    currentUserContent: string | null;
+  }> {
+    const events = await this.readHistoryEvents();
+    const current = selectHistoryWindow(events).events.find(
+      (event): event is Extract<AgentStoredEvent, { kind: "user_message" }> =>
+        event.kind === "user_message" && event.messageId === currentUserMessageId && !event.hidden
+    );
+    return { messages: this.renderHistory(events), currentUserContent: current?.content ?? null };
   }
 
   private async requirePermission(input: {

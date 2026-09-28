@@ -10,6 +10,7 @@ import {
   HISTORY_COMPACTION_THRESHOLD_RATIO,
   HISTORY_TURN_LIMIT,
 } from "./cesium/cesium-prompt.js";
+import { selectHistoryWindow } from "./cesium/cesium-history.js";
 import { buildOpenAiToolDefinitions, resolveCesiumTools } from "./cesium/cesium-tools.js";
 import {
   CONTEXT_CATEGORY_COLOR_KEY,
@@ -136,11 +137,10 @@ export type CesiumContextParts = {
 };
 
 /**
- * Mirror the provider's compaction rule so the estimate reflects what the
- * next turn actually sends: once the visible turn count or the estimated
- * size crosses the threshold, only the newest
- * `HISTORY_COMPACTION_TARGET_TURNS` turns (plus any compaction summaries
- * inside that window) survive.
+ * Mirror the provider's history window: the newest compaction summary opens
+ * it and only events after its source range follow. When that window crosses
+ * the turn or size threshold, the next turn compacts it down to the newest
+ * `HISTORY_COMPACTION_TARGET_TURNS` turns.
  */
 function retainEntriesForContext(input: {
   entries: AgentContextTranscriptEntry[];
@@ -148,23 +148,44 @@ function retainEntriesForContext(input: {
   systemTokens: number;
   limitTokens: number;
 }): { retained: AgentContextTranscriptEntry[]; compacted: boolean; droppedTurns: number } {
-  const visibleUserSeqs = input.events
+  const window = selectHistoryWindow(input.events);
+  const summaryEntry = window.summary
+    ? input.entries.find(
+        (entry) => entry.kind === "compaction_summary" && entry.seqStart === window.summary!.seq
+      )
+    : undefined;
+  const windowStart = window.summary?.sourceRange?.toSeq ?? -1;
+  const rangedSummarySeqs = new Set(
+    input.events
+      .filter((event) => event.kind === "compression_summary" && event.sourceRange)
+      .map((event) => event.seq)
+  );
+  const windowEntries = input.entries.filter(
+    (entry) =>
+      (entry.seqStart ?? 0) > windowStart &&
+      !(entry.kind === "compaction_summary" && rangedSummarySeqs.has(entry.seqStart ?? -1))
+  );
+  const head = summaryEntry ? [summaryEntry] : [];
+  const visibleUserSeqs = window.events
     .filter((event) => event.kind === "user_message" && !event.hidden)
-    .map((event) => event.seq)
-    .sort((a, b) => a - b);
+    .map((event) => event.seq);
   const estimatedTokensBefore =
-    input.systemTokens + input.entries.reduce((sum, entry) => sum + entry.tokens, 0);
+    input.systemTokens + [...head, ...windowEntries].reduce((sum, entry) => sum + entry.tokens, 0);
   const shouldCompact =
     visibleUserSeqs.length > HISTORY_TURN_LIMIT ||
     (input.limitTokens > 0 &&
       estimatedTokensBefore >= input.limitTokens * HISTORY_COMPACTION_THRESHOLD_RATIO);
-  if (!shouldCompact || visibleUserSeqs.length === 0) {
-    return { retained: input.entries, compacted: false, droppedTurns: 0 };
-  }
   const splitIndex = Math.max(0, visibleUserSeqs.length - HISTORY_COMPACTION_TARGET_TURNS);
+  if (!shouldCompact || splitIndex === 0) {
+    return {
+      retained: [...head, ...windowEntries],
+      compacted: Boolean(window.summary),
+      droppedTurns: 0,
+    };
+  }
   const splitSeq = visibleUserSeqs[splitIndex] ?? 0;
   return {
-    retained: input.entries.filter((entry) => (entry.seqStart ?? 0) >= splitSeq),
+    retained: [...head, ...windowEntries.filter((entry) => (entry.seqStart ?? 0) >= splitSeq)],
     compacted: true,
     droppedTurns: splitIndex,
   };

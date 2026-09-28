@@ -1,4 +1,5 @@
 import { asRecord, asString, parseJsonArgs } from "./cesium/cesium-coerce.js";
+import { selectTargetedReminders } from "./cesium/cesium-history.js";
 import {
   inferCesiumToolNameFromTitle,
   serializeToolCallArguments,
@@ -16,7 +17,6 @@ import type {
   AgentStoredEvent,
 } from "./types.js";
 
-type SystemReminderEvent = Extract<AgentStoredEvent, { kind: "system_reminder" }>;
 type AssistantChunkEvent = Extract<AgentStoredEvent, { kind: "assistant_message_chunk" }>;
 type ToolCallEvent = Extract<AgentStoredEvent, { kind: "tool_call" }>;
 type ToolCallUpdateEvent = Extract<AgentStoredEvent, { kind: "tool_call_update" }>;
@@ -71,43 +71,6 @@ function firstLine(text: string | undefined): string | undefined {
 
 function segmentId(kind: AgentContextSegmentKind, seq: number): string {
   return `${kind}:${seq}`;
-}
-
-/**
- * Targeted reminders that replay merged onto their user message. Mirrors the
- * selection in `normalizeEventsToHistory`: for the dynamic reasons (`mode`,
- * `plan_handoff`, `other`) only the newest reminder of each reason survives.
- */
-function targetedRemindersByMessageId(
-  events: AgentStoredEvent[]
-): Map<string, SystemReminderEvent[]> {
-  const latestDynamicSeq = new Map<string, number>();
-  for (const event of events) {
-    if (event.kind !== "system_reminder") {
-      continue;
-    }
-    if (event.reason !== "mode" && event.reason !== "plan_handoff" && event.reason !== "other") {
-      continue;
-    }
-    latestDynamicSeq.set(
-      event.reason,
-      Math.max(latestDynamicSeq.get(event.reason) ?? -1, event.seq)
-    );
-  }
-  const byMessageId = new Map<string, SystemReminderEvent[]>();
-  for (const event of events) {
-    if (event.kind !== "system_reminder" || !event.targetMessageId || !event.text.trim()) {
-      continue;
-    }
-    const latestSeq = latestDynamicSeq.get(event.reason);
-    if (latestSeq != null && event.seq !== latestSeq) {
-      continue;
-    }
-    const existing = byMessageId.get(event.targetMessageId) ?? [];
-    existing.push(event);
-    byMessageId.set(event.targetMessageId, existing);
-  }
-  return byMessageId;
 }
 
 function toolNameFromEvent(
@@ -232,7 +195,8 @@ export function buildConversationContextEntries(
   events: AgentStoredEvent[]
 ): AgentContextTranscriptEntry[] {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
-  const remindersByMessageId = targetedRemindersByMessageId(sorted);
+  const remindersByMessageId = selectTargetedReminders(sorted);
+  const openToolCalls = new Set<string>();
   const entries: AgentContextTranscriptEntry[] = [];
   const assistantById = new Map<string, PendingAssistant>();
   const toolStates = new Map<string, ToolEntryState>();
@@ -358,20 +322,11 @@ export function buildConversationContextEntries(
       case "assistant_message_end":
         finishAssistant(event.messageId, event);
         break;
+      // Reasoning never reaches the model again, so it takes no context.
       case "reasoning":
-        if (event.text.trim()) {
-          pushText({
-            kind: "reasoning",
-            categoryId: "conversation",
-            label: "Reasoning",
-            text: event.text.trim(),
-            tokensText: `[Reasoning]\n${event.text.trim()}`,
-            detail: firstLine(event.text),
-            events: [event],
-          });
-        }
         break;
       case "tool_call": {
+        openToolCalls.add(event.toolCallId);
         const name = toolNameFromEvent(event);
         const args = toolArgumentsFromEvent(event, name);
         const toolCall: AgentContextTranscriptToolCall = {
@@ -413,6 +368,9 @@ export function buildConversationContextEntries(
         break;
       }
       case "tool_call_update": {
+        if (event.status === "completed" || event.status === "failed") {
+          openToolCalls.delete(event.toolCallId);
+        }
         let state = toolStates.get(event.toolCallId);
         if (!state) {
           const name = toolNameFromEvent(event);
@@ -472,6 +430,10 @@ export function buildConversationContextEntries(
         break;
       }
       case "plan": {
+        // Written by a todo/plan tool mid-call; the tool result carries it.
+        if (openToolCalls.size > 0) {
+          break;
+        }
         const text = event.entries
           .map((entry) => `- [${entry.status}] ${entry.content}`)
           .join("\n");

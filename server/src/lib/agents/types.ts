@@ -277,6 +277,7 @@ export type AgentStoredEvent =
       targetMessageId?: string;
       reason:
         | "mode"
+        | "context"
         | "plan_handoff"
         | "compaction"
         | "goal"
