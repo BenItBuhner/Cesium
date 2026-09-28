@@ -43,49 +43,12 @@ export type CesiumAgentStoredSettings = {
   providers: StoredProvider[];
 };
 
-/** Modes the in-page harness genuinely implements. */
-export type BrowserModeId = "agent" | "plan" | "ask";
-
-export type BrowserModeDefinition = {
-  id: BrowserModeId;
-  label: string;
-  description: string;
-};
-
-/**
- * Advertised mode catalog. Server-only modes (orchestration, goal, workflow)
- * are intentionally absent: the browser machine never advertises settings it
- * cannot execute.
- */
-export const BROWSER_MODE_DEFINITIONS: readonly BrowserModeDefinition[] = [
-  {
-    id: "agent",
-    label: "Agent",
-    description: "Build, edit, run commands, and complete implementation work.",
-  },
-  {
-    id: "plan",
-    label: "Plan",
-    description: "Research and draft a reviewable implementation plan before building.",
-  },
-  {
-    id: "ask",
-    label: "Ask",
-    description: "Read-only Q&A mode for inspecting the workspace without side effects.",
-  },
-] as const;
-
-export const BROWSER_MODE_IDS: readonly BrowserModeId[] = BROWSER_MODE_DEFINITIONS.map(
-  (mode) => mode.id
-);
-
 export type BrowserToolPermissionDecision = "ask" | "allow" | "deny";
 
 export type BrowserToolPermissions = {
   editFile: BrowserToolPermissionDecision;
   terminal: BrowserToolPermissionDecision;
   mcpCall: BrowserToolPermissionDecision;
-  switchMode: BrowserToolPermissionDecision;
 };
 
 export type BrowserHarnessLimits = {
@@ -104,7 +67,6 @@ export type BrowserAgentPrefs = {
   compression: { enabled: boolean; modelId: string | null; thresholdRatio: number };
   titleGeneration: { modelId: string | null };
   orchestration: { continueWhenIncomplete: boolean };
-  modes: { enabled: Record<BrowserModeId, boolean> };
   toolPermissions: BrowserToolPermissions;
   modelAccess: CesiumModelAccessSettings;
   limits: BrowserHarnessLimits;
@@ -126,12 +88,10 @@ export function defaultBrowserAgentPrefs(): BrowserAgentPrefs {
     compression: { enabled: false, modelId: null, thresholdRatio: 0.8 },
     titleGeneration: { modelId: null },
     orchestration: { continueWhenIncomplete: false },
-    modes: { enabled: { agent: true, plan: true, ask: true } },
     toolPermissions: {
       editFile: "ask",
       terminal: "ask",
       mcpCall: "ask",
-      switchMode: "ask",
     },
     modelAccess: { entries: {} },
     limits: { ...DEFAULT_BROWSER_HARNESS_LIMITS },
@@ -165,19 +125,8 @@ export function normalizeBrowserAgentPrefs(raw: unknown): BrowserAgentPrefs {
   const compression = asRecord(record.compression);
   const titleGeneration = asRecord(record.titleGeneration);
   const orchestration = asRecord(record.orchestration);
-  const modesEnabled = asRecord(asRecord(record.modes)?.enabled);
   const toolPermissions = asRecord(record.toolPermissions);
   const limits = asRecord(record.limits);
-  const enabled: Record<BrowserModeId, boolean> = { ...defaults.modes.enabled };
-  for (const modeId of BROWSER_MODE_IDS) {
-    if (typeof modesEnabled?.[modeId] === "boolean") {
-      enabled[modeId] = modesEnabled[modeId] as boolean;
-    }
-  }
-  // At least one mode must survive normalization or the picker goes empty.
-  if (!BROWSER_MODE_IDS.some((modeId) => enabled[modeId])) {
-    enabled.agent = true;
-  }
   return {
     defaultProviderKeyId:
       typeof record.defaultProviderKeyId === "string" && record.defaultProviderKeyId.trim()
@@ -213,12 +162,10 @@ export function normalizeBrowserAgentPrefs(raw: unknown): BrowserAgentPrefs {
           ? orchestration.continueWhenIncomplete
           : defaults.orchestration.continueWhenIncomplete,
     },
-    modes: { enabled },
     toolPermissions: {
       editFile: asDecision(toolPermissions?.editFile, defaults.toolPermissions.editFile),
       terminal: asDecision(toolPermissions?.terminal, defaults.toolPermissions.terminal),
       mcpCall: asDecision(toolPermissions?.mcpCall, defaults.toolPermissions.mcpCall),
-      switchMode: asDecision(toolPermissions?.switchMode, defaults.toolPermissions.switchMode),
     },
     modelAccess: normalizeCesiumModelAccess(record.modelAccess),
     limits: {

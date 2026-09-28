@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { normalizeConversationRecord } from "./conversation-normalize.js";
 import {
   appendConversationEvents,
   appendConversationEventsAndPatchRecord,
@@ -46,12 +47,10 @@ import {
   computeCesiumAgentContextUsage,
   unsupportedContextUsageSnapshot,
 } from "./cesium-context-usage.js";
-import { normalizeCesiumMode } from "./cesium-mode-policy.js";
 import { propagateCloudExecutionLifecycle } from "./cloud-execution-lifecycle.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
 import { goalContinuationContext } from "./goal-steering.js";
 import {
-  ensureGoalForConversation,
   readGoalForConversation,
   updateGoalPlan,
 } from "./goal-store.js";
@@ -426,26 +425,16 @@ export class AgentRuntimeManager {
     userText: string;
     continuation?: boolean;
   }): Promise<string> {
-    const nativeGoal =
-      input.record.config.backendId === "cesium-agent" &&
-      normalizeCesiumMode(String(input.record.config.mode)) === "goal";
-    if (!nativeGoal) {
+    if (input.record.config.backendId !== "cesium-agent" || input.continuation !== true) {
       return input.userText;
     }
-    if (input.continuation !== true) {
-      return input.userText;
-    }
-    const existing = await readGoalForConversation({
+    const goal = await readGoalForConversation({
       workspace: input.workspace,
       conversationId: input.record.id,
     });
-    const goal =
-      existing ??
-      (await ensureGoalForConversation({
-        workspace: input.workspace,
-        conversationId: input.record.id,
-        objective: input.userText,
-      }));
+    if (!goal) {
+      return input.userText;
+    }
     return [
       goalContinuationContext(goal),
       "",
@@ -460,10 +449,7 @@ export class AgentRuntimeManager {
     conversation: AgentConversationRecord;
     events: AgentEventInput[];
   }): Promise<void> {
-    const nativeGoal =
-      input.conversation.config.backendId === "cesium-agent" &&
-      normalizeCesiumMode(String(input.conversation.config.mode)) === "goal";
-    if (!nativeGoal) {
+    if (input.conversation.config.backendId !== "cesium-agent") {
       return;
     }
     const planEvent = [...input.events]
@@ -612,7 +598,7 @@ export class AgentRuntimeManager {
     }
     const defaultModel = await this.resolveDefaultModelForBackend(backendId, backend);
     const now = nextConversationRankTimestamp();
-    const record: AgentConversationRecord = {
+    const record: AgentConversationRecord = normalizeConversationRecord({
       schemaVersion: 1,
       id: createConversationId(),
       workspaceId: workspace.id,
@@ -640,7 +626,7 @@ export class AgentRuntimeManager {
       ...(input.origin ? { origin: input.origin } : {}),
       lastReadSeq: 0,
       queuedPrompts: [],
-    };
+    });
     await saveConversationRecord(record);
     this.warmConversationRuntime(workspace, record);
     return record;

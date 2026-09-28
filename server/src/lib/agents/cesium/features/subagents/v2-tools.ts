@@ -140,7 +140,7 @@ export function createSubagentsV2Tools(limits: CesiumHarnessLimits): CesiumToolD
     {
       name: "read_subagent_transcript",
       description:
-        "Read the transcript of a collaborative subagent (by agent path, task_name, or id). In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents.",
+        "Read the transcript of a collaborative subagent (by agent path, task_name, or id). For kanban child agents use orchestration_read_agent_transcript.",
       parameters: {
         type: "object",
         properties: {

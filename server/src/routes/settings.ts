@@ -496,7 +496,6 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     compression?: Record<string, unknown>;
     titleGeneration?: { modelId?: string | null };
     orchestration?: Record<string, unknown>;
-    modes?: { enabled?: Record<string, boolean> };
     harness?: {
       features?: Record<
         string,
@@ -557,13 +556,6 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       : {}),
     ...(body.orchestration
       ? { orchestration: body.orchestration as Partial<CesiumAgentSettings["orchestration"]> }
-      : {}),
-    ...(body.modes
-      ? {
-          modes: body.modes as {
-            enabled?: Partial<CesiumAgentSettings["modes"]["enabled"]>;
-          },
-        }
       : {}),
     ...(body.harness
       ? {

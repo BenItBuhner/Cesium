@@ -43,7 +43,6 @@ import {
   useConversationEvents,
 } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
-import { isOrchestrationModeLocked } from "@/lib/chat-modes";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { resolvePersistedChatScroll } from "@/lib/workspace-session";
@@ -554,9 +553,6 @@ const showRecentChatsSection =
         key={composerDraftId}
         mode={composerState.mode}
         onModeChange={(next) => {
-          if (isOrchestrationModeLocked()) {
-            return;
-          }
           if (composerState.busy) {
             setPendingConfigForConversation(conversationId, { mode: next as EditorMode });
           } else {
@@ -615,7 +611,6 @@ const showRecentChatsSection =
         }}
         busy={composerState.busy}
         configLocked={false}
-        modeLocked={isOrchestrationModeLocked()}
         onRequestSideChat={openSideChat}
         draftAttachments={composerDraftAttachments}
         onDraftAttachmentsChange={(next) =>

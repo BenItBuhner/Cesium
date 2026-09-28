@@ -30,7 +30,7 @@ export const AGENT_CAPABILITY_KEYS = [
 export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilities> = {
   "cesium-agent": {
     supportsLoadSession: true,
-    supportsModeSelection: true,
+    supportsModeSelection: false,
     supportsModelSelection: true,
     supportsSlashCommands: false,
     supportsPermissions: true,

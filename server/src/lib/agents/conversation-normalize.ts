@@ -27,6 +27,30 @@ export function expireElapsedSettle<
   return record;
 }
 
+/**
+ * Cesium no longer has operating modes or agent profiles. Records saved while
+ * it did still carry a non-agent `config.mode`, a `profileId`, and "mode" /
+ * "profile" config options; strip them so every client sees a mode-less chat.
+ */
+function withoutLegacyCesiumModes(record: AgentConversationRecord): AgentConversationRecord {
+  const configOptions = record.configOptions ?? [];
+  const hasLegacyOptions = configOptions.some(
+    (option) => option.id === "mode" || option.id === "profile"
+  );
+  const legacyConfig = record.config as AgentConversationRecord["config"] & { profileId?: unknown };
+  if (record.config.mode === "agent" && !hasLegacyOptions && legacyConfig.profileId === undefined) {
+    return record;
+  }
+  const { profileId: _profileId, ...config } = legacyConfig;
+  return {
+    ...record,
+    config: { ...config, mode: "agent" },
+    configOptions: hasLegacyOptions
+      ? configOptions.filter((option) => option.id !== "mode" && option.id !== "profile")
+      : configOptions,
+  };
+}
+
 export function normalizeConversationRecord(
   record: AgentConversationRecord
 ): AgentConversationRecord {
@@ -94,6 +118,10 @@ export function normalizeConversationRecord(
         },
       };
     }
+  }
+
+  if (baseRecord.config.backendId === "cesium-agent") {
+    baseRecord = withoutLegacyCesiumModes(baseRecord);
   }
 
   const rawBackendId = baseRecord.config.backendId;

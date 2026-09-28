@@ -1828,7 +1828,7 @@ test("side chat: seeded child inherits config, is capped, cannot nest, and stays
   );
   assert.equal(sideChat.title, SIDE_CHAT_INITIAL_TITLE);
   assert.equal(sideChat.config.backendId, "cesium-agent");
-  assert.equal(sideChat.config.mode, "plan");
+  assert.equal(sideChat.config.mode, "agent", "Cesium conversations are mode-less");
   assert.equal(sideChat.config.modelId, "test-deep");
   assert.equal(sideChat.lastEventSeq, 1, "only the hidden seed reminder exists");
 

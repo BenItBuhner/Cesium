@@ -7,7 +7,7 @@
  *
  * Contract with the settings UI: everything this surface advertises is
  * persisted and enforced by the in-page harness. Server-only capabilities
- * (subagent plugins, orchestration/goal/workflow modes, cloud agents) are
+ * (subagent plugins, cloud agents) are
  * intentionally absent from the advertised catalogs instead of rendering as
  * dead controls.
  */
@@ -18,14 +18,12 @@ import { errorResponse, jsonResponse, type EngineRouter } from "../http";
 import { readDoc, writeDoc } from "../stores/kv-docs";
 import type {
   BrowserAgentPrefs,
-  BrowserModeId,
   BrowserToolPermissionDecision,
   ModelOrderUpdate,
   ModelToggleUpdate,
   SettingsStore,
   StoredProvider,
 } from "../stores/settings";
-import { BROWSER_MODE_DEFINITIONS, BROWSER_MODE_IDS } from "../stores/settings";
 
 const REMEMBERED_PERMISSIONS_KEY = "settings:remembered-permissions";
 
@@ -71,19 +69,6 @@ function customProviderPayload(provider: StoredProvider): Record<string, unknown
   };
 }
 
-/** All six canonical mode ids; server-only ones stay pinned off in-browser. */
-const ALL_MODE_IDS = ["agent", "plan", "orchestration", "goal", "workflow", "ask"] as const;
-
-function modesEnabledPayload(prefs: BrowserAgentPrefs): Record<string, boolean> {
-  const enabled: Record<string, boolean> = {};
-  for (const modeId of ALL_MODE_IDS) {
-    enabled[modeId] = BROWSER_MODE_IDS.includes(modeId as BrowserModeId)
-      ? prefs.modes.enabled[modeId as BrowserModeId]
-      : false;
-  }
-  return enabled;
-}
-
 async function buildCesiumAgentPayload(settings: SettingsStore): Promise<Record<string, unknown>> {
   const [stored, prefs, defaults] = await Promise.all([
     settings.getCesiumAgentSettings(),
@@ -108,10 +93,6 @@ async function buildCesiumAgentPayload(settings: SettingsStore): Promise<Record<
     compression: prefs.compression,
     titleGeneration: prefs.titleGeneration,
     orchestration: prefs.orchestration,
-    modes: { enabled: modesEnabledPayload(prefs) },
-    // Only modes the in-page harness implements are advertised; the UI never
-    // renders toggles for orchestration/goal/workflow here.
-    modeCatalog: BROWSER_MODE_DEFINITIONS,
     harness: {
       features: {
         subagents: { version: 1, enabled: false },
@@ -173,7 +154,6 @@ type CesiumAgentPatch = {
   compression?: Partial<BrowserAgentPrefs["compression"]>;
   titleGeneration?: Partial<BrowserAgentPrefs["titleGeneration"]>;
   orchestration?: Partial<BrowserAgentPrefs["orchestration"]>;
-  modes?: { enabled?: Partial<Record<string, boolean>> };
   harness?: {
     features?: Record<string, { version?: number; enabled?: boolean; config?: unknown }>;
     limits?: Partial<BrowserAgentPrefs["limits"]>;
@@ -214,7 +194,6 @@ export function mergeBrowserAgentPrefs(
     compression: { ...current.compression },
     titleGeneration: { ...current.titleGeneration },
     orchestration: { ...current.orchestration },
-    modes: { enabled: { ...current.modes.enabled } },
     toolPermissions: { ...current.toolPermissions },
     modelAccess: { entries: { ...current.modelAccess.entries } },
     limits: { ...current.limits },
@@ -248,19 +227,8 @@ export function mergeBrowserAgentPrefs(
   if (patch.orchestration && typeof patch.orchestration.continueWhenIncomplete === "boolean") {
     next.orchestration.continueWhenIncomplete = patch.orchestration.continueWhenIncomplete;
   }
-  if (patch.modes?.enabled) {
-    for (const modeId of BROWSER_MODE_IDS) {
-      const value = patch.modes.enabled[modeId];
-      if (typeof value === "boolean") {
-        next.modes.enabled[modeId] = value;
-      }
-    }
-    if (!BROWSER_MODE_IDS.some((modeId) => next.modes.enabled[modeId])) {
-      throw new Error("At least one Cesium mode must remain enabled.");
-    }
-  }
   if (patch.toolPermissions) {
-    for (const key of ["editFile", "terminal", "mcpCall", "switchMode"] as const) {
+    for (const key of ["editFile", "terminal", "mcpCall"] as const) {
       const value = patch.toolPermissions[key];
       if (isDecision(value)) {
         next.toolPermissions[key] = value;

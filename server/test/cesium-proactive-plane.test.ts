@@ -38,14 +38,12 @@ const [
   },
   { parseSkillFrontmatter },
   { resolveCesiumTools },
-  { resolveCesiumModeToolPolicy },
 ] = await Promise.all([
   import("../src/lib/agents/cesium-cron.js"),
   import("../src/lib/agents/cesium-triggers.js"),
   import("../src/lib/agents/cesium-skill-authoring.js"),
   import("../src/lib/agents/workspace-skills.js"),
   import("../src/lib/agents/cesium/cesium-tools.js"),
-  import("../src/lib/agents/cesium-mode-policy.js"),
 ]);
 
 after(async () => {
@@ -416,7 +414,7 @@ test("skill validation clamps and rejects empty fields", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tool / policy wiring
+// Tool wiring
 // ---------------------------------------------------------------------------
 
 test("skill and schedule are first-class harness tools", () => {
@@ -426,13 +424,3 @@ test("skill and schedule are first-class harness tools", () => {
   assert.ok(names.has("schedule"));
 });
 
-test("mode policy: skill/schedule blocked in ask mode, allowed in agent and orchestration", () => {
-  for (const toolName of ["skill", "schedule"]) {
-    assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName }).allowed, false);
-    assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName }).allowed, true);
-    assert.equal(
-      resolveCesiumModeToolPolicy({ mode: "orchestration", toolName }).allowed,
-      true
-    );
-  }
-});

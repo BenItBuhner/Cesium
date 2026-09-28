@@ -88,22 +88,12 @@ describe("browser machine settings surface", () => {
     );
   });
 
-  test("mode catalog only lists modes the in-page harness implements", async () => {
+  test("the settings payload advertises no Cesium modes", async () => {
     const { router } = await makeEngine();
     const response = await router.dispatch("/api/settings/cesium-agent");
-    const payload = await json<{
-      settings: {
-        modeCatalog: Array<{ id: string }>;
-        modes: { enabled: Record<string, boolean> };
-      };
-    }>(response);
-    assert.deepEqual(
-      payload.settings.modeCatalog.map((mode) => mode.id),
-      ["agent", "plan", "ask"]
-    );
-    assert.equal(payload.settings.modes.enabled.orchestration, false);
-    assert.equal(payload.settings.modes.enabled.goal, false);
-    assert.equal(payload.settings.modes.enabled.workflow, false);
+    const payload = await json<{ settings: Record<string, unknown> }>(response);
+    assert.equal("modeCatalog" in payload.settings, false);
+    assert.equal("modes" in payload.settings, false);
   });
 
   test("PATCH persists model access entries and enforces the 250-char cap", async () => {
@@ -147,12 +137,11 @@ describe("browser machine settings surface", () => {
     assert.equal(restored.settings.modelAccess.entries["model-b"], undefined);
   });
 
-  test("PATCH persists modes, tool permissions, and limits; last mode is protected", async () => {
+  test("PATCH persists tool permissions and limits", async () => {
     const { router } = await makeEngine();
     const patch = await router.dispatch("/api/settings/cesium-agent", {
       method: "PATCH",
       body: JSON.stringify({
-        modes: { enabled: { plan: false, ask: false } },
         toolPermissions: { terminal: "deny", editFile: "allow" },
         harness: { limits: { waitMaxSeconds: 45 } },
       }),
@@ -160,31 +149,18 @@ describe("browser machine settings surface", () => {
     assert.equal(patch.status, 200);
     const after = await json<{
       settings: {
-        modes: { enabled: Record<string, boolean> };
         toolPermissions: Record<string, string>;
         harness: { limits: { waitMaxSeconds: number } };
       };
     }>(await router.dispatch("/api/settings/cesium-agent"));
-    assert.equal(after.settings.modes.enabled.plan, false);
-    assert.equal(after.settings.modes.enabled.ask, false);
-    assert.equal(after.settings.modes.enabled.agent, true);
     assert.equal(after.settings.toolPermissions.terminal, "deny");
     assert.equal(after.settings.toolPermissions.editFile, "allow");
     assert.equal(after.settings.harness.limits.waitMaxSeconds, 45);
-
-    const lastMode = await router.dispatch("/api/settings/cesium-agent", {
-      method: "PATCH",
-      body: JSON.stringify({ modes: { enabled: { agent: false } } }),
-    });
-    assert.equal(lastMode.status, 400);
-    const error = await json<{ error: string }>(lastMode);
-    assert.match(error.error, /At least one Cesium mode/);
 
     // Restore for the following tests (shared in-memory kv cache).
     await router.dispatch("/api/settings/cesium-agent", {
       method: "PATCH",
       body: JSON.stringify({
-        modes: { enabled: { plan: true, ask: true } },
         toolPermissions: { terminal: "ask", editFile: "ask" },
       }),
     });
@@ -275,22 +251,21 @@ describe("browser machine settings surface", () => {
     assert.deepEqual(readBack.settings, { agents: { submitCtrlEnter: true } });
   });
 
-  test("conversation config options honor model access and enabled modes", async () => {
+  test("conversation config options honor model access and carry no mode option", async () => {
     const { router, workspaces } = await makeEngine();
-    // Disable model-b and plan mode before creating a conversation.
+    // Disable model-b before creating a conversation.
     await router.dispatch("/api/settings/cesium-agent", {
       method: "PATCH",
       body: JSON.stringify({
         modelAccess: { entries: { "model-b": { enabled: false } } },
-        modes: { enabled: { plan: false } },
       }),
     });
     const workspace = await workspaces.create({ name: "demo", root: "/workspaces/demo" });
     const response = await router.dispatch("/api/agents/conversations", {
       method: "POST",
       headers: { "x-opencursor-workspace-id": workspace.id },
-      // Orchestration is a server-only mode: the browser machine clamps it.
-      body: JSON.stringify({ mode: "orchestration" }),
+      // A stale composer mode is ignored: Cesium conversations are mode-less.
+      body: JSON.stringify({ mode: "plan" }),
     });
     assert.equal(response.status, 201);
     const payload = await json<{
@@ -300,10 +275,9 @@ describe("browser machine settings surface", () => {
       };
     }>(response);
     assert.equal(payload.conversation.config.mode, "agent");
-    const modeOption = payload.conversation.configOptions.find((option) => option.id === "mode");
-    assert.deepEqual(
-      modeOption?.options.map((option) => option.value),
-      ["agent", "ask"]
+    assert.equal(
+      payload.conversation.configOptions.some((option) => option.id === "mode"),
+      false
     );
     const modelOption = payload.conversation.configOptions.find(
       (option) => option.id === "model"
@@ -317,7 +291,6 @@ describe("browser machine settings surface", () => {
       method: "PATCH",
       body: JSON.stringify({
         modelAccess: { entries: { "model-b": null } },
-        modes: { enabled: { plan: true } },
       }),
     });
   });

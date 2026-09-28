@@ -13,7 +13,6 @@ export type CesiumToolName =
   | "grep"
   | "edit_file"
   | "terminal"
-  | "switch_mode"
   | "wait"
   | "todo"
   | "create_plan"
@@ -43,7 +42,7 @@ export type CesiumToolDefinition = {
   description: string;
   parameters: Record<string, unknown>;
   /** Permission category when the tool should prompt / honor auto-allow rules. */
-  requiresPermission?: "editFile" | "terminal" | "mcpCall" | "switchMode" | boolean;
+  requiresPermission?: "editFile" | "terminal" | "mcpCall" | boolean;
 };
 
 export type CesiumModelCatalogEntry = {
@@ -131,23 +130,6 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "switch_mode",
-    description:
-      "Switch this conversation into another Cesium operating profile. Requires user approval by default.",
-    requiresPermission: "switchMode",
-    parameters: {
-      type: "object",
-      properties: {
-        target_mode: {
-          type: "string",
-          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
-        },
-        reason: { type: "string" },
-      },
-      required: ["target_mode"],
-    },
-  },
-  {
     name: "wait",
     description:
       "Pause this agent for a fixed number of seconds before continuing. Prefer this over shell sleep for timed delays.",
@@ -222,7 +204,7 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   {
     name: "read_subagent_transcript",
     description:
-      "Read a paginated transcript for an ephemeral subagent started with the subagent tool. In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents.",
+      "Read a paginated transcript for an ephemeral subagent started with the subagent tool. For kanban child agents use orchestration_read_agent_transcript.",
     parameters: {
       type: "object",
       properties: {

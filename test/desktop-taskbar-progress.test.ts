@@ -17,18 +17,9 @@ const progress: GoalProgressStatus = {
   history: [],
 };
 
-test("resolveDesktopTaskbarGoalProgress only activates for goal modes with progress", () => {
+test("resolveDesktopTaskbarGoalProgress only activates when a goal reports progress", () => {
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "agent",
-      goalProgress: progress,
-      conversationStatus: "running",
-    }),
-    { active: false, mode: "none" }
-  );
-  assert.deepEqual(
-    resolveDesktopTaskbarGoalProgress({
-      mode: "goal",
       goalProgress: null,
       conversationStatus: "running",
     }),
@@ -36,7 +27,6 @@ test("resolveDesktopTaskbarGoalProgress only activates for goal modes with progr
   );
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "goal",
       goalProgress: progress,
       conversationStatus: "running",
     }),
@@ -47,7 +37,6 @@ test("resolveDesktopTaskbarGoalProgress only activates for goal modes with progr
 test("resolveDesktopTaskbarGoalProgress maps paused and failed states", () => {
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "goal",
       goalProgress: progress,
       conversationStatus: "paused",
     }),
@@ -55,7 +44,6 @@ test("resolveDesktopTaskbarGoalProgress maps paused and failed states", () => {
   );
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "goal",
       goalProgress: progress,
       conversationStatus: "failed",
     }),
@@ -66,7 +54,6 @@ test("resolveDesktopTaskbarGoalProgress maps paused and failed states", () => {
 test("resolveDesktopTaskbarGoalProgress clears completed goals", () => {
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "goal",
       goalProgress: { ...progress, completedAt: 10 },
       conversationStatus: "idle",
     }),

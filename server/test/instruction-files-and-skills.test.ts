@@ -16,7 +16,7 @@ import {
   refreshWorkspaceSkillsMirror,
   writeAgentSkillsWorkspaceMirror,
 } from "../src/lib/agents/skills-mirror.js";
-import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
+import { buildCesiumTurnReminder } from "../src/lib/agents/cesium-reminders.js";
 import { buildCesiumSystemPrompt } from "@cesium/core/mcp";
 
 async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
@@ -261,9 +261,8 @@ test("buildCesiumSystemPrompt uses Project Instruction Files naming and agent-sk
   assert.doesNotMatch(prompt, /## Your AGENTS\.md File/);
 });
 
-test("buildCesiumModeReminder uses Project Instruction Files section and mirror read guidance", () => {
-  const reminder = buildCesiumModeReminder({
-    mode: "agent",
+test("buildCesiumTurnReminder uses Project Instruction Files section and mirror read guidance", () => {
+  const reminder = buildCesiumTurnReminder({
     workspaceRoot: "/tmp/workspace",
     dateLabel: "Wednesday, July 15, 2026",
     gitSummary: "a git repository on branch `main`",

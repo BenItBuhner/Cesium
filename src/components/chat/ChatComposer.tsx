@@ -16,10 +16,7 @@ import {
   ArrowUp,
   Bug,
   FileText,
-  Flame,
-  GitBranch,
   Infinity as InfinityIcon,
-  Layers,
   LayoutTemplate,
   ListChecks,
   LoaderCircle,
@@ -154,7 +151,6 @@ import {
   DEFAULT_MODE_OPTIONS,
   ensureCurrentModeOption,
   getModeTone,
-  isGoalMode,
   resolveNextModeInCycle,
 } from "@/lib/chat-modes";
 import {
@@ -235,9 +231,6 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
   plan: "bg-[var(--plan-accent-dark)]",
   debug: "bg-[var(--debug-accent-dark)]",
   ask: "bg-[var(--ask-accent-dark)]",
-  goal: "bg-[var(--goal-accent-dark)]",
-  workflow: "bg-[var(--workflow-accent-dark)]",
-  orchestration: "bg-[var(--orchestration-accent-dark)]",
 };
 
 const COMPOSER_PLACEHOLDER_TEXT =
@@ -265,12 +258,6 @@ function renderModeChipIcon(tone: KnownEditorMode, color: string): ReactElement 
       return <Bug className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "ask":
       return <MessageSquare className={className} strokeWidth={strokeWidth} style={{ color }} />;
-    case "goal":
-      return <Flame className={className} strokeWidth={strokeWidth} style={{ color }} />;
-    case "workflow":
-      return <GitBranch className={className} strokeWidth={strokeWidth} style={{ color }} />;
-    case "orchestration":
-      return <Layers className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "agent":
       return <InfinityIcon className={className} strokeWidth={strokeWidth} style={{ color }} />;
     default: {
@@ -1129,15 +1116,14 @@ export function ChatComposer({
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (conversationId && isGoalMode(mode)) {
+    if (conversationId && goalProgress) {
       markDesktopTaskbarGoalProgressSourceOpen(surfaceId);
     }
-  }, [conversationId, mode, surfaceId]);
+  }, [conversationId, goalProgress, surfaceId]);
   useEffect(() => {
     publishDesktopTaskbarGoalProgress(
       surfaceId,
       resolveDesktopTaskbarGoalProgress({
-        mode,
         goalProgress,
         conversationStatus,
       })

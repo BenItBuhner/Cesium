@@ -233,7 +233,7 @@ export {
   probeMcpRemoteAuth,
   removePluginRegistrySource,
   startMcpOAuth,
-  startOrchestrationMode,
+  startOrchestration,
   startPiAgentOAuth,
   statFile,
   stopExtensionHostClient,

@@ -332,7 +332,7 @@ export interface EditorTab {
       touch?: boolean;
     };
   };
-  /** Server-owned Orchestration Mode board rendered as a kanban surface. */
+  /** Server-owned orchestration board rendered as a kanban surface. */
   orchestrationBoard?: {
     boardId: string;
   };
@@ -669,14 +669,7 @@ export interface ChatTab {
   isDraft?: boolean;
 }
 
-export type KnownEditorMode =
-  | "agent"
-  | "plan"
-  | "debug"
-  | "ask"
-  | "goal"
-  | "workflow"
-  | "orchestration";
+export type KnownEditorMode = "agent" | "plan" | "debug" | "ask";
 
 export type EditorMode = KnownEditorMode | (string & {});
 

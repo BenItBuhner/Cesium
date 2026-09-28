@@ -11,11 +11,6 @@ import {
   upsertWorkflowRun,
 } from "../src/lib/agents/workflow-store.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
-import {
-  resolveCesiumModeToolPolicy,
-  summarizeCesiumModeToolPolicy,
-} from "../src/lib/agents/cesium-mode-policy.js";
-import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
 
 const SAMPLE_SCRIPT = `export const meta = {
   name: "fanout-demo",
@@ -174,40 +169,6 @@ test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
   const c = hashWorkflowAgentCall("hello", { label: "y", phase: "Scan" });
   assert.equal(a, b);
   assert.notEqual(a, c);
-});
-
-test("Workflow capability is dynamic while Workflow mode strongly promotes it", () => {
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_run" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "edit_file" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "goal_set" }).allowed, false);
-  assert.equal(
-    resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "orchestration_create_issue" }).allowed,
-    false
-  );
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "workflow_run" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "workflow_run" }).allowed, false);
-  const summary = summarizeCesiumModeToolPolicy("workflow");
-  assert.equal(summary.allowed.includes("workflow_run"), true);
-  assert.match(summary.restricted.join(" "), /Prefer encoding fan-out/);
-});
-
-test("Workflow mode reminder documents script primitives", () => {
-  const reminder = buildCesiumModeReminder({
-    mode: "workflow",
-    workspaceRoot: "/workspace",
-    dateLabel: "Wed",
-    gitSummary: "main",
-    mcpSummaries: [],
-  });
-  assert.match(reminder, /Workflow mode/);
-  assert.match(reminder, /workflow_run/);
-  assert.match(reminder, /pipeline\(\)/);
-  assert.match(reminder, /export const meta/);
-  assert.match(reminder, /strong workflow-first profile/i);
-  assert.match(reminder, /SHOULD use workflow_run/);
-  assert.match(reminder, /NEVER wrap the body in `export default async function`/);
 });
 
 test("persistWorkflowScript writes under the workspace workflows directory", async () => {

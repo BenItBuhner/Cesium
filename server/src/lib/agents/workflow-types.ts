@@ -7,6 +7,11 @@ export type WorkflowRunStatus =
   | "failed"
   | "cancelled";
 
+/** Runs that have not reached a terminal state yet. */
+export function isWorkflowRunActive(status: WorkflowRunStatus): boolean {
+  return status === "pending" || status === "compiling" || status === "running" || status === "paused";
+}
+
 export type WorkflowAgentStatus =
   | "queued"
   | "running"

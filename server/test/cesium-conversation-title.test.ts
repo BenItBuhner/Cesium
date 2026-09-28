@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
-import { resolveCesiumModeToolPolicy } from "../src/lib/agents/cesium-mode-policy.js";
-import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
+import { buildCesiumTurnReminder } from "../src/lib/agents/cesium-reminders.js";
 import {
   applyConversationTitleAction,
   formatConversationTitleReminderLine,
@@ -31,16 +30,6 @@ test("conversation_title is a first-party history tool advertised to Code and Wo
     toolTitle("conversation_title", { action: "rename", title: "Fix login retry" }),
     "Rename conversation to Fix login retry"
   );
-});
-
-test("conversation_title is allowed in ask and orchestration (conversation metadata, not workspace writes)", () => {
-  for (const mode of ["ask", "plan", "agent", "goal", "workflow", "orchestration"]) {
-    assert.equal(
-      resolveCesiumModeToolPolicy({ mode, toolName: "conversation_title" }).allowed,
-      true,
-      `expected conversation_title in ${mode}`
-    );
-  }
 });
 
 test("parseConversationTitleToolArgs reads, renames, and toggles follow", () => {
@@ -118,8 +107,7 @@ test("mode reminder shows the current title and follow hint only when armed", ()
     /follow on — update via conversation_title/
   );
 
-  const idle = buildCesiumModeReminder({
-    mode: "agent",
+  const idle = buildCesiumTurnReminder({
     modelName: "kimi-k3",
     workspaceRoot: "/workspace",
     dateLabel: "Thursday",
@@ -131,8 +119,7 @@ test("mode reminder shows the current title and follow hint only when armed", ()
   assert.match(idle, /Conversation title: "Fix login retry"/);
   assert.doesNotMatch(idle, /follow on/);
 
-  const following = buildCesiumModeReminder({
-    mode: "agent",
+  const following = buildCesiumTurnReminder({
     modelName: "kimi-k3",
     workspaceRoot: "/workspace",
     dateLabel: "Thursday",

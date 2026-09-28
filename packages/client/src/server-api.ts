@@ -1542,7 +1542,7 @@ export async function createOrchestrationBoard(input?: {
   });
 }
 
-export async function startOrchestrationMode(input?: {
+export async function startOrchestration(input?: {
   title?: string;
   description?: string;
   prompt?: string;
@@ -2283,17 +2283,6 @@ export type CesiumAgentSettingsPayload = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
-  modes: {
-    enabled: Record<
-      "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask",
-      boolean
-    >;
-  };
-  modeCatalog: Array<{
-    id: "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask";
-    label: string;
-    description: string;
-  }>;
   harness: {
     features: Record<
       string,
@@ -2340,7 +2329,6 @@ export type CesiumAgentSettingsPayload = {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
     mcpCall: "ask" | "allow" | "deny";
-    switchMode: "ask" | "allow" | "deny";
   };
   /**
    * Per-model access filter and short notes (≤ 250 chars) surfaced to the
@@ -2445,7 +2433,6 @@ export async function patchCesiumAgentSettings(
       | "compression"
       | "titleGeneration"
       | "orchestration"
-      | "modes"
       | "harness"
       | "toolPermissions"
       | "customProviders"

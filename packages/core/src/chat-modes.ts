@@ -1,81 +1,16 @@
 import type { AgentModeOption, EditorMode, KnownEditorMode } from "./types";
 
-export const DEFAULT_MODE_OPTIONS: AgentModeOption[] = [
-  { id: "agent", label: "Agent" },
-  { id: "plan", label: "Plan" },
-  { id: "orchestration", label: "Orchestration" },
-  { id: "workflow", label: "Workflow" },
-  { id: "ask", label: "Ask" },
-];
-
-export function isOrchestrationMode(mode: string): boolean {
-  return String(mode).trim().toLowerCase() === "orchestration";
-}
-
-export function isWorkflowMode(mode: string): boolean {
-  return String(mode).trim().toLowerCase() === "workflow";
-}
-
-export function isGoalMode(mode: string): boolean {
-  const normalized = String(mode).trim().toLowerCase();
-  return normalized === "goal" || normalized === "burn";
-}
-
 /**
- * Normalize legacy Burn mode option ids to Goal, and drop duplicate Burn entries
- * when Goal is already present in the catalog.
+ * Stand-in catalog for backends that expose no mode option of their own
+ * (Cesium Agent, Pi): a single entry, so no mode chip, picker, or Shift+Tab
+ * cycle is offered for them.
  */
-export function filterGoalModeOptions(options: AgentModeOption[]): AgentModeOption[] {
-  const hasGoal = options.some((option) => String(option.id).trim().toLowerCase() === "goal");
-  const seen = new Set<string>();
-  const next: AgentModeOption[] = [];
-  for (const option of options) {
-    const normalized = String(option.id).trim().toLowerCase();
-    if (normalized === "burn") {
-      if (hasGoal) continue;
-      const remapped = { ...option, id: "goal" as EditorMode, label: option.label === "Burn" ? "Goal" : option.label };
-      if (seen.has("goal")) continue;
-      seen.add("goal");
-      next.push(remapped);
-      continue;
-    }
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    next.push(option);
-  }
-  return next;
-}
-
-/**
- * Coerce legacy persisted `"burn"` mode ids to `"goal"` when Goal is available.
- */
-export function coerceUnavailableGoalMode(
-  mode: string,
-  options: AgentModeOption[]
-): string {
-  const normalized = mode.trim().toLowerCase();
-  if (normalized === "burn") {
-    if (options.some((option) => String(option.id).trim().toLowerCase() === "goal")) {
-      return options.find((option) => String(option.id).trim().toLowerCase() === "goal")?.id ?? "goal";
-    }
-    if (options.some((option) => isGoalMode(option.id))) {
-      return options.find((option) => isGoalMode(option.id))?.id ?? mode;
-    }
-  }
-  return mode;
-}
-
-export function isOrchestrationModeLocked(): boolean {
-  return false;
-}
+export const DEFAULT_MODE_OPTIONS: AgentModeOption[] = [{ id: "agent", label: "Agent" }];
 
 export function formatModeLabel(mode: string): string {
   const trimmed = mode.trim();
   if (!trimmed) {
     return "Mode";
-  }
-  if (trimmed.toLowerCase() === "burn") {
-    return "Goal";
   }
   return trimmed
     .replace(/[-_]+/g, " ")
@@ -86,6 +21,7 @@ export function formatModeLabel(mode: string): string {
 /**
  * Map UI / persisted mode strings to the concrete `option.value` id exposed by the
  * active backend (case- and alias-aware, aligned with server mode resolution).
+ * A mode the backend does not offer resolves to its first option.
  */
 export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption[]): string {
   const trimmed = rawMode.trim();
@@ -93,7 +29,7 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
     return options[0]?.id ?? "agent";
   }
   if (options.length === 0) {
-    return trimmed.toLowerCase() === "burn" ? "goal" : trimmed;
+    return trimmed;
   }
   const ids = options.map((o) => o.id);
   if (ids.includes(trimmed)) {
@@ -105,47 +41,27 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
       return id;
     }
   }
-  const requestedLower = lower === "burn" ? "goal" : lower;
   const rawCandidates =
-    requestedLower === "agent" || requestedLower === "code"
+    lower === "agent" || lower === "code"
       ? ["agent", "code", "build"]
-      : requestedLower === "plan"
+      : lower === "plan"
         ? ["plan", "architect"]
-        : requestedLower === "ask"
+        : lower === "ask"
           ? ["ask", "review", "readonly", "read-only"]
-          : requestedLower === "debug"
+          : lower === "debug"
             ? ["debug", "build", "agent", "code"]
-            : requestedLower === "goal"
-              ? ["goal", "burn"]
-              : requestedLower === "workflow"
-                ? ["workflow"]
-                : [trimmed];
-  const idSet = new Set(ids);
-  for (const candidate of rawCandidates) {
-    if (idSet.has(candidate)) {
-      return candidate;
-    }
-  }
+            : [trimmed];
   for (const candidate of rawCandidates) {
     const found = ids.find((id) => id.toLowerCase() === candidate.toLowerCase());
     if (found) {
       return found;
     }
   }
-  return requestedLower === "goal" ? "goal" : trimmed;
+  return ids[0] ?? trimmed;
 }
 
 export function getModeTone(mode: string): KnownEditorMode {
   const normalized = mode.trim().toLowerCase();
-  if (isGoalMode(normalized)) {
-    return "goal";
-  }
-  if (isWorkflowMode(normalized) || normalized.includes("workflow")) {
-    return "workflow";
-  }
-  if (isOrchestrationMode(normalized) || normalized.includes("orchestration")) {
-    return "orchestration";
-  }
   if (
     normalized === "plan" ||
     normalized === "architect" ||

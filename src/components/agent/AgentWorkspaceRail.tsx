@@ -93,7 +93,7 @@ import {
   createWorkspaceGitWorktree,
   forkAgentConversation,
   relocateAgentConversation,
-  startOrchestrationMode,
+  startOrchestration,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
 import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-events";
@@ -992,14 +992,14 @@ export function AgentWorkspaceRail() {
   ) => {
     if (isGitRepo === false) {
       await dialogs.alert({
-        title: "Orchestration Mode needs a Git repository",
-        message: `${workspaceName} is not a Git repository. Initialize one first, then start Orchestration Mode from a worktree.`,
+        title: "Orchestration needs a Git repository",
+        message: `${workspaceName} is not a Git repository. Initialize one first, then start orchestration from a worktree.`,
       });
       return;
     }
     const defaultBranch = `orchestration/${Date.now().toString(36)}`;
     const trimmed = await dialogs.prompt({
-      title: "Start Orchestration Mode",
+      title: "Start orchestration",
       message: `A new worktree and branch are created in ${workspaceName}${
         baseBranch ? ` from ${baseBranch}` : ""
       }.`,
@@ -1020,10 +1020,10 @@ export function AgentWorkspaceRail() {
         name: trimmed.split(/[\\/]/).filter(Boolean).at(-1) ?? trimmed,
       });
       await openWorkspaceById(result.workspace.id);
-      const { snapshot, headConversation } = await startOrchestrationMode({
+      const { snapshot, headConversation } = await startOrchestration({
         title: `Orchestration: ${trimmed}`,
         prompt:
-          `Start Orchestration Mode for branch ${trimmed}. ` +
+          `Coordinate the work for branch ${trimmed} on your orchestration board. ` +
           "Create or refine the kanban board, identify the work, assign child agents where useful, and keep going until the board is complete and verified.",
       });
       dispatchAgentConversationUpserted(headConversation);
@@ -1041,7 +1041,7 @@ export function AgentWorkspaceRail() {
       void refreshConversationGroups();
     } catch (error) {
       await dialogs.alert({
-        title: "Couldn’t start Orchestration Mode",
+        title: "Couldn’t start orchestration",
         message: error instanceof Error ? error.message : "An unknown error occurred.",
         tone: "danger",
       });
@@ -3201,8 +3201,8 @@ export function AgentWorkspaceRail() {
                             )
                           }
                           className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                          aria-label={`Start Orchestration Mode in a new worktree for ${group.workspace.name}`}
-                          title={`Start Orchestration Mode in a new worktree for ${group.workspace.name}`}
+                          aria-label={`Start orchestration in a new worktree for ${group.workspace.name}`}
+                          title={`Start orchestration in a new worktree for ${group.workspace.name}`}
                         >
                           <GitBranchPlus className="size-[12px]" strokeWidth={2} />
                         </button>
