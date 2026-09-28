@@ -206,8 +206,6 @@ export type AgentConversationConfig = {
   mode: AgentConversationMode;
   modelId: string;
   modelName: string;
-  /** Cesium capability profile id ("code", "work", or a custom profile id). */
-  profileId?: string;
   /**
    * Where the agent executes. Absent = "local". Only backends advertising
    * `supportsCloudExecution` accept "cloud"; set at creation, never patched.
@@ -618,7 +616,7 @@ export type AgentConversationOrigin =
   | {
       /**
        * The orchestrator chat of a Project. Cesium harness only; it gets the
-       * fixed Project tool set regardless of mode or profile.
+       * fixed Project tool set regardless of mode.
        */
       kind: "project-orchestrator";
       projectId: string;

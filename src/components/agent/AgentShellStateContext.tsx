@@ -1963,9 +1963,6 @@ export function AgentShellStateProvider({
       mode: composer.mode,
       modelId: composer.model.modelValue ?? composer.model.id,
       modelName: composer.model.name,
-      ...(composer.backendId === "cesium-agent" && composer.profileId?.trim()
-        ? { profileId: composer.profileId.trim() }
-        : {}),
       title,
     };
 

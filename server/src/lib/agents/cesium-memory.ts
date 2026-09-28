@@ -223,8 +223,7 @@ export function formatCesiumMemoryEntry(entry: CesiumMemoryEntry): string {
 }
 
 /**
- * Compact recency-ordered snapshot rendered into the per-turn reminder for
- * profiles that include the memory tool.
+ * Compact recency-ordered snapshot rendered into the per-turn reminder.
  */
 export function renderCesiumMemorySnapshot(entries: CesiumMemoryEntry[]): string {
   if (entries.length === 0) {

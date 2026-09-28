@@ -317,7 +317,7 @@ test("splitSystemPrompt isolates the MCP section for both prompt builders", () =
     assert.ok(basePrompt.length + mcp.length < full.length + 4);
     assert.ok(basePrompt.length > 0);
   }
-  // The profile prompt keeps the skills section that follows the MCP section.
+  // The base prompt keeps the skills section that follows the MCP section.
   assert.ok(splitSystemPrompt(buildCesiumBaseSystemPrompt()).base.includes("## External Skills & Instructions"));
   assert.deepEqual(splitSystemPrompt("just a prompt"), { base: "just a prompt", mcp: "" });
 });

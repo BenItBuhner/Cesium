@@ -670,7 +670,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "schedule",
     description:
-      "Manage scheduled triggers that wake the agent proactively: each fire creates a fresh conversation with the stored prompt under a chosen profile/mode. create needs name, prompt, and exactly one of cron (5-field expression), everyMinutes, or atMs; list/pause/resume/delete/run manage existing triggers (run fires one immediately). The scheduler ticks every 30 seconds while the Cesium server runs.",
+      "Manage scheduled triggers that wake the agent proactively: each fire creates a fresh conversation with the stored prompt under a chosen mode. create needs name, prompt, and exactly one of cron (5-field expression), everyMinutes, or atMs; list/pause/resume/delete/run manage existing triggers (run fires one immediately). The scheduler ticks every 30 seconds while the Cesium server runs.",
     parameters: {
       type: "object",
       properties: {
@@ -695,10 +695,6 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         atMs: {
           type: "number",
           description: "One-shot schedule: epoch milliseconds of the single fire time.",
-        },
-        profileId: {
-          type: "string",
-          description: "Capability profile for spawned conversations (defaults to the settings default).",
         },
         mode: {
           type: "string",

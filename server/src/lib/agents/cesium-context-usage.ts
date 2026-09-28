@@ -11,7 +11,6 @@ import {
   HISTORY_TURN_LIMIT,
 } from "./cesium/cesium-prompt.js";
 import { buildOpenAiToolDefinitions, resolveCesiumTools } from "./cesium/cesium-tools.js";
-import { filterCesiumToolsForProfile, resolveCesiumProfile } from "./cesium-profiles.js";
 import {
   CONTEXT_CATEGORY_COLOR_KEY,
   buildConversationContextEntries,
@@ -56,7 +55,7 @@ function defaultToolDefinitions(): OpenAiToolDefinitionList {
 
 /**
  * Pull the MCP section out of the system prompt so it can be attributed to
- * the MCP bucket. Works for both prompt builders: the profile prompt joins
+ * the MCP bucket. Works for both prompt builders: the base prompt joins
  * `## ` sections with blank lines, the legacy agent prompt precedes the MCP
  * heading with a `---` rule.
  */
@@ -74,18 +73,8 @@ export function splitSystemPrompt(full: string): { base: string; mcp: string } {
   return { base, mcp: full.slice(start, end).trim() };
 }
 
-function conversationProfileId(conversation: AgentConversationRecord): string | null {
-  const option = conversation.configOptions?.find((entry) => entry.id === "profile");
-  const raw = option?.currentValue;
-  if (typeof raw === "string" && raw.trim()) {
-    return raw.trim();
-  }
-  return conversation.config.profileId?.trim() || null;
-}
-
 /**
- * Resolve the prompt + tool schemas the way the live session does (profile
- * base, verbatim profile instructions, profile tool envelope). Per-turn
+ * Resolve the prompt + tool schemas the way the live session does. Per-turn
  * additions the runtime layers on top - plugin prompt transforms and the
  * model roster appended to spawn tools - are not reproduced here.
  */
@@ -93,13 +82,11 @@ async function resolveCesiumPromptContext(input: {
   workspace: WorkspaceRecord;
   conversation: AgentConversationRecord;
 }): Promise<CesiumPromptContext> {
-  const profileId = conversationProfileId(input.conversation);
   const modelId = input.conversation.config.modelId ?? "";
   const modelName = resolveModelDisplayName(input.conversation.config.modelName, modelId);
   const cacheKey = [
     input.workspace.id,
     input.conversation.config.backendId ?? "",
-    profileId ?? "default",
     modelId,
     modelName,
   ].join(":");
@@ -110,26 +97,15 @@ async function resolveCesiumPromptContext(input: {
   let value: CesiumPromptContext;
   try {
     const settings = await getCesiumAgentSettings();
-    const profile = resolveCesiumProfile({
-      profileId,
-      customProfiles: settings.profiles,
-      defaultProfileId: settings.defaultProfileId,
-    });
-    const tools = filterCesiumToolsForProfile(
-      resolveCesiumTools(settings.harness).tools,
-      profile
-    );
+    const tools = resolveCesiumTools(settings.harness).tools;
     value = {
       systemPromptFull: buildCesiumBaseSystemPrompt({
-        base: profile.prompt.base,
-        customInstructions: profile.prompt.customInstructions,
         modelName,
         workspaceRoot: input.workspace.root,
       }),
       toolDefinitions: buildOpenAiToolDefinitions(tools),
       notes: [
-        `System prompt and tool schemas resolved from the "${profile.name}" agent profile. ` +
-          "Per-turn runtime additions (plugin prompt transforms, the subagent model roster) are not included.",
+        "Per-turn runtime additions (plugin prompt transforms, the subagent model roster) are not included.",
       ],
     };
   } catch {

@@ -138,7 +138,6 @@ export async function prepareSideChatCreation(input: {
       mode: parent.config.mode,
       modelId: parent.config.modelId,
       modelName: parent.config.modelName,
-      ...(parent.config.profileId ? { profileId: parent.config.profileId } : {}),
       title: SIDE_CHAT_INITIAL_TITLE,
       origin,
     },

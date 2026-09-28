@@ -298,7 +298,7 @@ export function persistChatScrollOverlay(
 
 /**
  * Per-workspace chat UI state. New-chat defaults (harness / mode / model,
- * capability profile, composer chrome defaults) deliberately do NOT live here:
+ * composer chrome defaults) deliberately do NOT live here:
  * they are account-wide and belong to `GlobalSettingsState.composer`. This
  * slice only holds state bound to specific conversations in this workspace.
  */

@@ -11,7 +11,6 @@ export {
   resolveLastUsedDraftModel,
   updateComposerDraftDefault,
   updateComposerDraftMode,
-  updateComposerDraftProfile,
 } from "@cesium/client";
 export type {
   ComposerDefaultsState,

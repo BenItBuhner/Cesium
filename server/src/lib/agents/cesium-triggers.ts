@@ -5,7 +5,7 @@ import { nextCronRunAfter, parseCronExpression } from "./cesium-cron.js";
 
 /**
  * Cesium agent triggers: the proactive plane. A trigger wakes the agent on a
- * schedule by creating a fresh conversation (with a chosen profile/mode) and
+ * schedule by creating a fresh conversation (with a chosen mode) and
  * injecting the stored prompt as the first user message.
  */
 
@@ -22,8 +22,6 @@ export type CesiumAgentTrigger = {
   schedule: CesiumTriggerSchedule;
   /** User-message text injected when the trigger fires. */
   prompt: string;
-  /** Capability profile for the spawned conversation ("code", "work", custom id). */
-  profileId?: string;
   /** Conversation mode for the spawned conversation (default "agent"). */
   mode?: string;
   /** Model pinned from the creating conversation so fires never fall back to an unconfigured provider. */
@@ -137,7 +135,6 @@ function normalizePersistedTrigger(raw: unknown, workspaceId: string): CesiumAge
     enabled: record.enabled !== false,
     schedule,
     prompt,
-    profileId: asTrimmed(record.profileId),
     mode: asTrimmed(record.mode),
     modelId: asTrimmed(record.modelId),
     modelName: asTrimmed(record.modelName),
@@ -180,7 +177,6 @@ export async function createCesiumTrigger(input: {
   name: string;
   prompt: string;
   schedule: CesiumTriggerSchedule;
-  profileId?: string;
   mode?: string;
   modelId?: string;
   modelName?: string;
@@ -209,7 +205,6 @@ export async function createCesiumTrigger(input: {
     enabled: true,
     schedule: input.schedule,
     prompt,
-    profileId: input.profileId?.trim() || undefined,
     mode: input.mode?.trim() || undefined,
     modelId: input.modelId?.trim() || undefined,
     modelName: input.modelName?.trim() || undefined,
@@ -236,7 +231,7 @@ export async function updateCesiumTrigger(input: {
   workspaceId: string;
   id: string;
   patch: Partial<
-    Pick<CesiumAgentTrigger, "name" | "prompt" | "enabled" | "profileId" | "mode" | "maxRuns">
+    Pick<CesiumAgentTrigger, "name" | "prompt" | "enabled" | "mode" | "maxRuns">
   > & { schedule?: CesiumTriggerSchedule };
 }): Promise<CesiumAgentTrigger> {
   const triggers = await listCesiumTriggers(input.workspaceId);
@@ -254,9 +249,6 @@ export async function updateCesiumTrigger(input: {
       ? { prompt: input.patch.prompt.trim().slice(0, CESIUM_TRIGGER_MAX_PROMPT_CHARS) }
       : {}),
     ...(input.patch.enabled !== undefined ? { enabled: input.patch.enabled } : {}),
-    ...(input.patch.profileId !== undefined
-      ? { profileId: input.patch.profileId?.trim() || undefined }
-      : {}),
     ...(input.patch.mode !== undefined ? { mode: input.patch.mode?.trim() || undefined } : {}),
     ...(input.patch.maxRuns !== undefined ? { maxRuns: input.patch.maxRuns } : {}),
     ...(input.patch.schedule !== undefined ? { schedule: input.patch.schedule } : {}),
@@ -381,7 +373,6 @@ export function formatCesiumTrigger(trigger: CesiumAgentTrigger): string {
     ? new Date(trigger.nextRunAt).toISOString()
     : "none";
   const extras = [
-    trigger.profileId ? `profile: ${trigger.profileId}` : null,
     trigger.mode ? `mode: ${trigger.mode}` : null,
     trigger.modelId ? `model: ${trigger.modelId}` : null,
     trigger.maxRuns != null ? `runs: ${trigger.runCount}/${trigger.maxRuns}` : `runs: ${trigger.runCount}`,

@@ -157,7 +157,6 @@ export function registerAgentRoutes(
         mode,
         modelId,
         modelName,
-        ...(input.profileId ? { profileId: input.profileId } : {}),
         executionTarget: "local",
       },
       providerSessionId: null,
@@ -402,7 +401,6 @@ export function registerAgentRoutes(
       if (patch.mode) nextConfig.mode = patch.mode;
       if (patch.modelId) nextConfig.modelId = patch.modelId;
       if (patch.modelName) nextConfig.modelName = patch.modelName;
-      if (patch.profileId) nextConfig.profileId = patch.profileId;
       let configOptions = current.configOptions;
       const applyOption = (configId: string, value: string): void => {
         configOptions = configOptions.map((option) =>
