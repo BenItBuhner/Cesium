@@ -420,3 +420,26 @@ test("Anthropic requests mark system, last tool, and newest message as cache bre
   const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
   assert.deepEqual(messages.at(-1)?.content.at(-1)?.cache_control, { type: "ephemeral" });
 });
+
+test("the compaction digest coalesces streamed chunks and skips turn context", () => {
+  const chunk = (seq: number, text: string) =>
+    ({
+      seq,
+      eventId: `a${seq}`,
+      conversationId: "c1",
+      createdAt: seq,
+      kind: "assistant_message_chunk",
+      messageId: "a1",
+      text,
+    }) as AgentStoredEvent;
+  const digest = history.summarizeForCompression([
+    userEvent(1, "m1", "Fix the login bug"),
+    reminderEvent(2, "m1", "context", "<system-reminder>## Project Instruction Files ...</system-reminder>", {
+      contextReminder: "full",
+    }),
+    chunk(3, "Looking "),
+    chunk(4, "at auth.ts "),
+    chunk(5, "now."),
+  ]);
+  assert.equal(digest, "User: Fix the login bug\nAssistant: Looking at auth.ts now.");
+});

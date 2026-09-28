@@ -188,7 +188,7 @@ export const CESIUM_TURN_CONTEXT_REMINDER_REASON = "context";
 const LEGACY_DYNAMIC_REMINDER_REASONS = new Set(["mode", "plan_handoff", "other"]);
 
 /** Reminders that open a turn (as opposed to inline mid-turn context). */
-export function isTurnReminder(event: AgentStoredEvent): event is SystemReminderEvent {
+export function isTurnReminder(event: AgentStoredEvent): boolean {
   return (
     event.kind === "system_reminder" &&
     event.placement !== "inline" &&
@@ -483,7 +483,19 @@ export function repairOpenAiMessageSequence(messages: CesiumHistoryMessage[]): C
 
 export function summarizeForCompression(events: AgentStoredEvent[]): string {
   const lines: string[] = [];
+  let assistantText = "";
+  const flushAssistant = () => {
+    if (assistantText.trim()) {
+      lines.push(`Assistant: ${truncate(assistantText.trim(), 1000)}`);
+    }
+    assistantText = "";
+  };
   for (const event of events) {
+    if (event.kind === "assistant_message_chunk") {
+      assistantText += event.text;
+      continue;
+    }
+    flushAssistant();
     switch (event.kind) {
       case "user_message":
         if (event.hidden) {
@@ -492,7 +504,10 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
         lines.push(`User: ${truncate(event.content, 1000)}`);
         break;
       case "system_reminder":
+        // Turn context is re-sent in full after a compaction; copying it into
+        // the digest only repeats boilerplate once per compressed turn.
         if (
+          isTurnReminder(event) ||
           event.reason === "goal" ||
           event.reason === "burn" ||
           event.reason === "linked_conversation"
@@ -500,11 +515,6 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
           break;
         }
         lines.push(truncate(event.text, 1000));
-        break;
-      case "assistant_message_chunk":
-        if (event.text.trim()) {
-          lines.push(`Assistant: ${truncate(event.text.trim(), 1000)}`);
-        }
         break;
       case "tool_call":
         lines.push(`Tool: ${event.title}${event.detail ? ` - ${truncate(event.detail, 400)}` : ""}`);
@@ -523,6 +533,7 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
         break;
     }
   }
+  flushAssistant();
   // The compressed range runs oldest -> newest: the head carries the original
   // task framing and the tail carries the latest work before the retained
   // window. Head-only truncation dropped exactly the recent end.
