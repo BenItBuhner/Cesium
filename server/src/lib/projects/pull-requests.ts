@@ -199,24 +199,41 @@ export async function listProjectPullRequests(projectId: string): Promise<Projec
   return listings.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-function resolveListing(listings: readonly ProjectPullRequestListing[], ref: string): ProjectPullRequestListing {
+/** `owner/repo#N` or a pull request URL. */
+function parsePullRef(ref: string): { repo: string; number: number } | null {
   const trimmed = ref.trim();
   const urlMatch = trimmed.match(/\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   const slugMatch = trimmed.match(/^([^/\s#]+\/[^/\s#]+)#(\d+)$/);
+  const match = urlMatch ?? slugMatch;
+  return match ? { repo: match[1]!, number: Number(match[2]) } : null;
+}
+
+function findListing(listings: readonly ProjectPullRequestListing[], ref: string): ProjectPullRequestListing | null {
+  const trimmed = ref.trim();
+  const parsed = parsePullRef(trimmed);
   const numberMatch = trimmed.match(/^#?(\d+)$/);
-  const found = listings.find((pr) => {
-    if (urlMatch) return pr.repo.toLowerCase() === urlMatch[1]!.toLowerCase() && pr.number === Number(urlMatch[2]);
-    if (slugMatch) return pr.repo.toLowerCase() === slugMatch[1]!.toLowerCase() && pr.number === Number(slugMatch[2]);
-    if (numberMatch) return pr.number === Number(numberMatch[1]);
-    return pr.agent?.toLowerCase() === trimmed.toLowerCase();
-  });
+  return (
+    listings.find((pr) => {
+      if (parsed) return pr.repo.toLowerCase() === parsed.repo.toLowerCase() && pr.number === parsed.number;
+      if (numberMatch) return pr.number === Number(numberMatch[1]);
+      return pr.agent?.toLowerCase() === trimmed.toLowerCase();
+    }) ?? null
+  );
+}
+
+function prNotFound(listings: readonly ProjectPullRequestListing[], ref: string): ProjectError {
+  const known = listings.map((pr) => `${pr.repo}#${pr.number}${pr.agent ? ` (${pr.agent})` : ""}`);
+  return new ProjectError(
+    `No tracked pull request matches "${ref}".${known.length ? ` Tracked: ${known.join(", ")}.` : ""}`,
+    404,
+    "pr_not_found"
+  );
+}
+
+function resolveListing(listings: readonly ProjectPullRequestListing[], ref: string): ProjectPullRequestListing {
+  const found = findListing(listings, ref);
   if (!found) {
-    const known = listings.map((pr) => `${pr.repo}#${pr.number}${pr.agent ? ` (${pr.agent})` : ""}`);
-    throw new ProjectError(
-      `No tracked pull request matches "${ref}".${known.length ? ` Tracked: ${known.join(", ")}.` : ""}`,
-      404,
-      "pr_not_found"
-    );
+    throw prNotFound(listings, ref);
   }
   return found;
 }
@@ -246,6 +263,26 @@ async function recentUserMessages(record: ProjectRecord): Promise<string[]> {
     .map((event) => event.displayContent?.trim() || event.content);
 }
 
+/** Throws unless `quote` is non-empty and appears in one of the user's recent messages. */
+async function assertUserQuote(
+  record: ProjectRecord,
+  quote: string | null | undefined,
+  errors: { missing: string; unmatched: string; code: string }
+): Promise<void> {
+  const trimmed = quote?.trim();
+  if (!trimmed) {
+    throw new ProjectError(errors.missing, 403, errors.code);
+  }
+  const messages = (await recentUserMessages(record)).map(normalizeQuote);
+  if (!messages.some((message) => message.includes(normalizeQuote(trimmed)))) {
+    throw new ProjectError(errors.unmatched, 403, errors.code);
+  }
+}
+
+function conflictGuidance(ref: string, base: string, agent: string | null): string {
+  return `${ref} has conflicts with ${base}. ${agent ? `Ask ${agent} to rebase it with project_request_rebase` : "Its author has to rebase it"}, or close it with project_close_pr if it is redundant.`;
+}
+
 export type MergeResult = { pr: ProjectPullRequestListing; sha: string | null };
 
 /**
@@ -265,22 +302,11 @@ export async function mergeProjectPullRequest(
   }
   const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
   if (!input.byUser && record.settings.mergePolicy !== "when_green") {
-    const quote = input.userQuote?.trim();
-    if (!quote) {
-      throw new ProjectError(
-        "Merging needs the user's explicit go-ahead in this Project: ask them, then pass their words as user_quote.",
-        403,
-        "merge_not_authorized"
-      );
-    }
-    const messages = (await recentUserMessages(record)).map(normalizeQuote);
-    if (!messages.some((message) => message.includes(normalizeQuote(quote)))) {
-      throw new ProjectError(
-        "user_quote does not appear in the user's recent messages, so the merge is not authorized. Ask the user.",
-        403,
-        "merge_not_authorized"
-      );
-    }
+    await assertUserQuote(record, input.userQuote, {
+      missing: "Merging needs the user's explicit go-ahead in this Project: ask them, then pass their words as user_quote.",
+      unmatched: "user_quote does not appear in the user's recent messages, so the merge is not authorized. Ask the user.",
+      code: "merge_not_authorized",
+    });
   }
   const client = await projectGithubClient();
   if (!client) {
@@ -295,7 +321,7 @@ export async function mergeProjectPullRequest(
     throw new ProjectError(`${listing.repo}#${listing.number} is a draft; mark it ready first.`, 409);
   }
   if (pull.mergeable === false) {
-    throw new ProjectError(`${listing.repo}#${listing.number} has conflicts with its base branch.`, 409);
+    throw new ProjectError(conflictGuidance(`${listing.repo}#${listing.number}`, pull.base.ref, listing.agent), 409, "merge_conflict");
   }
   const [checkRuns, combined, reviews] = await Promise.all([
     client.listCheckRuns(listing.repo, pull.head.sha),
@@ -316,11 +342,19 @@ export async function mergeProjectPullRequest(
   if (aggregateReviews(reviews) === "changes_requested") {
     throw new ProjectError(`A reviewer requested changes on ${listing.repo}#${listing.number}.`, 409, "changes_requested");
   }
-  const result = await client.mergePull(listing.repo, listing.number, {
-    mergeMethod: "squash",
-    commitTitle: `${pull.title} (#${listing.number})`,
-    sha: pull.head.sha,
-  });
+  const result = await client
+    .mergePull(listing.repo, listing.number, {
+      mergeMethod: "squash",
+      commitTitle: `${pull.title} (#${listing.number})`,
+      sha: pull.head.sha,
+    })
+    .catch((error: unknown) => {
+      // GitHub answers 405 when the trial merge it runs at merge time conflicts.
+      if (error instanceof GithubApiError && error.status === 405) {
+        throw new ProjectError(conflictGuidance(`${listing.repo}#${listing.number}`, pull.base.ref, listing.agent), 409, "merge_conflict");
+      }
+      throw error;
+    });
   if (!result.merged) {
     throw new ProjectError(result.message || `GitHub did not merge ${listing.repo}#${listing.number}.`, 409);
   }
@@ -334,7 +368,179 @@ export async function mergeProjectPullRequest(
   if (owner) {
     await patchChildPullRequest(projectId, owner.id, () => mergedPr);
   }
-  const { closeSubscriptionsForMergedPr } = await import("./listening.js");
-  await closeSubscriptionsForMergedPr(projectId, listing.repo, listing.number, pull.head.ref, mergedPr);
+  const { closeSubscriptionsForPr } = await import("./listening.js");
+  await closeSubscriptionsForPr(projectId, listing.repo, listing.number, pull.head.ref, mergedPr);
   return { pr: { ...mergedPr, agent: listing.agent }, sha: result.sha ?? null };
+}
+
+/**
+ * Closes a pull request without merging, posting the reason on it. A PR one of
+ * the Project's agents opened can be closed by the coordinator on its own
+ * judgment; any other (a teammate's PR in one of the Project's repositories)
+ * needs the user's go-ahead quoted, unless the user does it (`byUser`).
+ */
+export async function closeProjectPullRequest(
+  projectId: string,
+  input: { pr: string; reason: string; userQuote?: string | null; byUser?: boolean }
+): Promise<{ pr: ProjectPullRequestListing }> {
+  const record = await readProject(projectId);
+  if (!record) {
+    throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
+  }
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw new ProjectError("Say why the pull request is being closed (reason); it is posted on the PR.");
+  }
+  const listings = await listProjectPullRequests(projectId);
+  const tracked = findListing(listings, input.pr ?? "");
+  const ref = tracked ?? parsePullRef(input.pr ?? "");
+  if (!ref || (!tracked && !record.repos.some((repo) => repo.githubRepo?.toLowerCase() === ref.repo.toLowerCase()))) {
+    throw prNotFound(listings, input.pr ?? "");
+  }
+  const agent = tracked?.agent ?? null;
+  if (!input.byUser && !agent) {
+    await assertUserQuote(record, input.userQuote, {
+      missing:
+        "Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: ask them, then pass their words as user_quote.",
+      unmatched: "user_quote does not appear in the user's recent messages, so closing it is not authorized. Ask the user.",
+      code: "close_not_authorized",
+    });
+  }
+  const client = await projectGithubClient();
+  if (!client) {
+    throw new ProjectError("GitHub is not connected on this engine.", 409, "github_not_connected");
+  }
+  const pull = await client.getPull(ref.repo, ref.number);
+  const merged = pull.merged === true || Boolean(pull.merged_at);
+  if (merged || pull.state !== "open") {
+    throw new ProjectError(`${ref.repo}#${ref.number} is already ${merged ? "merged" : "closed"}.`, 409);
+  }
+  await client.addIssueComment(ref.repo, ref.number, `Closed by the Cesium Project "${record.name}": ${reason}`);
+  const closed = await client.closePull(ref.repo, ref.number);
+  const owner = record.children.find((child) => child.pr?.repo === ref.repo && child.pr.number === ref.number);
+  const closedPr: ProjectPullRequest = { ...toProjectPullRequest(ref.repo, closed, owner?.pr ?? tracked ?? null), state: "closed" };
+  if (owner) {
+    await patchChildPullRequest(projectId, owner.id, () => closedPr);
+  }
+  const { closeSubscriptionsForPr } = await import("./listening.js");
+  await closeSubscriptionsForPr(projectId, ref.repo, ref.number, pull.head.ref, closedPr);
+  return { pr: { ...closedPr, agent } };
+}
+
+/** Everyone whose latest review asked for changes or only commented (bots and the author can't be asked). */
+export function reviewersToAskAgain(reviews: readonly GithubReview[], author: string | null): string[] {
+  const latest = new Map<string, string>();
+  for (const review of reviews) {
+    const login = review.user?.login;
+    const state = review.state?.toUpperCase();
+    if (!login || !state || state === "PENDING" || state === "DISMISSED") {
+      continue;
+    }
+    latest.set(login, state);
+  }
+  return [...latest]
+    .filter(([login, state]) => state !== "APPROVED" && login !== author && !login.endsWith("[bot]"))
+    .map(([login]) => login);
+}
+
+/**
+ * Re-requests review on a tracked PR, by default from the reviewers who asked
+ * for changes or commented, optionally with a note mentioning them.
+ */
+export async function requestProjectPullRequestReview(
+  projectId: string,
+  input: { pr: string; reviewers?: readonly string[] | null; note?: string | null }
+): Promise<{ pr: ProjectPullRequestListing; requested: string[] }> {
+  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
+  const client = await projectGithubClient();
+  if (!client) {
+    throw new ProjectError("GitHub is not connected on this engine.", 409, "github_not_connected");
+  }
+  const ref = `${listing.repo}#${listing.number}`;
+  const pull = await client.getPull(listing.repo, listing.number);
+  if (pull.state !== "open" || pull.merged === true) {
+    throw new ProjectError(`${ref} is not open.`, 409);
+  }
+  let reviewers = (input.reviewers ?? []).map((login) => login.trim().replace(/^@/, "")).filter(Boolean);
+  if (reviewers.length === 0) {
+    reviewers = reviewersToAskAgain(await client.listReviews(listing.repo, listing.number), pull.user?.login ?? null);
+  }
+  if (reviewers.length === 0) {
+    throw new ProjectError(`Nobody has asked for changes on ${ref}; name the reviewers to ask.`, 409, "no_reviewers");
+  }
+  const note = input.note?.trim();
+  if (note) {
+    await client.addIssueComment(listing.repo, listing.number, `${reviewers.map((login) => `@${login}`).join(" ")} ${note}`);
+  }
+  await client.requestReviewers(listing.repo, listing.number, reviewers);
+  return { pr: listing, requested: reviewers };
+}
+
+export type RebaseRequest = {
+  pr: ProjectPullRequestListing;
+  childId: string;
+  message: string;
+  /** GitHub's current verdict: false when it conflicts, null when not computed yet. */
+  mergeable: boolean | null;
+};
+
+/**
+ * The agent that owns a tracked, still-open PR and the message that has it
+ * rebase the branch onto the latest base. PRs no agent owns are refused: only
+ * their author can rebase them.
+ */
+export async function rebaseRequestFor(projectId: string, input: { pr: string; note?: string | null }): Promise<RebaseRequest> {
+  const record = await readProject(projectId);
+  if (!record) {
+    throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
+  }
+  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
+  const ref = `${listing.repo}#${listing.number}`;
+  const owner = record.children.find(
+    (child) => child.deletedAt == null && child.pr?.repo === listing.repo && child.pr.number === listing.number
+  );
+  if (!owner) {
+    throw new ProjectError(`No agent of this Project owns ${ref}, so none can rebase it; its author has to.`, 409, "no_owner");
+  }
+  const client = await projectGithubClient();
+  const pull = client ? await client.getPull(listing.repo, listing.number) : null;
+  const merged = pull ? pull.merged === true || Boolean(pull.merged_at) : listing.state === "merged";
+  if (merged || (pull ? pull.state !== "open" : listing.state !== "open")) {
+    throw new ProjectError(`${ref} is already ${merged ? "merged" : "closed"}.`, 409);
+  }
+  const mergeable = pull ? (typeof pull.mergeable === "boolean" ? pull.mergeable : null) : listing.mergeable;
+  return {
+    pr: listing,
+    childId: owner.id,
+    message: buildRebaseRequest({
+      pr: { repo: listing.repo, number: listing.number, baseRef: pull?.base.ref ?? listing.baseRef },
+      branch: pull?.head.ref || listing.headRef || owner.branch || "",
+      note: input.note,
+      mergeable,
+    }),
+    mergeable,
+  };
+}
+
+/** What an agent is sent to rebase its pull request (one that conflicts, unless `mergeable` says otherwise). */
+export function buildRebaseRequest(input: {
+  pr: Pick<ProjectPullRequest, "repo" | "number" | "baseRef">;
+  branch: string;
+  note?: string | null;
+  mergeable?: boolean | null;
+}): string {
+  const base = input.pr.baseRef || "main";
+  const ref = `${input.pr.repo}#${input.pr.number}`;
+  return [
+    input.mergeable === true
+      ? `Bring your pull request ${ref} up to date: ${base} has moved on since you branched.`
+      : `Your pull request ${ref} no longer merges into ${base}: ${base} has moved on and now conflicts with your branch.`,
+    ...(input.note?.trim() ? [input.note.trim()] : []),
+    `Rebase \`${input.branch}\` onto the latest ${base} and resolve the conflicts yourself:`,
+    `1. \`git fetch origin\`, then \`git rebase origin/${base}\`.`,
+    "2. In each conflict keep what the base has now and put your change on top of it, so both work. Don't drop either side.",
+    "3. Run the tests.",
+    `4. \`git push --force-with-lease origin ${input.branch}\`; the pull request updates itself.`,
+    "Then report what conflicted and how you resolved it.",
+  ].join("\n");
 }

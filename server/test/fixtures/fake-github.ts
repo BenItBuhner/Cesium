@@ -40,6 +40,7 @@ type FakePull = {
   reviews: FakeReview[];
   reviewComments: FakeReviewComment[];
   mergeable: boolean | null;
+  requestedReviewers: string[];
 };
 
 type FakeRepo = { fullName: string; bareDir: string; defaultBranch: string; pulls: FakePull[] };
@@ -64,6 +65,8 @@ export type FakeGithub = {
   addComment(repo: string, number: number, login: string, body: string): void;
   addReview(repo: string, number: number, login: string, state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED", body: string): void;
   addReviewComment(repo: string, number: number, login: string, filePath: string, line: number, body: string): void;
+  /** Logins whose review is requested and still outstanding (submitting a review clears it, as on GitHub). */
+  requestedReviewers(repo: string, number: number): string[];
   setChecks(repo: string, sha: string, runs: FakeCheckRun[]): void;
   mergeExternally(repo: string, number: number): Promise<string>;
   closeExternally(repo: string, number: number): void;
@@ -99,6 +102,34 @@ export async function startFakeGithub(input: {
     return tryGitOutput(repo.bareDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   }
 
+  const mergeability = new Map<string, boolean>();
+
+  /** Whether the head still merges cleanly into the base, computed like GitHub does (a trial merge). */
+  async function mergesCleanly(repo: FakeRepo, pull: FakePull): Promise<boolean | null> {
+    const base = await branchHead(repo, pull.baseRef);
+    const head = await branchHead(repo, pull.headRef);
+    if (!base || !head) {
+      return null;
+    }
+    const key = `${repo.fullName}:${base}:${head}`;
+    const known = mergeability.get(key);
+    if (known !== undefined) {
+      return known;
+    }
+    try {
+      await git(repo.bareDir, ["merge-tree", "--write-tree", "--no-messages", base, head]);
+      mergeability.set(key, true);
+      return true;
+    } catch (error) {
+      // Status 1 is a conflicted trial merge; anything else (a git older than 2.38) leaves it unknown.
+      if ((error as { code?: unknown }).code !== 1) {
+        return null;
+      }
+      mergeability.set(key, false);
+      return false;
+    }
+  }
+
   async function refreshPull(repo: FakeRepo, pull: FakePull): Promise<void> {
     if (pull.state !== "open") {
       return;
@@ -108,6 +139,7 @@ export async function startFakeGithub(input: {
       pull.headSha = head;
       pull.updated_at = now();
     }
+    pull.mergeable = await mergesCleanly(repo, pull);
   }
 
   function pullJson(repo: FakeRepo, pull: FakePull): Json {
@@ -127,6 +159,7 @@ export async function startFakeGithub(input: {
       updated_at: pull.updated_at,
       head: { ref: pull.headRef, sha: pull.headSha, label: `${repo.fullName.split("/")[0]}:${pull.headRef}`, repo: { full_name: repo.fullName } },
       base: { ref: pull.baseRef, repo: { full_name: repo.fullName } },
+      requested_reviewers: pull.requestedReviewers.map((login) => ({ login, type: "User" })),
     };
   }
 
@@ -263,6 +296,26 @@ export async function startFakeGithub(input: {
       send(req, res, pull ? 200 : 404, pull ? pull.comments : { message: "Not Found" }, record);
       return;
     }
+    if (issueComments && method === "POST") {
+      const pull = repo.pulls.find((entry) => entry.number === Number(issueComments[1]));
+      const text = typeof body?.body === "string" ? body.body : "";
+      if (!pull || !text.trim()) {
+        send(req, res, pull ? 422 : 404, { message: pull ? "Validation Failed" : "Not Found" }, record);
+        return;
+      }
+      const id = nextId++;
+      const comment: FakeComment = {
+        id,
+        body: text,
+        created_at: now(),
+        user: { login: "cesium-bot", type: "Bot" },
+        html_url: `https://github.com/${repo.fullName}/pull/${pull.number}#issuecomment-${id}`,
+      };
+      pull.comments.push(comment);
+      pull.updated_at = now();
+      send(req, res, 201, comment, record);
+      return;
+    }
     if (commitMatch && method === "GET") {
       const runs = checks.get(`${repo.fullName.toLowerCase()}@${commitMatch[1]}`) ?? [];
       if (commitMatch[2] === "check-runs") {
@@ -284,6 +337,29 @@ export async function startFakeGithub(input: {
         send(req, res, 200, pullJson(repo, pull), record);
         return;
       }
+      if (method === "PATCH" && sub === "") {
+        if (body?.state === "closed" && pull.state === "open") {
+          pull.state = "closed";
+          pull.updated_at = now();
+        } else if (body?.state === "open" && pull.state === "closed" && !pull.merged) {
+          pull.state = "open";
+          pull.updated_at = now();
+          await refreshPull(repo, pull);
+        }
+        send(req, res, 200, pullJson(repo, pull), record);
+        return;
+      }
+      if (method === "POST" && sub === "/requested_reviewers") {
+        const reviewers = Array.isArray(body?.reviewers) ? body.reviewers.filter((entry): entry is string => typeof entry === "string") : [];
+        if (reviewers.length === 0 || reviewers.some((login) => login === pull.user.login || login.endsWith("[bot]"))) {
+          send(req, res, 422, { message: "Reviews may only be requested from collaborators." }, record);
+          return;
+        }
+        pull.requestedReviewers = [...new Set([...pull.requestedReviewers, ...reviewers])];
+        pull.updated_at = now();
+        send(req, res, 201, pullJson(repo, pull), record);
+        return;
+      }
       if (method === "GET" && sub === "/reviews") {
         send(req, res, 200, pull.reviews, record);
         return;
@@ -299,6 +375,10 @@ export async function startFakeGithub(input: {
         }
         if (body?.sha && body.sha !== pull.headSha) {
           send(req, res, 409, { message: "Head branch was modified. Review and try the merge again." }, record);
+          return;
+        }
+        if ((await mergesCleanly(repo, pull)) === false) {
+          send(req, res, 405, { message: "Pull Request is not mergeable" }, record);
           return;
         }
         const title = String(body?.commit_title ?? `${pull.title} (#${pull.number})`);
@@ -336,6 +416,7 @@ export async function startFakeGithub(input: {
       reviews: [],
       reviewComments: [],
       mergeable: true,
+      requestedReviewers: [],
     };
     repo.pulls.push(pull);
     return pull;
@@ -397,7 +478,13 @@ export async function startFakeGithub(input: {
       const pull = this.pull(fullName, number);
       const id = nextId++;
       pull.reviews.push({ id, state, body, submitted_at: now(), user: user(login), html_url: `https://github.com/${fullName}/pull/${number}#pullrequestreview-${id}` });
+      pull.requestedReviewers = pull.requestedReviewers.filter((entry: string) => entry !== login);
       pull.updated_at = now();
+    },
+    requestedReviewers(fullName, number) {
+      const pull = repoOf(fullName).pulls.find((entry) => entry.number === number);
+      if (!pull) throw new Error(`fake github: no pull #${number}`);
+      return [...pull.requestedReviewers];
     },
     addReviewComment(fullName, number, login, filePath, line, body) {
       const pull = this.pull(fullName, number);

@@ -135,7 +135,7 @@ export function buildWorkerBrief(brief: WorkerBriefInput, facts: WorkerPlacement
       : "- End every turn with a short report: what you did, what changed (files, commits, results), the evidence file paths, and anything blocking you or needing a decision. It reaches the coordinator automatically.",
     "- If you need a human decision, say so plainly in your report instead of guessing.",
     opensPullRequest
-      ? "- Follow-up instructions, review comments and CI failures on your pull request arrive as messages from the coordinator."
+      ? "- Follow-up instructions, review comments, CI failures and requests to rebase your pull request when it conflicts arrive as messages from the coordinator."
       : "- Follow-up instructions arrive as messages from the coordinator.",
     `</${WORKER_BRIEF_TAG}>`,
     "",
