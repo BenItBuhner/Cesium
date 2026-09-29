@@ -46,11 +46,8 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-  isLocalDeviceServer,
-} from "@/lib/server-rail-appearance";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
+import { getServerRailAppearance, isLocalDeviceServer } from "@/lib/server-rail-appearance";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 
 function formatSessionTimestamp(ms: number): string {
@@ -507,7 +504,7 @@ function ServerSessionSection() {
 
 function ActiveServerSection() {
   const chrome = useSettingsShellChrome();
-  const { activeServer, hasServer, servers, serverStatusById, setActiveServer } =
+  const { activeServer, hasServer, servers, serverStatusById, setActiveServer, engineNameById } =
     useServerConnections();
   const { settings } = useGlobalSettings();
   const { rememberLastWorkspaceForServer, getLastWorkspaceForServer } = useLastWorkspaceMemory();
@@ -530,10 +527,8 @@ function ActiveServerSection() {
   );
   const activeServerDisplayLabel = useMemo(
     () =>
-      hasServer && activeServerAppearance
-        ? getServerDisplayLabel(activeServer, activeServerAppearance)
-        : "No server",
-    [activeServer, activeServerAppearance, hasServer]
+      hasServer ? serverDisplayLabel(activeServer, serverRailAppearances, engineNameById) : "No server",
+    [activeServer, engineNameById, hasServer, serverRailAppearances]
   );
 
   const handleActiveServerChange = useCallback(

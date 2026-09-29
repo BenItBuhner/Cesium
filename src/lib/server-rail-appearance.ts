@@ -45,6 +45,28 @@ export function getServerRailAppearance(
   };
 }
 
+const MAX_SERVER_NICKNAME_LENGTH = 80;
+
+/**
+ * The appearance after the user renames a server to `name` in the device
+ * picker, or null when nothing changes. The rename is the nickname, so it
+ * outranks the engine's name; clearing it, or typing the name the server
+ * shows without one (`unrenamedLabel`), removes it.
+ */
+export function renameServerAppearance(
+  appearance: ServerRailAppearance,
+  name: string,
+  unrenamedLabel: string
+): ServerRailAppearance | null {
+  const trimmed = name.trim().slice(0, MAX_SERVER_NICKNAME_LENGTH).trim();
+  const nickname = trimmed && trimmed !== unrenamedLabel ? trimmed : undefined;
+  if (nickname === (appearance.nickname?.trim() || undefined)) {
+    return null;
+  }
+  const next = { icon: appearance.icon, color: appearance.color };
+  return nickname ? { ...next, nickname } : next;
+}
+
 /**
  * A rename the user gave the server wins, then the name the engine reports
  * for itself, then the connection label it was saved under.
