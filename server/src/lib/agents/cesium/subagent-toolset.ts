@@ -356,7 +356,6 @@ export async function runSubagentToolLoop(input: {
   const tools = toolset?.tools ?? [];
   const adapterImpl = input.runAdapterImpl ?? runAdapter;
   const messages: CesiumHistoryMessage[] = [...input.messages];
-  let usedToolResultChars = 0;
   let toolCallCount = 0;
   let lastResult: CesiumAdapterResult | null = null;
 
@@ -417,9 +416,7 @@ export async function runSubagentToolLoop(input: {
       const normalized = normalizeCesiumToolResultForModel({
         toolName: request.name,
         result: toolResult,
-        usedToolResultChars,
       });
-      usedToolResultChars = normalized.usedToolResultChars;
       messages.push({
         role: "tool",
         toolCallId: request.id,

@@ -187,7 +187,9 @@ import type {
   AgentTokenUsage,
   AgentToolCallStatus,
 } from "./types.js";
-import { addTokenUsage } from "./cesium/cesium-usage.js";
+import { addTokenUsage, contextTokensAfterResponse } from "./cesium/cesium-usage.js";
+import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
+import { DATA_DIR } from "../persistence.js";
 import {
   asRecord,
   asString,
@@ -212,9 +214,16 @@ import {
   todoEntriesFromReplace,
 } from "./cesium/cesium-todo.js";
 import {
+  CESIUM_HEADROOM_CHARS_PER_TOKEN,
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
+  CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
+  CESIUM_TOOL_RESULT_MODEL_MIN_CHARS,
+  CONTEXT_PRUNE_TARGET_RATIO,
+  CONTEXT_PRUNE_TRIGGER_RATIO,
   DEFAULT_GREP_RESULTS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  HISTORY_COMPACTION_TARGET_RATIO,
   HISTORY_COMPACTION_TARGET_TURNS,
   HISTORY_COMPACTION_THRESHOLD_RATIO,
   HISTORY_TURN_LIMIT,
@@ -279,6 +288,7 @@ import {
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
   previousUserMessageCreatedAt,
+  prunedToolCallIds,
   selectHistoryWindow,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
@@ -363,6 +373,24 @@ type TerminalRun = {
 
 function optionValue(options: AgentConfigOption[], id: string, fallback: string): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
+}
+
+/** A tool result's character budget: the per-result cap, less when the context is nearly full. */
+function toolResultBudgetForHeadroom(headroomTokens: number): number {
+  return Math.max(
+    CESIUM_TOOL_RESULT_MODEL_MIN_CHARS,
+    Math.min(CESIUM_TOOL_RESULT_MODEL_MAX_CHARS, Math.floor(headroomTokens * CESIUM_HEADROOM_CHARS_PER_TOKEN))
+  );
+}
+
+/**
+ * Where a mid-turn pruning boundary starts: the trigger share of the window,
+ * but early enough that headroom sizing has not yet started shrinking results.
+ */
+function pruneTriggerTokens(contextWindow: number): number {
+  const shrinkStartsAt =
+    contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - CESIUM_TOOL_RESULT_MODEL_MAX_CHARS / CESIUM_HEADROOM_CHARS_PER_TOKEN;
+  return Math.min(contextWindow * CONTEXT_PRUNE_TRIGGER_RATIO, shrinkStartsAt);
 }
 
 function resolvedModelId(
@@ -599,6 +627,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private pendingToolImages: Array<{ mimeType: string; data: string; source: string }> = [];
   /** Whether the model running the current turn advertises image support. */
   private turnSupportsImages = false;
+  /** Characters of the next tool result the model may see; the loop sets it from the context headroom. */
+  private nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+  /** How each just-completed result was stored for the model, keyed by tool call id. */
+  private toolResultShapes = new Map<string, { modelBudget?: number; spillPath?: string }>();
+  /** The model response whose tool calls are running; batches tool calls for pruning. */
+  private currentResponseId: string | null = null;
   /** Provider-reported usage of the current assistant message: its last response and the running sum. */
   private messageUsage: { last?: AgentModelUsage; total?: AgentTokenUsage; responses: number } = {
     responses: 0,
@@ -1212,7 +1246,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }));
       // The stored user message already carries what the user typed; only a
       // provider-side wrapper (handoff, fork, session recovery) adds a message.
-      if (currentUserContent?.trim() !== input.text.trim()) {
+      const wrappedPrompt = currentUserContent?.trim() !== input.text.trim();
+      if (wrappedPrompt) {
         history.push({
           role: "user",
           content: input.text,
@@ -1242,16 +1277,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ]);
       }
-      const modelHistory = modelSupportsImages
-        ? history
-        : history.map((message) =>
-            message.images?.length
-              ? { ...message, images: undefined }
-              : message
-          );
+      const forModel = (messages: CesiumHistoryMessage[]) =>
+        modelSupportsImages
+          ? messages
+          : messages.map((message) =>
+              message.images?.length ? { ...message, images: undefined } : message
+            );
+      let modelHistory = forModel(history);
       const toolResultMessages: CesiumHistoryMessage[] = [];
-      let usedToolResultChars = 0;
       let completedToolCallCount = 0;
+      const contextWindow = await resolveCesiumModelContextWindow(String(modelId)).catch(() => 100_000);
+      const toolSchemaTokens = Math.ceil(JSON.stringify(this.advertisedTools()).length / 4);
+      // The newest response's reported context size, and how many messages the
+      // turn has appended since; without one the whole request is estimated.
+      let usageAnchor: { tokens: number; messageCount: number } | null = null;
+      const contextTokensNow = () =>
+        usageAnchor
+          ? usageAnchor.tokens + estimateHistoryTokens(toolResultMessages.slice(usageAnchor.messageCount))
+          : toolSchemaTokens + estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
+      let pruneBlockedBelow = 0;
       for (let iteration = 0; ; iteration += 1) {
         if (this.cancelled) {
           return;
@@ -1339,23 +1383,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
             arguments: JSON.stringify(request.arguments),
           })),
         });
+        if (result.usage) {
+          usageAnchor = {
+            tokens: contextTokensAfterResponse(result.usage),
+            messageCount: toolResultMessages.length,
+          };
+        }
+        this.currentResponseId = `${assistantMessageId}:${iteration}`;
         const batchImages: Array<{ mimeType: string; data: string; source: string }> = [];
         for (const request of result.toolRequests) {
           if (this.cancelled) {
             return;
           }
+          this.nextToolResultBudget = toolResultBudgetForHeadroom(
+            contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - contextTokensNow()
+          );
           const toolResult = await this.executeTool(request);
-          const normalizedToolResult = normalizeCesiumToolResultForModel({
-            toolName: request.name,
-            result: toolResult,
-            usedToolResultChars,
-          });
-          usedToolResultChars = normalizedToolResult.usedToolResultChars;
+          const shape = this.toolResultShapes.get(request.id);
+          this.toolResultShapes.delete(request.id);
           toolResultMessages.push({
             role: "tool",
             toolCallId: request.id,
             name: request.name,
-            content: normalizedToolResult.content,
+            content: normalizeCesiumToolResultForModel({
+              toolName: request.name,
+              result: toolResult,
+              budget: shape?.modelBudget,
+              spillPath: shape?.spillPath,
+            }).content,
           });
           batchImages.push(...this.pendingToolImages.splice(0, 4));
           this.pendingToolImages = [];
@@ -1399,6 +1454,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
             assistantMessageId,
             await this.takeDeliverableSteers()
           );
+        }
+        // A wrapped prompt is not in the log, so a rebuilt request would lose it.
+        const contextTokens = contextTokensNow();
+        if (
+          !wrappedPrompt &&
+          contextTokens >= pruneTriggerTokens(contextWindow) &&
+          contextTokens >= pruneBlockedBelow
+        ) {
+          if (await this.pruneToolResultsAtBoundary(contextTokens, contextWindow)) {
+            modelHistory = forModel(this.renderHistory(await this.readHistoryEvents()));
+            toolResultMessages.length = 0;
+            usageAnchor = null;
+          } else {
+            pruneBlockedBelow = contextTokens + contextWindow * 0.05;
+          }
         }
       }
     } catch (error) {
@@ -2518,8 +2588,48 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ...(window.summary
         ? [{ role: "user" as const, content: `[Compressed earlier conversation]\n${window.summary.summary}` }]
         : []),
-      ...normalizeEventsToHistory(visible).slice(1),
+      ...normalizeEventsToHistory(visible, CESIUM_SYSTEM_PROMPT, prunedToolCallIds(window)).slice(1),
     ];
+  }
+
+  /**
+   * Mid-turn, when the context nears the window: stubs the oldest tool
+   * outputs in one persisted step. The request after it starts a new prefix;
+   * every request after that, and the next turn's rebuild, extends it.
+   */
+  private async pruneToolResultsAtBoundary(contextTokens: number, contextWindow: number): Promise<boolean> {
+    const events = await this.readHistoryEvents();
+    const window = selectHistoryWindow(events);
+    const plan = planToolResultPruning({
+      windowEvents: window.events,
+      alreadyPruned: prunedToolCallIds(window),
+      excessTokens: contextTokens - contextWindow * CONTEXT_PRUNE_TARGET_RATIO,
+    });
+    if (plan.toolCallIds.length === 0) {
+      return false;
+    }
+    await this.emitConversationStatus(
+      "running",
+      `Pruning ${plan.toolCallIds.length} older tool output${plan.toolCallIds.length === 1 ? "" : "s"} to free context…`
+    );
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "compression_summary",
+        messageId: `cesium-prune-${randomUUID()}`,
+        summary: "",
+        retainedTurnCount: window.events.filter(
+          (event) => event.kind === "user_message" && !event.hidden
+        ).length,
+        compressedTurnCount: 0,
+        prunedToolCallIds: plan.toolCallIds,
+        estimatedTokensBefore: contextTokens,
+        estimatedTokensAfter: Math.max(0, contextTokens - plan.freedTokens),
+        generation: window.summary?.generation ?? 0,
+      },
+    ]);
+    return true;
   }
 
   /**
@@ -2529,47 +2639,65 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private async compactHistoryIfNeeded(events: AgentStoredEvent[]): Promise<boolean> {
     const window = selectHistoryWindow(events);
-    const visibleUserTurns = window.events.filter(
+    const visibleUsers = window.events.filter(
       (event) => event.kind === "user_message" && !event.hidden
-    ).length;
+    );
     const modelId = optionValue(
       this.configOptions,
       "model",
       this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
     );
     const contextWindow = await resolveCesiumModelContextWindow(modelId).catch(() => 100_000);
-    const estimatedTokensBefore =
-      reportedContextTokens(window.events, modelId) ??
-      estimateHistoryTokens(this.renderHistory(events));
+    const estimated = estimateHistoryTokens(this.renderHistory(events));
+    const estimatedTokensBefore = reportedContextTokens(window.events, modelId) ?? estimated;
     if (
-      visibleUserTurns <= HISTORY_TURN_LIMIT &&
+      visibleUsers.length <= HISTORY_TURN_LIMIT &&
       estimatedTokensBefore < contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO
     ) {
       return false;
     }
+    // Keep the newest turns that fit the target, sized in reported tokens
+    // where the provider counted them, so the kept window does not start out
+    // over the threshold and re-compact on the next turn.
+    const scale = estimated > 0 ? Math.max(1, estimatedTokensBefore / estimated) : 1;
+    const target = contextWindow * HISTORY_COMPACTION_TARGET_RATIO;
+    const pruned = prunedToolCallIds(window);
+    let retainedTokens = 0;
+    let splitSeq = visibleUsers.at(-1)?.seq ?? Number.POSITIVE_INFINITY;
     let retainedUsers = 0;
-    let splitIndex = 0;
-    for (let index = window.events.length - 1; index >= 0; index -= 1) {
-      const event = window.events[index]!;
-      if (event.kind === "user_message" && !event.hidden) {
-        retainedUsers += 1;
-        splitIndex = index;
-        if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
-          break;
-        }
+    for (let index = visibleUsers.length - 1; index >= 0; index -= 1) {
+      const turnStart = visibleUsers[index]!.seq;
+      const turnEnd = visibleUsers[index + 1]?.seq ?? Number.POSITIVE_INFINITY;
+      const turnEvents = window.events.filter((event) => event.seq >= turnStart && event.seq < turnEnd);
+      const turnTokens = Math.ceil(
+        estimateHistoryTokens(normalizeEventsToHistory(turnEvents, CESIUM_SYSTEM_PROMPT, pruned).slice(1)) * scale
+      );
+      if (
+        retainedUsers > 0 &&
+        (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS || retainedTokens + turnTokens > target)
+      ) {
+        break;
       }
+      retainedTokens += turnTokens;
+      retainedUsers += 1;
+      splitSeq = turnStart;
     }
-    if (splitIndex <= 0) {
+    const retainedWindow = window.events.filter((event) => event.seq >= splitSeq);
+    const prune = planToolResultPruning({
+      windowEvents: retainedWindow,
+      alreadyPruned: pruned,
+      excessTokens: retainedTokens - target,
+    });
+    const compacts = window.events.some(
+      (event) => event.seq < splitSeq && event.kind === "user_message" && !event.hidden
+    );
+    if (!compacts && prune.toolCallIds.length === 0) {
       return false;
     }
-    const splitSeq = window.events[splitIndex]!.seq;
     const sorted = [...events].sort((a, b) => a.seq - b.seq);
-    const compressed = sorted.filter(
-      (event) => event.seq < splitSeq && event.kind !== "compression_summary"
-    );
-    const retained = sorted.filter(
-      (event) => event.seq >= splitSeq && event.kind !== "compression_summary"
-    );
+    const compressed = compacts
+      ? sorted.filter((event) => event.seq < splitSeq && event.kind !== "compression_summary")
+      : [];
     await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
     await this.callbacks.appendEvents([
       {
@@ -2577,22 +2705,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
         conversationId: this.callbacks.conversation.id,
         kind: "compression_summary",
         messageId: `cesium-compression-${randomUUID()}`,
-        summary: summarizeForCompression(compressed),
+        summary: compacts ? summarizeForCompression(compressed) : "",
         retainedTurnCount: retainedUsers,
         compressedTurnCount: compressed.filter(
           (event) => event.kind === "user_message" && !event.hidden
         ).length,
-        sourceRange: {
-          fromSeq: compressed[0]?.seq ?? 0,
-          toSeq: window.events[splitIndex - 1]!.seq,
-        },
+        ...(compacts
+          ? {
+              sourceRange: {
+                fromSeq: compressed[0]?.seq ?? 0,
+                toSeq: Math.max(...window.events.filter((event) => event.seq < splitSeq).map((event) => event.seq)),
+              },
+            }
+          : {}),
+        ...(prune.toolCallIds.length > 0 ? { prunedToolCallIds: prune.toolCallIds } : {}),
         estimatedTokensBefore,
-        estimatedTokensAfter: estimateHistoryTokens(this.renderHistory(retained)),
-        generation: (window.summary?.generation ?? 0) + 1,
+        estimatedTokensAfter: Math.max(0, retainedTokens - prune.freedTokens),
+        generation: (window.summary?.generation ?? 0) + (compacts ? 1 : 0),
       },
     ]);
     return true;
   }
+
 
   private async buildHistory(currentUserMessageId: string): Promise<{
     messages: CesiumHistoryMessage[];
@@ -2793,6 +2927,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const result = (await this.pluginRuntime?.afterTool(request, output)) ?? output;
     const refinedTitle = this.refinedToolTitles.get(request.id);
     this.refinedToolTitles.delete(request.id);
+    const budget = this.nextToolResultBudget;
+    this.nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+    const shape =
+      result.length > budget
+        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result)) }
+        : {};
+    this.toolResultShapes.set(request.id, shape);
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2803,10 +2944,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
         toolKind: toolKind(request.name, toolDefinition),
         status: "completed",
         detail: result,
-        raw: { request, result },
+        raw: { request, result, ...shape },
       },
     ]);
     return result;
+  }
+
+  /** Read-only home of this conversation's spilled tool outputs. */
+  private toolOutputDir(): string {
+    return path.join(DATA_DIR, "tool-output", this.callbacks.conversation.id);
+  }
+
+  /** Saves an output the model only sees part of, so `read_file` can page through the rest. */
+  private async spillToolOutput(toolCallId: string, output: string): Promise<{ spillPath?: string }> {
+    const spillPath = path.join(this.toolOutputDir(), `${toolCallId.replace(/[^A-Za-z0-9._-]/g, "_")}.txt`);
+    try {
+      await fs.mkdir(path.dirname(spillPath), { recursive: true });
+      await fs.writeFile(spillPath, output, "utf8");
+      return { spillPath };
+    } catch {
+      return {};
+    }
   }
 
   private async executeTool(request: CesiumToolRequest): Promise<string> {
@@ -2848,7 +3006,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginId: mcpServerForTool?.pluginId,
       pluginName: mcpServerForTool?.displayName,
       pluginIconUrl: mcpServerForTool?.iconUrl,
-      raw: effectiveRequest,
+      raw: this.currentResponseId
+        ? { ...effectiveRequest, responseId: this.currentResponseId }
+        : effectiveRequest,
     };
     await this.callbacks.appendEvents([callEvent]);
     try {
@@ -3137,7 +3297,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolReadFile(args: Record<string, unknown>): Promise<string> {
     const inputPath = asString(args.path);
     if (!inputPath) throw new Error("read_file.path is required.");
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, this.projectContextRoots());
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, [
+      ...this.projectContextRoots(),
+      this.toolOutputDir(),
+    ]);
     const imageMime = imageMimeTypeForPath(resolved);
     if (imageMime) {
       const buffer = await fs.readFile(resolved);

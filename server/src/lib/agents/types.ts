@@ -440,6 +440,8 @@ export type AgentStoredEvent =
       estimatedTokensBefore?: number;
       estimatedTokensAfter?: number;
       generation?: number;
+      /** Tool calls whose results this boundary pruned to stubs; the rest of the window is unchanged. */
+      prunedToolCallIds?: string[];
       raw?: unknown;
     }
   | {

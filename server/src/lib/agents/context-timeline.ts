@@ -126,6 +126,9 @@ function isMcpToolCall(toolKind: string, name: string, args: Record<string, unkn
   return false;
 }
 
+/** About the length of the stub a pruned result becomes in Cesium history. */
+const PRUNED_RESULT_STUB_CHARS = 110;
+
 type PendingAssistant = {
   messageId: string;
   text: string;
@@ -138,6 +141,8 @@ type ToolEntryState = {
   callEvent: ToolCallEvent | null;
   latestUpdate: ToolCallUpdateEvent | null;
   argsSerialized: string;
+  /** A compaction boundary replaced the result with a stub of this many characters. */
+  prunedChars?: number;
 };
 
 /** One row for the whole streamed message; `firstSeq` is the client-side compaction marker for swallowed chunk rows. */
@@ -152,11 +157,20 @@ function mergedAssistantChunkRow(pending: PendingAssistant): AssistantChunkEvent
   return row;
 }
 
+/** Characters of the result the model sees: a stub once pruned, else at most its stored budget. */
+function modelFacingResultChars(state: ToolEntryState): number {
+  if (state.prunedChars !== undefined) {
+    return state.prunedChars;
+  }
+  const length = state.entry.toolCall!.result?.length ?? 0;
+  const budget = asRecord(state.latestUpdate?.raw)?.modelBudget;
+  return typeof budget === "number" && budget > 0 ? Math.min(length, budget) : length;
+}
+
 function toolEntryTokens(state: ToolEntryState): number {
-  const call = state.entry.toolCall!;
   return (
     estimateContextTokensFromText(state.argsSerialized) +
-    estimateContextTokensFromText(call.result ?? "")
+    Math.ceil(modelFacingResultChars(state) / 4)
   );
 }
 
@@ -450,6 +464,17 @@ export function buildConversationContextEntries(
         break;
       }
       case "compression_summary":
+        for (const toolCallId of event.prunedToolCallIds ?? []) {
+          const state = toolStates.get(toolCallId);
+          if (state) {
+            state.prunedChars = PRUNED_RESULT_STUB_CHARS;
+            refreshToolEntry(state);
+            state.entry.detail = `${state.entry.detail} · pruned`;
+          }
+        }
+        if (event.prunedToolCallIds && !event.summary.trim()) {
+          break;
+        }
         pushText({
           kind: "compaction_summary",
           categoryId: "summarized_conversation",

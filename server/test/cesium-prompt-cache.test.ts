@@ -274,6 +274,37 @@ test("a tool image stays in history on later turns, exactly as the model saw it"
   assert.deepEqual(imageUrls(imageMessage), [`data:image/png;base64,${ONE_PIXEL_PNG}`]);
 });
 
+test("a turn with several tool batches rebuilds each as its own assistant message", async () => {
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  scripted.push(
+    toolCallTurn("", "call_batch_one", "read_file", { path: "notes.txt" }),
+    toolCallTurn("", "call_batch_two", "read_file", { path: "AGENTS.md" }),
+    toolCallTurn("Checking once more.", "call_batch_three", "read_file", { path: "notes.txt" }),
+    textTurn("Both files read.")
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read notes.txt, then AGENTS.md.");
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("Yes."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Done?");
+  await waitForIdle(workspace.id, conversation.id, 2);
+
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 5);
+  for (let index = 1; index < requests.length; index += 1) {
+    assert.deepEqual(
+      requests[index]!.messages.slice(0, requests[index - 1]!.messages.length),
+      requests[index - 1]!.messages,
+      `request ${index + 1} extends request ${index}`
+    );
+  }
+});
+
 test("provider-reported usage lands on the message end and sizes the context", async () => {
   const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
   const conversation = await agentRuntimeManager.createConversation(workspace, {
