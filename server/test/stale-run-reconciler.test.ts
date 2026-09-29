@@ -253,12 +253,41 @@ test("watchdog leaves a paused conversation with a live runtime alone", async ()
   }
 });
 
-test("watchdog never touches awaiting states (recoverable on demand)", async () => {
+test("watchdog interrupts awaiting states whose runtime disappeared, clearing the dead request", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "awaiting-watchdog-test");
   const stop = startStaleAgentRunWatchdog({
     tickMs: 25,
     graceMs: 40,
     hasLiveRuntime: () => false,
+  });
+  try {
+    const question = await seedConversation(workspace.id, "awaiting_question", {
+      pendingQuestion: { questionId: "q-1", requestedAt: Date.now() },
+    });
+    const permission = await seedConversation(workspace.id, "awaiting_permission", {
+      pendingPermission: { requestId: "perm-2", requestedAt: Date.now(), title: "Allow?", options: [] },
+    });
+    await delay(250);
+    for (const seeded of [question, permission]) {
+      const after = await readConversationRecord(workspace.id, seeded.id);
+      assert.equal(after?.status, "interrupted", `${seeded.status} is interrupted`);
+      assert.equal(after?.pendingQuestion, null);
+      assert.equal(after?.pendingPermission, null);
+      const events = await readConversationEvents(workspace.id, seeded.id);
+      const status = events.find((event) => event.kind === "status" && event.status === "interrupted");
+      assert.deepEqual(status?.raw, { interruption: { cause: "runtime_lost" } });
+    }
+  } finally {
+    stop();
+  }
+});
+
+test("watchdog leaves an awaiting conversation with a live runtime alone", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "healthy-awaiting-watchdog-test");
+  const stop = startStaleAgentRunWatchdog({
+    tickMs: 25,
+    graceMs: 40,
+    hasLiveRuntime: () => true,
   });
   try {
     const awaiting = await seedConversation(workspace.id, "awaiting_question");

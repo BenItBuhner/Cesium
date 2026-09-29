@@ -63,6 +63,26 @@ import { buildAttachmentsReminderText } from "./attachment-reminders.js";
 import { getImportSourceForBackend } from "./import/registry.js";
 import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import {
+  AgentRequestNotLiveError,
+  continuesInterruptedTurns,
+  markTurnInterrupted,
+} from "./turn-interruption.js";
+import {
+  analyzeCesiumTurnTail,
+  CESIUM_CONTINUE_PROMPT_TEXT,
+  CESIUM_TURN_INTERRUPTED_REMINDER_REASON,
+  cesiumPermissionAnswerAfterInterruptionEvents,
+  cesiumQuestionAnswerAfterInterruptionEvents,
+  cesiumSettleInterruptedTurnEvents,
+  cesiumTurnInterruptedNotice,
+  latestInterruptionCause,
+} from "./cesium/cesium-turn-recovery.js";
+import {
+  isPersistentPermissionOptionId,
+  permissionDecisionFromOption,
+} from "./permission-options.js";
+import { saveRememberedAgentPermissionRule } from "../global-settings-store.js";
+import {
   isSideChatAwaitingFirstPrompt,
   listSideChatsForParent,
   prepareSideChatCreation,
@@ -84,6 +104,7 @@ import type {
   AgentContextTranscript,
   AgentContextUsageSnapshot,
   AgentEventInput,
+  AgentPermissionCategory,
   AgentPromptAttachment,
   AgentPromptDeliveryOutcome,
   AgentProvider,
@@ -102,14 +123,7 @@ function nextConversationRankTimestamp(): number {
 }
 
 function isConversationTurnInProgress(status: AgentConversationStatus): boolean {
-  return (
-    status === "running" ||
-    status === "pause_requested" ||
-    status === "pausing" ||
-    status === "paused" ||
-    status === "awaiting_permission" ||
-    status === "awaiting_question"
-  );
+  return TURN_IN_PROGRESS_STATUSES.has(status);
 }
 
 /**
@@ -376,6 +390,30 @@ type ActiveRuntime = {
   sessionRecoveryTranscript?: string;
 };
 
+export type AgentRequestAnswerResult = {
+  conversation: AgentConversationRecord;
+  /** The asking turn was gone: the answer was recorded and the run marked interrupted. */
+  interrupted: boolean;
+};
+
+type TrackedTurn = {
+  workspaceId: string;
+  backendId: AgentBackendId;
+  done: Promise<void>;
+};
+
+const TURN_IN_PROGRESS_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
+  "running",
+  "pause_requested",
+  "pausing",
+  "paused",
+  "awaiting_permission",
+  "awaiting_question",
+]);
+
+/** How long shutdown waits for interrupted turns to unwind before it marks them and moves on. */
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 5_000;
+
 const RUNTIME_IDLE_DISPOSE_GRACE_MS = 5_000;
 
 type AgentRuntimeManagerOptions = {
@@ -409,6 +447,9 @@ export class AgentRuntimeManager {
   private readonly runtimeEnsureQueues = new Map<string, Promise<unknown>>();
   /** Serializes promptConversation per conversation so two prompts cannot both observe `idle`. */
   private readonly promptGateQueues = new Map<string, Promise<unknown>>();
+  /** Turns started by this process and not yet settled, so shutdown can drain them. */
+  private readonly turns = new Map<string, TrackedTurn>();
+  private shuttingDown = false;
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
   private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
@@ -1566,6 +1607,7 @@ export class AgentRuntimeManager {
     if (!trimmed && (!attachments || attachments.length === 0)) {
       throw new Error("Prompt text or attachments are required.");
     }
+    this.assertAcceptingTurns();
 
     let record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
@@ -1778,10 +1820,15 @@ export class AgentRuntimeManager {
           : designMatch
             ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
             : undefined;
+    const afterInterruption =
+      record.status === "interrupted" && continuesInterruptedTurns(record.config.backendId)
+        ? await this.settleInterruptedTurn(workspace.id, conversationId)
+        : null;
     const appended = await appendConversationEventsAndPatchRecord(
       workspace.id,
       conversationId,
       [
+        ...(afterInterruption?.events ?? []),
         {
           eventId: clientEventId || randomUUID(),
           conversationId,
@@ -1793,7 +1840,25 @@ export class AgentRuntimeManager {
           displayContent,
           ...(options?.hidden ? { hidden: true } : {}),
           attachments,
+          ...(afterInterruption && afterInterruption.permissionGrants.length > 0
+            ? { raw: { continuation: { permissionGrants: afterInterruption.permissionGrants } } }
+            : {}),
         },
+        // The model learns of the interruption on this message, where it is
+        // persisted, so the next rebuild shows it the same notice.
+        ...(afterInterruption
+          ? [
+              {
+                eventId: randomUUID(),
+                conversationId,
+                kind: "system_reminder" as const,
+                reminderId: `turn-interrupted-${userMessageId}`,
+                targetMessageId: userMessageId,
+                reason: CESIUM_TURN_INTERRUPTED_REMINDER_REASON,
+                text: afterInterruption.notice,
+              },
+            ]
+          : []),
         ...(attachmentsReminderText
           ? [
               {
@@ -1820,9 +1885,12 @@ export class AgentRuntimeManager {
       outcomeSink.value = "started";
     }
 
-    void (async () => {
+    this.trackTurn(workspace.id, updatedRecord.config.backendId, conversationId, async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        if (this.shuttingDown) {
+          return;
+        }
         // The cesium backend rebuilds its model history from stored events (the
         // reminder event above is prepended there); appending it to the live
         // text too would defeat its duplicate-user-message guard.
@@ -1861,7 +1929,7 @@ export class AgentRuntimeManager {
       } catch (error) {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
       }
-    })();
+    });
     return {
       conversation: this.withBackendDefaults(updatedRecord),
       events: appendedEvents,
@@ -1872,6 +1940,56 @@ export class AgentRuntimeManager {
         hasOlder: record.lastEventSeq > 0,
       },
     };
+  }
+
+  /**
+   * Everything the turn after an interrupted Cesium turn needs: events that
+   * settle what the interrupted turn left open, the notice its user message
+   * carries, and the one-shot permission grants the user gave meanwhile.
+   */
+  private async settleInterruptedTurn(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<{ events: AgentEventInput[]; notice: string; permissionGrants: string[] }> {
+    const events = await readConversationEvents(workspaceId, conversationId);
+    const tail = analyzeCesiumTurnTail(events);
+    const cause = latestInterruptionCause(events);
+    return {
+      events: cesiumSettleInterruptedTurnEvents(conversationId, tail, cause),
+      notice: cesiumTurnInterruptedNotice(cause),
+      permissionGrants: tail.grantedToolKeys,
+    };
+  }
+
+  /**
+   * Resumes an interrupted Cesium turn from the log: a "Continue" user message
+   * starts a new turn whose rebuilt history holds everything the interrupted
+   * one did, closed off where it stopped. Completed tool calls are results in
+   * that history, never re-run.
+   */
+  async continueInterruptedConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentConversationSnapshotHead> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record) {
+        throw new Error(`Unknown conversation: ${conversationId}`);
+      }
+      if (!continuesInterruptedTurns(record.config.backendId)) {
+        throw new Error("Only Cesium Agent conversations can continue an interrupted turn.");
+      }
+      if (record.status !== "interrupted") {
+        throw new Error("This conversation has no interrupted turn to continue.");
+      }
+      return this.promptConversationLocked(
+        workspace,
+        conversationId,
+        CESIUM_CONTINUE_PROMPT_TEXT,
+        undefined,
+        { displayContent: "Continue" }
+      );
+    });
   }
 
   async retryConversationTurn(
@@ -1902,6 +2020,7 @@ export class AgentRuntimeManager {
     if (!lastUser) {
       throw new Error("No user message found to retry.");
     }
+    this.assertAcceptingTurns();
 
     const updatedRecord = await updateConversationRecord(workspace.id, conversationId, (current) => ({
       ...current,
@@ -1910,9 +2029,12 @@ export class AgentRuntimeManager {
       pendingPermission: null,
     }));
 
-    void (async () => {
+    this.trackTurn(workspace.id, updatedRecord.config.backendId, conversationId, async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        if (this.shuttingDown) {
+          return;
+        }
         const retryText = await this.buildGoalRuntimePrompt({
           workspace,
           record: updatedRecord,
@@ -1927,7 +2049,7 @@ export class AgentRuntimeManager {
       } catch (error) {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
       }
-    })();
+    });
 
     const head = await readConversationSnapshotHead(workspace.id, conversationId);
     if (!head) {
@@ -2301,7 +2423,10 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string,
     input: { questionId: string; answer: string }
-  ): Promise<AgentConversationRecord> {
+  ): Promise<AgentRequestAnswerResult> {
+    if (await this.answersAfterInterruption(workspace.id, conversationId)) {
+      return this.answerQuestionAfterInterruption(workspace, conversationId, input);
+    }
     const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       throw new Error(
@@ -2311,19 +2436,32 @@ export class AgentRuntimeManager {
     if (typeof runtime.handle.answerQuestion !== "function") {
       throw new Error("This agent does not support answering structured questions.");
     }
-    await runtime.handle.answerQuestion(input);
+    try {
+      await runtime.handle.answerQuestion(input);
+    } catch (error) {
+      if (
+        error instanceof AgentRequestNotLiveError &&
+        (await this.answersAfterInterruption(workspace.id, conversationId))
+      ) {
+        return this.answerQuestionAfterInterruption(workspace, conversationId, input);
+      }
+      throw error;
+    }
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    return record;
+    return { conversation: record, interrupted: false };
   }
 
   async answerPermission(
     workspace: WorkspaceRecord,
     conversationId: string,
     input: { requestId: string; optionId?: string; cancelled?: boolean }
-  ): Promise<AgentConversationRecord> {
+  ): Promise<AgentRequestAnswerResult> {
+    if (await this.answersAfterInterruption(workspace.id, conversationId)) {
+      return this.answerPermissionAfterInterruption(workspace, conversationId, input);
+    }
     const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       harnessLog({
@@ -2339,6 +2477,12 @@ export class AgentRuntimeManager {
     try {
       await runtime.handle.answerPermission(input);
     } catch (error) {
+      if (
+        error instanceof AgentRequestNotLiveError &&
+        (await this.answersAfterInterruption(workspace.id, conversationId))
+      ) {
+        return this.answerPermissionAfterInterruption(workspace, conversationId, input);
+      }
       harnessLog({
         level: "error",
         conversationId,
@@ -2353,7 +2497,158 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    return record;
+    return { conversation: record, interrupted: false };
+  }
+
+  /** A Cesium request whose turn no longer runs in this process: its answer is recorded for the next turn. */
+  private async answersAfterInterruption(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<boolean> {
+    if (this.hasLiveRuntime(conversationId)) {
+      return false;
+    }
+    const record = await readConversationRecord(workspaceId, conversationId);
+    return record != null && continuesInterruptedTurns(record.config.backendId);
+  }
+
+  /**
+   * Fails loudly instead of answering into nothing: the run is marked
+   * interrupted (if it still looked busy), the answer is persisted as the
+   * tool result the model would have received, and the caller is told, so
+   * Continue resumes with it.
+   */
+  private async recordAnswerAfterInterruption(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    build: (
+      tail: ReturnType<typeof analyzeCesiumTurnTail>,
+      events: AgentStoredEvent[]
+    ) => Promise<AgentEventInput[] | "already_answered">,
+    detail: string
+  ): Promise<AgentRequestAnswerResult> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      if (this.hasLiveRuntime(conversationId)) {
+        throw new AgentRequestNotLiveError("This request now belongs to a running turn; try again.");
+      }
+      const events = await readConversationEvents(workspace.id, conversationId);
+      const answer = await build(analyzeCesiumTurnTail(events), events);
+      if (answer === "already_answered") {
+        const record = await readConversationRecord(workspace.id, conversationId);
+        if (!record) {
+          throw new Error(`Unknown conversation: ${conversationId}`);
+        }
+        return { conversation: record, interrupted: false };
+      }
+      await markTurnInterrupted(workspace.id, conversationId, {
+        reason: "The agent runtime stopped while this run waited for your answer.",
+        cause: "runtime_lost",
+        eligibleStatuses: TURN_IN_PROGRESS_STATUSES,
+      });
+      const appended = await appendConversationEventsAndPatchRecord(
+        workspace.id,
+        conversationId,
+        [
+          ...answer,
+          {
+            eventId: randomUUID(),
+            conversationId,
+            kind: "status",
+            status: "interrupted",
+            detail,
+          },
+        ],
+        { status: "interrupted", pendingPermission: null }
+      );
+      return { conversation: this.withBackendDefaults(appended.conversation), interrupted: true };
+    });
+  }
+
+  private async answerPermissionAfterInterruption(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    input: { requestId: string; optionId?: string; cancelled?: boolean }
+  ): Promise<AgentRequestAnswerResult> {
+    const decision = input.cancelled ? "reject" : permissionDecisionFromOption(input.optionId);
+    return this.recordAnswerAfterInterruption(
+      workspace,
+      conversationId,
+      async (tail, events) => {
+        const pending = tail.pendingPermissions.find(
+          (candidate) => candidate.request.requestId === input.requestId
+        );
+        if (!pending) {
+          if (
+            events.some(
+              (event) => event.kind === "permission_resolved" && event.requestId === input.requestId
+            )
+          ) {
+            return "already_answered";
+          }
+          throw new AgentRequestNotLiveError("This permission request is no longer pending.");
+        }
+        if (!input.cancelled && isPersistentPermissionOptionId(input.optionId) && pending.toolKey) {
+          await saveRememberedAgentPermissionRule({
+            workspaceId: workspace.id,
+            backendId: "cesium-agent",
+            toolKey: pending.toolKey,
+            toolLabel: pending.toolLabel ?? pending.request.title ?? pending.toolKey,
+            decision,
+            optionId: input.optionId,
+            optionKind: input.optionId,
+            ...(pending.permissionCategory
+              ? { permissionCategory: pending.permissionCategory as AgentPermissionCategory }
+              : {}),
+            matchStyle: "exact",
+          }).catch(() => undefined);
+        }
+        return cesiumPermissionAnswerAfterInterruptionEvents({
+          conversationId,
+          tail,
+          pending,
+          optionId: input.optionId,
+          cancelled: input.cancelled,
+          decision,
+        });
+      },
+      input.cancelled
+        ? "Permission dismissed. The agent had already stopped; press Continue to resume."
+        : decision === "allow"
+          ? "Permission allowed. The agent had already stopped; press Continue to resume and run it."
+          : "Permission rejected. The agent had already stopped; press Continue to resume."
+    );
+  }
+
+  private async answerQuestionAfterInterruption(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    input: { questionId: string; answer: string }
+  ): Promise<AgentRequestAnswerResult> {
+    const answer = input.answer.trim();
+    return this.recordAnswerAfterInterruption(
+      workspace,
+      conversationId,
+      async (tail, events) => {
+        const pending = tail.pendingQuestions.find(
+          (candidate) => candidate.question.questionId === input.questionId
+        );
+        if (!pending) {
+          if (
+            events.some(
+              (event) =>
+                event.kind === "question" &&
+                event.questionId === input.questionId &&
+                event.status === "answered"
+            )
+          ) {
+            return "already_answered";
+          }
+          throw new AgentRequestNotLiveError("This question is no longer pending.");
+        }
+        return cesiumQuestionAnswerAfterInterruptionEvents({ conversationId, tail, pending, answer });
+      },
+      "Answer saved. The agent had already stopped; press Continue to resume with it."
+    );
   }
 
   async ensureConversationRuntime(
@@ -2421,7 +2716,92 @@ export class AgentRuntimeManager {
    * and must be reconciled to a terminal status.
    */
   hasLiveRuntime(conversationId: string): boolean {
-    return this.runtimes.has(conversationId);
+    const runtime = this.runtimes.get(conversationId);
+    if (!runtime) {
+      return false;
+    }
+    // A Cesium turn lives inside its tracked prompt; a handle re-created for
+    // a record left busy by a lost runtime owns no turn and no pending request.
+    return runtime.provider.backend.id !== "cesium-agent" || this.turns.has(conversationId);
+  }
+
+  private assertAcceptingTurns(): void {
+    if (this.shuttingDown) {
+      throw new Error("The server is shutting down; send the message again once it is back.");
+    }
+  }
+
+  private trackTurn(
+    workspaceId: string,
+    backendId: AgentBackendId,
+    conversationId: string,
+    run: () => Promise<void>
+  ): void {
+    const done = run().catch((error) => {
+      console.warn(
+        `[agent-runtime] turn for ${conversationId} ended with an unhandled error:`,
+        error instanceof Error ? error.message : error
+      );
+    });
+    const turn: TrackedTurn = { workspaceId, backendId, done };
+    this.turns.set(conversationId, turn);
+    void done.finally(() => {
+      if (this.turns.get(conversationId) === turn) {
+        this.turns.delete(conversationId);
+      }
+    });
+  }
+
+  /**
+   * Graceful shutdown: refuses new turns, stops the running Cesium turns
+   * without settling them, waits (bounded) for them to unwind, then marks
+   * each one interrupted so the user can Continue it after the restart.
+   * Other backends' runtimes are left as they are. Returns the conversations
+   * marked interrupted and whether every tracked turn finished in time.
+   */
+  async shutdown(options: { timeoutMs?: number } = {}): Promise<{
+    interrupted: string[];
+    drained: boolean;
+  }> {
+    this.shuttingDown = true;
+    const cesiumTurns = [...this.turns.entries()].filter(
+      ([, turn]) => turn.backendId === "cesium-agent"
+    );
+    await Promise.all(
+      cesiumTurns.map(async ([conversationId]) => {
+        await this.runtimes
+          .get(conversationId)
+          ?.handle.interrupt?.()
+          .catch(() => undefined);
+      })
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.all(cesiumTurns.map(([, turn]) => turn.done)).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), options.timeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    const interrupted: string[] = [];
+    for (const [conversationId, turn] of cesiumTurns) {
+      const marked = await markTurnInterrupted(turn.workspaceId, conversationId, {
+        reason: "The server shut down while this agent run was in progress.",
+        cause: "shutdown",
+        eligibleStatuses: TURN_IN_PROGRESS_STATUSES,
+      }).catch((error) => {
+        console.warn(
+          `[agent-runtime] could not mark ${conversationId} interrupted on shutdown:`,
+          error instanceof Error ? error.message : error
+        );
+        return false;
+      });
+      if (marked) {
+        interrupted.push(conversationId);
+      }
+      await this.disposeRuntime(conversationId);
+    }
+    return { interrupted, drained };
   }
 
   async disposeRuntime(conversationId: string): Promise<void> {

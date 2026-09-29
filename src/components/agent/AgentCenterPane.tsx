@@ -11,6 +11,10 @@ import {
 } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
+import {
+  AgentInterruptedDock,
+  isContinuableInterruption,
+} from "@/components/chat/AgentInterruptedDock";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { MessageList } from "@/components/chat/MessageList";
@@ -150,6 +154,7 @@ export function AgentCenterPane() {
     getConversationHistoryCursor,
     loadOlderConversationHistory,
     retryConversation,
+    continueConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
@@ -1454,6 +1459,14 @@ export function AgentCenterPane() {
                   {visibleConversationView ? (
                     <AgentCompletionErrorDock dock={completionErrorDock} />
                   ) : null}
+                  {visibleConversationView ? (
+                    <AgentInterruptedDock
+                      conversation={conversation}
+                      events={deferredThreadEvents}
+                      onContinue={continueConversation}
+                      suppressed={dockedAsk != null || completionErrorDock.visible}
+                    />
+                  ) : null}
                   <ChatComposer
                     key={composerDraftId}
                     mode={composerMode}
@@ -1536,7 +1549,9 @@ export function AgentCenterPane() {
                     layout="docked-bottom"
                     dockedCardVisible={
                       (visibleConversationView != null &&
-                        (dockedAsk != null || completionErrorDock.visible)) ||
+                        (dockedAsk != null ||
+                          completionErrorDock.visible ||
+                          isContinuableInterruption(conversation))) ||
                       dockedPlan != null ||
                       queuedPrompts.length > 0
                     }

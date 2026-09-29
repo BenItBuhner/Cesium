@@ -279,6 +279,7 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
         | "burn"
         | "attachments"
         | "linked_conversation"
+        | "turn_interrupted"
         | "other";
       /** Tool-produced images the live turn attached to this inline reminder's user message. */
       images?: Array<{ mimeType: string; data: string }>;

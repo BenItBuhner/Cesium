@@ -284,6 +284,7 @@ export type AgentStoredEvent =
         | "burn"
         | "attachments"
         | "linked_conversation"
+        | "turn_interrupted"
         | "other";
       /**
        * `inline` reminders are rebuilt into model history as their own
@@ -945,6 +946,12 @@ export interface AgentSessionHandle {
     clientTimezone?: string;
   }) => Promise<void>;
   cancel: () => Promise<void>;
+  /**
+   * Stops the running turn for a server shutdown without settling it: unlike
+   * `cancel` nothing is written, so the log still shows where the turn
+   * stopped and the runtime manager records the interruption itself.
+   */
+  interrupt?: () => Promise<void>;
   pause?: () => Promise<void>;
   resume?: () => Promise<void>;
   setConfigOption: (configId: string, value: string) => Promise<void>;
