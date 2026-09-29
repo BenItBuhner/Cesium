@@ -176,3 +176,71 @@ test("grep advertises ripgrep syntax, ignoreCase, and glob, and needs no permiss
   assert.match(properties.pattern!.description ?? "", /ripgrep \(Rust regex\) syntax/);
   assert.doesNotMatch(grep!.description, /JavaScript regular expression/);
 });
+
+test("the fallback honours gitignore negation, .ignore and .git/info/exclude the way ripgrep does", async () => {
+  const { searchWorkspace } = await import("../src/lib/agents/cesium/cesium-grep.js");
+  const root = path.join(TEST_DATA_DIR, "ignore-rules");
+  const files: Record<string, string> = {
+    ".git/info/exclude": "# local excludes\nexcluded.txt\n",
+    ".gitignore": "*.log\n!keep.log\nbuild/\n\\!bang.txt\n",
+    ".ignore": "secret.txt\n",
+    "visible.txt": "needle\n",
+    "a.log": "needle\n",
+    "keep.log": "needle\n",
+    "excluded.txt": "needle\n",
+    "secret.txt": "needle\n",
+    "!bang.txt": "needle\n",
+    "build/out.txt": "needle\n",
+    "sub/.gitignore": "!important.log\n",
+    "sub/important.log": "needle\n",
+    "sub/other.log": "needle\n",
+  };
+  for (const [relative, content] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+    await fs.writeFile(path.join(root, relative), content);
+  }
+  const search = async (engine: "ripgrep" | "javascript") => {
+    setRipgrepBinaryOverride(engine === "ripgrep" ? RIPGREP : null);
+    try {
+      const result = await searchWorkspace({
+        workspaceRoot: root,
+        searchPath: root,
+        pattern: "needle",
+        ignoreCase: false,
+        context: 0,
+        maxResults: 100,
+      });
+      return [...new Set(result.hits.map((hit) => path.relative(root, hit.file).split(path.sep).join("/")))].sort();
+    } finally {
+      setRipgrepBinaryOverride(undefined);
+    }
+  };
+  const expected = ["keep.log", "sub/important.log", "visible.txt"];
+  assert.deepEqual(await search("javascript"), expected);
+  if (RIPGREP) {
+    assert.deepEqual(await search("ripgrep"), expected, "ripgrep agrees on the same tree");
+  }
+
+  const worktree = path.join(TEST_DATA_DIR, "ignore-rules-worktree");
+  const gitDir = path.join(root, ".git", "worktrees", "wt");
+  await fs.mkdir(gitDir, { recursive: true });
+  await fs.writeFile(path.join(gitDir, "commondir"), "../..\n");
+  await fs.mkdir(worktree, { recursive: true });
+  await fs.writeFile(path.join(worktree, ".git"), `gitdir: ${gitDir}\n`);
+  await fs.writeFile(path.join(worktree, "excluded.txt"), "needle\n");
+  await fs.writeFile(path.join(worktree, "kept.txt"), "needle\n");
+  setRipgrepBinaryOverride(null);
+  try {
+    const result = await searchWorkspace({
+      workspaceRoot: worktree,
+      searchPath: worktree,
+      pattern: "needle",
+      ignoreCase: false,
+      context: 0,
+      maxResults: 100,
+    });
+    assert.deepEqual(result.hits.map((hit) => path.basename(hit.file)), ["kept.txt"], "a linked worktree reads the common exclude file");
+  } finally {
+    setRipgrepBinaryOverride(undefined);
+  }
+});

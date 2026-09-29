@@ -169,22 +169,28 @@ async function searchWithRipgrep(binary: string, input: GrepInput, isFile: boole
   });
 }
 
-type IgnoreRule = { regex: RegExp; anchored: boolean; dirOnly: boolean };
+type IgnoreRule = { regex: RegExp; anchored: boolean; dirOnly: boolean; negate: boolean };
 type IgnoreScope = { base: string; rules: IgnoreRule[] };
 
-/** The subset of .gitignore the fallback honours: plain, anchored, and directory-only patterns (no negation). */
-function parseGitignore(text: string): IgnoreRule[] {
+/** gitignore syntax: plain, anchored, directory-only and `!` re-include patterns, with `\!` / `\#` escapes. */
+function parseIgnoreRules(text: string): IgnoreRule[] {
   const rules: IgnoreRule[] = [];
   for (const rawLine of text.split(/\r?\n/)) {
-    let line = rawLine.replace(/\s+$/, "");
-    if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+    let line = rawLine.replace(/(?<!\\)\s+$/, "");
+    if (!line || line.startsWith("#")) continue;
+    const negate = line.startsWith("!");
+    if (negate) {
+      line = line.slice(1);
+    } else if (line.startsWith("\\!") || line.startsWith("\\#")) {
+      line = line.slice(1);
+    }
     const dirOnly = line.endsWith("/");
     line = line.replace(/\/+$/, "");
     const anchored = line.includes("/");
     line = line.replace(/^\/+/, "");
     if (!line) continue;
     try {
-      rules.push({ regex: globToRegExp(line), anchored, dirOnly });
+      rules.push({ regex: globToRegExp(line), anchored, dirOnly, negate });
     } catch {
       // Unsupported pattern; skip it.
     }
@@ -192,24 +198,47 @@ function parseGitignore(text: string): IgnoreRule[] {
   return rules;
 }
 
+/** A directory's `.gitignore`, then its `.ignore`, whose rules take precedence as in ripgrep. */
 async function loadIgnoreScope(dir: string): Promise<IgnoreScope | null> {
-  const text = await fs.readFile(path.join(dir, ".gitignore"), "utf8").catch(() => null);
-  if (text == null) return null;
-  const rules = parseGitignore(text);
+  const rules: IgnoreRule[] = [];
+  for (const name of [".gitignore", ".ignore"]) {
+    const text = await fs.readFile(path.join(dir, name), "utf8").catch(() => null);
+    if (text != null) rules.push(...parseIgnoreRules(text));
+  }
   return rules.length ? { base: dir, rules } : null;
 }
 
+/** The repository's `.git/info/exclude`, including through a linked worktree's `.git` file. */
+async function loadGitExcludeScope(repoRoot: string): Promise<IgnoreScope | null> {
+  const dotGit = path.join(repoRoot, ".git");
+  const stat = await fs.stat(dotGit).catch(() => null);
+  if (!stat) return null;
+  let gitDir = dotGit;
+  if (stat.isFile()) {
+    const pointer = /^gitdir:\s*(.+)$/m.exec(await fs.readFile(dotGit, "utf8").catch(() => ""))?.[1]?.trim();
+    if (!pointer) return null;
+    gitDir = path.resolve(repoRoot, pointer);
+    const common = (await fs.readFile(path.join(gitDir, "commondir"), "utf8").catch(() => null))?.trim();
+    if (common) gitDir = path.resolve(gitDir, common);
+  }
+  const text = await fs.readFile(path.join(gitDir, "info", "exclude"), "utf8").catch(() => null);
+  const rules = text == null ? [] : parseIgnoreRules(text);
+  return rules.length ? { base: repoRoot, rules } : null;
+}
+
+/** Scopes run from lowest to highest precedence; the last rule that matches decides, as in git. */
 function isIgnored(scopes: IgnoreScope[], absolute: string, isDirectory: boolean): boolean {
   const name = path.basename(absolute);
+  let ignored = false;
   for (const scope of scopes) {
     const relative = path.relative(scope.base, absolute).split(path.sep).join("/");
     if (!relative || relative.startsWith("..")) continue;
     for (const rule of scope.rules) {
       if (rule.dirOnly && !isDirectory) continue;
-      if (rule.regex.test(rule.anchored ? relative : name)) return true;
+      if (rule.regex.test(rule.anchored ? relative : name)) ignored = !rule.negate;
     }
   }
-  return false;
+  return ignored;
 }
 
 function compileGlobFilter(glob: string | undefined): ((relative: string) => boolean) | null {
@@ -262,8 +291,10 @@ async function searchWithJavaScript(input: GrepInput, isFile: boolean): Promise<
     return { hits: collector.hits, truncated: collector.truncated, engine: "javascript" };
   }
 
-  // .gitignore files between the workspace root and the search root apply too.
+  // .git/info/exclude and the ignore files between the workspace root and the search root apply too.
   const ancestorScopes: IgnoreScope[] = [];
+  const excludeScope = await loadGitExcludeScope(input.workspaceRoot);
+  if (excludeScope) ancestorScopes.push(excludeScope);
   const fromRoot = path.relative(input.workspaceRoot, input.searchPath);
   if (fromRoot && !fromRoot.startsWith("..") && !path.isAbsolute(fromRoot)) {
     let dir = input.workspaceRoot;
