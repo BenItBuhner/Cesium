@@ -19,6 +19,7 @@ import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
 import { subscribeBrowserControlTabsChanged } from "../lib/browser-control/service.js";
 import { noteCodespaceClientActivity } from "../lib/codespace-keepalive.js";
 import { measureServerPerf } from "../lib/perf.js";
+import { BoundedTtlMap } from "../lib/bounded-ttl-map.js";
 
 type AgentSocketState = {
   workspaceId: string;
@@ -64,7 +65,7 @@ const DROP_MARKER_FLUSH_DELAY_MS = 300;
  * every record push) was lost. Purely in-memory: absent entries simply omit
  * the conversation from the pong, which the client treats as "no signal".
  */
-const latestSeqByConversationKey = new Map<string, number>();
+const latestSeqByConversationKey = new BoundedTtlMap<string, number>({ maxEntries: 5_000, ttlMs: 6 * 60 * 60_000 });
 
 /** Buffers live agent events for one I/O turn so a burst of row writes = one `event_batch` frame. */
 const eventBroadcastPending = new Map<string, AgentStoredEvent[]>();

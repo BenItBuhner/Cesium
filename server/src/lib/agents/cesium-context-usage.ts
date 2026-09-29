@@ -33,6 +33,7 @@ import type {
   AgentConversationRecord,
   AgentStoredEvent,
 } from "./types.js";
+import { BoundedTtlMap } from "../bounded-ttl-map.js";
 
 const PROMPT_CONTEXT_CACHE_TTL_MS = 60_000;
 const USAGE_SNAPSHOT_CACHE_TTL_MS = 15_000;
@@ -47,11 +48,14 @@ type CesiumPromptContext = {
 
 let cachedDefaultToolDefinitions: OpenAiToolDefinitionList | null = null;
 
-const promptContextCache = new Map<string, { expiresAt: number; value: CesiumPromptContext }>();
-const usageSnapshotCache = new Map<
+const promptContextCache = new BoundedTtlMap<string, { expiresAt: number; value: CesiumPromptContext }>({
+  maxEntries: 500,
+  ttlMs: PROMPT_CONTEXT_CACHE_TTL_MS,
+});
+const usageSnapshotCache = new BoundedTtlMap<
   string,
   { expiresAt: number; lastEventSeq: number; snapshot: AgentContextUsageSnapshot }
->();
+>({ maxEntries: 500, ttlMs: USAGE_SNAPSHOT_CACHE_TTL_MS });
 
 function defaultToolDefinitions(): OpenAiToolDefinitionList {
   if (!cachedDefaultToolDefinitions) {
