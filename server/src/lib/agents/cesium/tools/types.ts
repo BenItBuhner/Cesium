@@ -1,0 +1,20 @@
+import type { WorkspaceRecord } from "../../../workspace-registry.js";
+import type { AgentEventInput, AgentConversationSnapshot } from "../../types.js";
+
+/** What a tool module may use of the session running it. */
+export type CesiumToolContext = {
+  workspace: WorkspaceRecord;
+  conversationId: string;
+  appendEvents(events: AgentEventInput[]): Promise<unknown>;
+  readSnapshot(): Promise<AgentConversationSnapshot | null>;
+  /** Roots outside the workspace that absolute paths may also point into (read and write). */
+  extraRoots: string[];
+  /** A root `read_file` may read but no tool may write: this conversation's spilled tool outputs. */
+  readOnlyRoot: string;
+  /** Whether the current model accepts image attachments. */
+  turnSupportsImages: boolean;
+  /** Attaches an image the tool produced to the model's next request. */
+  attachImage(image: { mimeType: string; data: string; source: string }): void;
+  /** Replaces the title the tool call's completion event will carry. */
+  refineTitle(toolCallId: string, title: string): void;
+};

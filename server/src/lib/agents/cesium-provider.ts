@@ -69,7 +69,7 @@ import {
   PROJECT_ORCHESTRATOR_TOOL_NAMES,
 } from "../projects/orchestrator-tool-definitions.js";
 import { isProjectsEnabled } from "../projects/feature-flag.js";
-import { extractToolEditPreview } from "./tool-edit-preview.js";
+
 import {
   buildCesiumContextSections,
   buildCesiumTurnFacts,
@@ -112,24 +112,13 @@ import {
   isPersistentPermissionOptionId,
   STANDARD_PERMISSION_OPTIONS,
 } from "./permission-options.js";
-import {
-  readCesiumPlanFile,
-  writeCesiumPlanFile,
-} from "./cesium-plan-files.js";
+
 import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
 import { refreshWorkspaceSkillsMirror, slugifySkillId } from "./skills-mirror.js";
 import {
-  appendGoalSnapshot,
-  blockGoal,
-  completeGoal,
-  ensureGoalForConversation,
   formatGoalForModel,
-  pauseGoal,
   readGoalForConversation,
-  resumeGoal,
   updateGoal,
-  updateGoalPlan,
-  updateGoalProgress,
 } from "./goal-store.js";
 import { goalCompactionRecoveryContext } from "./goal-steering.js";
 import { executeWorkflowRun } from "./workflow-runtime.js";
@@ -190,6 +179,27 @@ import type {
   AgentToolCallStatus,
 } from "./types.js";
 import { addTokenUsage, contextTokensAfterResponse } from "./cesium/cesium-usage.js";
+import type { CesiumToolContext } from "./cesium/tools/types.js";
+
+import { editFileTool, globTool, grepTool, readFileTool, writeFileTool } from "./cesium/tools/file-tools.js";
+import {
+  createPlanTool,
+  finalizePlanTool,
+  readPlanTool,
+  todoTool,
+  updatePlanTool,
+} from "./cesium/tools/plan-tools.js";
+import {
+  goalBlockTool,
+  goalCompleteTool,
+  goalGetTool,
+  goalPauseTool,
+  goalResumeTool,
+  goalSetTool,
+  goalSummarizeTool,
+  goalUpdatePlanTool,
+  goalUpdateProgressTool,
+} from "./cesium/tools/goal-tools.js";
 import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
 import {
   COMPACTION_SUMMARY_SYSTEM_PROMPT,
@@ -209,15 +219,9 @@ import {
 } from "./cesium/cesium-coerce.js";
 import { USER_REFUSED_TOOL_CALL_RESULT } from "./cesium/cesium-turn-recovery.js";
 import { AgentRequestNotLiveError } from "./turn-interruption.js";
-import {
-  applyCesiumFileEdit,
-  describeWriteFileOutcome,
-  parseCesiumEditFileArgs,
-  parseCesiumWriteFileArgs,
-} from "./cesium/cesium-file-tools.js";
+
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
-import { formatGlobResult, globWorkspaceEntries } from "./cesium/cesium-glob.js";
-import { formatGrepResult, searchWorkspace } from "./cesium/cesium-grep.js";
+
 import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
 import {
   isTerminalRunAlive,
@@ -232,11 +236,7 @@ import {
   type TerminalRunRecord,
 } from "./cesium/cesium-terminal-runs.js";
 import {
-  applyTodoPatch,
-  CESIUM_TODO_PLAN_ID,
   latestTodoEntries,
-  parseTodoItems,
-  todoEntriesFromReplace,
 } from "./cesium/cesium-todo.js";
 import {
   CESIUM_HEADROOM_CHARS_PER_TOKEN,
@@ -246,15 +246,11 @@ import {
   CESIUM_TOOL_RESULT_MODEL_MIN_CHARS,
   CONTEXT_PRUNE_TARGET_RATIO,
   CONTEXT_PRUNE_TRIGGER_RATIO,
-  DEFAULT_GREP_RESULTS,
   DEFAULT_MAX_OUTPUT_TOKENS,
   HISTORY_COMPACTION_TARGET_RATIO,
   HISTORY_COMPACTION_TARGET_TURNS,
   HISTORY_COMPACTION_THRESHOLD_RATIO,
   HISTORY_TURN_LIMIT,
-  LARGE_FILE_LINE_LIMIT,
-  MAX_GREP_RESULTS,
-  MAX_READ_LINES,
   ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES,
   ORCHESTRATION_WAIT_DEFAULT_MS,
   ORCHESTRATION_WAIT_HEARTBEAT_MS,
@@ -455,30 +451,6 @@ function updateConfigOption(options: AgentConfigOption[], id: string, value: str
   return options.map((option) => option.id === id ? { ...option, currentValue: value } : option);
 }
 
-/** Relative paths resolve in the workspace; absolute ones may also point into `extraRoots`. */
-function resolveWorkspacePath(workspaceRoot: string, inputPath: string, extraRoots: readonly string[] = []): string {
-  const resolved = path.resolve(workspaceRoot, inputPath);
-  for (const root of [workspaceRoot, ...extraRoots]) {
-    const relative = path.relative(root, resolved);
-    if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
-      return resolved;
-    }
-  }
-  throw new Error(`Path escapes workspace: ${inputPath}`);
-}
-
-/** `null` when the file does not exist; other filesystem errors still throw. */
-async function readWorkspaceFileIfExists(resolvedPath: string): Promise<string | null> {
-  try {
-    return await fs.readFile(resolvedPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-}
-
 function statusFromError(error: unknown): { status: AgentToolCallStatus; detail: string } {
   return {
     status: "failed",
@@ -507,20 +479,6 @@ function unparsedToolArgumentsResult(
 
 const CESIUM_STREAM_CHUNK_FLUSH_MS = 120;
 const CESIUM_STREAM_CHUNK_MIN_CHARS = 512;
-const MAX_READ_IMAGE_BYTES = 4 * 1024 * 1024;
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-};
-
-function imageMimeTypeForPath(filePath: string): string | null {
-  const extension = path.extname(filePath).toLowerCase();
-  return IMAGE_MIME_BY_EXTENSION[extension] ?? null;
-}
-
 export type CesiumAssistantStreamSink = {
   /** The message the next text lands in; changes when an attempt is discarded. */
   readonly messageId: string;
@@ -1721,6 +1679,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return id === request.id ? request : { ...request, id };
   }
 
+  /** The slice of this session that tool modules run against. */
+  private toolContext(): CesiumToolContext {
+    return {
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      appendEvents: (events) => this.callbacks.appendEvents(events),
+      readSnapshot: () => this.callbacks.readSnapshot(),
+      extraRoots: this.projectContextRoots(),
+      readOnlyRoot: this.toolOutputDir(),
+      turnSupportsImages: this.turnSupportsImages,
+      attachImage: (image) => {
+        this.pendingToolImages.push(image);
+      },
+      refineTitle: (toolCallId, title) => {
+        this.refinedToolTitles.set(toolCallId, title);
+      },
+    };
+  }
+
   /** A Project agent may also read and write its Project's context folder with the file tools. */
   private projectContextRoots(): string[] {
     const contextDir = projectAgentContextDir(this.callbacks.conversation.origin);
@@ -2630,13 +2607,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     switch (name) {
       case "read_file":
-        return await this.toolReadFile(args);
+        return await readFileTool(this.toolContext(), args);
       case "grep":
-        return await this.toolGrep(args);
+        return await grepTool(this.toolContext(), args);
       case "write_file":
-        return await this.toolWriteFile(args, randomUUID());
+        return await writeFileTool(this.toolContext(), args, randomUUID());
       case "edit_file":
-        return await this.toolEditFile(args, randomUUID(), toolTitle(name, args));
+        return await editFileTool(this.toolContext(), args, randomUUID(), toolTitle(name, args));
       case "terminal":
         return await this.toolTerminal(args);
       case "terminal_read":
@@ -3039,7 +3016,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return { text: withCurrentTodos(text, input.todos), kind };
   }
 
-
   private async buildHistory(currentUserMessageId: string): Promise<{
     messages: CesiumHistoryMessage[];
     /** The current turn's stored user text, when it is part of the rendered window. */
@@ -3423,19 +3399,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
         const toolName = normalizeCesiumToolName(request.name);
         switch (toolName) {
         case "read_file":
-          result = await this.toolReadFile(request.arguments);
+          result = await readFileTool(this.toolContext(), request.arguments);
           break;
         case "grep":
-          result = await this.toolGrep(request.arguments);
+          result = await grepTool(this.toolContext(), request.arguments);
           break;
         case "glob":
-          result = await this.toolGlob(request.arguments);
+          result = await globTool(this.toolContext(), request.arguments);
           break;
         case "edit_file":
-          result = await this.toolEditFile(request.arguments, request.id, title);
+          result = await editFileTool(this.toolContext(), request.arguments, request.id, title);
           break;
         case "write_file":
-          result = await this.toolWriteFile(request.arguments, request.id);
+          result = await writeFileTool(this.toolContext(), request.arguments, request.id);
           break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
@@ -3450,49 +3426,49 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolWait(request.arguments);
           break;
         case "todo":
-          result = await this.toolTodo(request.arguments);
+          result = await todoTool(this.toolContext(), request.arguments);
           break;
         case "create_plan":
-          result = await this.toolCreatePlan(request.arguments);
+          result = await createPlanTool(this.toolContext(), request.arguments);
           break;
         case "update_plan":
-          result = await this.toolUpdatePlan(request.arguments);
+          result = await updatePlanTool(this.toolContext(), request.arguments);
           break;
         case "read_plan":
-          result = await this.toolReadPlan(request.arguments);
+          result = await readPlanTool(this.toolContext(), request.arguments);
           break;
         case "finalize_plan":
-          result = await this.toolFinalizePlan(request.arguments);
+          result = await finalizePlanTool(this.toolContext(), request.arguments);
           break;
         case "goal_set":
-          result = await this.toolGoalSet(request.arguments);
+          result = await goalSetTool(this.toolContext(), request.arguments);
           break;
         case "goal_pause":
-          result = await this.toolGoalPause(request.arguments);
+          result = await goalPauseTool(this.toolContext(), request.arguments);
           break;
         case "goal_block":
-          result = await this.toolGoalBlock(request.arguments);
+          result = await goalBlockTool(this.toolContext(), request.arguments);
           break;
         case "goal_summarize":
-          result = await this.toolGoalSummarize(request.arguments);
+          result = await goalSummarizeTool(this.toolContext(), request.arguments);
           break;
         case "goal_complete":
-          result = await this.toolGoalComplete();
+          result = await goalCompleteTool(this.toolContext());
           break;
         case "goal_get":
-          result = await this.toolGoalGet();
+          result = await goalGetTool(this.toolContext());
           break;
         case "goal_update_plan":
-          result = await this.toolGoalUpdatePlan(request.arguments);
+          result = await goalUpdatePlanTool(this.toolContext(), request.arguments);
           break;
         case "goal_update_progress":
-          result = await this.toolGoalUpdateProgress(request.arguments);
+          result = await goalUpdateProgressTool(this.toolContext(), request.arguments);
           break;
         case "goal_summarize_state":
-          result = await this.toolGoalSummarize(request.arguments);
+          result = await goalSummarizeTool(this.toolContext(), request.arguments);
           break;
         case "goal_resume":
-          result = await this.toolGoalResume();
+          result = await goalResumeTool(this.toolContext());
           break;
         case "workflow_run":
           result = await this.toolWorkflowRun(request.arguments);
@@ -3640,163 +3616,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]);
       return failed.detail;
     }
-  }
-
-  private async toolReadFile(args: Record<string, unknown>): Promise<string> {
-    const inputPath = asString(args.path);
-    if (!inputPath) throw new Error("read_file.path is required.");
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, [
-      ...this.projectContextRoots(),
-      this.toolOutputDir(),
-    ]);
-    const imageMime = imageMimeTypeForPath(resolved);
-    if (imageMime) {
-      const buffer = await fs.readFile(resolved);
-      if (buffer.length > MAX_READ_IMAGE_BYTES) {
-        return `${inputPath} is a ${imageMime} image of ${buffer.length} bytes, which exceeds the ${MAX_READ_IMAGE_BYTES}-byte attachment limit.`;
-      }
-      if (!this.turnSupportsImages) {
-        return `${inputPath} is a ${imageMime} image (${buffer.length} bytes). The current model does not advertise image support, so the pixels cannot be attached; switch to a vision model such as kimi-k3 to view it.`;
-      }
-      this.pendingToolImages.push({
-        mimeType: imageMime,
-        data: buffer.toString("base64"),
-        source: `read_file(${inputPath})`,
-      });
-      return `${inputPath} is a ${imageMime} image (${buffer.length} bytes). The image is attached to this turn for your review.`;
-    }
-    const raw = await fs.readFile(resolved, "utf8");
-    const lines = raw.split(/\r?\n/);
-    const offset = Math.max(1, Math.floor(asNumber(args.offset) ?? 1));
-    const requestedLimit = Math.floor(asNumber(args.limit) ?? Math.min(lines.length, MAX_READ_LINES));
-    const limit = Math.min(Math.max(1, requestedLimit), MAX_READ_LINES);
-    if (lines.length > LARGE_FILE_LINE_LIMIT && !args.offset && !args.limit) {
-      return [
-        `${inputPath} has ${lines.length} lines, which exceeds ${LARGE_FILE_LINE_LIMIT}.`,
-        `Start:\n${lines.slice(0, 80).map((line, index) => `${index + 1}|${line}`).join("\n")}`,
-        `End:\n${lines.slice(-80).map((line, index) => `${lines.length - 79 + index}|${line}`).join("\n")}`,
-        `Use offset and limit to read up to ${MAX_READ_LINES} lines.`,
-      ].join("\n\n");
-    }
-    return lines
-      .slice(offset - 1, offset - 1 + limit)
-      .map((line, index) => `${offset + index}|${line}`)
-      .join("\n");
-  }
-
-  private async toolGrep(args: Record<string, unknown>): Promise<string> {
-    const pattern = asString(args.pattern);
-    if (!pattern) throw new Error("grep.pattern is required.");
-    const workspaceRoot = this.callbacks.workspace.root;
-    const searchPath = resolveWorkspacePath(workspaceRoot, asString(args.path) ?? ".", this.projectContextRoots());
-    const context = Math.max(0, Math.min(20, Math.floor(asNumber(args.context) ?? 0)));
-    const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
-    const result = await searchWorkspace({
-      workspaceRoot,
-      searchPath,
-      pattern,
-      ignoreCase: args.ignoreCase === true,
-      glob: asString(args.glob)?.trim() || undefined,
-      context,
-      maxResults,
-    });
-    return formatGrepResult(result, workspaceRoot, MAX_GREP_RESULTS);
-  }
-
-  private async toolGlob(args: Record<string, unknown>): Promise<string> {
-    const pattern = asString(args.pattern);
-    if (!pattern) throw new Error("glob.pattern is required.");
-    const searchPath = asString(args.path) ?? ".";
-    const searchRoot = resolveWorkspacePath(this.callbacks.workspace.root, searchPath, this.projectContextRoots());
-    const stat = await fs.stat(searchRoot).catch(() => null);
-    if (!stat?.isDirectory()) {
-      throw new Error(`glob.path must be an existing directory inside the workspace: ${searchPath}`);
-    }
-    const result = await globWorkspaceEntries({
-      workspaceRoot: this.callbacks.workspace.root,
-      searchRoot,
-      pattern,
-      maxResults: asNumber(args.maxResults),
-    });
-    return formatGlobResult(result, { pattern, searchPath });
-  }
-
-  private async toolEditFile(
-    args: Record<string, unknown>,
-    toolCallId: string,
-    title: string
-  ): Promise<string> {
-    const parsed = parseCesiumEditFileArgs(args);
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path, this.projectContextRoots());
-    const before = await readWorkspaceFileIfExists(resolved);
-    const outcome = applyCesiumFileEdit({
-      path: parsed.path,
-      before,
-      oldString: parsed.oldString,
-      newString: parsed.newString,
-      replaceAll: parsed.replaceAll,
-    });
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    await fs.writeFile(resolved, outcome.after, "utf8");
-    const editPreview = extractToolEditPreview(
-      { path: parsed.path, oldString: parsed.oldString, newString: parsed.newString },
-      { beforeFullFileContent: before ?? "", afterFullFileContent: outcome.after },
-      parsed.path
-    );
-    const refinedTitle = outcome.created ? `Create ${parsed.path}` : title;
-    if (outcome.created) {
-      this.refinedToolTitles.set(toolCallId, refinedTitle);
-    }
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "tool_call_update",
-        toolCallId,
-        title: refinedTitle,
-        toolKind: "edit",
-        status: "in_progress",
-        detail: outcome.created ? "Created file." : "Applied edit preview.",
-        locations: [{ path: parsed.path }],
-        editPreview,
-      },
-    ]);
-    return outcome.resultMessage;
-  }
-
-  private async toolWriteFile(args: Record<string, unknown>, toolCallId: string): Promise<string> {
-    const parsed = parseCesiumWriteFileArgs(args);
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path, this.projectContextRoots());
-    const before = await readWorkspaceFileIfExists(resolved);
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    await fs.writeFile(resolved, parsed.content, "utf8");
-    const { created, resultMessage } = describeWriteFileOutcome({
-      path: parsed.path,
-      before,
-      content: parsed.content,
-    });
-    const editPreview = extractToolEditPreview(
-      { path: parsed.path },
-      { beforeFullFileContent: before ?? "", afterFullFileContent: parsed.content },
-      parsed.path
-    );
-    const refinedTitle = `${created ? "Create" : "Update"} ${parsed.path}`;
-    this.refinedToolTitles.set(toolCallId, refinedTitle);
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "tool_call_update",
-        toolCallId,
-        title: refinedTitle,
-        toolKind: "edit",
-        status: "in_progress",
-        detail: created ? "Created file." : "Overwrote file.",
-        locations: [{ path: parsed.path }],
-        editPreview,
-      },
-    ]);
-    return resultMessage;
   }
 
   private async toolTerminal(args: Record<string, unknown>): Promise<string> {
@@ -3970,306 +3789,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const record = await this.findTerminalRun(id).catch(() => null);
     return { killRunId: id, command: record?.command ?? "" };
-  }
-
-  private async appendPlanFileEvents(plan: Awaited<ReturnType<typeof readCesiumPlanFile>>, raw: unknown): Promise<void> {
-    const events: AgentEventInput[] = [
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "plan_file",
-        path: plan.path,
-        title: plan.title,
-        previewMode: "preview",
-        raw,
-      },
-    ];
-    if (plan.entries.length > 0) {
-      events.push({
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "plan",
-        planId: `plan-file:${plan.path}`,
-        entries: plan.entries,
-        raw,
-      });
-    }
-    await this.callbacks.appendEvents(events);
-  }
-
-  private async toolCreatePlan(args: Record<string, unknown>): Promise<string> {
-    const title = asString(args.title);
-    const content = asString(args.content);
-    if (!title) throw new Error("create_plan.title is required.");
-    if (!content) throw new Error("create_plan.content is required.");
-    const plan = await writeCesiumPlanFile({
-      workspaceRoot: this.callbacks.workspace.root,
-      title,
-      content,
-      path: asString(args.path),
-    });
-    await this.appendPlanFileEvents(plan, args);
-    return `Created plan ${plan.path} with ${plan.entries.length} checklist item${plan.entries.length === 1 ? "" : "s"}.`;
-  }
-
-  private async toolUpdatePlan(args: Record<string, unknown>): Promise<string> {
-    const planPath = asString(args.path);
-    const content = asString(args.content);
-    if (!planPath) throw new Error("update_plan.path is required.");
-    if (!content) throw new Error("update_plan.content is required.");
-    const plan = await writeCesiumPlanFile({
-      workspaceRoot: this.callbacks.workspace.root,
-      title: asString(args.title) ?? "Plan",
-      content,
-      path: planPath,
-    });
-    await this.appendPlanFileEvents(plan, args);
-    return `Updated plan ${plan.path} with ${plan.entries.length} checklist item${plan.entries.length === 1 ? "" : "s"}.`;
-  }
-
-  private async toolReadPlan(args: Record<string, unknown>): Promise<string> {
-    const planPath = asString(args.path);
-    if (!planPath) throw new Error("read_plan.path is required.");
-    const plan = await readCesiumPlanFile({
-      workspaceRoot: this.callbacks.workspace.root,
-      path: planPath,
-    });
-    return [
-      `Plan: ${plan.title}`,
-      `Path: ${plan.path}`,
-      `Checklist items: ${plan.entries.length}`,
-      "",
-      plan.content,
-    ].join("\n");
-  }
-
-  private async toolFinalizePlan(args: Record<string, unknown>): Promise<string> {
-    const planPath = asString(args.path);
-    if (!planPath) throw new Error("finalize_plan.path is required.");
-    const plan = await readCesiumPlanFile({
-      workspaceRoot: this.callbacks.workspace.root,
-      path: planPath,
-    });
-    await this.appendPlanFileEvents(plan, args);
-    return `Finalized plan ${plan.path} for review.`;
-  }
-
-  private async toolGoalGet(): Promise<string> {
-    const goal = await readGoalForConversation({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-    });
-    return goal ? formatGoalForModel(goal) : "No Goal exists for this conversation.";
-  }
-
-  private async toolGoalSet(args: Record<string, unknown>): Promise<string> {
-    const objective = asString(args.objective);
-    let goal = await readGoalForConversation({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-    });
-    if (!goal) {
-      if (!objective) {
-        throw new Error("goal_set.objective is required when no Goal exists.");
-      }
-      goal = await ensureGoalForConversation({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        objective,
-      });
-    } else if (objective && objective !== goal.objective) {
-      goal = await updateGoal({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        patch: {
-          objective,
-          status: goal.status === "planning" || goal.status === "paused" ? "active" : goal.status,
-          phase: goal.phase === "planning" ? "executing" : goal.phase,
-        },
-      });
-    }
-
-    const hasPlanState =
-      asString(args.planSummary) != null ||
-      Array.isArray(args.milestones) ||
-      Array.isArray(args.todos);
-    if (hasPlanState) {
-      goal = await updateGoalPlan({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        planSummary: asString(args.planSummary),
-        milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
-        todos: Array.isArray(args.todos) ? args.todos : undefined,
-      });
-    }
-
-    if (Array.isArray(args.verificationEvidence)) {
-      goal = await updateGoalProgress({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        verificationEvidence: args.verificationEvidence,
-      });
-    }
-
-    const progressPercent = asNumber(args.progressPercent);
-    const headline = asString(args.headline);
-    if (progressPercent != null || headline) {
-      const patch: Parameters<typeof updateGoal>[0]["patch"] = {};
-      if (progressPercent != null) {
-        const rounded = Math.round(progressPercent);
-        if (
-          !Number.isFinite(progressPercent) ||
-          rounded !== progressPercent ||
-          rounded < 0 ||
-          rounded > 100
-        ) {
-          throw new Error("goal_set.progressPercent must be an integer from 0 to 100.");
-        }
-        patch.progressPercent = rounded;
-      }
-      if (headline) {
-        patch.headline = headline;
-      }
-      goal = await updateGoal({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        patch,
-      });
-    }
-
-    if (goal.status === "planning") {
-      goal = await updateGoal({
-        workspace: this.callbacks.workspace,
-        conversationId: this.callbacks.conversation.id,
-        patch: {
-          status: "active",
-          phase: goal.phase === "planning" ? "executing" : goal.phase,
-        },
-      });
-    }
-
-    return `Goal set.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
-    const planSummary = asString(args.planSummary);
-    if (!planSummary) {
-      throw new Error("goal_update_plan.planSummary is required.");
-    }
-    const goal = await updateGoalPlan({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      planSummary,
-      milestones: Array.isArray(args.milestones) ? args.milestones : [],
-      todos: Array.isArray(args.todos) ? args.todos : [],
-    });
-    return `Goal plan recorded.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
-    const goal = await updateGoalProgress({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
-      todos: Array.isArray(args.todos) ? args.todos : undefined,
-      verificationEvidence: Array.isArray(args.verificationEvidence)
-        ? args.verificationEvidence
-        : undefined,
-    });
-    return `Goal progress updated.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalSummarize(args: Record<string, unknown>): Promise<string> {
-    const progressPercent = asNumber(args.progressPercent);
-    const summary = asString(args.summary);
-    if (progressPercent == null) {
-      throw new Error("goal_summarize.progressPercent is required.");
-    }
-    if (!summary) {
-      throw new Error("goal_summarize.summary is required.");
-    }
-    const goal = await appendGoalSnapshot({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      progressPercent,
-      summary,
-      headline: asString(args.headline),
-    });
-    return `Goal summarized.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalComplete(): Promise<string> {
-    const goal = await completeGoal({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-    });
-    return `Goal complete.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalBlock(args: Record<string, unknown>): Promise<string> {
-    const reason = asString(args.reason);
-    if (!reason) {
-      throw new Error("goal_block.reason is required.");
-    }
-    const goal = await blockGoal({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      reason,
-      evidence: asString(args.evidence),
-    });
-    return goal.status === "blocked"
-      ? `Goal blocked.\n\n${formatGoalForModel(goal)}`
-      : `Blocker recorded but Goal remains active until the same blocker repeats across at least three Goal turns.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalPause(args: Record<string, unknown>): Promise<string> {
-    const goal = await pauseGoal({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      reason: asString(args.reason),
-    });
-    return `Goal paused.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolGoalResume(): Promise<string> {
-    const goal = await resumeGoal({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-    });
-    return `Goal resumed.\n\n${formatGoalForModel(goal)}`;
-  }
-
-  private async toolTodo(args: Record<string, unknown>): Promise<string> {
-    const action = asString(args.action) ?? "list";
-    const items = Array.isArray(args.items) ? args.items : [];
-    if (action === "list") {
-      const snapshot = await this.callbacks.readSnapshot();
-      const latest = latestTodoEntries(snapshot?.events ?? []);
-      return latest
-        ? latest.map((entry) => `${entry.status}: ${entry.content}`).join("\n")
-        : "No todos yet.";
-    }
-    const parsedItems = parseTodoItems(items);
-    let entries: AgentPlanEntry[];
-    if (action === "patch") {
-      const snapshot = await this.callbacks.readSnapshot();
-      entries = applyTodoPatch(latestTodoEntries(snapshot?.events ?? []) ?? [], parsedItems);
-    } else {
-      entries = todoEntriesFromReplace(parsedItems);
-    }
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "plan",
-        planId: CESIUM_TODO_PLAN_ID,
-        entries,
-        raw: args,
-      },
-    ]);
-    return action === "patch"
-      ? `Patched ${parsedItems.length} todo item${parsedItems.length === 1 ? "" : "s"}; the list now has ${entries.length}.`
-      : `Stored ${entries.length} todo item${entries.length === 1 ? "" : "s"}.`;
   }
 
   private async toolAskQuestion(args: Record<string, unknown>): Promise<string> {
