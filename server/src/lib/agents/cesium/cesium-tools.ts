@@ -173,7 +173,8 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "terminal",
-    description: "Run a workspace command. waitUntil can be complete, background, or pattern.",
+    description:
+      "Run a shell command in the workspace root. waitUntil: complete (default) waits for exit, pattern returns once the output contains pattern, background returns immediately. Long output keeps its head and tail. A command still running when the call returns (background, pattern, or past timeoutMs) keeps running under the returned id: poll it with terminal_read and stop it with terminal_kill. Use background plus terminal_read for dev servers, watchers, and builds longer than two minutes.",
     requiresPermission: "terminal",
     parameters: {
       type: "object",
@@ -181,9 +182,43 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         command: { type: "string" },
         waitUntil: { type: "string", enum: ["complete", "background", "pattern"] },
         pattern: { type: "string" },
-        timeoutMs: { type: "number" },
+        timeoutMs: {
+          type: "number",
+          description: "How long to wait before returning while the command keeps running (default 30000, max 120000).",
+        },
       },
       required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "terminal_read",
+    description:
+      "Read the output and status (running, exit code) of a command started with terminal, by its id. Works after the terminal call returned, after the command finished, and across server restarts. Pass since from the previous read to get only newer output. Read-only.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Run id returned by terminal." },
+        since: {
+          type: "number",
+          description: "Byte offset to read from, as reported by the previous terminal_read. Omit to read from the start.",
+        },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "terminal_kill",
+    description:
+      "Stop a command started with terminal, by its id: SIGTERM to its whole process group (so servers it spawned stop too), then SIGKILL after a short grace period.",
+    requiresPermission: "terminal",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Run id returned by terminal." },
+      },
+      required: ["id"],
       additionalProperties: false,
     },
   },
@@ -1048,6 +1083,8 @@ export function toolKind(
     case "write_file":
       return "edit";
     case "terminal":
+    case "terminal_read":
+    case "terminal_kill":
       return "terminal";
     case "switch_mode":
       return "mode";
@@ -1141,7 +1178,9 @@ export function cesiumPermissionToolKey(
     case "editFile":
       return `cesium:edit_file:${asString(args.path) ?? ""}`;
     case "terminal":
-      return `cesium:terminal:${asString(args.command) ?? ""}`;
+      return asString(args.killRunId)
+        ? `cesium:terminal_kill:${asString(args.command) ?? ""}`
+        : `cesium:terminal:${asString(args.command) ?? ""}`;
     case "mcpCall":
       return `cesium:mcp:${asString(args.serverId) ?? ""}:${asString(args.toolName) ?? ""}`;
     default:
@@ -1168,6 +1207,10 @@ export function toolTitle(
       return `Write ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
+    case "terminal_read":
+      return `Read terminal ${asString(args.id)?.slice(0, 8) ?? "run"}`;
+    case "terminal_kill":
+      return `Kill terminal ${asString(args.id)?.slice(0, 8) ?? "run"}`;
     case "wait": {
       const seconds = typeof args.seconds === "number" ? args.seconds : Number(args.seconds);
       const reason = asString(args.reason);
