@@ -365,7 +365,8 @@ test("a child created by the orchestrator runs in its repo and reports back as a
 test("steer lands mid-turn on a busy child and queued work runs as its next turn", async () => {
   script(
     "web",
-    toolCall("call_web_wait", "wait", { seconds: 2, reason: "long build" }),
+    // The steer has to land before this wait ends; the coordinator's steering turn alone took up to 3 s on a loaded machine.
+    toolCall("call_web_wait", "wait", { seconds: 10, reason: "long build" }),
     text(["Web built with dark mode."]),
     text(["Docs written."])
   );
