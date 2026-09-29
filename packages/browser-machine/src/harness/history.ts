@@ -1,39 +1,74 @@
 /**
- * Rebuild adapter messages from the stored event log. The browser harness
- * writes its own bookkeeping into `raw` on tool events, so reconstruction is
- * lossless for turns produced here.
+ * Rebuild adapter messages from the stored event log with the normalizer the
+ * server harness uses, then map them onto the OpenAI chat shape the browser
+ * adapters send. The harness rebuilds before every model call, so each
+ * request is exactly what this returns for the log at that point.
  */
-import type { ImageAttachment, AgentStoredEvent } from "@cesium/core";
+import {
+  normalizeEventsToHistory,
+  type AgentStoredEvent,
+  type CesiumHistoryMessage,
+} from "@cesium/core";
 import type { AdapterContentPart, AdapterMessage } from "./adapters";
 
-/** `responseId` is the model response that issued the call (absent on older events). */
-type ToolRaw = { callId?: string; name?: string; argsJson?: string; responseId?: string };
-type ToolResultRaw = { result?: string };
-
-/** Mirrors the engine's per-tool result cap when feeding results back to the model. */
-const MAX_TOOL_RESULT_CHARS = 12_000;
-
-function capToolResult(result: string): string {
-  if (result.length <= MAX_TOOL_RESULT_CHARS) return result;
-  return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}\n[Tool result truncated at ${MAX_TOOL_RESULT_CHARS} characters.]`;
+function fileNotes(event: Extract<AgentStoredEvent, { kind: "user_message" }>): string {
+  return (event.attachments ?? [])
+    .filter((attachment) => attachment.kind === "file" && attachment.savedPath)
+    .map((attachment) => `[Attached file saved at ${attachment.savedPath}]`)
+    .join("\n");
 }
 
-function attachmentParts(attachments: ImageAttachment[] | undefined): AdapterContentPart[] {
-  const parts: AdapterContentPart[] = [];
-  for (const attachment of attachments ?? []) {
-    if ((attachment.kind ?? "image") === "image" && attachment.data) {
-      parts.push({
-        type: "image_url",
-        image_url: { url: `data:${attachment.mimeType};base64,${attachment.data}` },
-      });
-    } else if (attachment.savedPath) {
-      parts.push({
-        type: "text",
-        text: `[Attached file saved at ${attachment.savedPath}${attachment.name ? ` (${attachment.name})` : ""}]`,
-      });
-    }
+/**
+ * Browser-only event conventions, expressed in the shared shape: the context
+ * reminder has always gone out as its own tagged user message right after the
+ * prompt (an inline reminder at its position), and saved file attachments as
+ * notes on the prompt text.
+ */
+function toSharedShape(event: AgentStoredEvent): AgentStoredEvent {
+  if (event.kind === "system_reminder") {
+    const text = event.text.trimStart().startsWith("<system-reminder>")
+      ? event.text
+      : `<system-reminder>\n${event.text}\n</system-reminder>`;
+    return { ...event, text, placement: "inline", targetMessageId: undefined };
   }
-  return parts;
+  if (event.kind === "user_message") {
+    const notes = fileNotes(event);
+    return notes ? { ...event, content: `${event.content}\n\n${notes}` } : event;
+  }
+  return event;
+}
+
+function toAdapterMessage(message: CesiumHistoryMessage, supportsImages: boolean): AdapterMessage {
+  if (message.role === "tool") {
+    return { role: "tool", tool_call_id: message.toolCallId ?? "", content: message.content };
+  }
+  if (message.role === "assistant") {
+    return {
+      role: "assistant",
+      content: message.content || null,
+      ...(message.toolCalls?.length
+        ? {
+            tool_calls: message.toolCalls.map((call) => ({
+              id: call.id,
+              type: "function" as const,
+              function: { name: call.name, arguments: call.arguments },
+            })),
+          }
+        : {}),
+    };
+  }
+  const images = supportsImages ? (message.images ?? []) : [];
+  if (images.length === 0) {
+    return { role: message.role, content: message.content };
+  }
+  const parts: AdapterContentPart[] = [
+    ...(message.content.trim() ? [{ type: "text" as const, text: message.content }] : []),
+    ...images.map((image) => ({
+      type: "image_url" as const,
+      image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+    })),
+  ];
+  return { role: message.role, content: parts };
 }
 
 export function buildHistoryFromEvents(input: {
@@ -41,131 +76,7 @@ export function buildHistoryFromEvents(input: {
   systemPrompt: string;
   supportsImages: boolean;
 }): AdapterMessage[] {
-  const messages: AdapterMessage[] = [{ role: "system", content: input.systemPrompt }];
-
-  let assistantText = "";
-  let assistantMessageId: string | null = null;
-  const pendingToolCalls: Array<{ id: string; name: string; argsJson: string }> = [];
-  let pendingResponseId: string | null = null;
-  const pendingToolResults: Array<{ id: string; result: string }> = [];
-
-  const flushAssistant = (): void => {
-    if (!assistantText && pendingToolCalls.length === 0) return;
-    messages.push({
-      role: "assistant",
-      content: assistantText || null,
-      ...(pendingToolCalls.length > 0
-        ? {
-            tool_calls: pendingToolCalls.map((call) => ({
-              id: call.id,
-              type: "function" as const,
-              function: { name: call.name, arguments: call.argsJson },
-            })),
-          }
-        : {}),
-    });
-    for (const result of pendingToolResults) {
-      messages.push({ role: "tool", tool_call_id: result.id, content: result.result });
-    }
-    assistantText = "";
-    assistantMessageId = null;
-    pendingResponseId = null;
-    pendingToolCalls.length = 0;
-    pendingToolResults.length = 0;
-  };
-
-  for (const event of input.events) {
-    switch (event.kind) {
-      case "user_message": {
-        flushAssistant();
-        const parts = input.supportsImages ? attachmentParts(event.attachments) : [];
-        if (parts.length > 0) {
-          messages.push({
-            role: "user",
-            content: [{ type: "text", text: event.content }, ...parts],
-          });
-        } else {
-          const fileNotes = (event.attachments ?? [])
-            .filter((attachment) => attachment.kind === "file" && attachment.savedPath)
-            .map((attachment) => `[Attached file saved at ${attachment.savedPath}]`)
-            .join("\n");
-          messages.push({
-            role: "user",
-            content: fileNotes ? `${event.content}\n\n${fileNotes}` : event.content,
-          });
-        }
-        break;
-      }
-      case "system_reminder": {
-        flushAssistant();
-        const text = event.text.trimStart().startsWith("<system-reminder>")
-          ? event.text
-          : `<system-reminder>\n${event.text}\n</system-reminder>`;
-        messages.push({ role: "user", content: text });
-        break;
-      }
-      case "assistant_message_chunk": {
-        if (assistantMessageId !== null && assistantMessageId !== event.messageId) {
-          flushAssistant();
-        }
-        // A new burst of text after tool results means a new assistant message.
-        if (pendingToolResults.length > 0) {
-          flushAssistant();
-        }
-        assistantMessageId = event.messageId;
-        assistantText += event.text;
-        break;
-      }
-      case "assistant_message_end": {
-        break;
-      }
-      case "tool_call": {
-        const raw = (event.raw ?? {}) as ToolRaw;
-        if (raw.name) {
-          // Each model response is its own assistant message; merging a later
-          // response's calls into an earlier one would rewrite sent history.
-          if (raw.responseId && pendingToolCalls.length > 0 && pendingResponseId !== raw.responseId) {
-            flushAssistant();
-          }
-          pendingResponseId = raw.responseId ?? pendingResponseId;
-          pendingToolCalls.push({
-            id: raw.callId ?? event.toolCallId,
-            name: raw.name,
-            argsJson: raw.argsJson ?? "{}",
-          });
-        }
-        break;
-      }
-      case "tool_call_update": {
-        const raw = (event.raw ?? {}) as ToolResultRaw & ToolRaw;
-        if (
-          (event.status === "completed" ||
-            event.status === "failed" ||
-            event.status === "cancelled") &&
-          raw.result !== undefined
-        ) {
-          const matching = pendingToolCalls.find(
-            (call) => call.id === (raw.callId ?? event.toolCallId)
-          );
-          pendingToolResults.push({
-            id: matching?.id ?? raw.callId ?? event.toolCallId,
-            result: capToolResult(raw.result),
-          });
-        }
-        break;
-      }
-      case "compression_summary": {
-        flushAssistant();
-        messages.push({
-          role: "user",
-          content: `<system-reminder>\nEarlier conversation was compressed. Summary:\n${event.summary}\n</system-reminder>`,
-        });
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  flushAssistant();
-  return messages;
+  return normalizeEventsToHistory(input.events.map(toSharedShape), input.systemPrompt).map(
+    (message) => toAdapterMessage(message, input.supportsImages)
+  );
 }

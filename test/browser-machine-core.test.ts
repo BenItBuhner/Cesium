@@ -18,7 +18,16 @@ import {
 } from "../packages/browser-machine/src/harness/reminder.ts";
 import { ShellRuntime } from "../packages/browser-machine/src/shell/runtime.ts";
 import { BrowserGit } from "../packages/browser-machine/src/git/browser-git.ts";
-import { BrowserToolExecutor } from "../packages/browser-machine/src/harness/tools.ts";
+import {
+  BROWSER_TOOL_DEFINITIONS,
+  BrowserToolExecutor,
+} from "../packages/browser-machine/src/harness/tools.ts";
+import type { AdapterMessage } from "../packages/browser-machine/src/harness/adapters.ts";
+import {
+  CESIUM_SHARED_TOOL_DEFINITIONS,
+  CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
+  normalizeCesiumToolResultForModel,
+} from "@cesium/core";
 import type { AgentStoredEvent, WorkspaceRecord } from "@cesium/core";
 
 describe("browser machine paths", () => {
@@ -177,6 +186,30 @@ describe("browser machine grep tool", () => {
   });
 });
 
+describe("browser machine tool definitions", () => {
+  test("reuse the shared schemas and only advertise tools the harness runs", async () => {
+    for (const name of ["read_file", "write_file", "edit_file", "todo"] as const) {
+      assert.equal(
+        BROWSER_TOOL_DEFINITIONS.find((tool) => tool.name === name),
+        CESIUM_SHARED_TOOL_DEFINITIONS[name]
+      );
+    }
+    const names = BROWSER_TOOL_DEFINITIONS.map((tool) => tool.name);
+    assert.deepEqual(names, Object.keys(CESIUM_SHARED_TOOL_DEFINITIONS));
+
+    const vfs = new Vfs();
+    vfs.mkdir("/workspaces/demo", { recursive: true });
+    const git = new BrowserGit(vfs);
+    const tools = new BrowserToolExecutor(vfs, git, new ShellRuntime(vfs, git), async () => 0);
+    const workspace = { id: "demo", root: "/workspaces/demo", name: "demo", createdAt: 1 } as WorkspaceRecord;
+    // ask_question is answered by the harness itself, never the executor.
+    for (const name of names.filter((toolName) => toolName !== "ask_question")) {
+      const { result } = await tools.execute({ conversationId: "c1", workspace, name, args: {} });
+      assert.doesNotMatch(result, /is not available on the browser machine/, name);
+    }
+  });
+});
+
 describe("browser machine npm semver", () => {
   test("caret, tilde, and comparator ranges", () => {
     const v = parseSemver("1.4.2");
@@ -275,6 +308,93 @@ describe("browser machine harness history", () => {
     });
     assert.deepEqual(after.slice(0, before.length), before, "the second response only appends");
     assert.equal(after.filter((message) => message.role === "assistant").length, 2);
+  });
+
+  test("runs on the shared normalizer and only ever appends", () => {
+    let seq = 0;
+    const event = (partial: Record<string, unknown>): AgentStoredEvent =>
+      ({ seq: ++seq, eventId: `e${seq}`, conversationId: "c1", createdAt: seq, ...partial }) as AgentStoredEvent;
+    const longOutput = "x".repeat(CESIUM_TOOL_RESULT_MODEL_MAX_CHARS + 500);
+    const call = (
+      id: string,
+      responseId: string,
+      name: string,
+      status: "completed" | "cancelled",
+      result: string
+    ): AgentStoredEvent[] => [
+      event({
+        kind: "tool_call",
+        toolCallId: `t-${id}`,
+        title: name,
+        toolKind: "other",
+        status: "in_progress",
+        raw: { callId: id, name, argsJson: '{"command":"ls"}', responseId },
+      }),
+      event({ kind: "tool_call_update", toolCallId: `t-${id}`, status, raw: { callId: id, result } }),
+    ];
+    // Each entry is the log as it stood when the harness made a model call.
+    const requests: AgentStoredEvent[][] = [];
+    const log: AgentStoredEvent[] = [];
+    const add = (...events: AgentStoredEvent[]) => log.push(...events);
+    const request = () => requests.push([...log]);
+
+    add(
+      event({ kind: "user_message", messageId: "m1", content: "look around" }),
+      event({ kind: "system_reminder", reminderId: "r1", targetMessageId: "m1", reason: "context", text: "env" })
+    );
+    request();
+    add(
+      event({ kind: "assistant_message_chunk", messageId: "resp-1", text: "Checking." }),
+      ...call("call_a", "resp-1", "terminal", "completed", longOutput),
+      ...call("call_b", "resp-1", "write_file", "cancelled", "The user rejected this tool call.")
+    );
+    request();
+    add(
+      event({ kind: "assistant_message_chunk", messageId: "resp-2", text: "Half an ans" }),
+      event({ kind: "assistant_message_end", messageId: "resp-2", stopReason: "interrupted" })
+    );
+    request();
+    add(
+      event({ kind: "assistant_message_chunk", messageId: "resp-3", text: "All done." }),
+      event({ kind: "assistant_message_end", messageId: "resp-3", stopReason: "end_turn" }),
+      event({ kind: "user_message", messageId: "m2", content: "thanks" })
+    );
+    request();
+
+    const histories = requests.map((events) =>
+      buildHistoryFromEvents({ events, systemPrompt: "S", supportsImages: false })
+    );
+    for (let index = 1; index < histories.length; index += 1) {
+      const previous = histories[index - 1]!;
+      assert.deepEqual(histories[index]!.slice(0, previous.length), previous, `request ${index} only appends`);
+    }
+
+    const final = histories[histories.length - 1]!;
+    assert.deepEqual(
+      final.map((message) => message.role),
+      ["system", "user", "user", "assistant", "tool", "tool", "assistant", "assistant", "user"]
+    );
+    const batch = final[3] as Extract<AdapterMessage, { role: "assistant" }>;
+    assert.equal(batch.content, "Checking.");
+    assert.deepEqual(
+      batch.tool_calls?.map((toolCall) => [toolCall.id, toolCall.function.arguments]),
+      [
+        ["call_a", '{"command":"ls"}'],
+        ["call_b", '{"command":"ls"}'],
+      ]
+    );
+    assert.deepEqual(final[4], {
+      role: "tool",
+      tool_call_id: "call_a",
+      content: normalizeCesiumToolResultForModel({ toolName: "terminal", result: longOutput }).content,
+    });
+    assert.deepEqual(final[5], {
+      role: "tool",
+      tool_call_id: "call_b",
+      content: "The user rejected this tool call.",
+    });
+    assert.equal(final[6]?.content, "Half an ans");
+    assert.equal(final[7]?.content, "All done.");
   });
 });
 
