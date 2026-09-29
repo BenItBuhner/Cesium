@@ -235,6 +235,7 @@ function compactPullRequest(pr: ProjectPullRequestListing) {
     branch: pr.headRef,
     base: pr.baseRef,
     ...(pr.openedByProject ? { openedByProject: true } : {}),
+    ...(pr.closedByProject ? { closedByProject: true } : {}),
   };
 }
 

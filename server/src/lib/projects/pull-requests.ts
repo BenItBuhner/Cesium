@@ -20,6 +20,7 @@ import type { ProjectChildRecord, ProjectRecord } from "./types.js";
 
 const PR_TITLE_MAX_CHARS = 72;
 const USER_QUOTE_LOOKBACK = 5;
+const CLOSED_PRS_KEPT = 50;
 
 /** The latest decision per reviewer: changes requested beats approval beats comments. */
 export function aggregateReviews(reviews: readonly GithubReview[]): ProjectPullRequestReview | null {
@@ -49,6 +50,7 @@ export function toProjectPullRequest(
   extras?: Partial<Pick<ProjectPullRequest, "ci" | "failedChecks" | "review" | "openedByProject">>
 ): ProjectPullRequest {
   const merged = pull.merged === true || Boolean(pull.merged_at);
+  const state = merged ? "merged" : pull.state === "closed" ? "closed" : "open";
   const headSha = pull.head?.sha ?? previous?.headSha ?? null;
   const headChanged = previous?.headSha != null && headSha !== previous.headSha;
   return {
@@ -56,7 +58,7 @@ export function toProjectPullRequest(
     number: pull.number,
     url: pull.html_url,
     title: pull.title,
-    state: merged ? "merged" : pull.state === "closed" ? "closed" : "open",
+    state,
     draft: pull.draft === true,
     headRef: pull.head?.ref ?? previous?.headRef ?? "",
     baseRef: pull.base?.ref ?? previous?.baseRef ?? "",
@@ -67,6 +69,7 @@ export function toProjectPullRequest(
     review: extras?.review !== undefined ? extras.review : (previous?.review ?? null),
     mergeable: typeof pull.mergeable === "boolean" ? pull.mergeable : (previous?.mergeable ?? null),
     openedByProject: extras?.openedByProject ?? previous?.openedByProject ?? false,
+    ...(state === "closed" && previous?.closedByProject ? { closedByProject: true } : {}),
     updatedAt: pull.updated_at ? Date.parse(pull.updated_at) || Date.now() : Date.now(),
   };
 }
@@ -175,7 +178,15 @@ export async function trackWorkerPullRequest(
   return { pr: next, created };
 }
 
-/** Every PR the Project tracks: workers' own plus PRs it follows on request. */
+function prKey(pr: Pick<ProjectPullRequest, "repo" | "number">): string {
+  return `${pr.repo.toLowerCase()}#${pr.number}`;
+}
+
+/**
+ * Every PR the Project tracks: workers' own, PRs it follows on request, and
+ * PRs no agent opened that it closed. For a PR it both followed and closed,
+ * the newest record wins.
+ */
 export async function listProjectPullRequests(projectId: string): Promise<ProjectPullRequestListing[]> {
   const record = await readProject(projectId);
   if (!record) {
@@ -184,19 +195,34 @@ export async function listProjectPullRequests(projectId: string): Promise<Projec
   const listings: ProjectPullRequestListing[] = record.children
     .filter((child) => child.pr && child.deletedAt == null)
     .map((child) => ({ ...child.pr!, agent: child.name }));
-  const seen = new Set(listings.map((pr) => `${pr.repo}#${pr.number}`));
-  for (const subscription of await readProjectSubscriptions(projectId)) {
-    if (subscription.spec.kind !== "github_pr" || subscription.childId) {
-      continue;
+  const owned = new Set(listings.map(prKey));
+  const others = new Map<string, ProjectPullRequestListing>();
+  const offer = (pr: ProjectPullRequest) => {
+    const key = prKey(pr);
+    const current = others.get(key);
+    if (!owned.has(key) && (!current || pr.updatedAt > current.updatedAt)) {
+      others.set(key, { ...pr, agent: null });
     }
-    const key = `${subscription.spec.repo}#${subscription.spec.number}`;
-    const snapshot = subscription.state.pr;
-    if (snapshot && !seen.has(key)) {
-      seen.add(key);
-      listings.push({ ...snapshot, agent: null });
+  };
+  record.closedPrs.forEach(offer);
+  for (const subscription of await readProjectSubscriptions(projectId)) {
+    if (subscription.spec.kind === "github_pr" && !subscription.childId && subscription.state.pr) {
+      offer(subscription.state.pr);
     }
   }
-  return listings.sort((a, b) => b.updatedAt - a.updatedAt);
+  return [...listings, ...others.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Keeps a PR no agent opened in the Project's list after the Project closed it. */
+async function recordClosedPullRequest(projectId: string, pr: ProjectPullRequest): Promise<void> {
+  await mutateProject(
+    projectId,
+    (record) => ({
+      ...record,
+      closedPrs: [pr, ...record.closedPrs.filter((entry) => prKey(entry) !== prKey(pr))].slice(0, CLOSED_PRS_KEPT),
+    }),
+    { touch: false }
+  );
 }
 
 /**
@@ -454,10 +480,18 @@ export async function closeProjectPullRequest(
   }
   await client.addIssueComment(ref.repo, ref.number, `Closed by the Cesium Project "${record.name}": ${reason}`);
   const closed = await client.closePull(ref.repo, ref.number);
-  const owner = record.children.find((child) => child.pr?.repo === ref.repo && child.pr.number === ref.number);
-  const closedPr: ProjectPullRequest = { ...toProjectPullRequest(ref.repo, closed, owner?.pr ?? tracked ?? null), state: "closed" };
+  const owner = record.children.find(
+    (child) => child.deletedAt == null && child.pr?.repo === ref.repo && child.pr.number === ref.number
+  );
+  const closedPr: ProjectPullRequest = {
+    ...toProjectPullRequest(ref.repo, closed, owner?.pr ?? tracked ?? null),
+    state: "closed",
+    closedByProject: true,
+  };
   if (owner) {
     await patchChildPullRequest(projectId, owner.id, () => closedPr);
+  } else {
+    await recordClosedPullRequest(projectId, closedPr);
   }
   const { closeSubscriptionsForPr } = await import("./listening.js");
   await closeSubscriptionsForPr(projectId, ref.repo, ref.number, pull.head.ref, closedPr);
