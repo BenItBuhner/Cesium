@@ -12,7 +12,7 @@ import {
 } from "./features/index.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { GLOB_DEFAULT_RESULTS, GLOB_MAX_RESULTS } from "./cesium-glob.js";
-import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
+import { DEFAULT_GREP_RESULTS, MAX_GREP_RESULTS, WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
 
 export type { CesiumToolDefinition, ResolvedCesiumHarness };
@@ -98,14 +98,31 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "grep",
-    description: "Search workspace files by JavaScript regular expression.",
+    description:
+      "Search file contents with ripgrep. Returns path:line headers followed by numbered lines, in path order. Skips .gitignore'd files, binary files, .git, node_modules, .next, and .docker. Case-sensitive unless ignoreCase is true. Read-only; use glob to find files by name.",
     parameters: {
       type: "object",
       properties: {
-        pattern: { type: "string" },
-        path: { type: "string" },
-        context: { type: "number" },
-        maxResults: { type: "number" },
+        pattern: {
+          type: "string",
+          description:
+            "Regular expression in ripgrep (Rust regex) syntax, e.g. \"fn\\s+\\w+\" or \"TODO|FIXME\"; lookaround and backreferences also work. Escape literal ( ) [ ] { } . * + ? | ^ $ \\. Hosts without ripgrep evaluate it as a JavaScript RegExp.",
+        },
+        path: {
+          type: "string",
+          description: "File or directory to search, relative to the workspace root. Defaults to the root.",
+        },
+        glob: {
+          type: "string",
+          description:
+            "Only search files matching this glob, e.g. \"*.ts\" (file names at any depth) or \"src/**/*.tsx\" (relative to path). Prefix with ! to exclude.",
+        },
+        ignoreCase: { type: "boolean", description: "Match case-insensitively. Defaults to false." },
+        context: { type: "number", description: "Lines of context around each match (0-20, default 0)." },
+        maxResults: {
+          type: "number",
+          description: `Maximum matches to return (default ${DEFAULT_GREP_RESULTS}, max ${MAX_GREP_RESULTS}).`,
+        },
       },
       required: ["pattern"],
       additionalProperties: false,

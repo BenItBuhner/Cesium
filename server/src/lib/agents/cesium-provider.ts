@@ -200,6 +200,7 @@ import {
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
 import { formatGlobResult, globWorkspaceEntries } from "./cesium/cesium-glob.js";
+import { formatGrepResult, searchWorkspace } from "./cesium/cesium-grep.js";
 import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
 import {
   isTerminalRunAlive,
@@ -3152,39 +3153,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolGrep(args: Record<string, unknown>): Promise<string> {
     const pattern = asString(args.pattern);
     if (!pattern) throw new Error("grep.pattern is required.");
-    const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".", this.projectContextRoots());
-    const regex = new RegExp(pattern, "i");
+    const workspaceRoot = this.callbacks.workspace.root;
+    const searchPath = resolveWorkspacePath(workspaceRoot, asString(args.path) ?? ".", this.projectContextRoots());
     const context = Math.max(0, Math.min(20, Math.floor(asNumber(args.context) ?? 0)));
     const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
-    const results: string[] = [];
-    const visit = async (dir: string): Promise<void> => {
-      if (results.length >= maxResults) return;
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (results.length >= maxResults) return;
-        if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".docker" || entry.name === ".next") {
-          continue;
-        }
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await visit(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        const text = await fs.readFile(full, "utf8").catch(() => null);
-        if (text == null) continue;
-        const lines = text.split(/\r?\n/);
-        for (let index = 0; index < lines.length && results.length < maxResults; index += 1) {
-          if (!regex.test(lines[index] ?? "")) continue;
-          const start = Math.max(0, index - context);
-          const end = Math.min(lines.length, index + context + 1);
-          const rel = path.relative(this.callbacks.workspace.root, full);
-          results.push(`${rel}:${index + 1}\n${lines.slice(start, end).map((line, i) => `${start + i + 1}|${line}`).join("\n")}`);
-        }
-      }
-    };
-    await visit(root);
-    return results.length ? results.join("\n\n") : "No matches.";
+    const result = await searchWorkspace({
+      workspaceRoot,
+      searchPath,
+      pattern,
+      ignoreCase: args.ignoreCase === true,
+      glob: asString(args.glob)?.trim() || undefined,
+      context,
+      maxResults,
+    });
+    return formatGrepResult(result, workspaceRoot, MAX_GREP_RESULTS);
   }
 
   private async toolGlob(args: Record<string, unknown>): Promise<string> {

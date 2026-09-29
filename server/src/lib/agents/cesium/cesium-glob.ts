@@ -6,7 +6,7 @@ export const GLOB_MAX_RESULTS = 2_000;
 /** Directory-visit cap so a pathological tree cannot pin the event loop. */
 export const GLOB_MAX_DIRECTORIES = 20_000;
 
-/** Same directories the `grep` tool skips: never useful, always enormous. */
+/** Also skipped by `grep` (both the ripgrep and the fallback path): never useful, always enormous. */
 export const GLOB_SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
   ".git",
   "node_modules",
