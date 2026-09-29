@@ -28,6 +28,8 @@ export type ProjectSubscriptionState = {
   prState?: "open" | "closed" | "merged";
   draft?: boolean;
   headSha?: string | null;
+  /** Head whose conflict with the base was reported; cleared once the PR merges cleanly again. */
+  conflictSha?: string | null;
   seenCommentIds?: number[];
   seenReviewIds?: number[];
   seenReviewCommentIds?: number[];

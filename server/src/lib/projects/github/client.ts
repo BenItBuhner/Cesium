@@ -207,6 +207,19 @@ export class GithubClient {
     });
   }
 
+  closePull(repo: string, number: number): Promise<GithubPull> {
+    return this.request("PATCH", `/repos/${repo}/pulls/${number}`, { state: "closed" });
+  }
+
+  addIssueComment(repo: string, number: number, body: string): Promise<GithubIssueComment> {
+    return this.request("POST", `/repos/${repo}/issues/${number}/comments`, { body });
+  }
+
+  /** Requests (or re-requests, for someone who already reviewed) reviews from these users. */
+  requestReviewers(repo: string, number: number, reviewers: readonly string[]): Promise<GithubPull> {
+    return this.request("POST", `/repos/${repo}/pulls/${number}/requested_reviewers`, { reviewers });
+  }
+
   listIssueComments(repo: string, number: number): Promise<GithubIssueComment[]> {
     return this.request("GET", `/repos/${repo}/issues/${number}/comments?per_page=100`);
   }
