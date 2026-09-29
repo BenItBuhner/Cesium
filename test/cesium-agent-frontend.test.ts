@@ -542,6 +542,66 @@ describe("Cesium Agent frontend integration", () => {
     assert.equal(cards[0]!.subagentComplete, true);
   });
 
+  test("a subagent result stored only in detail projects like one also copied to raw.result", () => {
+    const instructions = "Summarize the release notes.";
+    const resultText = "Subagent tool-once completed: The release adds offline sync.";
+    const projectWith = (raw: Record<string, unknown>) =>
+      projectAgentEventsToChatMessages(
+        [
+          {
+            seq: 1,
+            eventId: "u1",
+            conversationId: "c1",
+            createdAt: 1,
+            kind: "user_message",
+            messageId: "m1",
+            content: "Go",
+          },
+          {
+            seq: 2,
+            eventId: "t1",
+            conversationId: "c1",
+            createdAt: 2,
+            kind: "tool_call",
+            toolCallId: "tool-once",
+            title: "Subagent Release notes",
+            toolKind: "subagent",
+            status: "in_progress",
+            detail: "{}",
+            raw: { id: "tool-once", name: "subagent", arguments: { title: "Release notes", instructions } },
+          },
+          {
+            seq: 3,
+            eventId: "t2",
+            conversationId: "c1",
+            createdAt: 3,
+            kind: "tool_call_update",
+            toolCallId: "tool-once",
+            title: "Subagent Release notes",
+            toolKind: "subagent",
+            status: "completed",
+            detail: resultText,
+            raw,
+          },
+        ],
+        { backendId: "cesium-agent" }
+      )
+        .filter((message) => message.type === "subagent")
+        .map((card) => ({
+          status: card.subagentStatus,
+          transcript: card.subagentTranscript?.map((row) => row.content ?? "") ?? [],
+        }));
+    const request = { id: "tool-once", name: "subagent", arguments: { title: "Release notes", instructions } };
+    const legacy = projectWith({ request, result: resultText });
+    const current = projectWith({ request });
+    assert.equal(current.length, 1);
+    assert.ok(
+      current[0]!.transcript.some((content) => content.includes("offline sync")),
+      "the card transcript carries the result"
+    );
+    assert.deepEqual(current, legacy);
+  });
+
   test("shows Compressing context during Cesium compression status", () => {
     const events: AgentStoredEvent[] = [
       {

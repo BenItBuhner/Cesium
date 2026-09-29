@@ -1544,19 +1544,86 @@ export async function* streamAdapter(
   }
 }
 
+/** Frames an empty reply keeps for its diagnostics; the newest ones carry any upstream error. */
+const EMPTY_REPLY_RAW_FRAMES = 32;
+const RAW_SUMMARY_MAX_STRING = 256;
+const RAW_SUMMARY_OBJECT_KEYS = new Set(["usage", "error", "incomplete_details", "status_details"]);
+
+/**
+ * The final frame without the reply it restates: its ids, status and usage.
+ * Responses API completions echo the whole output, instructions and tools.
+ */
+export function summarizeCesiumRawFrame(raw: unknown): unknown {
+  const record = asRecord(raw);
+  if (!record) {
+    return typeof raw === "string" ? raw.slice(0, RAW_SUMMARY_MAX_STRING) : raw;
+  }
+  const summary: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === "string") {
+      if (value.length <= RAW_SUMMARY_MAX_STRING) {
+        summary[key] = value;
+      }
+    } else if (value === null || typeof value !== "object") {
+      summary[key] = value;
+    } else if (RAW_SUMMARY_OBJECT_KEYS.has(key)) {
+      summary[key] = value;
+    } else if (key === "response") {
+      summary[key] = summarizeCesiumRawFrame(value);
+    } else if (key === "choices" && Array.isArray(value)) {
+      summary[key] = value.map((choice) => {
+        const entry = asRecord(choice);
+        return { index: entry?.index, finish_reason: entry?.finish_reason };
+      });
+    }
+  }
+  return summary;
+}
+
+/**
+ * What an adapter result keeps of the provider's raw frames: a reply with
+ * text or tool calls keeps a summary of its final frame; an empty reply keeps
+ * its newest frames for upstream-error detection and diagnostics.
+ */
+export class CesiumRawFrameLog {
+  private frames: unknown[] = [];
+  private last: unknown;
+  private hasOutput = false;
+
+  record(event: CesiumAdapterStreamEvent): void {
+    if (event.kind === "tool_request" || (event.kind === "text_delta" && event.text.trim())) {
+      this.hasOutput = true;
+      this.frames = [];
+    }
+    if (!("raw" in event) || event.raw === undefined || event.raw === this.last) {
+      return;
+    }
+    this.last = event.raw;
+    if (!this.hasOutput) {
+      this.frames.push(event.raw);
+      if (this.frames.length > EMPTY_REPLY_RAW_FRAMES) {
+        this.frames.shift();
+      }
+    }
+  }
+
+  result(): unknown {
+    if (!this.hasOutput && this.frames.length > 1) {
+      return this.frames;
+    }
+    return this.hasOutput ? summarizeCesiumRawFrame(this.last) : this.last;
+  }
+}
+
 export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterResult> {
   const textParts: string[] = [];
   const reasoningParts: string[] = [];
   const toolRequests: CesiumToolRequest[] = [];
-  const rawEvents: unknown[] = [];
-  let finalRaw: unknown;
+  const rawFrames = new CesiumRawFrameLog();
   let usage: CesiumAdapterResult["usage"];
   let stopReason: CesiumStopReason | undefined;
   for await (const event of streamAdapter(input)) {
-    if ("raw" in event && event.raw !== undefined) {
-      finalRaw = event.raw;
-      rawEvents.push(event.raw);
-    }
+    rawFrames.record(event);
     switch (event.kind) {
       case "text_delta":
         textParts.push(event.text);
@@ -1583,6 +1650,6 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
     toolRequests,
     ...(usage ? { usage } : {}),
     ...(stopReason ? { stopReason } : {}),
-    raw: rawEvents.length > 1 ? rawEvents : finalRaw,
+    raw: rawFrames.result(),
   };
 }

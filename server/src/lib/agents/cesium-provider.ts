@@ -303,6 +303,7 @@ import {
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   adapterHonorsMaxOutputTokens,
+  CesiumRawFrameLog,
   modelPart,
   providerPart,
   runAdapter,
@@ -2064,8 +2065,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const textParts: string[] = [];
     const reasoningParts: string[] = [];
     const toolRequests: CesiumToolRequest[] = [];
-    const rawEvents: unknown[] = [];
-    let finalRaw: unknown;
+    const rawFrames = new CesiumRawFrameLog();
     let heldText = "";
     let usage: CesiumAdapterResult["usage"];
     let stopReason: CesiumAdapterResult["stopReason"];
@@ -2073,10 +2073,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (this.cancelled) {
         throw new CesiumTurnCancelledError();
       }
-      if ("raw" in event && event.raw !== undefined) {
-        finalRaw = event.raw;
-        rawEvents.push(event.raw);
-      }
+      rawFrames.record(event);
       switch (event.kind) {
         case "text_delta": {
           textParts.push(event.text);
@@ -2116,7 +2113,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       toolRequests,
       ...(usage ? { usage } : {}),
       ...(stopReason ? { stopReason } : {}),
-      raw: rawEvents.length > 1 ? rawEvents : finalRaw,
+      raw: rawFrames.result(),
     };
   }
 
@@ -3231,7 +3228,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         toolKind: toolKind(request.name, toolDefinition),
         status: "completed",
         detail: result,
-        raw: { request, result, ...shape },
+        raw: { request, ...shape },
       },
     ]);
     return result;
@@ -3571,7 +3568,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             toolKind: toolKind(effectiveRequest.name, toolDefinition),
             status: "completed",
             detail: error.message,
-            raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
+            raw: { request: effectiveRequest, permissionRefused: true },
           },
         ]);
         return error.message;
