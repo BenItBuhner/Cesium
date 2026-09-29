@@ -512,7 +512,8 @@ export function AgentNewChatLanding({
       .map((group) => ({
         ...group.workspace,
         serverId: group.serverId ?? activeServer.id,
-        serverLabel: group.serverLabel ?? activeServer.label,
+        serverLabel:
+          group.serverLabel ?? serverDisplayLabel(activeServer, serverRailAppearances, engineNameById),
         serverBaseUrl:
           servers.find((server) => server.id === group.serverId)?.baseUrl ??
           activeServer.baseUrl,
@@ -521,11 +522,11 @@ export function AgentNewChatLanding({
       }));
     return sortDirectoryWorkspaces(fromGroups, settings.general.workspaceSortMode);
   }, [
-    activeServer.baseUrl,
-    activeServer.id,
-    activeServer.label,
+    activeServer,
     directoryWorkspaces,
+    engineNameById,
     groups,
+    serverRailAppearances,
     servers,
     settings.general.workspaceSortMode,
   ]);

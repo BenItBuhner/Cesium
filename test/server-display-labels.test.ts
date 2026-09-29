@@ -7,10 +7,12 @@ import type {
 import { groupAgentRailGroups } from "../src/lib/agent-rail-groups.ts";
 import {
   buildServerDisplayLabels,
+  projectListingServerLabel,
   relabelDirectoryWorkspaces,
   relabelRailGroups,
   sameServerDisplayLabels,
   serverDisplayLabel,
+  serverSwitchCommands,
 } from "../src/lib/server-display-labels.ts";
 import { getServerDisplayLabel, renameServerAppearance } from "../src/lib/server-rail-appearance.ts";
 
@@ -147,14 +149,23 @@ describe("relabeling the sidebar", () => {
     assert.equal(relabelRailGroups(groups, new Map()), groups);
   });
 
-  test("leaves sign-in placeholders and servers that are no longer saved alone", () => {
+  test("titles sign-in placeholders with the engine's name and keeps their badge", () => {
     const placeholder: AgentConversationGroup = {
       ...group("localhost:9101", buildBox),
       serverLabel: "Auth required",
       serverAuthRequired: true,
     };
-    const removed = group("old", { id: "gone", label: "old-box:9100" });
-    const groups = [placeholder, removed];
+    const [relabeled] = relabelRailGroups([placeholder], labels);
+    assert.equal(relabeled?.workspace.name, "Build box");
+    assert.equal(relabeled?.serverLabel, "Auth required");
+    assert.equal(placeholder.workspace.name, "localhost:9101", "the placeholder itself is not mutated");
+    assert.equal(relabelRailGroups([placeholder], labels)[0], relabeled, "and its relabeled copy is reused");
+    const unnamed = buildServerDisplayLabels([home, buildBox], {}, {});
+    assert.equal(relabelRailGroups([placeholder], unnamed)[0], placeholder, "no name, no change");
+  });
+
+  test("leaves servers that are no longer saved alone", () => {
+    const groups = [group("old", { id: "gone", label: "old-box:9100" })];
     assert.equal(relabelRailGroups(groups, labels), groups);
   });
 
@@ -251,5 +262,65 @@ describe("renaming a server in the picker", () => {
 
   test("cuts long names to 80 characters", () => {
     assert.equal(renameServerAppearance(appearance, "x".repeat(120), "Home")?.nickname, "x".repeat(80));
+  });
+});
+
+describe("the command palette's server entries", () => {
+  const staging = { id: "staging", label: "localhost:9114", baseUrl: "http://localhost:9114" };
+  const labelFor = (server: { id: string; label: string; baseUrl: string }) =>
+    serverDisplayLabel(server, { build: { nickname: "CI" } }, { home: "Home", build: "Build box" });
+
+  test("name each server like the sidebar and mark the active one", () => {
+    assert.deepEqual(serverSwitchCommands([home, buildBox, staging], "home", labelFor), [
+      {
+        serverId: "home",
+        label: "Server: Switch to Home (Active)",
+        detail: "http://localhost:9100",
+        active: true,
+        message: "Home is already active",
+      },
+      {
+        serverId: "build",
+        label: "Server: Switch to CI",
+        detail: "http://localhost:9101",
+        active: false,
+        message: "Switching to CI",
+      },
+      {
+        serverId: "staging",
+        label: "Server: Switch to localhost:9114",
+        detail: "http://localhost:9114",
+        active: false,
+        message: "Switching to localhost:9114",
+      },
+    ]);
+  });
+});
+
+describe("a Project listing's server", () => {
+  const listed = (engineLabel?: string) => ({ serverId: "home", serverLabel: "localhost:9100", engineLabel });
+
+  test("follows the same order: a rename, then the engine's name, then the connection label", () => {
+    assert.equal(projectListingServerLabel(listed("Home"), [home], { home: { nickname: "Desk" } }, { home: "Home" }), "Desk");
+    assert.equal(projectListingServerLabel(listed("Home"), [home], {}, { home: "Home" }), "Home");
+    assert.equal(projectListingServerLabel(listed(), [home], {}, {}), "localhost:9100");
+  });
+
+  test("uses the name the engine listed with until the client has learned it", () => {
+    assert.equal(projectListingServerLabel(listed("Home"), [home], {}, {}), "Home");
+    assert.equal(projectListingServerLabel(listed("  "), [home], {}, {}), "localhost:9100");
+  });
+
+  test("keeps this device, and the listing's names for a server that is no longer saved", () => {
+    const sidecar = { id: "desktop-sidecar", label: "Sidecar", baseUrl: "http://127.0.0.1:9100" };
+    assert.equal(
+      projectListingServerLabel({ serverId: "desktop-sidecar", serverLabel: "Sidecar", engineLabel: "laptop" }, [sidecar], {}, {}),
+      "This device"
+    );
+    assert.equal(
+      projectListingServerLabel({ serverId: "gone", serverLabel: "old-box:9100", engineLabel: "Old box" }, [home], {}, {}),
+      "Old box"
+    );
+    assert.equal(projectListingServerLabel({ serverId: "gone", serverLabel: "old-box:9100" }, [home], {}, {}), "old-box:9100");
   });
 });

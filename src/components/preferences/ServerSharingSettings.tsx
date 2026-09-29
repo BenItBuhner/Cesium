@@ -15,6 +15,7 @@ import {
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCloudContext, type CloudOutgoingShare } from "@/contexts/CloudContext";
 import { useCopyToClipboard, type CopyFeedback } from "@/hooks/useCopyToClipboard";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
 import {
   cloudServerIdentity,
   isCloudSyncableServerUrl,
@@ -95,6 +96,7 @@ function shareStatusChip(share: CloudOutgoingShare): {
 export function ServerSharingSettings() {
   const cloud = useCloudContext();
   const { servers } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
   const [busyShareIds, setBusyShareIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
@@ -199,14 +201,14 @@ export function ServerSharingSettings() {
         ...(expiryMs !== null ? { expiresAt: Date.now() + expiryMs } : {}),
       });
       const link = buildShareInviteLink(window.location.origin, result.inviteCode);
-      setCreatedInvite({ link, email: email || null, serverName: server.label });
+      setCreatedInvite({ link, email: email || null, serverName: serverLabelFor(server) });
       setShareEmail("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Creating the share failed.");
     } finally {
       setSharePending(false);
     }
-  }, [actions, shareEmail, shareExpiry, shareServerId, shareableServers]);
+  }, [actions, serverLabelFor, shareEmail, shareExpiry, shareServerId, shareableServers]);
 
   const handleRedeem = useCallback(async () => {
     if (!actions) {
@@ -398,7 +400,7 @@ export function ServerSharingSettings() {
                 >
                   {shareableServers.map((server) => (
                     <option key={server.id} value={server.id}>
-                      {server.label}
+                      {serverLabelFor(server)}
                     </option>
                   ))}
                 </select>

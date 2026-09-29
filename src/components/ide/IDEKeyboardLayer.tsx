@@ -106,6 +106,8 @@ import {
 import type { OrchestrationBoardRecord } from "@/lib/orchestration-types";
 import { runQuickAction, useQuickActionsConfig } from "@/lib/quick-actions";
 import { requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
+import { serverSwitchCommands } from "@/lib/server-display-labels";
 import type { QuickActionDefinition } from "@cesium/core";
 
 type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
@@ -177,6 +179,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const { pushNotification } = useWorkbenchNotifications();
   const dialogs = useWorkbenchDialogs();
   const { activeServer, servers, setActiveServer } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
   const chordRef = useRef<ShortcutChordState | null>(null);
@@ -1731,17 +1734,17 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           });
         },
       })),
-      ...servers.map((server) => ({
-        id: `workbench.action.server.switch.${server.id}`,
-        label: `Server: Switch to ${server.label}${server.id === activeServer.id ? " (Active)" : ""}`,
-        detail: server.baseUrl,
+      ...serverSwitchCommands(servers, activeServer.id, serverLabelFor).map((command) => ({
+        id: `workbench.action.server.switch.${command.serverId}`,
+        label: command.label,
+        detail: command.detail,
         run: () => {
-          if (server.id === activeServer.id) {
-            flash(setToast, `${server.label} is already active`);
+          if (command.active) {
+            flash(setToast, command.message);
             return;
           }
-          setActiveServer(server.id);
-          flash(setToast, `Switching to ${server.label}`);
+          setActiveServer(command.serverId);
+          flash(setToast, command.message);
           window.location.assign(WORKSPACE_ROUTE);
         },
       })),
@@ -1763,6 +1766,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       promptToRemoveWorkspace,
       refreshTree,
       runShortcutCommand,
+      serverLabelFor,
       servers,
       runWithBridge,
       setActiveServer,

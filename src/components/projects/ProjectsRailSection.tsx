@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { ChevronRight, Network, Plus } from "lucide-react";
-import {
-  projectListingEngineName,
-  projectSummaryStatusLine,
-  type ProjectListing,
-} from "@cesium/core";
+import { projectSummaryStatusLine, type ProjectListing } from "@cesium/core";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { projectListingServerLabel } from "@/lib/server-display-labels";
 import { ProjectEngineBadge, ProjectStatusDot } from "./project-ui";
 import { useProjects } from "./ProjectsProvider";
 
@@ -25,13 +23,14 @@ function ProjectRailRow({
   project,
   active,
   onOtherEngine,
+  engineName,
 }: {
   project: ProjectListing;
   active: boolean;
   onOtherEngine: boolean;
+  engineName: string;
 }) {
   const { openProject } = useProjects();
-  const engineName = projectListingEngineName(project);
   const busy = project.workingCount > 0 || project.orchestratorStatus === "running";
   const bucket =
     project.attentionCount > 0 ? "needs_attention" : busy ? "working" : "idle";
@@ -79,7 +78,8 @@ function ProjectRailRow({
 /** Projects at the top of the workspace rail; each row opens its Project page. */
 export function ProjectsRailSection() {
   const { enabled, projects, loaded, error, activeProjectId, setNewProjectOpen } = useProjects();
-  const { activeServer } = useServerConnections();
+  const { activeServer, servers, engineNameById } = useServerConnections();
+  const appearances = useGlobalSettings().settings.general.serverRailAppearances;
   const [collapsed, setCollapsed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -179,6 +179,7 @@ export function ProjectsRailSection() {
                 project={project}
                 active={project.id === activeProjectId}
                 onOtherEngine={project.serverId !== activeServer.id}
+                engineName={projectListingServerLabel(project, servers, appearances, engineNameById)}
               />
             ))}
           </ul>
