@@ -262,8 +262,8 @@ export async function ensureWorkerPrSubscriptions(
   }
 }
 
-/** After the Project merged a PR itself: close what watched it, without reporting the merge back. */
-export async function closeSubscriptionsForMergedPr(
+/** After the Project merged or closed a PR itself: close what watched it, without reporting that back. */
+export async function closeSubscriptionsForPr(
   projectId: string,
   repo: string,
   number: number,
@@ -271,6 +271,7 @@ export async function closeSubscriptionsForMergedPr(
   pr: ProjectPullRequest
 ): Promise<void> {
   const now = Date.now();
+  const prState: "merged" | "closed" = pr.state === "merged" ? "merged" : "closed";
   await mutateProjectSubscriptions(projectId, (current) => {
     let changed = false;
     const next = current.map((entry) => {
@@ -287,8 +288,8 @@ export async function closeSubscriptionsForMergedPr(
       return {
         ...entry,
         closedAt: now,
-        closedReason: "pr_merged",
-        state: watchesPr ? { ...entry.state, prState: "merged" as const, pr } : entry.state,
+        closedReason: `pr_${prState}`,
+        state: watchesPr ? { ...entry.state, prState, pr } : entry.state,
       };
     });
     return changed ? next : current;
@@ -372,12 +373,15 @@ async function pollPullRequest(
   const seenReviewCommentIds = primed
     ? subscription.state.seenReviewCommentIds
     : reviewComments.filter((comment) => postedBefore(comment.created_at, cutoff)).map((comment) => comment.id);
+  // GitHub computes mergeability in the background: null means "not known yet", not "clean".
+  const conflicted = prState === "open" && pull.mergeable === false;
   const nextState: ProjectSubscriptionState = {
     ...subscription.state,
     primed: true,
     prState,
     draft: pull.draft === true,
     headSha: pull.head.sha,
+    conflictSha: conflicted ? pull.head.sha : pull.mergeable === true ? null : (subscription.state.conflictSha ?? null),
     seenCommentIds: keepIds(subscription.state.seenCommentIds, comments),
     seenReviewIds: keepIds(subscription.state.seenReviewIds, decided),
     seenReviewCommentIds: keepIds(subscription.state.seenReviewCommentIds, reviewComments),
@@ -422,6 +426,17 @@ async function pollPullRequest(
       }),
       body: `${comment.user?.login ?? "Someone"} commented on ${comment.path ?? "the diff"}${comment.line ? `:${comment.line}` : ""}:\n${excerpt(comment.body)}`,
       label: `${ref} review comment`,
+    });
+  }
+  // A conflict is state, not history: report it on the first poll too, once per head.
+  if (conflicted && subscription.state.conflictSha !== pull.head.sha) {
+    events.push({
+      source: "github",
+      attrs: attrs("conflict", { base: pull.base.ref, head: pull.head.sha.slice(0, 12) }),
+      body: agent
+        ? `This pull request no longer merges into ${pull.base.ref}: it conflicts with what ${pull.base.ref} has now. Ask ${agent} to rebase it with project_request_rebase, or close it with project_close_pr if it is redundant.`
+        : `This pull request no longer merges into ${pull.base.ref}: it conflicts with what ${pull.base.ref} has now. Its author has to rebase it.`,
+      label: `${ref} conflicts`,
     });
   }
   if (!primed) {
