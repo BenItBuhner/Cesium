@@ -45,6 +45,8 @@ const MODEL_ENV = {
   CESIUM_PROVIDER_ID: "projhost",
   CESIUM_DEFAULT_MODEL: "kimi-k3",
   CESIUM_GITHUB_API_URL: "http://127.0.0.1:9",
+  // Browser checks here are scripted and never drive a browser: no Chromium download on either engine.
+  CESIUM_CHROMIUM_INSTALL: "skip",
 };
 const MODEL_ID = "projhost/kimi-k3";
 

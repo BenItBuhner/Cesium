@@ -73,6 +73,7 @@ const [
   { PROJECT_ORCHESTRATOR_TOOLS, PROJECT_ORCHESTRATOR_SYSTEM_PROMPT },
   { setExploreWaitForTests },
   { getPreferencesPath },
+  { setChromiumInstallForTests },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -86,7 +87,12 @@ const [
   import("../src/lib/projects/orchestrator-tool-definitions.js"),
   import("../src/lib/projects/helpers.js"),
   import("../src/lib/projects/preferences.js"),
+  import("../src/browser-debug/chromium-install.js"),
 ]);
+
+/** Browser checks here never drive a real browser; one test takes Chromium away. */
+const CHROMIUM_PRESENT = { probe: async () => null, install: async () => undefined };
+setChromiumInstallForTests(CHROMIUM_PRESENT);
 
 const app = createCesiumApp();
 startAgentPromptQueueDrainListener();
@@ -696,4 +702,45 @@ test("a browser check runs an agent's branch, reports with evidence, and never t
   assert.ok(await getWorkspaceById(worker.workspaceId), "the worker keeps its worktree and workspace");
   const record = await readConversationRecord(worker.workspaceId, worker.conversationId);
   assert.ok(record, "the worker's conversation is untouched");
+});
+
+test("a browser check without Chromium installs it first, or fails with the command to run and starts nothing", async () => {
+  let installed = false;
+  let installs = 0;
+  let network = false;
+  setChromiumInstallForTests({
+    probe: async () => (installed ? null : "browserType.launch: Executable doesn't exist at /ms-playwright/chrome-headless-shell"),
+    install: async () => {
+      installs += 1;
+      if (!network) {
+        throw new Error("getaddrinfo ENOTFOUND cdn.playwright.dev");
+      }
+      installed = true;
+    },
+  });
+  try {
+    const helpers = async () => (await readProject(project.id))!.children.filter((child) => child.kind === "helper").length;
+    const before = await helpers();
+    await assert.rejects(
+      executeProjectOrchestratorTool(project.id, "project_browser_check", { what: "The cart shows the total.", agent: "cart-total" }),
+      /The browser check needs Playwright's Chromium, which .+ doesn't have \(installing it failed: getaddrinfo ENOTFOUND cdn\.playwright\.dev\)\. Install it on that machine with `npx playwright install chromium` in Cesium's server folder/
+    );
+    assert.equal(await helpers(), before, "no helper was started");
+    await assert.rejects(fs.access(path.join(project.contextRoot, "media", "browser-check-2")), "no evidence folder is left behind");
+
+    network = true;
+    script("browser-check-2", text(["Checked the cart: the total shows."]));
+    script("orchestrator", text(["The check passed."]));
+    const started = JSON.parse(
+      await executeProjectOrchestratorTool(project.id, "project_browser_check", { what: "The cart shows the total.", agent: "cart-total" })
+    ) as { started: string };
+    assert.equal(started.started, "browser-check-2", "once Chromium is installed the check starts");
+    assert.equal(installs, 2, "the failed install was retried");
+    await updateDelivered("browser-check-2", /Checked the cart: the total shows\./);
+    await orchestratorIdle("after the second browser check");
+    const removed = await api("DELETE", `/api/projects/${project.id}/agents/browser-check-2`);
+    assert.equal(removed.status, 200, JSON.stringify(removed.json));
+  } finally {
+    setChromiumInstallForTests(CHROMIUM_PRESENT);
+  }
 });

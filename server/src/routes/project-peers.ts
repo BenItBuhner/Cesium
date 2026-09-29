@@ -375,6 +375,7 @@ projectPeerRoutes.post(
       mode: asString(body.mode) ?? null,
       peerTokenId: c.get("peerToken").id,
       ...(asString(body.homeLabel) ? { homeLabel: asString(body.homeLabel)!.slice(0, 80) } : {}),
+      engineLabel: engine,
       autoApprove: body.autoApprove === true,
       readOnly: body.readOnly === true,
     });
