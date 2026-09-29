@@ -15,6 +15,7 @@ import {
 import { useWorkbenchDialogs } from "@/components/dialogs/WorkbenchDialogProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
 import { formatAgentRailRelativeTime } from "@/lib/agent-rail-status";
 import {
   addProjectRepo,
@@ -602,6 +603,7 @@ function EnginesBlock({ snapshot, onChanged }: { snapshot: ProjectSnapshot; onCh
   const dialogs = useWorkbenchDialogs();
   const { refreshProject } = useProjects();
   const { servers, activeServer } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
   const [serverId, setServerId] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [manualUrl, setManualUrl] = useState("");
@@ -637,10 +639,14 @@ function EnginesBlock({ snapshot, onChanged }: { snapshot: ProjectSnapshot; onCh
       if (!server) {
         return;
       }
-      const minted = await mintProjectPeerToken(`Projects on ${activeServer.label}`, {
+      const minted = await mintProjectPeerToken(`Projects on ${serverLabelFor(activeServer)}`, {
         server: toServerRequestContext(server),
       });
-      await pairProjectEngine({ baseUrl: server.baseUrl, token: minted.secret, label: server.label });
+      await pairProjectEngine({
+        baseUrl: server.baseUrl,
+        token: minted.secret,
+        label: serverLabelFor(server),
+      });
       setServerId("");
     });
 
@@ -736,7 +742,7 @@ function EnginesBlock({ snapshot, onChanged }: { snapshot: ProjectSnapshot; onCh
           </option>
           {pairable.map((server) => (
             <option key={server.id} value={server.id}>
-              {server.label} · {server.baseUrl}
+              {serverLabelFor(server)} · {server.baseUrl}
             </option>
           ))}
         </select>

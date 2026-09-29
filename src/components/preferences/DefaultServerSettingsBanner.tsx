@@ -1,9 +1,11 @@
 "use client";
 
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
 
 export function DefaultServerSettingsBanner({ className = "" }: { className?: string }) {
   const { requiresDefaultServer, setDefaultServer, servers } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
 
   if (!requiresDefaultServer || servers.length < 2) {
     return null;
@@ -28,7 +30,7 @@ export function DefaultServerSettingsBanner({ className = "" }: { className?: st
             onClick={() => setDefaultServer(server.id)}
             className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-[10px] py-[5px] text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
           >
-            Use {server.label}
+            Use {serverLabelFor(server)}
           </button>
         ))}
       </div>

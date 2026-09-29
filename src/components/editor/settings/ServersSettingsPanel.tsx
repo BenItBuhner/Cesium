@@ -10,6 +10,7 @@ import { ServerConnectionsManager } from "@/components/preferences/ServerConnect
 import { ServerSharingSettings } from "@/components/preferences/ServerSharingSettings";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { DevicePickerSettingsSection } from "@/components/editor/settings/DevicePickerSettingsSection";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
 import { useSettingsEngineAvailability } from "@/hooks/useSettingsEngineAvailability";
 import {
   serverHealthColorClass,
@@ -39,6 +40,7 @@ function SettingsServerPicker({
   onSelect: (serverId: string) => void;
   disabled?: boolean;
 }) {
+  const serverLabelFor = useServerDisplayLabel();
   const [open, setOpen] = useState(false);
   const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0, width: 280 });
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -114,7 +116,9 @@ function SettingsServerPicker({
         >
           {serverHealthIndicator(selectedHealth)}
         </span>
-        <span className="min-w-0 flex-1 truncate">{selectedServer?.label ?? "Select server"}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {selectedServer ? serverLabelFor(selectedServer) : "Select server"}
+        </span>
         <ChevronDown className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
       </button>
       {open
@@ -164,7 +168,7 @@ function SettingsServerPicker({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
-                          {server.label}
+                          {serverLabelFor(server)}
                         </span>
                         <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
                           {server.baseUrl}
@@ -196,6 +200,7 @@ export function ServerConnectionsSettingsPanel() {
     setActiveServer,
     setDefaultServer,
   } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
   const { availability } = useSettingsEngineAvailability();
 
   return (
@@ -253,7 +258,7 @@ export function ServerConnectionsSettingsPanel() {
             title="Connected runtimes"
             description={
               onlineServers.length > 0
-                ? onlineServers.map((server) => server.label).join(", ")
+                ? onlineServers.map((server) => serverLabelFor(server)).join(", ")
                 : "No reachable saved servers yet."
             }
             trailing={

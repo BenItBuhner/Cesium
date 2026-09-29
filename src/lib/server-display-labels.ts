@@ -1,3 +1,4 @@
+import { projectListingEngineName, type ProjectListing } from "@cesium/core";
 import type {
   AgentConversationGroup,
   AgentRailConversationSummary,
@@ -27,6 +28,56 @@ export function buildServerDisplayLabels(
 ): ServerDisplayLabels {
   return new Map(
     servers.map((server) => [server.id, serverDisplayLabel(server, appearances, engineNameById)])
+  );
+}
+
+export type ServerSwitchCommand = {
+  serverId: string;
+  label: string;
+  detail: string;
+  active: boolean;
+  /** The toast when it runs. */
+  message: string;
+};
+
+/** The command palette's "Server: Switch to …" entries. */
+export function serverSwitchCommands(
+  servers: ReadonlyArray<{ id: string; label: string; baseUrl: string }>,
+  activeServerId: string,
+  labelFor: (server: { id: string; label: string; baseUrl: string }) => string
+): ServerSwitchCommand[] {
+  return servers.map((server) => {
+    const name = labelFor(server);
+    const active = server.id === activeServerId;
+    return {
+      serverId: server.id,
+      label: `Server: Switch to ${name}${active ? " (Active)" : ""}`,
+      detail: server.baseUrl,
+      active,
+      message: active ? `${name} is already active` : `Switching to ${name}`,
+    };
+  });
+}
+
+/**
+ * What a Project listing calls the server it came from, in the same order.
+ * The name the engine reported with the listing stands in until the client
+ * has learned the engine's name itself.
+ */
+export function projectListingServerLabel(
+  listing: Pick<ProjectListing, "serverId" | "serverLabel" | "engineLabel">,
+  servers: ReadonlyArray<{ id: string; label: string; baseUrl: string }>,
+  appearances: Readonly<Record<string, Pick<ServerRailAppearance, "nickname">>>,
+  engineNameById: Readonly<Record<string, string>>
+): string {
+  const server = servers.find((entry) => entry.id === listing.serverId);
+  if (!server) {
+    return projectListingEngineName(listing);
+  }
+  return getServerDisplayLabel(
+    server,
+    appearances[server.id],
+    engineNameById[server.id] ?? listing.engineLabel
   );
 }
 
@@ -70,12 +121,30 @@ function relabelConversation(
   return value;
 }
 
+/** A sign-in placeholder is titled with its server's name; its badge stays "Auth required". */
+function relabelSignInPlaceholder(
+  group: AgentConversationGroup,
+  labels: ServerDisplayLabels
+): AgentConversationGroup {
+  const label = group.serverId ? labels.get(group.serverId) : undefined;
+  if (label === undefined || label === group.workspace.name) {
+    return group;
+  }
+  const cached = relabeledGroups.get(group);
+  if (cached?.labels === labels) {
+    return cached.value;
+  }
+  const value = { ...group, workspace: { ...group.workspace, name: label } };
+  relabeledGroups.set(group, { labels, value });
+  return value;
+}
+
 function relabelGroup(
   group: AgentConversationGroup,
   labels: ServerDisplayLabels
 ): AgentConversationGroup {
   if (group.serverAuthRequired) {
-    return group;
+    return relabelSignInPlaceholder(group, labels);
   }
   const cached = relabeledGroups.get(group);
   if (cached?.labels === labels) {
@@ -103,10 +172,10 @@ function relabelGroup(
 }
 
 /**
- * Shows each group and conversation under its server's display label.
- * Servers that are no longer saved keep the label they were listed with,
- * and the sign-in placeholders keep theirs. Returns `groups` itself when
- * nothing changes.
+ * Shows each group and conversation under its server's display label, and
+ * titles sign-in placeholders with it. Servers that are no longer saved keep
+ * the label they were listed with. Returns `groups` itself when nothing
+ * changes.
  */
 export function relabelRailGroups(
   groups: AgentConversationGroup[],
