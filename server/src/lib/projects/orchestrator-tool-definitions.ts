@@ -14,7 +14,7 @@ const AGENT_REF = {
 
 const PR_REF = {
   type: "string",
-  description: "PR number, owner/repo#N, its URL, or the owning agent's name.",
+  description: "PR number, owner/repo#N, <repository>#N with a repository name from the Project state, its URL, or the owning agent's name.",
 };
 
 /**
@@ -373,7 +373,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
       required: ["kind"],
       properties: {
         kind: { type: "string", enum: ["github_pr", "github_ci", "timer"] },
-        pr: { type: "string", description: "github_pr: owner/repo#N or the PR URL." },
+        pr: { type: "string", description: "github_pr: owner/repo#N, <repository>#N, or the PR URL." },
         repo: { type: "string", description: "github_ci: owner/repo." },
         branch: { type: "string", description: "github_ci: branch to watch." },
         name: { type: "string", description: "timer: short unique name (a timer with the same name is replaced)." },

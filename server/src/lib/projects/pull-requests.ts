@@ -199,18 +199,30 @@ export async function listProjectPullRequests(projectId: string): Promise<Projec
   return listings.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** `owner/repo#N` or a pull request URL. */
-function parsePullRef(ref: string): { repo: string; number: number } | null {
+/**
+ * `owner/repo#N`, a pull request URL, or `<repository>#N` naming one of the
+ * Project's repositories that is bound to GitHub.
+ */
+function parsePullRef(ref: string, record: ProjectRecord): { repo: string; number: number } | null {
   const trimmed = ref.trim();
   const urlMatch = trimmed.match(/\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   const slugMatch = trimmed.match(/^([^/\s#]+\/[^/\s#]+)#(\d+)$/);
   const match = urlMatch ?? slugMatch;
-  return match ? { repo: match[1]!, number: Number(match[2]) } : null;
+  if (match) {
+    return { repo: match[1]!, number: Number(match[2]) };
+  }
+  const named = trimmed.match(/^([^/\s#]+)#(\d+)$/);
+  const repo = named ? record.repos.find((entry) => entry.name.toLowerCase() === named[1]!.toLowerCase()) : null;
+  return named && repo?.githubRepo ? { repo: repo.githubRepo, number: Number(named[2]) } : null;
 }
 
-function findListing(listings: readonly ProjectPullRequestListing[], ref: string): ProjectPullRequestListing | null {
+function findListing(
+  listings: readonly ProjectPullRequestListing[],
+  ref: string,
+  record: ProjectRecord
+): ProjectPullRequestListing | null {
   const trimmed = ref.trim();
-  const parsed = parsePullRef(trimmed);
+  const parsed = parsePullRef(trimmed, record);
   const numberMatch = trimmed.match(/^#?(\d+)$/);
   return (
     listings.find((pr) => {
@@ -221,19 +233,26 @@ function findListing(listings: readonly ProjectPullRequestListing[], ref: string
   );
 }
 
-function prNotFound(listings: readonly ProjectPullRequestListing[], ref: string): ProjectError {
+function prNotFound(listings: readonly ProjectPullRequestListing[], ref: string, record: ProjectRecord): ProjectError {
   const known = listings.map((pr) => `${pr.repo}#${pr.number}${pr.agent ? ` (${pr.agent})` : ""}`);
+  const bound = record.repos.filter((repo) => repo.githubRepo).map((repo) => `${repo.name} is ${repo.githubRepo}`);
   return new ProjectError(
-    `No tracked pull request matches "${ref}".${known.length ? ` Tracked: ${known.join(", ")}.` : ""}`,
+    `No tracked pull request matches "${ref}".${known.length ? ` Tracked: ${known.join(", ")}.` : ""}${
+      bound.length ? ` Name others as owner/repo#N or <repository>#N (${bound.join(", ")}).` : ""
+    }`,
     404,
     "pr_not_found"
   );
 }
 
-function resolveListing(listings: readonly ProjectPullRequestListing[], ref: string): ProjectPullRequestListing {
-  const found = findListing(listings, ref);
+function resolveListing(
+  listings: readonly ProjectPullRequestListing[],
+  ref: string,
+  record: ProjectRecord
+): ProjectPullRequestListing {
+  const found = findListing(listings, ref, record);
   if (!found) {
-    throw prNotFound(listings, ref);
+    throw prNotFound(listings, ref, record);
   }
   return found;
 }
@@ -242,7 +261,7 @@ function normalizeQuote(text: string): string {
   return text.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, " ").trim();
 }
 
-/** The last few things the user actually typed to the orchestrator (not notices or events). */
+/** The last few things the user said to the orchestrator: what they typed (not notices or events) and their answers to its questions. */
 async function recentUserMessages(record: ProjectRecord): Promise<string[]> {
   const snapshot = await readConversationSnapshot(
     record.orchestrator.workspaceId,
@@ -252,15 +271,21 @@ async function recentUserMessages(record: ProjectRecord): Promise<string[]> {
     return [];
   }
   return snapshot.events
-    .filter(
-      (event): event is Extract<typeof event, { kind: "user_message" }> =>
-        event.kind === "user_message" &&
-        !event.hidden &&
-        !event.displayContent?.startsWith(PROJECT_NOTICE_DISPLAY_PREFIX) &&
-        !isProjectEventDisplay(event.displayContent)
-    )
-    .slice(-USER_QUOTE_LOOKBACK)
-    .map((event) => event.displayContent?.trim() || event.content);
+    .flatMap((event) => {
+      if (event.kind === "user_message") {
+        const typed =
+          !event.hidden &&
+          !event.displayContent?.startsWith(PROJECT_NOTICE_DISPLAY_PREFIX) &&
+          !isProjectEventDisplay(event.displayContent);
+        return typed ? [event.displayContent?.trim() || event.content] : [];
+      }
+      // Their answer to a question the orchestrator asked them is their word too.
+      if (event.kind === "question" && event.status === "answered" && event.answer) {
+        return [Array.isArray(event.answer) ? event.answer.join("\n") : event.answer];
+      }
+      return [];
+    })
+    .slice(-USER_QUOTE_LOOKBACK);
 }
 
 /** Throws unless `quote` is non-empty and appears in one of the user's recent messages. */
@@ -301,10 +326,11 @@ export async function mergeProjectPullRequest(
   if (!record) {
     throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
   }
-  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
+  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "", record);
   if (!input.byUser && record.settings.mergePolicy !== "when_green") {
     await assertUserQuote(record, input.userQuote, {
-      missing: "Merging needs the user's explicit go-ahead in this Project: ask them, then pass their words as user_quote.",
+      missing:
+        "Merging needs the user's explicit go-ahead: if they already told you to merge, pass their words as user_quote; otherwise ask them first.",
       unmatched: "user_quote does not appear in the user's recent messages, so the merge is not authorized. Ask the user.",
       code: "merge_not_authorized",
     });
@@ -403,16 +429,16 @@ export async function closeProjectPullRequest(
     throw new ProjectError("Say why the pull request is being closed (reason); it is posted on the PR.");
   }
   const listings = await listProjectPullRequests(projectId);
-  const tracked = findListing(listings, input.pr ?? "");
-  const ref = tracked ?? parsePullRef(input.pr ?? "");
+  const tracked = findListing(listings, input.pr ?? "", record);
+  const ref = tracked ?? parsePullRef(input.pr ?? "", record);
   if (!ref || (!tracked && !record.repos.some((repo) => repo.githubRepo?.toLowerCase() === ref.repo.toLowerCase()))) {
-    throw prNotFound(listings, input.pr ?? "");
+    throw prNotFound(listings, input.pr ?? "", record);
   }
   const agent = tracked?.agent ?? null;
   if (!input.byUser && !agent) {
     await assertUserQuote(record, input.userQuote, {
       missing:
-        "Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: ask them, then pass their words as user_quote.",
+        "Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: if they already told you to close it, pass their words as user_quote; otherwise ask them first.",
       unmatched: "user_quote does not appear in the user's recent messages, so closing it is not authorized. Ask the user.",
       code: "close_not_authorized",
     });
@@ -462,7 +488,11 @@ export async function requestProjectPullRequestReview(
   projectId: string,
   input: { pr: string; reviewers?: readonly string[] | null; note?: string | null }
 ): Promise<{ pr: ProjectPullRequestListing; requested: string[] }> {
-  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
+  const record = await readProject(projectId);
+  if (!record) {
+    throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
+  }
+  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "", record);
   const client = await projectGithubClient();
   if (!client) {
     throw new ProjectError("GitHub is not connected on this engine.", 409, "github_not_connected");
@@ -505,7 +535,7 @@ export async function rebaseRequestFor(projectId: string, input: { pr: string; n
   if (!record) {
     throw new ProjectError(`Unknown project: ${projectId}`, 404, "project_not_found");
   }
-  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "");
+  const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "", record);
   const ref = `${listing.repo}#${listing.number}`;
   const owner = record.children.find(
     (child) => child.deletedAt == null && child.pr?.repo === listing.repo && child.pr.number === listing.number

@@ -64,6 +64,9 @@ function safeDecode(value: string): string {
   }
 }
 
+const PR_SUBSCRIPTIONS_CLOSED_NOTE =
+  "The subscriptions that followed it and its branch's CI closed with it: there is nothing to unsubscribe.";
+
 const WAIT_FOR_UPDATES_NOTE =
   "Agents report back on their own with a <project_agent_updates> message, delivered after your turn ends and never during it. Do not check on them in the meantime: finish any other delegation, then end your turn.";
 
@@ -207,6 +210,11 @@ function parsePrRef(record: ProjectRecord, raw: string): { repo: string; number:
   if (slug) {
     return { repo: slug[1]!, number: Number(slug[2]) };
   }
+  const named = raw.match(/^([^/\s#]+)#(\d+)$/);
+  const namedRepo = named ? record.repos.find((repo) => repo.name.toLowerCase() === named[1]!.toLowerCase()) : null;
+  if (named && namedRepo?.githubRepo) {
+    return { repo: namedRepo.githubRepo, number: Number(named[2]) };
+  }
   const bare = raw.match(/^#?(\d+)$/);
   const repos = [
     ...new Set(
@@ -218,7 +226,7 @@ function parsePrRef(record: ProjectRecord, raw: string): { repo: string; number:
   if (bare && repos.length === 1) {
     return { repo: repos[0]!, number: Number(bare[1]) };
   }
-  throw new ProjectError(`Pass the PR as owner/repo#N or its URL (got "${raw}").`);
+  throw new ProjectError(`Pass the PR as owner/repo#N, <repository>#N or its URL (got "${raw}").`);
 }
 
 function subscribeInputFromArgs(record: ProjectRecord, args: Record<string, unknown>): SubscribeInput {
@@ -434,7 +442,7 @@ export async function executeProjectOrchestratorTool(
         pr: requiredArg(args, "pr", name),
         userQuote: arg(args, "user_quote") ?? null,
       });
-      return json({ merged: compactPullRequest(result.pr), commit: result.sha });
+      return json({ merged: compactPullRequest(result.pr), commit: result.sha, note: PR_SUBSCRIPTIONS_CLOSED_NOTE });
     }
     case "project_close_pr": {
       await requireProject(projectId);
@@ -443,7 +451,7 @@ export async function executeProjectOrchestratorTool(
         reason: requiredArg(args, "reason", name),
         userQuote: arg(args, "user_quote") ?? null,
       });
-      return json({ closed: compactPullRequest(result.pr) });
+      return json({ closed: compactPullRequest(result.pr), note: PR_SUBSCRIPTIONS_CLOSED_NOTE });
     }
     case "project_request_review": {
       await requireProject(projectId);
@@ -573,7 +581,8 @@ export async function buildProjectOrchestratorReminder(
     "Repositories:",
     ...(record.repos.length > 0
       ? record.repos.map(
-          (repo) => `- ${repo.name} (engine ${projectEngineName(repo.engineId, engines)}) ${repo.root}`
+          (repo) =>
+            `- ${repo.name} (engine ${projectEngineName(repo.engineId, engines)}${repo.githubRepo ? `, GitHub ${repo.githubRepo}` : ""}) ${repo.root}`
         )
       : ["- none bound; agents without a repo get an empty scratch folder"]),
     "",

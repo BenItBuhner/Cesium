@@ -9,7 +9,7 @@ import type {
   ProjectSubscriptionSummary,
 } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
-import { messageText, startFakeChatModel, text, waitFor, type Responder } from "./helpers/fake-chat-model.js";
+import { messageText, startFakeChatModel, text, toolCall, waitFor, type Responder } from "./helpers/fake-chat-model.js";
 import { createRepoWithRemote, git, pushCommitToRemote } from "./helpers/git-fixtures.js";
 import { startFakeGithub } from "./fixtures/fake-github.js";
 
@@ -337,9 +337,10 @@ test("merging needs the user's own words; the Project squash-merges green PRs an
       pr: "cart",
       user_quote: "please merge the cart PR",
     })
-  ) as { merged: { pr: string; state: string }; commit: string };
+  ) as { merged: { pr: string; state: string }; commit: string; note: string };
   assert.equal(merged.merged.pr, "acme/shop#1");
   assert.equal(merged.merged.state, "merged");
+  assert.match(merged.note, /closed with it: there is nothing to unsubscribe/);
   assert.equal(github.pull("acme/shop", 1).merged, true);
   assert.equal(await git(SHOP_REMOTE, ["log", "-1", "--format=%s", "main"]), "Multiply by quantity (#1)");
   assert.equal(await git(SHOP_REMOTE, ["rev-parse", "main"]), merged.commit);
@@ -462,6 +463,10 @@ test("the coordinator follows another PR by URL, hears its new commits, and unsu
   ) as { subscribed: ProjectSubscriptionSummary };
   assert.equal(followed.subscribed.label, "acme/shop#3");
   assert.equal(followed.subscribed.createdBy, "coordinator");
+  const byName = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_subscribe", { kind: "github_pr", pr: "shop#3" })
+  ) as { alreadySubscribed?: ProjectSubscriptionSummary };
+  assert.equal(byName.alreadySubscribed?.id, followed.subscribed.id, "shop#3 names the same PR");
   await tick();
   const listed = JSON.parse(await executeProjectOrchestratorTool(project.id, "project_list_prs", {})) as {
     prs: Array<{ pr: string; agent: string | null }>;
@@ -492,6 +497,7 @@ test("the coordinator follows another PR by URL, hears its new commits, and unsu
     await import("../src/lib/projects/orchestrator-tools.js")
   ).buildProjectOrchestratorReminder(project.id, { dateLabel: "today", modelName: "test" });
   assert.match(reminder, /Pull requests:\n- acme\/shop#/);
+  assert.match(reminder, /Repositories:\n- shop \(engine Home, GitHub acme\/shop\) /, "the coordinator sees each repository's GitHub name");
   assert.match(reminder, /Merge policy: merge only when the user explicitly says so/);
   assert.match(reminder, /Listening:\n- hourly · every hour \[sub_/);
 });
@@ -589,8 +595,9 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
       pr: "banner",
       reason: "The shipping settings page replaces this banner.",
     })
-  ) as { closed: { pr: string; state: string; agent: string } };
+  ) as { closed: { pr: string; state: string; agent: string }; note: string };
   assert.deepEqual([closed.closed.pr, closed.closed.state, closed.closed.agent], [`acme/shop#${number}`, "closed", "banner"]);
+  assert.match(closed.note, /closed with it: there is nothing to unsubscribe/);
   const pull = github.pull("acme/shop", number);
   assert.equal(pull.state, "closed");
   assert.equal(pull.merged, false);
@@ -618,8 +625,9 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   // The teammate's hotfix PR (#3): no agent here opened it.
   const reason = "Its fix is already on main.";
   await assert.rejects(
-    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason }),
-    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead/
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "shop#3", reason }),
+    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: if they already told you to close it, pass their words as user_quote; otherwise ask them first\./,
+    "the Project's repository name resolves to its GitHub repo"
   );
   await assert.rejects(
     executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason, user_quote: "close it" }),
@@ -627,17 +635,38 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   );
   await assert.rejects(
     executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "other/repo#3", reason }),
-    /No tracked pull request matches "other\/repo#3"/,
+    /No tracked pull request matches "other\/repo#3"\..* Name others as owner\/repo#N or <repository>#N \(shop is acme\/shop\)\./,
     "only PRs in the Project's repositories"
   );
   assert.equal(github.pull("acme/shop", 3).state, "open");
-  script("orchestrator", text(["Will close the hotfix PR."]));
-  await sayToCoordinator("Close the teammate's hotfix PR, its fix is already on main.");
+  // The coordinator asks, and the user's answer to its question authorizes the close.
+  script(
+    "orchestrator",
+    toolCall("ask_close", "ask_question", {
+      prompt: "The teammate's hotfix PR (shop#3) duplicates what is on main. Close it?",
+      options: ["Yes, close it", "No, keep it"],
+    }),
+    text(["Closing it."])
+  );
+  const workspace = await getWorkspaceById(project.orchestrator.workspaceId);
+  assert.ok(workspace);
+  await agentRuntimeManager.promptConversation(workspace, project.orchestrator.conversationId, "The teammate's hotfix PR looks stale.");
+  const asking = await waitFor(
+    "the coordinator's question",
+    () => readConversationSnapshot(project.orchestrator.workspaceId, project.orchestrator.conversationId),
+    (snapshot) => snapshot.conversation.pendingQuestion != null,
+    30_000
+  );
+  await agentRuntimeManager.answerQuestion(workspace, project.orchestrator.conversationId, {
+    questionId: asking.conversation.pendingQuestion!.questionId,
+    answer: "Yes, close it",
+  });
+  await orchestratorIdle("after the answer");
   const teammate = JSON.parse(
     await executeProjectOrchestratorTool(project.id, "project_close_pr", {
       pr: "https://github.com/acme/shop/pull/3",
       reason,
-      user_quote: "close the teammate's hotfix PR",
+      user_quote: "Yes, close it",
     })
   ) as { closed: { pr: string; state: string; agent: string | null } };
   assert.deepEqual([teammate.closed.pr, teammate.closed.state, teammate.closed.agent], ["acme/shop#3", "closed", null]);
