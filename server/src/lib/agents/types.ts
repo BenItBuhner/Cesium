@@ -293,6 +293,8 @@ export type AgentStoredEvent =
        * iterations, so the persisted log reproduces the exact tail the model
        * already saw and the prompt-cache prefix stays byte-stable.
        */
+      /** Tool-produced images the live turn attached to this inline reminder's user message. */
+      images?: Array<{ mimeType: string; data: string }>;
       placement?: "inline";
       text: string;
       raw?: unknown;

@@ -1329,6 +1329,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             arguments: JSON.stringify(request.arguments),
           })),
         });
+        const batchImages: Array<{ mimeType: string; data: string; source: string }> = [];
         for (const request of result.toolRequests) {
           if (this.cancelled) {
             return;
@@ -1346,23 +1347,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
             name: request.name,
             content: normalizedToolResult.content,
           });
-          if (this.pendingToolImages.length > 0) {
-            // Vision attachments cannot ride on tool-role messages in the
-            // OpenAI-compatible protocol, so surface them as a follow-up user
-            // message right after the tool result that produced them.
-            const images = this.pendingToolImages.splice(0, 4);
-            toolResultMessages.push({
-              role: "user",
-              content: `[Attached ${images.length} image(s) captured by ${images
-                .map((image) => image.source)
-                .join(", ")} for your review.]`,
-              images: images.map((image) => ({
-                mimeType: image.mimeType,
-                data: image.data,
-              })),
-            });
-            this.pendingToolImages = [];
-          }
+          batchImages.push(...this.pendingToolImages.splice(0, 4));
+          this.pendingToolImages = [];
           completedToolCallCount += 1;
           if (completedToolCallCount % 8 === 0) {
             await this.emitConversationStatus(
@@ -1370,6 +1356,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
               `Cesium is continuing after ${completedToolCallCount} tool calls…`
             );
           }
+        }
+        if (batchImages.length > 0) {
+          await this.attachToolImages(toolResultMessages, batchImages);
         }
         // Side chats: anything the primary did while those tools ran lands
         // here, after the tool results and before the next model call - the
@@ -1655,6 +1644,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * position so the next history rebuild is byte-identical to what the model
    * sees now. Noise-only slices advance the cursor without emitting anything.
    */
+  /**
+   * Vision attachments cannot ride on tool-role messages in the
+   * OpenAI-compatible protocol, so a batch's tool images follow its tool
+   * results as one user message. It is persisted as an inline reminder with
+   * the image data so later turns rebuild the exact message the model saw.
+   */
+  private async attachToolImages(
+    toolResultMessages: CesiumHistoryMessage[],
+    images: Array<{ mimeType: string; data: string; source: string }>
+  ): Promise<void> {
+    const content = `[Attached ${images.length} image(s) captured by ${images
+      .map((image) => image.source)
+      .join(", ")} for your review.]`;
+    const stored = images.map((image) => ({ mimeType: image.mimeType, data: image.data }));
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "system_reminder",
+        reminderId: `tool-images-${randomUUID()}`,
+        reason: "attachments",
+        placement: "inline",
+        text: content,
+        images: stored,
+      },
+    ]);
+    toolResultMessages.push({ role: "user", content, images: stored });
+  }
+
   private async injectSideChatDeltas(toolResultMessages: CesiumHistoryMessage[]): Promise<void> {
     const tail = this.sideChatTail;
     const origin = sideChatOriginOf(this.callbacks.conversation);

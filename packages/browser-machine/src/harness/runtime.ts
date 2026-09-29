@@ -4,6 +4,7 @@
  * queueing - persisting the same event log shapes as the server harness.
  */
 import type {
+  AgentStoredEvent,
   AgentConversationRecord,
   AgentConversationSnapshotHead,
   AgentPendingPermission,
@@ -46,6 +47,20 @@ type RememberedRule = {
   toolKey: string;
   createdAt: number;
 };
+
+/**
+ * Environment hash of the newest reminder that carries one. Every reminder is
+ * replayed at its own position, so any earlier full block is still visible.
+ */
+function latestBrowserEnvironmentHash(events: AgentStoredEvent[]): string | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.kind !== "system_reminder") continue;
+    const hash = (event.raw as { browserEnvironmentHash?: unknown } | undefined)?.browserEnvironmentHash;
+    if (typeof hash === "string") return hash;
+  }
+  return null;
+}
 
 /** Extra tool definitions the browser harness adds to the shared catalog. */
 const EXTRA_TOOLS: AdapterToolDefinition[] = [
@@ -214,6 +229,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
     const record = await this.deps.conversations.get(workspace.id, conversationId);
     if (!record) return;
     const status = await this.deps.git.status(workspace).catch(() => null);
+    const events = await this.deps.conversations.readEvents(conversationId);
     const reminder = buildBrowserMachineReminder({
       workspace,
       modelName: record.config.modelName,
@@ -230,7 +246,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         month: "short",
         day: "numeric",
       }),
-    });
+    }, latestBrowserEnvironmentHash(events));
     await this.deps.conversations.appendEvents(workspace.id, conversationId, [
       {
         eventId: newEventId(),
@@ -238,8 +254,9 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         kind: "system_reminder",
         reminderId: crypto.randomUUID(),
         targetMessageId,
-        reason: "mode",
-        text: reminder,
+        reason: "context",
+        text: reminder.text,
+        raw: { browserEnvironmentHash: reminder.environmentHash },
       },
     ]);
   }
@@ -398,6 +415,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
             id: toolCall.id,
             name: toolCall.name,
             argsJson: toolCall.argsJson,
+            responseId: assistantMessageId,
           });
           if (!executed) {
             // Permission rejected turn continues so the model can adapt; a
@@ -479,7 +497,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
     workspace: WorkspaceRecord,
     conversationId: string,
     turn: TurnState,
-    toolCall: { id: string; name: string; argsJson: string }
+    toolCall: { id: string; name: string; argsJson: string; responseId: string }
   ): Promise<boolean> {
     const append = (events: Parameters<ConversationStore["appendEvents"]>[2]) =>
       this.deps.conversations.appendEvents(workspace.id, conversationId, events);
@@ -501,7 +519,12 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         toolKind: this.toolKind(toolCall.name),
         status: "in_progress",
         detail: this.toolDetail(toolCall.name, args),
-        raw: { callId: toolCall.id, name: toolCall.name, argsJson: toolCall.argsJson },
+        raw: {
+          callId: toolCall.id,
+          name: toolCall.name,
+          argsJson: toolCall.argsJson,
+          responseId: toolCall.responseId,
+        },
       },
     ]);
 

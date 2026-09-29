@@ -15,17 +15,22 @@ export type BrowserReminderInput = {
   dateLabel: string;
 };
 
-export function buildBrowserMachineReminder(input: BrowserReminderInput): string {
+/** Per-turn facts: sent with every turn's reminder. */
+export function buildBrowserMachineFacts(input: BrowserReminderInput): string {
+  return [
+    `Model: ${input.modelName}. Date: ${input.dateLabel}.`,
+    `Workspace root: ${input.workspace.root} (name: ${input.workspace.name}).`,
+    `Git: ${input.gitSummary}.`,
+  ].join("\n");
+}
+
+/** What this environment can do; sent once, then again only when it changes. */
+export function buildBrowserMachineEnvironment(input: BrowserReminderInput): string {
   const packs =
     input.installedPacks.length > 0
       ? input.installedPacks.join(", ")
       : "none installed (JS/TS toolchain is built in)";
   return [
-    "<system-reminder>",
-    `Model: ${input.modelName}. Date: ${input.dateLabel}.`,
-    `Workspace root: ${input.workspace.root} (name: ${input.workspace.name}).`,
-    `Git: ${input.gitSummary}.`,
-    "",
     "## Environment: Cesium Browser Machine",
     "You are running INSIDE the user's web browser tab - there is no operating system, no real processes, and no PTY. Everything below is what you have instead. It is shallower than a normal Linux environment but fully functional for reading, editing, searching, committing, and JavaScript/TypeScript-centric development.",
     "",
@@ -39,8 +44,40 @@ export function buildBrowserMachineReminder(input: BrowserReminderInput): string
     "- Full Linux VM (experimental escape hatch): `vm start --image <url>` boots a v86 x86 Linux image with a serial console (`vm exec`, `vm tail`). Very slow; only for toolchains with no browser build.",
     "- Performance/limits: heavy commands and huge repos are slower than native; keep operations bounded (prefer targeted grep/read over full-tree scans). Output over ~400KB per command is truncated.",
     "- Nothing you run can escape the browser sandbox; there is no access to the user's real local disk.",
-    "</system-reminder>",
   ].join("\n");
+}
+
+/** Stable 32-bit FNV-1a digest; the page has no synchronous crypto hash. */
+export function browserMachineEnvironmentHash(environment: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < environment.length; index += 1) {
+    hash ^= environment.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * The turn's reminder: facts always, the environment block only when
+ * `previousEnvironmentHash` is missing or differs from the current one.
+ */
+export function buildBrowserMachineReminder(
+  input: BrowserReminderInput,
+  previousEnvironmentHash: string | null = null
+): { text: string; environmentHash: string; includesEnvironment: boolean } {
+  const environment = buildBrowserMachineEnvironment(input);
+  const environmentHash = browserMachineEnvironmentHash(environment);
+  const includesEnvironment = previousEnvironmentHash !== environmentHash;
+  return {
+    text: [
+      "<system-reminder>",
+      buildBrowserMachineFacts(input),
+      ...(includesEnvironment ? ["", environment] : []),
+      "</system-reminder>",
+    ].join("\n"),
+    environmentHash,
+    includesEnvironment,
+  };
 }
 
 export function formatGitSummary(input: {
