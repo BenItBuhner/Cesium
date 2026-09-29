@@ -614,6 +614,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private disposed = false;
   private cancelled = false;
+  /** Aborts the turn's in-flight provider requests; replaced at every prompt. */
+  private turnAbort = new AbortController();
   private pausePhase: CesiumPausePhase = "none";
   private resumeWaiter: (() => void) | null = null;
   private resumeAck: (() => void) | null = null;
@@ -937,6 +939,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error("Cesium session has been disposed.");
     }
     this.cancelled = false;
+    this.turnAbort = new AbortController();
     this.pausePhase = "none";
     this.resumeWaiter = null;
     this.releaseResumeAck();
@@ -1332,6 +1335,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               messages: modelRequest.messages,
               tools: modelRequest.tools,
               promptCacheKey: this.callbacks.conversation.id,
+              signal: this.turnAbort.signal,
             },
             iteration,
             {
@@ -1875,8 +1879,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
             failure = emptyModelResponseError(model, result.raw, attempts);
           }
         } catch (error) {
-          if (error instanceof CesiumTurnCancelledError) {
-            throw error;
+          if (error instanceof CesiumTurnCancelledError || this.cancelled || this.disposed) {
+            throw new CesiumTurnCancelledError();
           }
           failure = error;
           failureMessage = error instanceof Error ? error.message : String(error);
@@ -1896,7 +1900,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           "running",
           formatTakingLongerStatusDetail(attempts, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
         );
-        await sleepMs(delayMs);
+        await sleepMs(delayMs, input.signal);
         if (this.cancelled) {
           throw new CesiumTurnCancelledError();
         }
@@ -2005,6 +2009,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   async cancel(): Promise<void> {
     this.cancelled = true;
+    this.turnAbort.abort(new CesiumTurnCancelledError());
     this.acceptingSteers = false;
     this.pendingSteers = [];
     this.pausePhase = "none";
@@ -2216,6 +2221,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.turnAbort.abort(new CesiumTurnCancelledError());
     this.pausePhase = "none";
     this.resumeWaiter?.();
     this.resumeWaiter = null;
