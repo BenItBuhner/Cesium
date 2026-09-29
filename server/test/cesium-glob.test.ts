@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import type { AgentConversationRecord } from "../src/lib/agents/types.js";
+import type { CesiumToolContext } from "../src/lib/agents/cesium/tools/types.js";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -19,14 +19,12 @@ await fs.mkdir(TEST_DATA_DIR, { recursive: true });
 // Dynamic imports after the OPENCURSOR_DATA_DIR override so persistence.ts
 // never freezes DATA_DIR to the real data directory.
 const [
-  { AGENT_BACKENDS },
-  { createCesiumAgentProvider },
+  { globTool },
   { globToRegExp, globWorkspaceEntries },
   { resolveCesiumTools, toolKind, toolTitle, resolveCesiumToolPermissionCategory },
   { SUBAGENT_SHARED_HOST_TOOL_NAMES },
 ] = await Promise.all([
-  import("../src/lib/agents/providers.js"),
-  import("../src/lib/agents/cesium-provider.js"),
+  import("../src/lib/agents/cesium/tools/file-tools.js"),
   import("../src/lib/agents/cesium/cesium-glob.js"),
   import("../src/lib/agents/cesium/cesium-tools.js"),
   import("../src/lib/agents/cesium/subagent-toolset.js"),
@@ -140,45 +138,18 @@ type GlobToolHandle = {
 test("glob tool returns sorted workspace-relative paths and rejects paths outside the workspace", async () => {
   const root = path.join(TEST_DATA_DIR, "tree-b");
   await writeFixtureTree(root);
-  const backend = AGENT_BACKENDS["cesium-agent"]!;
-  const provider = await createCesiumAgentProvider({ backend });
-  let conversation: AgentConversationRecord = {
-    schemaVersion: 1,
-    id: "cesium-glob-tool",
-    workspaceId: "ws-glob",
-    title: "Glob tool",
-    createdAt: 1,
-    updatedAt: 1,
-    lastEventSeq: 0,
-    status: "idle",
-    config: {
-      backendId: "cesium-agent",
-      mode: "ask",
-      modelId: "openai/gpt-5.1",
-      modelName: "GPT-5.1",
-    },
-    providerSessionId: null,
-    configOptions: [],
-    capabilities: backend.capabilities,
-    pendingPermission: null,
-    pendingQuestion: null,
-    lastError: null,
-    experimental: false,
-    archivedAt: null,
-    lastReadSeq: 0,
-    queuedPrompts: [],
-  };
-  const handle = (await provider.startSession({
-    conversation,
-    workspace: { id: "ws-glob", root, name: "glob", createdAt: 1 },
+  const ctx: CesiumToolContext = {
+    workspace: { id: "ws-glob", root: root, name: "ws-glob", createdAt: 1 },
+    conversationId: "cesium-glob-tool",
     appendEvents: async () => undefined,
     readSnapshot: async () => null,
-    updateConversation: async (patch) => {
-      conversation =
-        typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
-      return conversation;
-    },
-  })) as unknown as GlobToolHandle;
+    extraRoots: [],
+    readOnlyRoot: path.join(root, ".tool-output"),
+    turnSupportsImages: false,
+    attachImage: () => undefined,
+    refineTitle: () => undefined,
+  };
+  const handle: GlobToolHandle = { toolGlob: (args) => globTool(ctx, args), dispose: async () => undefined };
   try {
     assert.equal(
       await handle.toolGlob({ pattern: "*", path: "src" }),
