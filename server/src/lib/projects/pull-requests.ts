@@ -322,7 +322,8 @@ export async function mergeProjectPullRequest(
   const listing = resolveListing(await listProjectPullRequests(projectId), input.pr ?? "", record);
   if (!input.byUser && record.settings.mergePolicy !== "when_green") {
     await assertUserQuote(record, input.userQuote, {
-      missing: "Merging needs the user's explicit go-ahead in this Project: ask them, then pass their words as user_quote.",
+      missing:
+        "Merging needs the user's explicit go-ahead: if they already told you to merge, pass their words as user_quote; otherwise ask them first.",
       unmatched: "user_quote does not appear in the user's recent messages, so the merge is not authorized. Ask the user.",
       code: "merge_not_authorized",
     });
@@ -420,7 +421,7 @@ export async function closeProjectPullRequest(
   if (!input.byUser && !agent) {
     await assertUserQuote(record, input.userQuote, {
       missing:
-        "Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: ask them, then pass their words as user_quote.",
+        "Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: if they already told you to close it, pass their words as user_quote; otherwise ask them first.",
       unmatched: "user_quote does not appear in the user's recent messages, so closing it is not authorized. Ask the user.",
       code: "close_not_authorized",
     });

@@ -626,7 +626,7 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   const reason = "Its fix is already on main.";
   await assert.rejects(
     executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "shop#3", reason }),
-    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead/,
+    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead: if they already told you to close it, pass their words as user_quote; otherwise ask them first\./,
     "the Project's repository name resolves to its GitHub repo"
   );
   await assert.rejects(
