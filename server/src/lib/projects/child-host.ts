@@ -34,6 +34,7 @@ import {
   createWorkerWorktree,
   inspectWorkerRepo,
   isWorkerWorktreeRoot,
+  listChangedFiles,
   removeWorkerWorktree,
 } from "./worktrees.js";
 
@@ -169,6 +170,8 @@ export interface ChildHost {
   transcript(ref: ChildRef, turns: number): Promise<string>;
   /** The full text of the child's last reply (a helper's answer), untruncated. */
   lastReply(ref: ChildRef): Promise<string | null>;
+  /** Files changed in the child's folder since `baseSha`, committed or not; null when it is not a git checkout. */
+  changedFiles(ref: ChildRef, baseSha: string | null): Promise<string[] | null>;
   message(ref: ChildRef, text: string, delivery: "steer" | "queue"): Promise<ProjectAgentDelivery>;
   stop(ref: ChildRef): Promise<void>;
   update(ref: ChildRef, patch: ChildUpdatePatch): Promise<void>;
@@ -635,6 +638,11 @@ export class LocalChildHost implements ChildHost {
 
   async lastReply(ref: ChildRef): Promise<string | null> {
     return lastAssistantReply(await readRecentConversationEvents(ref.workspaceId, ref.conversationId, 2));
+  }
+
+  async changedFiles(ref: ChildRef, baseSha: string | null): Promise<string[] | null> {
+    const workspace = await getWorkspaceById(ref.workspaceId);
+    return workspace ? listChangedFiles(workspace.root, baseSha) : null;
   }
 
   async message(

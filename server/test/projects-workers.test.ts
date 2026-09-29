@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import type { ProjectChildSummary, ProjectContextFile, ProjectSnapshot, ProjectSummary } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
-import { startFakeChatModel, text, waitFor } from "./helpers/fake-chat-model.js";
+import { messageText, startFakeChatModel, text, waitFor } from "./helpers/fake-chat-model.js";
 import { createRepoWithRemote, git, pushCommitToRemote, tryGitOutput } from "./helpers/git-fixtures.js";
 
 const TEST_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-projects-workers-"));
@@ -426,6 +426,140 @@ test("the Project context stores media: uploads, kinds, raw bytes with ranges, a
   });
   assert.equal(huge.status, 400);
   assert.match(String(huge.json.error), /text files are capped/);
+});
+
+/** Agent updates the coordinator received or has queued, newest last. */
+async function coordinatorUpdates(name: string): Promise<string[]> {
+  const snapshot = await readConversationSnapshot(project.orchestrator.workspaceId, project.orchestrator.conversationId);
+  return [
+    ...eventsOfKind(snapshot?.events ?? [], "user_message").map((event) => event.content),
+    ...(snapshot?.conversation.queuedPrompts ?? []).map((entry) => entry.text),
+  ].filter((content) => content.includes(`name="${name}"`));
+}
+
+test("a UI change without screenshots goes back to its agent, and the evidence reaches the coordinator ready to embed", async () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+    "base64"
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let evidenceRequest = "";
+  script(
+    "banner",
+    async (request, res) => {
+      await gate;
+      await text(["Added the free-shipping banner."])(request, res);
+    },
+    async (request, res) => {
+      evidenceRequest = messageText(request.messages.filter((message) => message.role === "user").at(-1));
+      await fs.mkdir(path.join(project.contextRoot, "media", "banner"), { recursive: true });
+      await fs.writeFile(path.join(project.contextRoot, "media", "banner", "after.png"), png);
+      await text(["Saved a screenshot: media/banner/after.png"])(request, res);
+    }
+  );
+  const created = await createAgent({ name: "banner", repo: "shop", instructions: "Add a free-shipping banner to the home page." });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const worktree = created.json.agent.worktreePath!;
+  await fs.writeFile(path.join(worktree, "index.html"), '<p class="banner">Free shipping over $50</p>\n');
+  await git(worktree, ["add", "-A"]);
+  await git(worktree, ["commit", "-m", "Add a free-shipping banner"]);
+  await fs.writeFile(path.join(worktree, "src", "banner.css"), ".banner { color: green; }\n");
+  release();
+
+  const brief = await firstPrompt("banner");
+  assert.ok(
+    brief.includes(
+      `- A change to what users see (pages, components, styles, markup) is done only with evidence: screenshots of the result, plus a short recording for anything interactive, saved under ${project.contextRoot}/media/banner/ and listed in your report and the pull request. The Project checks this when your turn ends and sends the change back to you while that folder is empty.`
+    ),
+    brief
+  );
+  assert.match(brief, /call_mcp_tool on server "browser" with browser_navigate, browser_screenshot, and browser_record/);
+
+  const missing = await waitFor(
+    "the update saying the evidence is missing",
+    () => coordinatorUpdates("banner"),
+    (updates) => updates.some((content) => content.includes("Evidence: missing")),
+    30_000
+  );
+  assert.ok(
+    missing.some((content) =>
+      content.includes(
+        "Evidence: missing. It changed UI files (index.html, src/banner.css) but saved no screenshots or recording in media/banner/, so the Project asked it to capture them. The change is not done until they arrive."
+      )
+    ),
+    missing.join("\n---\n")
+  );
+  const present = await waitFor(
+    "the update with the evidence",
+    () => coordinatorUpdates("banner"),
+    (updates) => updates.some((content) => content.includes("Evidence for its UI change")),
+    30_000
+  );
+  assert.ok(
+    present.some((content) =>
+      content.includes(
+        "Evidence for its UI change (index.html, src/banner.css): ![after.png](context:media/banner/after.png). Embed it when you tell the user."
+      )
+    ),
+    present.join("\n---\n")
+  );
+  assert.match(evidenceRequest, /\nYour change touches what users see \(index\.html, src\/banner\.css\), but there are no screenshots or recording of it in your evidence folder \(media\/banner\/ in the Project context/);
+  assert.match(evidenceRequest, /call_mcp_tool on server "browser"/);
+  const child = await childRecord("banner");
+  assert.deepEqual(child.evidence?.uiFiles, ["index.html", "src/banner.css"]);
+  assert.deepEqual(child.evidence?.files, ["media/banner/after.png"]);
+  assert.equal(child.evidence?.requestedAt, null, "the request is settled once the evidence arrived");
+  assert.equal(child.turnsCompleted, 2);
+  const snapshot = await api<ProjectSnapshot>("GET", `/api/projects/${project.id}`);
+  assert.deepEqual(
+    snapshot.json.children.find((entry) => entry.name === "banner")?.evidence?.files,
+    ["media/banner/after.png"],
+    "the Agents list shows it"
+  );
+  const cart = await childRecord("cart");
+  assert.equal(cart.evidence, null, "a change to plain code needs no screenshots");
+});
+
+test("an agent that ignores the evidence request is asked once, and the coordinator is told to check it itself", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  script(
+    "hero",
+    async (request, res) => {
+      await gate;
+      await text(["Restyled the hero."])(request, res);
+    },
+    text(["I could not start the app, so no screenshots."])
+  );
+  const created = await createAgent({ name: "hero", repo: "shop", instructions: "Restyle the hero section." });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  await fs.mkdir(path.join(created.json.agent.worktreePath!, "src", "components"), { recursive: true });
+  await fs.writeFile(path.join(created.json.agent.worktreePath!, "src", "components", "Hero.js"), "export const Hero = () => 'Hi';\n");
+  release();
+  const updates = await waitFor(
+    "the update saying the evidence is still missing",
+    () => coordinatorUpdates("hero"),
+    (list) => list.some((content) => content.includes("Evidence: still missing")),
+    30_000
+  );
+  assert.ok(
+    updates.some((content) =>
+      content.includes(
+        "Evidence: still missing. It changed UI files (src/components/Hero.js) and was asked for screenshots, but media/hero/ is still empty. Don't report this change as done: capture it with project_browser_check, or ask hero again."
+      )
+    ),
+    updates.join("\n---\n")
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const child = await childRecord("hero");
+  assert.equal(child.turnsCompleted, 2, "no third request: it is asked once");
+  assert.equal(child.evidence?.files.length, 0);
+  assert.equal(typeof child.evidence?.requestedAt, "number");
 });
 
 test("deleting the Project removes every worker worktree and keeps the branches", async () => {

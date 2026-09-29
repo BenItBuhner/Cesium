@@ -308,6 +308,40 @@ async function excludeEngineFolders(worktreePath: string): Promise<void> {
 }
 
 /**
+ * Files a worker changed in the checkout at `root`: committed since `baseSha`
+ * (on its branch) plus anything not committed yet. Null when `root` is not a
+ * git checkout.
+ */
+export async function listChangedFiles(root: string, baseSha: string | null): Promise<string[] | null> {
+  const status = await tryGit(root, ["status", "--porcelain", "-z", "--untracked-files=all"]);
+  if (!status) {
+    return null;
+  }
+  const files = new Set<string>();
+  if (baseSha) {
+    const committed = await tryGit(root, ["diff", "--name-only", "-z", `${baseSha}...HEAD`]);
+    for (const file of committed?.stdout.split("\0") ?? []) {
+      if (file) {
+        files.add(file);
+      }
+    }
+  }
+  // Entries are "XY path"; a rename or copy is followed by its original path, which is skipped.
+  const entries = status.stdout.split("\0");
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    if (entry.length < 4) {
+      continue;
+    }
+    files.add(entry.slice(3));
+    if (entry[0] === "R" || entry[0] === "C") {
+      index += 1;
+    }
+  }
+  return [...files].sort();
+}
+
+/**
  * Removes a worker's worktree (uncommitted changes included) and its workspace
  * registration. The branch stays, so pushed work and open PRs are untouched.
  */

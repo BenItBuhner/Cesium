@@ -219,10 +219,70 @@ export type ProjectChildSummary = {
   /** Workers do the Project's work; helpers are short typed errands (code search, browser checks). */
   kind: ProjectAgentKind;
   helperKind: ProjectHelperKind | null;
+  /** Set once a worker's branch changes what users see. */
+  evidence: ProjectChildEvidence | null;
 };
 
 export type ProjectAgentKind = "worker" | "helper";
 export type ProjectHelperKind = "explore" | "browser";
+
+/**
+ * Whether a worker's change to what users see came with screenshots or a
+ * recording, as checked when its turns end.
+ */
+export type ProjectChildEvidence = {
+  /** UI files its branch changes (pages, components, styles, markup). */
+  uiFiles: string[];
+  /**
+   * Screenshots and recordings in the Project context: its own `media/<agent>/`
+   * and those of browser checks that ran in its working tree. Empty means missing.
+   */
+  files: string[];
+  /** When the Project asked it for the missing evidence; null once it arrived. */
+  requestedAt: number | null;
+  checkedAt: number;
+};
+
+const UI_FILE_EXTENSIONS = new Set(["html", "htm", "css", "scss", "sass", "less", "jsx", "tsx", "vue", "svelte", "astro"]);
+/** Code and assets count as UI only inside these folders. */
+const UI_FOLDERS = new Set(["components", "pages", "views", "templates", "layouts", "public", "static", "styles", "ui"]);
+const UI_FOLDER_EXTENSIONS = new Set(["js", "mjs", "cjs", "ts", "mts", "svg", "png", "jpg", "jpeg", "gif", "webp", "ico"]);
+const NOT_UI_PATH = /(^|\/)(__tests__|__mocks__|tests?|e2e|spec|fixtures)\/|\.(test|spec|stories)\.[^/]+$|\.d\.ts$/i;
+const EVIDENCE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov"]);
+
+function fileExtension(filePath: string): string {
+  const base = filePath.split("/").pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Whether a changed repository file is part of what users see: markup, styles, components, pages. Tests are not. */
+export function isProjectUiPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!normalized || NOT_UI_PATH.test(normalized)) {
+    return false;
+  }
+  const extension = fileExtension(normalized);
+  if (UI_FILE_EXTENSIONS.has(extension)) {
+    return true;
+  }
+  const folders = normalized.split("/").slice(0, -1).map((segment) => segment.toLowerCase());
+  return UI_FOLDER_EXTENSIONS.has(extension) && folders.some((folder) => UI_FOLDERS.has(folder));
+}
+
+/** Screenshots and recordings (what counts as evidence for a UI change). */
+export function isProjectEvidencePath(filePath: string): boolean {
+  return EVIDENCE_EXTENSIONS.has(fileExtension(filePath.replace(/\\/g, "/")));
+}
+
+/** Markdown that shows a Project context file in a coordinator message: an image embed, or a link for a recording. */
+export function projectEvidenceEmbed(contextPath: string): string {
+  const name = (contextPath.split("/").pop() ?? contextPath).replace(/[[\]\\]/g, "\\$&");
+  const encoded = encodeURI(contextPath).replace(/[()#?]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  const target = `context:${encoded}`;
+  return VIDEO_EXTENSIONS.has(fileExtension(contextPath)) ? `[${name}](${target})` : `![${name}](${target})`;
+}
 
 export type ProjectOrchestratorSummary = {
   conversationId: string;

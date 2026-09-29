@@ -7,6 +7,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  Images,
   LoaderCircle,
   MessageSquarePlus,
   Pencil,
@@ -153,7 +154,7 @@ function ProjectAgentCard({
   engine: ProjectEngineSummary | null;
 }) {
   const dialogs = useWorkbenchDialogs();
-  const { openChildConversation, refreshProject } = useProjects();
+  const { openChildConversation, openContextFile, refreshProject } = useProjects();
   const { servers } = useServerConnections();
   const [expanded, setExpanded] = useState<"message" | "transcript" | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -289,6 +290,27 @@ function ProjectAgentCard({
               PR #{child.pr.number} · {child.pr.draft && child.pr.state === "open" ? "draft" : child.pr.state}
               {child.pr.ci ? ` · CI ${child.pr.ci === "failure" ? "failing" : child.pr.ci === "success" ? "green" : "running"}` : ""}
             </a>
+          ) : null}
+          {child.evidence && child.evidence.files.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => openContextFile(child.evidence!.files[0]!.split("/").slice(0, 2).join("/"))}
+              className="inline-flex items-center gap-[3px] rounded-[4px] bg-[var(--bg-card)] px-[5px] font-sans text-[10.5px] text-[var(--text-primary)] hover:underline"
+              title={child.evidence.files.join("\n")}
+              data-project-evidence="present"
+            >
+              <Images className="size-[11px] shrink-0" strokeWidth={1.7} aria-hidden />
+              Evidence · {child.evidence.files.length}
+            </button>
+          ) : child.evidence ? (
+            <span
+              className="inline-flex items-center gap-[3px] text-[var(--status-warning)]"
+              title={`UI files changed: ${child.evidence.uiFiles.join(", ")}`}
+              data-project-evidence="missing"
+            >
+              <TriangleAlert className="size-[11px] shrink-0" strokeWidth={1.8} aria-hidden />
+              {child.evidence.requestedAt != null ? "Evidence missing · asked" : "Evidence missing"}
+            </span>
           ) : null}
           <span className="tabular-nums">
             {child.turnsCompleted} {child.turnsCompleted === 1 ? "turn" : "turns"}

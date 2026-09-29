@@ -20,6 +20,9 @@ import {
   sameProjectEngineUrl,
   sortProjectChildren,
   isProjectAgentIsolation,
+  isProjectEvidencePath,
+  isProjectUiPath,
+  projectEvidenceEmbed,
   formatProjectEventDisplay,
   isProjectEventDisplay,
   projectContextContentType,
@@ -67,9 +70,54 @@ function child(overrides: Partial<ProjectChildSummary> & Pick<ProjectChildSummar
     pr: null,
     kind: "worker",
     helperKind: null,
+    evidence: null,
     ...overrides,
   };
 }
+
+test("UI files are markup, styles and components; tests and backend code are not", () => {
+  for (const file of [
+    "index.html",
+    "src/styles.css",
+    "app/page.tsx",
+    "src/components/Banner.js",
+    "web/src/ui/button.ts",
+    "public/logo.svg",
+    "src/pages/checkout.vue",
+    "./src/theme.scss",
+    "src\\views\\Cart.jsx",
+  ]) {
+    assert.equal(isProjectUiPath(file), true, file);
+  }
+  for (const file of [
+    "src/cart.js",
+    "server/src/checkout.ts",
+    "app/api/route.ts",
+    "src/components/Banner.test.tsx",
+    "test/cart.test.js",
+    "src/__tests__/Banner.tsx",
+    "src/components/Banner.stories.tsx",
+    "src/components/types.d.ts",
+    "README.md",
+    "package.json",
+    "artifacts/browser/shot.png",
+  ]) {
+    assert.equal(isProjectUiPath(file), false, file);
+  }
+});
+
+test("evidence is screenshots and recordings, embedded as images or linked as videos", () => {
+  assert.equal(isProjectEvidencePath("media/banner/after.PNG"), true);
+  assert.equal(isProjectEvidencePath("media/banner/demo.webm"), true);
+  assert.equal(isProjectEvidencePath("media/banner/notes.md"), false);
+  assert.equal(projectEvidenceEmbed("media/banner/after.png"), "![after.png](context:media/banner/after.png)");
+  assert.equal(projectEvidenceEmbed("media/banner/demo.mp4"), "[demo.mp4](context:media/banner/demo.mp4)");
+  assert.equal(
+    projectEvidenceEmbed("media/banner/cart (1)#2.png"),
+    "![cart (1)#2.png](context:media/banner/cart%20%281%29%232.png)",
+    "spaces, parentheses and # can't break the link"
+  );
+});
 
 test("busy statuses cover every in-turn state and nothing else", () => {
   for (const status of [
