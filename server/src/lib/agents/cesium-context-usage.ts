@@ -15,6 +15,7 @@ import {
   reportedContextTokens,
   selectHistoryWindow,
 } from "./cesium/cesium-history.js";
+import { hydrateToolResultBlobs } from "./cesium/cesium-tool-result-blobs.js";
 import { contextTokensAfterResponse } from "./cesium/cesium-usage.js";
 import { buildOpenAiToolDefinitions, resolveCesiumTools } from "./cesium/cesium-tools.js";
 import {
@@ -402,7 +403,7 @@ async function loadCesiumContextParts(input: {
   return {
     systemPromptFull: promptContext.systemPromptFull,
     toolDefinitions: promptContext.toolDefinitions,
-    events: snapshot?.events ?? [],
+    events: await hydrateToolResultBlobs(snapshot?.events ?? []),
     limitTokens,
     modelId,
     notes: promptContext.notes,

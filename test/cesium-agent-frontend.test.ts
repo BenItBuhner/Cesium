@@ -661,4 +661,34 @@ describe("Cesium Agent frontend integration", () => {
     assert.match(text, /The full answer\./);
     assert.doesNotMatch(text, /Half an ans/);
   });
+
+  test("a tool row whose event kept only a preview links to the stored full result", () => {
+    let seq = 0;
+    const base = () => {
+      seq += 1;
+      return { seq, eventId: `e${seq}`, conversationId: "c-blob", createdAt: seq };
+    };
+    const request = { id: "t-big", name: "run_terminal_cmd", arguments: { command: "npm test" } };
+    const preview = "line 1\nline 2\n...[truncated 90000 chars from the middle]...\nline 999";
+    const events: AgentStoredEvent[] = [
+      { ...base(), kind: "user_message", messageId: "m1", content: "Run the tests" },
+      { ...base(), kind: "tool_call", toolCallId: "t-big", title: "Ran npm test", toolKind: "terminal", status: "in_progress", raw: request },
+      {
+        ...base(),
+        kind: "tool_call_update",
+        toolCallId: "t-big",
+        title: "Ran npm test",
+        toolKind: "terminal",
+        status: "completed",
+        detail: preview,
+        raw: { request, modelBudget: 12_000, blobRef: { sha256: "a".repeat(64), chars: 102_000 } },
+      },
+    ];
+    const tools = projectAgentEventsToChatMessages(events, { backendId: "cesium-agent" })
+      .flatMap((message) => message.workedEntries ?? [])
+      .filter((entry) => entry.kind === "tool");
+    assert.equal(tools.length, 1);
+    assert.deepEqual(tools[0]!.storedResult, { conversationId: "c-blob", chars: 102_000 }, "the row can load the full result");
+    assert.equal(tools[0]!.rawDetail ?? tools[0]!.detail, preview, "and shows the preview until then");
+  });
 });

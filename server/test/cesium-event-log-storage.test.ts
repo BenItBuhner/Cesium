@@ -12,6 +12,8 @@ const WORKSPACE_ROOT = path.join(TEST_DATA_DIR, "standalone-chats", "event-log")
 await fs.mkdir(WORKSPACE_ROOT, { recursive: true });
 const MEDIUM = Array.from({ length: 400 }, (_, index) => `medium ${String(index).padStart(4, "0")} ${"m".repeat(40)}`).join("\n");
 await fs.writeFile(path.join(WORKSPACE_ROOT, "medium.txt"), MEDIUM);
+const HUGE = Array.from({ length: 900 }, (_, index) => `huge ${String(index).padStart(4, "0")} ${"h".repeat(90)}`).join("\n");
+await fs.writeFile(path.join(WORKSPACE_ROOT, "huge.txt"), HUGE);
 
 for (const key of [
   "REDIS_URL",
@@ -71,9 +73,12 @@ const [
   { ensureWorkspaceRegistered },
   { agentRuntimeManager },
   { readConversationSnapshot },
-  { normalizeEventsToHistory },
+  { normalizeEventsToHistory, normalizeCesiumToolResultForModel },
   { CesiumRawFrameLog },
   { findUpstreamErrorPayload },
+  { hydrateToolResultBlobs, toolResultBlobPath },
+  { agentRoutes },
+  { WORKSPACE_ID_HEADER },
 ] = await Promise.all([
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -81,6 +86,9 @@ const [
   import("../src/lib/agents/cesium/cesium-history.js"),
   import("../src/lib/agents/cesium/cesium-model-adapters.js"),
   import("../src/lib/agents/completion-retry.js"),
+  import("../src/lib/agents/cesium/cesium-tool-result-blobs.js"),
+  import("../src/routes/agents.js"),
+  import("../src/lib/request-workspace.js"),
 ]);
 
 after(async () => {
@@ -235,6 +243,61 @@ test("history rebuilt from a log that also copied results to raw.result matches 
   const current = normalizeEventsToHistory(events({ request }));
   assert.deepEqual(current, legacy);
   assert.equal(current.find((message) => message.role === "tool")?.content, "1|alpha\n2|beta");
+});
+
+test("a very large result is stored once as a blob and history rebuilt from the preview event is identical", async () => {
+  const { workspace, conversation } = await newConversation();
+  const firstRequest = agentRequests.length;
+  scripted.push(toolTurn("call_huge", "read_file", { path: "huge.txt" }), textTurn("read it"));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read huge.txt.");
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("done"));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Thanks.");
+  const snapshot = await waitForIdle(workspace.id, conversation.id, 2);
+
+  const full = HUGE.split("\n").map((line, index) => `${index + 1}|${line}`).join("\n");
+  const [update] = updatesOf(snapshot.events);
+  const raw = update!.raw as { blobRef?: { sha256: string; chars: number }; spillPath?: string; modelBudget?: number };
+  assert.equal(raw.blobRef?.chars, full.length, "the event references the full result");
+  assert.ok((update!.detail?.length ?? 0) < 13_000, "and keeps only a preview");
+  assert.ok(update!.detail?.startsWith("1|huge 0000"), "the preview starts with the result head");
+  assert.ok(update!.detail?.endsWith(full.slice(-200)), "and ends with its tail");
+
+  const blobPath = toolResultBlobPath(raw.blobRef!.sha256);
+  assert.equal(await fs.readFile(blobPath, "utf8"), full, "the blob holds the full result");
+  const [blobStat, spillStat] = await Promise.all([fs.stat(blobPath), fs.stat(raw.spillPath!)]);
+  assert.equal(spillStat.ino, blobStat.ino, "the spill file is the blob, not a second copy");
+
+  const requests = agentRequests.slice(firstRequest).map((request) => request.messages);
+  assert.equal(requests.length, 3);
+  const toolMessage = requests[1]!.find((message) => message.role === "tool");
+  assert.equal(
+    toolMessage?.content,
+    normalizeCesiumToolResultForModel({ toolName: "read_file", result: full, budget: raw.modelBudget, spillPath: raw.spillPath }).content,
+    "the model saw the full result's head, tail and omitted count"
+  );
+  extendsPrevious(requests[1]!, requests[0]!, "the tool result request extends the first");
+  extendsPrevious(requests[2]!, requests[1]!, "the next turn, rebuilt from the preview event, extends the live requests");
+
+  const hydrated = await hydrateToolResultBlobs(snapshot.events);
+  assert.equal(updatesOf(hydrated)[0]!.detail, full, "loading on read restores the full result");
+  assert.notEqual(updatesOf(snapshot.events)[0]!.detail, full, "without mutating the stored events");
+  const singleCopy = snapshot.events.map((event) =>
+    event === update ? ({ ...update, detail: full, raw: { ...raw, blobRef: undefined } } as AgentStoredEvent) : event
+  );
+  assert.deepEqual(normalizeEventsToHistory(hydrated), normalizeEventsToHistory(singleCopy));
+
+  const missing = snapshot.events.map((event) =>
+    event === update ? ({ ...update, raw: { ...raw, blobRef: { sha256: "0".repeat(64), chars: full.length } } } as AgentStoredEvent) : event
+  );
+  assert.equal(updatesOf(await hydrateToolResultBlobs(missing))[0]!.detail, update!.detail, "a missing blob keeps the preview");
+
+  const route = `/api/agents/conversations/${conversation.id}/tool-results`;
+  const headers = { [WORKSPACE_ID_HEADER]: workspace.id };
+  const found = await agentRoutes.request(`${route}/call_huge`, { headers });
+  assert.equal(found.status, 200);
+  assert.deepEqual(await found.json(), { toolCallId: "call_huge", content: full });
+  assert.equal((await agentRoutes.request(`${route}/call_unknown`, { headers })).status, 404);
 });
 
 test("raw frames: an empty reply keeps its newest frames, a reply with output keeps a summary", () => {

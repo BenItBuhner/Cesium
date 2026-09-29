@@ -75,6 +75,7 @@ export {
   fetchAgentContextTranscript,
   fetchAgentContextUsage,
   fetchAgentConversationSnapshot,
+  fetchAgentToolResult,
   fetchAgentDeploymentHints,
   fetchAgentPluginHarnessCapabilities,
   fetchAgentPlugins,

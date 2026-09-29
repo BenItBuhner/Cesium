@@ -3299,7 +3299,30 @@ const GENERIC_STREAM_TOOL_TYPES = new Set([
   "custom_tool_call",
 ]);
 
+/** Cesium stores results above its blob threshold once, outside the log; the event keeps a preview. */
+function storedToolResult(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): { conversationId: string; chars: number } | undefined {
+  if (event.kind !== "tool_call_update" || !event.raw || typeof event.raw !== "object") {
+    return undefined;
+  }
+  const blobRef = (event.raw as { blobRef?: { chars?: unknown } }).blobRef;
+  return blobRef && typeof blobRef.chars === "number"
+    ? { conversationId: event.conversationId, chars: blobRef.chars }
+    : undefined;
+}
+
 function formatToolSummary(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
+  existing?: Extract<WorkedSessionEntry, { kind: "tool" }>,
+  workspaceRoot?: string | null
+): Extract<WorkedSessionEntry, { kind: "tool" }> {
+  const entry = formatToolSummaryEntry(event, existing, workspaceRoot);
+  const storedResult = storedToolResult(event) ?? existing?.storedResult;
+  return storedResult ? { ...entry, storedResult } : entry;
+}
+
+function formatToolSummaryEntry(
   event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
   existing?: Extract<WorkedSessionEntry, { kind: "tool" }>,
   workspaceRoot?: string | null

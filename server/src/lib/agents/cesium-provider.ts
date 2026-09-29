@@ -199,6 +199,14 @@ import {
 } from "./cesium/cesium-compaction.js";
 import { DATA_DIR } from "../persistence.js";
 import {
+  CESIUM_TOOL_RESULT_BLOB_MIN_CHARS,
+  type CesiumToolResultBlobRef,
+  hydrateToolResultBlobs,
+  toolResultBlobPath,
+  toolResultPreview,
+  writeToolResultBlob,
+} from "./cesium/cesium-tool-result-blobs.js";
+import {
   asRecord,
   asString,
   asStringArray,
@@ -2493,7 +2501,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
         getParentHistory: async () => {
           const snapshot = await this.callbacks.readSnapshot();
-          return normalizeEventsToHistory(snapshot?.events ?? []).filter(
+          return normalizeEventsToHistory(await hydrateToolResultBlobs(snapshot?.events ?? [])).filter(
             (message) => message.role !== "system"
           );
         },
@@ -2738,7 +2746,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         this.usedToolCallIds.add(event.toolCallId);
       }
     }
-    return events;
+    return hydrateToolResultBlobs(events);
   }
 
   /**
@@ -3213,9 +3221,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.refinedToolTitles.delete(request.id);
     const budget = this.nextToolResultBudget;
     this.nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+    const blobRef =
+      result.length > CESIUM_TOOL_RESULT_BLOB_MIN_CHARS
+        ? await writeToolResultBlob(result).catch(() => null)
+        : null;
     const shape =
       result.length > budget
-        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result)) }
+        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result, blobRef)) }
         : {};
     this.toolResultShapes.set(request.id, shape);
     await this.callbacks.appendEvents([
@@ -3227,8 +3239,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         title: refinedTitle ?? title,
         toolKind: toolKind(request.name, toolDefinition),
         status: "completed",
-        detail: result,
-        raw: { request, ...shape },
+        detail: blobRef ? toolResultPreview(result) : result,
+        raw: { request, ...shape, ...(blobRef ? { blobRef } : {}) },
       },
     ]);
     return result;
@@ -3240,11 +3252,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   /** Saves an output the model only sees part of, so `read_file` can page through the rest. */
-  private async spillToolOutput(toolCallId: string, output: string): Promise<{ spillPath?: string }> {
+  private async spillToolOutput(
+    toolCallId: string,
+    output: string,
+    blobRef: CesiumToolResultBlobRef | null
+  ): Promise<{ spillPath?: string }> {
     const spillPath = path.join(this.toolOutputDir(), `${toolCallId.replace(/[^A-Za-z0-9._-]/g, "_")}.txt`);
     try {
       await fs.mkdir(path.dirname(spillPath), { recursive: true });
-      await fs.writeFile(spillPath, output, "utf8");
+      // The spill file may be a hard link to a shared blob; writing through it would change the blob.
+      await fs.rm(spillPath, { force: true });
+      const linked =
+        blobRef !== null &&
+        (await fs.link(toolResultBlobPath(blobRef.sha256), spillPath).then(
+          () => true,
+          () => false
+        ));
+      if (!linked) {
+        await fs.writeFile(spillPath, output, "utf8");
+      }
       return { spillPath };
     } catch {
       return {};
