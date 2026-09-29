@@ -47,6 +47,9 @@ import { scrollEdgeMaskStyle } from "./scroll-edge-mask";
 import { PermissionRequestCard } from "./PermissionRequestCard";
 import type { ChatMessage, TodoItem, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
 import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
+import { formatMobileEditStats } from "@/lib/mobile-agent-projection";
+import { useLiveElapsedLabel } from "@/hooks/useLiveElapsed";
+import { formatAgentElapsed } from "@/lib/format-agent-run-duration";
 import {
   formatToolFileLabel,
   resolveWorkspaceToolPath,
@@ -221,6 +224,12 @@ interface WorkedSessionCardProps {
   contentRail?: boolean;
   /** Turn finished - card should collapse when this becomes true. */
   settled?: boolean;
+  /** Working placeholder only: latest runtime status line shown under the label. */
+  liveDetail?: string;
+  /** Working placeholder only: diffstat of the turn so far. */
+  liveEditStats?: ChatMessage["liveEditStats"];
+  /** Working placeholder only: turn start for the ticking elapsed timer. */
+  liveStartedAt?: number;
 }
 
 const TOOL_FILE_PREVIEW = 5;
@@ -688,6 +697,9 @@ export function WorkedSessionCard({
   onResolvePermission,
   contentRail = true,
   settled = false,
+  liveDetail,
+  liveEditStats,
+  liveStartedAt,
 }: WorkedSessionCardProps) {
   const { themeConfig } = useTheme();
   const entryListMaxHeightPx =
@@ -958,14 +970,25 @@ export function WorkedSessionCard({
   return (
     <div className="min-w-0 px-[1px]">
       {isWorkingPlaceholder ? (
-        <div className="flex w-full min-w-0 items-center gap-[6px] text-left text-[var(--text-secondary)]">
-          <span
-            className={`font-sans text-[13px] font-normal leading-snug ${
-              shimmerLoading ? "tool-loading-text" : ""
-            }`}
-          >
-            {label}
-          </span>
+        <div className="flex w-full min-w-0 flex-col gap-[2px] text-left text-[var(--text-secondary)]">
+          <div className="flex min-w-0 items-baseline gap-[8px]">
+            <span
+              className={`shrink-0 font-sans text-[13px] font-normal leading-snug ${
+                shimmerLoading ? "tool-loading-text" : ""
+              }`}
+            >
+              {label}
+            </span>
+            <LiveWorkingMeta editStats={liveEditStats} startedAt={liveStartedAt} />
+          </div>
+          {liveDetail ? (
+            <span
+              className="truncate font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
+              title={liveDetail}
+            >
+              {liveDetail}
+            </span>
+          ) : null}
         </div>
       ) : hasCollapsibleEntries ? (
         <button
@@ -1085,6 +1108,58 @@ export function WorkedSessionCard({
         </CollapsibleHeight>
       ) : null}
     </div>
+  );
+}
+
+/** Sub-second tool calls are the norm; a "0s" on every row would be noise. */
+const TOOL_DURATION_MIN_MS = 1_000;
+
+function ToolEntryDuration({
+  startedAt,
+  completedAt,
+  live,
+}: {
+  startedAt?: number;
+  completedAt?: number;
+  live: boolean;
+}) {
+  const liveLabel = useLiveElapsedLabel(live ? startedAt : undefined, TOOL_DURATION_MIN_MS);
+  const settledMs =
+    !live && startedAt != null && completedAt != null ? completedAt - startedAt : null;
+  const label = live
+    ? liveLabel
+    : settledMs != null && settledMs >= TOOL_DURATION_MIN_MS
+      ? formatAgentElapsed(settledMs)
+      : null;
+  if (!label) {
+    return null;
+  }
+  return (
+    <span className="font-sans text-[11px] font-normal leading-snug tabular-nums text-[var(--text-secondary)] opacity-80">
+      {label}
+    </span>
+  );
+}
+
+/** "+120 −8 · 4 files · 2m 14s" beside the live working label. */
+function LiveWorkingMeta({
+  editStats,
+  startedAt,
+}: {
+  editStats?: ChatMessage["liveEditStats"];
+  startedAt?: number;
+}) {
+  const elapsed = useLiveElapsedLabel(startedAt);
+  const parts = [formatMobileEditStats(editStats), elapsed].filter(
+    (part): part is string => Boolean(part)
+  );
+  if (parts.length === 0) {
+    return null;
+  }
+  return (
+    <span className="min-w-0 truncate font-sans text-[12px] font-normal leading-snug tabular-nums text-[var(--text-secondary)] opacity-80">
+      {parts.join(" · ")}
+    </span>
   );
 }
 
@@ -1364,6 +1439,11 @@ function renderEntry(
                   {statusKey}
                 </span>
               ) : null}
+              <ToolEntryDuration
+                startedAt={entry.startedAt}
+                completedAt={entry.completedAt}
+                live={active && isLiveWorkedTail}
+              />
             </div>
             {extraDetail ? (
               <HorizontalFadedScroll
