@@ -20,6 +20,7 @@ export {
   closeBrowserControlTab,
   closeExtensionSurfaceSessionClient,
   completeBrowserControlCommand,
+  continueAgentConversation,
   createAgentConversation,
   createAgentSideChat,
   createAndPromptAgentConversation,
