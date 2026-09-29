@@ -279,6 +279,7 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
         | "burn"
         | "attachments"
         | "linked_conversation"
+        | "turn_interrupted"
         | "other";
       /** `inline` reminders become their own user-role history message at their seq position. */
       /** Tool-produced images the live turn attached to this inline reminder's user message. */

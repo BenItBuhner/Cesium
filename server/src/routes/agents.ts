@@ -5,6 +5,7 @@ import path from "node:path";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { AgentRequestNotLiveError } from "../lib/agents/turn-interruption.js";
 import {
   RAIL_ALL_FIRST_PAGE_CACHE_KEY,
   RAIL_ALL_FIRST_PAGE_CACHE_TTL_SEC,
@@ -419,6 +420,21 @@ agentRoutes.post("/api/agents/conversations/:conversationId/retry", async (c) =>
   return c.json({ snapshot });
 });
 
+agentRoutes.post("/api/agents/conversations/:conversationId/continue", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  try {
+    const snapshot = await agentRuntimeManager.continueInterruptedConversation(
+      workspace,
+      conversationId
+    );
+    return c.json({ snapshot });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Continue failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
 agentRoutes.patch(
   "/api/agents/conversations/:conversationId/queue/:itemId",
   async (c) => {
@@ -552,11 +568,18 @@ agentRoutes.post("/api/agents/conversations/:conversationId/question", async (c)
   if (!body.answer?.trim()) {
     return c.json({ error: "Expected answer." }, 400);
   }
-  const conversation = await agentRuntimeManager.answerQuestion(workspace, conversationId, {
-    questionId: body.questionId.trim(),
-    answer: body.answer.trim(),
-  });
-  return c.json({ conversation });
+  try {
+    const result = await agentRuntimeManager.answerQuestion(workspace, conversationId, {
+      questionId: body.questionId.trim(),
+      answer: body.answer.trim(),
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof AgentRequestNotLiveError) {
+      return c.json({ error: error.message }, 409);
+    }
+    throw error;
+  }
 });
 
 agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (c) => {
@@ -570,16 +593,19 @@ agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (
   if (!body.requestId) {
     return c.json({ error: "Expected requestId." }, 400);
   }
-  const conversation = await agentRuntimeManager.answerPermission(
-    workspace,
-    conversationId,
-    {
+  try {
+    const result = await agentRuntimeManager.answerPermission(workspace, conversationId, {
       requestId: body.requestId,
       optionId: body.optionId,
       cancelled: body.cancelled,
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof AgentRequestNotLiveError) {
+      return c.json({ error: error.message }, 409);
     }
-  );
-  return c.json({ conversation });
+    throw error;
+  }
 });
 
 agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) => {

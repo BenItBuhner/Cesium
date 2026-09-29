@@ -1,13 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { listWorkspaces } from "../workspace-registry.js";
 import { agentRuntimeManager } from "./runtime-manager.js";
 import {
-  appendConversationEvents,
   listWorkspaceConversationRecordPage,
   readConversationRecord,
   subscribeAgentStoreEvents,
-  updateConversationRecord,
 } from "./session-store.js";
+import { markTurnInterrupted } from "./turn-interruption.js";
+import type { CesiumInterruptionCause } from "./cesium/cesium-turn-recovery.js";
 import type { AgentConversationRecord, AgentConversationStatus } from "./types.js";
 
 /**
@@ -29,7 +28,8 @@ import type { AgentConversationRecord, AgentConversationStatus } from "./types.j
  * Statuses that imply a live provider runtime must exist somewhere. After a
  * restart none can, so all of them are safe to interrupt at boot - including
  * the awaiting_* states, whose pending permission/question belonged to a
- * runtime that no longer exists and can never be answered, and "paused",
+ * runtime that no longer exists (an answer given later is only recorded, for
+ * the next turn to act on), and "paused",
  * whose suspended turn lived only inside that runtime: a fresh handle has
  * nothing to resume, so the record would otherwise stay paused forever.
  */
@@ -96,34 +96,10 @@ export async function interruptStaleAgentRun(
   workspaceId: string,
   conversationId: string,
   reason: string,
-  eligibleStatuses: ReadonlySet<AgentConversationStatus> = BOOT_STALE_STATUSES
+  eligibleStatuses: ReadonlySet<AgentConversationStatus> = BOOT_STALE_STATUSES,
+  cause: CesiumInterruptionCause = "restart"
 ): Promise<boolean> {
-  let flipped = false;
-  await updateConversationRecord(workspaceId, conversationId, (current) => {
-    if (!eligibleStatuses.has(current.status)) {
-      return current;
-    }
-    flipped = true;
-    return {
-      ...current,
-      status: "interrupted",
-      pendingPermission: null,
-      pendingQuestion: null,
-    };
-  });
-  if (!flipped) {
-    return false;
-  }
-  await appendConversationEvents(workspaceId, conversationId, [
-    {
-      eventId: randomUUID(),
-      conversationId,
-      kind: "status",
-      status: "interrupted",
-      detail: `${reason} The run was marked as interrupted; send a new message to continue.`,
-    },
-  ]);
-  return true;
+  return markTurnInterrupted(workspaceId, conversationId, { reason, cause, eligibleStatuses });
 }
 
 /**
@@ -255,7 +231,8 @@ export function startStaleAgentRunWatchdog(
           entry.workspaceId,
           conversationId,
           "The agent runtime for this run is no longer alive.",
-          WATCHDOG_STALE_STATUSES
+          WATCHDOG_STALE_STATUSES,
+          "runtime_lost"
         );
         if (didInterrupt) {
           console.warn(
