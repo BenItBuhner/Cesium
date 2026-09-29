@@ -80,6 +80,7 @@ import {
 import {
   forgetCesiumMemoryEntry,
   formatCesiumMemoryEntry,
+  formatCesiumMemorySaveResult,
   listCesiumMemoryEntries,
   renderCesiumMemorySnapshot,
   saveCesiumMemoryEntry,
@@ -5134,15 +5135,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
           rawCategory === "decision"
             ? rawCategory
             : "fact";
-        const entry = await saveCesiumMemoryEntry({
+        const saved = await saveCesiumMemoryEntry({
           workspaceId,
           scope: scope ?? "workspace",
           category,
           content,
+          key: asString(args.key),
           sourceConversationId: this.callbacks.conversation.id,
           id: asString(args.id)?.trim() || undefined,
         });
-        return `Saved memory entry.\n${formatCesiumMemoryEntry(entry)}`;
+        return formatCesiumMemorySaveResult(saved);
       }
       case "search": {
         const query = asString(args.query)?.trim();

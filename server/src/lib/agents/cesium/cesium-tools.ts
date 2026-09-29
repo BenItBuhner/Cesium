@@ -645,7 +645,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "memory",
     description:
-      "Curated persistent memory across conversations. save durable user preferences, facts, constraints, and decisions; search or list before re-asking the user; forget stale or wrong entries. Scope user is cross-workspace, workspace is project-local. Keep entries short and never save secrets.",
+      "Curated persistent memory across conversations. save durable user preferences, facts, constraints, and decisions; search or list before re-asking the user; forget stale or wrong entries. Scope user is cross-workspace, workspace is project-local. Saving the same fact again (same key, or same or nearly the same text) updates the existing entry; when a scope is full the least recently updated entries are evicted and listed in the result. Keep entries short and never save secrets.",
     parameters: {
       type: "object",
       properties: {
@@ -667,6 +667,11 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         id: {
           type: "string",
           description: "Entry id: update an existing entry on save, or the entry to forget.",
+        },
+        key: {
+          type: "string",
+          description:
+            "Optional stable slug for a fact that changes over time (e.g. \"package-manager\"). Saving with a key already in the scope updates that entry.",
         },
         query: { type: "string", description: "Search terms (required for search)." },
         limit: { type: "number", description: "Max results for search/list (default 10, max 50)." },
