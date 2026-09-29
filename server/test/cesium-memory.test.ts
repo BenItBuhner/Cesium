@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import type { AgentConversationRecord } from "../src/lib/agents/types.js";
+import type { CesiumToolContext } from "../src/lib/agents/cesium/tools/types.js";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -21,11 +22,11 @@ await fs.mkdir(TEST_DATA_DIR, { recursive: true });
 const [
   memory,
   { AGENT_BACKENDS },
-  { createCesiumAgentProvider },
+  { memoryTool },
 ] = await Promise.all([
   import("../src/lib/agents/cesium-memory.js"),
   import("../src/lib/agents/providers.js"),
-  import("../src/lib/agents/cesium-provider.js"),
+  import("../src/lib/agents/cesium/tools/memory-tools.js"),
 ]);
 const {
   CESIUM_MEMORY_MAX_CONTENT_CHARS,
@@ -206,7 +207,6 @@ test("long content is cut with a notice and the snapshot stays bounded", async (
 
 test("the memory tool reports merges and passes the key through", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"]!;
-  const provider = await createCesiumAgentProvider({ backend });
   const workspaceId = freshWorkspace();
   let conversation: AgentConversationRecord = {
     schemaVersion: 1,
@@ -229,16 +229,23 @@ test("the memory tool reports merges and passes the key through", async () => {
     lastReadSeq: 0,
     queuedPrompts: [],
   };
-  const handle = (await provider.startSession({
-    conversation,
+  const ctx: CesiumToolContext = {
     workspace: { id: workspaceId, root: TEST_DATA_DIR, name: "memory", createdAt: 1 },
-    appendEvents: async () => undefined,
-    readSnapshot: async () => null,
+    conversationId: conversation.id,
+    conversation,
     updateConversation: async (patch) => {
       conversation = typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
       return conversation;
     },
-  })) as unknown as { toolMemory: (args: Record<string, unknown>) => Promise<string>; dispose: () => Promise<void> };
+    appendEvents: async () => undefined,
+    readSnapshot: async () => null,
+    extraRoots: [],
+    readOnlyRoot: path.join(TEST_DATA_DIR, ".tool-output"),
+    turnSupportsImages: false,
+    attachImage: () => undefined,
+    refineTitle: () => undefined,
+  };
+  const handle = { toolMemory: (args: Record<string, unknown>) => memoryTool(ctx, args), dispose: async () => undefined };
   try {
     const first = await handle.toolMemory({ action: "save", content: "CI runs on GitHub Actions.", key: "ci" });
     assert.match(first, /^Saved memory entry\.\n- \[workspace\/fact\] CI runs on GitHub Actions\. \(id: [^,]+, key: ci\)$/);

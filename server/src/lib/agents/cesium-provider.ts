@@ -9,18 +9,9 @@ import {
   type McpServerSummary,
 } from "@cesium/core/mcp";
 import {
-  createWorkspaceWorktree,
   getGitWorkspaceStatus,
-  switchWorkspaceBranch,
 } from "../git-worktrees.js";
-import { listWorkspaces } from "../workspace-registry.js";
-import {
-  applyConversationTitleAction,
-  listConversationsForAgent,
-  parseConversationTitleToolArgs,
-  readConversationTranscriptForAgent,
-  searchConversationsForAgent,
-} from "./cesium/cesium-conversation-tools.js";
+
 import {
   createCesiumAgentConfigOptions,
   findCesiumModelCatalogEntry,
@@ -48,7 +39,7 @@ import {
   type AgentPluginAttachmentSnapshot,
 } from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
-import { generateTranscriptFromEvents } from "./event-log-read.js";
+
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents, readConversationRecord } from "./session-store.js";
 import {
@@ -78,35 +69,10 @@ import {
   renderCesiumTurnReminder,
 } from "./cesium-reminders.js";
 import {
-  forgetCesiumMemoryEntry,
-  formatCesiumMemoryEntry,
-  formatCesiumMemorySaveResult,
   listCesiumMemoryEntries,
   renderCesiumMemorySnapshot,
-  saveCesiumMemoryEntry,
-  searchCesiumMemoryEntries,
-  type CesiumMemoryCategory,
-  type CesiumMemoryScope,
 } from "./cesium-memory.js";
-import {
-  createAuthoredSkill,
-  deleteAuthoredSkill,
-  listAuthorableSkills,
-  readSkillById,
-  updateAuthoredSkill,
-} from "./cesium-skill-authoring.js";
-import {
-  attachCesiumTriggerConversation,
-  createCesiumTrigger,
-  deleteCesiumTrigger,
-  formatCesiumTrigger,
-  formatTriggerPromptPreamble,
-  listCesiumTriggers,
-  markCesiumTriggerFired,
-  normalizeTriggerSchedule,
-  updateCesiumTrigger,
-  type CesiumTriggerSchedule,
-} from "./cesium-triggers.js";
+
 import {
   isOrchestrationPermissionCategory,
   isPersistentPermissionOptionId,
@@ -114,7 +80,7 @@ import {
 } from "./permission-options.js";
 
 import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
-import { refreshWorkspaceSkillsMirror, slugifySkillId } from "./skills-mirror.js";
+import { refreshWorkspaceSkillsMirror } from "./skills-mirror.js";
 import {
   formatGoalForModel,
   readGoalForConversation,
@@ -134,20 +100,10 @@ import {
 import { formatWorkflowRunForModel, isWorkflowRunActive } from "./workflow-types.js";
 import type { WorkflowAgentSpawnRequest, WorkflowRunRecord } from "./workflow-types.js";
 import {
-  addOrchestrationComment,
-  createOrchestrationIssue,
-  deleteOrchestrationIssue,
   findOrchestrationAssignmentForConversation,
-  readOrchestrationBoardSnapshot,
   findOrchestrationBoardForHeadConversation,
-  resolveOrCreateOrchestrationBoardForHeadConversation,
-  upsertOrchestrationAssignment,
-  upsertOrchestrationIssue,
 } from "../orchestration/store.js";
 import type {
-  OrchestrationAssignmentRecord,
-  OrchestrationAssignmentPermissionPolicy,
-  OrchestrationAssignmentStatus,
   OrchestrationBoardSnapshot,
 } from "../orchestration/types.js";
 import {
@@ -161,7 +117,6 @@ import {
   sleepMs,
 } from "./completion-retry.js";
 import type {
-  AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
   AgentConversationRecord,
@@ -200,6 +155,39 @@ import {
   goalUpdatePlanTool,
   goalUpdateProgressTool,
 } from "./cesium/tools/goal-tools.js";
+import {
+  memoryTool,
+} from "./cesium/tools/memory-tools.js";
+import {
+  skillTool,
+} from "./cesium/tools/skill-tools.js";
+import {
+  scheduleTool,
+} from "./cesium/tools/schedule-tools.js";
+import {
+  conversationTitleTool,
+  listConversationsTool,
+  readConversationTool,
+  readHistoryPageTool,
+  searchConversationsTool,
+  searchHistoryTool,
+} from "./cesium/tools/conversation-tools.js";
+import {
+  createWorktreeTool,
+  switchBranchTool,
+} from "./cesium/tools/git-tools.js";
+import {
+  orchestrationAssignAgentTool,
+  orchestrationBoardSnapshotTool,
+  orchestrationCommentIssueTool,
+  orchestrationControlAgentTool,
+  orchestrationCreateIssueTool,
+  orchestrationDeleteIssueTool,
+  orchestrationReadAgentTranscriptTool,
+  orchestrationUpdateAgentPermissionsTool,
+  orchestrationUpdateIssueTool,
+  resolveCurrentOrchestrationBoard,
+} from "./cesium/tools/orchestration-tools.js";
 import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
 import {
   COMPACTION_SUMMARY_SYSTEM_PROMPT,
@@ -323,11 +311,6 @@ import {
 } from "./cesium/cesium-model-adapters.js";
 import {
   asOrchestrationAssignmentStatuses,
-  asOrchestrationColumnId,
-  asOrchestrationControlAction,
-  asOrchestrationPermissionDecision,
-  asOrchestrationPermissionPolicy,
-  asOrchestrationPriority,
   asOrchestrationWaitFor,
 } from "./cesium/cesium-orchestration-args.js";
 import type {
@@ -999,15 +982,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       conversationId: this.callbacks.conversation.id,
     }).catch(() => null);
     return goal && goal.status !== "complete" && goal.status !== "cancelled" ? goal : null;
-  }
-
-  private async resolveCurrentOrchestrationBoard() {
-    return resolveOrCreateOrchestrationBoardForHeadConversation({
-      workspace: this.callbacks.workspace,
-      conversationId: this.callbacks.conversation.id,
-      title: this.callbacks.conversation.title || "Orchestration",
-      allowedBackendIds: ["cesium-agent"],
-    });
   }
 
   async prompt(input: {
@@ -1684,6 +1658,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return {
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
+      conversation: this.callbacks.conversation,
+      updateConversation: (patch) => this.callbacks.updateConversation(patch),
       appendEvents: (events) => this.callbacks.appendEvents(events),
       readSnapshot: () => this.callbacks.readSnapshot(),
       extraRoots: this.projectContextRoots(),
@@ -3505,37 +3481,37 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.executeSubagentsV2Tool(request.name, request.arguments);
           break;
         case "search_history":
-          result = await this.toolSearchHistory(request.arguments);
+          result = await searchHistoryTool(this.toolContext(), request.arguments);
           break;
         case "read_history_page":
-          result = await this.toolReadHistoryPage(request.arguments);
+          result = await readHistoryPageTool(this.toolContext(), request.arguments);
           break;
         case "list_conversations":
-          result = await this.toolListConversations(request.arguments);
+          result = await listConversationsTool(this.toolContext(), request.arguments);
           break;
         case "read_conversation":
-          result = await this.toolReadConversation(request.arguments);
+          result = await readConversationTool(this.toolContext(), request.arguments);
           break;
         case "search_conversations":
-          result = await this.toolSearchConversations(request.arguments);
+          result = await searchConversationsTool(this.toolContext(), request.arguments);
           break;
         case "conversation_title":
-          result = await this.toolConversationTitle(request.arguments);
+          result = await conversationTitleTool(this.toolContext(), request.arguments);
           break;
         case "memory":
-          result = await this.toolMemory(request.arguments);
+          result = await memoryTool(this.toolContext(), request.arguments);
           break;
         case "skill":
-          result = await this.toolSkill(request.arguments);
+          result = await skillTool(this.toolContext(), request.arguments);
           break;
         case "schedule":
-          result = await this.toolSchedule(request.arguments);
+          result = await scheduleTool(this.toolContext(), request.arguments);
           break;
         case "switch_branch":
-          result = await this.toolSwitchBranch(request.arguments);
+          result = await switchBranchTool(this.toolContext(), request.arguments);
           break;
         case "create_worktree":
-          result = await this.toolCreateWorktree(request.arguments);
+          result = await createWorktreeTool(this.toolContext(), request.arguments);
           break;
         case "call_mcp_tool":
           result = await this.toolCallMcp(effectiveRequest.arguments);
@@ -3544,31 +3520,31 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolRefreshMcpServers();
           break;
         case "orchestration_board_snapshot":
-          result = await this.toolOrchestrationBoardSnapshot(request.arguments);
+          result = await orchestrationBoardSnapshotTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_create_issue":
-          result = await this.toolOrchestrationCreateIssue(request.arguments);
+          result = await orchestrationCreateIssueTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_update_issue":
-          result = await this.toolOrchestrationUpdateIssue(request.arguments);
+          result = await orchestrationUpdateIssueTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_comment_issue":
-          result = await this.toolOrchestrationCommentIssue(request.arguments);
+          result = await orchestrationCommentIssueTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_delete_issue":
-          result = await this.toolOrchestrationDeleteIssue(request.arguments);
+          result = await orchestrationDeleteIssueTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_assign_agent":
-          result = await this.toolOrchestrationAssignAgent(request.arguments);
+          result = await orchestrationAssignAgentTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_update_agent_permissions":
-          result = await this.toolOrchestrationUpdateAgentPermissions(request.arguments);
+          result = await orchestrationUpdateAgentPermissionsTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_control_agent":
-          result = await this.toolOrchestrationControlAgent(request.arguments);
+          result = await orchestrationControlAgentTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_read_agent_transcript":
-          result = await this.toolOrchestrationReadAgentTranscript(request.arguments);
+          result = await orchestrationReadAgentTranscriptTool(this.toolContext(), request.arguments);
           break;
         case "orchestration_wait":
           result = await this.toolOrchestrationWait(request.arguments);
@@ -3891,485 +3867,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
   }
 
-  private async resolveOrchestrationBoardFromArgs(args: Record<string, unknown>) {
-    const boardId = asString(args.boardId);
-    if (boardId) {
-      const snapshot = await readOrchestrationBoardSnapshot(boardId);
-      if (!snapshot || snapshot.board.workspaceId !== this.callbacks.workspace.id) {
-        throw new Error(`Unknown orchestration board: ${boardId}`);
-      }
-      return snapshot;
-    }
-    const snapshot = await this.resolveCurrentOrchestrationBoard();
-    if (!snapshot) {
-      throw new Error("No orchestration board is linked to this head conversation.");
-    }
-    return snapshot;
-  }
-
-  private async toolOrchestrationBoardSnapshot(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const snapshot = await this.resolveOrchestrationBoardFromArgs(args);
-    return safeJson({
-      board: snapshot.board,
-      issues: snapshot.issues,
-      assignments: snapshot.assignments,
-      recentEvents: snapshot.events.slice(-30),
-    });
-  }
-
-  private async toolOrchestrationCreateIssue(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveOrchestrationBoardFromArgs(args);
-    const title = asString(args.title);
-    if (!title) {
-      throw new Error("orchestration_create_issue.title is required.");
-    }
-    const columnId = asOrchestrationColumnId(args.columnId);
-    const blockerExplanation = asString(args.blockerExplanation);
-    if (columnId === "blocked" && !blockerExplanation) {
-      throw new Error(
-        "orchestration_create_issue.blockerExplanation is required for blocked issues."
-      );
-    }
-    const snapshot = await createOrchestrationIssue({
-      boardId: current.board.id,
-      title,
-      description: asString(args.description),
-      columnId,
-      priority: asOrchestrationPriority(args.priority),
-      acceptanceCriteria: asStringArray(args.acceptanceCriteria),
-      blockedReason: blockerExplanation,
-      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
-    });
-    const issue = snapshot.issues[snapshot.issues.length - 1];
-    return safeJson({ issue, boardId: snapshot.board.id });
-  }
-
-  private async toolOrchestrationUpdateIssue(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveOrchestrationBoardFromArgs(args);
-    const issueId = asString(args.issueId);
-    if (!issueId) {
-      throw new Error("orchestration_update_issue.issueId is required.");
-    }
-    const columnId = asOrchestrationColumnId(args.columnId);
-    const priority = asOrchestrationPriority(args.priority);
-    const blockerExplanation =
-      asString(args.blockerExplanation) ?? asString(args.blockedReason);
-    const existingIssue = current.issues.find((issue) => issue.id === issueId);
-    if (!existingIssue) {
-      throw new Error(`Unknown orchestration issue: ${issueId}`);
-    }
-    if (columnId === "blocked" && !blockerExplanation && !existingIssue.blockedReason) {
-      throw new Error(
-        "orchestration_update_issue.blockerExplanation is required when moving an issue to blocked."
-      );
-    }
-    const snapshot = await upsertOrchestrationIssue(
-      current.board.id,
-      {
-        id: issueId,
-        ...(asString(args.title) ? { title: asString(args.title)! } : {}),
-        ...(typeof args.description === "string"
-          ? { description: args.description }
-          : {}),
-        ...(columnId ? { columnId } : {}),
-        ...(priority ? { priority } : {}),
-        ...(Array.isArray(args.acceptanceCriteria)
-          ? { acceptanceCriteria: asStringArray(args.acceptanceCriteria) }
-          : {}),
-        ...(blockerExplanation
-          ? { blockedReason: blockerExplanation }
-          : {}),
-      },
-      { type: "head_agent", conversationId: this.callbacks.conversation.id }
-    );
-    return safeJson({
-      issue: snapshot.issues.find((issue) => issue.id === issueId),
-      boardId: snapshot.board.id,
-    });
-  }
-
-  private async toolOrchestrationCommentIssue(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveOrchestrationBoardFromArgs(args);
-    const issueId = asString(args.issueId);
-    const message = asString(args.message);
-    if (!issueId || !message) {
-      throw new Error("orchestration_comment_issue requires issueId and message.");
-    }
-    const snapshot = await addOrchestrationComment({
-      boardId: current.board.id,
-      issueId,
-      message,
-      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
-    });
-    return safeJson({ boardId: snapshot.board.id, issueId, message });
-  }
-
-  private async toolOrchestrationDeleteIssue(args: Record<string, unknown>): Promise<string> {
-    const current = await this.resolveOrchestrationBoardFromArgs(args);
-    const issueId = asString(args.issueId);
-    if (!issueId) {
-      throw new Error("orchestration_delete_issue.issueId is required.");
-    }
-    const issue = current.issues.find((candidate) => candidate.id === issueId);
-    if (!issue) {
-      throw new Error(`Unknown orchestration issue: ${issueId}`);
-    }
-    const assignments = current.assignments.filter(
-      (assignment) => assignment.issueId === issueId
-    );
-    const reason = asString(args.reason);
-    const { agentRuntimeManager } = await import("./runtime-manager.js");
-    await Promise.all(
-      assignments.map((assignment) =>
-        agentRuntimeManager
-          .cancelConversation(this.callbacks.workspace, assignment.conversationId)
-          .catch(() => undefined)
-      )
-    );
-    const snapshot = await deleteOrchestrationIssue(
-      current.board.id,
-      issueId,
-      { type: "head_agent", conversationId: this.callbacks.conversation.id }
-    );
-    return safeJson({
-      boardId: snapshot.board.id,
-      deletedIssue: issue,
-      cancelledAssignments: assignments.map((assignment) => assignment.id),
-      reason: reason ?? null,
-    });
-  }
-
-  private async toolOrchestrationAssignAgent(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveOrchestrationBoardFromArgs(args);
-    const issueId = asString(args.issueId);
-    const instructions = asString(args.instructions);
-    if (!issueId || !instructions) {
-      throw new Error("orchestration_assign_agent requires issueId and instructions.");
-    }
-    const issue = current.issues.find((candidate) => candidate.id === issueId);
-    if (!issue) {
-      throw new Error(`Unknown orchestration issue: ${issueId}`);
-    }
-    const backendId =
-      (asString(args.backendId) as AgentBackendId | undefined) ??
-      current.board.settings.defaultChildBackendId ??
-      "cesium-agent";
-    const modelId =
-      asString(args.modelId) ??
-      current.board.settings.defaultModelByBackend[backendId] ??
-      (backendId === this.callbacks.conversation.config.backendId
-        ? this.callbacks.conversation.config.modelId
-        : undefined);
-    const modelName =
-      modelId === this.callbacks.conversation.config.modelId
-        ? this.callbacks.conversation.config.modelName
-        : undefined;
-    const { agentRuntimeManager } = await import("./runtime-manager.js");
-    const promptText = [
-      `You are assigned to orchestration issue "${issue.title}".`,
-      "",
-      issue.description ? `Description:\n${issue.description}` : "",
-      issue.acceptanceCriteria.length
-        ? `Acceptance criteria:\n${issue.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
-        : "",
-      "",
-      "Manager instructions:",
-      instructions,
-      "",
-      "Work end-to-end, verify your result, and report blockers clearly.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const childSnapshot = await agentRuntimeManager.createConversationWithPrompt(
-      this.callbacks.workspace,
-      {
-        title: asString(args.title) ?? `Issue: ${issue.title}`,
-        archived: true,
-        backendId,
-        mode: "agent",
-        ...(modelId ? { modelId } : {}),
-        ...(modelName ? { modelName } : {}),
-      },
-      { text: promptText }
-    );
-    const child = childSnapshot.conversation;
-    const permissionPolicy = asOrchestrationPermissionPolicy(args.permissions);
-    const assignment: OrchestrationAssignmentRecord = {
-      schemaVersion: 1,
-      id: randomUUID(),
-      boardId: current.board.id,
-      issueId,
-      conversationId: child.id,
-      role: asString(args.role) ?? "implementation",
-      status: "running",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      config: { ...child.config, permissionPolicy },
-      lastKnownConversationStatus: child.status,
-    };
-    await upsertOrchestrationAssignment(
-      current.board.id,
-      assignment,
-      { type: "head_agent", conversationId: this.callbacks.conversation.id }
-    );
-    return safeJson({ assignment, childConversation: child });
-  }
-
-  private async toolOrchestrationUpdateAgentPermissions(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveCurrentOrchestrationBoard();
-    const assignmentId = asString(args.assignmentId);
-    const conversationId = asString(args.conversationId);
-    if (!assignmentId && !conversationId) {
-      throw new Error(
-        "orchestration_update_agent_permissions requires assignmentId or conversationId."
-      );
-    }
-    const assignment = current.assignments.find((candidate) =>
-      assignmentId
-        ? candidate.id === assignmentId
-        : candidate.conversationId === conversationId
-    );
-    if (!assignment) {
-      throw new Error(
-        `Unknown orchestration assignment: ${assignmentId ?? conversationId}`
-      );
-    }
-    const requestedPermissions = asRecord(args.permissions);
-    const existingPolicy = assignment.config.permissionPolicy;
-    const permissionPolicy: OrchestrationAssignmentPermissionPolicy = {
-      editFile:
-        asOrchestrationPermissionDecision(requestedPermissions?.editFile) ??
-        existingPolicy?.editFile ??
-        "allow",
-      terminal:
-        asOrchestrationPermissionDecision(requestedPermissions?.terminal) ??
-        existingPolicy?.terminal ??
-        "allow",
-      mcpCall:
-        asOrchestrationPermissionDecision(requestedPermissions?.mcpCall) ??
-        existingPolicy?.mcpCall ??
-        "allow",
-    };
-    const nextAssignment: OrchestrationAssignmentRecord = {
-      ...assignment,
-      config: {
-        ...assignment.config,
-        permissionPolicy,
-      },
-    };
-    const snapshot = await upsertOrchestrationAssignment(
-      current.board.id,
-      nextAssignment,
-      { type: "head_agent", conversationId: this.callbacks.conversation.id }
-    );
-    return safeJson({
-      assignment: snapshot.assignments.find(
-        (candidate) => candidate.id === assignment.id
-      ),
-    });
-  }
-
-  private async toolOrchestrationControlAgent(args: Record<string, unknown>): Promise<string> {
-    const current = await this.resolveCurrentOrchestrationBoard();
-    const action = asOrchestrationControlAction(args.action);
-    if (!action) {
-      throw new Error("orchestration_control_agent requires action.");
-    }
-    const assignmentId = asString(args.assignmentId);
-    const conversationId = asString(args.conversationId);
-    if (!assignmentId && !conversationId) {
-      throw new Error("orchestration_control_agent requires assignmentId or conversationId.");
-    }
-    const assignment = current.assignments.find((candidate) =>
-      assignmentId
-        ? candidate.id === assignmentId
-        : candidate.conversationId === conversationId
-    );
-    if (!assignment) {
-      throw new Error(`Unknown orchestration assignment: ${assignmentId ?? conversationId}`);
-    }
-    const issue = current.issues.find((candidate) => candidate.id === assignment.issueId);
-    const reason = asString(args.reason);
-    const instructions = asString(args.instructions);
-    const resumeAfterSteer = args.resumeAfterSteer === true;
-    const { agentRuntimeManager } = await import("./runtime-manager.js");
-
-    let nextAssignmentStatus: OrchestrationAssignmentStatus = assignment.status;
-    let childConversationStatus: AgentConversationStatus | null =
-      assignment.lastKnownConversationStatus;
-    let message: string;
-
-    switch (action) {
-      case "pause": {
-        const conversation = await agentRuntimeManager.pauseConversation(
-          this.callbacks.workspace,
-          assignment.conversationId
-        );
-        nextAssignmentStatus = "waiting";
-        childConversationStatus = conversation.status;
-        message = `Paused child agent ${assignment.conversationId}${
-          reason ? `: ${reason}` : "."
-        }`;
-        break;
-      }
-      case "resume": {
-        const conversation = await agentRuntimeManager.resumeConversation(
-          this.callbacks.workspace,
-          assignment.conversationId
-        );
-        nextAssignmentStatus = "running";
-        childConversationStatus = conversation.status;
-        message = `Resumed child agent ${assignment.conversationId}${
-          reason ? `: ${reason}` : "."
-        }`;
-        break;
-      }
-      case "stop": {
-        const conversation = await agentRuntimeManager.cancelConversation(
-          this.callbacks.workspace,
-          assignment.conversationId
-        );
-        nextAssignmentStatus = "cancelled";
-        childConversationStatus = conversation.status;
-        message = `Stopped child agent ${assignment.conversationId}${
-          reason ? `: ${reason}` : "."
-        }`;
-        break;
-      }
-      case "steer": {
-        if (!instructions) {
-          throw new Error("orchestration_control_agent steer requires instructions.");
-        }
-        const steerText = [
-          issue ? `Steering update for orchestration issue "${issue.title}".` : "Steering update.",
-          reason ? `Reason: ${reason}` : "",
-          "",
-          instructions,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        const snapshot = await agentRuntimeManager.promptConversation(
-          this.callbacks.workspace,
-          assignment.conversationId,
-          steerText,
-          undefined,
-          { delivery: "steer" }
-        );
-        if (resumeAfterSteer) {
-          try {
-            const conversation = await agentRuntimeManager.resumeConversation(
-              this.callbacks.workspace,
-              assignment.conversationId
-            );
-            childConversationStatus = conversation.status;
-            nextAssignmentStatus = "running";
-          } catch {
-            childConversationStatus = snapshot.conversation.status;
-            nextAssignmentStatus =
-              snapshot.conversation.status === "paused" ? "waiting" : "running";
-          }
-        } else {
-          childConversationStatus = snapshot.conversation.status;
-          nextAssignmentStatus =
-            snapshot.conversation.status === "paused" ? "waiting" : "running";
-        }
-        message = `Steered child agent ${assignment.conversationId}${
-          reason ? `: ${reason}` : "."
-        }`;
-        break;
-      }
-    }
-
-    const commented = await addOrchestrationComment({
-      boardId: current.board.id,
-      issueId: assignment.issueId,
-      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
-      message,
-    });
-    const updated = await upsertOrchestrationAssignment(
-      current.board.id,
-      {
-        ...assignment,
-        status: nextAssignmentStatus,
-        lastKnownConversationStatus: childConversationStatus,
-      },
-      { type: "head_agent", conversationId: this.callbacks.conversation.id }
-    );
-    return safeJson({
-      action,
-      message,
-      assignment:
-        updated.assignments.find((candidate) => candidate.id === assignment.id) ??
-        commented.assignments.find((candidate) => candidate.id === assignment.id) ??
-        null,
-    });
-  }
-
-  private async toolOrchestrationReadAgentTranscript(
-    args: Record<string, unknown>
-  ): Promise<string> {
-    const current = await this.resolveCurrentOrchestrationBoard();
-    const assignmentId = asString(args.assignmentId);
-    const conversationId = asString(args.conversationId);
-    if (!assignmentId && !conversationId) {
-      throw new Error(
-        "orchestration_read_agent_transcript requires assignmentId or conversationId."
-      );
-    }
-    const assignment = current.assignments.find((candidate) =>
-      assignmentId
-        ? candidate.id === assignmentId
-        : candidate.conversationId === conversationId
-    );
-    if (!assignment) {
-      throw new Error(`Unknown orchestration assignment: ${assignmentId ?? conversationId}`);
-    }
-    const issue = current.issues.find((candidate) => candidate.id === assignment.issueId);
-    const { agentRuntimeManager } = await import("./runtime-manager.js");
-    const limitEvents = Math.max(1, Math.min(200, Math.floor(asNumber(args.limitEvents) ?? 80)));
-    const limitTurns = Math.max(1, Math.min(100, Math.floor(asNumber(args.limitTurns) ?? 25)));
-    const beforeSeq = Math.floor(asNumber(args.beforeSeq) ?? Number.MAX_SAFE_INTEGER);
-    const head = await agentRuntimeManager.getConversationSnapshotHead(
-      this.callbacks.workspace,
-      assignment.conversationId,
-      { limitEvents, limitTurns }
-    );
-    if (!head) {
-      return `No conversation found for child agent ${assignment.conversationId}.`;
-    }
-    const events = head.events.filter((event) => event.seq < beforeSeq);
-    const header = [
-      "Kanban child agent transcript",
-      `Assignment: ${assignment.id}`,
-      `Conversation: ${assignment.conversationId}`,
-      issue ? `Issue: ${issue.title} (${issue.id})` : `Issue: ${assignment.issueId}`,
-      `Assignment status: ${assignment.status}`,
-      `Conversation status: ${head.conversation.status}`,
-      head.conversation.lastError ? `Last error: ${head.conversation.lastError}` : null,
-      head.window.hasOlder
-        ? `Older events available before seq ${head.window.oldestSeq}. Pass beforeSeq=${head.window.oldestSeq} to load more.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    if (events.length === 0) {
-      return `${header}\n\nNo transcript events in this page.`;
-    }
-    return `${header}\n\n${generateTranscriptFromEvents(events).trim()}`;
-  }
-
   private async toolWait(args: Record<string, unknown>): Promise<string> {
     const parsed = parseWaitToolArgs(args, this.harness.settings.limits.waitMaxSeconds);
     let elapsedMs = 0;
@@ -4443,7 +3940,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       requestedStatuses.length > 0
         ? requestedStatuses
         : ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES;
-    const initialSnapshot = await this.resolveCurrentOrchestrationBoard();
+    const initialSnapshot = await resolveCurrentOrchestrationBoard(this.toolContext());
     const initialEventIds = new Set(initialSnapshot.events.map((event) => event.id));
     const initialAssignmentStatusById = new Map(
       initialSnapshot.assignments.map((assignment) => [assignment.id, assignment.status])
@@ -4610,7 +4107,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       await new Promise((resolve) => setTimeout(resolve, chunkMs));
       elapsedMs += chunkMs;
       statusElapsedMs += chunkMs;
-      snapshot = await this.resolveCurrentOrchestrationBoard();
+      snapshot = await resolveCurrentOrchestrationBoard(this.toolContext());
       if (statusElapsedMs >= ORCHESTRATION_WAIT_HEARTBEAT_MS || elapsedMs >= timeoutMs) {
         statusElapsedMs = 0;
         await this.callbacks.appendEvents([
@@ -5084,457 +4581,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       .join("\n");
   }
 
-  private async toolSearchHistory(args: Record<string, unknown>): Promise<string> {
-    const query = asString(args.query);
-    if (!query) throw new Error("search_history.query is required.");
-    const maxResults = Math.max(1, Math.min(50, Math.floor(asNumber(args.maxResults) ?? 10)));
-    const snapshot = await this.callbacks.readSnapshot();
-    const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    const matches = (snapshot?.events ?? [])
-      .filter((event) => regex.test(safeJson(event)))
-      .slice(-maxResults);
-    return matches.length ? matches.map((event) => `seq ${event.seq} ${event.kind}: ${safeJson(event)}`).join("\n\n") : "No history matches.";
-  }
-
-  private async toolReadHistoryPage(args: Record<string, unknown>): Promise<string> {
-    const beforeSeq = Math.floor(asNumber(args.beforeSeq) ?? Number.MAX_SAFE_INTEGER);
-    const limitTurns = Math.max(1, Math.min(250, Math.floor(asNumber(args.limitTurns) ?? 25)));
-    const snapshot = await this.callbacks.readSnapshot();
-    const events = (snapshot?.events ?? []).filter((event) => event.seq < beforeSeq);
-    let users = 0;
-    let start = 0;
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (events[index]!.kind === "user_message") {
-        users += 1;
-        start = index;
-        if (users >= limitTurns) break;
-      }
-    }
-    return events.slice(start).map((event) => `seq ${event.seq} ${event.kind}: ${safeJson(event)}`).join("\n");
-  }
-
-  private async toolListConversations(args: Record<string, unknown>): Promise<string> {
-    return listConversationsForAgent({
-      query: asString(args.query),
-      workspaceId: asString(args.workspaceId),
-      limit: asNumber(args.limit),
-      currentConversationId: this.callbacks.conversation.id,
-    });
-  }
-
-  private async toolReadConversation(args: Record<string, unknown>): Promise<string> {
-    const conversationId = asString(args.conversationId);
-    if (!conversationId) {
-      throw new Error("read_conversation.conversationId is required.");
-    }
-    return readConversationTranscriptForAgent({
-      conversationId,
-      limitTurns: asNumber(args.limitTurns),
-      maxChars: asNumber(args.maxChars),
-    });
-  }
-
-  private async toolSearchConversations(args: Record<string, unknown>): Promise<string> {
-    const query = asString(args.query);
-    if (!query) {
-      throw new Error("search_conversations.query is required.");
-    }
-    return searchConversationsForAgent({
-      query,
-      conversationId: asString(args.conversationId),
-      maxResults: asNumber(args.maxResults),
-    });
-  }
-
-  /** Read or rename this conversation's display title; optional follow flag. */
-  private async toolConversationTitle(args: Record<string, unknown>): Promise<string> {
-    const parsed = parseConversationTitleToolArgs(args);
-    const current = this.callbacks.conversation;
-    const applied = applyConversationTitleAction({
-      currentTitle: current.title,
-      currentFollow: Boolean(current.config.titleFollow),
-      action: parsed.action,
-      title: parsed.title,
-      follow: parsed.follow,
-    });
-    if (applied.changed) {
-      await this.callbacks.updateConversation((record) => ({
-        ...record,
-        title: applied.nextTitle,
-        config: {
-          ...record.config,
-          titleFollow: applied.nextFollow,
-        },
-      }));
-    }
-    return applied.result;
-  }
-
-  /** Curated persistent memory: save/search/list/forget over bounded JSON stores. */
-  private async toolMemory(args: Record<string, unknown>): Promise<string> {
-    const action = asString(args.action)?.trim().toLowerCase();
-    const workspaceId = this.callbacks.workspace.id;
-    const rawScope = asString(args.scope)?.trim().toLowerCase();
-    const scope: CesiumMemoryScope | undefined =
-      rawScope === "user" || rawScope === "workspace" ? rawScope : undefined;
-    switch (action) {
-      case "save": {
-        const content = asString(args.content)?.trim();
-        if (!content) {
-          throw new Error("memory.content is required for save.");
-        }
-        const rawCategory = asString(args.category)?.trim().toLowerCase();
-        const category: CesiumMemoryCategory =
-          rawCategory === "preference" ||
-          rawCategory === "constraint" ||
-          rawCategory === "decision"
-            ? rawCategory
-            : "fact";
-        const saved = await saveCesiumMemoryEntry({
-          workspaceId,
-          scope: scope ?? "workspace",
-          category,
-          content,
-          key: asString(args.key),
-          sourceConversationId: this.callbacks.conversation.id,
-          id: asString(args.id)?.trim() || undefined,
-        });
-        return formatCesiumMemorySaveResult(saved);
-      }
-      case "search": {
-        const query = asString(args.query)?.trim();
-        if (!query) {
-          throw new Error("memory.query is required for search.");
-        }
-        const entries = await searchCesiumMemoryEntries({
-          workspaceId,
-          query,
-          scope,
-          limit: asNumber(args.limit),
-        });
-        if (entries.length === 0) {
-          return `No memory entries match "${query}".`;
-        }
-        return [
-          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} match "${query}":`,
-          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
-        ].join("\n");
-      }
-      case "list": {
-        const limit = Math.min(Math.max(asNumber(args.limit) ?? 10, 1), 50);
-        const entries = (await listCesiumMemoryEntries({ workspaceId, scope })).slice(0, limit);
-        if (entries.length === 0) {
-          return scope
-            ? `No memory entries saved in the ${scope} scope yet.`
-            : "No memory entries saved yet.";
-        }
-        return [
-          `${entries.length} memory entr${entries.length === 1 ? "y" : "ies"} (most recent first):`,
-          ...entries.map((entry) => formatCesiumMemoryEntry(entry)),
-        ].join("\n");
-      }
-      case "forget": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("memory.id is required for forget.");
-        }
-        const removed = await forgetCesiumMemoryEntry({ workspaceId, id });
-        if (!removed) {
-          return `No memory entry with id ${id}. Use memory list to see current entries.`;
-        }
-        return `Forgot memory entry.\n${formatCesiumMemoryEntry(removed)}`;
-      }
-      default:
-        throw new Error('memory.action must be one of "save", "search", "list", "forget".');
-    }
-  }
-
-  /** Agent Skills authoring: create/update/list/read/delete SKILL.md documents. */
-  private async toolSkill(args: Record<string, unknown>): Promise<string> {
-    const action = asString(args.action)?.trim().toLowerCase();
-    const workspaceRoot = this.callbacks.workspace.root;
-    switch (action) {
-      case "create": {
-        const name = asString(args.name)?.trim();
-        const description = asString(args.description)?.trim();
-        const instructions = asString(args.instructions)?.trim();
-        if (!name || !description || !instructions) {
-          throw new Error("skill.create requires name, description, and instructions.");
-        }
-        const created = await createAuthoredSkill({
-          workspaceRoot,
-          name,
-          description,
-          instructions,
-          id: asString(args.id)?.trim() || undefined,
-        });
-        return (
-          `Created skill "${created.name}" (id: ${created.id}) at ${created.relativePath}. ` +
-          "It is mirrored under agent-skills/ and will appear in the skills list from the next turn."
-        );
-      }
-      case "update": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("skill.id is required for update.");
-        }
-        const updated = await updateAuthoredSkill({
-          workspaceRoot,
-          id,
-          name: asString(args.name)?.trim() || undefined,
-          description: asString(args.description)?.trim() || undefined,
-          instructions: asString(args.instructions)?.trim() || undefined,
-        });
-        return `Updated skill "${updated.name}" (id: ${updated.id}) at ${updated.relativePath}.`;
-      }
-      case "list": {
-        const skills = await listAuthorableSkills(workspaceRoot);
-        if (skills.length === 0) {
-          return "No skills discovered in this workspace yet. Use skill create to author one.";
-        }
-        return [
-          `${skills.length} skill${skills.length === 1 ? "" : "s"} discovered:`,
-          ...skills.map(
-            (skill) =>
-              `- ${skill.name} (id: ${slugifySkillId(skill.name)}) - ${skill.description} [${
-                skill.authored ? "agent-authored" : `read-only: ${skill.source}`
-              }]`
-          ),
-        ].join("\n");
-      }
-      case "read": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("skill.id is required for read.");
-        }
-        const { skill, markdown } = await readSkillById({ workspaceRoot, id });
-        return `# ${skill.relativePath}\n\n${markdown}`;
-      }
-      case "delete": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("skill.id is required for delete.");
-        }
-        const removed = await deleteAuthoredSkill({ workspaceRoot, id });
-        return `Deleted skill "${removed.name}" (id: ${removed.id}).`;
-      }
-      default:
-        throw new Error(
-          'skill.action must be one of "create", "update", "list", "read", "delete".'
-        );
-    }
-  }
-
-  /** Scheduled triggers: the agent's proactive wake-ups (cron/interval/once). */
-  private async toolSchedule(args: Record<string, unknown>): Promise<string> {
-    const action = asString(args.action)?.trim().toLowerCase();
-    const workspaceId = this.callbacks.workspace.id;
-    const parseScheduleArgs = (): CesiumTriggerSchedule => {
-      const cron = asString(args.cron)?.trim();
-      const everyMinutes = asNumber(args.everyMinutes);
-      const atMs = asNumber(args.atMs);
-      const provided = [cron, everyMinutes, atMs].filter(
-        (value) => value !== undefined && value !== null && value !== ""
-      );
-      if (provided.length !== 1) {
-        throw new Error(
-          "Provide exactly one of schedule.cron, schedule.everyMinutes, or schedule.atMs."
-        );
-      }
-      if (cron) {
-        return normalizeTriggerSchedule({ kind: "cron", expression: cron });
-      }
-      if (everyMinutes != null) {
-        return normalizeTriggerSchedule({ kind: "interval", everyMs: everyMinutes * 60_000 });
-      }
-      return normalizeTriggerSchedule({ kind: "once", atMs: atMs! });
-    };
-    switch (action) {
-      case "create": {
-        const name = asString(args.name)?.trim();
-        const prompt = asString(args.prompt)?.trim();
-        if (!name || !prompt) {
-          throw new Error("schedule.create requires name and prompt.");
-        }
-        const trigger = await createCesiumTrigger({
-          workspaceId,
-          name,
-          prompt,
-          schedule: parseScheduleArgs(),
-          mode: asString(args.mode)?.trim() || undefined,
-          // Pin the creating conversation's model so scheduled fires never
-          // fall back to an unconfigured provider default.
-          modelId: this.callbacks.conversation.config.modelId || undefined,
-          modelName: this.callbacks.conversation.config.modelName || undefined,
-          maxRuns: asNumber(args.maxRuns) ?? undefined,
-          sourceConversationId: this.callbacks.conversation.id,
-        });
-        return `Created trigger.\n${formatCesiumTrigger(trigger)}`;
-      }
-      case "list": {
-        const triggers = await listCesiumTriggers(workspaceId);
-        if (triggers.length === 0) {
-          return "No scheduled triggers in this workspace. Use schedule create to add one.";
-        }
-        return [
-          `${triggers.length} trigger${triggers.length === 1 ? "" : "s"}:`,
-          ...triggers.map((trigger) => formatCesiumTrigger(trigger)),
-        ].join("\n");
-      }
-      case "update": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("schedule.id is required for update.");
-        }
-        const hasScheduleInput =
-          asString(args.cron)?.trim() || asNumber(args.everyMinutes) != null || asNumber(args.atMs) != null;
-        const updated = await updateCesiumTrigger({
-          workspaceId,
-          id,
-          patch: {
-            ...(asString(args.name)?.trim() ? { name: asString(args.name)!.trim() } : {}),
-            ...(asString(args.prompt)?.trim() ? { prompt: asString(args.prompt)!.trim() } : {}),
-            ...(asString(args.mode) !== undefined ? { mode: asString(args.mode)?.trim() } : {}),
-            ...(asNumber(args.maxRuns) != null ? { maxRuns: asNumber(args.maxRuns)! } : {}),
-            ...(hasScheduleInput ? { schedule: parseScheduleArgs() } : {}),
-          },
-        });
-        return `Updated trigger.\n${formatCesiumTrigger(updated)}`;
-      }
-      case "pause":
-      case "resume": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error(`schedule.id is required for ${action}.`);
-        }
-        const updated = await updateCesiumTrigger({
-          workspaceId,
-          id,
-          patch: { enabled: action === "resume" },
-        });
-        return `${action === "resume" ? "Resumed" : "Paused"} trigger.\n${formatCesiumTrigger(updated)}`;
-      }
-      case "delete": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("schedule.id is required for delete.");
-        }
-        const removed = await deleteCesiumTrigger({ workspaceId, id });
-        if (!removed) {
-          return `No trigger with id ${id}. Use schedule list to see current triggers.`;
-        }
-        return `Deleted trigger "${removed.name}" (id: ${removed.id}).`;
-      }
-      case "run": {
-        const id = asString(args.id)?.trim();
-        if (!id) {
-          throw new Error("schedule.id is required for run.");
-        }
-        const triggers = await listCesiumTriggers(workspaceId);
-        const trigger = triggers.find((entry) => entry.id === id);
-        if (!trigger) {
-          return `No trigger with id ${id}. Use schedule list to see current triggers.`;
-        }
-        const firedAt = Date.now();
-        const marked = await markCesiumTriggerFired({ workspaceId, id, firedAt });
-        const { agentRuntimeManager } = await import("./runtime-manager.js");
-        const snapshot = await agentRuntimeManager.createConversationWithPrompt(
-          this.callbacks.workspace,
-          {
-            backendId: "cesium-agent",
-            ...(trigger.mode ? { mode: trigger.mode } : {}),
-            ...(trigger.modelId ? { modelId: trigger.modelId } : {}),
-            ...(trigger.modelName ? { modelName: trigger.modelName } : {}),
-            title: `⏰ ${trigger.name}`,
-            origin: {
-              kind: "trigger",
-              triggerId: trigger.id,
-              triggerName: trigger.name,
-              firedAt,
-            },
-          },
-          { text: formatTriggerPromptPreamble(trigger, firedAt) }
-        );
-        await attachCesiumTriggerConversation({
-          workspaceId,
-          id,
-          conversationId: snapshot.conversation.id,
-        }).catch(() => null);
-        return (
-          `Fired trigger "${trigger.name}" now -> conversation ${snapshot.conversation.id}.` +
-          (marked && !marked.enabled ? " The trigger is now disabled (run cap reached)." : "")
-        );
-      }
-      default:
-        throw new Error(
-          'schedule.action must be one of "create", "list", "update", "pause", "resume", "delete", "run".'
-        );
-    }
-  }
-
-  /**
-   * Self-relocation across git branches in the current workspace.
-   *
-   * NOTE(future): extend agent self-relocation beyond branches - the agent
-   * could move this conversation to another repository, workspace, or
-   * directory via `agentRuntimeManager.relocateConversation` with
-   * `initiatedBy: "agent"`, letting it hop to a new project and keep working
-   * there. Branch-only for now, on purpose.
-   */
-  private async toolSwitchBranch(args: Record<string, unknown>): Promise<string> {
-    const branch = asString(args.branch)?.trim();
-    if (!branch) {
-      throw new Error("switch_branch.branch is required.");
-    }
-    const create = args.create === true;
-    const workspaces = await listWorkspaces().catch(() => [this.callbacks.workspace]);
-    const result = await switchWorkspaceBranch({
-      workspace: this.callbacks.workspace,
-      workspaces,
-      branch,
-      create,
-    });
-    if (result.checkedOutWorktree) {
-      return (
-        `Branch ${branch} is already checked out in worktree ${result.checkedOutWorktree.path}` +
-        `${result.checkedOutWorktree.workspaceName ? ` (workspace "${result.checkedOutWorktree.workspaceName}")` : ""}. ` +
-        "This checkout was left untouched - run terminal commands against that path, or ask the user to relocate this conversation there."
-      );
-    }
-    return (
-      `Switched ${this.callbacks.workspace.root} to branch ${result.status.currentBranch ?? branch}` +
-      `${result.created ? " (newly created)" : ""}. ` +
-      "Files may differ on this branch - re-verify paths and re-read key files before editing."
-    );
-  }
-
-  private async toolCreateWorktree(args: Record<string, unknown>): Promise<string> {
-    const branch = asString(args.branch)?.trim();
-    if (!branch) {
-      throw new Error("create_worktree.branch is required.");
-    }
-    const baseBranch = asString(args.baseBranch)?.trim();
-    const workspaces = await listWorkspaces().catch(() => [this.callbacks.workspace]);
-    const result = await createWorkspaceWorktree({
-      workspace: this.callbacks.workspace,
-      workspaces,
-      branch,
-      ...(baseBranch ? { baseBranch } : {}),
-      newBranch: true,
-    });
-    if (result.existingWorktree) {
-      return (
-        `Branch ${branch} already has a worktree at ${result.path}. Reuse it via terminal commands ` +
-        "against that path instead of creating another checkout."
-      );
-    }
-    return (
-      `Worktree ready at ${result.path} on branch ${result.branch}` +
-      `${result.setup.ran ? ` (setup commands ran: ${result.setup.commands.join("; ")})` : ""}. ` +
-      "Keep one workstream per worktree: run its commands via terminal against that path, and when the work " +
-      "is verified, merge the branch back (git merge/rebase from the main checkout) and remove the worktree."
-    );
-  }
 }
 
 export async function createCesiumAgentProvider(input: {
