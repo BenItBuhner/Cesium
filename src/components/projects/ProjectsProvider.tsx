@@ -33,6 +33,7 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useServerDisplayLabel } from "@/hooks/useServerDisplayLabels";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import { resolveRailFetchServers } from "@/lib/rail-fetch";
 import { safeReplaceLocationSearchParams, safeWindowLocationUrl } from "@/lib/safe-url";
@@ -77,7 +78,7 @@ type ProjectsContextValue = {
   openChildConversation: (
     projectId: string,
     child: ProjectChildSummary,
-    server?: { id: string; label: string }
+    server?: Pick<ServerConnection, "id" | "label" | "baseUrl">
   ) => Promise<void>;
   snapshots: Record<string, ProjectSnapshot>;
   /** Keeps a snapshot fresh while the caller is mounted. */
@@ -140,6 +141,7 @@ function projectListServers(input: {
 export function ProjectsProvider({ children }: { children: ReactNode }) {
   const { projects: enabled } = useUserPreferences();
   const { activeServer, servers, onlineServers, serverStatusById } = useServerConnections();
+  const serverLabelFor = useServerDisplayLabel();
   const {
     isMobile,
     openConversationSummary,
@@ -172,6 +174,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const listServersRef = useRef(listServers);
   const serversRef = useRef(servers);
   const activeServerRef = useRef(activeServer);
+  const serverLabelForRef = useRef(serverLabelFor);
   const listGenerationRef = useRef(0);
   const marksRef = useRef(new Map<string, Map<string, ProjectChildMark>>());
   const summaryTurnsRef = useRef(new Map<string, string>());
@@ -186,7 +189,8 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     listServersRef.current = listServers;
     serversRef.current = servers;
     activeServerRef.current = activeServer;
-  }, [activeServer, listServers, servers]);
+    serverLabelForRef.current = serverLabelFor;
+  }, [activeServer, listServers, serverLabelFor, servers]);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
@@ -291,11 +295,11 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       listServersRef.current.map(async (server): Promise<ProjectServerListing> => {
         try {
           const listed = await listProjects({ server: toServerRequestContext(server) });
-          return { serverId: server.id, serverLabel: server.label, projects: listed };
+          return { serverId: server.id, serverLabel: serverLabelForRef.current(server), projects: listed };
         } catch (caught) {
           return {
             serverId: server.id,
-            serverLabel: server.label,
+            serverLabel: serverLabelForRef.current(server),
             projects: null,
             error: errorMessage(caught),
           };
@@ -415,7 +419,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
           serverId: server.id,
-          serverLabel: server.label,
+          serverLabel: serverLabelForRef.current(server),
         })
       );
     },
@@ -450,7 +454,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     async (
       projectId: string,
       child: ProjectChildSummary,
-      peer?: { id: string; label: string }
+      peer?: Pick<ServerConnection, "id" | "label" | "baseUrl">
     ) => {
       const server = peer ?? serverForProject(projectId);
       await openConversationSummary(
@@ -463,7 +467,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
           createdAt: child.createdAt,
           updatedAt: child.updatedAt ?? child.createdAt,
           serverId: server.id,
-          serverLabel: server.label,
+          serverLabel: serverLabelForRef.current(server),
         })
       );
     },

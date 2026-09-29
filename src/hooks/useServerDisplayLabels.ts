@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
   buildServerDisplayLabels,
   sameServerDisplayLabels,
+  serverDisplayLabel,
   type ServerDisplayLabels,
 } from "@/lib/server-display-labels";
 
@@ -26,4 +27,19 @@ export function useServerDisplayLabels(): ServerDisplayLabels {
     previousRef.current = next;
     return next;
   }, [appearances, engineNameById, servers]);
+}
+
+/** Names one server at a time the way the sidebar does. */
+export function useServerDisplayLabel(): (server: {
+  id: string;
+  label: string;
+  baseUrl: string;
+}) => string {
+  const { engineNameById } = useServerConnections();
+  const { settings } = useGlobalSettings();
+  const appearances = settings.general.serverRailAppearances;
+  return useCallback(
+    (server) => serverDisplayLabel(server, appearances, engineNameById),
+    [appearances, engineNameById]
+  );
 }

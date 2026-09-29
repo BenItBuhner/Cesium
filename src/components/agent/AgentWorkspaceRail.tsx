@@ -1034,7 +1034,7 @@ export function AgentWorkspaceRail() {
       await openConversationSummary({
         ...agentRecordToRailSummary(headConversation),
         serverId: activeServer.id,
-        serverLabel: activeServer.label,
+        serverLabel: serverDisplayLabels.get(activeServer.id) ?? activeServer.label,
         workspaceKey: `${activeServer.id}:${headConversation.workspaceId}`,
         conversationKey: `${activeServer.id}:${headConversation.id}`,
       });
@@ -1054,6 +1054,7 @@ export function AgentWorkspaceRail() {
     openConversationSummary,
     openWorkspaceById,
     refreshConversationGroups,
+    serverDisplayLabels,
   ]);
 
   const handleNewChatForWorkspace = useCallback(

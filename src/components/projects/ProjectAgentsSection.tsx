@@ -186,11 +186,7 @@ function ProjectAgentCard({
   };
 
   const open = () =>
-    void openChildConversation(
-      projectId,
-      child,
-      remoteServer ? { id: remoteServer.id, label: remoteServer.label } : undefined
-    );
+    void openChildConversation(projectId, child, remoteServer ?? undefined);
 
   const stop = () =>
     act("stop", async () => {
