@@ -227,3 +227,106 @@ describe("system event levels", () => {
     assert.equal(reply.systemLevel, undefined);
   });
 });
+
+function toolEntries(messages: ChatMessage[]) {
+  return messages
+    .filter((message) => message.type === "worked-session")
+    .flatMap((message) => message.workedEntries ?? [])
+    .filter((entry) => entry.kind === "tool");
+}
+
+describe("tool row timing", () => {
+  test("spans the tool call to its completing update", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("tool-timing", [
+        userMessage(),
+        {
+          kind: "tool_call",
+          toolCallId: "t-run",
+          title: "Run npm test",
+          toolKind: "execute",
+          status: "in_progress",
+          createdAt: 2_000,
+        },
+        { kind: "tool_call_update", toolCallId: "t-run", status: "in_progress", createdAt: 4_000 },
+        { kind: "tool_call_update", toolCallId: "t-run", status: "completed", createdAt: 9_500 },
+        { kind: "tool_call_update", toolCallId: "t-run", status: "completed", createdAt: 9_900 },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const [tool] = toolEntries(messages);
+    assert.ok(tool);
+    assert.equal(tool.startedAt, 2_000);
+    assert.equal(tool.completedAt, 9_500);
+  });
+
+  test("leaves a running tool open-ended for the live timer", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("tool-running", [
+        userMessage(),
+        {
+          kind: "tool_call",
+          toolCallId: "t-read",
+          title: "Read a.ts",
+          toolKind: "read",
+          status: "in_progress",
+          createdAt: 3_000,
+        },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const [tool] = toolEntries(messages);
+    assert.ok(tool);
+    assert.equal(tool.status, "running");
+    assert.equal(tool.startedAt, 3_000);
+    assert.equal(tool.completedAt, undefined);
+  });
+
+  test("does not invent an end time when a turn boundary closes the tool", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("tool-implicit", [
+        userMessage(),
+        {
+          kind: "tool_call",
+          toolCallId: "t-grep",
+          title: "Search",
+          toolKind: "search",
+          status: "in_progress",
+          createdAt: 2_000,
+        },
+        { kind: "assistant_message_chunk", messageId: "a1", text: "Found it." },
+        { kind: "status", status: "idle", createdAt: 60_000 },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const [tool] = toolEntries(messages);
+    assert.ok(tool);
+    assert.equal(tool.status, "completed");
+    assert.equal(tool.startedAt, 2_000);
+    assert.equal(tool.completedAt, undefined);
+  });
+
+  test("stamps completion on the original row across a mid-turn user message", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("tool-cross-turn", [
+        userMessage(),
+        {
+          kind: "tool_call",
+          toolCallId: "t-build",
+          title: "Run build",
+          toolKind: "execute",
+          status: "in_progress",
+          createdAt: 2_000,
+        },
+        { kind: "user_message", messageId: "m-steer", content: "also run lint", createdAt: 5_000 },
+        { kind: "tool_call_update", toolCallId: "t-build", status: "failed", createdAt: 12_000 },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const tools = toolEntries(messages);
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0]!.status, "failed");
+    assert.equal(tools[0]!.startedAt, 2_000);
+    assert.equal(tools[0]!.completedAt, 12_000);
+  });
+});

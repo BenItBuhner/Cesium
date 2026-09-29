@@ -73,6 +73,10 @@ export type WorkedSessionEntry =
       editPreview?: WorkedSessionEditPreview;
       /** Parsed checklist for todo tools; rendered as an organic list instead of raw JSON args. */
       todos?: TodoItem[];
+      /** `createdAt` of the first event seen for this tool call (epoch ms). */
+      startedAt?: number;
+      /** `createdAt` of the tool event that settled it; unset when a turn boundary closed it implicitly. */
+      completedAt?: number;
     };
 
 export type ImageAttachment = {

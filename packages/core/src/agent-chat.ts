@@ -5,6 +5,7 @@ import type {
   AgentConversationStatus,
   AgentPlanEntry,
   AgentStoredEvent,
+  AgentToolCallStatus,
 } from "./protocol";
 import {
   COMPRESSING_CONTEXT_STATUS_PREFIX,
@@ -2354,6 +2355,24 @@ function finalizeOpenToolsInTurn(
   }
 }
 
+/**
+ * Timing for a tool row from its own events. Only an explicit terminal tool
+ * event sets `completedAt`: rows closed implicitly by a turn boundary have no
+ * real end time, and stamping one would show the model's run time instead.
+ */
+function stampToolEntryTiming(
+  entry: Extract<WorkedSessionEntry, { kind: "tool" }>,
+  event: { createdAt: number; status: AgentToolCallStatus }
+): void {
+  entry.startedAt ??= event.createdAt;
+  if (
+    entry.completedAt == null &&
+    (event.status === "completed" || event.status === "failed" || event.status === "cancelled")
+  ) {
+    entry.completedAt = event.createdAt;
+  }
+}
+
 const LIVE_STATUS_DETAIL_MAX = 240;
 
 /**
@@ -4669,6 +4688,7 @@ const toolEntryByIdAcrossTurns = new Map<
         } else {
           Object.assign(existing, entry);
         }
+        stampToolEntryTiming(existing ?? entry, event);
         break;
       }
       case "tool_call_update": {
@@ -4867,6 +4887,7 @@ const toolEntryByIdAcrossTurns = new Map<
             existing.toolCallId = keepToolCallId;
           }
         }
+        stampToolEntryTiming(existing ?? entry, event);
         break;
       }
       case "plan": {

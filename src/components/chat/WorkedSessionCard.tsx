@@ -49,6 +49,7 @@ import type { ChatMessage, TodoItem, WorkedSessionEntry, WorkedSessionEditPrevie
 import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
 import { formatMobileEditStats } from "@/lib/mobile-agent-projection";
 import { useLiveElapsedLabel } from "@/hooks/useLiveElapsed";
+import { formatAgentElapsed } from "@/lib/format-agent-run-duration";
 import {
   formatToolFileLabel,
   resolveWorkspaceToolPath,
@@ -1110,6 +1111,36 @@ export function WorkedSessionCard({
   );
 }
 
+/** Sub-second tool calls are the norm; a "0s" on every row would be noise. */
+const TOOL_DURATION_MIN_MS = 1_000;
+
+function ToolEntryDuration({
+  startedAt,
+  completedAt,
+  live,
+}: {
+  startedAt?: number;
+  completedAt?: number;
+  live: boolean;
+}) {
+  const liveLabel = useLiveElapsedLabel(live ? startedAt : undefined, TOOL_DURATION_MIN_MS);
+  const settledMs =
+    !live && startedAt != null && completedAt != null ? completedAt - startedAt : null;
+  const label = live
+    ? liveLabel
+    : settledMs != null && settledMs >= TOOL_DURATION_MIN_MS
+      ? formatAgentElapsed(settledMs)
+      : null;
+  if (!label) {
+    return null;
+  }
+  return (
+    <span className="font-sans text-[11px] font-normal leading-snug tabular-nums text-[var(--text-secondary)] opacity-80">
+      {label}
+    </span>
+  );
+}
+
 /** "+120 −8 · 4 files · 2m 14s" beside the live working label. */
 function LiveWorkingMeta({
   editStats,
@@ -1404,6 +1435,11 @@ function renderEntry(
                   {statusKey}
                 </span>
               ) : null}
+              <ToolEntryDuration
+                startedAt={entry.startedAt}
+                completedAt={entry.completedAt}
+                live={active && isLiveWorkedTail}
+              />
             </div>
             {extraDetail ? (
               <HorizontalFadedScroll
