@@ -237,7 +237,7 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
   );
   return (
     <WorkedSessionCard
-      label={message.workedLabel!}
+      label={message.liveStatusPhase ?? message.workedLabel!}
       entries={message.workedEntries!}
       highlightedEntry={message.workedHighlightedEntry}
       open={open}
@@ -251,6 +251,9 @@ const WorkedSessionRow = memo(function WorkedSessionRow({
       onResolvePermission={onResolvePermission}
       contentRail={contentRail}
       settled={settled}
+      liveDetail={message.liveStatusDetail}
+      liveEditStats={message.liveEditStats}
+      liveStartedAt={message.liveStartedAt}
     />
   );
 });

@@ -220,6 +220,14 @@ export interface ChatMessage {
   shellTitle?: string;
   /** Loading/working placeholder before any agent content arrives */
   loading?: boolean;
+  /** Live working row: latest runtime status line (e.g. "Cesium is connecting to openai…"). */
+  liveStatusDetail?: string;
+  /** Live working row: coarse activity phase ("Editing", "Running commands") replacing "Working". */
+  liveStatusPhase?: string;
+  /** Live working row: diffstat of the edits made so far this turn. */
+  liveEditStats?: { files: number; additions: number; deletions: number };
+  /** Live working row: turn start (epoch ms) for a ticking elapsed timer. */
+  liveStartedAt?: number;
   /** Agent handoff divider */
   handoffFromAgent?: string;
   handoffToAgent?: string;
