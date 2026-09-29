@@ -148,6 +148,14 @@ function compactChild(child: ProjectChildSummary) {
     queued: child.queued,
     turnsCompleted: child.turnsCompleted,
     needs: child.attention ? `${child.attention.kind}: ${child.attention.title}` : null,
+    ...(child.evidence
+      ? {
+          evidence:
+            child.evidence.files.length > 0
+              ? { uiFiles: child.evidence.uiFiles.length, files: child.evidence.files }
+              : { uiFiles: child.evidence.uiFiles.length, missing: true, askedAgent: child.evidence.requestedAt != null },
+        }
+      : {}),
     lastReply: child.lastReplyPreview,
     lastError: child.lastError,
     ...(child.archivedAt != null ? { archivedAt: new Date(child.archivedAt).toISOString() } : {}),

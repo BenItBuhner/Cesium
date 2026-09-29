@@ -326,7 +326,33 @@ test("a browser check on a peer agent runs in its working tree there, and its ev
   const notice = await coordinatorNotice("browser-check", (content) => content.includes("Copied back"));
   assert.match(notice, /Checked the home page: it renders\./);
   assert.match(notice, /Copied back to the Project context from build-box: media\/browser-check\/home\.png\./);
+  assert.ok(notice.includes("Evidence: ![home.png](context:media/browser-check/home.png). Embed it when you tell the user."), notice);
   assert.deepEqual(await fs.readFile(homeContext("media/browser-check/home.png")), PNG);
+});
+
+test("a UI change on a peer is checked for evidence once its screenshots have come home", async () => {
+  const builder = await childNamed("builder");
+  script(
+    "builder",
+    toolCall("w_banner", "write_file", {
+      path: path.join(builder.worktreePath!, "index.html"),
+      content: "<p class=\"banner\">Free shipping</p>\n",
+    }),
+    toolCall("t_banner", "terminal", {
+      command: `echo '${PNG.toString("base64")}' | base64 -d > '${mirrorFile("media/builder/banner.png")}'`,
+    }),
+    text(["Added the banner; screenshot at media/builder/banner.png."])
+  );
+  const sent = await api("POST", `/api/projects/${project.id}/agents/builder/messages`, {
+    text: "Add a free-shipping banner to index.html, with a screenshot.",
+  });
+  assert.equal(sent.status, 200, JSON.stringify(sent.json));
+  const notice = await coordinatorNotice("builder", (content) => content.includes("Evidence for its UI change"));
+  assert.match(notice, /Copied back to the Project context from build-box: media\/builder\/banner\.png\./);
+  assert.match(notice, /Evidence for its UI change \(index\.html\): /);
+  assert.ok(notice.includes("![banner.png](context:media/builder/banner.png)"), notice);
+  assert.ok(notice.includes("![home.png](context:media/browser-check/home.png)"), "a browser check in its working tree counts too");
+  assert.deepEqual((await childNamed("builder")).evidence?.uiFiles, ["index.html"]);
 });
 
 test("a peer places a helper only in the folder of an agent created with the same token", async () => {

@@ -178,6 +178,7 @@ export function summarizeChild(
     pr: child.pr,
     kind: child.kind,
     helperKind: child.helperKind,
+    evidence: child.evidence,
   };
 }
 
@@ -977,6 +978,7 @@ export async function createProjectChild(
       task: instructions.slice(0, CHILD_TASK_MAX_CHARS),
       kind: "worker",
       helperKind: null,
+      evidence: null,
       lastStatus: "running",
       turnsCompleted: 0,
       lastReportedSeq: 0,
@@ -1110,6 +1112,7 @@ export async function adoptProjectChild(
       task: null,
       kind: "worker",
       helperKind: null,
+      evidence: null,
       lastStatus: observation.status,
       turnsCompleted: 0,
       // Only turns after the adoption are reported.

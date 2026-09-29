@@ -101,6 +101,7 @@ function helperRecord(input: {
     task: input.task,
     kind: "helper",
     helperKind: input.helperKind,
+    evidence: null,
     lastStatus: "running",
     turnsCompleted: 0,
     lastReportedSeq: 0,

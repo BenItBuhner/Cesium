@@ -313,9 +313,10 @@ export type MergeResult = { pr: ProjectPullRequestListing; sha: string | null };
 /**
  * Squash-merges a tracked PR as `PR title (#N)`, keeping its branch. The
  * orchestrator may only merge under `when_green`, or with a quote of the
- * user's own go-ahead from their recent messages; the user merging from the UI
- * (`byUser`) needs neither. Every merge needs an open, ready, mergeable PR with
- * green CI (or none) and no outstanding request for changes.
+ * user's own go-ahead from their recent messages, and not while the agent's
+ * change to what users see still lacks screenshots; the user merging from the
+ * UI (`byUser`) needs none of that. Every merge needs an open, ready,
+ * mergeable PR with green CI (or none) and no outstanding request for changes.
  */
 export async function mergeProjectPullRequest(
   projectId: string,
@@ -333,6 +334,16 @@ export async function mergeProjectPullRequest(
       unmatched: "user_quote does not appear in the user's recent messages, so the merge is not authorized. Ask the user.",
       code: "merge_not_authorized",
     });
+  }
+  const author = record.children.find(
+    (child) => child.deletedAt == null && child.pr?.repo === listing.repo && child.pr.number === listing.number
+  );
+  if (!input.byUser && author?.evidence && author.evidence.files.length === 0) {
+    throw new ProjectError(
+      `${listing.repo}#${listing.number} changes what users see (${author.evidence.uiFiles.slice(0, 3).join(", ")}) and has no screenshots or recording yet, so it is not done. Wait for ${author.name}'s update with the evidence${author.evidence.requestedAt != null ? " (it was asked for it)" : ""}, or capture it with project_browser_check, then merge.`,
+      409,
+      "evidence_missing"
+    );
   }
   const client = await projectGithubClient();
   if (!client) {
