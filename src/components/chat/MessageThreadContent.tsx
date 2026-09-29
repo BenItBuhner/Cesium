@@ -16,6 +16,7 @@ import { getChatStickyRailInsetPx } from "./chat-sticky-rail";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
+import { SystemNoticeMessage } from "./SystemNoticeMessage";
 import { TodoStatusCard } from "./TodoStatusCard";
 import { TodoCard } from "./TodoCard";
 import { TodoUpdateCard } from "./TodoUpdateCard";
@@ -436,6 +437,17 @@ export function MessageThreadContent({
           const assistantBody = stripAgentTodoJsonAssistantContent(msg.content ?? "");
           if (!assistantBody.trim()) {
             return null;
+          }
+          if (msg.systemLevel === "warning" || msg.systemLevel === "error") {
+            return (
+              <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+                <SystemNoticeMessage
+                  level={msg.systemLevel}
+                  content={assistantBody}
+                  composerDraftId={composerDraftId}
+                />
+              </div>
+            );
           }
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">

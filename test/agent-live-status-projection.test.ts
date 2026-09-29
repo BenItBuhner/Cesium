@@ -192,3 +192,38 @@ describe("live working row", () => {
     );
   });
 });
+
+describe("system event levels", () => {
+  test("carries the system level onto the projected row", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("system-levels", [
+        userMessage(),
+        { kind: "system", level: "warning", text: "Model does not support images; dropped 1 image." },
+        { kind: "system", level: "error", text: "MCP server github failed to start." },
+        { kind: "system", level: "info", text: "Switched to plan mode." },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const byContent = new Map(
+      messages
+        .filter((message) => message.type === "assistant")
+        .map((message) => [message.content, message.systemLevel])
+    );
+    assert.equal(byContent.get("Model does not support images; dropped 1 image."), "warning");
+    assert.equal(byContent.get("MCP server github failed to start."), "error");
+    assert.equal(byContent.get("Switched to plan mode."), "info");
+  });
+
+  test("leaves real assistant replies without a system level", () => {
+    const messages = projectAgentEventsToChatMessages(
+      buildEvents("system-none", [
+        userMessage(),
+        { kind: "assistant_message_chunk", messageId: "a1", text: "Here is the answer." },
+      ]),
+      { backendId: "cesium-agent" }
+    );
+    const reply = messages.find((message) => message.type === "assistant");
+    assert.ok(reply);
+    assert.equal(reply.systemLevel, undefined);
+  });
+});

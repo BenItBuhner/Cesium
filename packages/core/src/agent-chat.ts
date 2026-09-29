@@ -4966,6 +4966,7 @@ const toolEntryByIdAcrossTurns = new Map<
               : event.level === "info"
                 ? event.text
                 : `[${event.level}] ${event.text}`,
+          systemLevel: event.level,
         });
         break;
       }

@@ -175,6 +175,8 @@ export interface ChatMessage {
   content?: string;
   /** Full user prompt text when `content` is a display-friendly summary. */
   rawContent?: string;
+  /** Set on `assistant` rows projected from runtime `system` events; warnings/errors render with a level badge. */
+  systemLevel?: "info" | "warning" | "error";
   /** Rich user bubble; when set, overrides plain `content` for body text. */
   segments?: UserMessageSegment[];
   /** Image attachments for user messages. */
