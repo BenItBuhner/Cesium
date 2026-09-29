@@ -64,6 +64,9 @@ function safeDecode(value: string): string {
   }
 }
 
+const PR_SUBSCRIPTIONS_CLOSED_NOTE =
+  "The subscriptions that followed it and its branch's CI closed with it: there is nothing to unsubscribe.";
+
 const WAIT_FOR_UPDATES_NOTE =
   "Agents report back on their own with a <project_agent_updates> message, delivered after your turn ends and never during it. Do not check on them in the meantime: finish any other delegation, then end your turn.";
 
@@ -430,7 +433,7 @@ export async function executeProjectOrchestratorTool(
         pr: requiredArg(args, "pr", name),
         userQuote: arg(args, "user_quote") ?? null,
       });
-      return json({ merged: compactPullRequest(result.pr), commit: result.sha });
+      return json({ merged: compactPullRequest(result.pr), commit: result.sha, note: PR_SUBSCRIPTIONS_CLOSED_NOTE });
     }
     case "project_close_pr": {
       await requireProject(projectId);
@@ -439,7 +442,7 @@ export async function executeProjectOrchestratorTool(
         reason: requiredArg(args, "reason", name),
         userQuote: arg(args, "user_quote") ?? null,
       });
-      return json({ closed: compactPullRequest(result.pr) });
+      return json({ closed: compactPullRequest(result.pr), note: PR_SUBSCRIPTIONS_CLOSED_NOTE });
     }
     case "project_request_review": {
       await requireProject(projectId);

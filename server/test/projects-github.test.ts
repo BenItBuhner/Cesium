@@ -337,9 +337,10 @@ test("merging needs the user's own words; the Project squash-merges green PRs an
       pr: "cart",
       user_quote: "please merge the cart PR",
     })
-  ) as { merged: { pr: string; state: string }; commit: string };
+  ) as { merged: { pr: string; state: string }; commit: string; note: string };
   assert.equal(merged.merged.pr, "acme/shop#1");
   assert.equal(merged.merged.state, "merged");
+  assert.match(merged.note, /closed with it: there is nothing to unsubscribe/);
   assert.equal(github.pull("acme/shop", 1).merged, true);
   assert.equal(await git(SHOP_REMOTE, ["log", "-1", "--format=%s", "main"]), "Multiply by quantity (#1)");
   assert.equal(await git(SHOP_REMOTE, ["rev-parse", "main"]), merged.commit);
@@ -594,8 +595,9 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
       pr: "banner",
       reason: "The shipping settings page replaces this banner.",
     })
-  ) as { closed: { pr: string; state: string; agent: string } };
+  ) as { closed: { pr: string; state: string; agent: string }; note: string };
   assert.deepEqual([closed.closed.pr, closed.closed.state, closed.closed.agent], [`acme/shop#${number}`, "closed", "banner"]);
+  assert.match(closed.note, /closed with it: there is nothing to unsubscribe/);
   const pull = github.pull("acme/shop", number);
   assert.equal(pull.state, "closed");
   assert.equal(pull.merged, false);
