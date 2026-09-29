@@ -12,7 +12,13 @@ import {
   unsubscribeProject,
   type SubscribeInput,
 } from "./listening.js";
-import { listProjectPullRequests, mergeProjectPullRequest } from "./pull-requests.js";
+import {
+  closeProjectPullRequest,
+  listProjectPullRequests,
+  mergeProjectPullRequest,
+  rebaseRequestFor,
+  requestProjectPullRequestReview,
+} from "./pull-requests.js";
 import { readProjectSubscriptions, summarizeSubscription } from "./subscriptions-store.js";
 import type { ProjectRecord } from "./types.js";
 import {
@@ -429,6 +435,44 @@ export async function executeProjectOrchestratorTool(
         userQuote: arg(args, "user_quote") ?? null,
       });
       return json({ merged: compactPullRequest(result.pr), commit: result.sha });
+    }
+    case "project_close_pr": {
+      await requireProject(projectId);
+      const result = await closeProjectPullRequest(projectId, {
+        pr: requiredArg(args, "pr", name),
+        reason: requiredArg(args, "reason", name),
+        userQuote: arg(args, "user_quote") ?? null,
+      });
+      return json({ closed: compactPullRequest(result.pr) });
+    }
+    case "project_request_review": {
+      await requireProject(projectId);
+      const listed = Array.isArray(args.reviewers) ? args.reviewers : typeof args.reviewers === "string" ? args.reviewers.split(/[\s,]+/) : [];
+      const result = await requestProjectPullRequestReview(projectId, {
+        pr: requiredArg(args, "pr", name),
+        reviewers: listed.filter((entry): entry is string => typeof entry === "string"),
+        note: arg(args, "note") ?? null,
+      });
+      return json({
+        requested: result.requested,
+        pr: `${result.pr.repo}#${result.pr.number}`,
+        note: "Their reviews arrive as <project_events> turns. End your turn.",
+      });
+    }
+    case "project_request_rebase": {
+      const record = await requireProject(projectId);
+      const request = await rebaseRequestFor(projectId, { pr: requiredArg(args, "pr", name), note: arg(args, "note") ?? null });
+      if (record.children.find((child) => child.id === request.childId)?.archivedAt != null) {
+        await setProjectChildArchived(projectId, request.childId, false);
+      }
+      const result = await messageProjectChild(projectId, request.childId, request.message, "queue");
+      return json({
+        asked: result.agent,
+        pr: `${request.pr.repo}#${request.pr.number}`,
+        delivery: result.delivery,
+        mergeable: request.mergeable,
+        note: `It rebases, force-pushes and reports back; the pull request updates itself. ${WAIT_FOR_UPDATES_NOTE}`,
+      });
     }
     case "project_subscribe": {
       const record = await requireProject(projectId);

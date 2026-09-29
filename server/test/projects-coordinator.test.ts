@@ -215,7 +215,8 @@ test("the coordinator runs on its contract: delegate, plan vague asks, talk thro
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /Talk to the user with project_message_user/);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /research agent that writes its findings to docs\/ in the Project context \(it changes no code, so it opens no pull request\)/);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /embed the evidence they list when you tell the user, and never report a UI change as done while its evidence is missing\./);
-  assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /You can merge pull requests but not close them: when one should be closed \(redundant, superseded\), tell the user instead of saying you closed it\./);
+  assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /When one conflicts with its base, have its agent rebase it with project_request_rebase instead of giving up on it\./);
+  assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /Close a redundant or superseded pull request with project_close_pr and say why; someone else's pull request only when the user tells you to\./);
 });
 
 test("messages to the user flag embedded evidence that doesn't exist", async () => {
