@@ -359,26 +359,34 @@ projectPeerRoutes.post(
       await fs.mkdir(brief.contextDir, { recursive: true });
     }
     const helperBrief = brief ? undefined : await helperBriefInput(body.helperBrief, name, mirrorDir);
-    const created = await host.create({
-      projectId,
-      childId: safeId(body, "childId"),
-      name,
-      ...(brief
-        ? { brief }
-        : helperBrief
-          ? { helperBrief }
-          : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
-      displayText: requiredText(body, "displayText", MAX_PROMPT_CHARS),
-      placement,
-      backendId: harness.id,
-      modelId: model.modelId,
-      mode: asString(body.mode) ?? null,
-      peerTokenId: c.get("peerToken").id,
-      ...(asString(body.homeLabel) ? { homeLabel: asString(body.homeLabel)!.slice(0, 80) } : {}),
-      engineLabel: engine,
-      autoApprove: body.autoApprove === true,
-      readOnly: body.readOnly === true,
-    });
+    let created: ChildCreateResult;
+    try {
+      created = await host.create({
+        projectId,
+        childId: safeId(body, "childId"),
+        name,
+        ...(brief
+          ? { brief }
+          : helperBrief
+            ? { helperBrief }
+            : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
+        displayText: requiredText(body, "displayText", MAX_PROMPT_CHARS),
+        placement,
+        backendId: harness.id,
+        modelId: model.modelId,
+        mode: asString(body.mode) ?? null,
+        peerTokenId: c.get("peerToken").id,
+        ...(asString(body.homeLabel) ? { homeLabel: asString(body.homeLabel)!.slice(0, 80) } : {}),
+        engineLabel: engine,
+        autoApprove: body.autoApprove === true,
+        readOnly: body.readOnly === true,
+      });
+    } catch (error) {
+      if (helperBrief?.kind === "browser" && helperBrief.mediaDir) {
+        await fs.rmdir(helperBrief.mediaDir).catch(() => undefined);
+      }
+      throw error;
+    }
     return c.json({ ...created, modelWarning: model.warning } satisfies ChildCreateResult, 201);
   })
 );

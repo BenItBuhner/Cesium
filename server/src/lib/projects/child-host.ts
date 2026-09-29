@@ -556,7 +556,9 @@ export class LocalChildHost implements ChildHost {
   async create(input: ChildCreateInput): Promise<ChildCreateResult> {
     if (input.helperBrief?.kind === "browser") {
       // Before anything is placed: a browser check without a browser would only report that it failed.
-      const browser = await ensurePlaywrightChromium(input.engineLabel ?? "this engine");
+      const browser = await ensurePlaywrightChromium(input.engineLabel ?? "this engine", {
+        peerRequest: Boolean(input.peerTokenId),
+      });
       if (!browser.ok) {
         throw new ProjectError(browser.message, 409, "browser_unavailable");
       }

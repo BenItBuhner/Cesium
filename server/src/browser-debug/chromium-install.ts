@@ -12,6 +12,13 @@ import path from "node:path";
  */
 
 const INSTALL_WAIT_MS = 5 * 60_000;
+/**
+ * How long an engine waits on the download when a home engine asked for the
+ * check over the peer API: the answer has to beat that home's request timeout
+ * and this server's HTTP idle timeout (120 s). A slower download answers
+ * "still downloading" and carries on.
+ */
+export const PEER_INSTALL_WAIT_MS = 45_000;
 const OUTPUT_KEPT_CHARS = 4_000;
 
 export type ChromiumReadiness = { ok: true; installed: boolean } | { ok: false; message: string };
@@ -21,23 +28,35 @@ type InstallHooks = {
   probe: () => Promise<string | null>;
   install: () => Promise<void>;
   waitMs: number;
+  peerWaitMs: number;
 };
 
-const defaultHooks: InstallHooks = { probe: probeChromium, install: installChromium, waitMs: INSTALL_WAIT_MS };
+const defaultHooks: InstallHooks = {
+  probe: probeChromium,
+  install: installChromium,
+  waitMs: INSTALL_WAIT_MS,
+  peerWaitMs: PEER_INSTALL_WAIT_MS,
+};
 let hooks = defaultHooks;
 let launchable = false;
 let installing: Promise<void> | null = null;
 
-/** Test hook: replace the probe, the installer or how long a caller waits for it; `null` restores them. */
+/** Test hook: replace the probe, the installer or how long callers wait for it; `null` restores them. */
 export function setChromiumInstallForTests(overrides: Partial<InstallHooks> | null): void {
   hooks = { ...defaultHooks, ...overrides };
   launchable = false;
   installing = null;
 }
 
-function firstLine(error: unknown): string {
+/** An error's first line, completed from the box Playwright prints under a bare `browserType.launch:`. */
+export function chromiumErrorReason(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.split("\n").map((line) => line.trim()).find(Boolean) ?? "unknown error";
+  const lines = text
+    .split("\n")
+    .map((line) => line.replace(/[║╔╗╚╝═]/g, "").trim())
+    .filter(Boolean);
+  const [first = "unknown error", next] = lines;
+  return first.endsWith(":") && next ? `${first} ${next}` : first;
 }
 
 async function probeChromium(): Promise<string | null> {
@@ -47,7 +66,7 @@ async function probeChromium(): Promise<string | null> {
     await browser.close();
     return null;
   } catch (error) {
-    return firstLine(error);
+    return chromiumErrorReason(error);
   }
 }
 
@@ -116,15 +135,23 @@ function startInstall(): Promise<void> {
 }
 
 function howToInstall(engine: string, why: string): string {
-  return `The browser check needs Playwright's Chromium, which ${engine} doesn't have (${why}). Install it on that machine with \`npx playwright install chromium\` in Cesium's server folder (${process.cwd()}), then start the check again.`;
+  const where = `in Cesium's server folder (${process.cwd()}), then start the check again.`;
+  if (/missing dependencies/i.test(why)) {
+    return `The browser check needs Playwright's Chromium, which can't run on ${engine} yet (${why}). Install the system libraries it needs on that machine with \`sudo npx playwright install-deps chromium\` ${where}`;
+  }
+  return `The browser check needs Playwright's Chromium, which ${engine} doesn't have (${why}). Install it on that machine with \`npx playwright install chromium\` ${where}`;
 }
 
 /**
  * Makes sure a headless Chromium launches on this engine, installing it on
  * first use (one install at a time, shared by concurrent callers). Never
- * throws: a failure comes back with what to do about it.
+ * throws: a failure comes back with what to do about it. A `peerRequest`
+ * (a home engine waiting on the peer API) gets the shorter peer wait.
  */
-export async function ensurePlaywrightChromium(engine: string): Promise<ChromiumReadiness> {
+export async function ensurePlaywrightChromium(
+  engine: string,
+  options: { peerRequest?: boolean } = {}
+): Promise<ChromiumReadiness> {
   const mode = process.env.CESIUM_CHROMIUM_INSTALL?.trim().toLowerCase() || "auto";
   if (launchable || mode === "skip") {
     return { ok: true, installed: false };
@@ -142,10 +169,10 @@ export async function ensurePlaywrightChromium(engine: string): Promise<Chromium
   const outcome = await Promise.race([
     install.then(
       () => null,
-      (error: unknown) => firstLine(error)
+      (error: unknown) => chromiumErrorReason(error)
     ),
     new Promise<"waiting">((resolve) => {
-      timer = setTimeout(() => resolve("waiting"), hooks.waitMs);
+      timer = setTimeout(() => resolve("waiting"), options.peerRequest ? hooks.peerWaitMs : hooks.waitMs);
     }),
   ]).finally(() => clearTimeout(timer));
   if (outcome === "waiting") {
