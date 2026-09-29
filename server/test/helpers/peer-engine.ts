@@ -35,6 +35,8 @@ export async function startPeerEngine(input: {
   const login = { username: "peer-admin", password: "peer-password-for-tests" };
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // Browser checks on test peers are scripted and never drive a browser: no Chromium check or download.
+    CESIUM_CHROMIUM_INSTALL: "skip",
     ...input.env,
     NODE_ENV: "test",
     PORT: String(port),
