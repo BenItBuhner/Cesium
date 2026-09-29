@@ -199,6 +199,11 @@ export class PeerClient {
     return result.transcript;
   }
 
+  async reply(ref: ChildRef): Promise<string | null> {
+    const result = await peerRequest<{ reply: string | null }>(this.peer, "GET", childPath(ref, "/reply"));
+    return result.reply;
+  }
+
   async message(
     ref: ChildRef,
     text: string,

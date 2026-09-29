@@ -40,7 +40,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     kind: KIND,
     title: (args) => `Explore ${str(args, "repo")}`.trim(),
     description:
-      "Ask read-only code explorers about a repository on this engine and wait for their answers. Each question gets its own explorer on a clean checkout of the base branch and they all work at once, so put separate questions in one call. Use it to plan from a vague request before creating agents. Answers are saved under internal/explore/; an explorer that takes more than a few minutes reports back as an agent update instead.",
+      "Ask read-only code explorers about one of the Project's repositories, on whichever engine holds it, and wait for their answers. Each question gets its own explorer on a clean checkout of the base branch and they all work at once, so put separate questions in one call. Use it to plan from a vague request before creating agents. Answers are saved under internal/explore/; an explorer that takes more than a few minutes reports back as an agent update instead.",
     parameters: {
       type: "object",
       required: ["repo", "questions"],
@@ -62,7 +62,7 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
     kind: KIND,
     title: (args) => `Browser check ${str(args, "agent") || str(args, "url")}`.trim(),
     description:
-      "Start a QA helper that runs an agent's branch (or opens a URL) in a real browser, checks the behavior you describe, and saves screenshots and a recording under media/<helper>/. It reports back as an agent update; embed its evidence when you tell the user.",
+      "Start a QA helper that runs an agent's branch on that agent's engine (or opens a URL) in a real browser, checks the behavior you describe, and saves screenshots and a recording under media/<helper>/ in the Project context. It reports back as an agent update; embed its evidence when you tell the user.",
     parameters: {
       type: "object",
       required: ["what"],

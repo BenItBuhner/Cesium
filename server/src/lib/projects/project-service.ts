@@ -684,7 +684,7 @@ export function resolveProjectChild(
  * engine without context sync (or one that fails it) just gets no copy; the
  * agent is told so.
  */
-async function syncContextToPeer(projectId: string, engineId: string): Promise<boolean> {
+export async function syncContextToPeer(projectId: string, engineId: string): Promise<boolean> {
   try {
     const { syncProjectContextWithPeer } = await import("./context-sync.js");
     await syncProjectContextWithPeer(projectId, engineId);

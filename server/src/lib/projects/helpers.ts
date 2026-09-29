@@ -1,15 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { PROJECT_HOME_ENGINE_ID, isProjectChildBusy, projectEngineName } from "@cesium/core/projects";
-import { readConversationRecord, readRecentConversationEvents } from "../agents/session-store.js";
 import type { AgentBackendId } from "../agents/types.js";
-import { getWorkspaceById, type WorkspaceRecord } from "../workspace-registry.js";
-import {
-  lastAssistantReply,
-  type ChildCreateResult,
-  type ChildPlacement,
-  type ChildRef,
-} from "./child-host.js";
+import type { ChildCreateResult, ChildPlacement, ChildRef } from "./child-host.js";
 import { writeContextFile } from "./context-store.js";
 import { homeEngineLabel, listEngineSummaries } from "./engine-registry.js";
 import { ProjectError } from "./errors.js";
@@ -22,15 +15,16 @@ import {
   randomHex,
   requireProject,
   resolveProjectChild,
+  syncContextToPeer,
 } from "./project-service.js";
 import { mutateProject, readProject } from "./project-store.js";
 import type { ProjectChildRecord, ProjectRecord } from "./types.js";
-import { createDetachedWorktree, removeWorkerWorktree } from "./worktrees.js";
 
-export const HELPER_BRIEF_TAG = "project_helper_brief";
 const MAX_ACTIVE_HELPERS = 4;
 const EXPLORE_WAIT_MS = 180_000;
 const HELPER_POLL_MS = 250;
+/** A helper on another engine is observed over the network, so less often. */
+const REMOTE_HELPER_POLL_MS = 1_000;
 const ANSWER_MAX_CHARS = 60_000;
 
 let exploreWaitMs = EXPLORE_WAIT_MS;
@@ -68,22 +62,25 @@ function assertHelperCapacity(record: ProjectRecord, adding = 1): void {
   }
 }
 
+/** Helpers run the Project's default model at home; another engine picks its own default, like its workers. */
+function helperModelId(record: ProjectRecord, engineId: string): string | null {
+  return engineId === PROJECT_HOME_ENGINE_ID ? (record.settings.defaultChildModelId ?? record.orchestrator.modelId) : null;
+}
+
 function helperRecord(input: {
   childId: string;
   name: string;
+  engineId: string;
   helperKind: "explore" | "browser";
-  created: Awaited<ReturnType<ReturnType<typeof childHostFor>["create"]>>;
+  created: ChildCreateResult;
   repoId: string | null;
   task: string;
   suppressReports: boolean;
-  worktreePath: string | null;
-  baseRef: string | null;
-  baseSha: string | null;
 }): ProjectChildRecord {
   return {
     id: input.childId,
     name: input.name,
-    engineId: PROJECT_HOME_ENGINE_ID,
+    engineId: input.engineId,
     repoId: input.repoId,
     workspaceId: input.created.workspaceId,
     conversationId: input.created.conversationId,
@@ -94,11 +91,11 @@ function helperRecord(input: {
     createdAt: Date.now(),
     deletedAt: null,
     archivedAt: null,
-    isolation: input.worktreePath ? "worktree" : input.repoId ? "checkout" : "scratch",
+    isolation: input.created.isolation,
     branch: null,
-    baseRef: input.baseRef,
-    baseSha: input.baseSha,
-    worktreePath: input.worktreePath,
+    baseRef: input.created.baseRef,
+    baseSha: input.created.baseSha,
+    worktreePath: input.created.worktreePath,
     githubRepo: null,
     pr: null,
     task: input.task,
@@ -116,26 +113,6 @@ function helperRecord(input: {
   };
 }
 
-export function buildExploreBrief(input: {
-  projectName: string;
-  helperName: string;
-  repoName: string;
-  root: string;
-  baseRef: string | null;
-  sha: string | null;
-  question: string;
-}): string {
-  return [
-    `<${HELPER_BRIEF_TAG}>`,
-    `You are "${input.helperName}", a helper agent in the Cesium Project "${input.projectName}": a read-only code explorer. The coordinator asked you the question below about the "${input.repoName}" repository.`,
-    `- The code is at ${input.root}${input.sha ? `, a clean checkout of ${input.baseRef} (${input.sha.slice(0, 12)})` : ""}. Search and read it; change nothing.`,
-    "- Answer concisely: the facts, the relevant files as path:line, and anything you are unsure of. Your reply goes to the coordinator as is.",
-    `</${HELPER_BRIEF_TAG}>`,
-    "",
-    `Question: ${input.question}`,
-  ].join("\n");
-}
-
 async function resumeProjectChildReports(projectId: string, childId: string, fromSeq: number): Promise<void> {
   const watcher = await import("./project-watcher.js");
   await watcher.resumeProjectChildReports(projectId, childId, fromSeq);
@@ -148,23 +125,25 @@ async function observeNewChild(projectId: string, childId: string): Promise<void
 
 type HelperOutcome = { done: true; answer: string } | { done: false };
 
-async function waitForHelperTurn(ref: ChildRef, timeoutMs: number): Promise<HelperOutcome> {
+async function waitForHelperTurn(engineId: string, ref: ChildRef, timeoutMs: number): Promise<HelperOutcome> {
+  const host = childHostFor(engineId);
+  const pollMs = engineId === PROJECT_HOME_ENGINE_ID ? helperPollMs : Math.max(helperPollMs, REMOTE_HELPER_POLL_MS);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const record = await readConversationRecord(ref.workspaceId, ref.conversationId);
-    if (record && !isProjectChildBusy(record.status) && (record.queuedPrompts?.length ?? 0) === 0) {
-      if (record.status === "failed") {
-        return { done: true, answer: `The explorer failed: ${record.lastError ?? "unknown error"}.` };
+    const observation = await host.observe(ref).catch(() => null);
+    if (observation?.exists && !isProjectChildBusy(observation.status) && observation.queued === 0) {
+      if (observation.status === "failed") {
+        return { done: true, answer: `The explorer failed: ${observation.lastError ?? "unknown error"}.` };
       }
-      if (record.status === "cancelled" || record.status === "interrupted") {
+      if (observation.status === "cancelled" || observation.status === "interrupted") {
         return { done: true, answer: "The explorer was stopped before it answered." };
       }
-      const reply = lastAssistantReply(await readRecentConversationEvents(ref.workspaceId, ref.conversationId, 2));
+      const reply = await host.lastReply(ref).catch(() => null);
       if (reply) {
         return { done: true, answer: reply };
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, helperPollMs));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   return { done: false };
 }
@@ -198,12 +177,14 @@ async function finalizeExploreHelper(projectId: string, childId: string, answer:
       "",
     ].join("\n")
   ).catch(() => undefined);
-  const observed = await readConversationRecord(child.workspaceId, child.conversationId).catch(() => null);
+  const observed = await childHostFor(child.engineId)
+    .observe({ workspaceId: child.workspaceId, conversationId: child.conversationId })
+    .catch(() => null);
   await patchChild(projectId, childId, (current) => ({
     deletedAt: Date.now(),
     suppressReports: true,
-    lastStatus: observed?.status ?? current.lastStatus,
-    lastReportedSeq: observed?.lastEventSeq ?? current.lastReportedSeq,
+    lastStatus: observed?.exists ? observed.status : current.lastStatus,
+    lastReportedSeq: observed?.exists ? observed.lastEventSeq : current.lastReportedSeq,
     turnsCompleted: current.turnsCompleted + 1,
     lastReplyPreview: answer.length > 1_200 ? `${answer.slice(0, 1_199)}…` : answer,
   }));
@@ -231,54 +212,37 @@ type StartedExplorer = {
 async function startExplorer(input: {
   record: ProjectRecord;
   repo: ProjectRecord["repos"][number];
-  repoWorkspace: WorkspaceRecord;
+  engineLabel: string;
   question: string;
   resolvedBase: { baseRef: string; sha: string } | null;
 }): Promise<StartedExplorer> {
-  const { record, repo, repoWorkspace, question } = input;
+  const { record, repo, question } = input;
   const claim = await claimChildName(record.id, "explore");
   try {
     const { name } = claim;
     const childId = `pca_${randomHex(6)}`;
-    const checkout = await createDetachedWorktree({
-      projectId: record.id,
-      repoWorkspace,
+    const placement: ChildPlacement = {
+      kind: "snapshot",
+      workspaceId: repo.workspaceId,
       baseBranch: repo.baseBranch ?? null,
       name: `${name}-${randomHex(2)}`,
-      resolvedBase: input.resolvedBase,
+      base: input.resolvedBase,
+    };
+    const created = await childHostFor(repo.engineId).create({
+      projectId: record.id,
+      childId,
+      name,
+      helperBrief: { kind: "explore", projectName: record.name, helperName: name, repoName: repo.name, question },
+      displayText: question,
+      placement,
+      backendId: "cesium-agent" as AgentBackendId,
+      modelId: helperModelId(record, repo.engineId),
+      homeLabel: homeEngineLabel(),
+      engineLabel: input.engineLabel,
+      // It only gets tools that change nothing, so its searches never wait for a person.
+      readOnly: true,
+      autoApprove: true,
     });
-    const root = checkout?.path ?? repoWorkspace.root;
-    const placement: ChildPlacement = { kind: "root", root };
-    let created: ChildCreateResult;
-    try {
-      created = await childHostFor(PROJECT_HOME_ENGINE_ID).create({
-        projectId: record.id,
-        childId,
-        name,
-        promptText: buildExploreBrief({
-          projectName: record.name,
-          helperName: name,
-          repoName: repo.name,
-          root,
-          baseRef: checkout?.baseRef ?? null,
-          sha: checkout?.sha ?? null,
-          question,
-        }),
-        displayText: question,
-        placement,
-        backendId: "cesium-agent" as AgentBackendId,
-        modelId: record.settings.defaultChildModelId ?? record.orchestrator.modelId,
-        homeLabel: homeEngineLabel(),
-        // It only gets tools that change nothing, so its searches never wait for a person.
-        readOnly: true,
-        autoApprove: true,
-      });
-    } catch (error) {
-      if (checkout) {
-        await removeWorkerWorktree(checkout.workspace).catch(() => undefined);
-      }
-      throw error;
-    }
     await mutateProject(record.id, (existing) => ({
       ...existing,
       children: [
@@ -286,28 +250,31 @@ async function startExplorer(input: {
         helperRecord({
           childId,
           name,
+          engineId: repo.engineId,
           helperKind: "explore",
           created,
           repoId: repo.id,
           task: question,
           suppressReports: true,
-          worktreePath: checkout?.path ?? null,
-          baseRef: checkout?.baseRef ?? null,
-          baseSha: checkout?.sha ?? null,
         }),
       ],
     }));
-    return { name, childId, ref: created, base: checkout ? { baseRef: checkout.baseRef, sha: checkout.sha } : null };
+    return {
+      name,
+      childId,
+      ref: created,
+      base: created.baseRef && created.baseSha ? { baseRef: created.baseRef, sha: created.baseSha } : null,
+    };
   } finally {
     claim.release();
   }
 }
 
 /**
- * Runs one read-only explorer per question on a repository (each in a clean
- * checkout of the same base commit), all at once, and waits for their answers.
- * An explorer that is too slow keeps working and reports back as an ordinary
- * agent update.
+ * Runs one read-only explorer per question on a repository, on the engine
+ * that holds it (each in a clean checkout of the same base commit), all at
+ * once, and waits for their answers. An explorer that is too slow keeps
+ * working and reports back as an ordinary agent update.
  */
 export async function exploreProjectRepo(
   projectId: string,
@@ -322,24 +289,15 @@ export async function exploreProjectRepo(
     throw new ProjectError(`Ask at most ${MAX_ACTIVE_HELPERS} questions at once.`);
   }
   const repo = findRepo(record, input.repo ?? "");
-  if (repo.engineId !== PROJECT_HOME_ENGINE_ID) {
-    const engines = await listEngineSummaries();
-    throw new ProjectError(
-      `project_explore reads repositories on this engine; ${repo.name} is on ${projectEngineName(repo.engineId, engines)}. Start a research agent there instead.`
-    );
-  }
   assertHelperCapacity(record, questions.length);
-  const repoWorkspace = await getWorkspaceById(repo.workspaceId);
-  if (!repoWorkspace) {
-    throw new ProjectError(`${repo.name}'s folder is no longer registered on this engine.`);
-  }
+  const engineLabel = projectEngineName(repo.engineId, await listEngineSummaries());
   // Checkouts are added one at a time (git locks the repository for each);
   // the explorers then all work at once.
   const slots: Array<{ question: string; explorer: StartedExplorer | null; error: string | null }> = [];
   let resolvedBase: { baseRef: string; sha: string } | null = null;
   for (const question of questions) {
     try {
-      const explorer = await startExplorer({ record, repo, repoWorkspace, question, resolvedBase });
+      const explorer = await startExplorer({ record, repo, engineLabel, question, resolvedBase });
       resolvedBase ??= explorer.base;
       slots.push({ question, explorer, error: null });
     } catch (error) {
@@ -353,7 +311,7 @@ export async function exploreProjectRepo(
     throw new ProjectError(`No explorer could start: ${slots[0]?.error ?? "unknown error"}`);
   }
   const outcomes = await Promise.all(
-    slots.map((slot) => (slot.explorer ? waitForHelperTurn(slot.explorer.ref, exploreWaitMs) : null))
+    slots.map((slot) => (slot.explorer ? waitForHelperTurn(repo.engineId, slot.explorer.ref, exploreWaitMs) : null))
   );
   const results: ExploreResult[] = [];
   for (const [index, slot] of slots.entries()) {
@@ -384,45 +342,24 @@ export async function afterHelperReported(projectId: string, childId: string): P
   if (!child || child.kind !== "helper" || child.helperKind !== "explore" || child.deletedAt != null) {
     return null;
   }
-  const reply = lastAssistantReply(await readRecentConversationEvents(child.workspaceId, child.conversationId, 2));
+  const reply = await childHostFor(child.engineId)
+    .lastReply({ workspaceId: child.workspaceId, conversationId: child.conversationId })
+    .catch(() => null);
   return (await finalizeExploreHelper(projectId, childId, reply ?? child.lastReplyPreview ?? "(no answer)")) || null;
 }
 
-export function buildBrowserCheckBrief(input: {
-  projectName: string;
-  helperName: string;
-  what: string;
-  where: string | null;
-  url: string | null;
-  mediaDir: string;
-}): string {
-  return [
-    `<${HELPER_BRIEF_TAG}>`,
-    `You are "${input.helperName}", a helper agent in the Cesium Project "${input.projectName}": a QA tester with a real browser. Check the behavior below in the running app and capture evidence.`,
-    ...(input.where
-      ? [
-          `- The code is ${input.where}. Don't change it. Start the app from there if it isn't running (the README or package.json says how) and stop whatever you started when you finish.`,
-        ]
-      : []),
-    ...(input.url ? [`- Open ${input.url}.`] : []),
-    '- Drive the browser with call_mcp_tool on server "browser": browser_tabs (open a tab), browser_navigate, browser_snapshot, browser_click, browser_type, browser_screenshot, and browser_record (action "start" right before the interaction, "stop" right after). Tool details are under mcp-servers/browser/.',
-    `- The tools save screenshots and recordings under artifacts/browser/ in your workspace; copy every one you make into ${input.mediaDir} and list the paths.`,
-    "- End with a short report: what you checked, what worked, what failed, and the evidence paths. It reaches the coordinator automatically.",
-    `</${HELPER_BRIEF_TAG}>`,
-    "",
-    `Check: ${input.what}`,
-  ].join("\n");
-}
-
 /**
- * Starts a browser QA helper, in an agent's working tree (to run its branch)
- * or a scratch folder for a URL. It reports back as an agent update with the
- * evidence saved under `media/<helper>/`.
+ * Starts a browser QA helper: in an agent's working tree on that agent's
+ * engine (to run its branch), or in a scratch folder here for a URL. It
+ * reports back as an agent update with the evidence saved under
+ * `media/<helper>/` in the Project context (copied back from a peer after its
+ * turn). Returns where the evidence lands here, or null when the peer has no
+ * copy of the context and the files stay there.
  */
 export async function startBrowserCheck(
   projectId: string,
   input: { what: string; agent?: string | null; url?: string | null }
-): Promise<{ helper: string; mediaDir: string }> {
+): Promise<{ helper: string; mediaDir: string | null; engine: string }> {
   const record = await requireProject(projectId);
   const what = input.what?.trim();
   if (!what) {
@@ -433,49 +370,59 @@ export async function startBrowserCheck(
     throw new ProjectError("url must start with http:// or https://.");
   }
   let placement: ChildPlacement;
-  let where: string | null = null;
-  let repoId: string | null = null;
+  let engineId: string = PROJECT_HOME_ENGINE_ID;
+  let target: ProjectChildRecord | null = null;
   if (input.agent?.trim()) {
-    const target = resolveProjectChild(record, input.agent);
-    if (target.engineId !== PROJECT_HOME_ENGINE_ID) {
-      throw new ProjectError("Browser checks run on this engine; that agent works on another one.");
-    }
-    const workspace = await getWorkspaceById(target.workspaceId);
-    if (!workspace) {
-      throw new ProjectError(`Agent ${target.name}'s folder is gone.`);
-    }
-    placement = { kind: "workspace", workspaceId: target.workspaceId };
-    where = `agent ${target.name}'s working tree at ${workspace.root}${target.branch ? ` (branch \`${target.branch}\`)` : ""}`;
-    repoId = target.repoId;
+    target = resolveProjectChild(record, input.agent);
+    engineId = target.engineId;
+    placement = { kind: "agent", workspaceId: target.workspaceId, conversationId: target.conversationId };
   } else if (url) {
     placement = { kind: "scratch", label: `${record.name} · browser check` };
   } else {
     throw new ProjectError("Pass the agent whose work to check, or a url.");
   }
   assertHelperCapacity(record);
+  const isHome = engineId === PROJECT_HOME_ENGINE_ID;
+  const engines = await listEngineSummaries();
   const claim = await claimChildName(projectId, "browser-check");
   try {
     const { name } = claim;
     const childId = `pca_${randomHex(6)}`;
-    const mediaDir = path.join(getProjectContextDir(projectId), "media", name);
-    await fs.mkdir(mediaDir, { recursive: true });
+    const homeMediaDir = path.join(getProjectContextDir(projectId), "media", name);
+    const contextSync = isHome ? false : await syncContextToPeer(projectId, engineId);
+    if (isHome) {
+      await fs.mkdir(homeMediaDir, { recursive: true });
+    }
     let created: ChildCreateResult;
     try {
-      created = await childHostFor(PROJECT_HOME_ENGINE_ID).create({
+      created = await childHostFor(engineId).create({
         projectId,
         childId,
         name,
-        promptText: buildBrowserCheckBrief({ projectName: record.name, helperName: name, what, where, url, mediaDir }),
+        helperBrief: {
+          kind: "browser",
+          projectName: record.name,
+          helperName: name,
+          what,
+          url,
+          agent: target ? { name: target.name, branch: target.branch } : null,
+          // A peer puts it in its own copy of the context.
+          mediaDir: isHome ? homeMediaDir : null,
+          contextSync,
+        },
         displayText: `Check: ${what}`,
         placement,
         backendId: "cesium-agent" as AgentBackendId,
-        modelId: record.settings.defaultChildModelId ?? record.orchestrator.modelId,
+        modelId: helperModelId(record, engineId),
         mode: "agent",
         homeLabel: homeEngineLabel(),
+        engineLabel: projectEngineName(engineId, engines),
         autoApprove: record.settings.autoApproveAgents,
       });
     } catch (error) {
-      await fs.rmdir(mediaDir).catch(() => undefined);
+      if (isHome) {
+        await fs.rmdir(homeMediaDir).catch(() => undefined);
+      }
       throw error;
     }
     await mutateProject(projectId, (existing) => ({
@@ -485,19 +432,17 @@ export async function startBrowserCheck(
         helperRecord({
           childId,
           name,
+          engineId,
           helperKind: "browser",
           created,
-          repoId,
+          repoId: target?.repoId ?? null,
           task: what,
           suppressReports: false,
-          worktreePath: null,
-          baseRef: null,
-          baseSha: null,
         }),
       ],
     }));
     await observeNewChild(projectId, childId);
-    return { helper: name, mediaDir };
+    return { helper: name, mediaDir: isHome || contextSync ? homeMediaDir : null, engine: projectEngineName(engineId, engines) };
   } finally {
     claim.release();
   }
