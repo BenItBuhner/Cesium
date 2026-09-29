@@ -199,6 +199,11 @@ function parsePrRef(record: ProjectRecord, raw: string): { repo: string; number:
   if (slug) {
     return { repo: slug[1]!, number: Number(slug[2]) };
   }
+  const named = raw.match(/^([^/\s#]+)#(\d+)$/);
+  const namedRepo = named ? record.repos.find((repo) => repo.name.toLowerCase() === named[1]!.toLowerCase()) : null;
+  if (named && namedRepo?.githubRepo) {
+    return { repo: namedRepo.githubRepo, number: Number(named[2]) };
+  }
   const bare = raw.match(/^#?(\d+)$/);
   const repos = [
     ...new Set(
@@ -210,7 +215,7 @@ function parsePrRef(record: ProjectRecord, raw: string): { repo: string; number:
   if (bare && repos.length === 1) {
     return { repo: repos[0]!, number: Number(bare[1]) };
   }
-  throw new ProjectError(`Pass the PR as owner/repo#N or its URL (got "${raw}").`);
+  throw new ProjectError(`Pass the PR as owner/repo#N, <repository>#N or its URL (got "${raw}").`);
 }
 
 function subscribeInputFromArgs(record: ProjectRecord, args: Record<string, unknown>): SubscribeInput {
@@ -564,7 +569,8 @@ export async function buildProjectOrchestratorReminder(
     "Repositories:",
     ...(record.repos.length > 0
       ? record.repos.map(
-          (repo) => `- ${repo.name} (engine ${projectEngineName(repo.engineId, engines)}) ${repo.root}`
+          (repo) =>
+            `- ${repo.name} (engine ${projectEngineName(repo.engineId, engines)}${repo.githubRepo ? `, GitHub ${repo.githubRepo}` : ""}) ${repo.root}`
         )
       : ["- none bound; agents without a repo get an empty scratch folder"]),
     "",

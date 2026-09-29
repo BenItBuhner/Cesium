@@ -462,6 +462,10 @@ test("the coordinator follows another PR by URL, hears its new commits, and unsu
   ) as { subscribed: ProjectSubscriptionSummary };
   assert.equal(followed.subscribed.label, "acme/shop#3");
   assert.equal(followed.subscribed.createdBy, "coordinator");
+  const byName = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_subscribe", { kind: "github_pr", pr: "shop#3" })
+  ) as { alreadySubscribed?: ProjectSubscriptionSummary };
+  assert.equal(byName.alreadySubscribed?.id, followed.subscribed.id, "shop#3 names the same PR");
   await tick();
   const listed = JSON.parse(await executeProjectOrchestratorTool(project.id, "project_list_prs", {})) as {
     prs: Array<{ pr: string; agent: string | null }>;
@@ -492,6 +496,7 @@ test("the coordinator follows another PR by URL, hears its new commits, and unsu
     await import("../src/lib/projects/orchestrator-tools.js")
   ).buildProjectOrchestratorReminder(project.id, { dateLabel: "today", modelName: "test" });
   assert.match(reminder, /Pull requests:\n- acme\/shop#/);
+  assert.match(reminder, /Repositories:\n- shop \(engine Home, GitHub acme\/shop\) /, "the coordinator sees each repository's GitHub name");
   assert.match(reminder, /Merge policy: merge only when the user explicitly says so/);
   assert.match(reminder, /Listening:\n- hourly · every hour \[sub_/);
 });
@@ -618,8 +623,9 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   // The teammate's hotfix PR (#3): no agent here opened it.
   const reason = "Its fix is already on main.";
   await assert.rejects(
-    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason }),
-    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead/
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "shop#3", reason }),
+    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead/,
+    "the Project's repository name resolves to its GitHub repo"
   );
   await assert.rejects(
     executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason, user_quote: "close it" }),
@@ -627,7 +633,7 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   );
   await assert.rejects(
     executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "other/repo#3", reason }),
-    /No tracked pull request matches "other\/repo#3"/,
+    /No tracked pull request matches "other\/repo#3"\..* Name others as owner\/repo#N or <repository>#N \(shop is acme\/shop\)\./,
     "only PRs in the Project's repositories"
   );
   assert.equal(github.pull("acme/shop", 3).state, "open");
