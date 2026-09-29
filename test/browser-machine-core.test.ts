@@ -18,6 +18,7 @@ import {
 } from "../packages/browser-machine/src/harness/reminder.ts";
 import { ShellRuntime } from "../packages/browser-machine/src/shell/runtime.ts";
 import { BrowserGit } from "../packages/browser-machine/src/git/browser-git.ts";
+import { BrowserToolExecutor } from "../packages/browser-machine/src/harness/tools.ts";
 import type { AgentStoredEvent, WorkspaceRecord } from "@cesium/core";
 
 describe("browser machine paths", () => {
@@ -155,6 +156,24 @@ describe("browser machine shell execution", () => {
     );
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /first/);
+  });
+});
+
+describe("browser machine grep tool", () => {
+  test("is case-sensitive unless ignoreCase is set", async () => {
+    const vfs = new Vfs();
+    vfs.mkdir("/workspaces/demo", { recursive: true });
+    vfs.writeFile("/workspaces/demo/a.txt", "Needle upper\nneedle lower\n");
+    const git = new BrowserGit(vfs);
+    const tools = new BrowserToolExecutor(vfs, git, new ShellRuntime(vfs, git));
+    const workspace = { id: "demo", root: "/workspaces/demo", name: "demo", createdAt: 1 } as WorkspaceRecord;
+    const grep = (args: Record<string, unknown>) =>
+      tools.execute({ conversationId: "c1", workspace, name: "grep", args });
+    assert.equal((await grep({ pattern: "needle" })).result, "a.txt:2:needle lower");
+    assert.equal(
+      (await grep({ pattern: "needle", ignoreCase: true })).result,
+      "a.txt:1:Needle upper\na.txt:2:needle lower"
+    );
   });
 });
 
