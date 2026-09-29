@@ -112,9 +112,13 @@ function summarizeProviderError(message: string): { httpStatus?: number; code?: 
   return { httpStatus, code, summary };
 }
 
-/** Network flakes, including a response body cut off mid-stream (undici: `terminated`; Bun: `socket connection was closed unexpectedly`). */
+/**
+ * Network flakes, including a response body cut off mid-stream (undici:
+ * `terminated`; Bun: `socket connection was closed unexpectedly`), and the
+ * errors Anthropic reports inside an open stream (`overloaded_error`, `api_error`).
+ */
 const TRANSIENT_PROVIDER_ERROR =
-  /timeout|timed out|econnreset|econnrefused|epipe|network|gateway timeout|provider unavailable|service unavailable|bad gateway|terminated|other side closed|socket hang up|socket connection|closed unexpectedly|fetch failed|premature close/i;
+  /timeout|timed out|econnreset|econnrefused|epipe|network|gateway timeout|provider unavailable|service unavailable|bad gateway|terminated|other side closed|socket hang up|socket connection|closed unexpectedly|fetch failed|premature close|overloaded|api_error|internal server error/i;
 
 /** True for 429/5xx, queue exceeded, gateway timeout, and similar provider/network flakes. */
 export function isTransientProviderCompletionError(message: string): boolean {

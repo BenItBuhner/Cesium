@@ -211,19 +211,6 @@ async function providerFetch(
   });
 }
 
-async function fetchJson(url: string, init: RequestInit, signal?: AbortSignal): Promise<unknown> {
-  const response = await providerFetch(url, init, signal);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
 /** A tool request from the model's argument text, flagged when that text is not JSON. */
 function toolRequestFromArguments(id: string, name: string, rawArguments: unknown): CesiumToolRequest {
   const parsed = tryParseJsonArgs(rawArguments);
@@ -568,6 +555,12 @@ function* parseSseFrame(frame: string): Generator<unknown | "[DONE]"> {
   yield parseJsonArgs(data);
 }
 
+/** False when a host answered a streaming request with a plain JSON body. */
+function isEventStream(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return Boolean(response.body) && !contentType.includes("application/json") && !contentType.includes("text/json");
+}
+
 async function* readSseJsonEvents(response: Response): AsyncGenerator<unknown | "[DONE]"> {
   if (!response.body) {
     return;
@@ -620,12 +613,7 @@ async function* streamOpenAiChat(input: {
     }
   }
 
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (
-    !response.body ||
-    contentType.includes("application/json") ||
-    contentType.includes("text/json")
-  ) {
+  if (!isEventStream(response)) {
     yield* streamStaticResult(openAiChatResultFromPayload(await readJsonResponse(response)));
     return;
   }
@@ -1111,7 +1099,7 @@ function withAnthropicCacheBreakpoints(body: {
   return { system: systemBlocks, messages, ...(tools ? { tools } : {}) };
 }
 
-async function runAnthropic(input: {
+async function* streamAnthropic(input: {
   apiKey: string;
   baseUrl?: string;
   model: string;
@@ -1121,7 +1109,7 @@ async function runAnthropic(input: {
   promptCacheKey?: string;
   maxOutputTokens?: number;
   signal?: AbortSignal;
-}): Promise<CesiumAdapterResult> {
+}): AsyncGenerator<CesiumAdapterStreamEvent> {
   const tools = optionalProviderTools(input.tools, anthropicTools);
   const isAnthropicOAuth = input.oauth?.providerId === "anthropic";
   const isCopilot = input.oauth?.providerId === "github-copilot";
@@ -1170,26 +1158,132 @@ async function runAnthropic(input: {
     messages: anthropicMessages(input.messages),
     ...(tools ? { tools: tools as Array<Record<string, unknown>> } : {}),
   };
-  const payload = await fetchJson(anthropicMessagesUrl(input.baseUrl), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: input.model,
-      max_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-      ...(input.promptCacheKey && !isCopilot
-        ? withAnthropicCacheBreakpoints(promptParts)
-        : promptParts),
-    }),
-  }, input.signal);
+  const response = await providerFetch(
+    anthropicMessagesUrl(input.baseUrl),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        max_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        ...(input.promptCacheKey && !isCopilot
+          ? withAnthropicCacheBreakpoints(promptParts)
+          : promptParts),
+        stream: true,
+      }),
+    },
+    input.signal
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+  }
+  if (!isEventStream(response)) {
+    yield* streamStaticResult(anthropicResultFromPayload(await readJsonResponse(response)));
+    return;
+  }
+
+  // Usage arrives split: input counts on message_start, output on message_delta.
+  let usage: Record<string, unknown> = {};
+  let stopReason: CesiumStopReason | undefined;
+  const toolBlocks = new Map<number, { id: string; name: string; json: string; input?: Record<string, unknown> }>();
+  const finishToolBlock = (index: number): CesiumToolRequest | null => {
+    const block = toolBlocks.get(index);
+    if (!block) {
+      return null;
+    }
+    toolBlocks.delete(index);
+    return block.json.trim() || !block.input
+      ? toolRequestFromArguments(block.id, block.name, block.json)
+      : createCesiumToolRequest(block.id, block.name, block.input);
+  };
+  for await (const event of readSseJsonEvents(response)) {
+    if (event === "[DONE]") {
+      break;
+    }
+    yield { kind: "raw", raw: event };
+    const root = asRecord(event);
+    switch (root?.type) {
+      case "message_start":
+        usage = { ...usage, ...asRecord(asRecord(root.message)?.usage) };
+        break;
+      case "content_block_start": {
+        const block = asRecord(root.content_block);
+        if (block?.type === "tool_use" && typeof root.index === "number") {
+          const startInput = asRecord(block.input);
+          toolBlocks.set(root.index, {
+            id: asString(block.id) ?? randomUUID(),
+            name: asString(block.name) ?? "tool",
+            json: "",
+            ...(startInput && Object.keys(startInput).length > 0 ? { input: startInput } : {}),
+          });
+        } else if (block?.type === "text" && typeof block.text === "string" && block.text) {
+          yield { kind: "text_delta", text: block.text, raw: event };
+        }
+        break;
+      }
+      case "content_block_delta": {
+        const delta = asRecord(root.delta);
+        if (delta?.type === "text_delta" && typeof delta.text === "string") {
+          yield { kind: "text_delta", text: delta.text, raw: event };
+        } else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+          yield { kind: "reasoning_delta", text: delta.thinking, raw: event };
+        } else if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const block = typeof root.index === "number" ? toolBlocks.get(root.index) : undefined;
+          if (block) {
+            block.json += delta.partial_json;
+          }
+        }
+        break;
+      }
+      case "content_block_stop": {
+        const request = typeof root.index === "number" ? finishToolBlock(root.index) : null;
+        if (request) {
+          yield { kind: "tool_request", request, raw: event };
+        }
+        break;
+      }
+      case "message_delta":
+        usage = { ...usage, ...asRecord(root.usage) };
+        stopReason = anthropicStopReason(asRecord(root.delta)?.stop_reason) ?? stopReason;
+        break;
+      case "error": {
+        const error = asRecord(root.error);
+        throw new Error(
+          `Anthropic stream error: ${asString(error?.type) ?? "error"}: ${asString(error?.message) ?? JSON.stringify(root)}`
+        );
+      }
+      default:
+        break;
+    }
+  }
+  // A stream cut off mid-block still reports the calls it started.
+  for (const index of [...toolBlocks.keys()]) {
+    const request = finishToolBlock(index);
+    if (request) {
+      yield { kind: "tool_request", request };
+    }
+  }
+  const total = usageFromAnthropic(usage);
+  if (total) {
+    yield { kind: "usage", usage: total };
+  }
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
+}
+
+function anthropicResultFromPayload(payload: unknown): CesiumAdapterResult {
   const root = asRecord(payload);
   const content = Array.isArray(root?.content) ? root.content : [];
   const toolRequests: CesiumToolRequest[] = [];
   const text: string[] = [];
+  const reasoning: string[] = [];
   for (const block of content) {
     const item = asRecord(block);
     if (!item) continue;
     if (item.type === "text" && typeof item.text === "string") {
       text.push(item.text);
+    } else if (item.type === "thinking" && typeof item.thinking === "string") {
+      reasoning.push(item.thinking);
     } else if (item.type === "tool_use") {
       const name = asString(item.name);
       if (name) {
@@ -1205,6 +1299,7 @@ async function runAnthropic(input: {
   }
   return {
     text: text.join(""),
+    ...(reasoning.length > 0 ? { reasoning: reasoning.join("") } : {}),
     toolRequests,
     usage: usageFromAnthropic(root?.usage),
     stopReason: anthropicStopReason(root?.stop_reason),
@@ -1221,7 +1316,7 @@ function googleContents(messages: CesiumHistoryMessage[]) {
     }));
 }
 
-async function runGoogle(input: {
+async function* streamGoogle(input: {
   apiKey: string;
   baseUrl?: string;
   model: string;
@@ -1230,16 +1325,16 @@ async function runGoogle(input: {
   oauth?: CesiumOAuthAdapterAuth;
   maxOutputTokens?: number;
   signal?: AbortSignal;
-}): Promise<CesiumAdapterResult> {
+}): AsyncGenerator<CesiumAdapterStreamEvent> {
   const base = (input.baseUrl?.trim() || "https://generativelanguage.googleapis.com").replace(
     /\/+$/,
     ""
   );
   const apiRoot = /\/v\d+(beta)?$/i.test(base) ? base : `${base}/v1beta`;
-  const endpoint = `${apiRoot}/models/${encodeURIComponent(input.model)}:generateContent`;
+  const endpoint = `${apiRoot}/models/${encodeURIComponent(input.model)}:streamGenerateContent?alt=sse`;
   // OAuth accounts (Pi Google provider packages) authenticate via Bearer;
-  // plain API keys keep the ?key= query parameter.
-  const url = input.oauth ? endpoint : `${endpoint}?key=${encodeURIComponent(input.apiKey)}`;
+  // plain API keys keep the key= query parameter.
+  const url = input.oauth ? endpoint : `${endpoint}&key=${encodeURIComponent(input.apiKey)}`;
   const headers = mergedHeaders(
     {
       "content-type": "application/json",
@@ -1248,56 +1343,80 @@ async function runGoogle(input: {
     input.oauth?.headers
   );
   const tools = optionalProviderTools(input.tools, googleTools);
-  const payload = await fetchJson(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      contents: googleContents(input.messages),
-      systemInstruction: {
-        parts: [{ text: systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT }],
-      },
-      ...(tools ? { tools } : {}),
-      generationConfig: {
-        maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-      },
-    }),
-  }, input.signal);
-  const root = asRecord(payload);
-  const candidates = Array.isArray(root?.candidates)
-    ? root.candidates
-    : [];
-  const candidate = asRecord(candidates[0]);
-  const content = asRecord(candidate?.content);
-  const parts = Array.isArray(content?.parts)
-    ? content.parts
-    : [];
-  const text: string[] = [];
-  const toolRequests: CesiumToolRequest[] = [];
-  for (const part of parts) {
-    const record = asRecord(part);
-    if (!record) continue;
-    if (typeof record.text === "string") {
-      text.push(record.text);
+  const response = await providerFetch(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        contents: googleContents(input.messages),
+        systemInstruction: {
+          parts: [{ text: systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT }],
+        },
+        ...(tools ? { tools } : {}),
+        generationConfig: {
+          maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        },
+      }),
+    },
+    input.signal
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+  }
+  let chunks: AsyncIterable<unknown> | unknown[];
+  if (isEventStream(response)) {
+    chunks = readSseJsonEvents(response);
+  } else {
+    const payload = await readJsonResponse(response);
+    chunks = Array.isArray(payload) ? payload : [payload];
+  }
+  // usageMetadata is cumulative, so the last one counts.
+  let usage: CesiumAdapterResult["usage"];
+  let stopReason: CesiumStopReason | undefined;
+  for await (const chunk of chunks) {
+    if (chunk === "[DONE]") {
+      break;
     }
-    const call = asRecord(record.functionCall);
-    const name = asString(call?.name);
-    if (name) {
-      toolRequests.push(
-        createCesiumToolRequest(
-          randomUUID(),
-          name,
-          asRecord(call?.args) ?? {}
-        )
+    yield { kind: "raw", raw: chunk };
+    const root = asRecord(chunk);
+    const error = asRecord(root?.error);
+    if (error) {
+      const code = typeof error.code === "number" || typeof error.code === "string" ? `${error.code} ` : "";
+      throw new Error(
+        `${code}${asString(error.status) ?? "Gemini error"}: ${asString(error.message) ?? JSON.stringify(error)}`
       );
     }
+    usage = usageFromGoogle(root?.usageMetadata) ?? usage;
+    const candidate = asRecord(Array.isArray(root?.candidates) ? root.candidates[0] : undefined);
+    stopReason = googleStopReason(candidate?.finishReason) ?? stopReason;
+    const parts = asRecord(candidate?.content)?.parts;
+    for (const part of Array.isArray(parts) ? parts : []) {
+      const record = asRecord(part);
+      if (!record) continue;
+      if (typeof record.text === "string" && record.text) {
+        yield {
+          kind: record.thought === true ? "reasoning_delta" : "text_delta",
+          text: record.text,
+          raw: chunk,
+        };
+      }
+      const call = asRecord(record.functionCall);
+      const name = asString(call?.name);
+      if (name) {
+        yield {
+          kind: "tool_request",
+          request: createCesiumToolRequest(asString(call?.id) ?? randomUUID(), name, asRecord(call?.args) ?? {}),
+          raw: chunk,
+        };
+      }
+    }
   }
-  return {
-    text: text.join(""),
-    toolRequests,
-    usage: usageFromGoogle(root?.usageMetadata),
-    stopReason: googleStopReason(candidate?.finishReason),
-    raw: payload,
-  };
+  if (usage) {
+    yield { kind: "usage", usage };
+  }
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
 }
 
 export type RunAdapterInput = {
@@ -1383,33 +1502,29 @@ export async function* streamAdapter(
       });
       return;
     case "anthropic":
-      yield* streamStaticResult(
-        await runAnthropic({
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          model,
-          messages: input.messages,
-          tools: input.tools,
-          oauth: input.oauth,
-          promptCacheKey: input.promptCacheKey,
-          maxOutputTokens: input.maxOutputTokens,
-          signal: input.signal,
-        })
-      );
+      yield* streamAnthropic({
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+        oauth: input.oauth,
+        promptCacheKey: input.promptCacheKey,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
+      });
       return;
     case "google-genai":
-      yield* streamStaticResult(
-        await runGoogle({
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          model,
-          messages: input.messages,
-          tools: input.tools,
-          oauth: input.oauth,
-          maxOutputTokens: input.maxOutputTokens,
-          signal: input.signal,
-        })
-      );
+      yield* streamGoogle({
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+        oauth: input.oauth,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
+      });
       return;
     case "openai-responses":
     default:
