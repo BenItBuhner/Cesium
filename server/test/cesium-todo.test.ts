@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import type {
-  AgentConversationRecord,
+  AgentConversationSnapshot,
   AgentEventInput,
   AgentPlanEntry,
   AgentStoredEvent,
 } from "../src/lib/agents/types.js";
+import type { CesiumToolContext } from "../src/lib/agents/cesium/tools/types.js";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -24,12 +25,10 @@ await fs.mkdir(TEST_DATA_DIR, { recursive: true });
 // Dynamic imports after the OPENCURSOR_DATA_DIR override so persistence.ts
 // never freezes DATA_DIR to the real data directory.
 const [
-  { AGENT_BACKENDS },
-  { createCesiumAgentProvider },
+  { todoTool },
   { applyTodoPatch, parseTodoItems, todoEntriesFromReplace },
 ] = await Promise.all([
-  import("../src/lib/agents/providers.js"),
-  import("../src/lib/agents/cesium-provider.js"),
+  import("../src/lib/agents/cesium/tools/plan-tools.js"),
   import("../src/lib/agents/cesium/cesium-todo.js"),
 ]);
 
@@ -109,38 +108,11 @@ async function startTodoSession(): Promise<{
   handle: TodoToolHandle;
   planEvents: () => Array<Extract<AgentStoredEvent, { kind: "plan" }>>;
 }> {
-  const backend = AGENT_BACKENDS["cesium-agent"]!;
-  const provider = await createCesiumAgentProvider({ backend });
-  let conversation: AgentConversationRecord = {
-    schemaVersion: 1,
-    id: `cesium-todo-${Math.random().toString(36).slice(2, 8)}`,
-    workspaceId: "ws-todo",
-    title: "Todo patch test",
-    createdAt: 1,
-    updatedAt: 1,
-    lastEventSeq: 0,
-    status: "idle",
-    config: {
-      backendId: "cesium-agent",
-      mode: "agent",
-      modelId: "openai/gpt-5.1",
-      modelName: "GPT-5.1",
-    },
-    providerSessionId: null,
-    configOptions: [],
-    capabilities: backend.capabilities,
-    pendingPermission: null,
-    pendingQuestion: null,
-    lastError: null,
-    experimental: false,
-    archivedAt: null,
-    lastReadSeq: 0,
-    queuedPrompts: [],
-  };
+  const conversationId = `cesium-todo-${Math.random().toString(36).slice(2, 8)}`;
   const stored: AgentStoredEvent[] = [];
-  const handle = await provider.startSession({
-    conversation,
+  const ctx: CesiumToolContext = {
     workspace: { id: "ws-todo", root: TEST_DATA_DIR, name: "todo", createdAt: 1 },
+    conversationId,
     appendEvents: async (events: AgentEventInput[]) => {
       for (const event of events) {
         stored.push({
@@ -150,15 +122,16 @@ async function startTodoSession(): Promise<{
         } as AgentStoredEvent);
       }
     },
-    readSnapshot: async () => ({ conversation, events: [...stored] }),
-    updateConversation: async (patch) => {
-      conversation =
-        typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
-      return conversation;
-    },
-  });
+    readSnapshot: async () => ({ events: [...stored] }) as unknown as AgentConversationSnapshot,
+    extraRoots: [],
+    readOnlyRoot: path.join(TEST_DATA_DIR, ".tool-output"),
+    turnSupportsImages: false,
+    attachImage: () => undefined,
+    refineTitle: () => undefined,
+  };
+  const handle: TodoToolHandle = { toolTodo: (args) => todoTool(ctx, args), dispose: async () => undefined };
   return {
-    handle: handle as unknown as TodoToolHandle,
+    handle,
     planEvents: () =>
       stored.filter(
         (event): event is Extract<AgentStoredEvent, { kind: "plan" }> => event.kind === "plan"
