@@ -23,10 +23,10 @@ export const HISTORY_COMPACTION_TARGET_RATIO = 0.4;
 export const CONTEXT_PRUNE_TRIGGER_RATIO = 0.85;
 /** ...and stubs the oldest tool outputs until it is back under this share. */
 export const CONTEXT_PRUNE_TARGET_RATIO = 0.6;
-/** The newest tool batches a pruning boundary never touches. */
-export const CONTEXT_PRUNE_KEEP_BATCHES = 2;
-/** Results shorter than this are not worth a stub. */
-export const CONTEXT_PRUNE_MIN_RESULT_CHARS = 1_000;
+export {
+  CESIUM_CONTEXT_PRUNE_KEEP_BATCHES as CONTEXT_PRUNE_KEEP_BATCHES,
+  CESIUM_CONTEXT_PRUNE_MIN_RESULT_CHARS as CONTEXT_PRUNE_MIN_RESULT_CHARS,
+} from "@cesium/core/cesium-context-pruning";
 export const LARGE_FILE_LINE_LIMIT = 3500;
 export const MAX_READ_LINES = 2000;
 export const MAX_GREP_RESULTS = 5000;

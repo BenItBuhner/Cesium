@@ -49,6 +49,14 @@
     "./cesium-tools": {
       "types": "./dist/cesium-tools.d.ts",
       "import": "./dist/cesium-tools.js"
+    },
+    "./cesium-compaction": {
+      "types": "./dist/cesium-compaction.d.ts",
+      "import": "./dist/cesium-compaction.js"
+    },
+    "./cesium-context-pruning": {
+      "types": "./dist/cesium-context-pruning.d.ts",
+      "import": "./dist/cesium-context-pruning.js"
     }
   },
   "scripts": {

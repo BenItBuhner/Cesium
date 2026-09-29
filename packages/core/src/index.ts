@@ -37,3 +37,5 @@ export * from "./harness-auth-sync";
 export * from "./cesium-model-access";
 export * from "./cesium-history";
 export * from "./cesium-tools";
+export * from "./cesium-compaction";
+export * from "./cesium-context-pruning";
