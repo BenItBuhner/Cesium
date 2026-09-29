@@ -109,7 +109,7 @@ export async function checkWorkerEvidence(
   if (askedAt != null || !options.ask) {
     await patchChild(projectId, childId, () => ({ evidence }));
     return askedAt != null
-      ? `Evidence: still missing. It changed UI files (${listed(uiFiles)}) and was asked for screenshots, but media/${child.name}/ is still empty. Don't report this change as done: capture it with project_browser_check, or ask ${child.name} again.`
+      ? `Evidence: still missing. It changed UI files (${listed(uiFiles)}) and was asked for screenshots, but media/${child.name}/ still has no screenshots or recording. Don't report this change as done: capture it with project_browser_check, or ask ${child.name} again.`
       : `Evidence: missing. It changed UI files (${listed(uiFiles)}) without screenshots or a recording in media/${child.name}/.`;
   }
   const asked = await messageProjectChild(projectId, child.id, buildEvidenceRequest(child.name, uiFiles), "queue").then(

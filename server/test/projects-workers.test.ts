@@ -550,7 +550,7 @@ test("an agent that ignores the evidence request is asked once, and the coordina
   assert.ok(
     updates.some((content) =>
       content.includes(
-        "Evidence: still missing. It changed UI files (src/components/Hero.js) and was asked for screenshots, but media/hero/ is still empty. Don't report this change as done: capture it with project_browser_check, or ask hero again."
+        "Evidence: still missing. It changed UI files (src/components/Hero.js) and was asked for screenshots, but media/hero/ still has no screenshots or recording. Don't report this change as done: capture it with project_browser_check, or ask hero again."
       )
     ),
     updates.join("\n---\n")
