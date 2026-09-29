@@ -9,7 +9,7 @@ import type {
   ProjectSubscriptionSummary,
 } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
-import { startFakeChatModel, text, waitFor, type Responder } from "./helpers/fake-chat-model.js";
+import { messageText, startFakeChatModel, text, waitFor, type Responder } from "./helpers/fake-chat-model.js";
 import { createRepoWithRemote, git, pushCommitToRemote } from "./helpers/git-fixtures.js";
 import { startFakeGithub } from "./fixtures/fake-github.js";
 
@@ -529,4 +529,218 @@ test("a review a bot posts before the first poll of an agent's PR still reaches 
   await orchestratorIdle("after the review turn");
   await tick();
   assert.equal((await eventTurns()).length, before + 1, "the review is delivered once");
+});
+
+async function sayToCoordinator(message: string) {
+  const workspace = await getWorkspaceById(project.orchestrator.workspaceId);
+  assert.ok(workspace);
+  await agentRuntimeManager.promptConversation(workspace, project.orchestrator.conversationId, message);
+  await orchestratorIdle(`after "${message}"`);
+}
+
+test("the coordinator asks reviewers to look again: by default whoever asked for changes, with a note", async () => {
+  const banner = await childRecord("banner");
+  const number = banner.pr!.number;
+  github.addReview("acme/shop", number, "alice", "CHANGES_REQUESTED", "Read the threshold from config.");
+  github.addReview("acme/shop", number, "bob", "APPROVED", "Fine by me.");
+  await tick();
+  await orchestratorIdle("after the reviews");
+
+  const asked = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_request_review", {
+      pr: "banner",
+      note: "banner now reads the threshold from config.",
+    })
+  ) as { requested: string[]; pr: string };
+  assert.deepEqual(asked.requested, ["alice"], "the approver and the bot are not asked again");
+  assert.equal(asked.pr, `acme/shop#${number}`);
+  assert.deepEqual(github.requestedReviewers("acme/shop", number), ["alice"]);
+  assert.ok(
+    github.pull("acme/shop", number).comments.some((comment) => comment.body === "@alice banner now reads the threshold from config."),
+    "the note mentions the reviewers on the PR"
+  );
+
+  const named = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_request_review", { pr: `acme/shop#${number}`, reviewers: ["@carol"] })
+  ) as { requested: string[] };
+  assert.deepEqual(named.requested, ["carol"]);
+  assert.deepEqual(github.requestedReviewers("acme/shop", number), ["alice", "carol"]);
+
+  github.addReview("acme/shop", number, "alice", "APPROVED", "Thanks.");
+  assert.deepEqual(github.requestedReviewers("acme/shop", number), ["carol"], "a submitted review answers the request");
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_request_review", { pr: "banner" }),
+    /Nobody has asked for changes on acme\/shop#\d+; name the reviewers to ask\./
+  );
+  await tick();
+  await orchestratorIdle("after alice's approval");
+});
+
+test("the coordinator closes its agent's redundant PR with a reason, and anyone else's only on the user's word", async () => {
+  const banner = await childRecord("banner");
+  const number = banner.pr!.number;
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "banner" }),
+    /project_close_pr\.reason is required/
+  );
+  const before = (await eventTurns()).length;
+  const closed = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_close_pr", {
+      pr: "banner",
+      reason: "The shipping settings page replaces this banner.",
+    })
+  ) as { closed: { pr: string; state: string; agent: string } };
+  assert.deepEqual([closed.closed.pr, closed.closed.state, closed.closed.agent], [`acme/shop#${number}`, "closed", "banner"]);
+  const pull = github.pull("acme/shop", number);
+  assert.equal(pull.state, "closed");
+  assert.equal(pull.merged, false);
+  assert.equal(
+    pull.comments.at(-1)?.body,
+    'Closed by the Cesium Project "Storefront": The shipping settings page replaces this banner.',
+    "the reason is posted before closing"
+  );
+  assert.equal((await childRecord("banner")).pr?.state, "closed");
+  const records = await readProjectSubscriptions(project.id);
+  assert.deepEqual(
+    records.filter((entry) => entry.childId === banner.id).map((entry) => [entry.kind, entry.closedReason]).sort(),
+    [
+      ["github_ci", "pr_closed"],
+      ["github_pr", "pr_closed"],
+    ]
+  );
+  await tick();
+  assert.equal((await eventTurns()).length, before, "the Project's own close is not reported back");
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "banner", reason: "again" }),
+    /already closed/
+  );
+
+  // The teammate's hotfix PR (#3): no agent here opened it.
+  const reason = "Its fix is already on main.";
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason }),
+    /Closing a pull request that no agent of this Project opened needs the user's explicit go-ahead/
+  );
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "acme/shop#3", reason, user_quote: "close it" }),
+    /does not appear in the user's recent messages/
+  );
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_close_pr", { pr: "other/repo#3", reason }),
+    /No tracked pull request matches "other\/repo#3"/,
+    "only PRs in the Project's repositories"
+  );
+  assert.equal(github.pull("acme/shop", 3).state, "open");
+  script("orchestrator", text(["Will close the hotfix PR."]));
+  await sayToCoordinator("Close the teammate's hotfix PR, its fix is already on main.");
+  const teammate = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_close_pr", {
+      pr: "https://github.com/acme/shop/pull/3",
+      reason,
+      user_quote: "close the teammate's hotfix PR",
+    })
+  ) as { closed: { pr: string; state: string; agent: string | null } };
+  assert.deepEqual([teammate.closed.pr, teammate.closed.state, teammate.closed.agent], ["acme/shop#3", "closed", null]);
+  assert.equal(github.pull("acme/shop", 3).state, "closed");
+});
+
+test("a PR that conflicts after another merge is reported, refused with guidance, and rebased by its own agent", async () => {
+  const cartLine = "export const total = (items) => items.reduce((sum, item) => sum + item.qty, 0);";
+  const tax = gatedResponder("Added tax to the total and pushed.");
+  const shipping = gatedResponder("Added shipping to the total and pushed.");
+  script("tax", tax.responder);
+  script("shipping", shipping.responder);
+  const started: Record<string, { branch: string; worktreePath: string }> = {};
+  for (const name of ["tax", "shipping"]) {
+    const created = await api<{ agent: { branch: string; worktreePath: string } }>("POST", `/api/projects/${project.id}/agents`, {
+      name,
+      repo: "shop",
+      instructions: `Add ${name} to the cart total.`,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    started[name] = created.json.agent;
+  }
+  // Both change the same line of the total.
+  await commitAndPush(started.tax!.worktreePath, started.tax!.branch, "src/cart.js", `${cartLine.replace(", 0);", ", 0) * 1.08;")}\n`, "Add tax to the total");
+  await commitAndPush(started.shipping!.worktreePath, started.shipping!.branch, "src/cart.js", `${cartLine.replace(", 0);", ", 0) + 5;")}\n`, "Add shipping to the total");
+  tax.release();
+  shipping.release();
+  const taxPr = (await waitFor("tax PR", () => childRecord("tax"), (child) => child.pr != null, 30_000)).pr!;
+  const shippingPr = (await waitFor("shipping PR", () => childRecord("shipping"), (child) => child.pr != null, 30_000)).pr!;
+  assert.equal(shippingPr.mergeable, true, "it merges cleanly while main has neither change");
+  await orchestratorIdle("after both PRs opened");
+  await tick();
+  await orchestratorIdle("after the baseline poll");
+
+  const before = (await eventTurns()).length;
+  script("orchestrator", text(["tax merged; shipping conflicts now."]));
+  await github.mergeExternally("acme/shop", taxPr.number);
+  await tick();
+  const turns = await waitFor("the conflict turn", eventTurns, (list) => list.length === before + 1);
+  const turn = turns.at(-1)!;
+  assert.match(turn.displayContent!, new RegExp(`acme/shop#${shippingPr.number} conflicts`));
+  assert.match(
+    turn.content,
+    new RegExp(`action="conflict" base="main" head="[0-9a-f]{12}" agent="shipping"[^>]*>\\nThis pull request no longer merges into main: it conflicts with what main has now\\. Ask shipping to rebase it with project_request_rebase, or close it with project_close_pr if it is redundant\\.`)
+  );
+  assert.equal((await childRecord("shipping")).pr?.mergeable, false);
+  await orchestratorIdle("after the conflict turn");
+  await tick();
+  assert.equal((await eventTurns()).length, before + 1, "a conflict is reported once per head");
+
+  script("orchestrator", text(["Will merge shipping."]));
+  await sayToCoordinator("Merge the shipping PR as well.");
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_merge_pr", { pr: "shipping", user_quote: "merge the shipping PR as well" }),
+    new RegExp(`acme/shop#${shippingPr.number} has conflicts with main\\. Ask shipping to rebase it with project_request_rebase, or close it with project_close_pr if it is redundant\\.`)
+  );
+
+  let rebaseRequest = "";
+  script("shipping", async (request, res) => {
+    rebaseRequest = messageText(request.messages.filter((message) => message.role === "user").at(-1));
+    const worktree = started.shipping!.worktreePath;
+    await git(worktree, ["fetch", "--quiet", "origin"]);
+    await git(worktree, ["rebase", "origin/main"]).catch(() => undefined);
+    await fs.writeFile(path.join(worktree, "src/cart.js"), `${cartLine.replace(", 0);", ", 0) * 1.08 + 5;")}\n`);
+    await git(worktree, ["add", "src/cart.js"]);
+    await git(worktree, ["-c", "core.editor=true", "rebase", "--continue"]);
+    await git(worktree, ["push", "--quiet", "--force-with-lease", "origin", started.shipping!.branch]);
+    await text(["Rebased onto main: kept tax and added shipping on top. Pushed."])(request, res);
+  });
+  script("orchestrator", text(["shipping rebased its PR."]));
+  const asked = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_request_rebase", {
+      pr: "shipping",
+      note: `The tax PR (#${taxPr.number}) changed the same line of the total.`,
+    })
+  ) as { asked: string; pr: string; delivery: string; mergeable: boolean | null };
+  assert.deepEqual([asked.asked, asked.pr, asked.mergeable], ["shipping", `acme/shop#${shippingPr.number}`, false]);
+  assert.equal(asked.delivery, "started", "the idle agent starts on it right away");
+  await waitFor(
+    "shipping's report",
+    async () => userMessages(await orchestratorEvents()).filter((event) => event.displayContent === "Agent update · shipping"),
+    (list) => list.some((event) => /Rebased onto main/.test(event.content)),
+    30_000
+  );
+  assert.match(rebaseRequest, new RegExp(`Your pull request acme/shop#${shippingPr.number} no longer merges into main`));
+  assert.match(rebaseRequest, /The tax PR \(#\d+\) changed the same line of the total\./);
+  assert.match(rebaseRequest, /`git rebase origin\/main`/);
+  assert.match(rebaseRequest, new RegExp(`\`git push --force-with-lease origin ${started.shipping!.branch}\``));
+  await orchestratorIdle("after shipping's report");
+  await tick();
+  assert.equal((await childRecord("shipping")).pr?.mergeable, true, "the rebased PR merges cleanly");
+
+  const merged = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_merge_pr", { pr: "shipping", user_quote: "merge the shipping PR as well" })
+  ) as { merged: { state: string } };
+  assert.equal(merged.merged.state, "merged");
+  assert.equal(
+    await git(SHOP_REMOTE, ["show", "main:src/cart.js"]),
+    cartLine.replace(", 0);", ", 0) * 1.08 + 5;"),
+    "main has both changes"
+  );
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_request_rebase", { pr: "acme/shop#3" }),
+    /No agent of this Project owns acme\/shop#3, so none can rebase it; its author has to\./
+  );
 });

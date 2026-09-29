@@ -12,6 +12,11 @@ const AGENT_REF = {
   description: "Agent name (as listed by project_list_agents) or agent id.",
 };
 
+const PR_REF = {
+  type: "string",
+  description: "PR number, owner/repo#N, its URL, or the owning agent's name.",
+};
+
 /**
  * The Project orchestrator's entire tool surface besides `ask_question`. It
  * manages agents and Project context; it never touches repositories itself.
@@ -295,11 +300,64 @@ export const PROJECT_ORCHESTRATOR_TOOLS: CesiumToolDefinition[] = [
       type: "object",
       required: ["pr"],
       properties: {
-        pr: { type: "string", description: "PR number, owner/repo#N, its URL, or the owning agent's name." },
+        pr: PR_REF,
         user_quote: {
           type: "string",
           description: "The user's own words authorizing this merge, copied from their message.",
         },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_close_pr",
+    kind: KIND,
+    title: (args) => `Close ${str(args, "pr")}`.trim(),
+    description:
+      "Close a pull request without merging it and post your reason on it, e.g. when it is redundant or another one supersedes it. Close your agents' own pull requests on your own judgment. Closing anyone else's pull request in the Project's repositories (owner/repo#N) needs the user's explicit go-ahead: pass their words as user_quote. Its subscriptions close with it.",
+    parameters: {
+      type: "object",
+      required: ["pr", "reason"],
+      properties: {
+        pr: PR_REF,
+        reason: { type: "string", description: "Why it is being closed, posted on the pull request." },
+        user_quote: {
+          type: "string",
+          description: "Only for a pull request no agent of this Project opened: the user's own words telling you to close it.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_request_review",
+    kind: KIND,
+    title: (args) => `Request review on ${str(args, "pr")}`.trim(),
+    description:
+      "Ask reviewers to look at a tracked pull request again, e.g. once its agent has pushed fixes for their comments. Without `reviewers` it asks everyone whose latest review requested changes or only commented. A note is posted on the pull request mentioning them.",
+    parameters: {
+      type: "object",
+      required: ["pr"],
+      properties: {
+        pr: PR_REF,
+        reviewers: { type: "array", items: { type: "string" }, description: "GitHub logins to ask." },
+        note: { type: "string", description: "What changed since their review." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project_request_rebase",
+    kind: KIND,
+    title: (args) => `Rebase ${str(args, "pr")}`.trim(),
+    description:
+      "Ask the agent that owns a conflicting pull request to rebase its branch onto the latest base branch, resolve the conflicts keeping both sides, rerun the tests and force-push. Use it whenever a pull request conflicts (a conflict event, or a merge refused for conflicts) instead of giving up on it. The request runs after the agent's current turn.",
+    parameters: {
+      type: "object",
+      required: ["pr"],
+      properties: {
+        pr: PR_REF,
+        note: { type: "string", description: "Context for the agent, e.g. which merged pull request it now conflicts with." },
       },
       additionalProperties: false,
     },
@@ -414,7 +472,8 @@ export const PROJECT_ORCHESTRATOR_SYSTEM_PROMPT = [
   "- Check before you claim: read the agent's transcript, its pull request and CI, and look at its evidence before telling the user something is done. Use project_browser_check to verify visible changes in a real browser.",
   "- notes.md is the Project's live status board, shown to the user under the chat. Keep it a short checklist (- [ ] / - [x]) of what is being worked on and by whom, with links to pull requests and docs. Longer material goes in docs/ (for the user) and internal/ (for agents).",
   "- Steer an agent that is working now with project_steer_agent; give an idle agent its next task with project_queue_agent. Archive an agent once its work is merged or abandoned; an agent whose branch still waits on the user stays listed.",
-  "- Merge pull requests only as the merge policy in the Project state allows. Under \"ask\" the user must have told you to merge, and you pass their words as user_quote. You can merge pull requests but not close them: when one should be closed (redundant, superseded), tell the user instead of saying you closed it.",
+  "- Merge pull requests only as the merge policy in the Project state allows. Under \"ask\" the user must have told you to merge, and you pass their words as user_quote.",
+  "- Keep pull requests moving. When one conflicts with its base, have its agent rebase it with project_request_rebase instead of giving up on it. When an agent has pushed fixes for review comments, ask the reviewers again with project_request_review. Close a redundant or superseded pull request with project_close_pr and say why; someone else's pull request only when the user tells you to.",
   "- When the user states a lasting preference (\"always…\", \"never…\", \"from now on…\"), record it with project_preferences. Follow the recorded preferences; agents get them too.",
   "- Keep your messages short and concrete: what you started and why, what came back, what happens next.",
 ].join("\n");
