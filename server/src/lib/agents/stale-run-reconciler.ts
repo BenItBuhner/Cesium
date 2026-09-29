@@ -43,18 +43,12 @@ const BOOT_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
 ]);
 
 /**
- * Statuses the watchdog may interrupt while the server is up. The awaiting_*
- * states are excluded here: answering a permission/question lazily re-ensures
- * the runtime, so a missing runtime is recoverable for them. A paused turn is
- * not: resume() on a re-ensured handle is a no-op, so a paused record whose
- * runtime vanished is as stuck as a running one.
+ * Statuses the watchdog may interrupt while the server is up: every status
+ * whose turn lives only inside its runtime. A re-ensured handle cannot resume
+ * a paused turn, and it holds no resolver for a permission or question the
+ * lost runtime was waiting on, so those records are as stuck as running ones.
  */
-const WATCHDOG_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = new Set([
-  "running",
-  "pause_requested",
-  "pausing",
-  "paused",
-]);
+const WATCHDOG_STALE_STATUSES: ReadonlySet<AgentConversationStatus> = BOOT_STALE_STATUSES;
 
 /** How often the watchdog looks for busy conversations without a runtime. */
 const WATCHDOG_TICK_MS = 30_000;
