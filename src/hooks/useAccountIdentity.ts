@@ -6,10 +6,7 @@ import { useServerConnections } from "@/components/preferences/ServerConnections
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { isUnconfiguredServerConnection } from "@cesium/client";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-} from "@/lib/server-rail-appearance";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
 
 /**
  * The identity source currently backing this client, in priority order:
@@ -50,20 +47,15 @@ export type AccountIdentity = {
 export function useAccountIdentity(): AccountIdentity {
   const cloud = useCloudContext();
   const auth = useOptionalAuth();
-  const { activeServer, servers } = useServerConnections();
+  const { activeServer, engineNameById } = useServerConnections();
   const { settings } = useGlobalSettings();
 
   const serverLabel = useMemo(() => {
     if (isUnconfiguredServerConnection(activeServer)) {
       return "No server";
     }
-    const appearance = getServerRailAppearance(
-      settings.general.serverRailAppearances,
-      activeServer.id,
-      servers.findIndex((server) => server.id === activeServer.id)
-    );
-    return getServerDisplayLabel(activeServer, appearance);
-  }, [activeServer, servers, settings.general.serverRailAppearances]);
+    return serverDisplayLabel(activeServer, settings.general.serverRailAppearances, engineNameById);
+  }, [activeServer, engineNameById, settings.general.serverRailAppearances]);
 
   return useMemo<AccountIdentity>(() => {
     if (cloud.mode === "clerk") {

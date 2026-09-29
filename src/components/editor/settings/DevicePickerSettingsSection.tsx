@@ -34,7 +34,7 @@ import {
   toggleDevicePickerHidden,
   type DevicePickerState,
 } from "@/lib/global-settings";
-import { getServerDisplayLabel, getServerRailAppearance } from "@/lib/server-rail-appearance";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
 
 type PickerEntry = {
   id: string;
@@ -95,7 +95,7 @@ function ReorderButtons({
 export function DevicePickerSettingsSection() {
   const { settings, updateSettings } = useGlobalSettings();
   const state = settings.general.devicePicker;
-  const { servers } = useServerConnections();
+  const { servers, engineNameById } = useServerConnections();
   const codespaces = useGithubCodespaces();
   const backends = useOptionalAgentConversations()?.backends ?? [];
   const { cloudDevices } = useCloudExecutionDevice(backends);
@@ -116,14 +116,11 @@ export function DevicePickerSettingsSection() {
 
   const entries = useMemo<PickerEntry[]>(() => {
     const out: PickerEntry[] = [];
-    servers.forEach((server, index) => {
+    servers.forEach((server) => {
       const isBrowser = isBrowserMachineUrl(server.baseUrl);
       out.push({
         id: devicePickerServerEntryId(server.id),
-        label: getServerDisplayLabel(
-          server,
-          getServerRailAppearance(serverRailAppearances, server.id, index)
-        ),
+        label: serverDisplayLabel(server, serverRailAppearances, engineNameById),
         description: isBrowser ? "Runs entirely in this browser tab." : server.baseUrl,
         icon: isBrowser ? (
           <Globe className={ICON_CLASS} strokeWidth={1.5} aria-hidden />
@@ -152,7 +149,7 @@ export function DevicePickerSettingsSection() {
       });
     }
     return sortByDevicePickerOrder(out, state.order, (entry) => entry.id);
-  }, [cloudDevices, codespaces.devices, serverRailAppearances, servers, state.order]);
+  }, [cloudDevices, codespaces.devices, engineNameById, serverRailAppearances, servers, state.order]);
 
   const displayedIds = entries.map((entry) => entry.id);
   const isDefault = state.order.length === 0 && state.hidden.length === 0;
