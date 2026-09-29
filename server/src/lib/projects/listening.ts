@@ -329,6 +329,30 @@ function postedBefore(at: string | null | undefined, cutoff: number): boolean {
   return !Number.isFinite(time) || time < cutoff;
 }
 
+/**
+ * How a PR's head moved from `before` to `after`: new commits on top of it, a
+ * rebase (history rewritten to take in commits the base gained), or other
+ * rewritten history such as an amend. Anything GitHub can't compare reads as
+ * new commits.
+ */
+async function classifyPush(
+  client: GithubClient,
+  repo: string,
+  before: string,
+  after: string,
+  base: string
+): Promise<"commits" | "rebase" | "rewrite"> {
+  const moved = await client.compare(repo, before, after).catch(() => null);
+  if (!moved || moved.behindBy === 0) {
+    return "commits";
+  }
+  const [was, now] = await Promise.all([
+    client.compare(repo, base, before).catch(() => null),
+    client.compare(repo, base, after).catch(() => null),
+  ]);
+  return was && now && was.behindBy > 0 && now.behindBy === 0 ? "rebase" : "rewrite";
+}
+
 function newIds<T extends { id: number }>(items: readonly T[], seen: readonly number[] | undefined): T[] {
   const known = new Set(seen ?? []);
   return items.filter((item) => !known.has(item.id));
@@ -443,14 +467,33 @@ async function pollPullRequest(
     // The first poll sets the baseline for the PR's state, head and draft flag.
     return { events, state: nextState };
   }
-  // A worker's own pushes are its business; only report pushes to PRs nobody here owns.
+  // The subscription the Project makes for an agent's PR leaves its pushes to the agent's own report.
   if (!subscription.childId && subscription.state.headSha && subscription.state.headSha !== pull.head.sha && prState === "open") {
-    events.push({
-      source: "github",
-      attrs: attrs("synchronize"),
-      body: `New commits were pushed; the head is now ${pull.head.sha.slice(0, 12)}.`,
-      label: `${ref} new commits`,
-    });
+    const push = await classifyPush(client, spec.repo, subscription.state.headSha, pull.head.sha, pull.base.ref);
+    const head = pull.head.sha.slice(0, 12);
+    const pusher = agent ?? "Its author";
+    events.push(
+      push === "rebase"
+        ? {
+            source: "github",
+            attrs: attrs("rebased", { base: pull.base.ref, head }),
+            body: `${pusher} rebased the branch onto ${pull.base.ref} (a force-push); the head is now ${head}.`,
+            label: `${ref} rebased`,
+          }
+        : push === "rewrite"
+          ? {
+              source: "github",
+              attrs: attrs("force_pushed", { head }),
+              body: `${pusher} force-pushed, rewriting the branch's history; the head is now ${head}.`,
+              label: `${ref} force-pushed`,
+            }
+          : {
+              source: "github",
+              attrs: attrs("synchronize"),
+              body: `${agent ? `${agent} pushed new commits` : "New commits were pushed"}; the head is now ${head}.`,
+              label: `${ref} new commits`,
+            }
+    );
   }
   if (subscription.state.draft === true && pull.draft !== true && prState === "open") {
     events.push({ source: "github", attrs: attrs("ready_for_review"), body: "This pull request is ready for review.", label: `${ref} ready` });
