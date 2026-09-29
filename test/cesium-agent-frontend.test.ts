@@ -574,4 +574,31 @@ describe("Cesium Agent frontend integration", () => {
       )
     );
   });
+
+  test("drops the text of a discarded model attempt but keeps the message's earlier text", () => {
+    let seq = 0;
+    const base = () => {
+      seq += 1;
+      return { seq, eventId: `e${seq}`, conversationId: "c1", createdAt: seq };
+    };
+    const events: AgentStoredEvent[] = [
+      { ...base(), kind: "user_message", messageId: "m1", content: "Write it" },
+      { ...base(), kind: "assistant_message_chunk", messageId: "a1", text: "Reading first." },
+      { ...base(), kind: "tool_call", toolCallId: "t1", title: "read_file a.ts", toolKind: "read", status: "in_progress" },
+      { ...base(), kind: "tool_call_update", toolCallId: "t1", status: "completed", detail: "ok" },
+      { ...base(), kind: "assistant_message_chunk", messageId: "a1", text: "Half an ans" },
+      { ...base(), kind: "assistant_message_end", messageId: "a1", stopReason: "discarded" },
+      { ...base(), kind: "assistant_message_chunk", messageId: "a2", text: "The full answer." },
+      { ...base(), kind: "assistant_message_end", messageId: "a2", stopReason: "stop" },
+    ];
+
+    const text = projectAgentEventsToChatMessages(events, { backendId: "cesium-agent" })
+      .filter((message) => message.type === "assistant")
+      .map((message) => message.content ?? "")
+      .join("\n");
+
+    assert.match(text, /Reading first\./);
+    assert.match(text, /The full answer\./);
+    assert.doesNotMatch(text, /Half an ans/);
+  });
 });

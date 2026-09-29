@@ -276,7 +276,9 @@ export function collectPrimaryChatDeltaLines(events: AgentStoredEvent[]): DeltaL
         break;
       }
       case "assistant_message_end": {
-        if (streaming && streaming.messageId === event.messageId) {
+        if (streaming && streaming.messageId === event.messageId && event.stopReason === "discarded") {
+          streaming = null;
+        } else if (streaming && streaming.messageId === event.messageId) {
           streaming.ended = true;
           flushStreaming();
         }
