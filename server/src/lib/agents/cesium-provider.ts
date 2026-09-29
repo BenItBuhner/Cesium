@@ -1,6 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { closeSync, promises as fs } from "node:fs";
 import path from "node:path";
 import {
   buildCesiumBaseSystemPrompt,
@@ -80,6 +80,7 @@ import {
 import {
   forgetCesiumMemoryEntry,
   formatCesiumMemoryEntry,
+  formatCesiumMemorySaveResult,
   listCesiumMemoryEntries,
   renderCesiumMemorySnapshot,
   saveCesiumMemoryEntry,
@@ -215,7 +216,20 @@ import {
 } from "./cesium/cesium-file-tools.js";
 import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
 import { formatGlobResult, globWorkspaceEntries } from "./cesium/cesium-glob.js";
+import { formatGrepResult, searchWorkspace } from "./cesium/cesium-grep.js";
 import { BoundedTerminalOutput } from "./cesium/cesium-terminal-output.js";
+import {
+  isTerminalRunAlive,
+  killTerminalProcessTree,
+  openTerminalRunLog,
+  pruneTerminalRuns,
+  readProcessStartTime,
+  readTerminalLogSlice,
+  readTerminalRunRecord,
+  TerminalLogFollower,
+  writeTerminalRunRecord,
+  type TerminalRunRecord,
+} from "./cesium/cesium-terminal-runs.js";
 import {
   applyTodoPatch,
   CESIUM_TODO_PLAN_ID,
@@ -371,14 +385,20 @@ type CesiumQuestionStep = {
   allowMultiple?: boolean;
 };
 
+/** A terminal run whose shell is still alive in this server process. */
 type TerminalRun = {
-  id: string;
-  process: ChildProcessWithoutNullStreams;
+  record: TerminalRunRecord;
+  process: ChildProcess;
   output: BoundedTerminalOutput;
-  startedAt: number;
-  completedAt?: number;
-  exitCode?: number | null;
+  follower: TerminalLogFollower;
 };
+
+function describeTerminalExit(record: TerminalRunRecord): string {
+  if (record.exitCode == null && record.signal) {
+    return `terminated by ${record.signal}`;
+  }
+  return `exited ${record.exitCode ?? 0}`;
+}
 
 function optionValue(options: AgentConfigOption[], id: string, fallback: string): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
@@ -659,6 +679,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private pendingPermissions = new Map<string, ActivePermission>();
   private pendingQuestions = new Map<string, ActiveQuestion>();
   private terminalRuns = new Map<string, TerminalRun>();
+  /** Every run this session started, so cancel/dispose can end process groups that outlived their shell. */
+  private terminalRunRecords = new Map<string, TerminalRunRecord>();
+  private terminalRunsPruned = false;
   /** Tool-call titles refined during execution (e.g. "Write x" → "Create x" once we know the file is new). */
   private refinedToolTitles = new Map<string, string>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
@@ -2456,7 +2479,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
                 arguments: normalized.arguments,
               };
             })()
-          : args;
+          : await this.withTerminalKillTarget(name, args);
       const title = `Subagent ${callerPath} · ${toolTitle(
         isBrowserTool ? "call_mcp_tool" : name,
         isBrowserTool ? { serverId: BROWSER_MCP_SERVER_ID, toolName: name } : args
@@ -2489,6 +2512,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         return await this.toolEditFile(args, randomUUID(), toolTitle(name, args));
       case "terminal":
         return await this.toolTerminal(args);
+      case "terminal_read":
+        return await this.toolTerminalRead(args);
+      case "terminal_kill":
+        return await this.toolTerminalKill(args);
       case "wait":
         return await this.toolWait(args);
       case "call_mcp_tool":
@@ -2547,12 +2574,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private killTerminalRuns(): void {
-    for (const run of this.terminalRuns.values()) {
-      if (run.exitCode === undefined) {
-        run.process.kill();
+    for (const record of this.terminalRunRecords.values()) {
+      if (record.pid && isTerminalRunAlive(record)) {
+        void killTerminalProcessTree(record.pid).catch(() => undefined);
       }
     }
-    this.terminalRuns.clear();
   }
 
   /** Adds one model response's usage to the current message and to the conversation's Goal. */
@@ -3223,7 +3249,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
                   arguments: normalized.arguments,
                 };
               })()
-            : effectiveRequest.arguments;
+            : await this.withTerminalKillTarget(effectiveRequest.name, effectiveRequest.arguments);
         await this.requirePermission({
           toolCallId: effectiveRequest.id,
           title,
@@ -3263,6 +3289,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
+          break;
+        case "terminal_read":
+          result = await this.toolTerminalRead(request.arguments);
+          break;
+        case "terminal_kill":
+          result = await this.toolTerminalKill(request.arguments);
           break;
         case "wait":
           result = await this.toolWait(request.arguments);
@@ -3505,39 +3537,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolGrep(args: Record<string, unknown>): Promise<string> {
     const pattern = asString(args.pattern);
     if (!pattern) throw new Error("grep.pattern is required.");
-    const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".", this.projectContextRoots());
-    const regex = new RegExp(pattern, "i");
+    const workspaceRoot = this.callbacks.workspace.root;
+    const searchPath = resolveWorkspacePath(workspaceRoot, asString(args.path) ?? ".", this.projectContextRoots());
     const context = Math.max(0, Math.min(20, Math.floor(asNumber(args.context) ?? 0)));
     const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
-    const results: string[] = [];
-    const visit = async (dir: string): Promise<void> => {
-      if (results.length >= maxResults) return;
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (results.length >= maxResults) return;
-        if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".docker" || entry.name === ".next") {
-          continue;
-        }
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await visit(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        const text = await fs.readFile(full, "utf8").catch(() => null);
-        if (text == null) continue;
-        const lines = text.split(/\r?\n/);
-        for (let index = 0; index < lines.length && results.length < maxResults; index += 1) {
-          if (!regex.test(lines[index] ?? "")) continue;
-          const start = Math.max(0, index - context);
-          const end = Math.min(lines.length, index + context + 1);
-          const rel = path.relative(this.callbacks.workspace.root, full);
-          results.push(`${rel}:${index + 1}\n${lines.slice(start, end).map((line, i) => `${start + i + 1}|${line}`).join("\n")}`);
-        }
-      }
-    };
-    await visit(root);
-    return results.length ? results.join("\n\n") : "No matches.";
+    const result = await searchWorkspace({
+      workspaceRoot,
+      searchPath,
+      pattern,
+      ignoreCase: args.ignoreCase === true,
+      glob: asString(args.glob)?.trim() || undefined,
+      context,
+      maxResults,
+    });
+    return formatGrepResult(result, workspaceRoot, MAX_GREP_RESULTS);
   }
 
   private async toolGlob(args: Record<string, unknown>): Promise<string> {
@@ -3641,60 +3654,172 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!command) throw new Error("terminal.command is required.");
     const waitUntil = asString(args.waitUntil) ?? "complete";
     const timeoutMs = Math.max(1000, Math.min(120_000, Math.floor(asNumber(args.timeoutMs) ?? 30_000)));
-    const child = spawn(command, {
-      cwd: this.callbacks.workspace.root,
-      shell: true,
-      windowsHide: true,
-    });
+    const workspaceId = this.callbacks.workspace.id;
+    const cwd = this.callbacks.workspace.root;
+    if (!this.terminalRunsPruned) {
+      this.terminalRunsPruned = true;
+      void pruneTerminalRuns(workspaceId).catch(() => undefined);
+    }
     const id = randomUUID();
-    const run: TerminalRun = {
+    const { logFile, fd } = await openTerminalRunLog(workspaceId, id);
+    let child: ChildProcess;
+    try {
+      // Output goes straight to the log file (not through pipes) so a run keeps
+      // logging, and stays readable, even after this server process restarts.
+      child = spawn(command, {
+        cwd,
+        shell: true,
+        windowsHide: true,
+        detached: process.platform !== "win32",
+        stdio: ["ignore", fd, fd],
+      });
+    } finally {
+      closeSync(fd);
+    }
+    const record: TerminalRunRecord = {
+      schemaVersion: 1,
       id,
+      conversationId: this.callbacks.conversation.id,
+      command,
+      cwd,
+      pid: child.pid ?? null,
+      pidStartTime: child.pid ? readProcessStartTime(child.pid) : null,
+      startedAt: Date.now(),
+      logFile,
+    };
+    const run: TerminalRun = {
+      record,
       process: child,
       output: new BoundedTerminalOutput(TERMINAL_OUTPUT_CAP),
-      startedAt: Date.now(),
+      follower: new TerminalLogFollower(logFile),
     };
     this.terminalRuns.set(id, run);
-    const append = (chunk: Buffer) => {
-      run.output.append(chunk.toString("utf8"));
+    this.terminalRunRecords.set(id, record);
+    const initialWrite = writeTerminalRunRecord(workspaceId, record).catch(() => undefined);
+    const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+      if (record.completedAt !== undefined) return;
+      record.exitCode = exitCode;
+      record.signal = signal;
+      record.completedAt = Date.now();
+      // Drop the live entry (process handle + output buffer) once the final
+      // record is on disk; terminal_read then serves the run from the log.
+      void initialWrite
+        .then(() => writeTerminalRunRecord(workspaceId, record))
+        .catch(() => undefined)
+        .finally(() => this.terminalRuns.delete(id));
     };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
-    // Nothing reads runs by id after completion; evict on exit or the map
-    // retains every ChildProcess + up to 80KB of output for the session's life.
-    child.on("exit", (code) => {
-      run.exitCode = code;
-      run.completedAt = Date.now();
-      this.terminalRuns.delete(id);
-    });
+    child.on("exit", (code, signal) => finish(code, signal));
     child.on("error", (error: Error) => {
-      run.output.append(`\n[spawn failed] ${error.message}`);
-      run.exitCode = -1;
-      run.completedAt = Date.now();
-      this.terminalRuns.delete(id);
+      void fs.appendFile(logFile, `\n[spawn failed] ${error.message}\n`).catch(() => undefined);
+      finish(-1, null);
     });
+    await initialWrite;
+    const followUp = (): string =>
+      `terminal_read { "id": "${id}", "since": ${run.follower.bytesRead} } returns newer output; terminal_kill { "id": "${id}" } stops it.`;
     if (waitUntil === "background") {
-      return `Started background command ${id}: ${command}`;
+      return `Started background command ${id}: ${command}\nRead its output with terminal_read { "id": "${id}" } and stop it with terminal_kill { "id": "${id}" }.`;
     }
     const pattern = asString(args.pattern);
-    return await new Promise<string>((resolve) => {
-      const started = Date.now();
-      const interval = setInterval(() => {
-        if (waitUntil === "pattern" && pattern && run.output.toString().includes(pattern)) {
-          clearInterval(interval);
-          resolve(`Pattern matched for ${command}.\n${run.output.toString()}`);
-          return;
-        }
-        if (run.exitCode !== undefined) {
-          clearInterval(interval);
-          resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output.toString()}`);
-          return;
-        }
-        if (Date.now() - started >= timeoutMs) {
-          clearInterval(interval);
-          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output.toString()}`);
-        }
-      }, 250);
-    });
+    const started = Date.now();
+    for (;;) {
+      const exited = record.completedAt !== undefined;
+      run.output.append(await run.follower.drain());
+      if (waitUntil === "pattern" && pattern && run.output.toString().includes(pattern)) {
+        return exited
+          ? `Pattern matched for ${command}.\n${run.output.toString()}`
+          : `Pattern matched for ${command} (still running as ${id}).\n${run.output.toString()}\n[${followUp()}]`;
+      }
+      if (exited) {
+        return `Command ${describeTerminalExit(record)}.\n${run.output.toString()}`;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        return `Command still running after ${timeoutMs}ms as ${id}.\n${run.output.toString()}\n[${followUp()}]`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  /** The run's record when it belongs to this conversation (live or persisted). */
+  private async findTerminalRun(id: string): Promise<TerminalRunRecord | null> {
+    const record =
+      this.terminalRunRecords.get(id) ??
+      (await readTerminalRunRecord(this.callbacks.workspace.id, id));
+    return record && record.conversationId === this.callbacks.conversation.id ? record : null;
+  }
+
+  private describeTerminalRunStatus(record: TerminalRunRecord): string {
+    if (record.completedAt !== undefined) {
+      return isTerminalRunAlive(record)
+        ? `${describeTerminalExit(record)}, but processes it started are still running (terminal_kill stops them)`
+        : describeTerminalExit(record);
+    }
+    if (this.terminalRuns.has(record.id)) {
+      return `is running (pid ${record.pid})`;
+    }
+    return isTerminalRunAlive(record)
+      ? `is running (pid ${record.pid}; started before the server restarted, so its exit code will not be reported)`
+      : "is no longer running (the server restarted while it ran, so its exit code is unknown)";
+  }
+
+  private async toolTerminalRead(args: Record<string, unknown>): Promise<string> {
+    const id = asString(args.id)?.trim();
+    if (!id) throw new Error("terminal_read.id is required.");
+    const record = await this.findTerminalRun(id);
+    if (!record) {
+      throw new Error(`No terminal run ${id} in this conversation.`);
+    }
+    const since = Math.max(0, Math.floor(asNumber(args.since) ?? 0));
+    const slice = await readTerminalLogSlice(record.logFile, since, TERMINAL_OUTPUT_CAP);
+    const status = this.describeTerminalRunStatus(record);
+    return [
+      `Terminal run ${id} ${status}.`,
+      `Command: ${record.command}`,
+      slice.end > slice.start
+        ? `Output bytes ${slice.start}-${slice.end} (pass since: ${slice.end} to read only newer output):\n${slice.text}`
+        : `No output after byte ${slice.start}.`,
+    ].join("\n");
+  }
+
+  private async toolTerminalKill(args: Record<string, unknown>): Promise<string> {
+    const id = asString(args.id)?.trim();
+    if (!id) throw new Error("terminal_kill.id is required.");
+    const record = await this.findTerminalRun(id);
+    if (!record) {
+      throw new Error(`No terminal run ${id} in this conversation.`);
+    }
+    if (!record.pid || !isTerminalRunAlive(record)) {
+      return `Terminal run ${id} (${record.command}) is not running; it ${
+        record.completedAt !== undefined ? describeTerminalExit(record) : "stopped while the server was down"
+      }.`;
+    }
+    await killTerminalProcessTree(record.pid);
+    const live = this.terminalRuns.get(id);
+    if (live) {
+      const deadline = Date.now() + 2_000;
+      while (record.completedAt === undefined && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } else if (record.completedAt === undefined) {
+      record.completedAt = Date.now();
+      record.exitCode = null;
+      record.signal = "SIGTERM";
+      await writeTerminalRunRecord(this.callbacks.workspace.id, record).catch(() => undefined);
+    }
+    const survivors = isTerminalRunAlive(record) ? " Some of its processes are still shutting down." : "";
+    return `Killed terminal run ${id} (${record.command}) and its process group.${survivors}`;
+  }
+
+  /** terminal_kill asks permission with the command it will stop, not just an opaque run id. */
+  private async withTerminalKillTarget(
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const id = asString(args.id)?.trim();
+    if (toolName !== "terminal_kill" || !id) {
+      return args;
+    }
+    const record = await this.findTerminalRun(id).catch(() => null);
+    return { killRunId: id, command: record?.command ?? "" };
   }
 
   private async appendPlanFileEvents(plan: Awaited<ReturnType<typeof readCesiumPlanFile>>, raw: unknown): Promise<void> {
@@ -5396,15 +5521,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
           rawCategory === "decision"
             ? rawCategory
             : "fact";
-        const entry = await saveCesiumMemoryEntry({
+        const saved = await saveCesiumMemoryEntry({
           workspaceId,
           scope: scope ?? "workspace",
           category,
           content,
+          key: asString(args.key),
           sourceConversationId: this.callbacks.conversation.id,
           id: asString(args.id)?.trim() || undefined,
         });
-        return `Saved memory entry.\n${formatCesiumMemoryEntry(entry)}`;
+        return formatCesiumMemorySaveResult(saved);
       }
       case "search": {
         const query = asString(args.query)?.trim();
