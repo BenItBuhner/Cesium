@@ -638,6 +638,9 @@ export function generateTranscriptFromEvents(events: AgentStoredEvent[]): string
         if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
           break;
         }
+        if (event.stopReason === "discarded") {
+          currentAssistantMessage = [];
+        }
         flushAssistant();
         break;
 

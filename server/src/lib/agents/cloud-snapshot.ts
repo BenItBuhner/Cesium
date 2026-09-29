@@ -49,7 +49,7 @@ function countMessages(events: AgentStoredEvent[]): number {
   for (const event of events) {
     if (event.kind === "user_message" && !event.hidden) {
       count += 1;
-    } else if (event.kind === "assistant_message_end") {
+    } else if (event.kind === "assistant_message_end" && event.stopReason !== "discarded") {
       count += 1;
     }
   }
