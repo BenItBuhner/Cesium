@@ -1,9 +1,9 @@
-import type { AgentStoredEvent } from "../types.js";
+import type { AgentModelUsage, AgentStoredEvent } from "../types.js";
 import { asRecord, asString, truncate, truncateMiddle } from "./cesium-coerce.js";
+import { contextTokensAfterResponse } from "./cesium-usage.js";
 import {
   CESIUM_SYSTEM_PROMPT,
   CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
-  CESIUM_TOOL_RESULT_MODEL_TOTAL_MAX_CHARS,
   HISTORY_EVENT_LIMIT,
 } from "./cesium-prompt.js";
 import { inferCesiumToolNameFromTitle, serializeToolCallArguments } from "./cesium-tools.js";
@@ -31,10 +31,16 @@ export {
 
 type PendingHistoryToolCall = CesiumHistoryToolCall & {
   result?: string;
+  budget?: number;
+  spillPath?: string;
 };
+
+/** Rough per-image cost; providers bill a typical screenshot at roughly this many tokens. */
+const IMAGE_TOKEN_ESTIMATE = 1_000;
 
 export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number {
   let chars = 0;
+  let images = 0;
   for (const message of messages) {
     chars += message.content.length;
     if (message.toolCalls) {
@@ -43,44 +49,106 @@ export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number 
     if (message.name) {
       chars += message.name.length;
     }
+    images += message.images?.length ?? 0;
   }
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / 4) + images * IMAGE_TOKEN_ESTIMATE;
 }
 
+/**
+ * The newest provider-reported usage inside the history window, for the model
+ * that produced it. A different model tokenizes differently, so its counts do
+ * not carry over.
+ */
+export function latestReportedUsage(
+  windowEvents: AgentStoredEvent[],
+  modelId: string
+): { usage: AgentModelUsage; seq: number } | null {
+  let latest: { usage: AgentModelUsage; seq: number } | null = null;
+  for (const event of windowEvents) {
+    if (event.kind === "assistant_message_end" && event.usage && (!latest || event.seq > latest.seq)) {
+      latest = { usage: event.usage, seq: event.seq };
+    }
+  }
+  return latest && latest.usage.modelId === modelId ? latest : null;
+}
+
+/**
+ * Context size in tokens: the provider's count as of its newest response plus
+ * an estimate for what was logged after it. Null when no response in the
+ * window reported usage, so callers fall back to a full estimate.
+ */
+export function reportedContextTokens(windowEvents: AgentStoredEvent[], modelId: string): number | null {
+  const latest = latestReportedUsage(windowEvents, modelId);
+  if (!latest) {
+    return null;
+  }
+  const after = windowEvents.filter((event) => event.seq > latest.seq);
+  const afterTokens = after.length > 0 ? estimateHistoryTokens(normalizeEventsToHistory(after).slice(1)) : 0;
+  return contextTokensAfterResponse(latest.usage) + afterTokens;
+}
+
+/**
+ * What the model sees of one tool result: all of it within `budget`
+ * characters, otherwise its head and tail around a note saying where the
+ * rest is. Depends only on its inputs, so history rebuilt from the stored
+ * result and budget repeats the live request byte for byte.
+ */
 export function normalizeCesiumToolResultForModel(input: {
   toolName: string;
   result: string;
-  usedToolResultChars: number;
-  perToolLimit?: number;
-  totalLimit?: number;
-}): { content: string; usedToolResultChars: number; truncated: boolean } {
-  const perToolLimit = input.perToolLimit ?? CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
-  const totalLimit = input.totalLimit ?? CESIUM_TOOL_RESULT_MODEL_TOTAL_MAX_CHARS;
-  const remaining = Math.max(0, totalLimit - input.usedToolResultChars);
-  const budget = Math.min(perToolLimit, remaining);
-  if (budget <= 0) {
-    return {
-      content:
-        `[${input.toolName} result omitted from model context: cumulative tool output exceeded ${totalLimit} characters. ` +
-        "The full result remains available in the conversation tool log.]",
-      usedToolResultChars: input.usedToolResultChars,
-      truncated: true,
-    };
-  }
+  budget?: number;
+  spillPath?: string;
+}): { content: string; truncated: boolean } {
+  const budget = input.budget ?? CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
   if (input.result.length <= budget) {
-    return {
-      content: input.result,
-      usedToolResultChars: input.usedToolResultChars + input.result.length,
-      truncated: false,
-    };
+    return { content: input.result, truncated: false };
   }
-  const omitted = input.result.length - budget;
+  const headLength = Math.ceil(budget / 2);
+  const tailLength = budget - headLength;
+  const omitted = input.result.length - headLength - tailLength;
+  const where = input.spillPath
+    ? `The full output is saved at ${input.spillPath}; read_file it with offset/limit for the rest.`
+    : "The full output is kept in the conversation tool log.";
   return {
     content:
-      `${input.result.slice(0, budget)}\n...[truncated ${omitted} chars from ${input.toolName} result for model context. ` +
-      "Full output is preserved in the conversation tool log.]",
-    usedToolResultChars: input.usedToolResultChars + budget,
+      `${input.result.slice(0, headLength)}\n...[${omitted} chars of this ${input.toolName} result omitted from the middle. ${where}]...\n` +
+      (tailLength > 0 ? input.result.slice(-tailLength) : ""),
     truncated: true,
+  };
+}
+
+/** What a pruned tool result becomes: enough to know it existed and how to get it back. */
+export function prunedToolResultStub(toolName: string, resultChars: number, spillPath?: string): string {
+  return (
+    `[${toolName} output (${resultChars} chars) pruned to free context.` +
+    (spillPath ? ` It is saved at ${spillPath}.` : " Run the tool again if you still need it.") +
+    "]"
+  );
+}
+
+/** Tool calls whose results a compaction boundary pruned, for the window the model sees. */
+export function prunedToolCallIds(window: {
+  summary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null;
+  events: AgentStoredEvent[];
+}): Set<string> {
+  const ids = new Set<string>(window.summary?.prunedToolCallIds ?? []);
+  for (const event of window.events) {
+    if (event.kind === "compression_summary") {
+      for (const id of event.prunedToolCallIds ?? []) {
+        ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
+/** The model-facing budget and spill file a completed tool result was stored with. */
+function storedToolResultShape(raw: unknown): { budget?: number; spillPath?: string } {
+  const record = asRecord(raw);
+  const budget = record?.modelBudget;
+  return {
+    ...(typeof budget === "number" && budget > 0 ? { budget } : {}),
+    ...(asString(record?.spillPath) ? { spillPath: asString(record?.spillPath) } : {}),
   };
 }
 
@@ -111,8 +179,9 @@ type HistoryBuildState = {
   pending: PendingHistoryToolCall[];
   /** Assistant text streamed before this batch of tool calls; the live turn sends it with them. */
   pendingContent: string;
-  /** Model-facing tool output budget, reset per turn exactly like the live loop. */
-  usedToolResultChars: number;
+  /** The model response the pending calls came from, when the log recorded it. */
+  pendingResponseId?: string;
+  pruned: ReadonlySet<string>;
 };
 
 function flushPendingToolCalls(state: HistoryBuildState): void {
@@ -127,14 +196,15 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   });
   for (const call of pending) {
     let content = MISSING_TOOL_RESULT_MESSAGE;
-    if (call.result?.trim()) {
-      const normalized = normalizeCesiumToolResultForModel({
+    if (call.result?.trim() && state.pruned.has(call.id)) {
+      content = prunedToolResultStub(call.name, call.result.length, call.spillPath);
+    } else if (call.result?.trim()) {
+      content = normalizeCesiumToolResultForModel({
         toolName: call.name,
         result: call.result,
-        usedToolResultChars: state.usedToolResultChars,
-      });
-      state.usedToolResultChars = normalized.usedToolResultChars;
-      content = normalized.content;
+        budget: call.budget,
+        spillPath: call.spillPath,
+      }).content;
     }
     messages.push({
       role: "tool",
@@ -145,6 +215,7 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   }
   pending.length = 0;
   state.pendingContent = "";
+  state.pendingResponseId = undefined;
 }
 
 export function satisfyOpenAiToolProtocol(messages: CesiumHistoryMessage[]): CesiumHistoryMessage[] {
@@ -295,14 +366,16 @@ export function selectHistoryWindow(events: AgentStoredEvent[]): {
 
 export function normalizeEventsToHistory(
   events: AgentStoredEvent[],
-  systemPrompt: string = CESIUM_SYSTEM_PROMPT
+  systemPrompt: string = CESIUM_SYSTEM_PROMPT,
+  /** Results a boundary pruned; defaults to the boundaries among `events`. */
+  pruned: ReadonlySet<string> = prunedToolCallIds({ summary: null, events })
 ): CesiumHistoryMessage[] {
   const messages: CesiumHistoryMessage[] = [{ role: "system", content: systemPrompt }];
   const state: HistoryBuildState = {
     messages,
     pending: [],
     pendingContent: "",
-    usedToolResultChars: 0,
+    pruned,
   };
   const assistantTextById = new Map<string, string>();
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
@@ -340,9 +413,6 @@ export function normalizeEventsToHistory(
         }
         break;
       case "system_reminder":
-        if (isTurnReminder(event)) {
-          state.usedToolResultChars = 0;
-        }
         // Targeted reminders were merged onto their user message above. Inline
         // reminders (context that landed between tool iterations, or a seed
         // written before the first prompt) replay as their own user-role
@@ -359,6 +429,10 @@ export function normalizeEventsToHistory(
         }
         break;
       case "assistant_message_chunk":
+        // Text after a finished batch opens the next model response.
+        if (state.pending.length > 0 && state.pending.every((call) => call.result !== undefined)) {
+          flushPendingToolCalls(state);
+        }
         assistantTextById.set(event.messageId, `${assistantTextById.get(event.messageId) ?? ""}${event.text}`);
         break;
       case "assistant_message_end": {
@@ -375,7 +449,12 @@ export function normalizeEventsToHistory(
       // tokens and rewrites the cached prefix.
       case "reasoning":
         break;
-      case "tool_call":
+      case "tool_call": {
+        const responseId = asString(asRecord(event.raw)?.responseId);
+        if (state.pending.length > 0 && responseId && state.pendingResponseId !== responseId) {
+          flushPendingToolCalls(state);
+        }
+        state.pendingResponseId = responseId ?? state.pendingResponseId;
         if (state.pending.length === 0) {
           // Text streamed before this batch belongs to the batch's assistant
           // message, as in the live request; the message end keeps only the rest.
@@ -385,6 +464,7 @@ export function normalizeEventsToHistory(
         }
         state.pending.push(toolCallFromStoredEvent(event));
         break;
+      }
       case "tool_call_update":
         if (event.status === "completed" || event.status === "failed") {
           const detail = event.detail?.trim()
@@ -392,9 +472,11 @@ export function normalizeEventsToHistory(
             : event.status === "failed"
               ? "Tool call failed."
               : "Tool call completed with no output.";
+          const shape = event.status === "completed" ? storedToolResultShape(event.raw) : {};
           const pending = state.pending.find((call) => call.id === event.toolCallId);
           if (pending) {
             pending.result = detail;
+            Object.assign(pending, shape);
           } else {
             const updateRaw = asRecord(event.raw);
             const request = asRecord(updateRaw?.request);
@@ -408,6 +490,7 @@ export function normalizeEventsToHistory(
               name,
               arguments: serializeToolCallArguments(name, request?.arguments, event.detail),
               result: detail,
+              ...shape,
             });
           }
         }
@@ -424,6 +507,10 @@ export function normalizeEventsToHistory(
         });
         break;
       case "compression_summary":
+        // A prune-only boundary changes which results are stubbed, not the sequence.
+        if (event.prunedToolCallIds && !event.summary.trim()) {
+          break;
+        }
         flushPendingToolCalls(state);
         messages.push({
           role: "user",

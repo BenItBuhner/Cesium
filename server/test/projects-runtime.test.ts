@@ -365,7 +365,8 @@ test("a child created by the orchestrator runs in its repo and reports back as a
 test("steer lands mid-turn on a busy child and queued work runs as its next turn", async () => {
   script(
     "web",
-    toolCall("call_web_wait", "wait", { seconds: 2, reason: "long build" }),
+    // The steer has to land before this wait ends; the coordinator's steering turn alone took up to 3 s on a loaded machine.
+    toolCall("call_web_wait", "wait", { seconds: 10, reason: "long build" }),
     text(["Web built with dark mode."]),
     text(["Docs written."])
   );
@@ -672,6 +673,77 @@ test("the orchestrator is told to wait for reports, repeat checks come back shor
     setProjectAgentCheckWindowForTests(null);
   }
   const removed = await api("DELETE", `/api/projects/${project.id}/agents/poller`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.json));
+});
+
+test("re-reading a working agent's transcript comes back short and ends a polling turn; an unchanged one stays short until there is more to read", async () => {
+  await waitForOrchestratorIdle("idle before transcript polling");
+  script(
+    "reader",
+    toolCall("call_reader_wait", "wait", { seconds: 4, reason: "long job" }),
+    text(["Reader job done."])
+  );
+  const onceTheReaderWaits =
+    (responder: Responder): Responder =>
+    async (request, res) => {
+      await waitFor(
+        "reader in its wait tool",
+        () => childSnapshot("reader"),
+        (value) => eventsOfKind(value.events, "tool_call").some((event) => event.toolCallId === "call_reader_wait")
+      );
+      await responder(request, res);
+    };
+  script(
+    "orchestrator",
+    toolCall("call_create_reader", "project_create_agent", { name: "reader", instructions: "Run the long job." }),
+    onceTheReaderWaits(toolCall("call_read_1", "project_read_transcript", { agent: "reader", turns: 5 })),
+    toolCall("call_read_2", "project_read_transcript", { agent: "reader", turns: 3 }),
+    toolCall("call_read_3", "project_read_transcript", { agent: "reader", turns: 10 }),
+    toolCall("call_read_4", "project_read_transcript", { agent: "reader", turns: 2 }),
+    toolCall("call_read_after_report", "project_read_transcript", { agent: "reader", turns: 2 }),
+    toolCall("call_read_again", "project_read_transcript", { agent: "reader", turns: 2 }),
+    toolCall("call_read_more", "project_read_transcript", { agent: "reader", turns: 6 }),
+    text(["Read it."])
+  );
+  await promptOrchestrator("Start the long job.");
+
+  assert.match(await waitForTool("call_read_1"), /^Agent reader \(status: \w+\)\n\nUser: Run the long job\./, "the first read is the transcript");
+  type ShortRead = { agent: string; stillWorking?: boolean; unchanged?: boolean; readsWithoutNews: number; note: string; turnEnds?: string };
+  const second = JSON.parse(await waitForTool("call_read_2")) as ShortRead;
+  assert.deepEqual([second.agent, second.stillWorking, second.readsWithoutNews], ["reader", true, 1]);
+  assert.match(second.note, /^reader is still working; you read its transcript \d+s ago\. Its report arrives as an agent update when its turn ends/);
+  const fourth = JSON.parse(await waitForTool("call_read_4")) as ShortRead;
+  assert.equal(fourth.readsWithoutNews, 3, "asking for more turns while it works is still polling");
+  assert.match(fourth.turnEnds ?? "", /three times in a row, so your turn ends here/);
+
+  const reported = await waitFor(
+    "reader report turn",
+    orchestratorSnapshot,
+    (value) =>
+      value.conversation.status === "idle" &&
+      eventsOfKind(value.events, "tool_call_update").some(
+        (event) => event.toolCallId === "call_read_more" && event.status !== "in_progress"
+      )
+  );
+  const polledAt = reported.events.findIndex(
+    (event) => event.kind === "tool_call_update" && event.toolCallId === "call_read_4" && event.status !== "in_progress"
+  );
+  const reportAt = reported.events.findIndex(
+    (event, index) => index > polledAt && event.kind === "user_message" && event.displayContent === "Agent update · reader"
+  );
+  assert.ok(polledAt >= 0 && reportAt > polledAt, "the report opened a turn of its own");
+  assert.equal(
+    reported.events.slice(polledAt + 1, reportAt).filter((event) => event.kind === "tool_call").length,
+    0,
+    "no more reads after the turn ended"
+  );
+  assert.match(toolResult(reported.events, "call_read_after_report"), /Assistant: Reader job done\./, "a finished agent's new turn is read in full");
+  const again = JSON.parse(toolResult(reported.events, "call_read_again")) as ShortRead;
+  assert.equal(again.unchanged, true);
+  assert.match(again.note, /^Nothing has happened in reader's conversation since you read it \d+s ago, so reading it again shows nothing new\./);
+  assert.match(toolResult(reported.events, "call_read_more"), /^Agent reader \(status: idle\)/, "asking for more history reads it again");
+
+  const removed = await api("DELETE", `/api/projects/${project.id}/agents/reader`);
   assert.equal(removed.status, 200, JSON.stringify(removed.json));
 });
 

@@ -281,9 +281,9 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
         | "linked_conversation"
         | "turn_interrupted"
         | "other";
-      /** `inline` reminders become their own user-role history message at their seq position. */
       /** Tool-produced images the live turn attached to this inline reminder's user message. */
       images?: Array<{ mimeType: string; data: string }>;
+      /** `inline` reminders become their own user-role history message at their seq position. */
       placement?: "inline";
       text: string;
       raw?: unknown;
@@ -306,6 +306,10 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
       kind: "assistant_message_end";
       messageId: string;
       stopReason?: string;
+      /** Provider-reported usage of the last model response in this message. */
+      usage?: AgentModelUsage;
+      /** Usage summed over every model response in this message. */
+      turnUsage?: AgentTokenUsage & { responses: number };
       raw?: unknown;
     }
   | {
@@ -468,6 +472,8 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
       estimatedTokensBefore?: number;
       estimatedTokensAfter?: number;
       generation?: number;
+      /** Tool calls whose results this boundary pruned to stubs; the rest of the window is unchanged. */
+      prunedToolCallIds?: string[];
       raw?: unknown;
     }
 | {
@@ -862,6 +868,19 @@ export type AgentContextUsageSegment = {
   /** Short secondary text (tool title, first line of a message) for legend rows and tooltips. */
   detail?: string;
 };
+
+/** Token counts as the provider reported them for one or more model responses. */
+export type AgentTokenUsage = {
+  /** Every prompt token the provider processed, cached or not. */
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  /** Part of `outputTokens` spent on reasoning the next request does not carry. */
+  reasoningTokens?: number;
+};
+
+export type AgentModelUsage = AgentTokenUsage & { modelId: string };
 
 export type AgentContextUsageSnapshot = {
   supported: boolean;

@@ -33,7 +33,12 @@ for (const key of [
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 type ChatMessage = { role: string; content?: unknown; tool_calls?: unknown; tool_call_id?: string };
-type ChatRequest = { messages: ChatMessage[]; tools?: unknown[]; prompt_cache_key?: string };
+type ChatRequest = {
+  messages: ChatMessage[];
+  tools?: unknown[];
+  prompt_cache_key?: string;
+  stream_options?: { include_usage?: boolean };
+};
 type Responder = (res: ServerResponse) => void;
 
 const scripted: Responder[] = [];
@@ -96,7 +101,19 @@ function sse(res: ServerResponse, payloads: unknown[]): void {
   res.end("data: [DONE]\n\n");
 }
 
-function toolCallTurn(textBefore: string, id: string, name: string, args: Record<string, unknown>): Responder {
+type ChatUsage = { prompt_tokens: number; completion_tokens: number; prompt_tokens_details?: { cached_tokens: number } };
+
+function usageChunk(usage: ChatUsage | undefined): unknown[] {
+  return usage ? [{ choices: [], usage }] : [];
+}
+
+function toolCallTurn(
+  textBefore: string,
+  id: string,
+  name: string,
+  args: Record<string, unknown>,
+  usage?: ChatUsage
+): Responder {
   return (res) =>
     sse(res, [
       { choices: [{ index: 0, delta: { reasoning_content: `Thinking about ${name}.` } }] },
@@ -112,15 +129,17 @@ function toolCallTurn(textBefore: string, id: string, name: string, args: Record
         ],
       },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      ...usageChunk(usage),
     ]);
 }
 
-function textTurn(text: string): Responder {
+function textTurn(text: string, usage?: ChatUsage): Responder {
   return (res) =>
     sse(res, [
       { choices: [{ index: 0, delta: { reasoning_content: "Wrapping up." } }] },
       { choices: [{ index: 0, delta: { content: text } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+      ...usageChunk(usage),
     ]);
 }
 
@@ -315,6 +334,126 @@ test("a turn cut off by shutdown continues after a restart as a pure append", as
   assert.equal(continueMessage.role, "user");
   assert.match(messageText(continueMessage), /Your previous turn was interrupted before it finished: the Cesium server shut down\./);
   assert.match(messageText(continueMessage), /Continue from where you left off\.$/);
+});
+
+function reminderEvent(
+  seq: number,
+  targetMessageId: string,
+  reason: "context" | "mode" | "linked_conversation",
+  text: string,
+  raw?: unknown
+): AgentStoredEvent {
+  return {
+    seq,
+    eventId: `r${seq}`,
+    conversationId: "c1",
+    createdAt: seq,
+    kind: "system_reminder",
+    reminderId: `r${seq}`,
+    targetMessageId,
+    reason,
+    text,
+    ...(raw ? { raw } : {}),
+  } as AgentStoredEvent;
+}
+
+function userEvent(seq: number, messageId: string, content: string): AgentStoredEvent {
+  return {
+    seq,
+    eventId: `u${seq}`,
+    conversationId: "c1",
+    createdAt: seq,
+    kind: "user_message",
+    messageId,
+    content,
+  } as AgentStoredEvent;
+}
+
+test("a turn with several tool batches rebuilds each as its own assistant message", async () => {
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  scripted.push(
+    toolCallTurn("", "call_batch_one", "read_file", { path: "notes.txt" }),
+    toolCallTurn("", "call_batch_two", "read_file", { path: "AGENTS.md" }),
+    toolCallTurn("Checking once more.", "call_batch_three", "read_file", { path: "notes.txt" }),
+    textTurn("Both files read.")
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read notes.txt, then AGENTS.md.");
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("Yes."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Done?");
+  await waitForIdle(workspace.id, conversation.id, 2);
+
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 5);
+  for (let index = 1; index < requests.length; index += 1) {
+    assert.deepEqual(
+      requests[index]!.messages.slice(0, requests[index - 1]!.messages.length),
+      requests[index - 1]!.messages,
+      `request ${index + 1} extends request ${index}`
+    );
+  }
+});
+
+test("provider-reported usage lands on the message end and sizes the context", async () => {
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  scripted.push(
+    toolCallTurn("Reading.", "call_usage_read", "read_file", { path: "notes.txt" }, {
+      prompt_tokens: 3_000,
+      completion_tokens: 20,
+    }),
+    textTurn("Alpha and beta.", {
+      prompt_tokens: 3_100,
+      completion_tokens: 12,
+      prompt_tokens_details: { cached_tokens: 2_900 },
+    })
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read notes.txt.");
+  const snapshot = await waitForIdle(workspace.id, conversation.id, 1);
+
+  for (const request of agentRequests.slice(firstRequest)) {
+    assert.equal(request.stream_options?.include_usage, true, "streams ask for usage");
+  }
+  const end = snapshot.events.find(
+    (event): event is Extract<AgentStoredEvent, { kind: "assistant_message_end" }> =>
+      event.kind === "assistant_message_end"
+  );
+  assert.deepEqual(end?.usage, {
+    inputTokens: 3_100,
+    outputTokens: 12,
+    cachedInputTokens: 2_900,
+    modelId: MODEL_ID,
+  });
+  assert.deepEqual(end?.turnUsage, {
+    inputTokens: 6_100,
+    outputTokens: 32,
+    cachedInputTokens: 2_900,
+    responses: 2,
+  });
+
+  const usage = await agentRuntimeManager.getConversationContextUsage(workspace, conversation.id);
+  assert.equal(usage?.usedTokens, 3_112, "the ring shows the provider's count");
+  assert.equal(usage?.approximate, false);
+  assert.equal(
+    history.reportedContextTokens(history.selectHistoryWindow(snapshot.events).events, MODEL_ID),
+    3_112
+  );
+  assert.equal(
+    history.reportedContextTokens(snapshot.events, "cachehost/other-model"),
+    null,
+    "another model's tokenizer does not carry over"
+  );
 });
 
 function reminderEvent(
