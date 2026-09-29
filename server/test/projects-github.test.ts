@@ -744,3 +744,46 @@ test("a PR that conflicts after another merge is reported, refused with guidance
     /No agent of this Project owns acme\/shop#3, so none can rebase it; its author has to\./
   );
 });
+
+test("the coordinator can't merge a UI change until its screenshots arrive", async () => {
+  const hero = gatedResponder("Restyled the hero and pushed.");
+  const capture = gatedResponder("Saved media/hero/after.png.");
+  script("hero", hero.responder, async (request, res) => {
+    await fs.mkdir(path.join(project.contextRoot, "media", "hero"), { recursive: true });
+    await fs.writeFile(path.join(project.contextRoot, "media", "hero", "after.png"), Buffer.from("fake png"));
+    await capture.responder(request, res);
+  });
+  const created = await api<{ agent: { branch: string; worktreePath: string } }>("POST", `/api/projects/${project.id}/agents`, {
+    name: "hero",
+    repo: "shop",
+    instructions: "Restyle the hero section.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  await commitAndPush(created.json.agent.worktreePath, created.json.agent.branch, "index.html", "<h1 class=\"hero\">Coffee</h1>\n", "Restyle the hero");
+  hero.release();
+  await waitFor(
+    "hero's update without evidence",
+    async () => userMessages(await orchestratorEvents()).filter((event) => event.displayContent === "Agent update · hero"),
+    (list) => list.some((event) => event.content.includes("Evidence: missing")),
+    30_000
+  );
+  script("orchestrator", text(["Will merge hero once it is ready."]));
+  await sayToCoordinator("Merge the hero PR once it is ready.");
+  await assert.rejects(
+    executeProjectOrchestratorTool(project.id, "project_merge_pr", { pr: "hero", user_quote: "merge the hero PR once it is ready" }),
+    /acme\/shop#\d+ changes what users see \(index\.html\) and has no screenshots or recording yet, so it is not done\. Wait for hero's update with the evidence \(it was asked for it\), or capture it with project_browser_check, then merge\./
+  );
+
+  capture.release();
+  await waitFor(
+    "hero's update with the evidence",
+    async () => userMessages(await orchestratorEvents()).filter((event) => event.displayContent === "Agent update · hero"),
+    (list) => list.some((event) => event.content.includes("![after.png](context:media/hero/after.png)")),
+    30_000
+  );
+  await orchestratorIdle("after hero's evidence");
+  const merged = JSON.parse(
+    await executeProjectOrchestratorTool(project.id, "project_merge_pr", { pr: "hero", user_quote: "merge the hero PR once it is ready" })
+  ) as { merged: { state: string } };
+  assert.equal(merged.merged.state, "merged");
+});

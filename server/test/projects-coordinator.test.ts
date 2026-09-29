@@ -214,7 +214,7 @@ test("the coordinator runs on its contract: delegate, plan vague asks, talk thro
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /Vague requests: plan it yourself, never ask the user for steps/);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /Talk to the user with project_message_user/);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /research agent that writes its findings to docs\/ in the Project context \(it changes no code, so it opens no pull request\)/);
-  assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /embed the evidence they list when you tell the user, and never report a UI change as done while its evidence is missing\./);
+  assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /embed the evidence they list when you tell the user, and never report a UI change as done or merge it while its evidence is missing\./);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /When one conflicts with its base, have its agent rebase it with project_request_rebase instead of giving up on it\./);
   assert.match(PROJECT_ORCHESTRATOR_SYSTEM_PROMPT, /Close a redundant or superseded pull request with project_close_pr and say why; someone else's pull request only when the user tells you to\./);
 });
