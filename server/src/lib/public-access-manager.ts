@@ -1286,11 +1286,18 @@ export class PublicAccessManager {
   private registerCleanupHandlers(): void {
     if (this.signalsRegistered || process.env.NODE_ENV === "test") return;
     this.signalsRegistered = true;
+    // The server's own signal handler drains agent turns before exiting;
+    // exiting here first would cut that short.
+    const exitUnlessHandled = (signal: NodeJS.Signals, code: number) => {
+      if (process.listenerCount(signal) === 0) {
+        process.exit(code);
+      }
+    };
     process.once("SIGINT", () => {
-      void this.stopRuntimeOnly().finally(() => process.exit(130));
+      void this.stopRuntimeOnly().finally(() => exitUnlessHandled("SIGINT", 130));
     });
     process.once("SIGTERM", () => {
-      void this.stopRuntimeOnly().finally(() => process.exit(143));
+      void this.stopRuntimeOnly().finally(() => exitUnlessHandled("SIGTERM", 143));
     });
     process.once("beforeExit", () => {
       const child = this.child;
