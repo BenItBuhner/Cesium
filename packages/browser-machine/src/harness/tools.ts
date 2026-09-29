@@ -188,7 +188,7 @@ export class BrowserToolExecutor {
     if (!pattern) return { result: "grep requires a pattern.", isError: true };
     let regex: RegExp;
     try {
-      regex = new RegExp(pattern, "i");
+      regex = new RegExp(pattern, args.ignoreCase === true ? "i" : "");
     } catch (error) {
       return {
         result: `Invalid pattern: ${error instanceof Error ? error.message : error}`,
