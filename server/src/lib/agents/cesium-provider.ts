@@ -294,6 +294,7 @@ import {
 } from "./cesium/cesium-history.js";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
+  adapterHonorsMaxOutputTokens,
   modelPart,
   providerPart,
   runAdapter,
@@ -437,6 +438,25 @@ function statusFromError(error: unknown): { status: AgentToolCallStatus; detail:
     status: "failed",
     detail: error instanceof Error ? error.message : String(error),
   };
+}
+
+/** Result for a tool call whose argument JSON did not parse; such a call never runs. */
+function unparsedToolArgumentsResult(
+  request: CesiumToolRequest,
+  cutOff: { outputTokens?: number } | null
+): string {
+  if (cutOff) {
+    const after = cutOff.outputTokens ? ` after ${cutOff.outputTokens} output tokens` : " at the output-token limit";
+    return (
+      `Your ${request.name} call was cut off${after}, so its arguments were incomplete ` +
+      `(${request.unparsedArgumentChars ?? 0} characters of JSON) and it did not run. ` +
+      "Split the content into smaller pieces, e.g. several smaller write_file or edit_file calls."
+    );
+  }
+  return (
+    `The arguments of your ${request.name} call were not valid JSON, so it did not run. ` +
+    "Send the call again with a complete JSON object."
+  );
 }
 
 const USER_REFUSED_TOOL_CALL_RESULT =
@@ -1341,6 +1361,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ? usageAnchor.tokens + estimateHistoryTokens(toolResultMessages.slice(usageAnchor.messageCount))
           : toolSchemaTokens + estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
       let pruneBlockedBelow = 0;
+      const raisedMaxOutputTokens = adapterHonorsMaxOutputTokens(auth)
+        ? Math.min(2 * DEFAULT_MAX_OUTPUT_TOKENS, catalogEntry?.outputLimit ?? Number.POSITIVE_INFINITY)
+        : undefined;
       for (let iteration = 0; ; iteration += 1) {
         if (this.cancelled) {
           return;
@@ -1384,7 +1407,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
               onTextDelta: (text) => assistantStream.pushText(text),
               onReasoningDelta: (text) => assistantStream.pushReasoning(text),
               onDiscardAttempt: () => assistantStream.discardAttempt(),
-            }
+            },
+            raisedMaxOutputTokens
           );
         } finally {
           await assistantStream.flush();
@@ -1445,7 +1469,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
           this.nextToolResultBudget = toolResultBudgetForHeadroom(
             contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - contextTokensNow()
           );
-          const toolResult = await this.executeTool(request);
+          const toolResult = await this.executeTool(
+            request,
+            request.unparsedArgumentChars === undefined
+              ? undefined
+              : unparsedToolArgumentsResult(
+                  request,
+                  result.stopReason === "length" ? { outputTokens: result.usage?.outputTokens } : null
+                )
+          );
           const shape = this.toolResultShapes.get(request.id);
           this.toolResultShapes.delete(request.id);
           toolResultMessages.push({
@@ -1863,10 +1895,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.sideChatTail = null;
   }
 
+  /**
+   * Runs one model call with transient-failure retries. A reply cut off at the
+   * output-token limit is retried once at `raisedMaxOutputTokens`, outside the
+   * transient retry budget.
+   */
   private async runAdapterWithWarning(
     input: RunAdapterInput,
     iteration: number,
-    handlers: CesiumAdapterStreamHandlers = {}
+    handlers: CesiumAdapterStreamHandlers = {},
+    raisedMaxOutputTokens?: number
   ): Promise<CesiumAdapterResult> {
     const providerId = providerPart(input.modelId);
     const timer = setTimeout(() => {
@@ -1888,8 +1926,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // or as an error payload inside an HTTP 200, instead of failing the turn.
     const retryEmptyReplies = await isProjectsEnabled();
     const model = `${providerId}/${modelPart(input.modelId)}`;
+    let request = input;
     try {
-      for (let retryIndex = 0; ; retryIndex += 1) {
+      for (let retryIndex = 0; ; ) {
         if (this.cancelled) {
           throw new CesiumTurnCancelledError();
         }
@@ -1900,11 +1939,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
         let retryable: boolean;
         try {
           const result = await this.streamAdapterAttempt(
-            input,
+            request,
             handlers,
             progress,
             retryEmptyReplies
           );
+          if (
+            result.stopReason === "length" &&
+            raisedMaxOutputTokens !== undefined &&
+            raisedMaxOutputTokens > (request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
+          ) {
+            console.warn(
+              `[cesium-agent] ${model} hit the ${request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS}-token output limit, retrying with ${raisedMaxOutputTokens}`
+            );
+            await handlers.onDiscardAttempt?.();
+            await this.emitConversationStatus(
+              "running",
+              "The reply hit the output limit, so Cesium is asking again with more room…"
+            );
+            request = { ...request, maxOutputTokens: raisedMaxOutputTokens };
+            continue;
+          }
           if (!retryEmptyReplies || !isEmptyCesiumAdapterResult(result)) {
             return result;
           }
@@ -1933,6 +1988,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw failure;
         }
         const delayMs = completionRetryDelayMs(retryIndex);
+        retryIndex += 1;
         console.warn(
           `[cesium-agent] provider attempt ${attempts} failed, retrying (${attempts}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}) in ${delayMs}ms:`,
           truncate(failureMessage, 500)
@@ -1942,7 +1998,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           "running",
           formatTakingLongerStatusDetail(attempts, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
         );
-        await sleepMs(delayMs, input.signal);
+        await sleepMs(delayMs, request.signal);
         if (this.cancelled) {
           throw new CesiumTurnCancelledError();
         }
@@ -3018,7 +3074,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
   }
 
-  private async executeTool(request: CesiumToolRequest): Promise<string> {
+  /** With `rejection`, the call is recorded and fails with that result instead of running. */
+  private async executeTool(request: CesiumToolRequest, rejection?: string): Promise<string> {
     request = (await this.pluginRuntime?.beforeTool(request)) ?? request;
     const effectiveRequest =
       request.name === "call_mcp_tool"
@@ -3063,6 +3120,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     };
     await this.callbacks.appendEvents([callEvent]);
     try {
+      if (rejection) {
+        throw new Error(rejection);
+      }
       if (orchestratorProjectId) {
         if (PROJECT_ORCHESTRATOR_TOOL_NAMES.has(effectiveRequest.name)) {
           const { executeProjectOrchestratorTool } = await import(

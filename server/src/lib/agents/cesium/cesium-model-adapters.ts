@@ -1337,6 +1337,21 @@ async function* streamStaticResult(
   yield { kind: "done", ...(result.stopReason ? { stopReason: result.stopReason } : {}), raw: result.raw };
 }
 
+/** Whether the request honours `maxOutputTokens`; Realtime and the ChatGPT Codex backend have no such field. */
+export function adapterHonorsMaxOutputTokens(input: Pick<RunAdapterInput, "apiKind" | "oauth">): boolean {
+  switch (input.apiKind) {
+    case "openai-realtime":
+      return false;
+    case "openai-chat-completions":
+    case "openai-compatible":
+    case "anthropic":
+    case "google-genai":
+      return true;
+    default:
+      return input.oauth?.providerId !== "openai-codex";
+  }
+}
+
 export async function* streamAdapter(
   input: RunAdapterInput
 ): AsyncGenerator<CesiumAdapterStreamEvent> {

@@ -256,3 +256,68 @@ test("a stream that breaks after partial text is retried and only the retry reac
     "the next turn's request extends the retried one"
   );
 });
+
+const truncatedWriteFile: Responder = (res) =>
+  sse(res, [
+    textDelta("Writing the file."),
+    {
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_big_write",
+                type: "function",
+                function: { name: "write_file", arguments: '{"path":"big.txt","content":"aaaaaaaa' },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    finish("length"),
+    { choices: [], usage: { prompt_tokens: 900, completion_tokens: 16384 } },
+  ]);
+
+test("a write_file cut off at the output limit is retried larger, then answered with a cut-off result", async () => {
+  const { workspace, conversation } = await startConversation("Truncated");
+  scripted.push(truncatedWriteFile, truncatedWriteFile, text("I will split it up."));
+  const requestsBefore = agentRequests.length;
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Write big.txt.");
+  let snapshot = await settle(workspace.id, conversation.id, 1);
+  assert.equal(snapshot.conversation.status, "idle", snapshot.conversation.lastError ?? "");
+  const turn = agentRequests.slice(requestsBefore);
+  assert.equal(turn.length, 3);
+  assert.equal(turn[0]!.max_tokens, 8192);
+  assert.equal(turn[1]!.max_tokens, 16384, "the retry doubles the output cap");
+  assert.deepEqual(turn[1]!.messages, turn[0]!.messages, "the retry resends the same request");
+  assert.deepEqual(turn[2]!.messages.slice(0, turn[1]!.messages.length), turn[1]!.messages, "pure append");
+
+  const appended = turn[2]!.messages.slice(turn[1]!.messages.length);
+  assert.equal(appended.length, 2);
+  assert.equal(appended[0]!.role, "assistant");
+  assert.equal(appended[0]!.content, "Writing the file.");
+  const toolResult = appended[1]!;
+  assert.equal(toolResult.role, "tool");
+  assert.equal(toolResult.tool_call_id, "call_big_write");
+  assert.match(String(toolResult.content), /Your write_file call was cut off after 16384 output tokens/);
+  assert.match(String(toolResult.content), /did not run/);
+  await assert.rejects(fs.access(path.join(WORKSPACE_ROOT, "big.txt")), "the truncated call did not write anything");
+
+  const discarded = eventsOfKind(snapshot.events, "assistant_message_end").filter((event) => event.stopReason === "discarded");
+  assert.equal(discarded.length, 1, "the first truncated attempt's text was discarded");
+
+  scripted.push(text("Done."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Thanks.");
+  snapshot = await settle(workspace.id, conversation.id, 2);
+  assert.equal(snapshot.conversation.status, "idle", snapshot.conversation.lastError ?? "");
+  const nextTurn = agentRequests.at(-1)!;
+  assert.deepEqual(
+    nextTurn.messages.slice(0, turn[2]!.messages.length),
+    turn[2]!.messages,
+    "history rebuilt from the log matches what the live turn sent"
+  );
+  assert.equal(JSON.stringify(nextTurn.messages).split("Writing the file.").length - 1, 1);
+});
