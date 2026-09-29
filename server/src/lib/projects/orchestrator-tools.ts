@@ -1,11 +1,13 @@
 import {
   isProjectAgentIsolation,
+  isProjectChildBusy,
   projectChildBucketLabel,
   projectEngineName,
   type ProjectChildSummary,
   type ProjectEngineListing,
   type ProjectPullRequestListing,
 } from "@cesium/core/projects";
+import type { ChildObservation } from "./child-host.js";
 import {
   listProjectSubscriptionSummaries,
   subscribeProject,
@@ -33,6 +35,8 @@ import { addPreference, listPreferenceLines, readPreferences, removePreference }
 import {
   ProjectError,
   adoptProjectChild,
+  childHostFor,
+  clampTranscriptTurns,
   createProjectChild,
   deleteProjectChild,
   getProjectChild,
@@ -42,6 +46,7 @@ import {
   messageProjectChild,
   readProjectChildTranscript,
   requireProject,
+  resolveProjectChild,
   setProjectChildArchived,
   stopProjectChild,
   updateProjectChild,
@@ -72,12 +77,15 @@ const WAIT_FOR_UPDATES_NOTE =
 
 type AgentCheck = { at: number; fingerprint: string; repeats: number };
 const lastAgentChecks = new Map<string, AgentCheck>();
+type TranscriptRead = { at: number; seq: number; turns: number; repeats: number };
+const lastTranscriptReads = new Map<string, TranscriptRead>();
 let repeatCheckWindowMs = REPEAT_CHECK_WINDOW_MS;
 
-/** Test hook: how long an unchanged repeat of project_list_agents gets the short answer; `null` restores it. */
+/** Test hook: how long a repeat agent check or transcript read gets the short answer; `null` restores it. */
 export function setProjectAgentCheckWindowForTests(ms: number | null): void {
   repeatCheckWindowMs = ms ?? REPEAT_CHECK_WINDOW_MS;
   lastAgentChecks.clear();
+  lastTranscriptReads.clear();
 }
 
 /**
@@ -102,6 +110,36 @@ function answerAgentCheck(key: string, payload: Record<string, unknown>): string
   }
   lastAgentChecks.set(key, { at: now, fingerprint, repeats: 0 });
   return json(payload);
+}
+
+/**
+ * Re-reading an agent's transcript is polling too when nothing happened in its
+ * conversation since the last read (and no more history is asked for), or
+ * while it is still working: its report arrives after the orchestrator's turn
+ * either way. Such a repeat within the window gets a short answer, which also
+ * counts toward the check that ends a polling turn; null means read it.
+ */
+function repeatTranscriptRead(key: string, agent: string, observation: ChildObservation, turns: number): string | null {
+  const now = Date.now();
+  const previous = lastTranscriptReads.get(key);
+  const working = isProjectChildBusy(observation.status) || observation.queued > 0;
+  const unchanged = previous?.seq === observation.lastEventSeq && turns <= previous.turns;
+  if (!previous || now - previous.at >= repeatCheckWindowMs || !(unchanged || working)) {
+    lastTranscriptReads.set(key, { at: now, seq: observation.lastEventSeq, turns, repeats: 0 });
+    return null;
+  }
+  const secondsAgo = Math.max(1, Math.round((now - previous.at) / 1000));
+  previous.at = now;
+  previous.repeats += 1;
+  return json({
+    agent,
+    status: observation.status,
+    ...(working ? { stillWorking: true } : { unchanged: true }),
+    readsWithoutNews: previous.repeats,
+    note: working
+      ? `${agent} is still working; you read its transcript ${secondsAgo}s ago. Its report arrives as an agent update when its turn ends, and reading along doesn't bring it sooner. ${WAIT_FOR_UPDATES_NOTE}`
+      : `Nothing has happened in ${agent}'s conversation since you read it ${secondsAgo}s ago, so reading it again shows nothing new. ${WAIT_FOR_UPDATES_NOTE}`,
+  });
 }
 
 function arg(args: Record<string, unknown>, key: string): string | undefined {
@@ -353,11 +391,17 @@ export async function executeProjectOrchestratorTool(
       return json({ adopted: compactChild(child) });
     }
     case "project_read_transcript": {
-      const result = await readProjectChildTranscript(
-        projectId,
-        requiredArg(args, "agent", name),
-        args.turns
-      );
+      const child = resolveProjectChild(await requireProject(projectId), requiredArg(args, "agent", name));
+      const turns = clampTranscriptTurns(args.turns);
+      const observation = await childHostFor(child.engineId).observe({
+        workspaceId: child.workspaceId,
+        conversationId: child.conversationId,
+      });
+      const repeat = repeatTranscriptRead(`${projectId}:transcript:${child.id}`, child.name, observation, turns);
+      if (repeat) {
+        return repeat;
+      }
+      const result = await readProjectChildTranscript(projectId, child.id, turns);
       return `Agent ${result.agent} (status: ${result.status})\n\n${result.transcript}`;
     }
     case "project_message_user": {
