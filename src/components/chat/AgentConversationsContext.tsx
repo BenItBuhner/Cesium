@@ -97,6 +97,7 @@ import {
   promptAgentConversation,
   resumeAgentConversation,
   retryAgentConversation,
+  continueAgentConversation,
   sendAgentConversationQueueItem,
   updateAgentConversationConfig,
   updateAgentConversationQueueItem,
@@ -396,6 +397,8 @@ type AgentConversationsContextValue = {
     delivery: "normal" | "steer"
   ) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
+  /** Resumes an interrupted Cesium turn; resolves to an error message when it could not. */
+  continueConversation: (conversationId: string) => Promise<string | null>;
   cancelConversation: (conversationId: string) => Promise<void>;
   pauseConversation: (conversationId: string) => Promise<void>;
   resumeConversation: (conversationId: string) => Promise<void>;
@@ -2227,6 +2230,24 @@ const executePrompt = useCallback(
     [markWorkspaceActivity, mergeConversationSnapshot]
   );
 
+  const continueConversation = useCallback(
+    async (conversationId: string) => {
+      try {
+        const snapshot = await continueAgentConversation(conversationId);
+        mergeConversationSnapshot(snapshot.snapshot);
+        dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
+        void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
+        return null;
+      } catch (error) {
+        void syncConversationSnapshot(conversationId).catch(() => undefined);
+        return error instanceof Error ? error.message : "Could not continue this run.";
+      }
+    },
+    [markWorkspaceActivity, mergeConversationSnapshot, syncConversationSnapshot]
+  );
+
   const createConversation = useCallback(
     async (input?: AgentConversationCreateInput) => {
       const result = await createAgentConversation(input ?? {});
@@ -3224,6 +3245,7 @@ busy,
       sendQueuedPromptNow,
       setQueuedPromptDelivery,
       retryConversation,
+      continueConversation,
       cancelConversation,
       pauseConversation,
       resumeConversation,
@@ -3265,6 +3287,7 @@ setQueuedPromptDelivery,
 pauseConversation,
 resumeConversation,
 retryConversation,
+continueConversation,
 refreshConversations,
 renameConversation,
 upsertConversation,

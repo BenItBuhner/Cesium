@@ -92,6 +92,28 @@ test("findDockedAskQuestion builds steps from pending question events", () => {
   assert.equal(docked?.steps[0]?.options.length, 3);
 });
 
+test("findDockedAskQuestion keeps an interrupted Cesium run's question answerable, and only Cesium's", () => {
+  const interrupted = (backendId: string) =>
+    baseConversation({
+      status: "interrupted",
+      pendingQuestion: null,
+      config: { backendId, mode: "agent", modelId: "m", modelName: "M" },
+    });
+  assert.equal(
+    findDockedAskQuestion({ events: [questionEvent()], conversation: interrupted("cesium-agent") })?.questionId,
+    "q-1"
+  );
+  assert.equal(findDockedAskQuestion({ events: [questionEvent()], conversation: interrupted("codex") }), null);
+  assert.equal(
+    findDockedAskQuestion({
+      events: [questionEvent(), questionEvent({ seq: 2, status: "cancelled" })],
+      conversation: interrupted("cesium-agent"),
+    }),
+    null,
+    "a question the next turn settled is gone"
+  );
+});
+
 test("hideDockedAskFromScroll removes docked ask-question messages", () => {
   const messages: ChatMessage[] = [
     { id: "u-1", type: "user", content: "Hi" },

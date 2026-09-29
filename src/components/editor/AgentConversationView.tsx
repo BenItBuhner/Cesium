@@ -12,6 +12,10 @@ import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
+import {
+  AgentInterruptedDock,
+  isContinuableInterruption,
+} from "@/components/chat/AgentInterruptedDock";
 import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
@@ -132,6 +136,7 @@ loadOlderConversationHistory,
   setPendingConfigForConversation,
   upsertConversation,
   retryConversation,
+  continueConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
   const {
@@ -698,7 +703,8 @@ const showRecentChatsSection =
         dockedCardVisible={
           dockedAsk != null ||
           queuedPrompts.length > 0 ||
-          completionErrorDock.visible
+          completionErrorDock.visible ||
+          isContinuableInterruption(conversation)
         }
         userMessageHistory={composerUserMessageHistory}
         hasMoreOlderUserMessageHistory={historyCursor.hasOlder}
@@ -736,6 +742,14 @@ const showRecentChatsSection =
               ) : null}
               <AgentCompletionErrorDock
                 dock={completionErrorDock}
+                insetClassName={EDITOR_CHAT_INSET_X_CLASS}
+                contentClassName={EDITOR_CHAT_CONTENT_CLASS}
+              />
+              <AgentInterruptedDock
+                conversation={conversation}
+                events={deferredThreadEvents}
+                onContinue={continueConversation}
+                suppressed={dockedAsk != null || completionErrorDock.visible}
                 insetClassName={EDITOR_CHAT_INSET_X_CLASS}
                 contentClassName={EDITOR_CHAT_CONTENT_CLASS}
               />
@@ -883,6 +897,14 @@ const showRecentChatsSection =
                 ) : null}
                 <AgentCompletionErrorDock
                   dock={completionErrorDock}
+                  insetClassName={EDITOR_CHAT_INSET_X_CLASS}
+                  contentClassName={EDITOR_CHAT_CONTENT_CLASS}
+                />
+                <AgentInterruptedDock
+                  conversation={conversation}
+                  events={deferredThreadEvents}
+                  onContinue={continueConversation}
+                  suppressed={dockedAsk != null || completionErrorDock.visible}
                   insetClassName={EDITOR_CHAT_INSET_X_CLASS}
                   contentClassName={EDITOR_CHAT_CONTENT_CLASS}
                 />

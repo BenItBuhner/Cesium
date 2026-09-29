@@ -206,6 +206,8 @@ import {
   safeJson,
   truncate,
 } from "./cesium/cesium-coerce.js";
+import { USER_REFUSED_TOOL_CALL_RESULT } from "./cesium/cesium-turn-recovery.js";
+import { AgentRequestNotLiveError } from "./turn-interruption.js";
 import {
   applyCesiumFileEdit,
   describeWriteFileOutcome,
@@ -482,8 +484,6 @@ function statusFromError(error: unknown): { status: AgentToolCallStatus; detail:
   };
 }
 
-const USER_REFUSED_TOOL_CALL_RESULT =
-  "The user refused this tool call. Continue in a different fashion that is either less intrusive or destructive.";
 const CESIUM_STREAM_CHUNK_FLUSH_MS = 120;
 const CESIUM_STREAM_CHUNK_MIN_CHARS = 512;
 const MAX_READ_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -666,6 +666,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private disposed = false;
   private cancelled = false;
+  /** Set by `interrupt()`: the turn stops without writing, so the log keeps showing where it stopped. */
+  private interrupting = false;
+  /**
+   * Tool keys the user allowed once while this turn's predecessor was
+   * interrupted; each lets one matching call through without asking again.
+   */
+  private carriedPermissionGrants = new Set<string>();
   private pausePhase: CesiumPausePhase = "none";
   private resumeWaiter: (() => void) | null = null;
   private resumeAck: (() => void) | null = null;
@@ -992,6 +999,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error("Cesium session has been disposed.");
     }
     this.cancelled = false;
+    this.interrupting = false;
+    this.carriedPermissionGrants = new Set();
     this.pausePhase = "none";
     this.resumeWaiter = null;
     this.releaseResumeAck();
@@ -1286,8 +1295,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
           detail: `Cesium is connecting to ${modelProviderId}…`,
         },
       ]);
-      const { messages: history, currentUserContent } = await this.buildHistory(
-        input.userMessageId
+      const {
+        messages: history,
+        currentUserContent,
+        currentUserRaw,
+      } = await this.buildHistory(input.userMessageId);
+      this.carriedPermissionGrants = new Set(
+        asStringArray(asRecord(asRecord(currentUserRaw)?.continuation)?.permissionGrants)
       );
       const promptImages = (input.attachments ?? [])
         .filter(
@@ -1711,7 +1725,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async requeueUndeliveredSteers(): Promise<void> {
     // A steer mirroring a queued prompt never left the queue.
     const leftover = this.pendingSteers.splice(0).filter((steer) => !steer.queuedPromptId);
-    if (leftover.length === 0 || this.cancelled || this.disposed) {
+    if (leftover.length === 0 || (this.cancelled && !this.interrupting) || this.disposed) {
       return;
     }
     await this.callbacks
@@ -2093,6 +2107,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
+  async interrupt(): Promise<void> {
+    this.interrupting = true;
+    this.cancelled = true;
+    this.acceptingSteers = false;
+    this.pausePhase = "none";
+    this.resumeWaiter?.();
+    this.resumeWaiter = null;
+    this.releaseResumeAck();
+    for (const permission of this.pendingPermissions.values()) {
+      permission.reject(new CesiumTurnCancelledError());
+    }
+    this.pendingPermissions.clear();
+    for (const question of this.pendingQuestions.values()) {
+      question.reject(new CesiumTurnCancelledError());
+    }
+    this.pendingQuestions.clear();
+    this.killTerminalRuns();
+  }
+
   private async emitConversationStatus(
     status: AgentConversationStatus,
     detail: string
@@ -2164,7 +2197,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }): Promise<void> {
     const pending = this.pendingPermissions.get(input.requestId);
     if (!pending) {
-      return;
+      throw new AgentRequestNotLiveError("No running Cesium turn is waiting on this permission request.");
     }
     this.pendingPermissions.delete(input.requestId);
     if (input.cancelled) {
@@ -2235,7 +2268,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   async answerQuestion(input: { questionId: string; answer: string }): Promise<void> {
     const pending = this.pendingQuestions.get(input.questionId);
     if (!pending) {
-      return;
+      throw new AgentRequestNotLiveError("No running Cesium turn is waiting on this question.");
     }
     this.pendingQuestions.delete(input.questionId);
     const answer = input.answer.trim();
@@ -2865,13 +2898,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
     messages: CesiumHistoryMessage[];
     /** The current turn's stored user text, when it is part of the rendered window. */
     currentUserContent: string | null;
+    currentUserRaw: unknown;
   }> {
     const events = await this.readHistoryEvents();
     const current = selectHistoryWindow(events).events.find(
       (event): event is Extract<AgentStoredEvent, { kind: "user_message" }> =>
         event.kind === "user_message" && event.messageId === currentUserMessageId && !event.hidden
     );
-    return { messages: this.renderHistory(events), currentUserContent: current?.content ?? null };
+    return {
+      messages: this.renderHistory(events),
+      currentUserContent: current?.content ?? null,
+      currentUserRaw: current?.raw,
+    };
   }
 
   private async requirePermission(input: {
@@ -3010,6 +3048,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
       return;
     }
 
+    if (this.carriedPermissionGrants.delete(input.toolKey)) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Allowed ${input.title}: you allowed it before the interruption.`,
+        },
+      ]);
+      return;
+    }
+
     const requestId = randomUUID();
     await this.callbacks.appendEvents([
       {
@@ -3021,6 +3072,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
         title: input.title,
         detail: input.detail,
         options: STANDARD_PERMISSION_OPTIONS,
+        raw: {
+          toolKey: input.toolKey,
+          toolLabel: input.toolLabel,
+          permissionCategory: input.permission,
+        },
       },
     ]);
     await this.callbacks.updateConversation((current) => ({
@@ -3397,6 +3453,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
       return await this.completeToolCall(effectiveRequest, title, toolDefinition, result);
     } catch (error) {
+      if (this.interrupting && error instanceof CesiumTurnCancelledError) {
+        throw error;
+      }
       await this.pluginRuntime?.toolError(effectiveRequest, error);
       this.refinedToolTitles.delete(effectiveRequest.id);
       if (error instanceof PermissionRefusedToolCallError) {

@@ -74,7 +74,7 @@ const MODEL_ID = "cachehost/kimi-k3";
 
 const [
   { ensureWorkspaceRegistered },
-  { agentRuntimeManager },
+  { agentRuntimeManager, AgentRuntimeManager },
   { readConversationSnapshot },
   history,
   reminders,
@@ -272,6 +272,68 @@ test("a tool image stays in history on later turns, exactly as the model saw it"
   const imageMessage = final[toolIndex + 1];
   assert.equal(imageMessage?.role, "user");
   assert.deepEqual(imageUrls(imageMessage), [`data:image/png;base64,${ONE_PIXEL_PNG}`]);
+});
+
+async function waitForRequests(fromIndex: number, count: number): Promise<ChatRequest[]> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 20_000) {
+    const requests = agentRequests.slice(fromIndex);
+    if (requests.length >= count) {
+      return requests;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${count} model requests.`);
+}
+
+test("a turn cut off by shutdown continues after a restart as a pure append", async () => {
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const beforeRestart = new AgentRuntimeManager();
+  const conversation = await beforeRestart.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  const hanging: ServerResponse[] = [];
+  scripted.push(
+    toolCallTurn("Let me read the notes.", "call_cut_read", "read_file", { path: "notes.txt" }),
+    (res) => {
+      hanging.push(res);
+    }
+  );
+  await beforeRestart.promptConversation(workspace, conversation.id, "What is in notes.txt?");
+  await waitForRequests(firstRequest, 2);
+  const shutdown = await beforeRestart.shutdown({ timeoutMs: 200 });
+  assert.deepEqual(shutdown.interrupted, [conversation.id]);
+  assert.equal(shutdown.drained, false, "the model call never returned");
+  hanging.forEach((res) => res.destroy());
+
+  const afterRestart = new AgentRuntimeManager();
+  scripted.push(textTurn("The notes say alpha and beta."));
+  await afterRestart.continueInterruptedConversation(workspace, conversation.id);
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("You asked about notes.txt."));
+  await afterRestart.promptConversation(workspace, conversation.id, "What did I ask?");
+  await waitForIdle(workspace.id, conversation.id, 2);
+
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 4);
+  for (let index = 1; index < requests.length; index += 1) {
+    assert.deepEqual(
+      requests[index]!.messages.slice(0, requests[index - 1]!.messages.length),
+      requests[index - 1]!.messages,
+      `request ${index + 1} extends request ${index}`
+    );
+  }
+  const continued = requests[2]!.messages;
+  const toolResults = continued.filter((message) => message.role === "tool");
+  assert.equal(toolResults.length, 1, "the completed read is a result, not re-run");
+  assert.match(messageText(toolResults[0]), /alpha/);
+  const continueMessage = continued.at(-1)!;
+  assert.equal(continueMessage.role, "user");
+  assert.match(messageText(continueMessage), /Your previous turn was interrupted before it finished: the Cesium server shut down\./);
+  assert.match(messageText(continueMessage), /Continue from where you left off\.$/);
 });
 
 test("a turn with several tool batches rebuilds each as its own assistant message", async () => {

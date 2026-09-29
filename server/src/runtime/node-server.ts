@@ -16,6 +16,7 @@ import {
   startCesiumBackgroundServices,
 } from "../app.js";
 import { flushServerPerfReport } from "../lib/perf.js";
+import { installGracefulShutdown } from "./graceful-shutdown.js";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -123,6 +124,9 @@ export function startNodeServer(): void {
   });
 
   console.log(`Cesium server listening on http://${serverConfig.publicHost}:${serverConfig.port}`);
+
+  // `close` waits on open WebSockets; exiting right after it is what ends them.
+  installGracefulShutdown({ stopServer: () => void server.close() });
 
   process.once("beforeExit", () => {
     void flushServerPerfReport("beforeExit").catch((error) => {

@@ -1290,6 +1290,16 @@ export async function retryAgentConversation(
   });
 }
 
+/** Re-prompts a Cesium conversation whose turn was interrupted, resuming from its log. */
+export async function continueAgentConversation(
+  conversationId: string
+): Promise<AgentConversationSnapshotResponse> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/continue`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export async function deleteAgentConversationQueueItem(
   conversationId: string,
   itemId: string
@@ -1351,7 +1361,11 @@ export async function resumeAgentConversation(
 export async function answerAgentPermission(
   conversationId: string,
   input: { requestId: string; optionId?: string; cancelled?: boolean }
-): Promise<{ conversation: AgentConversationRecord }> {
+): Promise<{
+  conversation: AgentConversationRecord;
+  /** The run had already stopped: the answer was recorded for Continue instead of reaching a live turn. */
+  interrupted?: boolean;
+}> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/permission`, {
     method: "POST",
     body: JSON.stringify(input),
@@ -1401,7 +1415,11 @@ export async function fetchAgentHarnessDiagnostics(options?: {
 export async function answerAgentQuestion(
   conversationId: string,
   input: { questionId: string; answer: string }
-): Promise<{ conversation: AgentConversationRecord }> {
+): Promise<{
+  conversation: AgentConversationRecord;
+  /** The run had already stopped: the answer was recorded for Continue instead of reaching a live turn. */
+  interrupted?: boolean;
+}> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/question`, {
     method: "POST",
     body: JSON.stringify(input),

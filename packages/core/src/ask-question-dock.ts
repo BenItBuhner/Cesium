@@ -85,9 +85,14 @@ export function findDockedAskQuestion(input: {
   if (!pending) {
     return null;
   }
+  // An interrupted Cesium run keeps its question answerable: the answer is
+  // recorded for Continue even though no turn is waiting on it anymore.
+  const answerableAfterInterruption =
+    conversation?.status === "interrupted" && conversation.config.backendId === "cesium-agent";
   if (
     conversation &&
     conversation.status !== "awaiting_question" &&
+    !answerableAfterInterruption &&
     conversation.pendingQuestion?.questionId !== pending.questionId
   ) {
     return null;

@@ -8,6 +8,7 @@ import {
   startCesiumBackgroundServices,
 } from "../app.js";
 import { flushServerPerfReport } from "../lib/perf.js";
+import { installGracefulShutdown } from "./graceful-shutdown.js";
 import { attachAgentSocket } from "../ws/agent.js";
 import { attachOrchestrationSocket } from "../ws/orchestration.js";
 import { attachFsSocket } from "../ws/filewatcher.js";
@@ -224,6 +225,8 @@ export function startBunServer(): void {
   });
 
   console.log(`Cesium Bun server listening on ${server.url}`);
+
+  installGracefulShutdown({ stopServer: () => server.stop() });
 
   process.once("beforeExit", () => {
     void flushServerPerfReport("beforeExit").catch((error) => {
