@@ -226,6 +226,8 @@ import {
   pruneTerminalRuns,
   readProcessStartTime,
   readTerminalLogSlice,
+  compactTerminalRunLog,
+  TERMINAL_RUN_LOG_COMPACT_INTERVAL_MS,
   readTerminalRunRecord,
   TerminalLogFollower,
   writeTerminalRunRecord,
@@ -381,7 +383,19 @@ type TerminalRun = {
   process: ChildProcess;
   output: BoundedTerminalOutput;
   follower: TerminalLogFollower;
+  /** Log reads and compactions run one at a time. */
+  logLock: Promise<void>;
+  compactTimer: ReturnType<typeof setInterval>;
 };
+
+function withTerminalLog<T>(run: TerminalRun, operation: () => Promise<T>): Promise<T> {
+  const next = run.logLock.then(operation, operation);
+  run.logLock = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
 
 function describeTerminalExit(record: TerminalRunRecord): string {
   if (record.exitCode == null && record.signal) {
@@ -3657,12 +3671,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
       startedAt: Date.now(),
       logFile,
     };
+    const compactLog = async () => {
+      const layout = await compactTerminalRunLog(logFile, record.logLayout);
+      if (layout !== record.logLayout) {
+        record.logLayout = layout;
+        run.follower.relayout(layout);
+        await writeTerminalRunRecord(workspaceId, record).catch(() => undefined);
+      }
+    };
     const run: TerminalRun = {
       record,
       process: child,
       output: new BoundedTerminalOutput(TERMINAL_OUTPUT_CAP),
       follower: new TerminalLogFollower(logFile),
+      logLock: Promise.resolve(),
+      compactTimer: setInterval(() => {
+        void withTerminalLog(run, compactLog).catch(() => undefined);
+      }, TERMINAL_RUN_LOG_COMPACT_INTERVAL_MS),
     };
+    run.compactTimer.unref?.();
     this.terminalRuns.set(id, run);
     this.terminalRunRecords.set(id, record);
     const initialWrite = writeTerminalRunRecord(workspaceId, record).catch(() => undefined);
@@ -3671,9 +3698,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
       record.exitCode = exitCode;
       record.signal = signal;
       record.completedAt = Date.now();
+      clearInterval(run.compactTimer);
       // Drop the live entry (process handle + output buffer) once the final
       // record is on disk; terminal_read then serves the run from the log.
       void initialWrite
+        .then(() => withTerminalLog(run, compactLog).catch(() => undefined))
         .then(() => writeTerminalRunRecord(workspaceId, record))
         .catch(() => undefined)
         .finally(() => this.terminalRuns.delete(id));
@@ -3693,7 +3722,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const started = Date.now();
     for (;;) {
       const exited = record.completedAt !== undefined;
-      run.output.append(await run.follower.drain());
+      run.output.append(await withTerminalLog(run, () => run.follower.drain()));
       if (waitUntil === "pattern" && pattern && run.output.toString().includes(pattern)) {
         return exited
           ? `Pattern matched for ${command}.\n${run.output.toString()}`
@@ -3739,7 +3768,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error(`No terminal run ${id} in this conversation.`);
     }
     const since = Math.max(0, Math.floor(asNumber(args.since) ?? 0));
-    const slice = await readTerminalLogSlice(record.logFile, since, TERMINAL_OUTPUT_CAP);
+    const readSlice = async () => {
+      const layout = await compactTerminalRunLog(record.logFile, record.logLayout);
+      if (layout !== record.logLayout) {
+        record.logLayout = layout;
+        live?.follower.relayout(layout);
+        await writeTerminalRunRecord(this.callbacks.workspace.id, record).catch(() => undefined);
+      }
+      return readTerminalLogSlice(record.logFile, since, TERMINAL_OUTPUT_CAP, record.logLayout);
+    };
+    const live = this.terminalRuns.get(id);
+    const slice = live ? await withTerminalLog(live, readSlice) : await readSlice();
     const status = this.describeTerminalRunStatus(record);
     return [
       `Terminal run ${id} ${status}.`,

@@ -23,7 +23,7 @@ const [
   { createCesiumAgentProvider },
   { resolveCesiumTools, resolveCesiumToolPermissionCategory, toolKind, toolTitle, cesiumPermissionToolKey },
   { SUBAGENT_SHARED_HOST_TOOL_NAMES },
-  { readTerminalRunRecord, readTerminalLogSlice, terminalRunsDir },
+  { readTerminalRunRecord, readTerminalLogSlice, terminalRunsDir, compactTerminalRunLog },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/cesium-provider.js"),
@@ -318,4 +318,78 @@ test("terminal_read is read-only while terminal_kill needs terminal permission",
   assert.match(terminal!.description, /terminal_kill/);
   assert.ok(SUBAGENT_SHARED_HOST_TOOL_NAMES.includes("terminal_read"));
   assert.ok(SUBAGENT_SHARED_HOST_TOOL_NAMES.includes("terminal_kill"));
+});
+
+test("a log past the cap keeps its head and newest output, and offsets still map after compaction", async () => {
+  const logFile = path.join(TEST_DATA_DIR, "compact.log");
+  const lines = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, index) => `line ${from + index}\n`).join("");
+  await fs.writeFile(logFile, lines(1, 2_000), "utf8");
+  const first = await compactTerminalRunLog(logFile, undefined, 4_000);
+  assert.ok(first, "an oversized log is compacted");
+  let text = await fs.readFile(logFile, "utf8");
+  assert.ok(text.length <= 4_000 + 80, `size ${text.length}`);
+  assert.ok(text.startsWith("line 1\nline 2\n"), "the head is kept");
+  assert.ok(text.endsWith("line 2000\n"), "the newest output is kept");
+  assert.match(text, /\.\.\.\[truncated \d+ chars from the middle\]\.\.\./);
+  const outputEnd = Buffer.byteLength(lines(1, 2_000));
+
+  await fs.appendFile(logFile, lines(2_001, 3_000), "utf8");
+  const second = await compactTerminalRunLog(logFile, first, 4_000);
+  assert.equal(second?.headBytes, first.headBytes, "the head stays put");
+  assert.ok((second?.droppedBytes ?? 0) > first.droppedBytes);
+  text = await fs.readFile(logFile, "utf8");
+  assert.ok(text.startsWith("line 1\n") && text.endsWith("line 3000\n"));
+  assert.equal((text.match(/truncated \d+ chars/g) ?? []).length, 1, "one marker");
+
+  const keptOffset = Buffer.byteLength(lines(1, 2_899));
+  const newer = await readTerminalLogSlice(logFile, keptOffset, 100_000, second);
+  assert.equal(newer.start, keptOffset, "an offset in the kept tail maps back to itself");
+  assert.equal(newer.end, Buffer.byteLength(lines(1, 3_000)));
+  assert.ok(newer.text.startsWith("line 2900\n") && newer.text.endsWith("line 3000\n"), newer.text.slice(0, 40));
+  const stale = await readTerminalLogSlice(logFile, outputEnd, 100_000, second);
+  assert.equal(stale.start, first.headBytes, "an offset the second compaction dropped reads from the marker");
+
+  const dropped = await readTerminalLogSlice(logFile, first.headBytes + 10, 100_000, second);
+  assert.match(dropped.text, /^\n\.\.\.\[truncated \d+ chars from the middle\]/, "a dropped offset reads from the marker");
+  assert.equal(await compactTerminalRunLog(logFile, second, 1_000_000), second, "a log under the cap is left alone");
+});
+
+test("a terminal run's saved log is capped while its output stays readable", posixOnly, async () => {
+  const previous = process.env.CESIUM_TERMINAL_LOG_MAX_BYTES;
+  process.env.CESIUM_TERMINAL_LOG_MAX_BYTES = "4096";
+  const handle = await startSession("conv-terminal-log-cap");
+  try {
+    const result = await handle.toolTerminal({ command: "seq 1 20000", timeoutMs: 10_000 });
+    assert.match(result, /^Command exited 0\./);
+    let record = null as Awaited<ReturnType<typeof readTerminalRunRecord>>;
+    assert.ok(
+      await waitFor(async () => {
+        const files = await fs.readdir(terminalRunsDir(WORKSPACE_ID));
+        for (const name of files.filter((file) => file.endsWith(".json"))) {
+          const candidate = await readTerminalRunRecord(WORKSPACE_ID, name.replace(/\.json$/, ""));
+          if (candidate?.conversationId === "conv-terminal-log-cap" && candidate.logLayout) {
+            record = candidate;
+            return true;
+          }
+        }
+        return false;
+      }, 10_000),
+      "the finished run's record carries the compacted layout"
+    );
+    const size = (await fs.stat(record!.logFile)).size;
+    assert.ok(size <= 4096 + 80, `log is ${size} bytes`);
+    const read = await handle.toolTerminalRead({ id: record!.id });
+    assert.match(read, /exited 0\./);
+    assert.ok(read.includes("\n1\n2\n") || read.includes(":\n1\n2\n"), "the head survives");
+    assert.ok(read.includes("20000"), "the newest output survives");
+    assert.match(read, /truncated \d+ chars from the middle/);
+  } finally {
+    await handle.dispose();
+    if (previous === undefined) {
+      delete process.env.CESIUM_TERMINAL_LOG_MAX_BYTES;
+    } else {
+      process.env.CESIUM_TERMINAL_LOG_MAX_BYTES = previous;
+    }
+  }
 });
