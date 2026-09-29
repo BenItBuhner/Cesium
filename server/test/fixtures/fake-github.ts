@@ -102,6 +102,11 @@ export async function startFakeGithub(input: {
     return tryGitOutput(repo.bareDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   }
 
+  /** A branch name or a commit sha (GitHub's compare takes either), as a full sha. */
+  async function resolveCommit(repo: FakeRepo, name: string): Promise<string | null> {
+    return (await branchHead(repo, name)) ?? (await tryGitOutput(repo.bareDir, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`]));
+  }
+
   const mergeability = new Map<string, boolean>();
 
   /** Whether the head still merges cleanly into the base, computed like GitHub does (a trial merge). */
@@ -240,13 +245,16 @@ export async function startFakeGithub(input: {
     }
     const compare = rest.match(/^\/compare\/(.+)$/);
     if (method === "GET" && compare) {
-      const [base, head] = decodeURIComponent(compare[1]!).split("...");
-      const ahead = await tryGitOutput(repo.bareDir, ["rev-list", "--count", `refs/heads/${base}..refs/heads/${head}`]);
-      if (ahead == null) {
+      const [baseName, headName] = decodeURIComponent(compare[1]!).split("...");
+      const base = await resolveCommit(repo, baseName ?? "");
+      const head = await resolveCommit(repo, headName ?? "");
+      if (!base || !head) {
         send(req, res, 404, { message: "Not Found" }, record);
         return;
       }
-      const log = await tryGitOutput(repo.bareDir, ["log", "--reverse", "--format=%H%x1f%B%x1e", `refs/heads/${base}..refs/heads/${head}`]);
+      const aheadBy = Number(await git(repo.bareDir, ["rev-list", "--count", `${base}..${head}`]));
+      const behindBy = Number(await git(repo.bareDir, ["rev-list", "--count", `${head}..${base}`]));
+      const log = await tryGitOutput(repo.bareDir, ["log", "--reverse", "--format=%H%x1f%B%x1e", `${base}..${head}`]);
       const commits = (log ?? "")
         .split("\x1e")
         .map((entry) => entry.trim())
@@ -255,7 +263,8 @@ export async function startFakeGithub(input: {
           const [sha, message] = entry.split("\x1f");
           return { sha, commit: { message: (message ?? "").trim() } };
         });
-      send(req, res, 200, { ahead_by: Number(ahead), status: Number(ahead) > 0 ? "ahead" : "identical", commits }, record);
+      const status = aheadBy > 0 && behindBy > 0 ? "diverged" : aheadBy > 0 ? "ahead" : behindBy > 0 ? "behind" : "identical";
+      send(req, res, 200, { ahead_by: aheadBy, behind_by: behindBy, status, commits }, record);
       return;
     }
     if (rest === "/pulls" && method === "GET") {

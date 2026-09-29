@@ -247,14 +247,23 @@ export class GithubClient {
     }
   }
 
-  /** How far `head` is ahead of `base`, with its commit messages oldest first. */
-  async compare(repo: string, base: string, head: string): Promise<{ aheadBy: number; commitMessages: string[] }> {
-    const result = await this.request<{ ahead_by?: number; commits?: Array<{ commit?: { message?: string } }> }>(
-      "GET",
-      `/repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`
-    );
+  /**
+   * How `head` relates to `base` (branches or commit shas): commits it has that
+   * `base` lacks, with their messages oldest first, and commits of `base` it lacks.
+   */
+  async compare(
+    repo: string,
+    base: string,
+    head: string
+  ): Promise<{ aheadBy: number; behindBy: number; commitMessages: string[] }> {
+    const result = await this.request<{
+      ahead_by?: number;
+      behind_by?: number;
+      commits?: Array<{ commit?: { message?: string } }>;
+    }>("GET", `/repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
     return {
       aheadBy: typeof result?.ahead_by === "number" ? result.ahead_by : 0,
+      behindBy: typeof result?.behind_by === "number" ? result.behind_by : 0,
       commitMessages: (result?.commits ?? []).map((entry) => entry.commit?.message?.trim() ?? "").filter(Boolean),
     };
   }

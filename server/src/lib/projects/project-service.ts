@@ -421,6 +421,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectS
       },
       repos,
       children: [],
+      closedPrs: [],
       settings: { ...DEFAULT_PROJECT_SETTINGS },
     };
     await insertProject(record);

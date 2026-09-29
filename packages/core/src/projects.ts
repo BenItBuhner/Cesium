@@ -58,7 +58,7 @@ export type ProjectPullRequestState = "open" | "closed" | "merged";
 export type ProjectPullRequestCi = "pending" | "success" | "failure";
 export type ProjectPullRequestReview = "approved" | "changes_requested" | "commented";
 
-/** A pull request a Project tracks: a worker's own, or one it was told to follow. */
+/** A pull request a Project tracks: a worker's own, one it was told to follow, or one it closed. */
 export type ProjectPullRequest = {
   /** `owner/repo`. */
   repo: string;
@@ -76,6 +76,8 @@ export type ProjectPullRequest = {
   mergeable: boolean | null;
   /** True when the Project opened it for a worker that pushed without one. */
   openedByProject: boolean;
+  /** True when the Project closed it without merging (project_close_pr). */
+  closedByProject?: boolean;
   updatedAt: number;
 };
 
