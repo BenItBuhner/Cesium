@@ -40,12 +40,40 @@ type Responder = (res: ServerResponse) => void;
 
 const scripted: Responder[] = [];
 const agentRequests: ChatRequest[] = [];
+const summaryRequests: ChatRequest[] = [];
+let summaryMode: "ok" | "fail" = "ok";
+const MODEL_SUMMARY = [
+  "## Objective",
+  "Read one.txt and keep a todo list about it.",
+  "## Decisions and why",
+  "Read the file in one call because it is small enough.",
+  "## Files touched",
+  "one.txt (read)",
+  "## Tried and failed",
+  "None.",
+  "## Open questions",
+  "None.",
+  "## Next steps",
+  "Answer the user's follow-up questions.",
+].join("\n");
 const modelServer = createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on("data", (chunk: Buffer) => chunks.push(chunk));
   req.on("end", () => {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatRequest;
     if (!Array.isArray(body.tools) || body.tools.length === 0) {
+      const system = typeof body.messages[0]?.content === "string" ? body.messages[0].content : "";
+      if (system.startsWith("You summarize")) {
+        summaryRequests.push(body);
+        if (summaryMode === "fail") {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "summary backend down" } }));
+          return;
+        }
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ choices: [{ message: { content: MODEL_SUMMARY } }] }));
+        return;
+      }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ choices: [{ message: { content: "Pruning Test" } }] }));
       return;
@@ -91,6 +119,10 @@ function sse(res: ServerResponse, payloads: unknown[]): void {
 }
 
 function readTurn(id: string, file: string, promptTokens: number): Responder {
+  return toolTurn(id, "read_file", { path: file }, promptTokens);
+}
+
+function toolTurn(id: string, name: string, args: Record<string, unknown>, promptTokens: number): Responder {
   return (res) =>
     sse(res, [
       {
@@ -99,7 +131,7 @@ function readTurn(id: string, file: string, promptTokens: number): Responder {
             index: 0,
             delta: {
               tool_calls: [
-                { index: 0, id, type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: file }) } },
+                { index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } },
               ],
             },
           },
@@ -200,3 +232,54 @@ test("tool results shrink with the headroom and old ones are pruned once, at a b
   extends_(r5!, r4!);
   assert.equal(messageText(r5!.at(-1)).endsWith("Did you read them?"), true);
 });
+
+for (const mode of ["ok", "fail"] as const) {
+  test(`compaction keeps the todo list and later requests extend it (summary call ${mode === "ok" ? "succeeds" : "fails"})`, async () => {
+    summaryMode = mode;
+    const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "pruning");
+    const conversation = await agentRuntimeManager.createConversation(workspace, {
+      backendId: "cesium-agent",
+      modelId: MODEL_ID,
+      modelName: "Tiny",
+    });
+    const firstRequest = agentRequests.length;
+    const firstSummary = summaryRequests.length;
+    scripted.push(
+      readTurn(`call_${mode}_read`, "one.txt", 4_000),
+      toolTurn(`call_${mode}_todo`, "todo", { action: "replace", items: [{ content: "Explain one.txt", status: "in_progress" }] }, 7_000),
+      textTurn("one.txt lists six hundred lines.", 8_000)
+    );
+    await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read one.txt and track it.");
+    await waitForIdle(workspace.id, conversation.id, 1);
+    scripted.push(textTurn("It has six hundred lines.", 15_000));
+    await agentRuntimeManager.promptConversation(workspace, conversation.id, "How long is it?");
+    await waitForIdle(workspace.id, conversation.id, 2);
+    scripted.push(textTurn("Still six hundred.", 6_000));
+    await agentRuntimeManager.promptConversation(workspace, conversation.id, "And now?");
+    await waitForIdle(workspace.id, conversation.id, 3);
+    scripted.push(textTurn("Yes.", 6_200));
+    await agentRuntimeManager.promptConversation(workspace, conversation.id, "Sure?");
+    const snapshot = await waitForIdle(workspace.id, conversation.id, 4);
+
+    const summary = snapshot.events.find(
+      (event): event is Extract<AgentStoredEvent, { kind: "compression_summary" }> =>
+        event.kind === "compression_summary" && Boolean(event.sourceRange)
+    );
+    assert.ok(summary, "the third turn compacts the first");
+    assert.equal(summaryRequests.length - firstSummary, 1, "one summary call per compaction");
+    assert.equal((summary.raw as { summaryKind?: string }).summaryKind, mode === "ok" ? "model" : "structured");
+    if (mode === "ok") {
+      assert.ok(summary.summary.startsWith(MODEL_SUMMARY));
+    } else {
+      assert.match(summary.summary, /^## Original request\nRead one\.txt and track it\./);
+      assert.match(summary.summary, /## Files touched\n- one\.txt \(read\)/);
+    }
+    assert.match(summary.summary, /## Current todo list\n- \[in_progress\] Explain one\.txt$/);
+
+    const requests = agentRequests.slice(firstRequest).map((request) => request.messages);
+    assert.equal(requests.length, 6);
+    const compactedRequest = requests[4]!;
+    assert.equal(messageText(compactedRequest[1]), `[Compressed earlier conversation]\n${summary.summary}`);
+    assert.deepEqual(requests[5]!.slice(0, compactedRequest.length), compactedRequest, "the next turn extends the compacted request");
+  });
+}

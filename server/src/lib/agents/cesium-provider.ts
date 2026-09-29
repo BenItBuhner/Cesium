@@ -189,6 +189,14 @@ import type {
 } from "./types.js";
 import { addTokenUsage, contextTokensAfterResponse } from "./cesium/cesium-usage.js";
 import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
+import {
+  COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  buildCompactionSummaryPrompt,
+  buildStructuredDigest,
+  isUsableModelSummary,
+  transcriptForSummary,
+  withCurrentTodos,
+} from "./cesium/cesium-compaction.js";
 import { DATA_DIR } from "../persistence.js";
 import {
   asRecord,
@@ -292,7 +300,6 @@ import {
   previousUserMessageCreatedAt,
   prunedToolCallIds,
   selectHistoryWindow,
-  summarizeForCompression,
 } from "./cesium/cesium-history.js";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
@@ -393,6 +400,22 @@ function pruneTriggerTokens(contextWindow: number): number {
   const shrinkStartsAt =
     contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - CESIUM_TOOL_RESULT_MODEL_MAX_CHARS / CESIUM_HEADROOM_CHARS_PER_TOKEN;
   return Math.min(contextWindow * CONTEXT_PRUNE_TRIGGER_RATIO, shrinkStartsAt);
+}
+
+const COMPACTION_SUMMARY_TIMEOUT_MS = 120_000;
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function resolvedModelId(
@@ -2741,13 +2764,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ? sorted.filter((event) => event.seq < splitSeq && event.kind !== "compression_summary")
       : [];
     await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
+    const latestPlan = [...sorted].reverse().find((event) => event.kind === "plan");
+    const summary = compacts
+      ? await this.summarizeCompactedRange({
+          events: window.events.filter((event) => event.seq < splitSeq),
+          previousSummary: window.summary?.summary,
+          pruned,
+          todos: latestPlan && latestPlan.seq < splitSeq ? latestTodoEntries(sorted) : null,
+          modelId,
+          contextWindow,
+        })
+      : null;
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         kind: "compression_summary",
         messageId: `cesium-compression-${randomUUID()}`,
-        summary: compacts ? summarizeForCompression(compressed) : "",
+        summary: summary?.text ?? "",
         retainedTurnCount: retainedUsers,
         compressedTurnCount: compressed.filter(
           (event) => event.kind === "user_message" && !event.hidden
@@ -2764,9 +2798,73 @@ class CesiumSessionHandle implements AgentSessionHandle {
         estimatedTokensBefore,
         estimatedTokensAfter: Math.max(0, retainedTokens - prune.freedTokens),
         generation: (window.summary?.generation ?? 0) + (compacts ? 1 : 0),
+        ...(summary ? { raw: { summaryKind: summary.kind } } : {}),
       },
     ]);
     return true;
+  }
+
+  /**
+   * The summary that replaces compacted turns: the model's, in a fixed
+   * schema, when the call succeeds; the deterministic digest otherwise. The
+   * current todo list is attached either way.
+   */
+  private async summarizeCompactedRange(input: {
+    events: AgentStoredEvent[];
+    previousSummary?: string;
+    pruned: ReadonlySet<string>;
+    todos: AgentPlanEntry[] | null;
+    modelId: string;
+    contextWindow: number;
+  }): Promise<{ text: string; kind: "model" | "structured" }> {
+    const digest = buildStructuredDigest(input.events, input.previousSummary);
+    let text = digest;
+    let kind: "model" | "structured" = "structured";
+    try {
+      const auth = await resolveCesiumAuth({
+        modelId: input.modelId,
+        configuredApiKind:
+          providerPart(input.modelId) === "openai"
+            ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
+            : undefined,
+      });
+      const transcript = transcriptForSummary(
+        normalizeEventsToHistory(input.events, CESIUM_SYSTEM_PROMPT, input.pruned)
+      );
+      const result = await withTimeout(
+        runAdapter({
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          oauth: auth.oauth,
+          modelId: input.modelId,
+          tools: [],
+          messages: [
+            { role: "system", content: COMPACTION_SUMMARY_SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: buildCompactionSummaryPrompt({
+                digest,
+                transcript,
+                maxTranscriptChars: Math.floor(input.contextWindow * 0.5 * CESIUM_HEADROOM_CHARS_PER_TOKEN),
+              }),
+            },
+          ],
+        }),
+        COMPACTION_SUMMARY_TIMEOUT_MS
+      );
+      if (isUsableModelSummary(result.text)) {
+        text = result.text.trim();
+        kind = "model";
+      }
+    } catch (error) {
+      console.warn(
+        "[cesium-agent] compaction summary call failed, keeping the digest:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    return { text: withCurrentTodos(text, input.todos), kind };
   }
 
 
