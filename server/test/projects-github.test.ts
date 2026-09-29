@@ -671,6 +671,70 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
   ) as { closed: { pr: string; state: string; agent: string | null } };
   assert.deepEqual([teammate.closed.pr, teammate.closed.state, teammate.closed.agent], ["acme/shop#3", "closed", null]);
   assert.equal(github.pull("acme/shop", 3).state, "closed");
+  const listed = (await api<{ prs: ProjectPullRequestListing[] }>("GET", `/api/projects/${project.id}/prs`)).json.prs;
+  const closedHere = (number: number) => listed.find((pr) => pr.repo === "acme/shop" && pr.number === number);
+  assert.deepEqual(
+    [closedHere(3)?.state, closedHere(3)?.agent, closedHere(3)?.closedByProject],
+    ["closed", null, true],
+    "the teammate's PR the Project stopped following shows closed, not its last snapshot"
+  );
+  assert.deepEqual([closedHere(number)?.agent, closedHere(number)?.closedByProject], ["banner", true]);
+});
+
+test("a teammate's PR the Project closed without ever following it stays in its PR list", async () => {
+  await git(SHOP_REMOTE, ["branch", "dana/experiment", "main"]);
+  await pushCommitToRemote({
+    remoteDir: SHOP_REMOTE,
+    scratchDir: SCRATCH,
+    files: { "src/experiment.js": "export const experiment = true;\n" },
+    message: "Try an experiment",
+    branch: "dana/experiment",
+  });
+  const pull = await github.createPullDirect("acme/shop", { head: "dana/experiment", title: "Experiment: loyalty points", login: "dana" });
+  const before = (await api<{ prs: ProjectPullRequestListing[] }>("GET", `/api/projects/${project.id}/prs`)).json.prs;
+  assert.equal(before.some((pr) => pr.number === pull.number), false, "the Project doesn't know it yet");
+
+  script("orchestrator", text(["Will close Dana's experiment."]));
+  await sayToCoordinator("Close Dana's loyalty points experiment PR, we are not doing that.");
+  await executeProjectOrchestratorTool(project.id, "project_close_pr", {
+    pr: `shop#${pull.number}`,
+    reason: "The user decided against loyalty points.",
+    user_quote: "Close Dana's loyalty points experiment PR",
+  });
+  assert.equal(github.pull("acme/shop", pull.number).state, "closed");
+  const listed = (await api<{ prs: ProjectPullRequestListing[] }>("GET", `/api/projects/${project.id}/prs`)).json.prs;
+  const entry = listed.find((pr) => pr.repo === "acme/shop" && pr.number === pull.number);
+  assert.deepEqual(
+    [entry?.title, entry?.state, entry?.agent, entry?.closedByProject],
+    ["Experiment: loyalty points", "closed", null, true]
+  );
+  const forCoordinator = JSON.parse(await executeProjectOrchestratorTool(project.id, "project_list_prs", {})) as {
+    prs: Array<{ pr: string; state: string; agent: string | null; closedByProject?: boolean }>;
+  };
+  const row = forCoordinator.prs.find((pr) => pr.pr === `acme/shop#${pull.number}`);
+  assert.deepEqual([row?.state, row?.agent, row?.closedByProject], ["closed", null, true], "the coordinator sees it too");
+  assert.equal(
+    (await readProjectSubscriptions(project.id)).some(
+      (entry) => entry.spec.kind === "github_pr" && entry.spec.number === pull.number
+    ),
+    false,
+    "no subscription was made for it"
+  );
+
+  // Dana reopens it and the coordinator follows it again: the newer state wins over the close.
+  const reopened = await fetch(`${github.baseUrl}/repos/acme/shop/pulls/${pull.number}`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${github.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ state: "open" }),
+  });
+  assert.equal(reopened.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await executeProjectOrchestratorTool(project.id, "project_subscribe", { kind: "github_pr", pr: `shop#${pull.number}` });
+  await tick();
+  const after = (await api<{ prs: ProjectPullRequestListing[] }>("GET", `/api/projects/${project.id}/prs`)).json.prs;
+  const current = after.find((pr) => pr.repo === "acme/shop" && pr.number === pull.number);
+  assert.deepEqual([current?.state, current?.closedByProject], ["open", undefined], "a reopened, followed PR shows open again");
+  await orchestratorIdle("after following the reopened PR");
 });
 
 test("a PR that conflicts after another merge is reported, refused with guidance, and rebased by its own agent", async () => {
@@ -815,4 +879,70 @@ test("the coordinator can't merge a UI change until its screenshots arrive", asy
     await executeProjectOrchestratorTool(project.id, "project_merge_pr", { pr: "hero", user_quote: "merge the hero PR once it is ready" })
   ) as { merged: { state: string } };
   assert.equal(merged.merged.state, "merged");
+});
+
+test("pushes to an agent's PR the coordinator follows are labeled: a rebase, an amend, new commits", async () => {
+  const promo = gatedResponder("Added the promo code field and opened a PR.");
+  script("promo", promo.responder);
+  const created = await api<{ agent: { branch: string; worktreePath: string } }>("POST", `/api/projects/${project.id}/agents`, {
+    name: "promo",
+    repo: "shop",
+    instructions: "Add a promo code field.",
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const { branch, worktreePath: worktree } = created.json.agent;
+  await commitAndPush(worktree, branch, "src/promo.js", "export const promo = (code) => code.trim();\n", "Add a promo code field");
+  // As in the live run: the agent opens its PR and the coordinator follows it before the Project does.
+  const pull = await github.createPullDirect("acme/shop", { head: branch, title: "Add a promo code field", login: "worker" });
+  await executeProjectOrchestratorTool(project.id, "project_subscribe", { kind: "github_pr", pr: `acme/shop#${pull.number}` });
+  promo.release();
+  await waitFor("promo's PR tracked", () => childRecord("promo"), (child) => child.pr?.number === pull.number, 30_000);
+  await orchestratorIdle("after promo's update");
+  assert.deepEqual(
+    (await readProjectSubscriptions(project.id))
+      .filter((entry) => entry.closedAt == null && entry.spec.kind === "github_pr" && entry.spec.number === pull.number)
+      .map((entry) => [entry.createdBy, entry.childId]),
+    [["coordinator", null]],
+    "the coordinator's own subscription follows it, so pushes are reported"
+  );
+  await tick(); // the head's baseline
+
+  const before = (await eventTurns()).length;
+  script("orchestrator", text(["promo rebased."]), text(["promo amended."]), text(["promo pushed more."]));
+  await pushCommitToRemote({
+    remoteDir: SHOP_REMOTE,
+    scratchDir: SCRATCH,
+    files: { "src/footer.js": "export const footer = 'Acme';\n" },
+    message: "Add a footer",
+    branch: "main",
+  });
+  await git(worktree, ["fetch", "--quiet", "origin"]);
+  await git(worktree, ["rebase", "origin/main"]);
+  await git(worktree, ["push", "--quiet", "--force-with-lease", "origin", branch]);
+  await tick();
+  let turns = await waitFor("the rebase event", eventTurns, (list) => list.length === before + 1);
+  assert.match(turns.at(-1)!.displayContent!, new RegExp(`acme/shop#${pull.number} rebased$`));
+  assert.match(
+    turns.at(-1)!.content,
+    /action="rebased" base="main" head="[0-9a-f]{12}" agent="promo"[^>]*>\npromo rebased the branch onto main \(a force-push\); the head is now [0-9a-f]{12}\./
+  );
+  assert.doesNotMatch(turns.at(-1)!.content, /new commits/);
+  await orchestratorIdle("after the rebase event");
+
+  // An amend rewrites the branch without taking in anything new from main.
+  await git(worktree, ["commit", "--amend", "-m", "Add a promo code field, trimmed"]);
+  await git(worktree, ["push", "--quiet", "--force-with-lease", "origin", branch]);
+  await tick();
+  turns = await waitFor("the force-push event", eventTurns, (list) => list.length === before + 2);
+  assert.match(
+    turns.at(-1)!.content,
+    /action="force_pushed" head="[0-9a-f]{12}" agent="promo"[^>]*>\npromo force-pushed, rewriting the branch's history; the head is now [0-9a-f]{12}\./
+  );
+  await orchestratorIdle("after the force-push event");
+
+  await commitAndPush(worktree, branch, "src/promo-notes.js", "export const notes = [];\n", "Keep promo notes");
+  await tick();
+  turns = await waitFor("the new-commits event", eventTurns, (list) => list.length === before + 3);
+  assert.match(turns.at(-1)!.content, /action="synchronize" agent="promo"[^>]*>\npromo pushed new commits; the head is now [0-9a-f]{12}\./);
+  await orchestratorIdle("after the new-commits event");
 });

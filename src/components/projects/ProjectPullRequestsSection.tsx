@@ -215,6 +215,7 @@ function PullRequestList({
               {ci ? <ProjectBadgePill badge={ci} /> : null}
               {review ? <ProjectBadgePill badge={review} /> : null}
               {pr.openedByProject ? <ProjectBadgePill badge={{ label: "Opened by the Project", tone: "neutral" }} /> : null}
+              {pr.closedByProject ? <ProjectBadgePill badge={{ label: "Closed by the Project", tone: "neutral" }} /> : null}
               <span className="flex-1" />
               {pr.agent ? (
                 <button type="button" onClick={() => onEvidence(pr.agent!)} className={projectButtonClass} title={`Screenshots and recordings from ${pr.agent}`}>

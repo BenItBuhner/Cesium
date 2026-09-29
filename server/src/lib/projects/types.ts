@@ -92,6 +92,11 @@ export type ProjectRecord = {
   };
   repos: ProjectRepoBinding[];
   children: ProjectChildRecord[];
+  /**
+   * Pull requests no agent of the Project opened that it closed (a teammate's,
+   * on the user's word), newest first, so its PR list still shows them.
+   */
+  closedPrs: ProjectPullRequest[];
   settings: ProjectSettings;
 };
 
