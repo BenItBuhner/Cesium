@@ -24,7 +24,7 @@ import {
 import type { BrowserControlViewport } from "../browser-control/types.js";
 import { asString } from "../coerce.js";
 
-export const BROWSER_MCP_SERVER_ID = "browser";
+export { CESIUM_BROWSER_MCP_SERVER_ID as BROWSER_MCP_SERVER_ID } from "@cesium/core/cesium-tools";
 
 const tabIdSchema = { type: "string", description: "Browser tab id returned by browser_tabs." };
 

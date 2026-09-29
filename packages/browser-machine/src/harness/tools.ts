@@ -7,8 +7,10 @@ import type {
   AgentPlanEntry,
   AgentToolEditPreview,
   AgentToolEditPreviewLine,
+  CesiumToolDefinition,
   WorkspaceRecord,
 } from "@cesium/core";
+import { CESIUM_SHARED_TOOL_DEFINITIONS } from "@cesium/core";
 import { basename, resolveSafePath, toRelativePath } from "../paths";
 import type { Vfs } from "../vfs";
 import type { BrowserGit } from "../git/browser-git";
@@ -27,6 +29,98 @@ export type ToolExecution = {
 
 const MAX_READ_LINES = 1200;
 const MAX_GREP_RESULTS = 100;
+const GREP_RESULTS_CAP = 300;
+const GREP_CONTEXT_CAP = 5;
+const TERMINAL_RESULT_MAX_CHARS = 60_000;
+
+/**
+ * Tool schemas advertised to the model. read_file, write_file, edit_file and
+ * todo behave here as the server's do, so they use the shared definitions;
+ * the others describe what this executor actually does.
+ */
+export const BROWSER_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
+  CESIUM_SHARED_TOOL_DEFINITIONS.read_file,
+  {
+    name: "grep",
+    description:
+      "Search workspace file contents line by line with a JavaScript regular expression. Returns path:line:text for each match (with context, path:line-text lines and -- between groups). Skips binary files, files over 2 MB, and directories such as .git and node_modules. Case-sensitive unless ignoreCase is true. Read-only.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "JavaScript RegExp source, e.g. \"fn\\\\s+\\\\w+\" or \"TODO|FIXME\"." },
+        path: {
+          type: "string",
+          description: "File or directory to search, relative to the workspace root. Defaults to the root.",
+        },
+        ignoreCase: { type: "boolean", description: "Match case-insensitively. Defaults to false." },
+        context: {
+          type: "number",
+          description: `Lines of context around each match (0-${GREP_CONTEXT_CAP}, default 0).`,
+        },
+        maxResults: {
+          type: "number",
+          description: `Maximum matches to return (default ${MAX_GREP_RESULTS}, max ${GREP_RESULTS_CAP}).`,
+        },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+  },
+  CESIUM_SHARED_TOOL_DEFINITIONS.write_file,
+  CESIUM_SHARED_TOOL_DEFINITIONS.edit_file,
+  {
+    name: "terminal",
+    description: `Run a command in the browser machine's built-in shell (not bash; the environment reminder lists its syntax and commands) from the workspace root, and wait for it to exit. Returns the exit code and the combined stdout and stderr, cut off after ${TERMINAL_RESULT_MAX_CHARS} characters. There are no background processes.`,
+    requiresPermission: "terminal",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string" },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "wait",
+    description:
+      "Pause for a fixed number of seconds before continuing. Prefer this over shell sleep. Waits longer than the harness wait limit in Settings are cut to that limit.",
+    parameters: {
+      type: "object",
+      properties: {
+        seconds: { type: "number", description: "How long to wait. Fractional values are allowed." },
+      },
+      required: ["seconds"],
+      additionalProperties: false,
+    },
+  },
+  CESIUM_SHARED_TOOL_DEFINITIONS.todo,
+  {
+    name: "ask_question",
+    description:
+      'Ask the user a question and wait for the answer, which comes back as the tool result. Pass prompt plus optional options (strings or {id,label}). Example: {"prompt":"Which approach?","options":["Refactor now","Ship as-is"]}.',
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "The question to show the user." },
+        options: { type: "array", description: "Selectable answers: strings or {id,label}. Optional." },
+        allowMultiple: { type: "boolean" },
+      },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "switch_branch",
+    description: "Switch the workspace to another git branch, creating it when it does not exist.",
+    parameters: {
+      type: "object",
+      properties: { branch: { type: "string" } },
+      required: ["branch"],
+      additionalProperties: false,
+    },
+  },
+];
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -197,8 +291,8 @@ export class BrowserToolExecutor {
     }
     const scope = asString(args.path);
     const root = scope ? resolveSafePath(workspace.root, scope) : workspace.root;
-    const context = Math.min(asNumber(args.context) ?? 0, 5);
-    const maxResults = Math.min(asNumber(args.maxResults) ?? MAX_GREP_RESULTS, 300);
+    const context = Math.min(asNumber(args.context) ?? 0, GREP_CONTEXT_CAP);
+    const maxResults = Math.min(asNumber(args.maxResults) ?? MAX_GREP_RESULTS, GREP_RESULTS_CAP);
     const results: string[] = [];
     let total = 0;
 
@@ -325,7 +419,7 @@ export class BrowserToolExecutor {
     const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
     return {
       result:
-        `Exit code: ${result.exitCode}\n\n${output || "(no output)"}`.slice(0, 60_000),
+        `Exit code: ${result.exitCode}\n\n${output || "(no output)"}`.slice(0, TERMINAL_RESULT_MAX_CHARS),
       detail: command,
       isError: result.exitCode !== 0,
     };
@@ -345,7 +439,7 @@ export class BrowserToolExecutor {
     const items = Array.isArray(args.items) ? (args.items as Array<Record<string, unknown>>) : [];
     const normalized: AgentPlanEntry[] = items.map((item, index) => ({
       id: asString(item.id) || `todo-${index + 1}`,
-      content: asString(item.content ?? item.title ?? item.text),
+      content: asString(item.content ?? item.title ?? item.text ?? item.description),
       status: (["pending", "in_progress", "blocked", "completed"].includes(asString(item.status))
         ? asString(item.status)
         : "pending") as AgentPlanEntry["status"],
