@@ -73,6 +73,10 @@ export type WorkedSessionEntry =
       editPreview?: WorkedSessionEditPreview;
       /** Parsed checklist for todo tools; rendered as an organic list instead of raw JSON args. */
       todos?: TodoItem[];
+      /** `createdAt` of the first event seen for this tool call (epoch ms). */
+      startedAt?: number;
+      /** `createdAt` of the tool event that settled it; unset when a turn boundary closed it implicitly. */
+      completedAt?: number;
     };
 
 export type ImageAttachment = {
@@ -175,6 +179,8 @@ export interface ChatMessage {
   content?: string;
   /** Full user prompt text when `content` is a display-friendly summary. */
   rawContent?: string;
+  /** Set on `assistant` rows projected from runtime `system` events; warnings/errors render with a level badge. */
+  systemLevel?: "info" | "warning" | "error";
   /** Rich user bubble; when set, overrides plain `content` for body text. */
   segments?: UserMessageSegment[];
   /** Image attachments for user messages. */
@@ -220,6 +226,14 @@ export interface ChatMessage {
   shellTitle?: string;
   /** Loading/working placeholder before any agent content arrives */
   loading?: boolean;
+  /** Live working row: latest runtime status line (e.g. "Cesium is connecting to openai…"). */
+  liveStatusDetail?: string;
+  /** Live working row: coarse activity phase ("Editing", "Running commands") replacing "Working". */
+  liveStatusPhase?: string;
+  /** Live working row: diffstat of the edits made so far this turn. */
+  liveEditStats?: { files: number; additions: number; deletions: number };
+  /** Live working row: turn start (epoch ms) for a ticking elapsed timer. */
+  liveStartedAt?: number;
   /** Agent handoff divider */
   handoffFromAgent?: string;
   handoffToAgent?: string;

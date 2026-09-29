@@ -20,3 +20,16 @@ export function formatAgentRunDuration(durationMs: number): string {
   parts.push(`${minutes}m`);
   return parts.join(" ");
 }
+
+/** Second-granular elapsed time for live timers and tool rows (e.g. `8s`, `2m 14s`, `1h 3m`). */
+export function formatAgentElapsed(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m ${totalSeconds % 60}s`;
+  }
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}

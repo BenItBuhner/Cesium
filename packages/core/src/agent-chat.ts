@@ -5,11 +5,19 @@ import type {
   AgentConversationStatus,
   AgentPlanEntry,
   AgentStoredEvent,
+  AgentToolCallStatus,
 } from "./protocol";
 import {
+  COMPRESSING_CONTEXT_STATUS_PREFIX,
   isCompressingContextStatusDetail,
   isTakingLongerStatusDetail,
+  TAKING_LONGER_STATUS_PREFIX,
 } from "./agent-completion-error";
+import {
+  deriveAgentActivityPhase,
+  deriveAgentRunEditStats,
+  getMobileAgentPhaseLabel,
+} from "./agent-run-activity";
 import {
   parseLooseJsonObjectCached,
   tryParseLeadingJsonArrayCached,
@@ -673,6 +681,8 @@ type ProjectedTurn = {
   takingLonger?: boolean;
   /** Cesium context compression in progress - show "Compressing context". */
   compressingContext?: boolean;
+  /** Latest running `status.detail`, cleared once newer agent activity supersedes it. */
+  liveStatusDetail?: string;
   /** Wall-clock start for this turn (`user_message.createdAt`). */
   turnStartedAt?: number;
   /** Wall-clock end when the runtime settles this turn (`status` idle/failed/cancelled). */
@@ -1955,7 +1965,11 @@ function mergeAdjacentWorkedSessions(messages: ChatMessage[]): ChatMessage[] {
 
 function projectTurnTimelineToMessages(
   turn: ProjectedTurn,
-  options?: { isLatestTurn?: boolean }
+  options?: {
+    isLatestTurn?: boolean;
+    /** Events of this turn (after its user message), resolved only when the live row renders. */
+    runEvents?: () => AgentStoredEvent[];
+  }
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantText = "";
@@ -2058,14 +2072,31 @@ function projectTurnTimelineToMessages(
     const hasAssistantMessage = ordered.some((message) => message.type === "assistant");
     const shouldAppendLiveStatus = ordered.length === 0 || hasWorkedSession || hasAssistantMessage;
     if (shouldAppendLiveStatus) {
-      ordered.push({
+      const runEvents = options?.runEvents?.() ?? [];
+      const phase = deriveAgentActivityPhase(runEvents);
+      const editStats = deriveAgentRunEditStats(runEvents);
+      const liveStatus: ChatMessage = {
         id: `turn-working-${turn.id}`,
         type: "worked-session",
         workedLabel: liveStatusLabel,
         workedEntries: [],
         workedDefaultOpen: false,
         loading: true,
-      });
+      };
+      // "starting" only means nothing has streamed yet; "Working" says that better.
+      if (liveStatusLabel === "Working" && phase !== "starting" && phase !== "working") {
+        liveStatus.liveStatusPhase = getMobileAgentPhaseLabel(phase);
+      }
+      if (turn.liveStatusDetail) {
+        liveStatus.liveStatusDetail = turn.liveStatusDetail;
+      }
+      if (editStats) {
+        liveStatus.liveEditStats = editStats;
+      }
+      if (turn.turnStartedAt != null) {
+        liveStatus.liveStartedAt = turn.turnStartedAt;
+      }
+      ordered.push(liveStatus);
     }
   }
 
@@ -2334,6 +2365,73 @@ function finalizeOpenToolsInTurn(
     if (entry.status === "pending" || entry.status === "running") {
       entry.status = finalStatus;
     }
+  }
+}
+
+/**
+ * Timing for a tool row from its own events. Only an explicit terminal tool
+ * event sets `completedAt`: rows closed implicitly by a turn boundary have no
+ * real end time, and stamping one would show the model's run time instead.
+ */
+function stampToolEntryTiming(
+  entry: Extract<WorkedSessionEntry, { kind: "tool" }>,
+  event: { createdAt: number; status: AgentToolCallStatus }
+): void {
+  entry.startedAt ??= event.createdAt;
+  if (
+    entry.completedAt == null &&
+    (event.status === "completed" || event.status === "failed" || event.status === "cancelled")
+  ) {
+    entry.completedAt = event.createdAt;
+  }
+}
+
+const LIVE_STATUS_DETAIL_MAX = 240;
+
+/**
+ * One-line live status text from a running `status.detail`. Retry and
+ * compression details already drive the row label, so their label prefix is
+ * dropped and only the remainder ("Retrying provider request (1/3)…") is kept.
+ */
+function liveStatusDetailFromStatus(detail: string | undefined): string | undefined {
+  let text = detail?.replace(/\s+/g, " ").trim() ?? "";
+  for (const prefix of [TAKING_LONGER_STATUS_PREFIX, COMPRESSING_CONTEXT_STATUS_PREFIX]) {
+    if (text.startsWith(prefix)) {
+      text = text.slice(prefix.length).replace(/^[\s\-–—:·.…]+/, "");
+    }
+  }
+  if (!text) {
+    return undefined;
+  }
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  return text.length > LIVE_STATUS_DETAIL_MAX
+    ? `${text.slice(0, LIVE_STATUS_DETAIL_MAX - 1).trimEnd()}…`
+    : text;
+}
+
+/**
+ * Agent activity that makes an earlier running status line stale ("connecting
+ * to openai…" once tokens stream). In-flight tool updates and subagent
+ * progress do not: a wait tool keeps re-emitting its countdown while they flow.
+ */
+function supersedesLiveStatusDetail(event: AgentStoredEvent): boolean {
+  switch (event.kind) {
+    case "assistant_message_chunk":
+    case "reasoning":
+    case "tool_call":
+    case "plan":
+    case "question":
+    case "permission_request":
+    case "compression_summary":
+      return true;
+    case "tool_call_update":
+      return (
+        event.status === "completed" ||
+        event.status === "failed" ||
+        event.status === "cancelled"
+      );
+    default:
+      return false;
   }
 }
 
@@ -4300,6 +4398,9 @@ const toolEntryByIdAcrossTurns = new Map<
 
   for (const event of ordered) {
     try {
+    if (currentTurn?.liveStatusDetail && supersedesLiveStatusDetail(event)) {
+      currentTurn.liveStatusDetail = undefined;
+    }
     switch (event.kind) {
     case "user_message": {
       if (event.hidden) {
@@ -4609,6 +4710,7 @@ const toolEntryByIdAcrossTurns = new Map<
         } else {
           Object.assign(existing, entry);
         }
+        stampToolEntryTiming(existing ?? entry, event);
         break;
       }
       case "tool_call_update": {
@@ -4807,6 +4909,7 @@ const toolEntryByIdAcrossTurns = new Map<
             existing.toolCallId = keepToolCallId;
           }
         }
+        stampToolEntryTiming(existing ?? entry, event);
         break;
       }
       case "plan": {
@@ -4906,6 +5009,7 @@ const toolEntryByIdAcrossTurns = new Map<
               : event.level === "info"
                 ? event.text
                 : `[${event.level}] ${event.text}`,
+          systemLevel: event.level,
         });
         break;
       }
@@ -4937,6 +5041,9 @@ const toolEntryByIdAcrossTurns = new Map<
           }
           if (event.status === "running" && isCompressingContextStatusDetail(event.detail)) {
             ensureTurn().compressingContext = true;
+          }
+          if (event.status === "running") {
+            ensureTurn().liveStatusDetail = liveStatusDetailFromStatus(event.detail);
           }
           break;
         }
@@ -4992,11 +5099,23 @@ const toolEntryByIdAcrossTurns = new Map<
   }
 
 const messages: ChatMessage[] = [];
+const latestTurn = turns[turns.length - 1];
+const latestTurnEvents = (): AgentStoredEvent[] => {
+  const userMessageId = latestTurn?.userMessage?.id;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const event = ordered[index]!;
+    if (event.kind === "user_message" && event.messageId === userMessageId) {
+      return ordered.slice(index + 1);
+    }
+  }
+  return [];
+};
 for (const turn of turns) {
   const timelineMsgs = appendTurnCompletionFooter(
     turn,
     projectTurnTimelineToMessages(turn, {
-      isLatestTurn: turn === turns[turns.length - 1],
+      isLatestTurn: turn === latestTurn,
+      runEvents: turn === latestTurn ? latestTurnEvents : undefined,
     })
   );
   const forkInTimeline = timelineMsgs.filter((m) => m.type === "chat-fork");
