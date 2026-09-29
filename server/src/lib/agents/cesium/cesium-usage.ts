@@ -1,6 +1,8 @@
 import type { AgentTokenUsage } from "../types.js";
 import { asRecord } from "./cesium-coerce.js";
 
+export { contextTokensAfterResponse } from "@cesium/core/cesium-history";
+
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
 }
@@ -79,11 +81,6 @@ export function usageFromGoogle(value: unknown): AgentTokenUsage | undefined {
     { inputTokens: input, outputTokens: (count(usage.candidatesTokenCount) ?? 0) + thoughts },
     { cachedInputTokens: count(usage.cachedContentTokenCount), reasoningTokens: thoughts }
   );
-}
-
-/** Tokens the next request starts from: this prompt plus the reply it carries forward. */
-export function contextTokensAfterResponse(usage: AgentTokenUsage): number {
-  return usage.inputTokens + Math.max(0, usage.outputTokens - (usage.reasoningTokens ?? 0));
 }
 
 export function addTokenUsage(total: AgentTokenUsage | undefined, next: AgentTokenUsage): AgentTokenUsage {

@@ -11,10 +11,7 @@ import type {
   AgentPermissionCategory,
   WorkspaceRecord,
 } from "@cesium/core";
-import {
-  buildCesiumBaseSystemPrompt,
-  CESIUM_TOOL_DEFINITIONS,
-} from "@cesium/core";
+import { buildCesiumBaseSystemPrompt } from "@cesium/core";
 import type { Vfs } from "../vfs";
 import type { BrowserGit } from "../git/browser-git";
 import type { ShellRuntime } from "../shell/runtime";
@@ -25,7 +22,7 @@ import type { BrowserAgentRuntime, PromptInput } from "../routes/agent-routes";
 import { streamModelTurn, type AdapterToolDefinition } from "./adapters";
 import { buildHistoryFromEvents } from "./history";
 import { buildBrowserMachineReminder, formatGitSummary } from "./reminder";
-import { BrowserToolExecutor } from "./tools";
+import { BROWSER_TOOL_DEFINITIONS, BrowserToolExecutor } from "./tools";
 import { readDoc, writeDoc } from "../stores/kv-docs";
 
 const MAX_ITERATIONS = 40;
@@ -62,43 +59,6 @@ function latestBrowserEnvironmentHash(events: AgentStoredEvent[]): string | null
   return null;
 }
 
-/** Extra tool definitions the browser harness adds to the shared catalog. */
-const EXTRA_TOOLS: AdapterToolDefinition[] = [
-  {
-    name: "write_file",
-    description: "Create or overwrite a workspace file with the provided content.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        content: { type: "string" },
-      },
-      required: ["path", "content"],
-    },
-  },
-  {
-    name: "switch_branch",
-    description: "Switch the workspace to another git branch (creates it if missing).",
-    parameters: {
-      type: "object",
-      properties: { branch: { type: "string" } },
-      required: ["branch"],
-    },
-  },
-];
-
-const BROWSER_TOOL_NAMES = new Set([
-  "read_file",
-  "grep",
-  "edit_file",
-  "write_file",
-  "terminal",
-  "todo",
-  "ask_question",
-  "wait",
-  "switch_branch",
-]);
-
 type TurnState = {
   abort: AbortController;
   cancelled: boolean;
@@ -130,16 +90,12 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
     });
   }
 
-  /** Tool schemas advertised to the model: the shared catalog's browser tools plus browser-only extras. */
   private toolDefinitions(): AdapterToolDefinition[] {
-    const shared = CESIUM_TOOL_DEFINITIONS.filter((tool) => BROWSER_TOOL_NAMES.has(tool.name)).map(
-      (tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      })
-    );
-    return [...shared, ...EXTRA_TOOLS];
+    return BROWSER_TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
   }
 
   async promptConversation(
@@ -315,6 +271,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         const assistantMessageId = crypto.randomUUID();
         let textBuffer = "";
         let reasoningBuffer = "";
+        let streamedText = false;
         let flushTimer: ReturnType<typeof setTimeout> | null = null;
         let flushChain = Promise.resolve();
         const flush = (): Promise<void> => {
@@ -339,6 +296,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
               });
             }
             if (text) {
+              streamedText = true;
               batch.push({
                 eventId: newEventId(),
                 conversationId,
@@ -359,6 +317,20 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           if (!flushTimer) {
             flushTimer = setTimeout(() => void flush(), STREAM_FLUSH_MS);
           }
+        };
+        // Text the model never finished closes here, as the server's
+        // interruption repair does, instead of trailing later requests.
+        const closeInterrupted = async (): Promise<void> => {
+          if (!streamedText) return;
+          await append([
+            {
+              eventId: newEventId(),
+              conversationId,
+              kind: "assistant_message_end",
+              messageId: assistantMessageId,
+              stopReason: "interrupted",
+            },
+          ]);
         };
 
         let result;
@@ -386,6 +358,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           );
         } catch (error) {
           await flush();
+          await closeInterrupted();
           if (turn.cancelled) return;
           await fail(
             error instanceof Error
@@ -409,6 +382,10 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           break;
         }
 
+        if (turn.cancelled) {
+          await closeInterrupted();
+          return;
+        }
         for (const toolCall of result.toolCalls) {
           if (turn.cancelled) return;
           const executed = await this.executeToolCall(workspace, conversationId, turn, {

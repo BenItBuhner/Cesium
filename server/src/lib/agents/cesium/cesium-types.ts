@@ -1,28 +1,11 @@
 import type { AgentTokenUsage } from "../types.js";
 
-export type CesiumRole = "system" | "user" | "assistant" | "tool";
-
-export type CesiumHistoryToolCall = {
-  id: string;
-  name: string;
-  arguments: string;
-};
-
-export type CesiumImagePart = {
-  mimeType: string;
-  data: string;
-  name?: string;
-};
-
-export type CesiumHistoryMessage = {
-  role: CesiumRole;
-  content: string;
-  /** Image attachments for multimodal / vision models (OpenAI-compatible image_url parts). */
-  images?: CesiumImagePart[];
-  toolCallId?: string;
-  name?: string;
-  toolCalls?: CesiumHistoryToolCall[];
-};
+export type {
+  CesiumHistoryMessage,
+  CesiumHistoryToolCall,
+  CesiumImagePart,
+  CesiumRole,
+} from "@cesium/core/cesium-history";
 
 export type CesiumToolRequest = {
   id: string;
