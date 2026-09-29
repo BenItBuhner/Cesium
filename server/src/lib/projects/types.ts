@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROJECT_SETTINGS_VALUES,
   type ProjectAgentKind,
+  type ProjectChildEvidence,
   type ProjectHelperKind,
   type ProjectAgentIsolation,
   type ProjectPullRequest,
@@ -53,6 +54,8 @@ export type ProjectChildRecord = {
   task: string | null;
   kind: ProjectAgentKind;
   helperKind: ProjectHelperKind | null;
+  /** Evidence for a change to what users see, from the check after its last finished turn. */
+  evidence: ProjectChildEvidence | null;
   /** Last status the watcher observed. */
   lastStatus: AgentConversationStatus | "unknown";
   turnsCompleted: number;

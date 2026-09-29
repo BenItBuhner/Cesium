@@ -499,6 +499,18 @@ projectPeerRoutes.get(
   guarded(async (c) => c.json({ reply: await host.lastReply(await scopedChild(c)) }))
 );
 
+projectPeerRoutes.get(
+  `${CHILD_PATH}/changes`,
+  guarded(async (c) => {
+    const ref = await scopedChild(c);
+    const base = c.req.query("base") ?? "";
+    if (base && !SHA_PATTERN.test(base)) {
+      throw new ProjectError("base must be a full commit sha.");
+    }
+    return c.json({ files: await host.changedFiles(ref, base || null) });
+  })
+);
+
 projectPeerRoutes.post(
   `${CHILD_PATH}/messages`,
   guarded(async (c) => {

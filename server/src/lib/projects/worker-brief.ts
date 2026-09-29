@@ -100,7 +100,8 @@ function doneLines(facts: WorkerPlacementFacts, brief: WorkerBriefInput): string
     lines.push("- Commit your work with a clear message unless you were told not to.");
   }
   lines.push(
-    `- For UI or behavior changes: screenshots and a short screen recording that prove it works, saved under ${evidenceDir} and listed in your report${facts.isolation === "worktree" && facts.hasOrigin ? " and the pull request" : ""}.`
+    `- A change to what users see (pages, components, styles, markup) is done only with evidence: screenshots of the result, plus a short recording for anything interactive, saved under ${evidenceDir} and listed in your report${facts.isolation === "worktree" && facts.hasOrigin ? " and the pull request" : ""}. The Project checks this when your turn ends and sends the change back to you while that folder is empty.`,
+    `- To capture it, run the app. With Cesium's browser tools: call_mcp_tool on server "browser" with browser_navigate, browser_screenshot, and browser_record ("start" before an interaction, "stop" after). They save under artifacts/browser/ in your workspace, so copy the files into ${evidenceDir}.`
   );
   return lines;
 }

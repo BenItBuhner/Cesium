@@ -10,6 +10,7 @@ import {
 import {
   PROJECT_HOME_ENGINE_ID,
   isProjectAgentIsolation,
+  type ProjectChildEvidence,
   type ProjectPullRequest,
   type ProjectRepoBinding,
   type ProjectSettings,
@@ -94,6 +95,23 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   };
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function normalizeEvidence(raw: unknown): ProjectChildEvidence | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const evidence = raw as Partial<ProjectChildEvidence>;
+  return {
+    uiFiles: stringList(evidence.uiFiles),
+    files: stringList(evidence.files),
+    requestedAt: typeof evidence.requestedAt === "number" ? evidence.requestedAt : null,
+    checkedAt: typeof evidence.checkedAt === "number" ? evidence.checkedAt : 0,
+  };
+}
+
 function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -137,6 +155,7 @@ function normalizeChildRecord(raw: unknown): ProjectChildRecord | null {
     task: nullableString(child.task),
     kind: child.kind === "helper" ? "helper" : "worker",
     helperKind: child.helperKind === "explore" || child.helperKind === "browser" ? child.helperKind : null,
+    evidence: normalizeEvidence(child.evidence),
     lastStatus: typeof child.lastStatus === "string" ? child.lastStatus : "unknown",
     turnsCompleted: typeof child.turnsCompleted === "number" ? child.turnsCompleted : 0,
     lastReportedSeq: typeof child.lastReportedSeq === "number" ? child.lastReportedSeq : 0,

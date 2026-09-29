@@ -204,6 +204,12 @@ export class PeerClient {
     return result.reply;
   }
 
+  async changedFiles(ref: ChildRef, baseSha: string | null): Promise<string[] | null> {
+    const query = baseSha ? `?base=${encodeURIComponent(baseSha)}` : "";
+    const result = await peerRequest<{ files: string[] | null }>(this.peer, "GET", childPath(ref, `/changes${query}`));
+    return result.files;
+  }
+
   async message(
     ref: ChildRef,
     text: string,

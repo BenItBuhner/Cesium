@@ -14,6 +14,7 @@ import {
   listPeerEngines,
 } from "./engine-registry.js";
 import type { ProjectEvent } from "./events.js";
+import { afterBrowserCheck, checkWorkerEvidence } from "./evidence.js";
 import { isProjectsEnabled } from "./feature-flag.js";
 import { deliverProjectEvents, ensureWorkerPrSubscriptions } from "./listening.js";
 import { composeProjectNotice, type ProjectNoticeUpdate } from "./notices.js";
@@ -206,6 +207,19 @@ async function processChild(entry: PendingObservation): Promise<void> {
     const line = await syncPeerContext(entry.projectId, child.engineId);
     if (line) {
       update.detail = `${update.detail ?? ""}\n${line}`.trim();
+    }
+  }
+  if (update?.event === "finished" && (child.kind === "worker" || child.helperKind === "browser")) {
+    // After the peer sync, so evidence an agent saved there is already here.
+    const line = await (
+      child.kind === "worker" ? checkWorkerEvidence(entry.projectId, child.id, { ask: true }) : afterBrowserCheck(entry.projectId, child.id)
+    ).catch((error) => {
+      console.warn(`[projects] could not check ${child.name}'s evidence:`, error instanceof Error ? error.message : error);
+      return null;
+    });
+    if (line) {
+      update.detail = `${update.detail ?? ""}\n${line}`.trim();
+      updated = (await readProject(entry.projectId)) ?? updated;
     }
   }
   if (update) {
