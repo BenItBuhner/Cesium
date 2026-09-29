@@ -367,6 +367,59 @@ test("a turn with several tool batches rebuilds each as its own assistant messag
   }
 });
 
+test("parallel tool calls stay one assistant message followed by each result", async () => {
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  const readCall = (index: number, id: string, file: string) => ({
+    index,
+    id,
+    type: "function",
+    function: { name: "read_file", arguments: JSON.stringify({ path: file }) },
+  });
+  scripted.push(
+    (res) =>
+      sse(res, [
+        { choices: [{ index: 0, delta: { content: "Reading both." } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [readCall(0, "call_par_a", "notes.txt"), readCall(1, "call_par_b", "AGENTS.md")] } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    textTurn("Read both.")
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read notes.txt and AGENTS.md.");
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("Yes."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Done?");
+  await waitForIdle(workspace.id, conversation.id, 2);
+
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 3);
+  for (let index = 1; index < requests.length; index += 1) {
+    assert.deepEqual(
+      requests[index]!.messages.slice(0, requests[index - 1]!.messages.length),
+      requests[index - 1]!.messages,
+      `request ${index + 1} extends request ${index}`
+    );
+  }
+  const afterBatch = requests[1]!.messages;
+  const batchIndex = afterBatch.findIndex((message) => Array.isArray(message.tool_calls));
+  const batch = afterBatch.slice(batchIndex);
+  assert.deepEqual(
+    batch.map((message) =>
+      message.role === "tool"
+        ? `tool:${message.tool_call_id}`
+        : `assistant:${(message.tool_calls as Array<{ id: string }>).map((call) => call.id).join(",")}`
+    ),
+    ["assistant:call_par_a,call_par_b", "tool:call_par_a", "tool:call_par_b"]
+  );
+  assert.match(messageText(batch[1]), /alpha/);
+  assert.match(messageText(batch[2]), /Always be brief/);
+});
+
 test("provider-reported usage lands on the message end and sizes the context", async () => {
   const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
   const conversation = await agentRuntimeManager.createConversation(workspace, {

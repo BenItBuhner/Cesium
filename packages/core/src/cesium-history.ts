@@ -611,10 +611,15 @@ export function repairOpenAiMessageSequence(messages: CesiumHistoryMessage[]): C
   const repaired: CesiumHistoryMessage[] = [];
   for (const message of messages) {
     if (message.role === "tool") {
-      const previous = repaired[repaired.length - 1];
+      // Results of one batch follow each other; they all answer the assistant message before them.
+      let openerIndex = repaired.length - 1;
+      while (openerIndex >= 0 && repaired[openerIndex]!.role === "tool") {
+        openerIndex -= 1;
+      }
+      const opener = repaired[openerIndex];
       const hasMatchingCall =
-        previous?.role === "assistant" &&
-        previous.toolCalls?.some((call) => call.id === message.toolCallId);
+        opener?.role === "assistant" &&
+        opener.toolCalls?.some((call) => call.id === message.toolCallId);
       if (!hasMatchingCall && message.toolCallId) {
         repaired.push({
           role: "assistant",
