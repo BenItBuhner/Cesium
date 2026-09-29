@@ -21,6 +21,7 @@ import {
   type WorkspaceRecord,
 } from "../workspace-registry.js";
 import { ProjectError } from "./errors.js";
+import { renderHelperBrief, type HelperBriefInput } from "./helper-brief.js";
 import {
   buildWorkerBrief,
   type WorkerBriefInput,
@@ -29,6 +30,7 @@ import {
 import {
   WorkerIsolationError,
   WorkerPlacementError,
+  createDetachedWorktree,
   createWorkerWorktree,
   inspectWorkerRepo,
   isWorkerWorktreeRoot,
@@ -91,7 +93,21 @@ export type ChildPlacement =
       branch: string;
       baseBranch: string | null;
       fallbackToCheckout: boolean;
-    };
+    }
+  /**
+   * A clean, detached checkout of the repository's base branch for a
+   * read-only helper, named `name` under the Project's worktrees. `base` reuses
+   * a base another helper of the same batch already fetched and resolved.
+   */
+  | {
+      kind: "snapshot";
+      workspaceId: string;
+      baseBranch: string | null;
+      name: string;
+      base?: { baseRef: string; sha: string } | null;
+    }
+  /** The folder another agent of the Project works in (a helper checking its work). */
+  | { kind: "agent"; workspaceId: string; conversationId: string };
 
 export type ChildCreateInput = {
   projectId: string;
@@ -99,6 +115,8 @@ export type ChildCreateInput = {
   name: string;
   /** The worker contract; the hosting engine completes it with where the worker landed. */
   brief?: WorkerBriefInput;
+  /** A helper's brief, completed the same way. */
+  helperBrief?: HelperBriefInput;
   /** Prebuilt first-turn text, for callers that don't send a brief. */
   promptText?: string;
   /** What the thread shows for the first turn. */
@@ -149,6 +167,8 @@ export interface ChildHost {
   /** Summarizes events with `afterSeq < seq <= throughSeq`. */
   digestSince(ref: ChildRef, afterSeq: number, throughSeq: number): Promise<ChildTurnDigest>;
   transcript(ref: ChildRef, turns: number): Promise<string>;
+  /** The full text of the child's last reply (a helper's answer), untruncated. */
+  lastReply(ref: ChildRef): Promise<string | null>;
   message(ref: ChildRef, text: string, delivery: "steer" | "queue"): Promise<ProjectAgentDelivery>;
   stop(ref: ChildRef): Promise<void>;
   update(ref: ChildRef, patch: ChildUpdatePatch): Promise<void>;
@@ -483,13 +503,60 @@ export class LocalChildHost implements ChildHost {
           throw error;
         }
       }
+      case "snapshot": {
+        const repoWorkspace = await getWorkspaceById(placement.workspaceId);
+        if (!repoWorkspace) {
+          throw new ProjectError("That repository's folder is no longer registered on this engine.");
+        }
+        let checkout: Awaited<ReturnType<typeof createDetachedWorktree>>;
+        try {
+          checkout = await createDetachedWorktree({
+            projectId: input.projectId,
+            repoWorkspace,
+            baseBranch: placement.baseBranch,
+            name: placement.name,
+            resolvedBase: placement.base ?? null,
+          });
+        } catch (error) {
+          throw error instanceof WorkerPlacementError ? new ProjectError(error.message) : error;
+        }
+        if (!checkout) {
+          return this.checkoutPlacement(repoWorkspace, "It is not a git repository, so the helper reads the folder itself.");
+        }
+        return {
+          workspace: checkout.workspace,
+          ownsWorkspace: true,
+          githubRepo: null,
+          facts: {
+            isolation: "worktree",
+            root: checkout.path,
+            branch: null,
+            baseRef: checkout.baseRef,
+            baseSha: checkout.sha,
+            hasOrigin: false,
+            setup: null,
+            warning: null,
+          },
+        };
+      }
+      case "agent": {
+        const workspace = await getWorkspaceById(placement.workspaceId);
+        if (!workspace) {
+          throw new ProjectError("That agent's folder no longer exists on this engine.");
+        }
+        return this.checkoutPlacement(workspace);
+      }
     }
   }
 
   async create(input: ChildCreateInput): Promise<ChildCreateResult> {
     const { workspace, facts, ownsWorkspace, githubRepo } = await this.place(input);
     const modelId = input.modelId?.trim() || undefined;
-    const promptText = input.brief ? buildWorkerBrief(input.brief, facts) : input.promptText?.trim();
+    const promptText = input.brief
+      ? buildWorkerBrief(input.brief, facts)
+      : input.helperBrief
+        ? renderHelperBrief(input.helperBrief, facts)
+        : input.promptText?.trim();
     if (!promptText) {
       throw new ProjectError("A Project agent needs a brief or prompt text.");
     }
@@ -564,6 +631,10 @@ export class LocalChildHost implements ChildHost {
     }
     const events = await readRecentConversationEvents(ref.workspaceId, ref.conversationId, turns);
     return formatProjectTranscript(events, turns);
+  }
+
+  async lastReply(ref: ChildRef): Promise<string | null> {
+    return lastAssistantReply(await readRecentConversationEvents(ref.workspaceId, ref.conversationId, 2));
   }
 
   async message(

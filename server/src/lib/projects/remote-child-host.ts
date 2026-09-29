@@ -57,6 +57,10 @@ export class RemoteChildHost implements ChildHost {
     return callPeerEngine(this.engineId, (client) => client.transcript(ref, turns));
   }
 
+  lastReply(ref: ChildRef): Promise<string | null> {
+    return callPeerEngine(this.engineId, (client) => client.reply(ref));
+  }
+
   message(ref: ChildRef, text: string, delivery: "steer" | "queue"): Promise<ProjectAgentDelivery> {
     return callPeerEngine(this.engineId, (client) => client.message(ref, text, delivery));
   }

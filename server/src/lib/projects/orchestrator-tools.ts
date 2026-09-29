@@ -393,7 +393,8 @@ export async function executeProjectOrchestratorTool(
       });
       return json({
         started: result.helper,
-        evidence: result.mediaDir,
+        engine: result.engine,
+        evidence: result.mediaDir ?? `stays on ${result.engine}, which has no copy of the Project context; its report lists the files`,
         note: `It reports back as an agent update. ${WAIT_FOR_UPDATES_NOTE}`,
       });
     }
