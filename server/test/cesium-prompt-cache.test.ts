@@ -336,39 +336,6 @@ test("a turn cut off by shutdown continues after a restart as a pure append", as
   assert.match(messageText(continueMessage), /Continue from where you left off\.$/);
 });
 
-function reminderEvent(
-  seq: number,
-  targetMessageId: string,
-  reason: "context" | "mode" | "linked_conversation",
-  text: string,
-  raw?: unknown
-): AgentStoredEvent {
-  return {
-    seq,
-    eventId: `r${seq}`,
-    conversationId: "c1",
-    createdAt: seq,
-    kind: "system_reminder",
-    reminderId: `r${seq}`,
-    targetMessageId,
-    reason,
-    text,
-    ...(raw ? { raw } : {}),
-  } as AgentStoredEvent;
-}
-
-function userEvent(seq: number, messageId: string, content: string): AgentStoredEvent {
-  return {
-    seq,
-    eventId: `u${seq}`,
-    conversationId: "c1",
-    createdAt: seq,
-    kind: "user_message",
-    messageId,
-    content,
-  } as AgentStoredEvent;
-}
-
 test("a turn with several tool batches rebuilds each as its own assistant message", async () => {
   const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
   const conversation = await agentRuntimeManager.createConversation(workspace, {
