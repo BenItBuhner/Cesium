@@ -4487,9 +4487,14 @@ const toolEntryByIdAcrossTurns = new Map<
       case "compression_summary": {
         const turn = ensureTurn();
         turn.compressingContext = false;
+        const prunedCount = event.prunedToolCallIds?.length ?? 0;
         appendTraceEntry(turn, {
           kind: "compression",
-          summary: event.summary,
+          summary:
+            event.summary ||
+            (prunedCount > 0
+              ? `Pruned ${prunedCount} older tool output${prunedCount === 1 ? "" : "s"} to free context.`
+              : ""),
           retainedTurnCount: event.retainedTurnCount,
           compressedTurnCount: event.compressedTurnCount,
         });

@@ -216,29 +216,25 @@ test("normalizeEventsToHistory preserves call_mcp_tool routing after failed tool
   assert.equal(parsed.arguments?.action, "list");
 });
 
-test("Cesium compacts long tool outputs before feeding the next model call", () => {
-  const first = normalizeCesiumToolResultForModel({
-    toolName: "read_file",
-    result: "a".repeat(50),
-    usedToolResultChars: 0,
-    perToolLimit: 10,
-    totalLimit: 25,
-  });
-  assert.equal(first.content.length > 10, true);
-  assert.equal(first.usedToolResultChars, 10);
+test("Cesium trims each long tool output to its budget, keeping head and tail", () => {
+  const result = `${"a".repeat(30)}MIDDLE${"z".repeat(30)}`;
+  const first = normalizeCesiumToolResultForModel({ toolName: "read_file", result, budget: 20 });
   assert.equal(first.truncated, true);
-  assert.match(first.content, /Full output is preserved/);
+  assert.ok(first.content.startsWith("a".repeat(10)));
+  assert.ok(first.content.endsWith("z".repeat(10)));
+  assert.doesNotMatch(first.content, /MIDDLE/);
+  assert.match(first.content, /kept in the conversation tool log/);
 
-  const exhausted = normalizeCesiumToolResultForModel({
-    toolName: "grep",
-    result: "still large",
-    usedToolResultChars: 25,
-    perToolLimit: 10,
-    totalLimit: 25,
+  const spilled = normalizeCesiumToolResultForModel({
+    toolName: "terminal",
+    result,
+    budget: 20,
+    spillPath: "/data/tool-output/c/call.txt",
   });
-  assert.equal(exhausted.usedToolResultChars, 25);
-  assert.equal(exhausted.truncated, true);
-  assert.match(exhausted.content, /omitted from model context/);
+  assert.match(spilled.content, /saved at \/data\/tool-output\/c\/call\.txt; read_file it with offset\/limit/);
+
+  const later = normalizeCesiumToolResultForModel({ toolName: "grep", result: "still visible" });
+  assert.deepEqual(later, { content: "still visible", truncated: false }, "earlier output never blanks a later result");
 });
 
 test("Cesium detects upstream empty model responses without blocking text-only turns", () => {

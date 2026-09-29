@@ -1300,19 +1300,23 @@ function renderEntry(
       return (
         <div className="flex flex-col gap-[10px] font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
           <div className="flex flex-col gap-[4px] text-[var(--text-secondary)]">
-            <p>
-              Summarized{" "}
-              <span className="text-[var(--text-primary)]">
-                {entry.compressedTurnCount}
-              </span>{" "}
-              earlier user turn{entry.compressedTurnCount === 1 ? "" : "s"}; kept{" "}
-              <span className="text-[var(--text-primary)]">
-                {entry.retainedTurnCount}
-              </span>{" "}
-              recent turn{entry.retainedTurnCount === 1 ? "" : "s"} in full.
-            </p>
+            {entry.compressedTurnCount === 0 ? (
+              <p>{entry.summary}</p>
+            ) : (
+              <p>
+                Summarized{" "}
+                <span className="text-[var(--text-primary)]">
+                  {entry.compressedTurnCount}
+                </span>{" "}
+                earlier user turn{entry.compressedTurnCount === 1 ? "" : "s"}; kept{" "}
+                <span className="text-[var(--text-primary)]">
+                  {entry.retainedTurnCount}
+                </span>{" "}
+                recent turn{entry.retainedTurnCount === 1 ? "" : "s"} in full.
+              </p>
+            )}
           </div>
-          {entry.summary.trim() ? (
+          {entry.compressedTurnCount > 0 && entry.summary.trim() ? (
             <div className="rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
               <p className="border-b border-[color-mix(in_srgb,var(--border-card)_55%,transparent)] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-wide text-[var(--text-secondary)]">
                 Summary
