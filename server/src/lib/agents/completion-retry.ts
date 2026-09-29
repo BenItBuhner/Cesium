@@ -139,6 +139,25 @@ export function isTransientProviderCompletionError(message: string): boolean {
   return false;
 }
 
+const CONTEXT_LENGTH_ERROR =
+  /context[_\s-]?length[_\s-]?exceeded|maximum context length|prompt is too long|input is too long|context window|too many tokens|exceeds? the (?:maximum|max) (?:number of )?(?:input )?tokens/i;
+
+/** True when the provider rejected the request for being too long: HTTP 413, or a 400 (or status-less stream error) saying so. */
+export function isContextLengthProviderError(message: string): boolean {
+  const trimmed = message.trim();
+  const httpStatus = parseHttpStatus(trimmed) ?? parseLeadingStatus(trimmed);
+  if (httpStatus === 413) {
+    return true;
+  }
+  return (httpStatus === undefined || httpStatus === 400) && CONTEXT_LENGTH_ERROR.test(trimmed);
+}
+
+/** `413 : …` when the response had no status text (HTTP/2). */
+function parseLeadingStatus(message: string): number | undefined {
+  const match = message.match(/^([1-5]\d{2})\b/);
+  return match ? Number.parseInt(match[1]!, 10) : undefined;
+}
+
 export type UpstreamErrorPayload = {
   /** `code: message` as the upstream reported it. */
   message: string;

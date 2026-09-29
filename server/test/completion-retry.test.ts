@@ -8,6 +8,7 @@ import {
   findUpstreamErrorPayload,
   formatTakingLongerStatusDetail,
   formatCompressingContextStatusDetail,
+  isContextLengthProviderError,
   isTransientProviderCompletionError,
   setCompletionRetryDelaysForTests,
 } from "../src/lib/agents/completion-retry.js";
@@ -25,6 +26,30 @@ describe("completion retry helpers", () => {
     assert.equal(isTransientProviderCompletionError("fetch failed: ECONNRESET"), true);
     assert.equal(isTransientProviderCompletionError("Request timed out after 120000ms"), true);
     assert.equal(isTransientProviderCompletionError('{"code":"queueexceeded","message":"busy"}'), true);
+  });
+
+  test("detects a response body cut off mid-stream", () => {
+    assert.equal(isTransientProviderCompletionError("terminated (other side closed, UND_ERR_SOCKET)"), true);
+    assert.equal(
+      isTransientProviderCompletionError("The socket connection was closed unexpectedly. For more information, pass `verbose: true`"),
+      true
+    );
+  });
+
+  test("detects context-length rejections", () => {
+    assert.equal(isContextLengthProviderError("413 Payload Too Large: {}"), true);
+    assert.equal(isContextLengthProviderError("413 : request entity too large"), true);
+    assert.equal(
+      isContextLengthProviderError(
+        '400 Bad Request: {"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 128000 tokens."}}'
+      ),
+      true
+    );
+    assert.equal(isContextLengthProviderError('400 Bad Request: {"error":{"message":"prompt is too long: 210000 tokens > 200000 maximum"}}'), true);
+    assert.equal(isContextLengthProviderError("returned an error instead of a reply: context_length_exceeded: too long"), true);
+    assert.equal(isContextLengthProviderError("400 Bad Request: invalid tool schema"), false);
+    assert.equal(isContextLengthProviderError("429 Too Many Requests: too many tokens per minute"), false);
+    assert.equal(isContextLengthProviderError("503 Service Unavailable"), false);
   });
 
   test("rejects non-retryable auth and client errors", () => {

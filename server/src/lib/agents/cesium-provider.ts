@@ -166,6 +166,7 @@ import {
   findUpstreamErrorPayload,
   formatCompressingContextStatusDetail,
   formatTakingLongerStatusDetail,
+  isContextLengthProviderError,
   isTransientProviderCompletionError,
   sleepMs,
 } from "./completion-retry.js";
@@ -1361,6 +1362,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ? usageAnchor.tokens + estimateHistoryTokens(toolResultMessages.slice(usageAnchor.messageCount))
           : toolSchemaTokens + estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
       let pruneBlockedBelow = 0;
+      let compactedForContextError = false;
       const raisedMaxOutputTokens = adapterHonorsMaxOutputTokens(auth)
         ? Math.min(2 * DEFAULT_MAX_OUTPUT_TOKENS, catalogEntry?.outputLimit ?? Number.POSITIVE_INFINITY)
         : undefined;
@@ -1410,6 +1412,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
             },
             raisedMaxOutputTokens
           );
+        } catch (error) {
+          // Once per turn: shrink the persisted history and resend from it.
+          if (
+            compactedForContextError ||
+            wrappedPrompt ||
+            !isContextLengthProviderError(providerFailureMessage(error))
+          ) {
+            throw error;
+          }
+          compactedForContextError = true;
+          await assistantStream.discardAttempt();
+          if (!(await this.shrinkHistoryAfterContextError(contextTokensNow(), contextWindow))) {
+            throw error;
+          }
+          modelHistory = forModel(this.renderHistory(await this.readHistoryEvents()));
+          toolResultMessages.length = 0;
+          usageAnchor = null;
+          continue;
         } finally {
           await assistantStream.flush();
           assistantMessageId = assistantStream.messageId;
@@ -2740,11 +2760,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   /**
+   * After the provider rejected a request as too long: stubs old tool outputs
+   * as if the context were full, or compacts when there are none to stub.
+   */
+  private async shrinkHistoryAfterContextError(contextTokens: number, contextWindow: number): Promise<boolean> {
+    if (await this.pruneToolResultsAtBoundary(Math.max(contextTokens, contextWindow), contextWindow)) {
+      return true;
+    }
+    return this.compactHistoryIfNeeded(await this.readHistoryEvents(), { force: true });
+  }
+
+  /**
    * Compacts once the window outgrows its turn or token budget: the newest
    * turns stay verbatim and a summary replaces the rest. The window then stays
    * fixed until it outgrows the budget again, instead of sliding every turn.
    */
-  private async compactHistoryIfNeeded(events: AgentStoredEvent[]): Promise<boolean> {
+  private async compactHistoryIfNeeded(
+    events: AgentStoredEvent[],
+    options: { force?: boolean } = {}
+  ): Promise<boolean> {
     const window = selectHistoryWindow(events);
     const visibleUsers = window.events.filter(
       (event) => event.kind === "user_message" && !event.hidden
@@ -2758,6 +2792,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const estimated = estimateHistoryTokens(this.renderHistory(events));
     const estimatedTokensBefore = reportedContextTokens(window.events, modelId) ?? estimated;
     if (
+      !options.force &&
       visibleUsers.length <= HISTORY_TURN_LIMIT &&
       estimatedTokensBefore < contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO
     ) {
@@ -2779,9 +2814,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const turnTokens = Math.ceil(
         estimateHistoryTokens(normalizeEventsToHistory(turnEvents, CESIUM_SYSTEM_PROMPT, pruned).slice(1)) * scale
       );
+      // Forced means the provider refused a request these estimates said would
+      // fit, so only the newest turn stays verbatim.
       if (
         retainedUsers > 0 &&
-        (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS || retainedTokens + turnTokens > target)
+        (options.force ||
+          retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS ||
+          retainedTokens + turnTokens > target)
       ) {
         break;
       }

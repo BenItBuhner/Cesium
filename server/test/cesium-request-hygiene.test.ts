@@ -321,3 +321,45 @@ test("a write_file cut off at the output limit is retried larger, then answered 
   );
   assert.equal(JSON.stringify(nextTurn.messages).split("Writing the file.").length - 1, 1);
 });
+
+const tooLarge: Responder = (res) => {
+  res.writeHead(413, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error: { message: "Request entity too large" } }));
+};
+
+test("a 413 compacts the history once and resends", async () => {
+  const { workspace, conversation } = await startConversation("Too large");
+  scripted.push(text("First answer."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "First question.");
+  await settle(workspace.id, conversation.id, 1);
+
+  scripted.push(tooLarge, text("Second answer."));
+  const requestsBefore = agentRequests.length;
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Second question.");
+  const snapshot = await settle(workspace.id, conversation.id, 2);
+  assert.equal(snapshot.conversation.status, "idle", snapshot.conversation.lastError ?? "");
+  const turn = agentRequests.slice(requestsBefore);
+  assert.equal(turn.length, 2);
+  assert.equal(eventsOfKind(snapshot.events, "compression_summary").length, 1);
+  const resent = JSON.stringify(turn[1]!.messages);
+  assert.match(resent, /\[Compressed earlier conversation\]/);
+  assert.deepEqual(assistantContents(turn[1]!), [], "the compacted turn is no longer sent verbatim");
+  assert.match(resent, /Second question\./);
+  assert.equal(eventsOfKind(snapshot.events, "system").filter((event) => event.level === "error").length, 0);
+});
+
+test("a second context-length error in the same turn fails it instead of compacting again", async () => {
+  const { workspace, conversation } = await startConversation("Too large twice");
+  scripted.push(text("First answer."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "First question.");
+  await settle(workspace.id, conversation.id, 1);
+
+  scripted.push(tooLarge, tooLarge);
+  const requestsBefore = agentRequests.length;
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Second question.");
+  const snapshot = await settle(workspace.id, conversation.id, 2);
+  assert.equal(snapshot.conversation.status, "failed");
+  assert.match(snapshot.conversation.lastError ?? "", /413/);
+  assert.equal(agentRequests.length - requestsBefore, 2);
+  assert.equal(eventsOfKind(snapshot.events, "compression_summary").length, 1);
+});
