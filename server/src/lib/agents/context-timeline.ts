@@ -132,6 +132,8 @@ const PRUNED_RESULT_STUB_CHARS = 110;
 type PendingAssistant = {
   messageId: string;
   text: string;
+  /** Length of `text` when the latest tool call was recorded. */
+  textAtToolCall?: number;
   firstChunk: AssistantChunkEvent;
   lastChunk: AssistantChunkEvent;
 };
@@ -334,12 +336,24 @@ export function buildConversationContextEntries(
         break;
       }
       case "assistant_message_end":
-        finishAssistant(event.messageId, event);
+        if (event.stopReason === "discarded") {
+          const pending = assistantById.get(event.messageId);
+          if (pending?.textAtToolCall) {
+            pending.text = pending.text.slice(0, pending.textAtToolCall);
+          } else {
+            assistantById.delete(event.messageId);
+          }
+        } else {
+          finishAssistant(event.messageId, event);
+        }
         break;
       // Reasoning never reaches the model again, so it takes no context.
       case "reasoning":
         break;
       case "tool_call": {
+        for (const pending of assistantById.values()) {
+          pending.textAtToolCall = pending.text.length;
+        }
         openToolCalls.add(event.toolCallId);
         const name = toolNameFromEvent(event);
         const args = toolArgumentsFromEvent(event, name);

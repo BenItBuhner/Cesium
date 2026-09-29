@@ -1112,6 +1112,19 @@ function appendAssistantChunk(turn: ProjectedTurn, text: string, messageId: stri
   }
 }
 
+/** Removes the text a retried model attempt streamed into `messageId` since its last tool call. */
+function dropDiscardedAssistantText(turn: ProjectedTurn, messageId: string): void {
+  for (let index = turn.timeline.length - 1; index >= 0; index -= 1) {
+    const item = turn.timeline[index]!;
+    if (item.kind === "trace" && item.entry.kind === "tool") {
+      break;
+    }
+    if (item.kind === "assistant" && item.messageId === messageId) {
+      turn.timeline.splice(index, 1);
+    }
+  }
+}
+
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -4462,6 +4475,10 @@ const toolEntryByIdAcrossTurns = new Map<
           break;
         }
         const turn = ensureTurn();
+        if (event.stopReason === "discarded") {
+          dropDiscardedAssistantText(turn, event.messageId);
+          break;
+        }
         const hasAssistantText = turn.timeline.some(
           (item) => item.kind === "assistant" && item.text.trim().length > 0
         );

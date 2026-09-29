@@ -53,16 +53,25 @@ export function truncateMiddle(value: string, max = 40_000): string {
 }
 
 export function parseJsonArgs(value: unknown): Record<string, unknown> {
+  return tryParseJsonArgs(value).args;
+}
+
+/**
+ * `parseJsonArgs` that also reports whether the text parsed: `ok` is false
+ * only for a non-blank string that is not JSON (e.g. arguments cut off
+ * mid-stream), so callers can tell a broken call from an empty one.
+ */
+export function tryParseJsonArgs(value: unknown): { args: Record<string, unknown>; ok: boolean } {
   if (asRecord(value)) {
-    return value as Record<string, unknown>;
+    return { args: value as Record<string, unknown>, ok: true };
   }
-  if (typeof value !== "string") {
-    return {};
+  if (typeof value !== "string" || !value.trim()) {
+    return { args: {}, ok: true };
   }
   try {
-    return asRecord(JSON.parse(value)) ?? {};
+    return { args: asRecord(JSON.parse(value)) ?? {}, ok: true };
   } catch {
-    return {};
+    return { args: {}, ok: false };
   }
 }
 

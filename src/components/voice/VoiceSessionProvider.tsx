@@ -570,7 +570,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     if (viewRef.current === "closed") return;
     for (const event of boundEvents) {
       if (event.seq <= lastSpokenSeqRef.current) continue;
-      if (event.kind !== "assistant_message_end") continue;
+      if (event.kind !== "assistant_message_end" || event.stopReason === "discarded") continue;
       lastSpokenSeqRef.current = event.seq;
       trackProcessedReply();
       const text = boundEvents

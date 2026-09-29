@@ -112,6 +112,14 @@ function summarizeProviderError(message: string): { httpStatus?: number; code?: 
   return { httpStatus, code, summary };
 }
 
+/**
+ * Network flakes, including a response body cut off mid-stream (undici:
+ * `terminated`; Bun: `socket connection was closed unexpectedly`), and the
+ * errors Anthropic reports inside an open stream (`overloaded_error`, `api_error`).
+ */
+const TRANSIENT_PROVIDER_ERROR =
+  /timeout|timed out|econnreset|econnrefused|epipe|network|gateway timeout|provider unavailable|service unavailable|bad gateway|terminated|other side closed|socket hang up|socket connection|closed unexpectedly|fetch failed|premature close|overloaded|api_error|internal server error/i;
+
 /** True for 429/5xx, queue exceeded, gateway timeout, and similar provider/network flakes. */
 export function isTransientProviderCompletionError(message: string): boolean {
   const trimmed = message.trim();
@@ -127,16 +135,31 @@ export function isTransientProviderCompletionError(message: string): boolean {
     httpStatus === 429 ||
     (httpStatus !== undefined && httpStatus >= 500) ||
     code === "queueexceeded" ||
-    /timeout|timed out|econnreset|network|gateway timeout|provider unavailable|service unavailable|bad gateway/i.test(
-      summary
-    ) ||
-    /timeout|timed out|econnreset|network|gateway timeout|provider unavailable|service unavailable|bad gateway/i.test(
-      trimmed
-    )
+    TRANSIENT_PROVIDER_ERROR.test(summary) ||
+    TRANSIENT_PROVIDER_ERROR.test(trimmed)
   ) {
     return true;
   }
   return false;
+}
+
+const CONTEXT_LENGTH_ERROR =
+  /context[_\s-]?length[_\s-]?exceeded|maximum context length|prompt is too long|input is too long|context window|too many tokens|exceeds? the (?:maximum|max) (?:number of )?(?:input )?tokens/i;
+
+/** True when the provider rejected the request for being too long: HTTP 413, or a 400 (or status-less stream error) saying so. */
+export function isContextLengthProviderError(message: string): boolean {
+  const trimmed = message.trim();
+  const httpStatus = parseHttpStatus(trimmed) ?? parseLeadingStatus(trimmed);
+  if (httpStatus === 413) {
+    return true;
+  }
+  return (httpStatus === undefined || httpStatus === 400) && CONTEXT_LENGTH_ERROR.test(trimmed);
+}
+
+/** `413 : …` when the response had no status text (HTTP/2). */
+function parseLeadingStatus(message: string): number | undefined {
+  const match = message.match(/^([1-5]\d{2})\b/);
+  return match ? Number.parseInt(match[1]!, 10) : undefined;
 }
 
 export type UpstreamErrorPayload = {
@@ -220,6 +243,19 @@ export function findUpstreamErrorPayload(raw: unknown): UpstreamErrorPayload | n
   return null;
 }
 
-export function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Resolves after `ms`, or as soon as `signal` aborts. */
+export function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
