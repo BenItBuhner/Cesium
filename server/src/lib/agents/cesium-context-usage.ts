@@ -10,7 +10,12 @@ import {
   HISTORY_COMPACTION_THRESHOLD_RATIO,
   HISTORY_TURN_LIMIT,
 } from "./cesium/cesium-prompt.js";
-import { selectHistoryWindow } from "./cesium/cesium-history.js";
+import {
+  latestReportedUsage,
+  reportedContextTokens,
+  selectHistoryWindow,
+} from "./cesium/cesium-history.js";
+import { contextTokensAfterResponse } from "./cesium/cesium-usage.js";
 import { buildOpenAiToolDefinitions, resolveCesiumTools } from "./cesium/cesium-tools.js";
 import {
   CONTEXT_CATEGORY_COLOR_KEY,
@@ -134,7 +139,58 @@ export type CesiumContextParts = {
   toolDefinitions?: OpenAiToolDefinitionList;
   events: AgentStoredEvent[];
   limitTokens: number;
+  /** The conversation's model; its provider-reported usage anchors the counts. */
+  modelId?: string;
 };
+
+type ReportedAnchor = {
+  /** Provider-reported context size at the newest response. */
+  reportedTokens: number;
+  /** Whether blocks logged after that response are still estimated. */
+  estimatedTail: boolean;
+};
+
+/**
+ * Scales the estimated blocks up to the newest response the provider counted,
+ * so the ring shows real tokens; blocks logged after it keep their estimate.
+ */
+function anchorEntriesToReportedUsage(
+  entries: AgentContextTranscriptEntry[],
+  events: AgentStoredEvent[],
+  modelId: string | undefined
+): { entries: AgentContextTranscriptEntry[]; anchor: ReportedAnchor | null } {
+  const latest = modelId ? latestReportedUsage(selectHistoryWindow(events).events, modelId) : null;
+  if (!latest) {
+    return { entries, anchor: null };
+  }
+  const covered = (entry: AgentContextTranscriptEntry) =>
+    entry.seqStart === undefined || entry.seqStart <= latest.seq;
+  const reportedTokens = contextTokensAfterResponse(latest.usage);
+  const estimated = entries.filter(covered).reduce((sum, entry) => sum + entry.tokens, 0);
+  if (estimated <= 0) {
+    return { entries, anchor: null };
+  }
+  const factor = reportedTokens / estimated;
+  let assigned = 0;
+  let lastCoveredIndex = -1;
+  const scaled = entries.map((entry, index) => {
+    if (!covered(entry)) {
+      return entry;
+    }
+    lastCoveredIndex = index;
+    const tokens = Math.round(entry.tokens * factor);
+    assigned += tokens;
+    return { ...entry, tokens };
+  });
+  if (lastCoveredIndex >= 0) {
+    const last = scaled[lastCoveredIndex]!;
+    scaled[lastCoveredIndex] = { ...last, tokens: Math.max(0, last.tokens + reportedTokens - assigned) };
+  }
+  return {
+    entries: scaled,
+    anchor: { reportedTokens, estimatedTail: entries.some((entry) => !covered(entry)) },
+  };
+}
 
 /**
  * Mirror the provider's history window: the newest compaction summary opens
@@ -147,6 +203,7 @@ function retainEntriesForContext(input: {
   events: AgentStoredEvent[];
   systemTokens: number;
   limitTokens: number;
+  modelId?: string;
 }): { retained: AgentContextTranscriptEntry[]; compacted: boolean; droppedTurns: number } {
   const window = selectHistoryWindow(input.events);
   const summaryEntry = window.summary
@@ -170,6 +227,7 @@ function retainEntriesForContext(input: {
     .filter((event) => event.kind === "user_message" && !event.hidden)
     .map((event) => event.seq);
   const estimatedTokensBefore =
+    (input.modelId ? reportedContextTokens(window.events, input.modelId) : null) ??
     input.systemTokens + [...head, ...windowEntries].reduce((sum, entry) => sum + entry.tokens, 0);
   const shouldCompact =
     visibleUserSeqs.length > HISTORY_TURN_LIMIT ||
@@ -199,6 +257,7 @@ export function buildCesiumContextEntries(input: CesiumContextParts): {
   entries: AgentContextTranscriptEntry[];
   compacted: boolean;
   droppedTurns: number;
+  anchor: ReportedAnchor | null;
 } {
   const { base, mcp } = splitSystemPrompt(input.systemPromptFull);
   const toolDefinitions = input.toolDefinitions ?? defaultToolDefinitions();
@@ -250,18 +309,21 @@ export function buildCesiumContextEntries(input: CesiumContextParts): {
     events: input.events,
     systemTokens: staticEntries[0]!.tokens,
     limitTokens: input.limitTokens,
+    modelId: input.modelId,
   });
-  return {
-    entries: [...staticEntries.filter((entry) => entry.tokens > 0), ...retained],
-    compacted,
-    droppedTurns,
-  };
+  const estimatedEntries = [...staticEntries.filter((entry) => entry.tokens > 0), ...retained];
+  // The next turn compacts: the reported count describes the window it replaces.
+  const { entries, anchor } =
+    droppedTurns > 0
+      ? { entries: estimatedEntries, anchor: null }
+      : anchorEntriesToReportedUsage(estimatedEntries, input.events, input.modelId);
+  return { entries, compacted, droppedTurns, anchor };
 }
 
 export function estimateCesiumContextUsageFromParts(
   input: CesiumContextParts
 ): AgentContextUsageSnapshot {
-  const { entries } = buildCesiumContextEntries(input);
+  const { entries, anchor } = buildCesiumContextEntries(input);
   const timeline = entries.map(contextEntryToSegment);
   const categories = poolContextEntries(timeline);
   const usedTokens = categories.reduce((sum, row) => sum + row.tokens, 0);
@@ -275,7 +337,7 @@ export function estimateCesiumContextUsageFromParts(
     usedTokens,
     percentFull,
     categories,
-    approximate: true,
+    approximate: !anchor || anchor.estimatedTail,
     timeline,
   };
 }
@@ -286,14 +348,17 @@ export function buildCesiumContextTranscriptFromParts(
     notes?: string[];
   }
 ): AgentContextTranscript {
-  const { entries, compacted, droppedTurns } = buildCesiumContextEntries(input);
+  const { entries, compacted, droppedTurns, anchor } = buildCesiumContextEntries(input);
   const timeline = entries.map(contextEntryToSegment);
   const categories = poolContextEntries(timeline);
   const usedTokens = categories.reduce((sum, row) => sum + row.tokens, 0);
   const limitTokens = input.limitTokens;
   const notes = [...(input.notes ?? [])];
   notes.push(
-    "Token counts are character-based estimates (about four characters per token)."
+    anchor
+      ? `Token counts are scaled to the ${anchor.reportedTokens.toLocaleString()} tokens the provider reported for the latest response` +
+          (anchor.estimatedTail ? "; blocks logged after it are estimated (about four characters per token)." : ".")
+      : "Token counts are character-based estimates (about four characters per token)."
   );
   if (compacted) {
     notes.push(
@@ -314,7 +379,7 @@ export function buildCesiumContextTranscriptFromParts(
       percentFull:
         limitTokens > 0 ? Math.min(100, Math.round((usedTokens / limitTokens) * 100)) : 0,
       categories,
-      approximate: true,
+      approximate: !anchor || anchor.estimatedTail,
       timeline,
     },
     entries,
@@ -332,14 +397,14 @@ async function loadCesiumContextParts(input: {
     input.conversation
   );
   const promptContext = await resolveCesiumPromptContext(input);
-  const limitTokens = await resolveCesiumModelContextWindow(
-    input.conversation.config.modelId ?? "openai/gpt-5.1"
-  );
+  const modelId = input.conversation.config.modelId || "openai/gpt-5.1";
+  const limitTokens = await resolveCesiumModelContextWindow(modelId);
   return {
     systemPromptFull: promptContext.systemPromptFull,
     toolDefinitions: promptContext.toolDefinitions,
     events: snapshot?.events ?? [],
     limitTokens,
+    modelId,
     notes: promptContext.notes,
   };
 }

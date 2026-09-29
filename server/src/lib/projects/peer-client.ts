@@ -1,4 +1,5 @@
 import type { ProjectAgentDelivery } from "@cesium/core/projects";
+import { PEER_INSTALL_WAIT_MS } from "../../browser-debug/chromium-install.js";
 import type {
   ChildCreateInput,
   ChildCreateResult,
@@ -47,6 +48,11 @@ export class PeerRequestError extends Error {
 export type PeerConnection = { baseUrl: string; token: string; label: string };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** A browser check's create can first wait out the peer's Chromium download. */
+export function createChildTimeoutMs(body: Pick<PeerCreateChildBody, "helperBrief">): number {
+  return body.helperBrief?.kind === "browser" ? PEER_INSTALL_WAIT_MS + DEFAULT_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
 
 /** Canonical `http(s)://host[:port][/prefix]` with no trailing slash, or null. */
 export function normalizePeerBaseUrl(raw: string): string | null {
@@ -175,7 +181,13 @@ export class PeerClient {
   }
 
   createChild(body: PeerCreateChildBody): Promise<ChildCreateResult> {
-    return peerRequest<ChildCreateResult>(this.peer, "POST", "/api/projects/peer/children", body);
+    return peerRequest<ChildCreateResult>(
+      this.peer,
+      "POST",
+      "/api/projects/peer/children",
+      body,
+      createChildTimeoutMs(body)
+    );
   }
 
   observe(ref: ChildRef): Promise<ChildObservation> {

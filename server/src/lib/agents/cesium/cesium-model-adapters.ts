@@ -18,6 +18,7 @@ import type {
   CesiumHistoryMessage,
   CesiumToolRequest,
 } from "./cesium-types.js";
+import { usageFromAnthropic, usageFromGoogle, usageFromOpenAi } from "./cesium-usage.js";
 
 /**
  * OAuth request shaping passed through from resolveCesiumAuth. `providerId`
@@ -225,7 +226,8 @@ function openAiChatRequestBody(
     tools?: import("./cesium-tools.js").CesiumToolDefinition[];
     promptCacheKey?: string;
   },
-  stream: boolean
+  stream: boolean,
+  streamUsage = false
 ): Record<string, unknown> {
   const tools =
     input.tools && input.tools.length === 0 ? undefined : openAiTools(input.tools);
@@ -236,7 +238,18 @@ function openAiChatRequestBody(
     max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
     ...openAiPromptCacheKey(input.providerId ?? "", input.promptCacheKey),
     ...(stream ? { stream: true } : {}),
+    ...(stream && streamUsage ? { stream_options: { include_usage: true } } : {}),
   };
+}
+
+/**
+ * Streams only report usage when asked with `stream_options`. A host that
+ * rejects the field is remembered and asked without it from then on.
+ */
+const hostsRejectingStreamUsage = new Set<string>(["mistral"]);
+
+function rejectsStreamUsage(status: number, body: string): boolean {
+  return (status === 400 || status === 422) && /stream_options|include_usage/i.test(body);
 }
 
 function openAiChatResultFromPayload(payload: unknown): CesiumAdapterResult {
@@ -261,6 +274,7 @@ function openAiChatResultFromPayload(payload: unknown): CesiumAdapterResult {
         parseJsonArgs(fn?.arguments)
       )];
     }),
+    usage: usageFromOpenAi(root?.usage),
     raw: payload,
   };
 }
@@ -275,6 +289,7 @@ async function fetchOpenAiChat(input: {
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
   stream: boolean;
+  streamUsage?: boolean;
 }): Promise<Response> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
   let headers = mergedHeaders(
@@ -293,7 +308,7 @@ async function fetchOpenAiChat(input: {
   return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify(openAiChatRequestBody(input, input.stream)),
+    body: JSON.stringify(openAiChatRequestBody(input, input.stream, input.streamUsage)),
   });
 }
 
@@ -419,10 +434,19 @@ async function* streamOpenAiChat(input: {
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
-  const response = await fetchOpenAiChat({ ...input, stream: true });
+  const host = `${input.providerId}|${input.baseUrl ?? ""}`;
+  const askUsage = !hostsRejectingStreamUsage.has(input.providerId) && !hostsRejectingStreamUsage.has(host);
+  let response = await fetchOpenAiChat({ ...input, stream: true, streamUsage: askUsage });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+    let text = await response.text();
+    if (askUsage && rejectsStreamUsage(response.status, text)) {
+      hostsRejectingStreamUsage.add(host);
+      response = await fetchOpenAiChat({ ...input, stream: true });
+      text = response.ok ? "" : await response.text();
+    }
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+    }
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
@@ -442,6 +466,10 @@ async function* streamOpenAiChat(input: {
     }
     yield { kind: "raw", raw: event };
     const root = asRecord(event);
+    const usage = usageFromOpenAi(root?.usage);
+    if (usage) {
+      yield { kind: "usage", usage, raw: event };
+    }
     const choices = Array.isArray(root?.choices) ? root.choices : [];
     for (const rawChoice of choices) {
       const choice = asRecord(rawChoice);
@@ -616,6 +644,16 @@ async function* streamOpenAiResponses(input: {
           }
           const event = parseJsonArgs(dataLine);
           yield { kind: "raw", raw: event };
+          if (
+            event.type === "response.completed" ||
+            event.type === "response.incomplete" ||
+            event.type === "response.done"
+          ) {
+            const usage = usageFromOpenAi(asRecord(event.response)?.usage);
+            if (usage) {
+              yield { kind: "usage", usage, raw: event };
+            }
+          }
           if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
             yield { kind: "text_delta", text: event.delta, raw: event };
           }
@@ -679,6 +717,10 @@ async function* streamOpenAiResponses(input: {
   for (const request of toolRequests) {
     yield { kind: "tool_request", request, raw: payload };
   }
+  const usage = usageFromOpenAi(record?.usage);
+  if (usage) {
+    yield { kind: "usage", usage, raw: payload };
+  }
   yield { kind: "done", raw: payload };
 }
 
@@ -733,6 +775,10 @@ async function* streamOpenAiRealtime(input: {
       push({ kind: "event", event: { kind: "text_delta", text: event.delta, raw: event } });
     }
     if (event.type === "response.done") {
+      const usage = usageFromOpenAi(asRecord(event.response)?.usage);
+      if (usage) {
+        push({ kind: "event", event: { kind: "usage", usage, raw: event } });
+      }
       completed = true;
       push({ kind: "event", event: { kind: "done", raw: event } });
       push({ kind: "closed" });
@@ -953,7 +999,7 @@ async function runAnthropic(input: {
       }
     }
   }
-  return { text: text.join(""), toolRequests, raw: payload };
+  return { text: text.join(""), toolRequests, usage: usageFromAnthropic(root?.usage), raw: payload };
 }
 
 function googleContents(messages: CesiumHistoryMessage[]) {
@@ -1033,7 +1079,7 @@ async function runGoogle(input: {
       );
     }
   }
-  return { text: text.join(""), toolRequests, raw: payload };
+  return { text: text.join(""), toolRequests, usage: usageFromGoogle(root?.usageMetadata), raw: payload };
 }
 
 export type RunAdapterInput = {
@@ -1062,6 +1108,9 @@ async function* streamStaticResult(
   }
   for (const request of result.toolRequests) {
     yield { kind: "tool_request", request, raw: result.raw };
+  }
+  if (result.usage) {
+    yield { kind: "usage", usage: result.usage, raw: result.raw };
   }
   yield { kind: "done", raw: result.raw };
 }
@@ -1140,6 +1189,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
   const toolRequests: CesiumToolRequest[] = [];
   const rawEvents: unknown[] = [];
   let finalRaw: unknown;
+  let usage: CesiumAdapterResult["usage"];
   for await (const event of streamAdapter(input)) {
     if ("raw" in event && event.raw !== undefined) {
       finalRaw = event.raw;
@@ -1155,6 +1205,9 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
       case "tool_request":
         toolRequests.push(event.request);
         break;
+      case "usage":
+        usage = event.usage;
+        break;
       case "raw":
       case "done":
         break;
@@ -1164,6 +1217,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
     text: textParts.join(""),
     reasoning: reasoningParts.join("") || undefined,
     toolRequests,
+    ...(usage ? { usage } : {}),
     raw: rawEvents.length > 1 ? rawEvents : finalRaw,
   };
 }

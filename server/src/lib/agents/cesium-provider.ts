@@ -177,6 +177,7 @@ import type {
   AgentConversationRecord,
   AgentConversationStatus,
   AgentEventInput,
+  AgentModelUsage,
   AgentPlanEntry,
   AgentQueuedChatPrompt,
   AgentPermissionCategory,
@@ -184,8 +185,12 @@ import type {
   AgentRuntimeCallbacks,
   AgentSessionHandle,
   AgentStoredEvent,
+  AgentTokenUsage,
   AgentToolCallStatus,
 } from "./types.js";
+import { addTokenUsage, contextTokensAfterResponse } from "./cesium/cesium-usage.js";
+import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
+import { DATA_DIR } from "../persistence.js";
 import {
   asRecord,
   asString,
@@ -223,9 +228,16 @@ import {
   todoEntriesFromReplace,
 } from "./cesium/cesium-todo.js";
 import {
+  CESIUM_HEADROOM_CHARS_PER_TOKEN,
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
+  CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
+  CESIUM_TOOL_RESULT_MODEL_MIN_CHARS,
+  CONTEXT_PRUNE_TARGET_RATIO,
+  CONTEXT_PRUNE_TRIGGER_RATIO,
   DEFAULT_GREP_RESULTS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  HISTORY_COMPACTION_TARGET_RATIO,
   HISTORY_COMPACTION_TARGET_TURNS,
   HISTORY_COMPACTION_THRESHOLD_RATIO,
   HISTORY_TURN_LIMIT,
@@ -279,6 +291,7 @@ import {
   cesiumEnvironmentChangeNotice,
   cesiumRelocationChangeNotice,
   estimateHistoryTokens,
+  reportedContextTokens,
   formatCesiumDateLabel,
   isEmptyCesiumAdapterResult,
   latestCesiumEnvironmentReminderSnapshot,
@@ -289,6 +302,7 @@ import {
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
   previousUserMessageCreatedAt,
+  prunedToolCallIds,
   selectHistoryWindow,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
@@ -379,6 +393,24 @@ function describeTerminalExit(record: TerminalRunRecord): string {
 
 function optionValue(options: AgentConfigOption[], id: string, fallback: string): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
+}
+
+/** A tool result's character budget: the per-result cap, less when the context is nearly full. */
+function toolResultBudgetForHeadroom(headroomTokens: number): number {
+  return Math.max(
+    CESIUM_TOOL_RESULT_MODEL_MIN_CHARS,
+    Math.min(CESIUM_TOOL_RESULT_MODEL_MAX_CHARS, Math.floor(headroomTokens * CESIUM_HEADROOM_CHARS_PER_TOKEN))
+  );
+}
+
+/**
+ * Where a mid-turn pruning boundary starts: the trigger share of the window,
+ * but early enough that headroom sizing has not yet started shrinking results.
+ */
+function pruneTriggerTokens(contextWindow: number): number {
+  const shrinkStartsAt =
+    contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - CESIUM_TOOL_RESULT_MODEL_MAX_CHARS / CESIUM_HEADROOM_CHARS_PER_TOKEN;
+  return Math.min(contextWindow * CONTEXT_PRUNE_TRIGGER_RATIO, shrinkStartsAt);
 }
 
 function resolvedModelId(
@@ -559,6 +591,15 @@ const COORDINATOR_ROSTER_CHECKS_BEFORE_TURN_ENDS = 3;
 const COORDINATOR_TURN_ENDS_NOTE =
   "You checked on your agents three times in a row, so your turn ends here. Their reports and any Project events arrive as your next turn.";
 
+/**
+ * A coordinator checking on its agents: every project_list_agents, and a
+ * project_read_transcript that came back short because there was nothing new
+ * to read (a full read answers with the transcript text, never JSON).
+ */
+function isCoordinatorAgentCheck(toolName: string, output: string): boolean {
+  return toolName === "project_list_agents" || (toolName === "project_read_transcript" && output.trimStart().startsWith("{"));
+}
+
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
 /** Model-facing framing for a steer injected into a running turn. */
@@ -618,6 +659,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private pendingToolImages: Array<{ mimeType: string; data: string; source: string }> = [];
   /** Whether the model running the current turn advertises image support. */
   private turnSupportsImages = false;
+  /** Characters of the next tool result the model may see; the loop sets it from the context headroom. */
+  private nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+  /** How each just-completed result was stored for the model, keyed by tool call id. */
+  private toolResultShapes = new Map<string, { modelBudget?: number; spillPath?: string }>();
+  /** The model response whose tool calls are running; batches tool calls for pruning. */
+  private currentResponseId: string | null = null;
+  /** Provider-reported usage of the current assistant message: its last response and the running sum. */
+  private messageUsage: { last?: AgentModelUsage; total?: AgentTokenUsage; responses: number } = {
+    responses: 0,
+  };
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
@@ -652,7 +703,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * repeated id would merge distinct calls wherever events are keyed by it.
    */
   private readonly usedToolCallIds = new Set<string>();
-  /** Project coordinators: project_list_agents calls in a row this turn; any other tool resets it. */
+  /** Project coordinators: checks on agents in a row this turn (see isCoordinatorAgentCheck); any other tool resets it. */
   private rosterChecksInARow = 0;
   /** Set by a coordinator's third check in a row: the turn ends once this batch of tools is done. */
   private endTurnAfterTools = false;
@@ -1227,7 +1278,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }));
       // The stored user message already carries what the user typed; only a
       // provider-side wrapper (handoff, fork, session recovery) adds a message.
-      if (currentUserContent?.trim() !== input.text.trim()) {
+      const wrappedPrompt = currentUserContent?.trim() !== input.text.trim();
+      if (wrappedPrompt) {
         history.push({
           role: "user",
           content: input.text,
@@ -1239,6 +1291,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const modelSupportsImages = catalogEntry?.supportsImages === true;
       this.turnSupportsImages = modelSupportsImages;
       this.pendingToolImages = [];
+      this.messageUsage = { responses: 0 };
       const historyImageCount = history.reduce(
         (count, message) => count + (message.images?.length ?? 0),
         0
@@ -1256,16 +1309,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ]);
       }
-      const modelHistory = modelSupportsImages
-        ? history
-        : history.map((message) =>
-            message.images?.length
-              ? { ...message, images: undefined }
-              : message
-          );
+      const forModel = (messages: CesiumHistoryMessage[]) =>
+        modelSupportsImages
+          ? messages
+          : messages.map((message) =>
+              message.images?.length ? { ...message, images: undefined } : message
+            );
+      let modelHistory = forModel(history);
       const toolResultMessages: CesiumHistoryMessage[] = [];
-      let usedToolResultChars = 0;
       let completedToolCallCount = 0;
+      const contextWindow = await resolveCesiumModelContextWindow(String(modelId)).catch(() => 100_000);
+      const toolSchemaTokens = Math.ceil(JSON.stringify(this.advertisedTools()).length / 4);
+      // The newest response's reported context size, and how many messages the
+      // turn has appended since; without one the whole request is estimated.
+      let usageAnchor: { tokens: number; messageCount: number } | null = null;
+      const contextTokensNow = () =>
+        usageAnchor
+          ? usageAnchor.tokens + estimateHistoryTokens(toolResultMessages.slice(usageAnchor.messageCount))
+          : toolSchemaTokens + estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
+      let pruneBlockedBelow = 0;
       for (let iteration = 0; ; iteration += 1) {
         if (this.cancelled) {
           return;
@@ -1316,6 +1378,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (!result) {
           throw new Error("Cesium streaming adapter did not produce a result.");
         }
+        await this.recordModelUsage(result.usage, modelRequest.modelId);
         result = (await this.pluginRuntime?.afterModel(result)) ?? result;
         result = { ...result, toolRequests: result.toolRequests.map((request) => this.withUniqueToolCallId(request)) };
         if (result.toolRequests.length === 0) {
@@ -1352,23 +1415,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
             arguments: JSON.stringify(request.arguments),
           })),
         });
+        if (result.usage) {
+          usageAnchor = {
+            tokens: contextTokensAfterResponse(result.usage),
+            messageCount: toolResultMessages.length,
+          };
+        }
+        this.currentResponseId = `${assistantMessageId}:${iteration}`;
         const batchImages: Array<{ mimeType: string; data: string; source: string }> = [];
         for (const request of result.toolRequests) {
           if (this.cancelled) {
             return;
           }
+          this.nextToolResultBudget = toolResultBudgetForHeadroom(
+            contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - contextTokensNow()
+          );
           const toolResult = await this.executeTool(request);
-          const normalizedToolResult = normalizeCesiumToolResultForModel({
-            toolName: request.name,
-            result: toolResult,
-            usedToolResultChars,
-          });
-          usedToolResultChars = normalizedToolResult.usedToolResultChars;
+          const shape = this.toolResultShapes.get(request.id);
+          this.toolResultShapes.delete(request.id);
           toolResultMessages.push({
             role: "tool",
             toolCallId: request.id,
             name: request.name,
-            content: normalizedToolResult.content,
+            content: normalizeCesiumToolResultForModel({
+              toolName: request.name,
+              result: toolResult,
+              budget: shape?.modelBudget,
+              spillPath: shape?.spillPath,
+            }).content,
           });
           batchImages.push(...this.pendingToolImages.splice(0, 4));
           this.pendingToolImages = [];
@@ -1412,6 +1486,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
             assistantMessageId,
             await this.takeDeliverableSteers()
           );
+        }
+        // A wrapped prompt is not in the log, so a rebuilt request would lose it.
+        const contextTokens = contextTokensNow();
+        if (
+          !wrappedPrompt &&
+          contextTokens >= pruneTriggerTokens(contextWindow) &&
+          contextTokens >= pruneBlockedBelow
+        ) {
+          if (await this.pruneToolResultsAtBoundary(contextTokens, contextWindow)) {
+            modelHistory = forModel(this.renderHistory(await this.readHistoryEvents()));
+            toolResultMessages.length = 0;
+            usageAnchor = null;
+          } else {
+            pruneBlockedBelow = contextTokens + contextWindow * 0.05;
+          }
         }
       }
     } catch (error) {
@@ -1465,7 +1554,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * batch of tools and the reports start the next one.
    */
   private afterCoordinatorTool(toolName: string, output: string): string {
-    if (toolName !== "project_list_agents") {
+    if (!isCoordinatorAgentCheck(toolName, output)) {
       this.rosterChecksInARow = 0;
       return output;
     }
@@ -1571,6 +1660,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         kind: "assistant_message_end",
         messageId: assistantMessageId,
         stopReason: "steered",
+        ...this.takeMessageUsage(),
       },
     ];
     for (const steer of steers) {
@@ -1865,6 +1955,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const rawEvents: unknown[] = [];
     let finalRaw: unknown;
     let heldText = "";
+    let usage: CesiumAdapterResult["usage"];
     for await (const event of streamAdapter(input)) {
       if (this.cancelled) {
         throw new CesiumTurnCancelledError();
@@ -1897,6 +1988,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "tool_request":
           toolRequests.push(event.request);
           break;
+        case "usage":
+          usage = event.usage;
+          break;
         case "raw":
         case "done":
           break;
@@ -1906,6 +2000,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       text: textParts.join(""),
       reasoning: reasoningParts.join("") || undefined,
       toolRequests,
+      ...(usage ? { usage } : {}),
       raw: rawEvents.length > 1 ? rawEvents : finalRaw,
     };
   }
@@ -2430,6 +2525,42 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
   }
 
+  /** Adds one model response's usage to the current message and to the conversation's Goal. */
+  private async recordModelUsage(
+    usage: AgentTokenUsage | undefined,
+    modelId: string
+  ): Promise<void> {
+    if (!usage) {
+      return;
+    }
+    this.messageUsage = {
+      last: { ...usage, modelId },
+      total: addTokenUsage(this.messageUsage.total, usage),
+      responses: this.messageUsage.responses + 1,
+    };
+    const goal = await readGoalForConversation({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    }).catch(() => null);
+    if (goal && !["complete", "cancelled"].includes(goal.status)) {
+      await updateGoal({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        patch: { tokensUsed: goal.tokensUsed + usage.inputTokens + usage.outputTokens },
+      }).catch(() => undefined);
+    }
+  }
+
+  /** The usage fields for an `assistant_message_end`; the next message starts counting from zero. */
+  private takeMessageUsage(): Pick<
+    Extract<AgentEventInput, { kind: "assistant_message_end" }>,
+    "usage" | "turnUsage"
+  > {
+    const { last, total, responses } = this.messageUsage;
+    this.messageUsage = { responses: 0 };
+    return last && total ? { usage: last, turnUsage: { ...total, responses } } : {};
+  }
+
   private async finishAssistant(messageId: string, raw?: unknown): Promise<void> {
     await this.callbacks.appendEvents([
       {
@@ -2438,6 +2569,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         kind: "assistant_message_end",
         messageId,
         stopReason: "end_turn",
+        ...this.takeMessageUsage(),
         raw,
       },
       {
@@ -2491,8 +2623,48 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ...(window.summary
         ? [{ role: "user" as const, content: `[Compressed earlier conversation]\n${window.summary.summary}` }]
         : []),
-      ...normalizeEventsToHistory(visible).slice(1),
+      ...normalizeEventsToHistory(visible, CESIUM_SYSTEM_PROMPT, prunedToolCallIds(window)).slice(1),
     ];
+  }
+
+  /**
+   * Mid-turn, when the context nears the window: stubs the oldest tool
+   * outputs in one persisted step. The request after it starts a new prefix;
+   * every request after that, and the next turn's rebuild, extends it.
+   */
+  private async pruneToolResultsAtBoundary(contextTokens: number, contextWindow: number): Promise<boolean> {
+    const events = await this.readHistoryEvents();
+    const window = selectHistoryWindow(events);
+    const plan = planToolResultPruning({
+      windowEvents: window.events,
+      alreadyPruned: prunedToolCallIds(window),
+      excessTokens: contextTokens - contextWindow * CONTEXT_PRUNE_TARGET_RATIO,
+    });
+    if (plan.toolCallIds.length === 0) {
+      return false;
+    }
+    await this.emitConversationStatus(
+      "running",
+      `Pruning ${plan.toolCallIds.length} older tool output${plan.toolCallIds.length === 1 ? "" : "s"} to free context…`
+    );
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "compression_summary",
+        messageId: `cesium-prune-${randomUUID()}`,
+        summary: "",
+        retainedTurnCount: window.events.filter(
+          (event) => event.kind === "user_message" && !event.hidden
+        ).length,
+        compressedTurnCount: 0,
+        prunedToolCallIds: plan.toolCallIds,
+        estimatedTokensBefore: contextTokens,
+        estimatedTokensAfter: Math.max(0, contextTokens - plan.freedTokens),
+        generation: window.summary?.generation ?? 0,
+      },
+    ]);
+    return true;
   }
 
   /**
@@ -2502,46 +2674,65 @@ class CesiumSessionHandle implements AgentSessionHandle {
    */
   private async compactHistoryIfNeeded(events: AgentStoredEvent[]): Promise<boolean> {
     const window = selectHistoryWindow(events);
-    const visibleUserTurns = window.events.filter(
+    const visibleUsers = window.events.filter(
       (event) => event.kind === "user_message" && !event.hidden
-    ).length;
-    const contextWindow = await resolveCesiumModelContextWindow(
-      optionValue(
-        this.configOptions,
-        "model",
-        this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
-      )
-    ).catch(() => 100_000);
-    const estimatedTokensBefore = estimateHistoryTokens(this.renderHistory(events));
+    );
+    const modelId = optionValue(
+      this.configOptions,
+      "model",
+      this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
+    );
+    const contextWindow = await resolveCesiumModelContextWindow(modelId).catch(() => 100_000);
+    const estimated = estimateHistoryTokens(this.renderHistory(events));
+    const estimatedTokensBefore = reportedContextTokens(window.events, modelId) ?? estimated;
     if (
-      visibleUserTurns <= HISTORY_TURN_LIMIT &&
+      visibleUsers.length <= HISTORY_TURN_LIMIT &&
       estimatedTokensBefore < contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO
     ) {
       return false;
     }
+    // Keep the newest turns that fit the target, sized in reported tokens
+    // where the provider counted them, so the kept window does not start out
+    // over the threshold and re-compact on the next turn.
+    const scale = estimated > 0 ? Math.max(1, estimatedTokensBefore / estimated) : 1;
+    const target = contextWindow * HISTORY_COMPACTION_TARGET_RATIO;
+    const pruned = prunedToolCallIds(window);
+    let retainedTokens = 0;
+    let splitSeq = visibleUsers.at(-1)?.seq ?? Number.POSITIVE_INFINITY;
     let retainedUsers = 0;
-    let splitIndex = 0;
-    for (let index = window.events.length - 1; index >= 0; index -= 1) {
-      const event = window.events[index]!;
-      if (event.kind === "user_message" && !event.hidden) {
-        retainedUsers += 1;
-        splitIndex = index;
-        if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
-          break;
-        }
+    for (let index = visibleUsers.length - 1; index >= 0; index -= 1) {
+      const turnStart = visibleUsers[index]!.seq;
+      const turnEnd = visibleUsers[index + 1]?.seq ?? Number.POSITIVE_INFINITY;
+      const turnEvents = window.events.filter((event) => event.seq >= turnStart && event.seq < turnEnd);
+      const turnTokens = Math.ceil(
+        estimateHistoryTokens(normalizeEventsToHistory(turnEvents, CESIUM_SYSTEM_PROMPT, pruned).slice(1)) * scale
+      );
+      if (
+        retainedUsers > 0 &&
+        (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS || retainedTokens + turnTokens > target)
+      ) {
+        break;
       }
+      retainedTokens += turnTokens;
+      retainedUsers += 1;
+      splitSeq = turnStart;
     }
-    if (splitIndex <= 0) {
+    const retainedWindow = window.events.filter((event) => event.seq >= splitSeq);
+    const prune = planToolResultPruning({
+      windowEvents: retainedWindow,
+      alreadyPruned: pruned,
+      excessTokens: retainedTokens - target,
+    });
+    const compacts = window.events.some(
+      (event) => event.seq < splitSeq && event.kind === "user_message" && !event.hidden
+    );
+    if (!compacts && prune.toolCallIds.length === 0) {
       return false;
     }
-    const splitSeq = window.events[splitIndex]!.seq;
     const sorted = [...events].sort((a, b) => a.seq - b.seq);
-    const compressed = sorted.filter(
-      (event) => event.seq < splitSeq && event.kind !== "compression_summary"
-    );
-    const retained = sorted.filter(
-      (event) => event.seq >= splitSeq && event.kind !== "compression_summary"
-    );
+    const compressed = compacts
+      ? sorted.filter((event) => event.seq < splitSeq && event.kind !== "compression_summary")
+      : [];
     await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
     await this.callbacks.appendEvents([
       {
@@ -2549,22 +2740,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
         conversationId: this.callbacks.conversation.id,
         kind: "compression_summary",
         messageId: `cesium-compression-${randomUUID()}`,
-        summary: summarizeForCompression(compressed),
+        summary: compacts ? summarizeForCompression(compressed) : "",
         retainedTurnCount: retainedUsers,
         compressedTurnCount: compressed.filter(
           (event) => event.kind === "user_message" && !event.hidden
         ).length,
-        sourceRange: {
-          fromSeq: compressed[0]?.seq ?? 0,
-          toSeq: window.events[splitIndex - 1]!.seq,
-        },
+        ...(compacts
+          ? {
+              sourceRange: {
+                fromSeq: compressed[0]?.seq ?? 0,
+                toSeq: Math.max(...window.events.filter((event) => event.seq < splitSeq).map((event) => event.seq)),
+              },
+            }
+          : {}),
+        ...(prune.toolCallIds.length > 0 ? { prunedToolCallIds: prune.toolCallIds } : {}),
         estimatedTokensBefore,
-        estimatedTokensAfter: estimateHistoryTokens(this.renderHistory(retained)),
-        generation: (window.summary?.generation ?? 0) + 1,
+        estimatedTokensAfter: Math.max(0, retainedTokens - prune.freedTokens),
+        generation: (window.summary?.generation ?? 0) + (compacts ? 1 : 0),
       },
     ]);
     return true;
   }
+
 
   private async buildHistory(currentUserMessageId: string): Promise<{
     messages: CesiumHistoryMessage[];
@@ -2765,6 +2962,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const result = (await this.pluginRuntime?.afterTool(request, output)) ?? output;
     const refinedTitle = this.refinedToolTitles.get(request.id);
     this.refinedToolTitles.delete(request.id);
+    const budget = this.nextToolResultBudget;
+    this.nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+    const shape =
+      result.length > budget
+        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result)) }
+        : {};
+    this.toolResultShapes.set(request.id, shape);
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2775,10 +2979,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
         toolKind: toolKind(request.name, toolDefinition),
         status: "completed",
         detail: result,
-        raw: { request, result },
+        raw: { request, result, ...shape },
       },
     ]);
     return result;
+  }
+
+  /** Read-only home of this conversation's spilled tool outputs. */
+  private toolOutputDir(): string {
+    return path.join(DATA_DIR, "tool-output", this.callbacks.conversation.id);
+  }
+
+  /** Saves an output the model only sees part of, so `read_file` can page through the rest. */
+  private async spillToolOutput(toolCallId: string, output: string): Promise<{ spillPath?: string }> {
+    const spillPath = path.join(this.toolOutputDir(), `${toolCallId.replace(/[^A-Za-z0-9._-]/g, "_")}.txt`);
+    try {
+      await fs.mkdir(path.dirname(spillPath), { recursive: true });
+      await fs.writeFile(spillPath, output, "utf8");
+      return { spillPath };
+    } catch {
+      return {};
+    }
   }
 
   private async executeTool(request: CesiumToolRequest): Promise<string> {
@@ -2820,7 +3041,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginId: mcpServerForTool?.pluginId,
       pluginName: mcpServerForTool?.displayName,
       pluginIconUrl: mcpServerForTool?.iconUrl,
-      raw: effectiveRequest,
+      raw: this.currentResponseId
+        ? { ...effectiveRequest, responseId: this.currentResponseId }
+        : effectiveRequest,
     };
     await this.callbacks.appendEvents([callEvent]);
     try {
@@ -3115,7 +3338,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolReadFile(args: Record<string, unknown>): Promise<string> {
     const inputPath = asString(args.path);
     if (!inputPath) throw new Error("read_file.path is required.");
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, this.projectContextRoots());
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath, [
+      ...this.projectContextRoots(),
+      this.toolOutputDir(),
+    ]);
     const imageMime = imageMimeTypeForPath(resolved);
     if (imageMime) {
       const buffer = await fs.readFile(resolved);
@@ -4645,6 +4871,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     ].join("\n\n");
 
     let lastError: string | null = null;
+    let tokensUsed = 0;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await runAdapter({
         apiKind: auth.apiKind,
@@ -4664,6 +4891,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ],
       });
+      tokensUsed += result.usage ? result.usage.inputTokens + result.usage.outputTokens : 0;
       const text = result.text.trim();
       if (!request.schema) {
         return {
@@ -4674,11 +4902,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
                   .map((tool) => tool.name)
                   .join(", ")}`
               : ""),
+          ...(tokensUsed > 0 ? { tokensUsed } : {}),
         };
       }
       try {
         const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-        return { value: JSON.parse(jsonText) as unknown };
+        return { value: JSON.parse(jsonText) as unknown, ...(tokensUsed > 0 ? { tokensUsed } : {}) };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }

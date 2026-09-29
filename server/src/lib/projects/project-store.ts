@@ -74,6 +74,7 @@ function normalizePullRequest(raw: unknown): ProjectPullRequest | null {
         : null,
     mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : null,
     openedByProject: pr.openedByProject === true,
+    ...(pr.closedByProject === true ? { closedByProject: true } : {}),
     updatedAt: typeof pr.updatedAt === "number" ? pr.updatedAt : 0,
   };
 }
@@ -197,6 +198,9 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
       ? record.children
           .map(normalizeChildRecord)
           .filter((child): child is ProjectChildRecord => child !== null)
+      : [],
+    closedPrs: Array.isArray(record.closedPrs)
+      ? record.closedPrs.map(normalizePullRequest).filter((pr): pr is ProjectPullRequest => pr !== null)
       : [],
     settings: normalizeProjectSettings(record.settings),
   };
