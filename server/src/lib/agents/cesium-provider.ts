@@ -539,6 +539,15 @@ const COORDINATOR_ROSTER_CHECKS_BEFORE_TURN_ENDS = 3;
 const COORDINATOR_TURN_ENDS_NOTE =
   "You checked on your agents three times in a row, so your turn ends here. Their reports and any Project events arrive as your next turn.";
 
+/**
+ * A coordinator checking on its agents: every project_list_agents, and a
+ * project_read_transcript that came back short because there was nothing new
+ * to read (a full read answers with the transcript text, never JSON).
+ */
+function isCoordinatorAgentCheck(toolName: string, output: string): boolean {
+  return toolName === "project_list_agents" || (toolName === "project_read_transcript" && output.trimStart().startsWith("{"));
+}
+
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
 /** Model-facing framing for a steer injected into a running turn. */
@@ -629,7 +638,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * repeated id would merge distinct calls wherever events are keyed by it.
    */
   private readonly usedToolCallIds = new Set<string>();
-  /** Project coordinators: project_list_agents calls in a row this turn; any other tool resets it. */
+  /** Project coordinators: checks on agents in a row this turn (see isCoordinatorAgentCheck); any other tool resets it. */
   private rosterChecksInARow = 0;
   /** Set by a coordinator's third check in a row: the turn ends once this batch of tools is done. */
   private endTurnAfterTools = false;
@@ -1442,7 +1451,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * batch of tools and the reports start the next one.
    */
   private afterCoordinatorTool(toolName: string, output: string): string {
-    if (toolName !== "project_list_agents") {
+    if (!isCoordinatorAgentCheck(toolName, output)) {
       this.rosterChecksInARow = 0;
       return output;
     }
