@@ -88,12 +88,14 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   },
   {
     name: "grep",
-    description: "Search workspace files by regular expression and optional context lines.",
+    description:
+      "Search workspace files by JavaScript regular expression and optional context lines. Case-sensitive unless ignoreCase is true.",
     parameters: {
       type: "object",
       properties: {
         pattern: { type: "string" },
         path: { type: "string" },
+        ignoreCase: { type: "boolean" },
         context: { type: "number" },
         maxResults: { type: "number" },
       },
