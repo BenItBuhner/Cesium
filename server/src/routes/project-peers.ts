@@ -26,6 +26,7 @@ import {
   forgetContextHashes,
   writeContextBytesIn,
 } from "../lib/projects/context-sync.js";
+import type { HelperBriefInput } from "../lib/projects/helper-brief.js";
 import { getPeerMirrorContextDir } from "../lib/projects/paths.js";
 import type { WorkerBriefInput } from "../lib/projects/worker-brief.js";
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
@@ -111,9 +112,8 @@ function workspaceInfo(workspace: WorkspaceRecord): PeerWorkspaceInfo {
   return { id: workspace.id, name: workspace.name, root: workspace.root };
 }
 
-async function scopedChild(c: Context<PeerEnv>): Promise<ChildRef> {
-  const workspaceId = c.req.param("workspaceId") ?? "";
-  const conversationId = c.req.param("conversationId") ?? "";
+/** A Project agent this token created here; anything else is reported as missing. */
+async function tokenChild(workspaceId: string, conversationId: string, tokenId: string): Promise<ChildRef> {
   const missing = new ProjectError(
     "No Project agent with that id was created here with this token.",
     404,
@@ -124,10 +124,14 @@ async function scopedChild(c: Context<PeerEnv>): Promise<ChildRef> {
   }
   const record = await readConversationRecord(workspaceId, conversationId);
   const origin = record?.origin;
-  if (origin?.kind !== "project-child" || origin.peerTokenId !== c.get("peerToken").id) {
+  if (origin?.kind !== "project-child" || origin.peerTokenId !== tokenId) {
     throw missing;
   }
   return { workspaceId, conversationId };
+}
+
+function scopedChild(c: Context<PeerEnv>): Promise<ChildRef> {
+  return tokenChild(c.req.param("workspaceId") ?? "", c.req.param("conversationId") ?? "", c.get("peerToken").id);
 }
 
 function requiredText(body: Record<string, unknown>, key: string, max: number): string {
@@ -155,6 +159,7 @@ function safeId(body: Record<string, unknown>, key: string): string {
 }
 
 const BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+const SHA_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 async function repoWorkspace(value: unknown): Promise<WorkspaceRecord> {
   const workspaceId = asString(value) ?? "";
@@ -165,8 +170,33 @@ async function repoWorkspace(value: unknown): Promise<WorkspaceRecord> {
   return workspace;
 }
 
-async function resolvePlacement(value: unknown): Promise<ChildCreateInput["placement"]> {
+async function resolvePlacement(value: unknown, tokenId: string): Promise<ChildCreateInput["placement"]> {
   const placement = asRecord(value) ?? {};
+  if (placement.kind === "snapshot") {
+    const name = asString(placement.name) ?? "";
+    const baseBranch = asString(placement.baseBranch)?.trim() || null;
+    if (!SAFE_ID.test(name) || (baseBranch && !BRANCH_PATTERN.test(baseBranch))) {
+      throw new ProjectError("placement.name must be a short id and placement.baseBranch a plain branch name.");
+    }
+    const base = asRecord(placement.base);
+    const baseRef = asString(base?.baseRef) ?? "";
+    const sha = asString(base?.sha) ?? "";
+    if (base && (!BRANCH_PATTERN.test(baseRef) || !SHA_PATTERN.test(sha))) {
+      throw new ProjectError("placement.base needs a branch name and a full commit sha.");
+    }
+    return {
+      kind: "snapshot",
+      workspaceId: (await repoWorkspace(placement.workspaceId)).id,
+      baseBranch,
+      name,
+      base: base ? { baseRef, sha } : null,
+    };
+  }
+  if (placement.kind === "agent") {
+    // Only the folder of an agent this same token created here.
+    const ref = await tokenChild(asString(placement.workspaceId) ?? "", asString(placement.conversationId) ?? "", tokenId);
+    return { kind: "agent", ...ref };
+  }
   if (placement.kind === "scratch") {
     return { kind: "scratch", label: (asString(placement.label) ?? "Project agent").slice(0, 120) };
   }
@@ -187,7 +217,51 @@ async function resolvePlacement(value: unknown): Promise<ChildCreateInput["place
       fallbackToCheckout: placement.fallbackToCheckout === true,
     };
   }
-  throw new ProjectError('placement.kind must be "worktree", "workspace" or "scratch".');
+  throw new ProjectError('placement.kind must be "worktree", "workspace", "scratch", "snapshot" or "agent".');
+}
+
+/**
+ * The home's helper brief. A browser check saves its evidence in this
+ * engine's mirror of the Project context when the home synced it here
+ * (`contextSync`), else it only lists the files in its report.
+ */
+async function helperBriefInput(value: unknown, name: string, mirrorDir: string): Promise<HelperBriefInput | undefined> {
+  const brief = asRecord(value);
+  if (!brief) {
+    return undefined;
+  }
+  const projectName = (asString(brief.projectName) ?? "Project").slice(0, 120);
+  if (brief.kind === "explore") {
+    return {
+      kind: "explore",
+      projectName,
+      helperName: name,
+      repoName: (asString(brief.repoName) ?? "repository").slice(0, 120),
+      question: requiredText(brief, "question", MAX_PROMPT_CHARS),
+    };
+  }
+  if (brief.kind === "browser") {
+    const url = asString(brief.url)?.trim() || null;
+    if (url && !/^https?:\/\//i.test(url)) {
+      throw new ProjectError("helperBrief.url must start with http:// or https://.");
+    }
+    const agent = asRecord(brief.agent);
+    const agentName = asString(agent?.name)?.trim().slice(0, 80) ?? "";
+    const mediaDir = brief.contextSync === true ? path.join(mirrorDir, "media", name) : null;
+    if (mediaDir) {
+      await fs.mkdir(mediaDir, { recursive: true });
+    }
+    return {
+      kind: "browser",
+      projectName,
+      helperName: name,
+      what: requiredText(brief, "what", MAX_PROMPT_CHARS),
+      url,
+      agent: agentName ? { name: agentName, branch: asString(agent?.branch)?.slice(0, 200) ?? null } : null,
+      mediaDir,
+    };
+  }
+  throw new ProjectError('helperBrief.kind must be "explore" or "browser".');
 }
 
 /**
@@ -278,18 +352,24 @@ projectPeerRoutes.post(
       engineLabel: engine,
     });
     const projectId = safeId(body, "projectId");
+    const placement = await resolvePlacement(body.placement, c.get("peerToken").id);
     const mirrorDir = getPeerMirrorContextDir(c.get("peerToken").id, projectId);
     const brief = briefInput(body.brief, name, mirrorDir);
     if (brief?.contextDir) {
       await fs.mkdir(brief.contextDir, { recursive: true });
     }
+    const helperBrief = brief ? undefined : await helperBriefInput(body.helperBrief, name, mirrorDir);
     const created = await host.create({
       projectId,
       childId: safeId(body, "childId"),
       name,
-      ...(brief ? { brief } : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
+      ...(brief
+        ? { brief }
+        : helperBrief
+          ? { helperBrief }
+          : { promptText: requiredText(body, "promptText", MAX_PROMPT_CHARS) }),
       displayText: requiredText(body, "displayText", MAX_PROMPT_CHARS),
-      placement: await resolvePlacement(body.placement),
+      placement,
       backendId: harness.id,
       modelId: model.modelId,
       mode: asString(body.mode) ?? null,
@@ -412,6 +492,11 @@ projectPeerRoutes.get(
       transcript: await host.transcript(ref, clampTranscriptTurns(c.req.query("turns"))),
     });
   })
+);
+
+projectPeerRoutes.get(
+  `${CHILD_PATH}/reply`,
+  guarded(async (c) => c.json({ reply: await host.lastReply(await scopedChild(c)) }))
 );
 
 projectPeerRoutes.post(
