@@ -1,5 +1,6 @@
-import type { AgentStoredEvent } from "../types.js";
+import type { AgentModelUsage, AgentStoredEvent } from "../types.js";
 import { asRecord, asString, truncate, truncateMiddle } from "./cesium-coerce.js";
+import { contextTokensAfterResponse } from "./cesium-usage.js";
 import {
   CESIUM_SYSTEM_PROMPT,
   CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
@@ -33,8 +34,12 @@ type PendingHistoryToolCall = CesiumHistoryToolCall & {
   result?: string;
 };
 
+/** Rough per-image cost; providers bill a typical screenshot at roughly this many tokens. */
+const IMAGE_TOKEN_ESTIMATE = 1_000;
+
 export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number {
   let chars = 0;
+  let images = 0;
   for (const message of messages) {
     chars += message.content.length;
     if (message.toolCalls) {
@@ -43,8 +48,42 @@ export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number 
     if (message.name) {
       chars += message.name.length;
     }
+    images += message.images?.length ?? 0;
   }
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / 4) + images * IMAGE_TOKEN_ESTIMATE;
+}
+
+/**
+ * The newest provider-reported usage inside the history window, for the model
+ * that produced it. A different model tokenizes differently, so its counts do
+ * not carry over.
+ */
+export function latestReportedUsage(
+  windowEvents: AgentStoredEvent[],
+  modelId: string
+): { usage: AgentModelUsage; seq: number } | null {
+  let latest: { usage: AgentModelUsage; seq: number } | null = null;
+  for (const event of windowEvents) {
+    if (event.kind === "assistant_message_end" && event.usage && (!latest || event.seq > latest.seq)) {
+      latest = { usage: event.usage, seq: event.seq };
+    }
+  }
+  return latest && latest.usage.modelId === modelId ? latest : null;
+}
+
+/**
+ * Context size in tokens: the provider's count as of its newest response plus
+ * an estimate for what was logged after it. Null when no response in the
+ * window reported usage, so callers fall back to a full estimate.
+ */
+export function reportedContextTokens(windowEvents: AgentStoredEvent[], modelId: string): number | null {
+  const latest = latestReportedUsage(windowEvents, modelId);
+  if (!latest) {
+    return null;
+  }
+  const after = windowEvents.filter((event) => event.seq > latest.seq);
+  const afterTokens = after.length > 0 ? estimateHistoryTokens(normalizeEventsToHistory(after).slice(1)) : 0;
+  return contextTokensAfterResponse(latest.usage) + afterTokens;
 }
 
 export function normalizeCesiumToolResultForModel(input: {
