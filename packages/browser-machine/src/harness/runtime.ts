@@ -271,6 +271,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
         const assistantMessageId = crypto.randomUUID();
         let textBuffer = "";
         let reasoningBuffer = "";
+        let streamedText = false;
         let flushTimer: ReturnType<typeof setTimeout> | null = null;
         let flushChain = Promise.resolve();
         const flush = (): Promise<void> => {
@@ -295,6 +296,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
               });
             }
             if (text) {
+              streamedText = true;
               batch.push({
                 eventId: newEventId(),
                 conversationId,
@@ -315,6 +317,20 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           if (!flushTimer) {
             flushTimer = setTimeout(() => void flush(), STREAM_FLUSH_MS);
           }
+        };
+        // Text the model never finished closes here, as the server's
+        // interruption repair does, instead of trailing later requests.
+        const closeInterrupted = async (): Promise<void> => {
+          if (!streamedText) return;
+          await append([
+            {
+              eventId: newEventId(),
+              conversationId,
+              kind: "assistant_message_end",
+              messageId: assistantMessageId,
+              stopReason: "interrupted",
+            },
+          ]);
         };
 
         let result;
@@ -342,6 +358,7 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           );
         } catch (error) {
           await flush();
+          await closeInterrupted();
           if (turn.cancelled) return;
           await fail(
             error instanceof Error
@@ -365,6 +382,10 @@ export class BrowserAgentHarness implements BrowserAgentRuntime {
           break;
         }
 
+        if (turn.cancelled) {
+          await closeInterrupted();
+          return;
+        }
         for (const toolCall of result.toolCalls) {
           if (turn.cancelled) return;
           const executed = await this.executeToolCall(workspace, conversationId, turn, {
