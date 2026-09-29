@@ -350,7 +350,12 @@ export function normalizeEventsToHistory(
         // preceded them - the same shape the model saw live, byte for byte.
         if (event.placement === "inline" && event.text.trim()) {
           flushPendingToolCalls(state);
-          messages.push({ role: "user", content: event.text });
+          const images = (event.images ?? []).filter((image) => image.data.length > 0);
+          messages.push({
+            role: "user",
+            content: event.text,
+            ...(images.length > 0 ? { images } : {}),
+          });
         }
         break;
       case "assistant_message_chunk":
