@@ -104,13 +104,31 @@ function runInstaller(runtime: string, cli: string): Promise<void> {
   });
 }
 
+const requireHere = createRequire(import.meta.url);
+
 /** The playwright package's CLI (its `bin`, which its exports map doesn't expose to require). */
 export function playwrightCliPath(): string {
-  const require = createRequire(import.meta.url);
-  const manifestPath = require.resolve("playwright/package.json");
-  const manifest = require(manifestPath) as { bin?: string | Record<string, string> };
+  const manifestPath = requireHere.resolve("playwright/package.json");
+  const manifest = requireHere(manifestPath) as { bin?: string | Record<string, string> };
   const bin = typeof manifest.bin === "string" ? manifest.bin : (manifest.bin?.playwright ?? "cli.js");
   return path.join(path.dirname(manifestPath), bin);
+}
+
+/**
+ * The folder whose node_modules has Cesium's playwright, where `npx playwright`
+ * runs that copy. Not the working directory: the desktop app starts its engine
+ * in its resources folder.
+ */
+function playwrightHome(): string {
+  try {
+    const modules = path.dirname(path.dirname(requireHere.resolve("playwright/package.json")));
+    if (path.basename(modules) === "node_modules") {
+      return path.dirname(modules);
+    }
+  } catch {
+    // Falls back to the working directory below.
+  }
+  return process.cwd();
 }
 
 /** Playwright's own installer for Chromium and its headless shell, run with Node when the engine runs on Bun. */
@@ -144,7 +162,7 @@ function startInstall(): Promise<void> {
 }
 
 function howToInstall(engine: string, why: string): string {
-  const where = `in Cesium's server folder (${process.cwd()}), then start the check again.`;
+  const where = `in Cesium's server folder (${playwrightHome()}), then start the check again.`;
   if (/missing dependencies/i.test(why)) {
     return `The browser check needs Playwright's Chromium, which can't run on ${engine} yet (${why}). Install the system libraries it needs on that machine with \`sudo npx playwright install-deps chromium\` ${where}`;
   }

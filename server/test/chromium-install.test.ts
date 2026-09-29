@@ -140,17 +140,25 @@ test("asked by a home engine over the peer API, it answers within the shorter pe
   assert.equal(box.calls.installs, 1);
 });
 
-test("a Chromium that still won't launch after installing says why, and missing system libraries get the command that installs them", async () => {
+test("a Chromium that still won't launch after installing says why, and missing system libraries get the command to run where Cesium's playwright lives", async () => {
   assert.equal(chromiumErrorReason(new Error(MISSING_LIBRARIES)), "browserType.launch: Host system is missing dependencies to run browsers.");
   assert.equal(chromiumErrorReason(new Error(`${MISSING}\n╔════╗\n║ Looks like Playwright was just installed or updated. ║`)), MISSING);
   setChromiumInstallForTests({
     probe: async () => chromiumErrorReason(new Error(MISSING_LIBRARIES)),
     install: async () => undefined,
   });
-  assert.deepEqual(await ensurePlaywrightChromium("Build box"), {
-    ok: false,
-    message: `The browser check needs Playwright's Chromium, which can't run on Build box yet (it still doesn't launch after installing: browserType.launch: Host system is missing dependencies to run browsers.). Install the system libraries it needs on that machine with \`sudo npx playwright install-deps chromium\` in Cesium's server folder (${process.cwd()}), then start the check again.`,
-  });
+  const serverFolder = path.dirname(path.dirname(path.dirname(playwrightCliPath())));
+  const cwd = process.cwd();
+  // The desktop app starts its engine in its resources folder, not the server folder.
+  process.chdir(os.tmpdir());
+  try {
+    assert.deepEqual(await ensurePlaywrightChromium("Build box"), {
+      ok: false,
+      message: `The browser check needs Playwright's Chromium, which can't run on Build box yet (it still doesn't launch after installing: browserType.launch: Host system is missing dependencies to run browsers.). Install the system libraries it needs on that machine with \`sudo npx playwright install-deps chromium\` in Cesium's server folder (${serverFolder}), then start the check again.`,
+    });
+  } finally {
+    process.chdir(cwd);
+  }
 });
 
 test("a failed install reports the installer's first error, not the stack frames under its last one", () => {
