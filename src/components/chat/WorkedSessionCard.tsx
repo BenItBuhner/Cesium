@@ -50,6 +50,7 @@ import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
 import { formatMobileEditStats } from "@/lib/mobile-agent-projection";
 import { useLiveElapsedLabel } from "@/hooks/useLiveElapsed";
 import { formatAgentElapsed } from "@/lib/format-agent-run-duration";
+import { fetchAgentToolResult } from "@/lib/server-api";
 import {
   formatToolFileLabel,
   resolveWorkspaceToolPath,
@@ -1163,6 +1164,109 @@ function LiveWorkingMeta({
   );
 }
 
+type StoredToolResult = Extract<WorkedSessionEntry, { kind: "tool" }>["storedResult"];
+
+function useStoredToolResult(toolCallId: string | undefined, storedResult: StoredToolResult) {
+  const [full, setFull] = useState<string | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
+  const load = async () => {
+    if (!storedResult || !toolCallId) {
+      return;
+    }
+    setState("loading");
+    try {
+      const result = await fetchAgentToolResult(storedResult.conversationId, toolCallId);
+      setFull(formatRawDetailForDisplay(result.content));
+      setState("idle");
+    } catch {
+      setState("failed");
+    }
+  };
+  return { full, state, load, canLoad: Boolean(storedResult && toolCallId) && full === null };
+}
+
+function StoredToolResultButton({
+  chars,
+  state,
+  onLoad,
+  className,
+}: {
+  chars: number;
+  state: "idle" | "loading" | "failed";
+  onLoad: () => void;
+  className: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={state === "loading"}
+      onClick={onLoad}
+      className={`font-sans text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-60 ${className}`}
+    >
+      {state === "loading"
+        ? "Loading full output…"
+        : state === "failed"
+          ? "Full output unavailable - retry"
+          : `Load full output (${chars.toLocaleString()} characters)`}
+    </button>
+  );
+}
+
+const storedResultPreClass =
+  "max-h-[220px] overflow-auto whitespace-pre-wrap break-words px-[8px] py-[7px] font-mono text-[11px] font-normal leading-relaxed text-[var(--text-secondary)]";
+
+/** Details pane body: the preview, swapped for the full stored result once loaded. */
+function ToolRawDetailBody({
+  preview,
+  toolCallId,
+  storedResult,
+}: {
+  preview: string | undefined;
+  toolCallId: string | undefined;
+  storedResult: StoredToolResult;
+}) {
+  const { full, state, load, canLoad } = useStoredToolResult(toolCallId, storedResult);
+  return (
+    <>
+      <pre className={storedResultPreClass}>{full ?? preview}</pre>
+      {canLoad && storedResult ? (
+        <StoredToolResultButton
+          chars={storedResult.chars}
+          state={state}
+          onLoad={() => void load()}
+          className="w-full border-t border-[color-mix(in_srgb,var(--border-card)_55%,transparent)] px-[8px] py-[4px] text-left"
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** Rows that show their (preview) output inline load the full stored result into a pane below it. */
+function InlineStoredToolResult({
+  toolCallId,
+  storedResult,
+}: {
+  toolCallId: string | undefined;
+  storedResult: NonNullable<StoredToolResult>;
+}) {
+  const { full, state, load, canLoad } = useStoredToolResult(toolCallId, storedResult);
+  if (full !== null) {
+    return (
+      <div className="relative z-[2] mt-[6px] overflow-hidden rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
+        <pre className={storedResultPreClass}>{full}</pre>
+      </div>
+    );
+  }
+  return canLoad ? (
+    <StoredToolResultButton
+      chars={storedResult.chars}
+      state={state}
+      onLoad={() => void load()}
+      className="mt-[4px] text-left"
+    />
+  ) : null;
+}
+
 function WorkedEntryBlock({
   entry,
   isLiveWorkedTail,
@@ -1453,15 +1557,20 @@ function renderEntry(
                 {extraDetail}
               </HorizontalFadedScroll>
             ) : null}
+            {entry.storedResult && extraDetail && !showRawDetail ? (
+              <InlineStoredToolResult toolCallId={entry.toolCallId} storedResult={entry.storedResult} />
+            ) : null}
             {todos ? <WorkedTodoChecklist todos={todos} /> : null}
             {showRawDetail && rawDetailOpen ? (
               <div className="relative z-[2] mt-[6px] overflow-hidden rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
                 <p className="border-b border-[color-mix(in_srgb,var(--border-card)_55%,transparent)] px-[8px] py-[4px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {rawDetailHeading}
                 </p>
-                <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words px-[8px] py-[7px] font-mono text-[11px] font-normal leading-relaxed text-[var(--text-secondary)]">
-                  {rawDetailDisplay}
-                </pre>
+                <ToolRawDetailBody
+                  preview={rawDetailDisplay}
+                  toolCallId={entry.toolCallId}
+                  storedResult={entry.storedResult}
+                />
               </div>
             ) : null}
             {entry.editPreview ? (

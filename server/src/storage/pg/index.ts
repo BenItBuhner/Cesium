@@ -947,19 +947,29 @@ async deleteAgentEvents(input: {
 }
 
 async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> {
-    const limit = input.limit && input.limit > 0 ? Math.min(input.limit, 10_000) : 10_000;
-    const rows = await getDb()
-      .select()
-      .from(schema.agentEvents)
-      .where(
-        and(
-          eq(schema.agentEvents.conversationId, input.conversationId),
-          sql`${schema.agentEvents.seq} > ${input.afterSeq ?? 0}`
+    const limit = input.limit && input.limit > 0 ? input.limit : 10_000;
+    const events: AgentStoredEvent[] = [];
+    let afterSeq = input.afterSeq ?? 0;
+    // Paged so a long conversation is read whole instead of silently stopping at one page.
+    while (events.length < limit) {
+      const rows = await getDb()
+        .select()
+        .from(schema.agentEvents)
+        .where(
+          and(
+            eq(schema.agentEvents.conversationId, input.conversationId),
+            sql`${schema.agentEvents.seq} > ${afterSeq}`
+          )
         )
-      )
-      .orderBy(asc(schema.agentEvents.seq))
-      .limit(limit);
-    return rows.map(rowToEvent);
+        .orderBy(asc(schema.agentEvents.seq))
+        .limit(Math.min(limit - events.length, 10_000));
+      events.push(...rows.map(rowToEvent));
+      if (rows.length < 10_000 || rows.length === 0) {
+        break;
+      }
+      afterSeq = events[events.length - 1]!.seq;
+    }
+    return events;
   }
 
   async readAgentEventsOlderThan(input: {

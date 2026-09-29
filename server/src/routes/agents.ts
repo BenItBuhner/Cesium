@@ -27,7 +27,12 @@ import type {
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
 import { expireElapsedSettle } from "../lib/agents/conversation-normalize.js";
 import { maybeAutoSyncImportedConversation } from "../lib/agents/import/importer.js";
-import { readConversationRecord } from "../lib/agents/session-store.js";
+import { readConversationEvents, readConversationRecord } from "../lib/agents/session-store.js";
+import {
+  type CesiumToolResultBlobRef,
+  readToolResultBlob,
+  toolResultBlobRef,
+} from "../lib/agents/cesium/cesium-tool-result-blobs.js";
 import {
   harnessDiagnosticsFilePaths,
   readHarnessDiagnostics,
@@ -291,6 +296,24 @@ agentRoutes.get("/api/agents/conversations/:conversationId/context-transcript", 
     return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
   }
   return c.json({ transcript });
+});
+
+agentRoutes.get("/api/agents/conversations/:conversationId/tool-results/:toolCallId", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const toolCallId = c.req.param("toolCallId");
+  const events = await readConversationEvents(workspace.id, conversationId).catch(() => []);
+  let ref: CesiumToolResultBlobRef | null = null;
+  for (const event of events) {
+    if (event.kind === "tool_call_update" && event.toolCallId === toolCallId) {
+      ref = toolResultBlobRef(event) ?? ref;
+    }
+  }
+  const content = ref ? await readToolResultBlob(ref) : null;
+  if (content === null) {
+    return c.json({ error: `No stored result for tool call ${toolCallId}` }, 404);
+  }
+  return c.json({ toolCallId, content });
 });
 
 agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {

@@ -455,20 +455,6 @@ export async function readConversationEventsSinceEfficient(
       return [];
     }
 
-    if (fileSize <= EVENT_LOG_FULL_READ_MAX_BYTES) {
-      const raw = Buffer.alloc(fileSize);
-      await fh.read(raw, 0, fileSize, 0);
-      return sortEventsBySeq(
-        raw
-          .toString("utf8")
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .map(parseEventLine)
-          .filter((e): e is AgentStoredEvent => e != null)
-      ).filter((e) => e.seq > since);
-    }
-
     let bytesFromEnd = 0;
     let chunkSize = TAIL_INITIAL_CHUNK_BYTES;
     const lineBuf: string[] = [];

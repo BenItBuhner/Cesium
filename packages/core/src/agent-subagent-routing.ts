@@ -299,7 +299,8 @@ export function getToolRawUpdate(
   if (fromUpdate && typeof fromUpdate === "object") {
     return fromUpdate as Record<string, unknown>;
   }
-  // Cesium tool_call_update wraps the original request: `{ request: {id, name, arguments}, result }`.
+  // Cesium tool_call_update wraps the original request: `{ request: {id, name, arguments} }`,
+  // with the result in `detail` (logs written before that also copied it to `raw.result`).
   // Flatten it so tool-name based classification and transcript extraction keep working.
   const fromRequest = raw.request;
   if (
@@ -311,6 +312,12 @@ export function getToolRawUpdate(
     const merged: Record<string, unknown> = { ...(fromRequest as Record<string, unknown>) };
     if (raw.result !== undefined) {
       merged.result = raw.result;
+    } else if (
+      event.kind === "tool_call_update" &&
+      event.status === "completed" &&
+      typeof event.detail === "string"
+    ) {
+      merged.result = event.detail;
     }
     if (raw.error !== undefined) {
       merged.error = raw.error;

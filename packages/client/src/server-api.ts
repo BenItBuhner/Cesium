@@ -1198,6 +1198,18 @@ export async function fetchAgentContextTranscript(
   );
 }
 
+/** Full text of a tool result whose event only kept a preview. */
+export async function fetchAgentToolResult(
+  conversationId: string,
+  toolCallId: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ toolCallId: string; content: string }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/tool-results/${encodeURIComponent(toolCallId)}`,
+    options?.signal ? { signal: options.signal } : undefined
+  );
+}
+
 export async function fetchAgentConversationSnapshot(
   conversationId: string,
   options?: {

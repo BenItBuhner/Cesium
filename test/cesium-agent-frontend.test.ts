@@ -542,6 +542,66 @@ describe("Cesium Agent frontend integration", () => {
     assert.equal(cards[0]!.subagentComplete, true);
   });
 
+  test("a subagent result stored only in detail projects like one also copied to raw.result", () => {
+    const instructions = "Summarize the release notes.";
+    const resultText = "Subagent tool-once completed: The release adds offline sync.";
+    const projectWith = (raw: Record<string, unknown>) =>
+      projectAgentEventsToChatMessages(
+        [
+          {
+            seq: 1,
+            eventId: "u1",
+            conversationId: "c1",
+            createdAt: 1,
+            kind: "user_message",
+            messageId: "m1",
+            content: "Go",
+          },
+          {
+            seq: 2,
+            eventId: "t1",
+            conversationId: "c1",
+            createdAt: 2,
+            kind: "tool_call",
+            toolCallId: "tool-once",
+            title: "Subagent Release notes",
+            toolKind: "subagent",
+            status: "in_progress",
+            detail: "{}",
+            raw: { id: "tool-once", name: "subagent", arguments: { title: "Release notes", instructions } },
+          },
+          {
+            seq: 3,
+            eventId: "t2",
+            conversationId: "c1",
+            createdAt: 3,
+            kind: "tool_call_update",
+            toolCallId: "tool-once",
+            title: "Subagent Release notes",
+            toolKind: "subagent",
+            status: "completed",
+            detail: resultText,
+            raw,
+          },
+        ],
+        { backendId: "cesium-agent" }
+      )
+        .filter((message) => message.type === "subagent")
+        .map((card) => ({
+          status: card.subagentStatus,
+          transcript: card.subagentTranscript?.map((row) => row.content ?? "") ?? [],
+        }));
+    const request = { id: "tool-once", name: "subagent", arguments: { title: "Release notes", instructions } };
+    const legacy = projectWith({ request, result: resultText });
+    const current = projectWith({ request });
+    assert.equal(current.length, 1);
+    assert.ok(
+      current[0]!.transcript.some((content) => content.includes("offline sync")),
+      "the card transcript carries the result"
+    );
+    assert.deepEqual(current, legacy);
+  });
+
   test("shows Compressing context during Cesium compression status", () => {
     const events: AgentStoredEvent[] = [
       {
@@ -600,5 +660,35 @@ describe("Cesium Agent frontend integration", () => {
     assert.match(text, /Reading first\./);
     assert.match(text, /The full answer\./);
     assert.doesNotMatch(text, /Half an ans/);
+  });
+
+  test("a tool row whose event kept only a preview links to the stored full result", () => {
+    let seq = 0;
+    const base = () => {
+      seq += 1;
+      return { seq, eventId: `e${seq}`, conversationId: "c-blob", createdAt: seq };
+    };
+    const request = { id: "t-big", name: "run_terminal_cmd", arguments: { command: "npm test" } };
+    const preview = "line 1\nline 2\n...[truncated 90000 chars from the middle]...\nline 999";
+    const events: AgentStoredEvent[] = [
+      { ...base(), kind: "user_message", messageId: "m1", content: "Run the tests" },
+      { ...base(), kind: "tool_call", toolCallId: "t-big", title: "Ran npm test", toolKind: "terminal", status: "in_progress", raw: request },
+      {
+        ...base(),
+        kind: "tool_call_update",
+        toolCallId: "t-big",
+        title: "Ran npm test",
+        toolKind: "terminal",
+        status: "completed",
+        detail: preview,
+        raw: { request, modelBudget: 12_000, blobRef: { sha256: "a".repeat(64), chars: 102_000 } },
+      },
+    ];
+    const tools = projectAgentEventsToChatMessages(events, { backendId: "cesium-agent" })
+      .flatMap((message) => message.workedEntries ?? [])
+      .filter((entry) => entry.kind === "tool");
+    assert.equal(tools.length, 1);
+    assert.deepEqual(tools[0]!.storedResult, { conversationId: "c-blob", chars: 102_000 }, "the row can load the full result");
+    assert.equal(tools[0]!.rawDetail ?? tools[0]!.detail, preview, "and shows the preview until then");
   });
 });

@@ -66,6 +66,8 @@ export type WorkedSessionEntry =
       detail?: string;
       /** Full stdout/file/search payload kept behind a disclosure instead of inline. */
       rawDetail?: string;
+      /** The event kept only a preview of this result; the full text loads from the server on demand. */
+      storedResult?: { conversationId: string; chars: number };
       variant?: "default" | "terminal";
       status?: "pending" | "running" | "completed" | "failed" | "cancelled";
       locations?: Array<{ path: string; line?: number }>;

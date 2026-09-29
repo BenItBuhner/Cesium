@@ -41,7 +41,7 @@ import {
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 
 import { asNumber } from "./json-coerce.js";
-import { readConversationEvents, readConversationRecord } from "./session-store.js";
+import { readConversationEventsIncremental, readConversationRecord } from "./session-store.js";
 import {
   deltaPayloadFor,
   resolveSideChatDelta,
@@ -199,6 +199,14 @@ import {
 } from "./cesium/cesium-compaction.js";
 import { DATA_DIR } from "../persistence.js";
 import {
+  CESIUM_TOOL_RESULT_BLOB_MIN_CHARS,
+  type CesiumToolResultBlobRef,
+  hydrateToolResultBlobs,
+  toolResultBlobPath,
+  toolResultPreview,
+  writeToolResultBlob,
+} from "./cesium/cesium-tool-result-blobs.js";
+import {
   asRecord,
   asString,
   asStringArray,
@@ -303,6 +311,7 @@ import {
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   adapterHonorsMaxOutputTokens,
+  CesiumRawFrameLog,
   modelPart,
   providerPart,
   runAdapter,
@@ -2064,8 +2073,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const textParts: string[] = [];
     const reasoningParts: string[] = [];
     const toolRequests: CesiumToolRequest[] = [];
-    const rawEvents: unknown[] = [];
-    let finalRaw: unknown;
+    const rawFrames = new CesiumRawFrameLog();
     let heldText = "";
     let usage: CesiumAdapterResult["usage"];
     let stopReason: CesiumAdapterResult["stopReason"];
@@ -2073,10 +2081,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (this.cancelled) {
         throw new CesiumTurnCancelledError();
       }
-      if ("raw" in event && event.raw !== undefined) {
-        finalRaw = event.raw;
-        rawEvents.push(event.raw);
-      }
+      rawFrames.record(event);
       switch (event.kind) {
         case "text_delta": {
           textParts.push(event.text);
@@ -2116,7 +2121,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       toolRequests,
       ...(usage ? { usage } : {}),
       ...(stopReason ? { stopReason } : {}),
-      raw: rawEvents.length > 1 ? rawEvents : finalRaw,
+      raw: rawFrames.result(),
     };
   }
 
@@ -2496,7 +2501,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
         getParentHistory: async () => {
           const snapshot = await this.callbacks.readSnapshot();
-          return normalizeEventsToHistory(snapshot?.events ?? []).filter(
+          return normalizeEventsToHistory(await hydrateToolResultBlobs(snapshot?.events ?? [])).filter(
             (message) => message.role !== "system"
           );
         },
@@ -2727,21 +2732,23 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
-  /** Every stored event of this conversation (the snapshot head can be truncated). */
+  /**
+   * Every stored event of this conversation, read incrementally from the log.
+   * The snapshot only stands in when the log has nothing (a conversation that
+   * is not in the store); in production it is a bounded head, never the full log.
+   */
   private async readHistoryEvents(): Promise<AgentStoredEvent[]> {
-    const snapshot = await this.callbacks.readSnapshot();
-    const snapshotEvents = snapshot?.events ?? [];
-    const fullEvents = await readConversationEvents(
+    const stored = await readConversationEventsIncremental(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
-    ).catch(() => snapshotEvents);
-    const events = fullEvents.length > snapshotEvents.length ? fullEvents : snapshotEvents;
+    ).catch(() => [] as AgentStoredEvent[]);
+    const events = stored.length > 0 ? stored : ((await this.callbacks.readSnapshot())?.events ?? []);
     for (const event of events) {
       if (event.kind === "tool_call") {
         this.usedToolCallIds.add(event.toolCallId);
       }
     }
-    return events;
+    return hydrateToolResultBlobs(events);
   }
 
   /**
@@ -3216,9 +3223,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.refinedToolTitles.delete(request.id);
     const budget = this.nextToolResultBudget;
     this.nextToolResultBudget = CESIUM_TOOL_RESULT_MODEL_MAX_CHARS;
+    const blobRef =
+      result.length > CESIUM_TOOL_RESULT_BLOB_MIN_CHARS
+        ? await writeToolResultBlob(result).catch(() => null)
+        : null;
     const shape =
       result.length > budget
-        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result)) }
+        ? { modelBudget: budget, ...(await this.spillToolOutput(request.id, result, blobRef)) }
         : {};
     this.toolResultShapes.set(request.id, shape);
     await this.callbacks.appendEvents([
@@ -3230,8 +3241,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         title: refinedTitle ?? title,
         toolKind: toolKind(request.name, toolDefinition),
         status: "completed",
-        detail: result,
-        raw: { request, result, ...shape },
+        detail: blobRef ? toolResultPreview(result) : result,
+        raw: { request, ...shape, ...(blobRef ? { blobRef } : {}) },
       },
     ]);
     return result;
@@ -3243,11 +3254,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   /** Saves an output the model only sees part of, so `read_file` can page through the rest. */
-  private async spillToolOutput(toolCallId: string, output: string): Promise<{ spillPath?: string }> {
+  private async spillToolOutput(
+    toolCallId: string,
+    output: string,
+    blobRef: CesiumToolResultBlobRef | null
+  ): Promise<{ spillPath?: string }> {
     const spillPath = path.join(this.toolOutputDir(), `${toolCallId.replace(/[^A-Za-z0-9._-]/g, "_")}.txt`);
     try {
       await fs.mkdir(path.dirname(spillPath), { recursive: true });
-      await fs.writeFile(spillPath, output, "utf8");
+      // The spill file may be a hard link to a shared blob; writing through it would change the blob.
+      await fs.rm(spillPath, { force: true });
+      const linked =
+        blobRef !== null &&
+        (await fs.link(toolResultBlobPath(blobRef.sha256), spillPath).then(
+          () => true,
+          () => false
+        ));
+      if (!linked) {
+        await fs.writeFile(spillPath, output, "utf8");
+      }
       return { spillPath };
     } catch {
       return {};
@@ -3571,7 +3596,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             toolKind: toolKind(effectiveRequest.name, toolDefinition),
             status: "completed",
             detail: error.message,
-            raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
+            raw: { request: effectiveRequest, permissionRefused: true },
           },
         ]);
         return error.message;
@@ -4532,7 +4557,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * in-memory maps only cover subagents this session handle ran itself; after
    * a restart (or in a re-ensured handle) the persisted copy is the only one.
    * Production readSnapshot() is a bounded head, so fall through to the full
-   * event log the same way buildHistory does.
+   * event log the same way readHistoryEvents does.
    */
   private async readPersistedSubagentTranscript(
     subagentId: string
@@ -4542,7 +4567,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (fromSnapshot) {
       return fromSnapshot;
     }
-    const fullEvents = await readConversationEvents(
+    const fullEvents = await readConversationEventsIncremental(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
     ).catch(() => [] as AgentStoredEvent[]);
