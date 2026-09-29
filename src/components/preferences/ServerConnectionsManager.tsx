@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 import { assertEngineConnectionAllowed, assertEngineServerUrlAllowed } from "@cesium/client";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   setStoredSessionToken,
   syncAuthTokenFromResponse,
@@ -15,6 +16,7 @@ import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { accountOwnsServers } from "@/lib/account-server-sync";
 import { cloudServerIdentity } from "@/lib/cloud/cloud-servers";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -47,7 +49,9 @@ export function ServerConnectionsManager({
     removeServer,
     probeServer,
     refreshServerHealth,
+    engineNameById,
   } = useServerConnections();
+  const serverRailAppearances = useGlobalSettings().settings.general.serverRailAppearances;
   const cloud = useCloudContext();
   const linked = accountOwnsServers(cloud);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -195,13 +199,16 @@ export function ServerConnectionsManager({
         const runtimeStatus = serverStatusById[server.id];
         const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
         const share = sharedByIdentity.get(cloudServerIdentity(server)) ?? null;
-        return { isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share };
+        const displayLabel = serverDisplayLabel(server, serverRailAppearances, engineNameById);
+        return { displayLabel, isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share };
       }),
     [
       activeServer.id,
+      engineNameById,
       hasServer,
       onlineServers,
       probeByServerId,
+      serverRailAppearances,
       serverStatusById,
       servers,
       settingsServer?.id,
@@ -214,7 +221,7 @@ export function ServerConnectionsManager({
       <div className="flex min-w-0 flex-col gap-[12px] sm:gap-[14px]">
         {rows.length > 0 ? (
           <div className="flex min-w-0 flex-col">
-            {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share }, index) => (
+            {rows.map(({ displayLabel, isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server, share }, index) => (
               <div
                 key={server.id}
                 className={`flex min-w-0 flex-col gap-[10px] py-[10px] sm:py-[12px] ${
@@ -231,7 +238,7 @@ export function ServerConnectionsManager({
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-[6px] sm:gap-[8px]">
                   <p className="min-w-0 max-w-full truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                    {server.label}
+                    {displayLabel}
                   </p>
                   {share ? (
                     <span

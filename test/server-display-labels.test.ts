@@ -10,8 +10,9 @@ import {
   relabelDirectoryWorkspaces,
   relabelRailGroups,
   sameServerDisplayLabels,
+  serverDisplayLabel,
 } from "../src/lib/server-display-labels.ts";
-import { getServerDisplayLabel } from "../src/lib/server-rail-appearance.ts";
+import { getServerDisplayLabel, renameServerAppearance } from "../src/lib/server-rail-appearance.ts";
 
 const home = { id: "home", label: "localhost:9100", baseUrl: "http://localhost:9100" };
 const buildBox = { id: "build", label: "localhost:9101", baseUrl: "http://localhost:9101" };
@@ -191,5 +192,64 @@ describe("relabeling the sidebar", () => {
     assert.equal(relabeled[2], records[2]);
     assert.equal(relabelDirectoryWorkspaces(records, labels)[0], relabeled[0]);
     assert.equal(relabelDirectoryWorkspaces(records, new Map()), records);
+  });
+});
+
+describe("the landing pill, server picker, account settings and Settings server list", () => {
+  const thisDevice = { id: "local", label: "This device", baseUrl: "http://127.0.0.1:9100" };
+  const sidecar = { id: "desktop-sidecar", label: "Sidecar", baseUrl: "http://127.0.0.1:9100" };
+  const retired = { id: "old", label: "old-box:9100", baseUrl: "http://old-box:9100" };
+  const engineNames = { home: "Home", build: "Build box", local: "laptop", "desktop-sidecar": "laptop" };
+
+  test("call every server what the sidebar calls it", () => {
+    const servers = [home, buildBox, thisDevice, sidecar, retired];
+    const appearances = { build: { icon: "Globe", color: "#22c55e", nickname: "CI" } };
+    const sidebar = buildServerDisplayLabels(servers, appearances, engineNames);
+    assert.deepEqual(
+      servers.map((server) => serverDisplayLabel(server, appearances, engineNames)),
+      ["Home", "CI", "This device", "This device", "old-box:9100"]
+    );
+    for (const server of servers) {
+      assert.equal(serverDisplayLabel(server, appearances, engineNames), sidebar.get(server.id));
+    }
+  });
+
+  test("a lone server shows its engine's name, and an unnamed engine keeps its connection label", () => {
+    assert.equal(serverDisplayLabel(home, {}, { home: "Home" }), "Home");
+    assert.equal(serverDisplayLabel(home, {}, {}), "localhost:9100");
+    assert.equal(serverDisplayLabel(home, { home: { nickname: "Desk" } }, {}), "Desk");
+  });
+});
+
+describe("renaming a server in the picker", () => {
+  const appearance = { icon: "Server", color: "#22c55e" };
+
+  test("stores the rename as the nickname, so it outranks the engine's name", () => {
+    const renamed = renameServerAppearance(appearance, "  Office Mac  ", "Home");
+    assert.deepEqual(renamed, { icon: "Server", color: "#22c55e", nickname: "Office Mac" });
+    assert.equal(serverDisplayLabel(home, { home: renamed! }, { home: "Home" }), "Office Mac");
+  });
+
+  test("changes nothing when the name stays the same", () => {
+    assert.equal(renameServerAppearance(appearance, "Home", "Home"), null);
+    assert.equal(renameServerAppearance({ ...appearance, nickname: "Desk" }, " Desk ", "Home"), null);
+    assert.equal(renameServerAppearance(appearance, "   ", "Home"), null, "no rename to remove");
+  });
+
+  test("clearing the name, or typing the engine's name, removes the rename", () => {
+    const withRename = { ...appearance, nickname: "Desk" };
+    assert.deepEqual(renameServerAppearance(withRename, "", "Home"), appearance);
+    assert.deepEqual(renameServerAppearance(withRename, "Home", "Home"), appearance);
+    assert.equal(serverDisplayLabel(home, { home: appearance }, { home: "Home" }), "Home");
+  });
+
+  test("an unnamed engine's rename wins over its connection label", () => {
+    const renamed = renameServerAppearance(appearance, "Staging", "localhost:9100");
+    assert.equal(serverDisplayLabel(home, { home: renamed! }, {}), "Staging");
+    assert.equal(renameServerAppearance(appearance, "localhost:9100", "localhost:9100"), null);
+  });
+
+  test("cuts long names to 80 characters", () => {
+    assert.equal(renameServerAppearance(appearance, "x".repeat(120), "Home")?.nickname, "x".repeat(80));
   });
 });

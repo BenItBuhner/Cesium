@@ -47,11 +47,13 @@ import {
   sortByDevicePickerOrder,
   type ServerRailAppearance,
 } from "@/lib/global-settings";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
   isLocalDeviceServer,
   pickStableServerColor,
+  renameServerAppearance,
 } from "@/lib/server-rail-appearance";
 import {
   serverHealthColorClass,
@@ -209,7 +211,7 @@ export function ServerPickerPopover({
     maxHeight: 420,
   });
   const [connectOpen, setConnectOpen] = useState(false);
-  const { saveServer, removeServer } = useServerConnections();
+  const { saveServer, removeServer, engineNameById } = useServerConnections();
   const dialogs = useWorkbenchDialogs();
   const { updateWorkspaceSession } = useWorkspace();
   const { openSettingsView } = useShellView();
@@ -224,7 +226,15 @@ export function ServerPickerPopover({
    * the panel (or the whole popover) closes.
    */
   const [customize, setCustomize] = useState<
-    | { kind: "server"; id: string; baseUrl: string; label: string }
+    | {
+        kind: "server";
+        id: string;
+        /** What the row showed when the panel opened. */
+        name: string;
+        /** What it shows without a rename: the engine's name, else the connection label. */
+        unrenamedLabel: string;
+        fallback: { icon: string; color: string };
+      }
     | { kind: "codespace"; device: CodespaceDevice }
     | null
   >(null);
@@ -234,14 +244,37 @@ export function ServerPickerPopover({
     if (!customize) {
       return;
     }
-    const next = nameDraft.trim();
-    if (!next) {
+    if (customize.kind === "server") {
+      const { id, name, unrenamedLabel, fallback } = customize;
+      if (nameDraft.trim() === name) {
+        return;
+      }
+      updateSettings((current) => {
+        const saved = current.general.serverRailAppearances[id];
+        const next = renameServerAppearance(
+          {
+            icon: saved?.icon || fallback.icon,
+            color: saved?.color || fallback.color,
+            ...(saved?.nickname ? { nickname: saved.nickname } : {}),
+          },
+          nameDraft,
+          unrenamedLabel
+        );
+        if (!next) {
+          return current;
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            serverRailAppearances: { ...current.general.serverRailAppearances, [id]: next },
+          },
+        };
+      });
       return;
     }
-    if (customize.kind === "server") {
-      if (next !== customize.label) {
-        saveServer({ id: customize.id, label: next, baseUrl: customize.baseUrl });
-      }
+    const next = nameDraft.trim();
+    if (!next) {
       return;
     }
     const device = customize.device;
@@ -262,7 +295,7 @@ export function ServerPickerPopover({
         codespace: codespacePairingMeta(device),
       })
       .catch(() => undefined);
-  }, [cloud.actions, customize, nameDraft, saveServer]);
+  }, [cloud.actions, customize, nameDraft, saveServer, updateSettings]);
 
   const closeCustomize = useCallback(() => {
     commitCustomizeName();
@@ -498,7 +531,7 @@ export function ServerPickerPopover({
     const selected = server.id === selectedServerId && !selectedCloudDeviceId;
     const health = serverStatusById[server.id]?.health ?? "unknown";
     const appearance = getServerRailAppearance(serverRailAppearances, server.id, index);
-    const displayLabel = getServerDisplayLabel(server, appearance);
+    const displayLabel = serverDisplayLabel(server, serverRailAppearances, engineNameById);
     const isLocalDevice = isLocalDeviceServer(server);
     const isBrowser = isBrowserMachineUrl(server.baseUrl);
     const customizing = customize?.kind === "server" && customize.id === server.id;
@@ -555,10 +588,11 @@ export function ServerPickerPopover({
                   setCustomize({
                     kind: "server",
                     id: server.id,
-                    baseUrl: server.baseUrl,
-                    label: server.label,
+                    name: displayLabel,
+                    unrenamedLabel: getServerDisplayLabel(server, undefined, engineNameById[server.id]),
+                    fallback: { icon: appearance.icon, color: appearance.color },
                   });
-                  setNameDraft(server.label);
+                  setNameDraft(displayLabel);
                 }}
                 className="flex size-[26px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
               >

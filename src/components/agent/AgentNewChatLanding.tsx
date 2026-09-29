@@ -66,11 +66,8 @@ import {
   isChatUiShortcutEvent,
 } from "@/lib/chat-ui-shortcut-events";
 import { resolveGroupWorkspaceAppearanceKey, WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
-import {
-  getServerDisplayLabel,
-  getServerRailAppearance,
-  isLocalDeviceServer,
-} from "@/lib/server-rail-appearance";
+import { serverDisplayLabel } from "@/lib/server-display-labels";
+import { getServerRailAppearance, isLocalDeviceServer } from "@/lib/server-rail-appearance";
 import { useLastWorkspaceMemory } from "@/hooks/useLastWorkspaceMemory";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
@@ -159,7 +156,8 @@ export function AgentNewChatLanding({
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const { rememberLastWorkspaceForServer, getLastWorkspaceForServer } = useLastWorkspaceMemory();
-  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { activeServer, servers, serverStatusById, setActiveServer, engineNameById } =
+    useServerConnections();
   const { workspaces: directoryWorkspaces, byServerId: directoryByServerId } =
     useWorkspaceDirectory();
 
@@ -220,7 +218,7 @@ export function AgentNewChatLanding({
     activeCloudDevice?.label ??
     (activeCodespaceDevice
       ? CODESPACE_DEVICE_LABEL
-      : getServerDisplayLabel(activeServer, activeServerAppearance));
+      : serverDisplayLabel(activeServer, serverRailAppearances, engineNameById));
   const activeDeviceTitle = activeCodespaceDevice
     ? `${CODESPACE_DEVICE_LABEL} · ${activeCodespaceDevice.repoFullName}`
     : activeDeviceLabel;

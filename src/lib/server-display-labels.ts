@@ -8,16 +8,25 @@ import { getServerDisplayLabel } from "@/lib/server-rail-appearance";
 /** What the sidebar calls each saved server, keyed by server id. */
 export type ServerDisplayLabels = ReadonlyMap<string, string>;
 
+/**
+ * What every surface calls `server`: "This device", then the user's rename,
+ * then the name the engine reports, then the connection label.
+ */
+export function serverDisplayLabel(
+  server: { id: string; label: string; baseUrl: string },
+  appearances: Readonly<Record<string, Pick<ServerRailAppearance, "nickname">>>,
+  engineNameById: Readonly<Record<string, string>>
+): string {
+  return getServerDisplayLabel(server, appearances[server.id], engineNameById[server.id]);
+}
+
 export function buildServerDisplayLabels(
   servers: ReadonlyArray<{ id: string; label: string; baseUrl: string }>,
   appearances: Record<string, ServerRailAppearance>,
   engineNameById: Record<string, string>
 ): ServerDisplayLabels {
   return new Map(
-    servers.map((server) => [
-      server.id,
-      getServerDisplayLabel(server, appearances[server.id], engineNameById[server.id]),
-    ])
+    servers.map((server) => [server.id, serverDisplayLabel(server, appearances, engineNameById)])
   );
 }
 
