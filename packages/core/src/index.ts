@@ -35,3 +35,5 @@ export * from "./project-page";
 export * from "./secret-envelope";
 export * from "./harness-auth-sync";
 export * from "./cesium-model-access";
+export * from "./cesium-history";
+export * from "./cesium-tools";

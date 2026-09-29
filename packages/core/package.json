@@ -37,6 +37,18 @@
     "./projects": {
       "types": "./dist/projects.d.ts",
       "import": "./dist/projects.js"
+    },
+    "./cesium-coerce": {
+      "types": "./dist/cesium-coerce.d.ts",
+      "import": "./dist/cesium-coerce.js"
+    },
+    "./cesium-history": {
+      "types": "./dist/cesium-history.d.ts",
+      "import": "./dist/cesium-history.js"
+    },
+    "./cesium-tools": {
+      "types": "./dist/cesium-tools.d.ts",
+      "import": "./dist/cesium-tools.js"
     }
   },
   "scripts": {
