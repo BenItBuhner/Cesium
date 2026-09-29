@@ -70,6 +70,16 @@ async function probeChromium(): Promise<string | null> {
   }
 }
 
+/** Why the installer failed: its first error (the cause, printed before retries and stack frames), else its last words. */
+export function installerFailure(output: string, code: number | null): string {
+  const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
+  const error = lines.find((line) => /^error\b/i.test(line));
+  if (error) {
+    return error.replace(/^error\b:?\s*/i, "").replace(/,\s*caused by$/i, "") || error;
+  }
+  return lines.filter((line) => !line.startsWith("at ")).at(-1) ?? `the installer exited with code ${code}`;
+}
+
 function runInstaller(runtime: string, cli: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(runtime, [cli, "install", "chromium"], {
@@ -89,8 +99,7 @@ function runInstaller(runtime: string, cli: string): Promise<void> {
         resolve();
         return;
       }
-      const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
-      reject(new Error(lines.at(-1) ?? `the installer exited with code ${code}`));
+      reject(new Error(installerFailure(output, code)));
     });
   });
 }

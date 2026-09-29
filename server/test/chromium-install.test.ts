@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, test } from "node:test";
 import {
   chromiumErrorReason,
   ensurePlaywrightChromium,
+  installerFailure,
   PEER_INSTALL_WAIT_MS,
   playwrightCliPath,
   setChromiumInstallForTests,
@@ -148,6 +151,52 @@ test("a Chromium that still won't launch after installing says why, and missing 
     ok: false,
     message: `The browser check needs Playwright's Chromium, which can't run on Build box yet (it still doesn't launch after installing: browserType.launch: Host system is missing dependencies to run browsers.). Install the system libraries it needs on that machine with \`sudo npx playwright install-deps chromium\` in Cesium's server folder (${process.cwd()}), then start the check again.`,
   });
+});
+
+test("a failed install reports the installer's first error, not the stack frames under its last one", () => {
+  const output = [
+    "Downloading Chrome for Testing 149.0.7827.55 (playwright chromium v1228) from http://127.0.0.1:9/builds/cft/149.0.7827.55/linux64/chrome-linux64.zip",
+    "Error: connect ECONNREFUSED 127.0.0.1:9",
+    "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1634:16) {",
+    "  errno: -111,",
+    "  code: 'ECONNREFUSED',",
+    "}",
+    "Failed to install browsers",
+    "Error: Failed to download Chrome for Testing 149.0.7827.55 (playwright chromium v1228), caused by",
+    "Error: Download failure, code=1",
+    "    at ChildProcess.<anonymous> (/srv/cesium/server/node_modules/playwright-core/lib/coreBundle.js:27793:32)",
+    "    at ChildProcess._handle.onexit (node:internal/child_process:293:12)",
+  ].join("\n");
+  assert.equal(installerFailure(output, 1), "connect ECONNREFUSED 127.0.0.1:9");
+  assert.equal(
+    installerFailure("Removing unused browsers\nThe download was interrupted\n    at stream (node:internal/streams:1:1)", 1),
+    "The download was interrupted"
+  );
+  assert.equal(installerFailure("", 1), "the installer exited with code 1");
+});
+
+test("with its download host unreachable, the real installer's failure comes back with its cause", async () => {
+  const browsers = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-no-chromium-"));
+  const saved = { browsers: process.env.PLAYWRIGHT_BROWSERS_PATH, host: process.env.PLAYWRIGHT_DOWNLOAD_HOST };
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsers;
+  process.env.PLAYWRIGHT_DOWNLOAD_HOST = "http://127.0.0.1:9";
+  try {
+    const result = await ensurePlaywrightChromium("Build box");
+    assert.equal(result.ok, false);
+    assert.match(
+      !result.ok ? result.message : "",
+      /which Build box doesn't have \(installing it failed: connect ECONNREFUSED 127\.0\.0\.1:9\)\. Install it on that machine with `npx playwright install chromium`/
+    );
+  } finally {
+    for (const [key, value] of [["PLAYWRIGHT_BROWSERS_PATH", saved.browsers], ["PLAYWRIGHT_DOWNLOAD_HOST", saved.host]] as const) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    await fs.rm(browsers, { recursive: true, force: true });
+  }
 });
 
 test("a home engine waits on a peer's browser check longer than the peer waits on its download", () => {
