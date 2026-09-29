@@ -248,6 +248,23 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   state.pendingResponseId = undefined;
 }
 
+/**
+ * Text of messages that never got an end (the stream failed or was stopped)
+ * closes where the log moved on, as the server's interruption repair would
+ * have closed it; left open, it would trail every later request instead.
+ */
+function flushDanglingAssistantText(
+  messages: CesiumHistoryMessage[],
+  assistantTextById: Map<string, string>
+): void {
+  for (const text of assistantTextById.values()) {
+    if (text.trim()) {
+      messages.push({ role: "assistant", content: text.trim() });
+    }
+  }
+  assistantTextById.clear();
+}
+
 export function satisfyOpenAiToolProtocol(messages: CesiumHistoryMessage[]): CesiumHistoryMessage[] {
   const out: CesiumHistoryMessage[] = [];
   let index = 0;
@@ -414,6 +431,7 @@ export function normalizeEventsToHistory(
     switch (event.kind) {
       case "user_message":
         flushPendingToolCalls(state);
+        flushDanglingAssistantText(messages, assistantTextById);
         {
           const reminders = (remindersByMessageId.get(event.messageId) ?? []).map((reminder) =>
             reminder.text.trim()
@@ -583,11 +601,7 @@ export function normalizeEventsToHistory(
     }
   }
   flushPendingToolCalls(state);
-  for (const text of assistantTextById.values()) {
-    if (text.trim()) {
-      messages.push({ role: "assistant", content: text.trim() });
-    }
-  }
+  flushDanglingAssistantText(messages, assistantTextById);
   return satisfyOpenAiToolProtocol(repairOpenAiMessageSequence(messages)).slice(
     -CESIUM_HISTORY_MESSAGE_LIMIT
   );

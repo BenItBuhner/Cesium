@@ -481,6 +481,28 @@ test("context reminders stay on their turns; legacy mode reminders keep newest-o
   assert.deepEqual(selected.get("m4")?.map((event) => event.text), ["delta"]);
 });
 
+test("text of a stream that never ended stays before the next user message", () => {
+  const chunk = (seq: number, messageId: string, text: string) =>
+    ({ seq, eventId: `c${seq}`, conversationId: "c", createdAt: seq, kind: "assistant_message_chunk", messageId, text }) as AgentStoredEvent;
+  const end = (seq: number, messageId: string) =>
+    ({ seq, eventId: `x${seq}`, conversationId: "c", createdAt: seq, kind: "assistant_message_end", messageId, stopReason: "end_turn" }) as AgentStoredEvent;
+  const firstTurn = [userEvent(1, "m1", "one"), chunk(2, "a1", "partial answer")];
+  const secondTurn = [...firstTurn, userEvent(3, "m2", "two"), chunk(4, "a2", "done"), end(5, "a2")];
+  const earlier = history.normalizeEventsToHistory(firstTurn, "SYS");
+  const later = history.normalizeEventsToHistory(secondTurn, "SYS");
+  assert.deepEqual(later.slice(0, earlier.length), earlier);
+  assert.deepEqual(
+    later.map((message) => [message.role, message.content]),
+    [
+      ["system", "SYS"],
+      ["user", "one"],
+      ["assistant", "partial answer"],
+      ["user", "two"],
+      ["assistant", "done"],
+    ]
+  );
+});
+
 test("a delta baseline needs a full context reminder inside the window", () => {
   const full = reminderEvent(2, "m1", "context", "full", {
     contextReminder: "full",
