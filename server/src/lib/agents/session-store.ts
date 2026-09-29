@@ -4,6 +4,7 @@ import path from "node:path";
 import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } from "../../cache/kv.js";
 import { publish, subscribeSync } from "../../cache/pubsub.js";
 import { measureServerPerf } from "../perf.js";
+import { BoundedTtlMap } from "../bounded-ttl-map.js";
 import { getStorage } from "../../storage/runtime.js";
 import {
   expireElapsedSettle,
@@ -498,6 +499,7 @@ export async function deleteConversationEvents(
   return withConversationQueue(workspaceId, conversationId, async () => {
     const storage = await getStorage();
     await storage.deleteAgentEvents({ conversationId, eventIds });
+    invalidateConversationEventProjection(workspaceId, conversationId);
     await invalidateConversationCaches(workspaceId, conversationId);
     scheduleAgentCacheRefill(workspaceId, conversationId);
     const updated = await storage.getAgentConversation(conversationId);
@@ -522,6 +524,79 @@ export async function readConversationEvents(
     limit: 100_000,
   });
   return enrichEventsWithDerivedEditPreview(events);
+}
+
+type ConversationEventProjection = { events: AgentStoredEvent[]; lastSeq: number };
+
+const eventProjections = new BoundedTtlMap<string, ConversationEventProjection>({
+  maxEntries: 32,
+  ttlMs: 10 * 60_000,
+});
+const eventProjectionReads = new Map<string, Promise<AgentStoredEvent[]>>();
+let eventProjectionGeneration = 0;
+
+/** Drops the cached projection; required after anything that rewrites (not appends to) a log. */
+export function invalidateConversationEventProjection(workspaceId: string, conversationId: string): void {
+  eventProjectionGeneration += 1;
+  eventProjections.delete(queueKey(workspaceId, conversationId));
+}
+
+/**
+ * Same events as {@link readConversationEvents}, but each call only reads the
+ * events appended since the previous one: the log read so far stays cached
+ * per conversation. Returns a fresh array; the events are shared, never mutate them.
+ */
+export async function readConversationEventsIncremental(
+  workspaceId: string,
+  conversationId: string
+): Promise<AgentStoredEvent[]> {
+  const key = queueKey(workspaceId, conversationId);
+  const previous = eventProjectionReads.get(key) ?? Promise.resolve([]);
+  const next = previous
+    .catch(() => [])
+    .then(() => extendConversationEventProjection(key, workspaceId, conversationId));
+  eventProjectionReads.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (eventProjectionReads.get(key) === next) {
+      eventProjectionReads.delete(key);
+    }
+  }
+}
+
+async function extendConversationEventProjection(
+  key: string,
+  workspaceId: string,
+  conversationId: string
+): Promise<AgentStoredEvent[]> {
+  const generation = eventProjectionGeneration;
+  const storage = await getStorage();
+  const rec = await storage.getAgentConversation(conversationId);
+  if (!rec || rec.workspaceId !== workspaceId) {
+    eventProjections.delete(key);
+    return [];
+  }
+  let projection = eventProjections.get(key);
+  if (projection && (rec.lastEventSeq ?? 0) < projection.lastSeq) {
+    projection = undefined;
+  }
+  const afterSeq = projection?.lastSeq ?? 0;
+  const appended = (await storage.readAgentEvents({ conversationId, afterSeq, limit: 100_000 })).filter(
+    (event) => event.seq > afterSeq
+  );
+  const enriched = await enrichEventsWithDerivedEditPreview(appended);
+  if (generation !== eventProjectionGeneration) {
+    return [...(projection?.events ?? []), ...enriched];
+  }
+  const events = projection?.events ?? [];
+  let lastSeq = afterSeq;
+  for (const event of enriched) {
+    events.push(event);
+    lastSeq = Math.max(lastSeq, event.seq);
+  }
+  eventProjections.set(key, { events, lastSeq });
+  return events.slice();
 }
 
 function dropDuplicateEventIdsInOrder(events: AgentStoredEvent[]): AgentStoredEvent[] {
@@ -968,6 +1043,8 @@ export async function relocateConversationStorage(
       updatedAt: Math.max(current.updatedAt + 1, Date.now()),
     };
     await storage.upsertAgentConversation(next);
+    invalidateConversationEventProjection(fromWorkspaceId, conversationId);
+    invalidateConversationEventProjection(toWorkspaceId, conversationId);
     await invalidateConversationCaches(fromWorkspaceId, conversationId);
     await invalidateConversationCaches(toWorkspaceId, conversationId);
     scheduleAgentCacheRefill(toWorkspaceId, conversationId);
@@ -994,6 +1071,7 @@ export async function deleteConversationFromStore(
     return;
   }
   await storage.deleteAgentConversation(conversationId);
+  invalidateConversationEventProjection(workspaceId, conversationId);
   await invalidateConversationCaches(workspaceId, conversationId);
   // Harness-side memory (Claude session id, context usage) dies with the conversation.
   const { deleteClaudeCodeSdkConversationState } = await import("./claude-code-sdk-session-state.js");

@@ -41,7 +41,7 @@ import {
 import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 
 import { asNumber } from "./json-coerce.js";
-import { readConversationEvents, readConversationRecord } from "./session-store.js";
+import { readConversationEventsIncremental, readConversationRecord } from "./session-store.js";
 import {
   deltaPayloadFor,
   resolveSideChatDelta,
@@ -2732,15 +2732,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
-  /** Every stored event of this conversation (the snapshot head can be truncated). */
+  /**
+   * Every stored event of this conversation, read incrementally from the log.
+   * The snapshot only stands in when the log has nothing (a conversation that
+   * is not in the store); in production it is a bounded head, never the full log.
+   */
   private async readHistoryEvents(): Promise<AgentStoredEvent[]> {
-    const snapshot = await this.callbacks.readSnapshot();
-    const snapshotEvents = snapshot?.events ?? [];
-    const fullEvents = await readConversationEvents(
+    const stored = await readConversationEventsIncremental(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
-    ).catch(() => snapshotEvents);
-    const events = fullEvents.length > snapshotEvents.length ? fullEvents : snapshotEvents;
+    ).catch(() => [] as AgentStoredEvent[]);
+    const events = stored.length > 0 ? stored : ((await this.callbacks.readSnapshot())?.events ?? []);
     for (const event of events) {
       if (event.kind === "tool_call") {
         this.usedToolCallIds.add(event.toolCallId);
@@ -4555,7 +4557,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
    * in-memory maps only cover subagents this session handle ran itself; after
    * a restart (or in a re-ensured handle) the persisted copy is the only one.
    * Production readSnapshot() is a bounded head, so fall through to the full
-   * event log the same way buildHistory does.
+   * event log the same way readHistoryEvents does.
    */
   private async readPersistedSubagentTranscript(
     subagentId: string
@@ -4565,7 +4567,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (fromSnapshot) {
       return fromSnapshot;
     }
-    const fullEvents = await readConversationEvents(
+    const fullEvents = await readConversationEventsIncremental(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
     ).catch(() => [] as AgentStoredEvent[]);

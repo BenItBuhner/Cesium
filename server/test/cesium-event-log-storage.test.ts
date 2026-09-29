@@ -72,13 +72,21 @@ const MODEL_ID = "eventloghost/wide";
 const [
   { ensureWorkspaceRegistered },
   { agentRuntimeManager },
-  { readConversationSnapshot },
+  {
+    readConversationSnapshot,
+    readConversationEvents,
+    readConversationEventsIncremental,
+    appendConversationEvents,
+    deleteConversationEvents,
+    relocateConversationStorage,
+  },
   { normalizeEventsToHistory, normalizeCesiumToolResultForModel },
   { CesiumRawFrameLog },
   { findUpstreamErrorPayload },
   { hydrateToolResultBlobs, toolResultBlobPath },
   { agentRoutes },
   { WORKSPACE_ID_HEADER },
+  { getStorage },
 ] = await Promise.all([
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/runtime-manager.js"),
@@ -89,6 +97,7 @@ const [
   import("../src/lib/agents/cesium/cesium-tool-result-blobs.js"),
   import("../src/routes/agents.js"),
   import("../src/lib/request-workspace.js"),
+  import("../src/storage/runtime.js"),
 ]);
 
 after(async () => {
@@ -298,6 +307,76 @@ test("a very large result is stored once as a blob and history rebuilt from the 
   assert.equal(found.status, 200);
   assert.deepEqual(await found.json(), { toolCallId: "call_huge", content: full });
   assert.equal((await agentRoutes.request(`${route}/call_unknown`, { headers })).status, 404);
+});
+
+test("the incremental projection matches a full read after appends and rewrites, reading only new events", async () => {
+  const { workspace, conversation } = await newConversation();
+  const storage = await getStorage();
+  const originalRead = storage.readAgentEvents.bind(storage);
+  const reads: number[] = [];
+  storage.readAgentEvents = async (input) => {
+    if (input.conversationId === conversation.id) {
+      reads.push(input.afterSeq ?? 0);
+    }
+    return originalRead(input);
+  };
+  try {
+    const append = (count: number, prefix: string) =>
+      appendConversationEvents(
+        workspace.id,
+        conversation.id,
+        Array.from({ length: count }, (_, index) => ({
+          eventId: `${prefix}-${index}`,
+          conversationId: conversation.id,
+          kind: "user_message" as const,
+          messageId: `${prefix}-m${index}`,
+          content: `${prefix} ${index}`,
+        }))
+      );
+    const matchesFullRead = async (label: string) => {
+      const incremental = await readConversationEventsIncremental(workspace.id, conversation.id);
+      reads.length = 0;
+      assert.deepEqual(incremental, await readConversationEvents(workspace.id, conversation.id), label);
+      return incremental;
+    };
+
+    await append(5, "a");
+    await matchesFullRead("first read");
+    const lastSeq = (await append(3, "b")).at(-1)!.seq;
+    const beforeSecond = lastSeq - 3;
+    reads.length = 0;
+    const second = await readConversationEventsIncremental(workspace.id, conversation.id);
+    assert.deepEqual(reads, [beforeSecond], "the second read only asks for events after the last seen seq");
+    assert.deepEqual(second, await readConversationEvents(workspace.id, conversation.id), "after appends");
+    reads.length = 0;
+    await readConversationEventsIncremental(workspace.id, conversation.id);
+    assert.deepEqual(reads, [lastSeq], "an unchanged log reads nothing old");
+
+    second.pop();
+    assert.equal(
+      (await readConversationEventsIncremental(workspace.id, conversation.id)).length,
+      second.length + 1,
+      "callers get their own array"
+    );
+
+    await deleteConversationEvents(workspace.id, conversation.id, ["a-1", "b-2"]);
+    const afterDelete = await matchesFullRead("after events are deleted");
+    assert.equal(afterDelete.some((event) => event.eventId === "a-1"), false);
+
+    await append(2, "c");
+    await matchesFullRead("after appends following a delete");
+
+    const otherRoot = path.join(TEST_DATA_DIR, "standalone-chats", "event-log-other");
+    await fs.mkdir(otherRoot, { recursive: true });
+    const other = await ensureWorkspaceRegistered(otherRoot, "event-log-other");
+    await relocateConversationStorage(conversation.id, workspace.id, other.id);
+    assert.deepEqual(await readConversationEventsIncremental(workspace.id, conversation.id), [], "the old key is gone");
+    const relocated = await readConversationEventsIncremental(other.id, conversation.id);
+    assert.deepEqual(relocated, await readConversationEvents(other.id, conversation.id), "after relocation");
+    assert.equal(relocated.length, afterDelete.length + 2);
+  } finally {
+    storage.readAgentEvents = originalRead;
+  }
 });
 
 test("raw frames: an empty reply keeps its newest frames, a reply with output keeps a summary", () => {
