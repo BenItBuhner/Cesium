@@ -305,6 +305,10 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
       createdAt: number;
       kind: "assistant_message_end";
       messageId: string;
+      /**
+       * `discarded`: a retried model attempt streamed this message's text since
+       * its last tool call; the model never saw it, so consumers drop it.
+       */
       stopReason?: string;
       /** Provider-reported usage of the last model response in this message. */
       usage?: AgentModelUsage;

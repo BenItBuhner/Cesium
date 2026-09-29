@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import type { CesiumProviderKind } from "../../cesium-agent-settings.js";
-import { asRecord, asString, parseJsonArgs } from "./cesium-coerce.js";
-import { CESIUM_SYSTEM_PROMPT, DEFAULT_MAX_OUTPUT_TOKENS } from "./cesium-prompt.js";
+import { asRecord, asString, parseJsonArgs, tryParseJsonArgs } from "./cesium-coerce.js";
+import {
+  CESIUM_STREAM_IDLE_TIMEOUT_MS,
+  CESIUM_SYSTEM_PROMPT,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+} from "./cesium-prompt.js";
 import { repairOpenAiMessageSequence, satisfyOpenAiToolProtocol } from "./cesium-history.js";
 import {
   anthropicTools,
@@ -16,6 +20,7 @@ import type {
   CesiumAdapterResult,
   CesiumAdapterStreamEvent,
   CesiumHistoryMessage,
+  CesiumStopReason,
   CesiumToolRequest,
 } from "./cesium-types.js";
 import { usageFromAnthropic, usageFromGoogle, usageFromOpenAi } from "./cesium-usage.js";
@@ -109,16 +114,169 @@ function optionalProviderTools(
   return build(tools);
 }
 
-async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+export class CesiumStreamIdleTimeoutError extends Error {
+  constructor(idleMs: number) {
+    const idle = idleMs >= 1000 ? `${Math.round(idleMs / 1000)}s` : `${idleMs}ms`;
+    super(`The provider sent no data for ${idle}, so the request timed out and was aborted.`);
+    this.name = "CesiumStreamIdleTimeoutError";
   }
+}
+
+export function cesiumStreamIdleTimeoutMs(): number {
+  const override = Number(process.env.CESIUM_STREAM_IDLE_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : CESIUM_STREAM_IDLE_TIMEOUT_MS;
+}
+
+/**
+ * Aborts with `signal` (turn cancel) or once no bytes arrived for the idle
+ * timeout. `touch` restarts the idle clock; `release` detaches everything.
+ */
+function watchProviderRequest(signal: AbortSignal | undefined) {
+  const controller = new AbortController();
+  const idleMs = cesiumStreamIdleTimeoutMs();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onAbort = () => controller.abort(signal?.reason);
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new CesiumStreamIdleTimeoutError(idleMs)), idleMs);
+    timer.unref?.();
+  };
+  const release = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  };
+  if (signal?.aborted) {
+    controller.abort(signal.reason);
+  } else {
+    signal?.addEventListener("abort", onAbort, { once: true });
+    touch();
+  }
+  /** The abort reason when this watch aborted the request, else the error as thrown. */
+  const explain = (error: unknown): unknown =>
+    controller.signal.aborted && controller.signal.reason instanceof Error
+      ? controller.signal.reason
+      : error;
+  return { signal: controller.signal, touch, release, explain };
+}
+
+/**
+ * `fetch` for provider calls: aborts on the turn's signal and when the
+ * response goes idle, whether waiting for headers or between body chunks.
+ */
+async function providerFetch(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal | undefined
+): Promise<Response> {
+  const watch = watchProviderRequest(signal);
+  let response: Response;
   try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
+    response = await fetch(url, { ...init, signal: watch.signal });
+  } catch (error) {
+    watch.release();
+    throw watch.explain(error);
+  }
+  const source = response.body;
+  if (!source) {
+    watch.release();
+    return response;
+  }
+  watch.touch();
+  const reader = source.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          watch.release();
+          controller.close();
+          return;
+        }
+        watch.touch();
+        controller.enqueue(value);
+      } catch (error) {
+        watch.release();
+        controller.error(watch.explain(error));
+      }
+    },
+    async cancel(reason) {
+      watch.release();
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+/** A tool request from the model's argument text, flagged when that text is not JSON. */
+function toolRequestFromArguments(id: string, name: string, rawArguments: unknown): CesiumToolRequest {
+  const parsed = tryParseJsonArgs(rawArguments);
+  const request = createCesiumToolRequest(id, name, parsed.args);
+  return parsed.ok || typeof rawArguments !== "string"
+    ? request
+    : { ...request, unparsedArgumentChars: rawArguments.length };
+}
+
+function chatStopReason(value: unknown): CesiumStopReason | undefined {
+  switch (value) {
+    case undefined:
+    case null:
+      return undefined;
+    case "length":
+      return "length";
+    case "stop":
+      return "stop";
+    case "tool_calls":
+    case "function_call":
+      return "tool_calls";
+    default:
+      return "other";
+  }
+}
+
+/** Responses API: `incomplete` with `max_output_tokens` is the truncation case. */
+function responsesStopReason(response: Record<string, unknown> | null): CesiumStopReason | undefined {
+  if (!response) {
+    return undefined;
+  }
+  if (response.status === "incomplete") {
+    return asRecord(response.incomplete_details)?.reason === "max_output_tokens" ? "length" : "other";
+  }
+  return response.status === "completed" ? "stop" : undefined;
+}
+
+function anthropicStopReason(value: unknown): CesiumStopReason | undefined {
+  switch (value) {
+    case undefined:
+    case null:
+      return undefined;
+    case "max_tokens":
+      return "length";
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "tool_use":
+      return "tool_calls";
+    default:
+      return "other";
+  }
+}
+
+function googleStopReason(value: unknown): CesiumStopReason | undefined {
+  switch (value) {
+    case undefined:
+    case null:
+    case "FINISH_REASON_UNSPECIFIED":
+      return undefined;
+    case "MAX_TOKENS":
+      return "length";
+    case "STOP":
+      return "stop";
+    default:
+      return "other";
   }
 }
 
@@ -225,6 +383,7 @@ function openAiChatRequestBody(
     messages: CesiumHistoryMessage[];
     tools?: import("./cesium-tools.js").CesiumToolDefinition[];
     promptCacheKey?: string;
+    maxOutputTokens?: number;
   },
   stream: boolean,
   streamUsage = false
@@ -235,7 +394,7 @@ function openAiChatRequestBody(
     model: input.model,
     messages: openAiMessages(input.messages),
     ...(tools ? { tools, tool_choice: "auto" as const } : {}),
-    max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    max_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     ...openAiPromptCacheKey(input.providerId ?? "", input.promptCacheKey),
     ...(stream ? { stream: true } : {}),
     ...(stream && streamUsage ? { stream_options: { include_usage: true } } : {}),
@@ -268,13 +427,10 @@ function openAiChatResultFromPayload(payload: unknown): CesiumAdapterResult {
       if (!record || !name) {
         return [];
       }
-      return [createCesiumToolRequest(
-        asString(record.id) ?? randomUUID(),
-        name,
-        parseJsonArgs(fn?.arguments)
-      )];
+      return [toolRequestFromArguments(asString(record.id) ?? randomUUID(), name, fn?.arguments)];
     }),
     usage: usageFromOpenAi(root?.usage),
+    stopReason: chatStopReason(choice?.finish_reason),
     raw: payload,
   };
 }
@@ -288,6 +444,8 @@ async function fetchOpenAiChat(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
   stream: boolean;
   streamUsage?: boolean;
 }): Promise<Response> {
@@ -305,11 +463,15 @@ async function fetchOpenAiChat(input: {
       "Openai-Intent": "conversation-edits",
     });
   }
-  return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(openAiChatRequestBody(input, input.stream, input.streamUsage)),
-  });
+  return providerFetch(
+    `${baseUrl.replace(/\/+$/, "")}/chat/completions`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(openAiChatRequestBody(input, input.stream, input.streamUsage)),
+    },
+    input.signal
+  );
 }
 
 type ChatToolCallDelta = {
@@ -357,13 +519,7 @@ function completeOpenAiChatToolCalls(
       if (!call.name) {
         return [];
       }
-      return [
-        createCesiumToolRequest(
-          call.id ?? randomUUID(),
-          call.name,
-          parseJsonArgs(call.arguments)
-        ),
-      ];
+      return [toolRequestFromArguments(call.id ?? randomUUID(), call.name, call.arguments)];
     });
 }
 
@@ -397,6 +553,12 @@ function* parseSseFrame(frame: string): Generator<unknown | "[DONE]"> {
     return;
   }
   yield parseJsonArgs(data);
+}
+
+/** False when a host answered a streaming request with a plain JSON body. */
+function isEventStream(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return Boolean(response.body) && !contentType.includes("application/json") && !contentType.includes("text/json");
 }
 
 async function* readSseJsonEvents(response: Response): AsyncGenerator<unknown | "[DONE]"> {
@@ -433,6 +595,8 @@ async function* streamOpenAiChat(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const host = `${input.providerId}|${input.baseUrl ?? ""}`;
   const askUsage = !hostsRejectingStreamUsage.has(input.providerId) && !hostsRejectingStreamUsage.has(host);
@@ -449,17 +613,13 @@ async function* streamOpenAiChat(input: {
     }
   }
 
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (
-    !response.body ||
-    contentType.includes("application/json") ||
-    contentType.includes("text/json")
-  ) {
+  if (!isEventStream(response)) {
     yield* streamStaticResult(openAiChatResultFromPayload(await readJsonResponse(response)));
     return;
   }
 
   const pendingToolCalls = new Map<number, ChatToolCallDelta>();
+  let stopReason: CesiumStopReason | undefined;
   for await (const event of readSseJsonEvents(response)) {
     if (event === "[DONE]") {
       break;
@@ -473,6 +633,7 @@ async function* streamOpenAiChat(input: {
     const choices = Array.isArray(root?.choices) ? root.choices : [];
     for (const rawChoice of choices) {
       const choice = asRecord(rawChoice);
+      stopReason = chatStopReason(choice?.finish_reason) ?? stopReason;
       const delta = asRecord(choice?.delta);
       if (!delta) {
         continue;
@@ -492,7 +653,7 @@ async function* streamOpenAiChat(input: {
   for (const request of completeOpenAiChatToolCalls(pendingToolCalls)) {
     yield { kind: "tool_request", request };
   }
-  yield { kind: "done" };
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
 }
 
 /**
@@ -563,6 +724,8 @@ async function* streamOpenAiResponses(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const isCodex = input.oauth?.providerId === "openai-codex";
   const tools = optionalProviderTools(input.tools, responseTools);
@@ -609,16 +772,20 @@ async function* streamOpenAiResponses(input: {
       model: input.model,
       input: openAiResponsesInput(input.messages, { includeSystem: true }),
       ...(tools ? { tools } : {}),
-      max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_output_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       ...openAiPromptCacheKey(input.providerId, input.promptCacheKey),
       stream: true,
     };
   }
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const response = await providerFetch(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    },
+    input.signal
+  );
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
@@ -627,6 +794,7 @@ async function* streamOpenAiResponses(input: {
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = "";
+    let stopReason: CesiumStopReason | undefined;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -653,20 +821,23 @@ async function* streamOpenAiResponses(input: {
             if (usage) {
               yield { kind: "usage", usage, raw: event };
             }
+            stopReason = responsesStopReason(asRecord(event.response)) ?? stopReason;
           }
           if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
             yield { kind: "text_delta", text: event.delta, raw: event };
           }
+          // `output_item.added` announces the call with empty arguments; only the
+          // finished item carries them.
           const item = asRecord(event.item);
-          if (item?.type === "function_call") {
+          if (event.type === "response.output_item.done" && item?.type === "function_call") {
             const name = asString(item.name);
             if (name) {
               yield {
                 kind: "tool_request",
-                request: createCesiumToolRequest(
+                request: toolRequestFromArguments(
                   asString(item.call_id) ?? asString(item.id) ?? randomUUID(),
                   name,
-                  parseJsonArgs(item.arguments)
+                  item.arguments
                 ),
                 raw: event,
               };
@@ -675,7 +846,7 @@ async function* streamOpenAiResponses(input: {
         }
       }
     }
-    yield { kind: "done" };
+    yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
     return;
   }
   const payload = await response.json();
@@ -690,11 +861,7 @@ async function* streamOpenAiResponses(input: {
       const name = asString(out.name);
       if (name) {
         toolRequests.push(
-          createCesiumToolRequest(
-            asString(out.call_id) ?? asString(out.id) ?? randomUUID(),
-            name,
-            parseJsonArgs(out.arguments)
-          )
+          toolRequestFromArguments(asString(out.call_id) ?? asString(out.id) ?? randomUUID(), name, out.arguments)
         );
       }
     }
@@ -721,7 +888,8 @@ async function* streamOpenAiResponses(input: {
   if (usage) {
     yield { kind: "usage", usage, raw: payload };
   }
-  yield { kind: "done", raw: payload };
+  const stopReason = responsesStopReason(record);
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}), raw: payload };
 }
 
 async function* streamOpenAiRealtime(input: {
@@ -729,6 +897,7 @@ async function* streamOpenAiRealtime(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   type QueueItem =
     | { kind: "event"; event: CesiumAdapterStreamEvent }
@@ -748,7 +917,18 @@ async function* streamOpenAiRealtime(input: {
     notify?.();
     notify = null;
   };
+  const watch = watchProviderRequest(input.signal);
+  const onWatchAbort = () => {
+    push({ kind: "error", error: watch.explain(new Error("Realtime request aborted.")) as Error });
+    ws.terminate();
+  };
+  if (watch.signal.aborted) {
+    onWatchAbort();
+  } else {
+    watch.signal.addEventListener("abort", onWatchAbort, { once: true });
+  }
   ws.on("open", () => {
+    watch.touch();
     const tools = optionalProviderTools(input.tools, responseTools);
     ws.send(JSON.stringify({
       type: "session.update",
@@ -769,18 +949,26 @@ async function* streamOpenAiRealtime(input: {
     ws.send(JSON.stringify({ type: "response.create" }));
   });
   ws.on("message", (data) => {
+    watch.touch();
     const event = parseJsonArgs(data.toString());
     push({ kind: "event", event: { kind: "raw", raw: event } });
     if (event.type === "response.text.delta" && typeof event.delta === "string") {
       push({ kind: "event", event: { kind: "text_delta", text: event.delta, raw: event } });
     }
     if (event.type === "response.done") {
-      const usage = usageFromOpenAi(asRecord(event.response)?.usage);
+      const response = asRecord(event.response);
+      const usage = usageFromOpenAi(response?.usage);
       if (usage) {
         push({ kind: "event", event: { kind: "usage", usage, raw: event } });
       }
       completed = true;
-      push({ kind: "event", event: { kind: "done", raw: event } });
+      const truncated =
+        response?.status === "incomplete" &&
+        asRecord(response.status_details)?.reason === "max_output_tokens";
+      push({
+        kind: "event",
+        event: { kind: "done", ...(truncated ? { stopReason: "length" as const } : {}), raw: event },
+      });
       push({ kind: "closed" });
       ws.close();
     }
@@ -814,6 +1002,8 @@ async function* streamOpenAiRealtime(input: {
       yield item.event;
     }
   } finally {
+    watch.signal.removeEventListener("abort", onWatchAbort);
+    watch.release();
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.close();
     }
@@ -909,7 +1099,7 @@ function withAnthropicCacheBreakpoints(body: {
   return { system: systemBlocks, messages, ...(tools ? { tools } : {}) };
 }
 
-async function runAnthropic(input: {
+async function* streamAnthropic(input: {
   apiKey: string;
   baseUrl?: string;
   model: string;
@@ -917,7 +1107,9 @@ async function runAnthropic(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
   promptCacheKey?: string;
-}): Promise<CesiumAdapterResult> {
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
+}): AsyncGenerator<CesiumAdapterStreamEvent> {
   const tools = optionalProviderTools(input.tools, anthropicTools);
   const isAnthropicOAuth = input.oauth?.providerId === "anthropic";
   const isCopilot = input.oauth?.providerId === "github-copilot";
@@ -966,26 +1158,132 @@ async function runAnthropic(input: {
     messages: anthropicMessages(input.messages),
     ...(tools ? { tools: tools as Array<Record<string, unknown>> } : {}),
   };
-  const payload = await fetchJson(anthropicMessagesUrl(input.baseUrl), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: input.model,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      ...(input.promptCacheKey && !isCopilot
-        ? withAnthropicCacheBreakpoints(promptParts)
-        : promptParts),
-    }),
-  });
+  const response = await providerFetch(
+    anthropicMessagesUrl(input.baseUrl),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        max_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        ...(input.promptCacheKey && !isCopilot
+          ? withAnthropicCacheBreakpoints(promptParts)
+          : promptParts),
+        stream: true,
+      }),
+    },
+    input.signal
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+  }
+  if (!isEventStream(response)) {
+    yield* streamStaticResult(anthropicResultFromPayload(await readJsonResponse(response)));
+    return;
+  }
+
+  // Usage arrives split: input counts on message_start, output on message_delta.
+  let usage: Record<string, unknown> = {};
+  let stopReason: CesiumStopReason | undefined;
+  const toolBlocks = new Map<number, { id: string; name: string; json: string; input?: Record<string, unknown> }>();
+  const finishToolBlock = (index: number): CesiumToolRequest | null => {
+    const block = toolBlocks.get(index);
+    if (!block) {
+      return null;
+    }
+    toolBlocks.delete(index);
+    return block.json.trim() || !block.input
+      ? toolRequestFromArguments(block.id, block.name, block.json)
+      : createCesiumToolRequest(block.id, block.name, block.input);
+  };
+  for await (const event of readSseJsonEvents(response)) {
+    if (event === "[DONE]") {
+      break;
+    }
+    yield { kind: "raw", raw: event };
+    const root = asRecord(event);
+    switch (root?.type) {
+      case "message_start":
+        usage = { ...usage, ...asRecord(asRecord(root.message)?.usage) };
+        break;
+      case "content_block_start": {
+        const block = asRecord(root.content_block);
+        if (block?.type === "tool_use" && typeof root.index === "number") {
+          const startInput = asRecord(block.input);
+          toolBlocks.set(root.index, {
+            id: asString(block.id) ?? randomUUID(),
+            name: asString(block.name) ?? "tool",
+            json: "",
+            ...(startInput && Object.keys(startInput).length > 0 ? { input: startInput } : {}),
+          });
+        } else if (block?.type === "text" && typeof block.text === "string" && block.text) {
+          yield { kind: "text_delta", text: block.text, raw: event };
+        }
+        break;
+      }
+      case "content_block_delta": {
+        const delta = asRecord(root.delta);
+        if (delta?.type === "text_delta" && typeof delta.text === "string") {
+          yield { kind: "text_delta", text: delta.text, raw: event };
+        } else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+          yield { kind: "reasoning_delta", text: delta.thinking, raw: event };
+        } else if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const block = typeof root.index === "number" ? toolBlocks.get(root.index) : undefined;
+          if (block) {
+            block.json += delta.partial_json;
+          }
+        }
+        break;
+      }
+      case "content_block_stop": {
+        const request = typeof root.index === "number" ? finishToolBlock(root.index) : null;
+        if (request) {
+          yield { kind: "tool_request", request, raw: event };
+        }
+        break;
+      }
+      case "message_delta":
+        usage = { ...usage, ...asRecord(root.usage) };
+        stopReason = anthropicStopReason(asRecord(root.delta)?.stop_reason) ?? stopReason;
+        break;
+      case "error": {
+        const error = asRecord(root.error);
+        throw new Error(
+          `Anthropic stream error: ${asString(error?.type) ?? "error"}: ${asString(error?.message) ?? JSON.stringify(root)}`
+        );
+      }
+      default:
+        break;
+    }
+  }
+  // A stream cut off mid-block still reports the calls it started.
+  for (const index of [...toolBlocks.keys()]) {
+    const request = finishToolBlock(index);
+    if (request) {
+      yield { kind: "tool_request", request };
+    }
+  }
+  const total = usageFromAnthropic(usage);
+  if (total) {
+    yield { kind: "usage", usage: total };
+  }
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
+}
+
+function anthropicResultFromPayload(payload: unknown): CesiumAdapterResult {
   const root = asRecord(payload);
   const content = Array.isArray(root?.content) ? root.content : [];
   const toolRequests: CesiumToolRequest[] = [];
   const text: string[] = [];
+  const reasoning: string[] = [];
   for (const block of content) {
     const item = asRecord(block);
     if (!item) continue;
     if (item.type === "text" && typeof item.text === "string") {
       text.push(item.text);
+    } else if (item.type === "thinking" && typeof item.thinking === "string") {
+      reasoning.push(item.thinking);
     } else if (item.type === "tool_use") {
       const name = asString(item.name);
       if (name) {
@@ -999,7 +1297,14 @@ async function runAnthropic(input: {
       }
     }
   }
-  return { text: text.join(""), toolRequests, usage: usageFromAnthropic(root?.usage), raw: payload };
+  return {
+    text: text.join(""),
+    ...(reasoning.length > 0 ? { reasoning: reasoning.join("") } : {}),
+    toolRequests,
+    usage: usageFromAnthropic(root?.usage),
+    stopReason: anthropicStopReason(root?.stop_reason),
+    raw: payload,
+  };
 }
 
 function googleContents(messages: CesiumHistoryMessage[]) {
@@ -1011,23 +1316,25 @@ function googleContents(messages: CesiumHistoryMessage[]) {
     }));
 }
 
-async function runGoogle(input: {
+async function* streamGoogle(input: {
   apiKey: string;
   baseUrl?: string;
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
   oauth?: CesiumOAuthAdapterAuth;
-}): Promise<CesiumAdapterResult> {
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
+}): AsyncGenerator<CesiumAdapterStreamEvent> {
   const base = (input.baseUrl?.trim() || "https://generativelanguage.googleapis.com").replace(
     /\/+$/,
     ""
   );
   const apiRoot = /\/v\d+(beta)?$/i.test(base) ? base : `${base}/v1beta`;
-  const endpoint = `${apiRoot}/models/${encodeURIComponent(input.model)}:generateContent`;
+  const endpoint = `${apiRoot}/models/${encodeURIComponent(input.model)}:streamGenerateContent?alt=sse`;
   // OAuth accounts (Pi Google provider packages) authenticate via Bearer;
-  // plain API keys keep the ?key= query parameter.
-  const url = input.oauth ? endpoint : `${endpoint}?key=${encodeURIComponent(input.apiKey)}`;
+  // plain API keys keep the key= query parameter.
+  const url = input.oauth ? endpoint : `${endpoint}&key=${encodeURIComponent(input.apiKey)}`;
   const headers = mergedHeaders(
     {
       "content-type": "application/json",
@@ -1036,50 +1343,80 @@ async function runGoogle(input: {
     input.oauth?.headers
   );
   const tools = optionalProviderTools(input.tools, googleTools);
-  const payload = await fetchJson(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      contents: googleContents(input.messages),
-      systemInstruction: {
-        parts: [{ text: systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT }],
-      },
-      ...(tools ? { tools } : {}),
-      generationConfig: {
-        maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      },
-    }),
-  });
-  const root = asRecord(payload);
-  const candidates = Array.isArray(root?.candidates)
-    ? root.candidates
-    : [];
-  const candidate = asRecord(candidates[0]);
-  const content = asRecord(candidate?.content);
-  const parts = Array.isArray(content?.parts)
-    ? content.parts
-    : [];
-  const text: string[] = [];
-  const toolRequests: CesiumToolRequest[] = [];
-  for (const part of parts) {
-    const record = asRecord(part);
-    if (!record) continue;
-    if (typeof record.text === "string") {
-      text.push(record.text);
+  const response = await providerFetch(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        contents: googleContents(input.messages),
+        systemInstruction: {
+          parts: [{ text: systemPromptFromMessages(input.messages) || CESIUM_SYSTEM_PROMPT }],
+        },
+        ...(tools ? { tools } : {}),
+        generationConfig: {
+          maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        },
+      }),
+    },
+    input.signal
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+  }
+  let chunks: AsyncIterable<unknown> | unknown[];
+  if (isEventStream(response)) {
+    chunks = readSseJsonEvents(response);
+  } else {
+    const payload = await readJsonResponse(response);
+    chunks = Array.isArray(payload) ? payload : [payload];
+  }
+  // usageMetadata is cumulative, so the last one counts.
+  let usage: CesiumAdapterResult["usage"];
+  let stopReason: CesiumStopReason | undefined;
+  for await (const chunk of chunks) {
+    if (chunk === "[DONE]") {
+      break;
     }
-    const call = asRecord(record.functionCall);
-    const name = asString(call?.name);
-    if (name) {
-      toolRequests.push(
-        createCesiumToolRequest(
-          randomUUID(),
-          name,
-          asRecord(call?.args) ?? {}
-        )
+    yield { kind: "raw", raw: chunk };
+    const root = asRecord(chunk);
+    const error = asRecord(root?.error);
+    if (error) {
+      const code = typeof error.code === "number" || typeof error.code === "string" ? `${error.code} ` : "";
+      throw new Error(
+        `${code}${asString(error.status) ?? "Gemini error"}: ${asString(error.message) ?? JSON.stringify(error)}`
       );
     }
+    usage = usageFromGoogle(root?.usageMetadata) ?? usage;
+    const candidate = asRecord(Array.isArray(root?.candidates) ? root.candidates[0] : undefined);
+    stopReason = googleStopReason(candidate?.finishReason) ?? stopReason;
+    const parts = asRecord(candidate?.content)?.parts;
+    for (const part of Array.isArray(parts) ? parts : []) {
+      const record = asRecord(part);
+      if (!record) continue;
+      if (typeof record.text === "string" && record.text) {
+        yield {
+          kind: record.thought === true ? "reasoning_delta" : "text_delta",
+          text: record.text,
+          raw: chunk,
+        };
+      }
+      const call = asRecord(record.functionCall);
+      const name = asString(call?.name);
+      if (name) {
+        yield {
+          kind: "tool_request",
+          request: createCesiumToolRequest(asString(call?.id) ?? randomUUID(), name, asRecord(call?.args) ?? {}),
+          raw: chunk,
+        };
+      }
+    }
   }
-  return { text: text.join(""), toolRequests, usage: usageFromGoogle(root?.usageMetadata), raw: payload };
+  if (usage) {
+    yield { kind: "usage", usage };
+  }
+  yield { kind: "done", ...(stopReason ? { stopReason } : {}) };
 }
 
 export type RunAdapterInput = {
@@ -1095,6 +1432,10 @@ export type RunAdapterInput = {
   oauth?: CesiumOAuthAdapterAuth;
   /** Stable per-conversation key so providers route every turn to the same prompt cache. */
   promptCacheKey?: string;
+  /** Output-token cap for the reply; defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
+  maxOutputTokens?: number;
+  /** Aborts the in-flight provider request (turn cancel). */
+  signal?: AbortSignal;
 };
 
 async function* streamStaticResult(
@@ -1112,7 +1453,22 @@ async function* streamStaticResult(
   if (result.usage) {
     yield { kind: "usage", usage: result.usage, raw: result.raw };
   }
-  yield { kind: "done", raw: result.raw };
+  yield { kind: "done", ...(result.stopReason ? { stopReason: result.stopReason } : {}), raw: result.raw };
+}
+
+/** Whether the request honours `maxOutputTokens`; Realtime and the ChatGPT Codex backend have no such field. */
+export function adapterHonorsMaxOutputTokens(input: Pick<RunAdapterInput, "apiKind" | "oauth">): boolean {
+  switch (input.apiKind) {
+    case "openai-realtime":
+      return false;
+    case "openai-chat-completions":
+    case "openai-compatible":
+    case "anthropic":
+    case "google-genai":
+      return true;
+    default:
+      return input.oauth?.providerId !== "openai-codex";
+  }
 }
 
 export async function* streamAdapter(
@@ -1132,6 +1488,8 @@ export async function* streamAdapter(
         tools: input.tools,
         oauth: input.oauth,
         promptCacheKey: input.promptCacheKey,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
       });
       return;
     case "openai-realtime":
@@ -1140,32 +1498,33 @@ export async function* streamAdapter(
         model,
         messages: input.messages,
         tools: input.tools,
+        signal: input.signal,
       });
       return;
     case "anthropic":
-      yield* streamStaticResult(
-        await runAnthropic({
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          model,
-          messages: input.messages,
-          tools: input.tools,
-          oauth: input.oauth,
-          promptCacheKey: input.promptCacheKey,
-        })
-      );
+      yield* streamAnthropic({
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+        oauth: input.oauth,
+        promptCacheKey: input.promptCacheKey,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
+      });
       return;
     case "google-genai":
-      yield* streamStaticResult(
-        await runGoogle({
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          model,
-          messages: input.messages,
-          tools: input.tools,
-          oauth: input.oauth,
-        })
-      );
+      yield* streamGoogle({
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+        oauth: input.oauth,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
+      });
       return;
     case "openai-responses":
     default:
@@ -1178,6 +1537,8 @@ export async function* streamAdapter(
         tools: input.tools,
         oauth: input.oauth,
         promptCacheKey: input.promptCacheKey,
+        maxOutputTokens: input.maxOutputTokens,
+        signal: input.signal,
       });
       return;
   }
@@ -1190,6 +1551,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
   const rawEvents: unknown[] = [];
   let finalRaw: unknown;
   let usage: CesiumAdapterResult["usage"];
+  let stopReason: CesiumStopReason | undefined;
   for await (const event of streamAdapter(input)) {
     if ("raw" in event && event.raw !== undefined) {
       finalRaw = event.raw;
@@ -1208,8 +1570,10 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
       case "usage":
         usage = event.usage;
         break;
-      case "raw":
       case "done":
+        stopReason = event.stopReason ?? stopReason;
+        break;
+      case "raw":
         break;
     }
   }
@@ -1218,6 +1582,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
     reasoning: reasoningParts.join("") || undefined,
     toolRequests,
     ...(usage ? { usage } : {}),
+    ...(stopReason ? { stopReason } : {}),
     raw: rawEvents.length > 1 ? rawEvents : finalRaw,
   };
 }
