@@ -9,7 +9,7 @@ import type {
   ProjectSubscriptionSummary,
 } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
-import { messageText, startFakeChatModel, text, waitFor, type Responder } from "./helpers/fake-chat-model.js";
+import { messageText, startFakeChatModel, text, toolCall, waitFor, type Responder } from "./helpers/fake-chat-model.js";
 import { createRepoWithRemote, git, pushCommitToRemote } from "./helpers/git-fixtures.js";
 import { startFakeGithub } from "./fixtures/fake-github.js";
 
@@ -639,13 +639,34 @@ test("the coordinator closes its agent's redundant PR with a reason, and anyone 
     "only PRs in the Project's repositories"
   );
   assert.equal(github.pull("acme/shop", 3).state, "open");
-  script("orchestrator", text(["Will close the hotfix PR."]));
-  await sayToCoordinator("Close the teammate's hotfix PR, its fix is already on main.");
+  // The coordinator asks, and the user's answer to its question authorizes the close.
+  script(
+    "orchestrator",
+    toolCall("ask_close", "ask_question", {
+      prompt: "The teammate's hotfix PR (shop#3) duplicates what is on main. Close it?",
+      options: ["Yes, close it", "No, keep it"],
+    }),
+    text(["Closing it."])
+  );
+  const workspace = await getWorkspaceById(project.orchestrator.workspaceId);
+  assert.ok(workspace);
+  await agentRuntimeManager.promptConversation(workspace, project.orchestrator.conversationId, "The teammate's hotfix PR looks stale.");
+  const asking = await waitFor(
+    "the coordinator's question",
+    () => readConversationSnapshot(project.orchestrator.workspaceId, project.orchestrator.conversationId),
+    (snapshot) => snapshot.conversation.pendingQuestion != null,
+    30_000
+  );
+  await agentRuntimeManager.answerQuestion(workspace, project.orchestrator.conversationId, {
+    questionId: asking.conversation.pendingQuestion!.questionId,
+    answer: "Yes, close it",
+  });
+  await orchestratorIdle("after the answer");
   const teammate = JSON.parse(
     await executeProjectOrchestratorTool(project.id, "project_close_pr", {
       pr: "https://github.com/acme/shop/pull/3",
       reason,
-      user_quote: "close the teammate's hotfix PR",
+      user_quote: "Yes, close it",
     })
   ) as { closed: { pr: string; state: string; agent: string | null } };
   assert.deepEqual([teammate.closed.pr, teammate.closed.state, teammate.closed.agent], ["acme/shop#3", "closed", null]);

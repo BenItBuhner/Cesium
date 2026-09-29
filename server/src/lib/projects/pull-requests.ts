@@ -261,7 +261,7 @@ function normalizeQuote(text: string): string {
   return text.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, " ").trim();
 }
 
-/** The last few things the user actually typed to the orchestrator (not notices or events). */
+/** The last few things the user said to the orchestrator: what they typed (not notices or events) and their answers to its questions. */
 async function recentUserMessages(record: ProjectRecord): Promise<string[]> {
   const snapshot = await readConversationSnapshot(
     record.orchestrator.workspaceId,
@@ -271,15 +271,21 @@ async function recentUserMessages(record: ProjectRecord): Promise<string[]> {
     return [];
   }
   return snapshot.events
-    .filter(
-      (event): event is Extract<typeof event, { kind: "user_message" }> =>
-        event.kind === "user_message" &&
-        !event.hidden &&
-        !event.displayContent?.startsWith(PROJECT_NOTICE_DISPLAY_PREFIX) &&
-        !isProjectEventDisplay(event.displayContent)
-    )
-    .slice(-USER_QUOTE_LOOKBACK)
-    .map((event) => event.displayContent?.trim() || event.content);
+    .flatMap((event) => {
+      if (event.kind === "user_message") {
+        const typed =
+          !event.hidden &&
+          !event.displayContent?.startsWith(PROJECT_NOTICE_DISPLAY_PREFIX) &&
+          !isProjectEventDisplay(event.displayContent);
+        return typed ? [event.displayContent?.trim() || event.content] : [];
+      }
+      // Their answer to a question the orchestrator asked them is their word too.
+      if (event.kind === "question" && event.status === "answered" && event.answer) {
+        return [Array.isArray(event.answer) ? event.answer.join("\n") : event.answer];
+      }
+      return [];
+    })
+    .slice(-USER_QUOTE_LOOKBACK);
 }
 
 /** Throws unless `quote` is non-empty and appears in one of the user's recent messages. */
