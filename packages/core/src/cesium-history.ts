@@ -45,6 +45,10 @@ export function contextTokensAfterResponse(usage: AgentTokenUsage): number {
 }
 
 type PendingHistoryToolCall = CesiumHistoryToolCall & {
+  /** The event log's id for the call; `id` is the one the model issued. */
+  storedId: string;
+  /** Browser-machine calls keep the model-facing result in `raw.result` of their updates. */
+  resultInRaw?: boolean;
   result?: string;
   budget?: number;
   spillPath?: string;
@@ -167,7 +171,12 @@ function storedToolResultShape(raw: unknown): { budget?: number; spillPath?: str
   };
 }
 
-function toolCallFromStoredEvent(event: Extract<AgentStoredEvent, { kind: "tool_call" }>): CesiumHistoryToolCall {
+/**
+ * Server calls store `{request: {id, name, arguments}}` (or the request
+ * itself) and are keyed by their own id. Browser-machine calls store the
+ * model's `{callId, name, argsJson}`, which replays verbatim.
+ */
+function toolCallFromStoredEvent(event: Extract<AgentStoredEvent, { kind: "tool_call" }>): PendingHistoryToolCall {
   const raw = asRecord(event.raw);
   const request = asRecord(raw?.request) ?? raw;
   const name =
@@ -175,8 +184,18 @@ function toolCallFromStoredEvent(event: Extract<AgentStoredEvent, { kind: "tool_
     inferCesiumToolNameFromTitle(event.title) ??
     event.title.split(" ")[0] ??
     "tool";
+  if (typeof raw?.argsJson === "string") {
+    return {
+      id: asString(raw.callId) ?? event.toolCallId,
+      storedId: event.toolCallId,
+      resultInRaw: true,
+      name,
+      arguments: raw.argsJson,
+    };
+  }
   return {
     id: event.toolCallId,
+    storedId: event.toolCallId,
     name,
     arguments: serializeToolCallArguments(name, request?.arguments, event.detail),
   };
@@ -207,7 +226,7 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   });
   for (const call of pending) {
     let content = MISSING_TOOL_RESULT_MESSAGE;
-    if (call.result?.trim() && state.pruned.has(call.id)) {
+    if (call.result?.trim() && state.pruned.has(call.storedId)) {
       content = prunedToolResultStub(call.name, call.result.length, call.spillPath);
     } else if (call.result?.trim()) {
       content = normalizeCesiumToolResultForModel({
@@ -481,7 +500,18 @@ export function normalizeEventsToHistory(
         state.pending.push(toolCallFromStoredEvent(event));
         break;
       }
-      case "tool_call_update":
+      case "tool_call_update": {
+        const pending = state.pending.find((call) => call.storedId === event.toolCallId);
+        const rawResult = asRecord(event.raw)?.result;
+        // A rejected or cancelled browser call still answers the model.
+        if (
+          pending?.resultInRaw &&
+          typeof rawResult === "string" &&
+          (event.status === "completed" || event.status === "failed" || event.status === "cancelled")
+        ) {
+          pending.result = rawResult;
+          break;
+        }
         if (event.status === "completed" || event.status === "failed") {
           const detail = event.detail?.trim()
             ? event.detail
@@ -489,7 +519,6 @@ export function normalizeEventsToHistory(
               ? "Tool call failed."
               : "Tool call completed with no output.";
           const shape = event.status === "completed" ? storedToolResultShape(event.raw) : {};
-          const pending = state.pending.find((call) => call.id === event.toolCallId);
           if (pending) {
             pending.result = detail;
             Object.assign(pending, shape);
@@ -503,6 +532,7 @@ export function normalizeEventsToHistory(
               "tool";
             state.pending.push({
               id: event.toolCallId,
+              storedId: event.toolCallId,
               name,
               arguments: serializeToolCallArguments(name, request?.arguments, event.detail),
               result: detail,
@@ -511,6 +541,7 @@ export function normalizeEventsToHistory(
           }
         }
         break;
+      }
       case "plan":
         // A todo or plan-file tool writes its plan while the call is still
         // pending; the tool result already told the model what happened.
