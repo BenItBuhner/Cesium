@@ -208,6 +208,53 @@ test("every request extends the previous one byte for byte across turns", async 
   );
 });
 
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function imageUrls(message: ChatMessage | undefined): string[] {
+  if (!Array.isArray(message?.content)) {
+    return [];
+  }
+  return (message.content as Array<{ type?: string; image_url?: { url?: string } }>)
+    .filter((part) => part.type === "image_url")
+    .map((part) => part.image_url?.url ?? "");
+}
+
+test("a tool image stays in history on later turns, exactly as the model saw it", async () => {
+  await fs.writeFile(path.join(WORKSPACE_ROOT, "pixel.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+  const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "prompt-cache");
+  const conversation = await agentRuntimeManager.createConversation(workspace, {
+    backendId: "cesium-agent",
+    modelId: MODEL_ID,
+    modelName: "Kimi K3",
+  });
+  const firstRequest = agentRequests.length;
+  scripted.push(
+    toolCallTurn("Opening the image.", "call_image", "read_file", { path: "pixel.png" }),
+    textTurn("It is a single pixel.")
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "What is in pixel.png?");
+  await waitForIdle(workspace.id, conversation.id, 1);
+  scripted.push(textTurn("Still one pixel."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "And now?");
+  await waitForIdle(workspace.id, conversation.id, 2);
+
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 3);
+  for (let index = 1; index < requests.length; index += 1) {
+    assert.deepEqual(
+      requests[index]!.messages.slice(0, requests[index - 1]!.messages.length),
+      requests[index - 1]!.messages,
+      `request ${index + 1} extends request ${index}`
+    );
+  }
+  const final = requests.at(-1)!.messages;
+  const toolIndex = final.findIndex((message) => message.role === "tool");
+  const imageMessage = final[toolIndex + 1];
+  assert.equal(imageMessage?.role, "user");
+  assert.deepEqual(imageUrls(imageMessage), [`data:image/png;base64,${ONE_PIXEL_PNG}`]);
+});
+
 function reminderEvent(
   seq: number,
   targetMessageId: string,

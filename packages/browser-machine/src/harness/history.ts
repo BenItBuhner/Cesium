@@ -6,7 +6,8 @@
 import type { ImageAttachment, AgentStoredEvent } from "@cesium/core";
 import type { AdapterContentPart, AdapterMessage } from "./adapters";
 
-type ToolRaw = { callId?: string; name?: string; argsJson?: string };
+/** `responseId` is the model response that issued the call (absent on older events). */
+type ToolRaw = { callId?: string; name?: string; argsJson?: string; responseId?: string };
 type ToolResultRaw = { result?: string };
 
 /** Mirrors the engine's per-tool result cap when feeding results back to the model. */
@@ -45,6 +46,7 @@ export function buildHistoryFromEvents(input: {
   let assistantText = "";
   let assistantMessageId: string | null = null;
   const pendingToolCalls: Array<{ id: string; name: string; argsJson: string }> = [];
+  let pendingResponseId: string | null = null;
   const pendingToolResults: Array<{ id: string; result: string }> = [];
 
   const flushAssistant = (): void => {
@@ -67,6 +69,7 @@ export function buildHistoryFromEvents(input: {
     }
     assistantText = "";
     assistantMessageId = null;
+    pendingResponseId = null;
     pendingToolCalls.length = 0;
     pendingToolResults.length = 0;
   };
@@ -119,6 +122,12 @@ export function buildHistoryFromEvents(input: {
       case "tool_call": {
         const raw = (event.raw ?? {}) as ToolRaw;
         if (raw.name) {
+          // Each model response is its own assistant message; merging a later
+          // response's calls into an earlier one would rewrite sent history.
+          if (raw.responseId && pendingToolCalls.length > 0 && pendingResponseId !== raw.responseId) {
+            flushAssistant();
+          }
+          pendingResponseId = raw.responseId ?? pendingResponseId;
           pendingToolCalls.push({
             id: raw.callId ?? event.toolCallId,
             name: raw.name,

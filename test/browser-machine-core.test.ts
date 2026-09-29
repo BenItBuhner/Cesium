@@ -228,6 +228,35 @@ describe("browser machine harness history", () => {
     assert.equal(final.role, "assistant");
     assert.match(String(final.content), /Done: a\.txt/);
   });
+
+  test("tool calls from separate model responses stay separate assistant messages", () => {
+    let seq = 0;
+    const event = (partial: Record<string, unknown>): AgentStoredEvent =>
+      ({ seq: ++seq, eventId: `e${seq}`, conversationId: "c1", createdAt: seq, ...partial }) as AgentStoredEvent;
+    const call = (id: string, responseId: string, result: string): AgentStoredEvent[] => [
+      event({
+        kind: "tool_call",
+        toolCallId: `t-${id}`,
+        title: id,
+        toolKind: "read",
+        status: "in_progress",
+        raw: { callId: id, name: "read_file", argsJson: "{}", responseId },
+      }),
+      event({ kind: "tool_call_update", toolCallId: `t-${id}`, status: "completed", raw: { callId: id, result } }),
+    ];
+    const firstResponse = [
+      event({ kind: "user_message", messageId: "m1", content: "read two files" }),
+      ...call("call_a", "resp-1", "A"),
+    ];
+    const before = buildHistoryFromEvents({ events: firstResponse, systemPrompt: "S", supportsImages: false });
+    const after = buildHistoryFromEvents({
+      events: [...firstResponse, ...call("call_b", "resp-2", "B")],
+      systemPrompt: "S",
+      supportsImages: false,
+    });
+    assert.deepEqual(after.slice(0, before.length), before, "the second response only appends");
+    assert.equal(after.filter((message) => message.role === "assistant").length, 2);
+  });
 });
 
 describe("browser machine reminder", () => {
@@ -240,19 +269,38 @@ describe("browser machine reminder", () => {
       updatedAt: 0,
       lastOpenedAt: 0,
     };
-    const reminder = buildBrowserMachineReminder({
+    const input = {
       workspace,
-      mode: "agent",
       modelName: "Kimi K3",
       gitSummary: formatGitSummary({ isGitRepo: true, branch: "main", dirty: false }),
       shellCommands: ["ls", "cat", "git", "node", "npm"],
       installedPacks: ["Python (Pyodide) (python, pip)"],
       dateLabel: "Monday, Aug 31, 2026",
-    });
-    assert.match(reminder, /<system-reminder>/);
-    assert.match(reminder, /INSIDE the user's web browser tab/);
-    assert.match(reminder, /on branch main/);
-    assert.match(reminder, /Python \(Pyodide\)/);
-    assert.match(reminder, /serve <dir>/);
+    };
+    const first = buildBrowserMachineReminder(input);
+    assert.equal(first.includesEnvironment, true);
+    assert.match(first.text, /<system-reminder>/);
+    assert.match(first.text, /INSIDE the user's web browser tab/);
+    assert.match(first.text, /on branch main/);
+    assert.match(first.text, /Python \(Pyodide\)/);
+    assert.match(first.text, /serve <dir>/);
+
+    // Later turns carry only the facts until the environment itself changes.
+    const next = buildBrowserMachineReminder(
+      { ...input, dateLabel: "Tuesday, Sep 1, 2026" },
+      first.environmentHash
+    );
+    assert.equal(next.includesEnvironment, false);
+    assert.match(next.text, /Tuesday, Sep 1, 2026/);
+    assert.match(next.text, /on branch main/);
+    assert.doesNotMatch(next.text, /INSIDE the user's web browser tab/);
+    assert.ok(next.text.length < 400, `delta reminder is small (${next.text.length} chars)`);
+
+    const withNewPack = buildBrowserMachineReminder(
+      { ...input, installedPacks: [...input.installedPacks, "Ruby (ruby.wasm)"] },
+      first.environmentHash
+    );
+    assert.equal(withNewPack.includesEnvironment, true);
+    assert.match(withNewPack.text, /Ruby \(ruby\.wasm\)/);
   });
 });
