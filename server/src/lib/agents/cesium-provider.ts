@@ -458,18 +458,24 @@ function imageMimeTypeForPath(filePath: string): string | null {
 }
 
 export type CesiumAssistantStreamSink = {
+  /** The message the next text lands in; changes when an attempt is discarded. */
+  readonly messageId: string;
   pushText: (text: string) => Promise<void>;
   pushReasoning: (text: string) => Promise<void>;
   flush: () => Promise<void>;
-  /** Drops output not yet persisted, e.g. from a model attempt that is being retried. */
-  discardPending: () => void;
+  /**
+   * Drops a model attempt that is being retried. Text it already persisted is
+   * closed out as a `discarded` message, which history replay skips, and the
+   * retry streams into a fresh message.
+   */
+  discardAttempt: () => Promise<void>;
 };
 
 type CesiumAdapterStreamHandlers = {
   onTextDelta?: (text: string) => Promise<void>;
   onReasoningDelta?: (text: string) => Promise<void>;
-  /** A failed attempt is about to be retried; drop what it buffered. */
-  onDiscardAttempt?: () => void;
+  /** A failed attempt is about to be retried; drop what it streamed. */
+  onDiscardAttempt?: () => Promise<void>;
 };
 
 /**
@@ -483,8 +489,10 @@ export function createCesiumAssistantStreamSink(input: {
   reasoningMessageId: string;
   appendEvents: (events: AgentEventInput[]) => Promise<unknown>;
 }): CesiumAssistantStreamSink {
+  let messageId = input.messageId;
   let pendingText = "";
   let pendingReasoning = "";
+  let persistedText = false;
   let lastFlushAt = 0;
   const flushReasoning = async () => {
     if (!pendingReasoning) {
@@ -509,17 +517,21 @@ export function createCesiumAssistantStreamSink(input: {
     const text = pendingText;
     pendingText = "";
     lastFlushAt = Date.now();
+    persistedText = true;
     await input.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: input.conversationId,
         kind: "assistant_message_chunk",
-        messageId: input.messageId,
+        messageId,
         text,
       },
     ]);
   };
   return {
+    get messageId() {
+      return messageId;
+    },
     pushText: async (text: string) => {
       if (!text) {
         return;
@@ -544,11 +556,41 @@ export function createCesiumAssistantStreamSink(input: {
       await flushReasoning();
       await flushText();
     },
-    discardPending: () => {
+    discardAttempt: async () => {
       pendingReasoning = "";
       pendingText = "";
+      if (!persistedText) {
+        return;
+      }
+      persistedText = false;
+      const discardedMessageId = messageId;
+      messageId = `cesium-assistant-${randomUUID()}`;
+      await input.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: input.conversationId,
+          kind: "assistant_message_end",
+          messageId: discardedMessageId,
+          stopReason: "discarded",
+        },
+      ]);
     },
   };
+}
+
+/** A fetch failure's message with its cause, which is where runtimes say the socket closed. */
+function providerFailureMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = error.cause;
+  const causeMessage =
+    cause instanceof Error
+      ? [cause.message, (cause as { code?: unknown }).code].filter(
+          (part): part is string => typeof part === "string" && part.length > 0
+        )
+      : [];
+  return causeMessage.length > 0 ? `${error.message} (${causeMessage.join(", ")})` : error.message;
 }
 
 function emptyModelResponseError(model: string, raw: unknown, attempts = 1): Error {
@@ -1341,11 +1383,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
             {
               onTextDelta: (text) => assistantStream.pushText(text),
               onReasoningDelta: (text) => assistantStream.pushReasoning(text),
-              onDiscardAttempt: () => assistantStream.discardPending(),
+              onDiscardAttempt: () => assistantStream.discardAttempt(),
             }
           );
         } finally {
           await assistantStream.flush();
+          assistantMessageId = assistantStream.messageId;
         }
         if (!result) {
           throw new Error("Cesium streaming adapter did not produce a result.");
@@ -1851,7 +1894,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new CesiumTurnCancelledError();
         }
         const attempts = retryIndex + 1;
-        const progress = { emittedText: false, emittedDelta: false };
+        const progress = { emittedText: false, emittedToolCall: false };
         let failure: unknown;
         let failureMessage: string;
         let retryable: boolean;
@@ -1883,11 +1926,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
             throw new CesiumTurnCancelledError();
           }
           failure = error;
-          failureMessage = error instanceof Error ? error.message : String(error);
+          failureMessage = providerFailureMessage(error);
           retryable = isTransientProviderCompletionError(failureMessage);
         }
-        const streamedOutput = retryEmptyReplies ? progress.emittedText : progress.emittedDelta;
-        if (retryIndex >= COMPLETION_AUTO_RETRY_MAX_ATTEMPTS || streamedOutput || !retryable) {
+        if (retryIndex >= COMPLETION_AUTO_RETRY_MAX_ATTEMPTS || progress.emittedToolCall || !retryable) {
           throw failure;
         }
         const delayMs = completionRetryDelayMs(retryIndex);
@@ -1895,7 +1937,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           `[cesium-agent] provider attempt ${attempts} failed, retrying (${attempts}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}) in ${delayMs}ms:`,
           truncate(failureMessage, 500)
         );
-        handlers.onDiscardAttempt?.();
+        await handlers.onDiscardAttempt?.();
         await this.emitConversationStatus(
           "running",
           formatTakingLongerStatusDetail(attempts, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
@@ -1918,7 +1960,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async streamAdapterAttempt(
     input: RunAdapterInput,
     handlers: CesiumAdapterStreamHandlers,
-    progress: { emittedText: boolean; emittedDelta: boolean },
+    progress: { emittedText: boolean; emittedToolCall: boolean },
     holdBlankText: boolean
   ): Promise<CesiumAdapterResult> {
     const textParts: string[] = [];
@@ -1940,7 +1982,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       switch (event.kind) {
         case "text_delta": {
           textParts.push(event.text);
-          progress.emittedDelta = progress.emittedDelta || event.text.length > 0;
           if (holdBlankText && !progress.emittedText) {
             heldText += event.text;
             if (!heldText.trim()) {
@@ -1955,11 +1996,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }
         case "reasoning_delta":
           reasoningParts.push(event.text);
-          progress.emittedDelta = progress.emittedDelta || event.text.length > 0;
           await handlers.onReasoningDelta?.(event.text);
           break;
         case "tool_request":
           toolRequests.push(event.request);
+          progress.emittedToolCall = true;
           break;
         case "usage":
           usage = event.usage;

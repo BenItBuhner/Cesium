@@ -112,6 +112,10 @@ function summarizeProviderError(message: string): { httpStatus?: number; code?: 
   return { httpStatus, code, summary };
 }
 
+/** Network flakes, including a response body cut off mid-stream (undici: `terminated`; Bun: `socket connection was closed unexpectedly`). */
+const TRANSIENT_PROVIDER_ERROR =
+  /timeout|timed out|econnreset|econnrefused|epipe|network|gateway timeout|provider unavailable|service unavailable|bad gateway|terminated|other side closed|socket hang up|socket connection|closed unexpectedly|fetch failed|premature close/i;
+
 /** True for 429/5xx, queue exceeded, gateway timeout, and similar provider/network flakes. */
 export function isTransientProviderCompletionError(message: string): boolean {
   const trimmed = message.trim();
@@ -127,12 +131,8 @@ export function isTransientProviderCompletionError(message: string): boolean {
     httpStatus === 429 ||
     (httpStatus !== undefined && httpStatus >= 500) ||
     code === "queueexceeded" ||
-    /timeout|timed out|econnreset|network|gateway timeout|provider unavailable|service unavailable|bad gateway/i.test(
-      summary
-    ) ||
-    /timeout|timed out|econnreset|network|gateway timeout|provider unavailable|service unavailable|bad gateway/i.test(
-      trimmed
-    )
+    TRANSIENT_PROVIDER_ERROR.test(summary) ||
+    TRANSIENT_PROVIDER_ERROR.test(trimmed)
   ) {
     return true;
   }

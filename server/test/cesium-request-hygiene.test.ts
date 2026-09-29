@@ -210,3 +210,49 @@ test("a stream that goes idle is aborted and retried", async () => {
     "Answer after the stall."
   );
 });
+
+/** Streams some text, then drops the connection mid-response. */
+const dropAfter = (content: string): Responder => (res) => {
+  sseHead(res);
+  res.write(`data: ${JSON.stringify(textDelta(content))}\n\n`);
+  setTimeout(() => res.socket?.destroy(), 150);
+};
+
+function assistantContents(request: ChatRequest): string[] {
+  return request.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => (typeof message.content === "string" ? message.content : ""));
+}
+
+test("a stream that breaks after partial text is retried and only the retry reaches history", async () => {
+  const { workspace, conversation } = await startConversation("Mid-stream");
+  scripted.push(dropAfter("Half an ans"), text("The full answer."));
+  const requestsBefore = agentRequests.length;
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Answer me.");
+  let snapshot = await settle(workspace.id, conversation.id, 1);
+  assert.equal(snapshot.conversation.status, "idle", snapshot.conversation.lastError ?? "");
+  assert.equal(agentRequests.length - requestsBefore, 2);
+  assert.deepEqual(agentRequests.at(-1)!.messages, agentRequests.at(-2)!.messages, "the retry resends the same request");
+
+  const ends = eventsOfKind(snapshot.events, "assistant_message_end");
+  const discarded = ends.filter((event) => event.stopReason === "discarded");
+  assert.equal(discarded.length, 1, "the partial attempt was persisted and then discarded");
+  const discardedText = eventsOfKind(snapshot.events, "assistant_message_chunk")
+    .filter((event) => event.messageId === discarded[0]!.messageId)
+    .map((event) => event.text)
+    .join("");
+  assert.equal(discardedText, "Half an ans");
+
+  scripted.push(text("Second reply."));
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "And again.");
+  snapshot = await settle(workspace.id, conversation.id, 2);
+  assert.equal(snapshot.conversation.status, "idle", snapshot.conversation.lastError ?? "");
+  const nextTurn = agentRequests.at(-1)!;
+  assert.deepEqual(assistantContents(nextTurn), ["The full answer."]);
+  assert.equal(JSON.stringify(nextTurn.messages).includes("Half an ans"), false);
+  assert.deepEqual(
+    nextTurn.messages.slice(0, agentRequests.at(-2)!.messages.length),
+    agentRequests.at(-2)!.messages,
+    "the next turn's request extends the retried one"
+  );
+});

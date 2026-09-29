@@ -436,6 +436,11 @@ export function normalizeEventsToHistory(
         assistantTextById.set(event.messageId, `${assistantTextById.get(event.messageId) ?? ""}${event.text}`);
         break;
       case "assistant_message_end": {
+        // A retried attempt's text never reached a later request.
+        if (event.stopReason === "discarded") {
+          assistantTextById.delete(event.messageId);
+          break;
+        }
         flushPendingToolCalls(state);
         const text = assistantTextById.get(event.messageId)?.trim();
         if (text) {
@@ -585,6 +590,10 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
   for (const event of events) {
     if (event.kind === "assistant_message_chunk") {
       assistantText += event.text;
+      continue;
+    }
+    if (event.kind === "assistant_message_end" && event.stopReason === "discarded") {
+      assistantText = "";
       continue;
     }
     flushAssistant();

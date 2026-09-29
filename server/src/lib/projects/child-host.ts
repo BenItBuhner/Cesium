@@ -243,7 +243,7 @@ export function lastAssistantReply(events: readonly AgentStoredEvent[]): string 
       current.push(event.text);
     } else if (event.kind === "assistant_message_end") {
       const text = current.join("").trim();
-      if (text) {
+      if (text && event.stopReason !== "discarded") {
         last = text;
       }
       current = [];
@@ -293,7 +293,11 @@ function countTurnsEnded(events: readonly AgentStoredEvent[]): number {
         turnsEnded += 1;
       }
       replyClosed = false;
-    } else if (event.kind === "assistant_message_end" && event.stopReason !== "steered") {
+    } else if (
+      event.kind === "assistant_message_end" &&
+      event.stopReason !== "steered" &&
+      event.stopReason !== "discarded"
+    ) {
       replyClosed = true;
     }
   }
