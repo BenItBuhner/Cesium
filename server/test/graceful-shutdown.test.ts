@@ -54,3 +54,46 @@ test("a signal interrupts agent turns, then stops the listener, then exits; a se
   }
   assert.equal(process.listenerCount("SIGUSR2"), listenersBefore, "removing the handlers leaves no listener");
 });
+test("cleanup such as closing the database pool runs only after the interrupted turns are recorded", async () => {
+  const { onShutdown, runShutdownHooks } = await import("../src/runtime/shutdown-hooks.js");
+  const calls: string[] = [];
+  let exited!: () => void;
+  const exitedOnce = new Promise<void>((resolve) => {
+    exited = resolve;
+  });
+  const unregister = onShutdown(async () => {
+    calls.push("close pool");
+  });
+  const remove = installGracefulShutdown({
+    signals: ["SIGUSR2"],
+    drainTimeoutMs: 50,
+    shutdownAgents: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      calls.push("interrupted turns recorded");
+      return { interrupted: ["c1"], drained: true };
+    },
+    stopServer: () => {
+      calls.push("stop");
+    },
+    exit: (code) => {
+      calls.push(`exit ${code}`);
+      exited();
+    },
+  });
+  try {
+    process.emit("SIGUSR2", "SIGUSR2");
+    await exitedOnce;
+    assert.deepEqual(calls, ["interrupted turns recorded", "stop", "close pool", "exit 0"]);
+    await runShutdownHooks();
+    assert.equal(calls.filter((call) => call === "close pool").length, 1, "hooks run once");
+  } finally {
+    unregister();
+    remove();
+  }
+});
+
+test("the database client registers no signal listener of its own", async () => {
+  const source = await fs.readFile(new URL("../src/db/client.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /process\.once\("SIG/);
+  assert.match(source, /onShutdown\(shutdown\)/);
+});

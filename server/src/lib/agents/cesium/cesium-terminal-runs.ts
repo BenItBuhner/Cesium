@@ -25,11 +25,106 @@ export type TerminalRunRecord = {
   exitCode?: number | null;
   signal?: string | null;
   logFile: string;
+  /** Set once the log has been compacted; maps output offsets onto the shorter file. */
+  logLayout?: TerminalLogLayout;
+};
+
+/**
+ * Where the elided middle of a compacted log sits. The file holds the first
+ * `headBytes` of output, a `markerBytes` truncation marker, then the newest
+ * output; `droppedBytes` of output were removed between them.
+ */
+export type TerminalLogLayout = {
+  headBytes: number;
+  markerBytes: number;
+  droppedBytes: number;
 };
 
 export const TERMINAL_KILL_GRACE_MS = 3_000;
 /** Finished runs (and their logs) older than this are pruned when a new run starts. */
 export const TERMINAL_RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** A run's log is compacted to about this size, keeping its head and its newest output. */
+export const TERMINAL_RUN_LOG_MAX_BYTES = 2 * 1024 * 1024;
+/** How often a live run's log is checked against the cap. */
+export const TERMINAL_RUN_LOG_COMPACT_INTERVAL_MS = 5_000;
+
+export function terminalRunLogMaxBytes(): number {
+  const configured = Number(process.env.CESIUM_TERMINAL_LOG_MAX_BYTES);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : TERMINAL_RUN_LOG_MAX_BYTES;
+}
+
+/** Output offset -> file offset. Offsets inside the dropped middle land on the marker. */
+export function terminalLogFileOffset(offset: number, layout: TerminalLogLayout | undefined): number {
+  if (!layout || offset <= layout.headBytes) {
+    return offset;
+  }
+  if (offset < layout.headBytes + layout.droppedBytes) {
+    return layout.headBytes;
+  }
+  return offset - layout.droppedBytes + layout.markerBytes;
+}
+
+/** File offset -> output offset. Offsets inside the marker map to just past the dropped middle. */
+export function terminalLogOutputOffset(fileOffset: number, layout: TerminalLogLayout | undefined): number {
+  if (!layout || fileOffset <= layout.headBytes) {
+    return fileOffset;
+  }
+  if (fileOffset < layout.headBytes + layout.markerBytes) {
+    return layout.headBytes + layout.droppedBytes;
+  }
+  return fileOffset - layout.markerBytes + layout.droppedBytes;
+}
+
+/**
+ * Shrinks a log past `maxBytes` in place to its head, a truncation marker and
+ * its newest output, the same shape as the bounded terminal output. The
+ * command keeps an append-mode descriptor, so its later writes still land at
+ * the new end; bytes it writes between the final size check and the truncate
+ * are lost, which in practice is a microsecond window. Returns the new layout
+ * (the given one when nothing changed).
+ */
+export async function compactTerminalRunLog(
+  logFile: string,
+  layout: TerminalLogLayout | undefined,
+  maxBytes: number = terminalRunLogMaxBytes()
+): Promise<TerminalLogLayout | undefined> {
+  const handle = await fs.open(logFile, "r+").catch(() => null);
+  if (!handle) {
+    return layout;
+  }
+  try {
+    let size = (await handle.stat()).size;
+    if (size <= maxBytes) {
+      return layout;
+    }
+    const headBytes = layout?.headBytes ?? Math.floor(maxBytes / 2);
+    const tailStart = headBytes + (layout?.markerBytes ?? 0);
+    const tailKeep = Math.max(0, maxBytes - headBytes - 80);
+    let cut = Math.max(tailStart, size - tailKeep);
+    let tail = Buffer.alloc(size - cut);
+    await handle.read(tail, 0, tail.length, cut);
+    const newline = tail.indexOf(0x0a);
+    if (newline >= 0 && newline < 1024 && newline < tail.length - 1) {
+      tail = tail.subarray(newline + 1);
+      cut += newline + 1;
+    }
+    const appendedSince = (await handle.stat()).size;
+    if (appendedSince > size) {
+      const extra = Buffer.alloc(appendedSince - size);
+      await handle.read(extra, 0, extra.length, size);
+      tail = Buffer.concat([tail, extra]);
+      size = appendedSince;
+    }
+    const droppedBytes = (layout?.droppedBytes ?? 0) + (cut - tailStart);
+    const marker = Buffer.from(truncationMarker(droppedBytes), "utf8");
+    const body = Buffer.concat([marker, tail]);
+    await handle.write(body, 0, body.length, headBytes);
+    await handle.truncate(headBytes + body.length);
+    return { headBytes, markerBytes: marker.length, droppedBytes };
+  } finally {
+    await handle.close();
+  }
+}
 
 const RUN_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -203,7 +298,8 @@ export type TerminalLogSlice = {
 export async function readTerminalLogSlice(
   logFile: string,
   since: number,
-  cap: number
+  cap: number,
+  layout?: TerminalLogLayout
 ): Promise<TerminalLogSlice> {
   const handle = await fs.open(logFile, "r").catch(() => null);
   if (!handle) {
@@ -211,15 +307,17 @@ export async function readTerminalLogSlice(
   }
   try {
     const size = (await handle.stat()).size;
-    const start = Math.max(0, Math.min(size, Math.floor(since)));
+    const start = Math.max(0, Math.min(size, terminalLogFileOffset(Math.floor(since), layout)));
     const length = size - start;
+    const startOffset = terminalLogOutputOffset(start, layout);
+    const endOffset = terminalLogOutputOffset(size, layout);
     const read = async (position: number, bytes: number): Promise<string> => {
       const buffer = Buffer.alloc(bytes);
       const { bytesRead } = await handle.read(buffer, 0, bytes, position);
       return buffer.subarray(0, bytesRead).toString("utf8");
     };
     if (length <= cap) {
-      return { text: await read(start, length), start, end: size, omittedBytes: 0 };
+      return { text: await read(start, length), start: startOffset, end: endOffset, omittedBytes: 0 };
     }
     const headBytes = Math.ceil(cap / 2);
     const tailBytes = cap - headBytes;
@@ -228,8 +326,8 @@ export async function readTerminalLogSlice(
     const tail = await read(size - tailBytes, tailBytes);
     return {
       text: `${head}${truncationMarker(omittedBytes)}${tail}`,
-      start,
-      end: size,
+      start: startOffset,
+      end: endOffset,
       omittedBytes,
     };
   } finally {
@@ -240,13 +338,22 @@ export async function readTerminalLogSlice(
 /** Incremental reader over a growing log: each `drain()` returns bytes appended since the last one. */
 export class TerminalLogFollower {
   private offset = 0;
+  private layout: TerminalLogLayout | undefined;
   private draining: Promise<string> | null = null;
-  private readonly decoder = new StringDecoder("utf8");
+  private decoder = new StringDecoder("utf8");
 
   constructor(private readonly logFile: string) {}
 
+  /** Output offset read so far (what `terminal_read` takes as `since`). */
   get bytesRead(): number {
-    return this.offset;
+    return terminalLogOutputOffset(this.offset, this.layout);
+  }
+
+  /** Follows the log across a compaction; unread output that was dropped comes back as the marker. */
+  relayout(layout: TerminalLogLayout | undefined): void {
+    this.offset = terminalLogFileOffset(terminalLogOutputOffset(this.offset, this.layout), layout);
+    this.layout = layout;
+    this.decoder = new StringDecoder("utf8");
   }
 
   drain(): Promise<string> {

@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
+import { onShutdown } from "../runtime/shutdown-hooks.js";
 import * as schema from "./schema.js";
 
 type DrizzleClient = ReturnType<typeof drizzle<typeof schema>>;
@@ -112,12 +113,9 @@ function registerShutdown(): void {
       await localPool.end({ timeout: 5 }).catch(() => undefined);
     }
   };
-  process.once("SIGINT", () => {
-    void shutdown();
-  });
-  process.once("SIGTERM", () => {
-    void shutdown();
-  });
+  // Graceful shutdown still writes interrupted-turn records through this pool
+  // after the signal, so the pool closes from its hooks, not on the signal.
+  onShutdown(shutdown);
   process.once("beforeExit", () => {
     void shutdown();
   });

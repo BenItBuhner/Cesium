@@ -1,5 +1,6 @@
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
 import { flushServerPerfReport } from "../lib/perf.js";
+import { runShutdownHooks } from "./shutdown-hooks.js";
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
 /** Extra time past the drain bound for marking turns and stopping the listener. */
@@ -14,12 +15,14 @@ export type GracefulShutdownOptions = {
     interrupted: string[];
     drained: boolean;
   }>;
+  /** Cleanup that must wait for the interrupted-turn records (defaults to the registered shutdown hooks). */
+  runCleanup?: () => Promise<void>;
 };
 
 /**
  * SIGTERM/SIGINT handling for a server entry point: refuse new agent turns,
  * interrupt the running ones and record that on their conversations, stop
- * the listener, then exit. A second signal exits at once. Other modules only
+ * the listener, run the registered shutdown hooks, then exit. A second signal exits at once. Other modules only
  * add cleanup listeners, and a signal listener disables Node's default exit,
  * so this handler must always end the process itself.
  *
@@ -30,6 +33,7 @@ export function installGracefulShutdown(options: GracefulShutdownOptions): () =>
   const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const shutdownAgents =
     options.shutdownAgents ?? ((input) => agentRuntimeManager.shutdown(input));
+  const runCleanup = options.runCleanup ?? runShutdownHooks;
   const signals = options.signals ?? ["SIGTERM", "SIGINT"];
   let started = false;
 
@@ -71,6 +75,7 @@ export function installGracefulShutdown(options: GracefulShutdownOptions): () =>
           error instanceof Error ? error.message : error
         );
       }
+      await runCleanup();
       clearTimeout(hardExit);
       exit(0);
     })();
