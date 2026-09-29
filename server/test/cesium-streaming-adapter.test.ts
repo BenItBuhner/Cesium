@@ -254,3 +254,135 @@ test("Cesium batch adapter compatibility accumulates streamed deltas", async () 
   assert.equal(result.text, "fast path");
   assert.deepEqual(result.toolRequests, []);
 });
+
+test("Cesium chat adapter asks for stream usage and reports it with cached tokens", async () => {
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return sseResponse([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":900,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":800},"completion_tokens_details":{"reasoning_tokens":10}}}\n\n',
+      "data: [DONE]\n\n",
+    ]);
+  };
+
+  const result = await runAdapter({
+    apiKind: "openai-compatible",
+    apiKey: "test-key",
+    baseUrl: "https://usage.invalid/v1",
+    providerId: "usagehost",
+    modelId: "usagehost/test-model",
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assert.deepEqual(requestBody?.stream_options, { include_usage: true });
+  assert.deepEqual(result.usage, {
+    inputTokens: 900,
+    outputTokens: 30,
+    cachedInputTokens: 800,
+    reasoningTokens: 10,
+  });
+});
+
+test("Cesium chat adapter retries without stream_options when a host rejects it, and remembers", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    bodies.push(body);
+    if (body.stream_options) {
+      return new Response('{"error":"Unrecognized request argument supplied: stream_options"}', { status: 400 });
+    }
+    return sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', "data: [DONE]\n\n"]);
+  };
+  const input = {
+    apiKind: "openai-compatible" as const,
+    apiKey: "test-key",
+    baseUrl: "https://strict.invalid/v1",
+    providerId: "stricthost",
+    modelId: "stricthost/test-model",
+    messages: [{ role: "user" as const, content: "hi" }],
+  };
+
+  assert.equal((await runAdapter(input)).text, "ok");
+  assert.equal((await runAdapter(input)).text, "ok");
+  assert.deepEqual(
+    bodies.map((body) => Boolean(body.stream_options)),
+    [true, false, false]
+  );
+});
+
+test("Cesium Responses adapter reports usage from response.completed", async () => {
+  globalThis.fetch = async () =>
+    sseResponse([
+      'data: {"type":"response.output_text.delta","delta":"ok"}\n\n',
+      'data: {"type":"response.completed","response":{"usage":{"input_tokens":500,"output_tokens":40,"input_tokens_details":{"cached_tokens":450},"output_tokens_details":{"reasoning_tokens":25}}}}\n\n',
+    ]);
+
+  const result = await runAdapter({
+    apiKind: "openai-responses",
+    apiKey: "test-key",
+    baseUrl: "https://example.invalid/v1",
+    providerId: "example",
+    modelId: "example/test-model",
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assert.deepEqual(result.usage, {
+    inputTokens: 500,
+    outputTokens: 40,
+    cachedInputTokens: 450,
+    reasoningTokens: 25,
+  });
+});
+
+test("Cesium Anthropic adapter counts cache reads and writes as input", async () => {
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 20, output_tokens: 7, cache_read_input_tokens: 4000, cache_creation_input_tokens: 300 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+
+  const result = await runAdapter({
+    apiKind: "anthropic",
+    apiKey: "test-key",
+    providerId: "anthropic",
+    modelId: "anthropic/claude-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assert.deepEqual(result.usage, {
+    inputTokens: 4320,
+    outputTokens: 7,
+    cachedInputTokens: 4000,
+    cacheWriteTokens: 300,
+  });
+});
+
+test("Cesium Google adapter reads usageMetadata with thinking tokens as output", async () => {
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "ok" }] } }],
+        usageMetadata: { promptTokenCount: 1200, candidatesTokenCount: 50, thoughtsTokenCount: 30, cachedContentTokenCount: 1000 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+
+  const result = await runAdapter({
+    apiKind: "google-genai",
+    apiKey: "test-key",
+    providerId: "google",
+    modelId: "google/gemini-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assert.deepEqual(result.usage, {
+    inputTokens: 1200,
+    outputTokens: 80,
+    cachedInputTokens: 1000,
+    reasoningTokens: 30,
+  });
+});
