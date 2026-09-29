@@ -1928,6 +1928,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     let finalRaw: unknown;
     let heldText = "";
     let usage: CesiumAdapterResult["usage"];
+    let stopReason: CesiumAdapterResult["stopReason"];
     for await (const event of streamAdapter(input)) {
       if (this.cancelled) {
         throw new CesiumTurnCancelledError();
@@ -1963,8 +1964,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "usage":
           usage = event.usage;
           break;
-        case "raw":
         case "done":
+          stopReason = event.stopReason ?? stopReason;
+          break;
+        case "raw":
           break;
       }
     }
@@ -1973,6 +1976,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       reasoning: reasoningParts.join("") || undefined,
       toolRequests,
       ...(usage ? { usage } : {}),
+      ...(stopReason ? { stopReason } : {}),
       raw: rawEvents.length > 1 ? rawEvents : finalRaw,
     };
   }

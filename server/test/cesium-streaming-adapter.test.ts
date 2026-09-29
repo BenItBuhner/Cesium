@@ -386,3 +386,111 @@ test("Cesium Google adapter reads usageMetadata with thinking tokens as output",
     reasoningTokens: 30,
   });
 });
+
+test("Cesium chat adapter reports finish_reason length and flags tool arguments cut off mid-JSON", async () => {
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return sseResponse([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_w","function":{"name":"write_file","arguments":"{\\"path\\":\\"a.txt\\",\\"content\\":\\"line 1\\\\nline"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+      "data: [DONE]\n\n",
+    ]);
+  };
+
+  const result = await runAdapter({
+    apiKind: "openai-compatible",
+    apiKey: "test-key",
+    baseUrl: "https://example.invalid/v1",
+    providerId: "example",
+    modelId: "example/test-model",
+    messages: [{ role: "user", content: "Write a big file" }],
+    maxOutputTokens: 16_384,
+  });
+
+  assert.equal(requestBody?.max_tokens, 16_384);
+  assert.equal(result.stopReason, "length");
+  assert.equal(result.toolRequests.length, 1);
+  assert.deepEqual(result.toolRequests[0]?.arguments, {});
+  assert.equal(result.toolRequests[0]?.unparsedArgumentChars, 39);
+});
+
+test("Cesium chat adapter does not flag a tool call with no arguments", async () => {
+  globalThis.fetch = async () =>
+    sseResponse([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_g","function":{"name":"goal_get","arguments":""}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      "data: [DONE]\n\n",
+    ]);
+
+  const result = await runAdapter({
+    apiKind: "openai-compatible",
+    apiKey: "test-key",
+    baseUrl: "https://example.invalid/v1",
+    providerId: "example",
+    modelId: "example/test-model",
+    messages: [{ role: "user", content: "Get the goal" }],
+  });
+
+  assert.equal(result.stopReason, "tool_calls");
+  assert.equal(result.toolRequests[0]?.unparsedArgumentChars, undefined);
+});
+
+test("Cesium Responses adapter reports max_output_tokens truncation and takes calls only from finished items", async () => {
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return sseResponse([
+      'data: {"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_r","name":"grep","arguments":""}}\n\n',
+      'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_r","name":"grep","arguments":"{\\"pattern\\":\\"x\\"}"}}\n\n',
+      'data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+    ]);
+  };
+
+  const result = await runAdapter({
+    apiKind: "openai-responses",
+    apiKey: "test-key",
+    baseUrl: "https://example.invalid/v1",
+    providerId: "example",
+    modelId: "example/test-model",
+    messages: [{ role: "user", content: "Search" }],
+    maxOutputTokens: 12_000,
+  });
+
+  assert.equal(requestBody?.max_output_tokens, 12_000);
+  assert.equal(result.stopReason, "length");
+  assert.deepEqual(
+    result.toolRequests.map((request) => [request.id, request.arguments]),
+    [["call_r", { pattern: "x" }]]
+  );
+});
+
+test("Cesium Anthropic and Google adapters report their max-token stop reasons", async () => {
+  globalThis.fetch = async (url) =>
+    new Response(
+      JSON.stringify(
+        String(url).includes("anthropic")
+          ? { content: [{ type: "text", text: "partial" }], stop_reason: "max_tokens" }
+          : { candidates: [{ content: { parts: [{ text: "partial" }] }, finishReason: "MAX_TOKENS" }] }
+      ),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+
+  const anthropic = await runAdapter({
+    apiKind: "anthropic",
+    apiKey: "test-key",
+    providerId: "anthropic",
+    modelId: "anthropic/claude-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+  const google = await runAdapter({
+    apiKind: "google-genai",
+    apiKey: "test-key",
+    providerId: "google",
+    modelId: "google/gemini-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assert.equal(anthropic.stopReason, "length");
+  assert.equal(google.stopReason, "length");
+});
