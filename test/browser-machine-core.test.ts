@@ -18,7 +18,11 @@ import {
 } from "../packages/browser-machine/src/harness/reminder.ts";
 import { ShellRuntime } from "../packages/browser-machine/src/shell/runtime.ts";
 import { BrowserGit } from "../packages/browser-machine/src/git/browser-git.ts";
-import { BrowserToolExecutor } from "../packages/browser-machine/src/harness/tools.ts";
+import {
+  BROWSER_TOOL_DEFINITIONS,
+  BrowserToolExecutor,
+} from "../packages/browser-machine/src/harness/tools.ts";
+import { CESIUM_SHARED_TOOL_DEFINITIONS } from "@cesium/core";
 import type { AgentStoredEvent, WorkspaceRecord } from "@cesium/core";
 
 describe("browser machine paths", () => {
@@ -174,6 +178,30 @@ describe("browser machine grep tool", () => {
       (await grep({ pattern: "needle", ignoreCase: true })).result,
       "a.txt:1:Needle upper\na.txt:2:needle lower"
     );
+  });
+});
+
+describe("browser machine tool definitions", () => {
+  test("reuse the shared schemas and only advertise tools the harness runs", async () => {
+    for (const name of ["read_file", "write_file", "edit_file", "todo"] as const) {
+      assert.equal(
+        BROWSER_TOOL_DEFINITIONS.find((tool) => tool.name === name),
+        CESIUM_SHARED_TOOL_DEFINITIONS[name]
+      );
+    }
+    const names = BROWSER_TOOL_DEFINITIONS.map((tool) => tool.name);
+    assert.deepEqual(names, Object.keys(CESIUM_SHARED_TOOL_DEFINITIONS));
+
+    const vfs = new Vfs();
+    vfs.mkdir("/workspaces/demo", { recursive: true });
+    const git = new BrowserGit(vfs);
+    const tools = new BrowserToolExecutor(vfs, git, new ShellRuntime(vfs, git), async () => 0);
+    const workspace = { id: "demo", root: "/workspaces/demo", name: "demo", createdAt: 1 } as WorkspaceRecord;
+    // ask_question is answered by the harness itself, never the executor.
+    for (const name of names.filter((toolName) => toolName !== "ask_question")) {
+      const { result } = await tools.execute({ conversationId: "c1", workspace, name, args: {} });
+      assert.doesNotMatch(result, /is not available on the browser machine/, name);
+    }
   });
 });
 

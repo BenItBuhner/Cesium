@@ -29,8 +29,10 @@ export {
 } from "@cesium/core/cesium-context-pruning";
 export const LARGE_FILE_LINE_LIMIT = 3500;
 export const MAX_READ_LINES = 2000;
-export const MAX_GREP_RESULTS = 5000;
-export const DEFAULT_GREP_RESULTS = 100;
+export {
+  CESIUM_GREP_DEFAULT_RESULTS as DEFAULT_GREP_RESULTS,
+  CESIUM_GREP_MAX_RESULTS as MAX_GREP_RESULTS,
+} from "@cesium/core/cesium-tools";
 export const TERMINAL_OUTPUT_CAP = 80_000;
 export const ORCHESTRATION_WAIT_HEARTBEAT_MS = 15_000;
 export const ORCHESTRATION_WAIT_DEFAULT_MS = 30_000;
