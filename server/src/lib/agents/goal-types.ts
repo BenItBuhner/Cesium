@@ -1,3 +1,5 @@
+import type { AgentGoalSummary } from "./types.js";
+
 export type GoalStatus =
   | "planning"
   | "active"
@@ -224,4 +226,33 @@ export function goalRemainingSummary(goal: GoalRecord): string {
       ? `Token budget: ${goal.tokensUsed.toLocaleString("en-US")} of ${goal.tokenBudget.toLocaleString("en-US")} used`
       : null,
   ].filter(Boolean).join("\n");
+}
+
+/** The chat's view of a Goal: its record, with progress falling back to completed todos. */
+export function goalSummaryForChat(goal: GoalRecord): AgentGoalSummary {
+  const todosCompleted = goal.todos.filter((todo) => todo.status === "completed").length;
+  const todosTotal = goal.todos.length;
+  const progress =
+    goal.status === "complete"
+      ? 100
+      : goal.progressPercent ?? (todosTotal > 0 ? (todosCompleted / todosTotal) * 100 : 0);
+  return {
+    objective: goal.objective,
+    status: goal.status,
+    progressPercent: Math.max(0, Math.min(100, Math.round(progress))),
+    headline: goal.headline,
+    todosCompleted,
+    todosTotal,
+    tokenBudget: goal.tokenBudget,
+    tokensUsed: goal.tokensUsed,
+    snapshots: goal.snapshots.map((snapshot) => ({
+      id: snapshot.id,
+      createdAt: snapshot.createdAt,
+      progressPercent: snapshot.progressPercent,
+      summary: snapshot.summary,
+      headline: snapshot.headline ?? null,
+    })),
+    updatedAt: goal.updatedAt,
+    completedAt: goal.completedAt,
+  };
 }

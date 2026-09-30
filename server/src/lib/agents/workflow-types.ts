@@ -87,6 +87,9 @@ export type WorkflowRunRecord = {
 
 export type WorkflowAgentSpawnRequest = {
   prompt: string;
+  /** The run and the agent's id within it, for the chat card that tracks the call. */
+  runId?: string;
+  agentId?: string;
   label?: string;
   phase?: string | null;
   schema?: Record<string, unknown>;

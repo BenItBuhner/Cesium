@@ -17,6 +17,7 @@ export type {
   AgentContextUsageCategoryId,
   AgentContextUsageSegment,
   AgentContextUsageSnapshot,
+  AgentGoalSummary,
   AgentImportResult,
   AgentImportSessionSummary,
   AgentImportSourceInfo,

@@ -257,3 +257,88 @@ test("latestGoalProgressStatus tracks goal runtime only during running spans", (
   assert.equal(status?.runtimeSeconds, 240);
   assert.equal(status?.runtimeActiveSince, 420_000);
 });
+
+test("goalProgressFromRecord builds the pill from the Goal record, not from tool arguments", async () => {
+  const { goalProgressFromRecord, goalRecordRefreshKey } = await import("../src/lib/agent-chat");
+  const events: AgentStoredEvent[] = [
+    {
+      seq: 1,
+      eventId: "e1",
+      conversationId: "c1",
+      createdAt: 100,
+      kind: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+      raw: { request: { name: "goal_set", arguments: { objective: "Ship it" } } },
+    },
+  ];
+  const noSnapshots = goalProgressFromRecord(
+    {
+      objective: "Ship it",
+      status: "active",
+      progressPercent: 50,
+      headline: null,
+      todosCompleted: 1,
+      todosTotal: 2,
+      tokenBudget: null,
+      tokensUsed: 0,
+      snapshots: [],
+      updatedAt: 200,
+      completedAt: null,
+    },
+    events,
+    "idle"
+  );
+  assert.equal(noSnapshots.progressPercent, 50);
+  assert.equal(noSnapshots.headline, "Ship it", "the objective stands in for a missing headline");
+  assert.equal(noSnapshots.history.length, 1);
+
+  const withSnapshots = goalProgressFromRecord(
+    {
+      objective: "Ship it",
+      status: "complete",
+      progressPercent: 100,
+      headline: "Shipped",
+      todosCompleted: 2,
+      todosTotal: 2,
+      tokenBudget: 10_000,
+      tokensUsed: 4_000,
+      snapshots: [
+        { id: "s1", createdAt: 150, progressPercent: 40, summary: "## Progress\n- Half.", headline: "Halfway" },
+        { id: "s2", createdAt: 190, progressPercent: 90, summary: "", headline: null },
+      ],
+      updatedAt: 210,
+      completedAt: 205,
+    },
+    events,
+    "idle"
+  );
+  assert.equal(withSnapshots.headline, "Shipped");
+  assert.deepEqual(
+    withSnapshots.history.map((item) => [item.toolCallId, item.progressPercent, item.summary]),
+    [
+      ["s1", 40, "## Progress\n- Half."],
+      ["s2", 90, null],
+    ]
+  );
+  assert.equal(withSnapshots.completedAt, 205);
+
+  const before = goalRecordRefreshKey(events, "running");
+  const after = goalRecordRefreshKey(
+    [
+      ...events,
+      {
+        seq: 2,
+        eventId: "e2",
+        conversationId: "c1",
+        createdAt: 300,
+        kind: "system",
+        level: "info",
+        text: "The Goal's token budget is spent.",
+      } as AgentStoredEvent,
+    ],
+    "running"
+  );
+  assert.notEqual(before, after, "a runtime notice refreshes the record");
+  assert.notEqual(before, goalRecordRefreshKey(events, "idle"), "a status change refreshes it too");
+});

@@ -27,9 +27,12 @@ import {
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useConversationGoal } from "@/hooks/useConversationGoal";
 import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import {
   extractComposerUserMessageHistory,
+  goalProgressFromRecord,
+  goalRecordRefreshKey,
   latestGoalProgressStatus,
   projectAgentEventsToChatMessages,
 } from "@/lib/agent-chat";
@@ -178,9 +181,21 @@ loadOlderConversationHistory,
     () => computeContextUsageRefreshGeneration(deferredThreadEvents),
     [deferredThreadEvents]
   );
-  const goalProgress = useMemo(
-    () => latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+  const goalRecordKey = useMemo(
+    () => goalRecordRefreshKey(deferredThreadEvents, conversation?.status),
     [conversation?.status, deferredThreadEvents]
+  );
+  const goalRecord = useConversationGoal({
+    conversationId: conversation?.id,
+    refreshKey: goalRecordKey,
+    enabled: conversation?.config.backendId === "cesium-agent",
+  });
+  const goalProgress = useMemo(
+    () =>
+      goalRecord
+        ? goalProgressFromRecord(goalRecord, deferredThreadEvents, conversation?.status)
+        : latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+    [conversation?.status, deferredThreadEvents, goalRecord]
   );
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(deferredThreadEvents),

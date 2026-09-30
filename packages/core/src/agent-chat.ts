@@ -1,4 +1,5 @@
 import type {
+  AgentGoalSummary,
   AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
@@ -243,6 +244,59 @@ export function latestGoalProgressStatus(
   return runtime
     ? { ...latest, history, ...completion, ...runtime }
     : { ...latest, history, ...completion };
+}
+
+/**
+ * The Goal pill's state from the Goal record: its progress and headline, with
+ * the recorded state summaries as history and runtime from the event log.
+ */
+export function goalProgressFromRecord(
+  goal: AgentGoalSummary,
+  events: readonly AgentStoredEvent[],
+  conversationStatus?: AgentConversationStatus | null
+): GoalProgressStatus {
+  const history: GoalProgressSnapshotStatus[] = goal.snapshots.map((snapshot) => ({
+    progressPercent: Math.max(0, Math.min(100, Math.round(snapshot.progressPercent))),
+    headline: snapshot.headline,
+    summary: snapshot.summary.trim() || null,
+    updatedAt: snapshot.createdAt,
+    toolCallId: snapshot.id,
+  }));
+  const latestSnapshot = history.at(-1);
+  const latest: GoalProgressSnapshotStatus = {
+    progressPercent: goal.progressPercent,
+    headline: goal.headline?.trim() || goal.objective.trim() || null,
+    summary: latestSnapshot?.summary ?? null,
+    updatedAt: goal.updatedAt,
+    toolCallId: latestSnapshot?.toolCallId ?? `goal-${goal.updatedAt}`,
+  };
+  const runtime = goalRuntimeStatus(events, conversationStatus);
+  return {
+    ...latest,
+    history: history.length > 0 ? history : [latest],
+    ...(goal.completedAt != null ? { completedAt: goal.completedAt } : {}),
+    ...(runtime ?? {}),
+  };
+}
+
+/**
+ * Changes whenever the Goal record may have changed: a goal tool finished, the
+ * runtime left a notice (budget, continuation), or the run changed state.
+ */
+export function goalRecordRefreshKey(
+  events: readonly AgentStoredEvent[],
+  conversationStatus?: AgentConversationStatus | null
+): string {
+  let goalTools = 0;
+  let notices = 0;
+  for (const event of events) {
+    if (event.kind === "tool_call_update" && event.status === "completed" && goalToolNameFromEvent(event)) {
+      goalTools += 1;
+    } else if (event.kind === "system") {
+      notices += 1;
+    }
+  }
+  return `${goalTools}:${notices}:${conversationStatus ?? ""}`;
 }
 
 /** Apply a streamed `status` event to a conversation record (null = no change). */

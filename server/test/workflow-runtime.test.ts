@@ -97,13 +97,17 @@ test("executeWorkflowRun fans out agent calls and returns synthesized value", as
     run = await upsertWorkflowRun(run);
 
     const prompts: string[] = [];
+    const cardIds: string[] = [];
     const completed = await executeWorkflowRun({
       run,
       spawnAgent: async (request) => {
         prompts.push(request.prompt);
+        cardIds.push(`${request.runId}/${request.agentId}`);
         return { value: `ok:${request.prompt}`, tokensUsed: 12 };
       },
     });
+    assert.equal(new Set(cardIds).size, 4, "each agent() call gets its own card id");
+    assert.ok(cardIds.every((id) => id.startsWith(`${run.runId}/`) && !id.endsWith("/undefined")));
 
     assert.equal(completed.status, "completed");
     assert.equal(completed.agentsUsed, 4);

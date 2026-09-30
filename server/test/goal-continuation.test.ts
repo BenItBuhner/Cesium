@@ -345,3 +345,24 @@ test("todos and Goal items keep their ids when a list is reordered or rewritten"
   assert.equal(normalizeWorkItemStatus("whatever"), "pending");
   assert.equal(normalizeWorkItemStatus(undefined), undefined);
 });
+
+test("the chat's Goal summary falls back to completed todos and pins a complete Goal at 100%", async () => {
+  const { createGoalRecord } = await import("../src/lib/agents/goal-store.js");
+  const { goalSummaryForChat } = await import("../src/lib/agents/goal-types.js");
+  const base = createGoalRecord({
+    workspace: { id: "ws", root: "/tmp/ws", name: "ws", createdAt: 1, updatedAt: 1, lastOpenedAt: 1 },
+    conversationId: "c1",
+    objective: "Ship it",
+  });
+  const todos = [
+    { id: "todo-1", content: "a", status: "completed" as const, updatedAt: 1 },
+    { id: "todo-2", content: "b", status: "pending" as const, updatedAt: 1 },
+    { id: "todo-3", content: "c", status: "completed" as const, updatedAt: 1 },
+  ];
+  const fromTodos = goalSummaryForChat({ ...base, todos, progressPercent: null });
+  assert.equal(fromTodos.progressPercent, 67);
+  assert.equal(fromTodos.todosCompleted, 2);
+  assert.equal(fromTodos.todosTotal, 3);
+  assert.equal(goalSummaryForChat({ ...base, todos, progressPercent: 30 }).progressPercent, 30);
+  assert.equal(goalSummaryForChat({ ...base, todos, status: "complete", progressPercent: 80 }).progressPercent, 100);
+});
