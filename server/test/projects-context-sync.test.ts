@@ -62,6 +62,7 @@ const [
   { startAgentPromptQueueDrainListener },
   { startProjectWatcher, settleProjectWatcher, pollProjectPeerChildren },
   { syncProjectContextWithPeer },
+  { startLiveContextSync, stopLiveContextSync },
   { executeProjectOrchestratorTool },
   { readProject },
 ] = await Promise.all([
@@ -70,6 +71,7 @@ const [
   import("../src/lib/agents/prompt-queue-drain.js"),
   import("../src/lib/projects/project-watcher.js"),
   import("../src/lib/projects/context-sync.js"),
+  import("../src/lib/projects/context-live.js"),
   import("../src/lib/projects/orchestrator-tools.js"),
   import("../src/lib/projects/project-store.js"),
 ]);
@@ -218,7 +220,11 @@ test("an agent on a peer works in a synced copy of the Project context, and what
   assert.equal(await fs.readFile(mirrorFile("notes.md"), "utf8"), homeNotes, "and the coordinator's version replaces the edit");
 });
 
-test("the home leads: its notes win, both-sides edits keep a conflict copy, and home deletions reach the peer", async () => {
+test("the home leads: its notes win, both-sides edits keep a conflict copy, and home deletions reach the peer", async (t) => {
+  // One sync has to see every edit below at once; live sync would take them one by one.
+  stopLiveContextSync();
+  t.after(() => void startLiveContextSync());
+  await syncProjectContextWithPeer(project.id, peerEngineId, { fresh: true });
   await fs.writeFile(homeContext("docs/plan.md"), "# Plan v2 (home)\n");
   await fs.writeFile(mirrorFile("docs/plan.md"), "# Plan v2 (build-box)\n");
   await fs.writeFile(mirrorFile("notes.md"), "Another edit on build-box.\n");

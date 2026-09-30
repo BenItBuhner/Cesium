@@ -504,3 +504,62 @@ test("a context folder's manifest hashes its files, and mirror paths stay inside
   await deleteContextFileIn(root, "notes.md");
   assert.deepEqual((await contextManifest(root)).map((file) => file.path), ["media/agent/shot.png"]);
 });
+
+test("the engine's half-written temp files and hidden entries are never reported or synced", async () => {
+  const { isContextNoisePath } = await import("../src/lib/projects/context-watch.js");
+  const { contextManifest, writeContextBytesIn } = await import("../src/lib/projects/context-sync.js");
+  const { getPeerMirrorContextDir } = await import("../src/lib/projects/paths.js");
+  for (const quiet of ["notes.md.4242.1727600000000.tmp", "docs/plan.md.1.1727600000000.sync", ".cesium/state.json", "docs/.draft.md"]) {
+    assert.equal(isContextNoisePath(quiet), true, quiet);
+  }
+  for (const kept of ["notes.md", "media/shot.final.png", "backup.2024.10.tmp", "docs/v1.2.3.md"]) {
+    assert.equal(isContextNoisePath(kept), false, kept);
+  }
+  const root = getPeerMirrorContextDir("ptk_0000noise", "prj_0123456789ab");
+  await writeContextBytesIn(root, "docs/plan.md", Buffer.from("# Plan\n"), null);
+  await fs.writeFile(path.join(root, "docs", "plan.md.4242.1727600000000.tmp"), "half");
+  assert.deepEqual((await contextManifest(root)).map((file) => file.path), ["docs/plan.md"]);
+});
+
+test("a peer's change feed wakes a waiting home on a change, but not for the home's own writes or a dropped copy", async () => {
+  const { closeMirrorFeed, dropMirrorFeedProject, expectOwnMirrorWrite, waitForMirrorChanges } = await import(
+    "../src/lib/projects/context-feed.js"
+  );
+  const { writeContextBytesIn } = await import("../src/lib/projects/context-sync.js");
+  const { getPeerMirrorContextDir } = await import("../src/lib/projects/paths.js");
+  const tokenId = "ptk_0000feed";
+  const projectId = "prj_00000000feed";
+  const root = getPeerMirrorContextDir(tokenId, projectId);
+
+  const first = await waitForMirrorChanges(tokenId, { feed: null, cursor: 0, waitMs: 0 });
+  assert.equal(first?.reset, true, "a caller without the feed's id syncs everything first");
+  const startedAt = Date.now();
+  const woken = waitForMirrorChanges(tokenId, { feed: first!.feed, cursor: first!.cursor, waitMs: 10_000 });
+  await fs.mkdir(path.join(root, "media", "agent"), { recursive: true });
+  await fs.writeFile(path.join(root, "media", "agent", "shot.png"), "png");
+  const changed = await woken;
+  assert.deepEqual(changed && [changed.reset, changed.projects], [false, [projectId]]);
+  assert.ok(Date.now() - startedAt < 3_000, "answered at once, not at the end of its wait");
+  assert.deepEqual(
+    await waitForMirrorChanges(tokenId, { feed: first!.feed, cursor: first!.cursor, waitMs: 0 }),
+    changed,
+    "a caller behind the change still gets it"
+  );
+
+  const mtimeMs = Date.UTC(2026, 0, 2);
+  expectOwnMirrorWrite(tokenId, path.join(root, "docs", "plan.md"), { size: 7, mtimeMs });
+  const quiet = waitForMirrorChanges(tokenId, { feed: changed!.feed, cursor: changed!.cursor, waitMs: 800 });
+  await writeContextBytesIn(root, "docs/plan.md", Buffer.from("# Plan\n"), mtimeMs);
+  assert.deepEqual((await quiet)?.projects, [], "the home's own write is not reported back");
+
+  dropMirrorFeedProject(tokenId, projectId);
+  const dropped = waitForMirrorChanges(tokenId, { feed: changed!.feed, cursor: changed!.cursor, waitMs: 800 });
+  await fs.writeFile(path.join(root, "docs", "late.md"), "late");
+  assert.deepEqual((await dropped)?.projects, [], "a copy the home dropped stays quiet");
+
+  const restarted = await waitForMirrorChanges(tokenId, { feed: "0123456789abcdef", cursor: changed!.cursor, waitMs: 0 });
+  assert.equal(restarted?.reset, true, "another feed's cursor (a restarted peer) means sync everything");
+  const waiting = waitForMirrorChanges(tokenId, { feed: changed!.feed, cursor: changed!.cursor, waitMs: 10_000 });
+  await closeMirrorFeed(tokenId);
+  assert.equal(await waiting, null, "a revoked token's waiting request ends at once");
+});

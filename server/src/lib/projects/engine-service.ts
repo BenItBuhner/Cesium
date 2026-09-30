@@ -4,6 +4,7 @@ import {
   type ProjectPeerTokenSummary,
 } from "@cesium/core/projects";
 import { promises as fs } from "node:fs";
+import { closeMirrorFeed } from "./context-feed.js";
 import { forgetContextHashes } from "./context-sync.js";
 import { listEngineSummaries, registerPeerEngine, removePeerEngine } from "./engine-registry.js";
 import { ProjectError } from "./errors.js";
@@ -71,6 +72,7 @@ export async function revokeProjectPeerToken(tokenId: string): Promise<void> {
   }
   // No home can reach the Project context copies kept for this token any more.
   try {
+    await closeMirrorFeed(tokenId);
     const mirrors = getPeerMirrorsDir(tokenId);
     await fs.rm(mirrors, { recursive: true, force: true });
     forgetContextHashes(mirrors);
