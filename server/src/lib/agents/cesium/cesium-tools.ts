@@ -337,53 +337,49 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_run",
     description:
-      "Compile and execute a JavaScript orchestration workflow. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal). After that declaration, write top-level workflow statements and `return` the final value directly; NEVER export a default function or import modules. The body may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+      "Run a JavaScript orchestration workflow for real fan-out, repeated item processing, or staged verification, using agent()/parallel()/pipeline()/phase()/log()/budget/args. The script MUST begin with `export const meta = { name, description, phases }` (a pure literal), then top-level statements ending in a direct `return`; never export a default function or import modules. With wait (default) the tool returns the script's value; agent results stay in script variables.",
     parameters: {
       type: "object",
       properties: {
         script: {
           type: "string",
-          description:
-            "Self-contained workflow script beginning with export const meta = { name, description, phases }, followed by top-level statements and a direct return (no export default function or imports).",
+          description: "The workflow script, in the shape described above.",
         },
         scriptPath: {
           type: "string",
-          description:
-            "Path to a previously persisted workflow script. Takes precedence over script when provided.",
+          description: "Path of a saved workflow script; takes precedence over script.",
         },
         name: {
           type: "string",
-          description: "Optional display name override (meta.name still required in the script).",
+          description: "Display name override.",
         },
         args: {
-          description:
-            "Optional input exposed to the script as the global args. Pass real JSON values, not stringified JSON.",
+          description: "Input exposed to the script as args (real JSON values, not a JSON string).",
         },
         tokenBudget: {
           type: "integer",
           minimum: 0,
-          description: "Optional hard token ceiling for this run. budget.remaining() is Infinity when omitted.",
+          description: "Token ceiling for the run (default none).",
         },
         maxAgents: {
           type: "integer",
           minimum: 1,
           maximum: 200,
-          description: "Optional agent() call cap for this run (default 50).",
+          description: "agent() call cap (default 50).",
         },
         maxConcurrent: {
           type: "integer",
           minimum: 1,
           maximum: 16,
-          description: "Optional concurrent agent() cap (default 8, also bounded by CPU count).",
+          description: "Concurrent agent() cap (default 8).",
         },
         resumeFromRunId: {
           type: "string",
-          description:
-            "Prior run id whose completed agent() calls are reused when prompt+opts are unchanged.",
+          description: "Earlier run whose finished agent() calls are reused when unchanged.",
         },
         wait: {
           type: "boolean",
-          description: "When true (default), wait for the workflow to finish and return the result.",
+          description: "Wait for the result (default true).",
         },
       },
       additionalProperties: false,
@@ -462,23 +458,21 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "conversation_title",
     description:
-      "Read or rename this conversation's display title. action=read returns the current name; action=rename sets title. Optional follow=true keeps a tiny reminder to refresh the name when the topic changes (only if the user asked to keep it updated); follow=false turns that off. Use only when the user wants the title changed — do not rename unprompted.",
+      "Read or rename this conversation's title. Rename only when the user asks; follow=true keeps the title updated as the topic changes, if the user asked for that.",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
           enum: ["read", "rename"],
-          description: "read inspects the current title; rename writes a new one.",
         },
         title: {
           type: "string",
-          description: "New display name (required for rename). Keep it short.",
+          description: "New short title (required for rename).",
         },
         follow: {
           type: "boolean",
-          description:
-            "When true, keep updating the title as work evolves if the user asked for that. When false, only rename when asked again.",
+          description: "Keep the title updated as work evolves (true) or stop (false).",
         },
       },
       additionalProperties: false,
@@ -528,36 +522,35 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "memory",
     description:
-      "Curated persistent memory across conversations. save durable user preferences, facts, constraints, and decisions; search or list before re-asking the user; forget stale or wrong entries. Scope user is cross-workspace, workspace is project-local. Saving the same fact again (same key, or same or nearly the same text) updates the existing entry; when a scope is full the least recently updated entries are evicted and listed in the result. Keep entries short and never save secrets.",
+      "Persistent memory across conversations: save durable preferences, facts, constraints and decisions; search or list before re-asking the user; forget stale entries. Saving the same fact again updates it, and a full scope evicts its oldest entries and says which. Keep entries short; never save secrets.",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["save", "search", "list", "forget"] },
         content: {
           type: "string",
-          description: "Memory text to save (required for save). Keep it one short factual sentence.",
+          description: "One short sentence (required for save).",
         },
         category: {
           type: "string",
           enum: ["preference", "fact", "constraint", "decision"],
-          description: "Kind of entry when saving. Defaults to fact.",
+          description: "Default fact.",
         },
         scope: {
           type: "string",
           enum: ["user", "workspace"],
-          description: "Where the entry lives. Defaults to workspace for save; both scopes for search/list.",
+          description: "user is cross-workspace, workspace is project-local. Save defaults to workspace; search and list cover both.",
         },
         id: {
           type: "string",
-          description: "Entry id: update an existing entry on save, or the entry to forget.",
+          description: "Entry to update on save, or to forget.",
         },
         key: {
           type: "string",
-          description:
-            "Optional stable slug for a fact that changes over time (e.g. \"package-manager\"). Saving with a key already in the scope updates that entry.",
+          description: "Stable slug for a fact that changes over time, e.g. \"package-manager\".",
         },
         query: { type: "string", description: "Search terms (required for search)." },
-        limit: { type: "number", description: "Max results for search/list (default 10, max 50)." },
+        limit: { type: "number", description: "Max results (default 10, max 50)." },
       },
       required: ["action"],
       additionalProperties: false,
@@ -566,23 +559,23 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "skill",
     description:
-      "Author and manage Agent Skills (agentskills.io SKILL.md standard). create documents a reusable procedure under .agents/skills/<id>/SKILL.md; update/delete manage agent-authored skills; list catalogs every discovered skill; read returns a skill's full SKILL.md. Authored skills appear in the agent-skills/ mirror immediately. Write a skill when you finish a non-obvious multi-step procedure worth repeating.",
+      "Manage Agent Skills (SKILL.md files). create saves a reusable procedure under .agents/skills/<id>/SKILL.md, worth doing after a non-obvious multi-step procedure you would repeat; update and delete manage agent-written skills; list and read show every discovered skill.",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["create", "update", "list", "read", "delete"] },
         id: {
           type: "string",
-          description: "Skill id/slug (required for update, read, delete; optional for create - defaults to a slug of name).",
+          description: "Skill slug (required except for create and list).",
         },
         name: { type: "string", description: "Human skill name (required for create)." },
         description: {
           type: "string",
-          description: "One-to-two sentence trigger description: when should this skill be used? (required for create, max 500 chars).",
+          description: "When to use the skill, in one or two sentences (required for create).",
         },
         instructions: {
           type: "string",
-          description: "Markdown body of the skill: steps, commands, caveats (required for create, max 24000 chars).",
+          description: "Markdown steps, commands and caveats (required for create).",
         },
       },
       required: ["action"],
@@ -592,7 +585,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "schedule",
     description:
-      "Manage scheduled triggers that wake the agent proactively: each fire creates a fresh conversation with the stored prompt under a chosen mode. create needs name, prompt, and exactly one of cron (5-field expression), everyMinutes, or atMs; list/pause/resume/delete/run manage existing triggers (run fires one immediately). The scheduler ticks every 30 seconds while the Cesium server runs.",
+      "Manage scheduled triggers; each fire starts a new conversation with the stored prompt. create needs name, prompt and exactly one of cron, everyMinutes or atMs; run fires a trigger now.",
     parameters: {
       type: "object",
       properties: {
@@ -604,11 +597,11 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         name: { type: "string", description: "Short trigger name (required for create, max 80 chars)." },
         prompt: {
           type: "string",
-          description: "User-message text injected when the trigger fires (required for create, max 4000 chars).",
+          description: "Message sent when the trigger fires (required for create).",
         },
         cron: {
           type: "string",
-          description: '5-field cron expression in server-local time, e.g. "0 9 * * mon-fri".',
+          description: '5-field cron in server-local time, e.g. "0 9 * * mon-fri".',
         },
         everyMinutes: {
           type: "number",
@@ -616,13 +609,13 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         },
         atMs: {
           type: "number",
-          description: "One-shot schedule: epoch milliseconds of the single fire time.",
+          description: "One-shot fire time in epoch milliseconds.",
         },
         mode: {
           type: "string",
-          description: "Conversation mode for spawned conversations (default agent).",
+          description: "Mode for the spawned conversation.",
         },
-        maxRuns: { type: "number", description: "Optional run cap; the trigger disables itself after this many fires." },
+        maxRuns: { type: "number", description: "Disable after this many fires." },
       },
       required: ["action"],
       additionalProperties: false,
