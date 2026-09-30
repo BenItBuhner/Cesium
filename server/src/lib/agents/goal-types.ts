@@ -220,5 +220,8 @@ export function goalRemainingSummary(goal: GoalRecord): string {
     `Milestones remaining: ${runnableMilestones.length}`,
     `Todos remaining: ${runnableTodos.length}`,
     blockedTodos.length ? `Blocked todos: ${blockedTodos.length}` : null,
+    goal.tokenBudget != null
+      ? `Token budget: ${goal.tokensUsed.toLocaleString("en-US")} of ${goal.tokenBudget.toLocaleString("en-US")} used`
+      : null,
   ].filter(Boolean).join("\n");
 }

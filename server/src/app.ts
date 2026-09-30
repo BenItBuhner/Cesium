@@ -40,6 +40,7 @@ import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
+import { startGoalContinuationListener } from "./lib/agents/goal-continuation-listener.js";
 import {
   reconcileStaleAgentRunsOnBoot,
   startStaleAgentRunWatchdog,
@@ -260,6 +261,7 @@ export function startCesiumBackgroundServices(): void {
     });
   }
   startAgentPromptQueueDrainListener();
+  startGoalContinuationListener();
   startProjectWatcher();
   if (process.env.NODE_ENV !== "test") {
     startProjectListening();

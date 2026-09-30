@@ -221,11 +221,54 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
       properties: {
         objective: { type: "string" },
         planSummary: { type: "string" },
-        milestones: { type: "array" },
-        todos: { type: "array" },
-        verificationEvidence: { type: "array" },
+        milestones: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "blocked", "completed"] },
+              evidence: { type: "string" },
+            },
+            required: ["title"],
+          },
+        },
+        todos: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              content: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "blocked", "completed"] },
+              milestoneId: { type: "string" },
+              evidence: { type: "string" },
+            },
+            required: ["content"],
+          },
+        },
+        verificationEvidence: {
+          type: "array",
+          description: "Each requirement of the objective with how it was checked; goal_complete needs at least one passed.",
+          items: {
+            type: "object",
+            properties: {
+              requirement: { type: "string" },
+              status: { type: "string", enum: ["passed", "failed", "unverified"] },
+              evidence: { type: "string", description: "The command output, file or test result that shows it." },
+            },
+            required: ["requirement", "status"],
+          },
+        },
         progressPercent: { type: "integer", minimum: 0, maximum: 100 },
         headline: { type: "string" },
+        tokenBudget: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Optional token ceiling for the whole Goal (input plus output, as the provider reports it). The Goal stops as budget_limited when it is used up; 0 removes the ceiling.",
+        },
       },
       additionalProperties: false,
     },
@@ -239,6 +282,16 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
       properties: {
         reason: { type: "string" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "goal_resume",
+    description:
+      "Resume a paused Goal so work on it continues. Use when the user asks to resume, or when the reason for the pause no longer applies.",
+    parameters: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },

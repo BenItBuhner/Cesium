@@ -121,7 +121,8 @@ export async function todoTool(
     const snapshot = await ctx.readSnapshot();
     entries = applyTodoPatch(latestTodoEntries(snapshot?.events ?? []) ?? [], parsedItems);
   } else {
-    entries = todoEntriesFromReplace(parsedItems);
+    const snapshot = await ctx.readSnapshot();
+    entries = todoEntriesFromReplace(parsedItems, latestTodoEntries(snapshot?.events ?? []) ?? []);
   }
   await ctx.appendEvents([
     {

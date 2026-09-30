@@ -1,5 +1,6 @@
 import type { AgentPlanEntry, AgentStoredEvent } from "../types.js";
 import { asRecord, asString } from "./cesium-coerce.js";
+import { assignWorkItemIds, normalizeWorkItemStatus } from "../work-items.js";
 
 export const CESIUM_TODO_PLAN_ID = "cesium-todos";
 
@@ -21,25 +22,7 @@ export type ParsedTodoItem = {
 };
 
 export function normalizeTodoStatus(raw: string | undefined): TodoStatus | undefined {
-  if (raw === undefined) {
-    return undefined;
-  }
-  const normalized = raw.toLowerCase();
-  if (normalized === "completed" || normalized === "done") {
-    return "completed";
-  }
-  if (normalized === "blocked" || normalized === "stuck") {
-    return "blocked";
-  }
-  if (
-    normalized === "in_progress" ||
-    normalized === "in-progress" ||
-    normalized === "in progress" ||
-    normalized === "running"
-  ) {
-    return "in_progress";
-  }
-  return "pending";
+  return normalizeWorkItemStatus(raw);
 }
 
 export function parseTodoItems(items: unknown[]): ParsedTodoItem[] {
@@ -72,18 +55,25 @@ export function parseTodoItems(items: unknown[]): ParsedTodoItem[] {
  * `replace` semantics: the incoming items become the whole list. Items with
  * no content have nothing to display and are skipped, as before.
  */
-export function todoEntriesFromReplace(items: ParsedTodoItem[]): AgentPlanEntry[] {
-  return items.flatMap((item): AgentPlanEntry[] =>
-    item.content
-      ? [
-          {
-            id: item.id ?? item.title ?? `todo-${item.sourceIndex + 1}`,
-            content: item.content,
-            status: item.status ?? "pending",
-          },
-        ]
-      : []
+export function todoEntriesFromReplace(
+  items: ParsedTodoItem[],
+  existing: AgentPlanEntry[] = []
+): AgentPlanEntry[] {
+  const kept = items.filter((item): item is ParsedTodoItem & { content: string } => Boolean(item.content));
+  const ids = assignWorkItemIds(
+    kept.map((item) => ({
+      id: item.id ?? (item.title && existing.some((entry) => entry.id === item.title) ? item.title : undefined),
+      text: item.content,
+    })),
+    existing.map((entry) => ({ id: entry.id, text: entry.content })),
+    "todo",
+    (index) => kept[index]!.title ?? `todo-${kept[index]!.sourceIndex + 1}`
   );
+  return kept.map((item, index) => ({
+    id: ids[index]!,
+    content: item.content,
+    status: item.status ?? "pending",
+  }));
 }
 
 function contentKey(value: string): string {
