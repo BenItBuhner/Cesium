@@ -4,6 +4,7 @@ import type {
   AgentConversationSnapshot,
   AgentEventInput,
   AgentRuntimeCallbacks,
+  AgentStoredEvent,
 } from "../../types.js";
 
 /** What a tool module may use of the session running it. */
@@ -15,6 +16,8 @@ export type CesiumToolContext = {
   updateConversation: AgentRuntimeCallbacks["updateConversation"];
   appendEvents(events: AgentEventInput[]): Promise<unknown>;
   readSnapshot(): Promise<AgentConversationSnapshot | null>;
+  /** Every stored event of the conversation (the snapshot is a bounded head). */
+  readEvents(): Promise<AgentStoredEvent[]>;
   /** Roots outside the workspace that absolute paths may also point into (read and write). */
   extraRoots: string[];
   /** A root `read_file` may read but no tool may write: this conversation's spilled tool outputs. */
