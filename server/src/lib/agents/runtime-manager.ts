@@ -7,6 +7,7 @@ import {
   deleteConversationEvents,
   deleteConversationFromStore,
   readConversationEvents,
+  readConversationEventsIncremental,
   readConversationEventsBeforeMessage,
   readConversationEventsUpToMessage,
   readConversationRecord,
@@ -49,11 +50,18 @@ import {
 } from "./cesium-context-usage.js";
 import { propagateCloudExecutionLifecycle } from "./cloud-execution-lifecycle.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
-import { goalContinuationContext } from "./goal-steering.js";
 import {
   readGoalForConversation,
+  updateGoal,
   updateGoalPlan,
 } from "./goal-store.js";
+import {
+  advanceGoalContinuationState,
+  decideGoalContinuation,
+  freshGoalContinuationState,
+  latestUserMessageId,
+  type GoalContinuationState,
+} from "./goal-continuation.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -453,6 +461,7 @@ export class AgentRuntimeManager {
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
   private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
+  private readonly goalContinuations = new Map<string, GoalContinuationState>();
 
   constructor(options: AgentRuntimeManagerOptions = {}) {
     this.backends = options.backends ?? AGENT_BACKENDS;
@@ -460,29 +469,56 @@ export class AgentRuntimeManager {
     this.listBackendsFn = options.listBackends ?? listAgentBackendsWithCache;
   }
 
-  private async buildGoalRuntimePrompt(input: {
-    workspace: WorkspaceRecord;
-    record: AgentConversationRecord;
-    userText: string;
-    continuation?: boolean;
-  }): Promise<string> {
-    if (input.record.config.backendId !== "cesium-agent" || input.continuation !== true) {
-      return input.userText;
-    }
-    const goal = await readGoalForConversation({
-      workspace: input.workspace,
-      conversationId: input.record.id,
+  /**
+   * Keeps an active Goal going after a turn that ended with Goal work left:
+   * starts one continuation turn (persisted as its own user message, so the
+   * next request extends the last) unless the Goal's budget is spent, it has
+   * continued too often without the user, or it stopped making progress.
+   * Returns whether a turn started.
+   */
+  async continueGoalIfRunnable(workspace: WorkspaceRecord, conversationId: string): Promise<boolean> {
+    return this.withConversationQueue(this.promptGateQueues, conversationId, async () => {
+      if (this.shuttingDown) {
+        return false;
+      }
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (!record || record.config.backendId !== "cesium-agent" || record.status !== "idle") {
+        return false;
+      }
+      const events = await readConversationEventsIncremental(workspace.id, conversationId);
+      const userMessageId = latestUserMessageId(events);
+      const state = this.goalContinuations.get(conversationId) ?? freshGoalContinuationState();
+      if (!userMessageId || state.handledUserMessageId === userMessageId) {
+        return false;
+      }
+      const goal = await readGoalForConversation({ workspace, conversationId }).catch(() => null);
+      const decision = decideGoalContinuation({ record, goal, events, state });
+      this.goalContinuations.set(conversationId, advanceGoalContinuationState(state, userMessageId, decision));
+      if (decision.kind === "stop") {
+        if (decision.budgetLimited && goal && goal.status !== "budget_limited") {
+          await updateGoal({ workspace, conversationId, patch: { status: "budget_limited" } }).catch(
+            () => undefined
+          );
+        }
+        if (decision.notice) {
+          await appendConversationEvents(workspace.id, conversationId, [
+            {
+              eventId: randomUUID(),
+              conversationId,
+              kind: "system",
+              level: "info",
+              text: decision.notice,
+            },
+          ]);
+        }
+        return false;
+      }
+      await this.promptConversationLocked(workspace, conversationId, decision.text, undefined, {
+        displayContent: decision.displayContent,
+        goalContinuation: true,
+      });
+      return true;
     });
-    if (!goal) {
-      return input.userText;
-    }
-    return [
-      goalContinuationContext(goal),
-      "",
-      "<current_user_message>",
-      input.userText,
-      "</current_user_message>",
-    ].join("\n");
   }
 
   private async processGoalSignals(input: {
@@ -1600,9 +1636,14 @@ export class AgentRuntimeManager {
       hidden?: boolean;
       displayContent?: string;
       coalesceKey?: string;
+      /** A Goal continuation the runtime started itself; any other prompt resets the count. */
+      goalContinuation?: boolean;
     },
     outcomeSink?: { value?: "queued" | "started" }
   ): Promise<AgentConversationSnapshotHead> {
+    if (!options?.goalContinuation) {
+      this.goalContinuations.delete(conversationId);
+    }
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
       throw new Error("Prompt text or attachments are required.");
@@ -1898,12 +1939,7 @@ export class AgentRuntimeManager {
           attachmentsReminderText && updatedRecord.config.backendId !== "cesium-agent"
             ? `${runtimePromptText}\n\n${attachmentsReminderText}`
             : runtimePromptText;
-        const providerPromptText = await this.buildGoalRuntimePrompt({
-          workspace,
-          record: updatedRecord,
-          userText: promptTextWithAttachmentNotice,
-          continuation: options?.hidden === true,
-        });
+        const providerPromptText = promptTextWithAttachmentNotice;
         // Handoff/fork seed prompts already embed the transcript; wrapping them
         // again in recovery context would duplicate the same conversation twice.
         const alreadySeeded = pendingHandoffContext != null || pendingForkContext != null;
@@ -2035,13 +2071,8 @@ export class AgentRuntimeManager {
         if (this.shuttingDown) {
           return;
         }
-        const retryText = await this.buildGoalRuntimePrompt({
-          workspace,
-          record: updatedRecord,
-          userText: lastUser.content,
-        });
         await runtime.handle.prompt({
-          text: retryText,
+          text: lastUser.content,
           userMessageId: lastUser.messageId,
           attachments: lastUser.attachments,
           isRetry: true,

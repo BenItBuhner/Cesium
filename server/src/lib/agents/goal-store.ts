@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getStorage } from "../../storage/runtime.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
+import { assignWorkItemIds, normalizeWorkItemStatus } from "./work-items.js";
 import {
   GOAL_SNAPSHOT_LIMIT,
   goalLatestSnapshotFreshness,
@@ -29,58 +30,72 @@ function nowMs(): number {
 }
 
 function asStatus(value: unknown): GoalItemStatus {
-  const normalized = String(value ?? "pending").trim().toLowerCase();
-  if (normalized === "done" || normalized === "completed") return "completed";
-  if (normalized === "in-progress" || normalized === "in_progress") return "in_progress";
-  if (normalized === "blocked") return "blocked";
-  return "pending";
+  return normalizeWorkItemStatus(value) ?? "pending";
 }
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function recordText(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = stringValue(record[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
 function normalizeMilestones(values: unknown[], previous: GoalMilestone[]): GoalMilestone[] {
-  const byId = new Map(previous.map((item) => [item.id, item]));
-  return values.flatMap((value, index) => {
+  const records = values.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const record = value as Record<string, unknown>;
-    const title = stringValue(record.title) ?? stringValue(record.content) ?? stringValue(record.text);
-    if (!title) return [];
-    const id = stringValue(record.id) ?? `milestone-${index + 1}`;
+    const title = recordText(record, ["title", "content", "text"]);
+    return title ? [{ record, title }] : [];
+  });
+  const ids = assignWorkItemIds(
+    records.map(({ record, title }) => ({ id: stringValue(record.id) ?? undefined, text: title })),
+    previous.map((item) => ({ id: item.id, text: item.title })),
+    "milestone"
+  );
+  const byId = new Map(previous.map((item) => [item.id, item]));
+  return records.map(({ record, title }, index) => {
+    const id = ids[index]!;
     const existing = byId.get(id);
-    return [{
+    return {
       id,
       title,
       description: stringValue(record.description) ?? existing?.description,
       status: asStatus(record.status ?? existing?.status),
       evidence: stringValue(record.evidence) ?? existing?.evidence,
       updatedAt: nowMs(),
-    }];
+    };
   });
 }
 
 function normalizeTodos(values: unknown[], previous: GoalTodo[]): GoalTodo[] {
-  const byId = new Map(previous.map((item) => [item.id, item]));
-  return values.flatMap((value, index) => {
+  const records = values.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const record = value as Record<string, unknown>;
-    const content =
-      stringValue(record.content) ??
-      stringValue(record.title) ??
-      stringValue(record.text) ??
-      stringValue(record.description);
-    if (!content) return [];
-    const id = stringValue(record.id) ?? `todo-${index + 1}`;
+    const content = recordText(record, ["content", "title", "text", "description"]);
+    return content ? [{ record, content }] : [];
+  });
+  const ids = assignWorkItemIds(
+    records.map(({ record, content }) => ({ id: stringValue(record.id) ?? undefined, text: content })),
+    previous.map((item) => ({ id: item.id, text: item.content })),
+    "todo"
+  );
+  const byId = new Map(previous.map((item) => [item.id, item]));
+  return records.map(({ record, content }, index) => {
+    const id = ids[index]!;
     const existing = byId.get(id);
-    return [{
+    return {
       id,
       content,
       status: asStatus(record.status ?? existing?.status),
       milestoneId: stringValue(record.milestoneId) ?? stringValue(record.milestone_id) ?? existing?.milestoneId,
       evidence: stringValue(record.evidence) ?? existing?.evidence,
       updatedAt: nowMs(),
-    }];
+    };
   });
 }
 

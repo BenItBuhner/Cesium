@@ -1096,7 +1096,7 @@ test("Cesium base prompt and tool schema are stable", () => {
   assert.equal(names.includes("goal_update_plan"), false);
   assert.equal(names.includes("goal_update_progress"), false);
   assert.equal(names.includes("goal_summarize_state"), false);
-  assert.equal(names.includes("goal_resume"), false);
+  assert.equal(names.includes("goal_resume"), true, "a paused Goal has an advertised way back");
 });
 
 test("Goal, Workflow, Plan and Orchestration guidance lives in the stable system prompt", () => {
