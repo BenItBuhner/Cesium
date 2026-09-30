@@ -162,13 +162,44 @@ export function normalizeCesiumToolResultForModel(input: {
   };
 }
 
-/** What a pruned tool result becomes: enough to know it existed and how to get it back. */
-export function prunedToolResultStub(toolName: string, resultChars: number, spillPath?: string): string {
+/**
+ * What a pruned tool result becomes: enough to know it existed and how to get
+ * it back, plus the boundary's summary of what it showed when one was written.
+ */
+export function prunedToolResultStub(
+  toolName: string,
+  resultChars: number,
+  spillPath?: string,
+  summary?: string
+): string {
   return (
     `[${toolName} output (${resultChars} chars) pruned to free context.` +
+    (summary ? ` What it showed: ${summary}` : "") +
     (spillPath ? ` It is saved at ${spillPath}.` : " Run the tool again if you still need it.") +
     "]"
   );
+}
+
+/** Summaries the window's pruning boundaries wrote for the results they stubbed. */
+export function prunedToolSummaries(window: {
+  summary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null;
+  events: AgentStoredEvent[];
+}): Map<string, string> {
+  const summaries = new Map<string, string>();
+  const add = (event: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null) => {
+    for (const [id, text] of Object.entries(event?.prunedSummaries ?? {})) {
+      if (typeof text === "string" && text.trim()) {
+        summaries.set(id, text);
+      }
+    }
+  };
+  add(window.summary);
+  for (const event of window.events) {
+    if (event.kind === "compression_summary") {
+      add(event);
+    }
+  }
+  return summaries;
 }
 
 /** Tool calls whose results a compaction boundary pruned, for the window the model sees. */
@@ -240,6 +271,7 @@ type HistoryBuildState = {
   /** Native reasoning of that response, stored on its first call. */
   pendingNativeReasoning?: CesiumNativeReasoning;
   pruned: ReadonlySet<string>;
+  prunedSummaries: ReadonlyMap<string, string>;
 };
 
 function flushPendingToolCalls(state: HistoryBuildState): void {
@@ -256,7 +288,12 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   for (const call of pending) {
     let content = MISSING_TOOL_RESULT_MESSAGE;
     if (call.result?.trim() && state.pruned.has(call.storedId)) {
-      content = prunedToolResultStub(call.name, call.result.length, call.spillPath);
+      content = prunedToolResultStub(
+        call.name,
+        call.result.length,
+        call.spillPath,
+        state.prunedSummaries.get(call.storedId)
+      );
     } else if (call.result?.trim()) {
       content = normalizeCesiumToolResultForModel({
         toolName: call.name,
@@ -445,7 +482,9 @@ export function normalizeEventsToHistory(
   events: AgentStoredEvent[],
   systemPrompt: string = CESIUM_SYSTEM_PROMPT,
   /** Results a boundary pruned; defaults to the boundaries among `events`. */
-  pruned: ReadonlySet<string> = prunedToolCallIds({ summary: null, events })
+  pruned: ReadonlySet<string> = prunedToolCallIds({ summary: null, events }),
+  /** What those boundaries wrote about the results they pruned. */
+  prunedSummaries: ReadonlyMap<string, string> = prunedToolSummaries({ summary: null, events })
 ): CesiumHistoryMessage[] {
   const messages: CesiumHistoryMessage[] = [{ role: "system", content: systemPrompt }];
   const state: HistoryBuildState = {
@@ -453,6 +492,7 @@ export function normalizeEventsToHistory(
     pending: [],
     pendingContent: "",
     pruned,
+    prunedSummaries,
   };
   const assistantTextById = new Map<string, string>();
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
