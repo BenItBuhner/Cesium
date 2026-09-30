@@ -9,6 +9,7 @@ import {
   listContextEntriesIn,
   resolveContextPathIn,
 } from "./context-store.js";
+import { isContextNoisePath } from "./context-watch.js";
 import { callPeerEngine, listEngineSummaries } from "./engine-registry.js";
 import { getProjectContextDir, getProjectDir } from "./paths.js";
 
@@ -19,6 +20,8 @@ import { getProjectContextDir, getProjectDir } from "./paths.js";
  * the source of truth: deletions only flow home → peer, notes.md and inbox/
  * are never pulled back, and when both sides changed a file the home keeps
  * its version and saves the peer's beside it as `name.conflict-<engine>.ext`.
+ * A sync runs when either side writes (context-live.ts), before an agent
+ * starts on a peer and after its turns, and periodically as a safety net.
  */
 
 /** Largest file one sync moves; bigger ones stay put and are reported. */
@@ -36,26 +39,41 @@ async function sha256Of(absolute: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function cachedSha256(absolute: string, stat: { size: number; mtimeMs: number }): Promise<string> {
+  const cached = hashCache.get(absolute);
+  const sha256 =
+    cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs ? cached.sha256 : await sha256Of(absolute);
+  hashCache.set(absolute, { size: stat.size, mtimeMs: stat.mtimeMs, sha256 });
+  return sha256;
+}
+
+/** A file's content hash now, or null when there is no file. */
+export async function currentSha256(absolute: string): Promise<string | null> {
+  const stat = await fs.stat(absolute).catch(() => null);
+  return stat?.isFile() ? cachedSha256(absolute, stat) : null;
+}
+
 /** Every file under a context folder, with content hashes (cached by size and mtime). */
 export async function contextManifest(root: string): Promise<ContextManifestEntry[]> {
   const { files } = await listContextEntriesIn(root);
   const entries: ContextManifestEntry[] = [];
   for (const file of files) {
+    if (isContextNoisePath(file.path)) {
+      continue;
+    }
     const absolute = path.join(root, file.path);
     const stat = await fs.stat(absolute).catch(() => null);
     if (!stat?.isFile()) {
       continue;
     }
-    const cached = hashCache.get(absolute);
-    const sha256 =
-      cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs
-        ? cached.sha256
-        : await sha256Of(absolute);
-    hashCache.set(absolute, { size: stat.size, mtimeMs: stat.mtimeMs, sha256 });
+    const sha256 = await cachedSha256(absolute, stat);
     entries.push({ path: file.path, size: stat.size, sha256, mtimeMs: Math.round(stat.mtimeMs) });
   }
   return entries;
 }
+
+/** `ifMatch` for a file the peer did not have when the sync listed it. */
+export const CONTEXT_FILE_ABSENT = "absent";
 
 /** Drops cached hashes for a context folder that is being removed. */
 export function forgetContextHashes(root: string): void {
@@ -226,6 +244,8 @@ async function writeSyncState(projectId: string, engineId: string, state: SyncSt
 }
 
 const running = new Map<string, Promise<ContextSyncResult>>();
+/** The one run queued behind a running one for callers that need a run started after their change. */
+const followUps = new Map<string, Promise<ContextSyncResult>>();
 /** Projects being deleted: no sync starts, and a running one stops after its current file. */
 const closed = new Set<string>();
 const CLOSE_WAIT_MS = 15_000;
@@ -249,17 +269,41 @@ export function takeUnreportedContextSync(projectId: string, engineId: string): 
   };
 }
 
+/** True once the Project's deletion has started: its context is no longer synced. */
+export function isProjectContextClosed(projectId: string): boolean {
+  return closed.has(projectId);
+}
+
 /**
  * Brings a peer's mirror of the Project context and the home's context in
  * step (see the module comment). One sync per Project and engine at a time;
- * a call while one runs waits for it and returns its result.
+ * a call while one runs waits for it and returns its result. With `fresh`,
+ * the caller knows of a change the running sync may have listed too early,
+ * so it gets the next run instead, shared with everyone who asked meanwhile.
  */
-export function syncProjectContextWithPeer(projectId: string, engineId: string): Promise<ContextSyncResult> {
+export function syncProjectContextWithPeer(
+  projectId: string,
+  engineId: string,
+  options?: { fresh?: boolean }
+): Promise<ContextSyncResult> {
   if (closed.has(projectId)) {
     return Promise.reject(new Error("The Project is being deleted."));
   }
   const key = `${projectId}:${engineId}`;
   const inFlight = running.get(key);
+  if (inFlight && options?.fresh) {
+    let followUp = followUps.get(key);
+    if (!followUp) {
+      followUp = inFlight
+        .catch(() => undefined)
+        .then(() => {
+          followUps.delete(key);
+          return syncProjectContextWithPeer(projectId, engineId);
+        });
+      followUps.set(key, followUp);
+    }
+    return followUp;
+  }
   if (inFlight) {
     return inFlight;
   }
@@ -297,15 +341,27 @@ async function runContextSync(projectId: string, engineId: string): Promise<Cont
       return result;
     }
     try {
+      // Writes are conditional on what was listed: a file an agent or the
+      // coordinator changed since is left for the next sync, which sees both
+      // edits and keeps the home's version with the peer's beside it.
       if (action.kind === "push") {
         const entry = homeBy.get(action.path)!;
         const bytes = await fs.readFile(path.join(root, action.path));
-        await callPeerEngine(engineId, (client) => client.writeContextFile(projectId, action.path, bytes, entry.mtimeMs));
+        const ifMatch = peerBy.get(action.path)?.sha256 ?? CONTEXT_FILE_ABSENT;
+        await callPeerEngine(engineId, (client) =>
+          client.writeContextFile(projectId, action.path, bytes, entry.mtimeMs, ifMatch)
+        );
         agreed[action.path] = entry.sha256;
         result.pushed.push(action.path);
       } else if (action.kind === "pull") {
         const entry = peerBy.get(action.path)!;
         const bytes = await callPeerEngine(engineId, (client) => client.readContextFile(projectId, action.path));
+        if (
+          action.to === action.path &&
+          (await currentSha256(path.join(root, action.path))) !== (homeBy.get(action.path)?.sha256 ?? null)
+        ) {
+          throw new ProjectContextError(`${action.path} changed here during the sync.`);
+        }
         await assertTotalFits(projectId, action.to, bytes.byteLength);
         await writeContextBytesIn(root, action.to, bytes, entry.mtimeMs);
         if (action.to === action.path) {
@@ -315,7 +371,8 @@ async function runContextSync(projectId: string, engineId: string): Promise<Cont
           result.conflicts.push({ path: action.path, savedAs: action.to });
         }
       } else if (action.kind === "delete_peer") {
-        await callPeerEngine(engineId, (client) => client.deleteContextFile(projectId, action.path));
+        const ifMatch = peerBy.get(action.path)?.sha256 ?? CONTEXT_FILE_ABSENT;
+        await callPeerEngine(engineId, (client) => client.deleteContextFile(projectId, action.path, ifMatch));
         result.deletedOnPeer.push(action.path);
       } else {
         result.skipped.push({ path: action.path, reason: action.reason });
@@ -357,6 +414,7 @@ async function runContextSync(projectId: string, engineId: string): Promise<Cont
  */
 export async function dropProjectContextMirrors(projectId: string, engineIds: readonly string[]): Promise<void> {
   closed.add(projectId);
+  (await import("./context-live.js")).forgetLiveContextProject(projectId);
   const inFlight = [...running].filter(([key]) => key.startsWith(`${projectId}:`)).map(([, run]) => run.catch(() => undefined));
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
