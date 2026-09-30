@@ -22,6 +22,16 @@ export type CesiumImagePart = {
   name?: string;
 };
 
+/**
+ * Reasoning a response produced alongside its tool calls, in the provider's
+ * own item format (Responses `reasoning` items, Anthropic signed `thinking`
+ * blocks). Only an adapter of the same format sends it back.
+ */
+export type CesiumNativeReasoning = {
+  format: "openai-responses" | "anthropic";
+  items: Array<Record<string, unknown>>;
+};
+
 export type CesiumHistoryMessage = {
   role: CesiumRole;
   content: string;
@@ -30,7 +40,20 @@ export type CesiumHistoryMessage = {
   toolCallId?: string;
   name?: string;
   toolCalls?: CesiumHistoryToolCall[];
+  nativeReasoning?: CesiumNativeReasoning;
 };
+
+/** The native reasoning stored on a batch's first tool call, when it is well formed. */
+export function nativeReasoningFromRaw(raw: unknown): CesiumNativeReasoning | undefined {
+  const value = asRecord(asRecord(raw)?.nativeReasoning);
+  if (!value || (value.format !== "openai-responses" && value.format !== "anthropic")) {
+    return undefined;
+  }
+  const items = Array.isArray(value.items)
+    ? value.items.filter((item): item is Record<string, unknown> => asRecord(item) !== null)
+    : [];
+  return items.length > 0 ? { format: value.format, items } : undefined;
+}
 
 /** Characters of one tool result the model sees when no smaller budget was stored with it. */
 export const CESIUM_TOOL_RESULT_MODEL_MAX_CHARS = 12_000;
@@ -64,6 +87,9 @@ export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number 
     chars += message.content.length;
     if (message.toolCalls) {
       chars += JSON.stringify(message.toolCalls).length;
+    }
+    if (message.nativeReasoning) {
+      chars += JSON.stringify(message.nativeReasoning.items).length;
     }
     if (message.name) {
       chars += message.name.length;
@@ -136,13 +162,44 @@ export function normalizeCesiumToolResultForModel(input: {
   };
 }
 
-/** What a pruned tool result becomes: enough to know it existed and how to get it back. */
-export function prunedToolResultStub(toolName: string, resultChars: number, spillPath?: string): string {
+/**
+ * What a pruned tool result becomes: enough to know it existed and how to get
+ * it back, plus the boundary's summary of what it showed when one was written.
+ */
+export function prunedToolResultStub(
+  toolName: string,
+  resultChars: number,
+  spillPath?: string,
+  summary?: string
+): string {
   return (
     `[${toolName} output (${resultChars} chars) pruned to free context.` +
+    (summary ? ` What it showed: ${summary}` : "") +
     (spillPath ? ` It is saved at ${spillPath}.` : " Run the tool again if you still need it.") +
     "]"
   );
+}
+
+/** Summaries the window's pruning boundaries wrote for the results they stubbed. */
+export function prunedToolSummaries(window: {
+  summary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null;
+  events: AgentStoredEvent[];
+}): Map<string, string> {
+  const summaries = new Map<string, string>();
+  const add = (event: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null) => {
+    for (const [id, text] of Object.entries(event?.prunedSummaries ?? {})) {
+      if (typeof text === "string" && text.trim()) {
+        summaries.set(id, text);
+      }
+    }
+  };
+  add(window.summary);
+  for (const event of window.events) {
+    if (event.kind === "compression_summary") {
+      add(event);
+    }
+  }
+  return summaries;
 }
 
 /** Tool calls whose results a compaction boundary pruned, for the window the model sees. */
@@ -211,7 +268,10 @@ type HistoryBuildState = {
   pendingContent: string;
   /** The model response the pending calls came from, when the log recorded it. */
   pendingResponseId?: string;
+  /** Native reasoning of that response, stored on its first call. */
+  pendingNativeReasoning?: CesiumNativeReasoning;
   pruned: ReadonlySet<string>;
+  prunedSummaries: ReadonlyMap<string, string>;
 };
 
 function flushPendingToolCalls(state: HistoryBuildState): void {
@@ -223,11 +283,17 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
     role: "assistant",
     content: state.pendingContent,
     toolCalls: pending.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
+    ...(state.pendingNativeReasoning ? { nativeReasoning: state.pendingNativeReasoning } : {}),
   });
   for (const call of pending) {
     let content = MISSING_TOOL_RESULT_MESSAGE;
     if (call.result?.trim() && state.pruned.has(call.storedId)) {
-      content = prunedToolResultStub(call.name, call.result.length, call.spillPath);
+      content = prunedToolResultStub(
+        call.name,
+        call.result.length,
+        call.spillPath,
+        state.prunedSummaries.get(call.storedId)
+      );
     } else if (call.result?.trim()) {
       content = normalizeCesiumToolResultForModel({
         toolName: call.name,
@@ -246,6 +312,7 @@ function flushPendingToolCalls(state: HistoryBuildState): void {
   pending.length = 0;
   state.pendingContent = "";
   state.pendingResponseId = undefined;
+  state.pendingNativeReasoning = undefined;
 }
 
 /**
@@ -415,7 +482,9 @@ export function normalizeEventsToHistory(
   events: AgentStoredEvent[],
   systemPrompt: string = CESIUM_SYSTEM_PROMPT,
   /** Results a boundary pruned; defaults to the boundaries among `events`. */
-  pruned: ReadonlySet<string> = prunedToolCallIds({ summary: null, events })
+  pruned: ReadonlySet<string> = prunedToolCallIds({ summary: null, events }),
+  /** What those boundaries wrote about the results they pruned. */
+  prunedSummaries: ReadonlyMap<string, string> = prunedToolSummaries({ summary: null, events })
 ): CesiumHistoryMessage[] {
   const messages: CesiumHistoryMessage[] = [{ role: "system", content: systemPrompt }];
   const state: HistoryBuildState = {
@@ -423,6 +492,7 @@ export function normalizeEventsToHistory(
     pending: [],
     pendingContent: "",
     pruned,
+    prunedSummaries,
   };
   const assistantTextById = new Map<string, string>();
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
@@ -497,9 +567,9 @@ export function normalizeEventsToHistory(
         assistantTextById.delete(event.messageId);
         break;
       }
-      // Reasoning is not replayed: the live loop never sends it back within a
-      // turn, and re-sending stale chain-of-thought on later turns only costs
-      // tokens and rewrites the cached prefix.
+      // Reasoning text is not replayed as content. Provider-native reasoning
+      // that came with tool calls is stored on the batch's first call and
+      // travels with that assistant message, as it did in the live turn.
       case "reasoning":
         break;
       case "tool_call": {
@@ -514,6 +584,7 @@ export function normalizeEventsToHistory(
           const streamed = [...assistantTextById.values()].join("").trim();
           assistantTextById.clear();
           state.pendingContent = streamed;
+          state.pendingNativeReasoning = nativeReasoningFromRaw(event.raw);
         }
         state.pending.push(toolCallFromStoredEvent(event));
         break;

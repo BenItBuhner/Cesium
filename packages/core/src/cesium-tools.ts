@@ -155,13 +155,14 @@ export type CesiumSharedToolName =
 export const CESIUM_SHARED_TOOL_DEFINITIONS: Record<CesiumSharedToolName, CesiumToolDefinition> = {
   read_file: {
     name: "read_file",
-    description: "Read all or part of a workspace file. Use offset and limit for large files.",
+    description:
+      "Read a workspace text file. Each line comes back as its 1-based line number, a |, then the line; leave that prefix out when you copy text into edit_file. One call returns at most 2000 lines, and a longer file returns a partial view with a hint: page with offset and limit, or grep first when you only need the matching lines.",
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string" },
-        offset: { type: "number" },
-        limit: { type: "number" },
+        path: { type: "string", description: "File path relative to the workspace root." },
+        offset: { type: "number", description: "1-based line to start from (default 1)." },
+        limit: { type: "number", description: "Number of lines to return (default and max 2000)." },
       },
       required: ["path"],
       additionalProperties: false,
@@ -170,7 +171,7 @@ export const CESIUM_SHARED_TOOL_DEFINITIONS: Record<CesiumSharedToolName, Cesium
   grep: {
     name: "grep",
     description:
-      "Search file contents with ripgrep. Returns path:line headers followed by numbered lines, in path order. Skips .gitignore'd files, binary files, .git, node_modules, .next, and .docker. Case-sensitive unless ignoreCase is true. Read-only; use glob to find files by name.",
+      "Search file contents with ripgrep. Returns path:line headers followed by numbered lines, in path order. Skips .gitignore'd files, binary files, .git, node_modules, .next, and .docker. Case-sensitive unless ignoreCase is true. Use it to find where something is before reading, then read_file around the reported line numbers. Read-only; use glob to find files by name.",
     parameters: {
       type: "object",
       properties: {
@@ -202,13 +203,13 @@ export const CESIUM_SHARED_TOOL_DEFINITIONS: Record<CesiumSharedToolName, Cesium
   write_file: {
     name: "write_file",
     description:
-      "Create a new workspace file or overwrite an existing one with the full content. Parent directories are created automatically. Prefer edit_file for targeted changes inside existing files.",
+      "Create a new workspace file or overwrite an existing one with the full content. Parent directories are created automatically. Prefer edit_file for targeted changes inside existing files, and read a file before overwriting it.",
     requiresPermission: "editFile",
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string" },
-        content: { type: "string" },
+        path: { type: "string", description: "File path relative to the workspace root." },
+        content: { type: "string", description: "The complete file content." },
       },
       required: ["path", "content"],
       additionalProperties: false,
@@ -217,14 +218,14 @@ export const CESIUM_SHARED_TOOL_DEFINITIONS: Record<CesiumSharedToolName, Cesium
   edit_file: {
     name: "edit_file",
     description:
-      "Replace one exact string in an existing file (set replaceAll to true to replace every occurrence). Use write_file to create new files or fully rewrite one. Returns a precise, actionable error if the match is missing or ambiguous.",
+      "Replace one exact string in an existing file (set replaceAll to true to replace every occurrence). oldString must match the file character for character, indentation included, without read_file's line-number prefixes; include enough surrounding lines to make it unique. Make one call per change. Use write_file to create new files or fully rewrite one. Returns a precise, actionable error if the match is missing or ambiguous.",
     requiresPermission: "editFile",
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string" },
-        oldString: { type: "string" },
-        newString: { type: "string" },
+        path: { type: "string", description: "File path relative to the workspace root." },
+        oldString: { type: "string", description: "Exact text to replace, copied from the file." },
+        newString: { type: "string", description: "Replacement text." },
         replaceAll: {
           type: "boolean",
           description: "Replace every occurrence of oldString instead of requiring a unique match.",
@@ -237,7 +238,7 @@ export const CESIUM_SHARED_TOOL_DEFINITIONS: Record<CesiumSharedToolName, Cesium
   terminal: {
     name: "terminal",
     description:
-      "Run a shell command in the workspace root. waitUntil: complete (default) waits for exit, pattern returns once the output contains pattern, background returns immediately. Long output keeps its head and tail. A command still running when the call returns (background, pattern, or past timeoutMs) keeps running under the returned id: poll it with terminal_read and stop it with terminal_kill. Use background plus terminal_read for dev servers, watchers, and builds longer than two minutes.",
+      "Run a shell command in the workspace root; each call starts a fresh shell, so chain dependent steps with && instead of relying on an earlier cd. waitUntil: complete (default) waits for exit, pattern returns once the output contains pattern, background returns immediately. Long output keeps its head and tail. A command still running when the call returns (background, pattern, or past timeoutMs) keeps running under the returned id: poll it with terminal_read and stop it with terminal_kill. Use background plus terminal_read for dev servers, watchers, and builds longer than two minutes.",
     requiresPermission: "terminal",
     parameters: {
       type: "object",

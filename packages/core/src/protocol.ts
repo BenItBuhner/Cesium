@@ -478,6 +478,8 @@ export type AgentStoredEvent = AgentStoredEventCompactionMeta &
       generation?: number;
       /** Tool calls whose results this boundary pruned to stubs; the rest of the window is unchanged. */
       prunedToolCallIds?: string[];
+      /** Short model-written summaries of those results by tool call id, shown in their stubs. */
+      prunedSummaries?: Record<string, string>;
       raw?: unknown;
     }
 | {

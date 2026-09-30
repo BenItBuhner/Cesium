@@ -16,6 +16,7 @@ import {
   responseTools,
   type CesiumToolDefinition,
 } from "./cesium-tools.js";
+import { appendNativeReasoning } from "./cesium-types.js";
 import type {
   CesiumAdapterResult,
   CesiumAdapterStreamEvent,
@@ -682,6 +683,9 @@ function openAiResponsesInput(
       continue;
     }
     if (message.role === "assistant" && message.toolCalls?.length) {
+      if (message.nativeReasoning?.format === "openai-responses") {
+        items.push(...message.nativeReasoning.items);
+      }
       if (message.content.trim()) {
         items.push({ role: "assistant", content: message.content });
       }
@@ -713,6 +717,47 @@ function openAiResponsesInput(
     items.push({ role: message.role, content: message.content });
   }
   return items;
+}
+
+/**
+ * A Responses `reasoning` output item in the form it is sent back. Items with
+ * their reasoning inline (encrypted or plain) replay without their id, which
+ * a host that stores nothing would try to resolve. An id-only item replays
+ * by reference, so it is kept only where the host stored it.
+ */
+function responsesReasoningInputItem(
+  item: Record<string, unknown>,
+  hostStoresItems: boolean
+): Record<string, unknown> | null {
+  const summary = Array.isArray(item.summary) ? item.summary : [];
+  const content = Array.isArray(item.content) && item.content.length > 0 ? item.content : undefined;
+  const encrypted = asString(item.encrypted_content);
+  if (content || encrypted) {
+    return {
+      type: "reasoning",
+      summary,
+      ...(content ? { content } : {}),
+      ...(encrypted ? { encrypted_content: encrypted } : {}),
+    };
+  }
+  const id = asString(item.id);
+  return hostStoresItems && id ? { type: "reasoning", id, summary } : null;
+}
+
+function responsesReasoningText(item: Record<string, unknown>): string {
+  const parts = [
+    ...(Array.isArray(item.content) ? item.content : []),
+    ...(Array.isArray(item.summary) ? item.summary : []),
+  ];
+  return parts.map((part) => asString(asRecord(part)?.text) ?? "").join("");
+}
+
+function isFirstPartyOpenAiUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname === "api.openai.com";
+  } catch {
+    return false;
+  }
 }
 
 async function* streamOpenAiResponses(input: {
@@ -777,6 +822,7 @@ async function* streamOpenAiResponses(input: {
       stream: true,
     };
   }
+  const hostStoresItems = !isCodex && isFirstPartyOpenAiUrl(url);
   const response = await providerFetch(
     url,
     {
@@ -826,9 +872,26 @@ async function* streamOpenAiResponses(input: {
           if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
             yield { kind: "text_delta", text: event.delta, raw: event };
           }
+          if (
+            (event.type === "response.reasoning_text.delta" ||
+              event.type === "response.reasoning_summary_text.delta") &&
+            typeof event.delta === "string"
+          ) {
+            yield { kind: "reasoning_delta", text: event.delta, raw: event };
+          }
           // `output_item.added` announces the call with empty arguments; only the
           // finished item carries them.
           const item = asRecord(event.item);
+          if (event.type === "response.output_item.done" && item?.type === "reasoning") {
+            const replay = responsesReasoningInputItem(item, hostStoresItems);
+            if (replay) {
+              yield {
+                kind: "native_reasoning",
+                reasoning: { format: "openai-responses", items: [replay] },
+                raw: event,
+              };
+            }
+          }
           if (event.type === "response.output_item.done" && item?.type === "function_call") {
             const name = asString(item.name);
             if (name) {
@@ -854,9 +917,19 @@ async function* streamOpenAiResponses(input: {
   const output = Array.isArray(record?.output) ? record.output : [];
   const toolRequests: CesiumToolRequest[] = [];
   const textParts: string[] = [];
+  const reasoningParts: string[] = [];
+  const reasoningItems: Array<Record<string, unknown>> = [];
   for (const item of output) {
     const out = asRecord(item);
     if (!out) continue;
+    if (out.type === "reasoning") {
+      reasoningParts.push(responsesReasoningText(out));
+      const replay = responsesReasoningInputItem(out, hostStoresItems);
+      if (replay) {
+        reasoningItems.push(replay);
+      }
+      continue;
+    }
     if (out.type === "function_call") {
       const name = asString(out.name);
       if (name) {
@@ -877,9 +950,16 @@ async function* streamOpenAiResponses(input: {
   if (text) {
     yield { kind: "text_delta", text, raw: payload };
   }
-  const reasoning = asString(record?.reasoning);
+  const reasoning = asString(record?.reasoning) ?? (reasoningParts.join("") || undefined);
   if (reasoning) {
     yield { kind: "reasoning_delta", text: reasoning, raw: payload };
+  }
+  if (reasoningItems.length > 0) {
+    yield {
+      kind: "native_reasoning",
+      reasoning: { format: "openai-responses", items: reasoningItems },
+      raw: payload,
+    };
   }
   for (const request of toolRequests) {
     yield { kind: "tool_request", request, raw: payload };
@@ -1027,7 +1107,9 @@ function anthropicMessages(messages: CesiumHistoryMessage[]) {
         };
       }
       if (message.role === "assistant" && message.toolCalls?.length) {
-        const blocks: Array<Record<string, unknown>> = [];
+        // Thinking blocks have to open the assistant content they came with.
+        const blocks: Array<Record<string, unknown>> =
+          message.nativeReasoning?.format === "anthropic" ? [...message.nativeReasoning.items] : [];
         if (message.content.trim()) {
           blocks.push({ type: "text", text: message.content });
         }
@@ -1187,6 +1269,7 @@ async function* streamAnthropic(input: {
   let usage: Record<string, unknown> = {};
   let stopReason: CesiumStopReason | undefined;
   const toolBlocks = new Map<number, { id: string; name: string; json: string; input?: Record<string, unknown> }>();
+  const thinkingBlocks = new Map<number, { thinking: string; signature: string }>();
   const finishToolBlock = (index: number): CesiumToolRequest | null => {
     const block = toolBlocks.get(index);
     if (!block) {
@@ -1219,15 +1302,34 @@ async function* streamAnthropic(input: {
           });
         } else if (block?.type === "text" && typeof block.text === "string" && block.text) {
           yield { kind: "text_delta", text: block.text, raw: event };
+        } else if (block?.type === "thinking" && typeof root.index === "number") {
+          thinkingBlocks.set(root.index, {
+            thinking: asString(block.thinking) ?? "",
+            signature: asString(block.signature) ?? "",
+          });
+        } else if (block?.type === "redacted_thinking" && asString(block.data)) {
+          yield {
+            kind: "native_reasoning",
+            reasoning: { format: "anthropic", items: [{ type: "redacted_thinking", data: block.data }] },
+            raw: event,
+          };
         }
         break;
       }
       case "content_block_delta": {
         const delta = asRecord(root.delta);
+        const thinking = typeof root.index === "number" ? thinkingBlocks.get(root.index) : undefined;
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
           yield { kind: "text_delta", text: delta.text, raw: event };
         } else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+          if (thinking) {
+            thinking.thinking += delta.thinking;
+          }
           yield { kind: "reasoning_delta", text: delta.thinking, raw: event };
+        } else if (delta?.type === "signature_delta" && typeof delta.signature === "string") {
+          if (thinking) {
+            thinking.signature += delta.signature;
+          }
         } else if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
           const block = typeof root.index === "number" ? toolBlocks.get(root.index) : undefined;
           if (block) {
@@ -1240,6 +1342,21 @@ async function* streamAnthropic(input: {
         const request = typeof root.index === "number" ? finishToolBlock(root.index) : null;
         if (request) {
           yield { kind: "tool_request", request, raw: event };
+        }
+        const thinking = typeof root.index === "number" ? thinkingBlocks.get(root.index) : undefined;
+        if (thinking && typeof root.index === "number") {
+          thinkingBlocks.delete(root.index);
+          // Anthropic rejects a thinking block sent back without its signature.
+          if (thinking.signature) {
+            yield {
+              kind: "native_reasoning",
+              reasoning: {
+                format: "anthropic",
+                items: [{ type: "thinking", thinking: thinking.thinking, signature: thinking.signature }],
+              },
+              raw: event,
+            };
+          }
         }
         break;
       }
@@ -1277,6 +1394,7 @@ function anthropicResultFromPayload(payload: unknown): CesiumAdapterResult {
   const toolRequests: CesiumToolRequest[] = [];
   const text: string[] = [];
   const reasoning: string[] = [];
+  const reasoningItems: Array<Record<string, unknown>> = [];
   for (const block of content) {
     const item = asRecord(block);
     if (!item) continue;
@@ -1284,6 +1402,11 @@ function anthropicResultFromPayload(payload: unknown): CesiumAdapterResult {
       text.push(item.text);
     } else if (item.type === "thinking" && typeof item.thinking === "string") {
       reasoning.push(item.thinking);
+      if (asString(item.signature)) {
+        reasoningItems.push({ type: "thinking", thinking: item.thinking, signature: item.signature });
+      }
+    } else if (item.type === "redacted_thinking" && asString(item.data)) {
+      reasoningItems.push({ type: "redacted_thinking", data: item.data });
     } else if (item.type === "tool_use") {
       const name = asString(item.name);
       if (name) {
@@ -1300,6 +1423,9 @@ function anthropicResultFromPayload(payload: unknown): CesiumAdapterResult {
   return {
     text: text.join(""),
     ...(reasoning.length > 0 ? { reasoning: reasoning.join("") } : {}),
+    ...(reasoningItems.length > 0
+      ? { nativeReasoning: { format: "anthropic" as const, items: reasoningItems } }
+      : {}),
     toolRequests,
     usage: usageFromAnthropic(root?.usage),
     stopReason: anthropicStopReason(root?.stop_reason),
@@ -1446,6 +1572,9 @@ async function* streamStaticResult(
   }
   if (result.reasoning) {
     yield { kind: "reasoning_delta", text: result.reasoning, raw: result.raw };
+  }
+  if (result.nativeReasoning) {
+    yield { kind: "native_reasoning", reasoning: result.nativeReasoning, raw: result.raw };
   }
   for (const request of result.toolRequests) {
     yield { kind: "tool_request", request, raw: result.raw };
@@ -1618,6 +1747,7 @@ export class CesiumRawFrameLog {
 export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterResult> {
   const textParts: string[] = [];
   const reasoningParts: string[] = [];
+  let nativeReasoning: CesiumAdapterResult["nativeReasoning"];
   const toolRequests: CesiumToolRequest[] = [];
   const rawFrames = new CesiumRawFrameLog();
   let usage: CesiumAdapterResult["usage"];
@@ -1630,6 +1760,9 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
         break;
       case "reasoning_delta":
         reasoningParts.push(event.text);
+        break;
+      case "native_reasoning":
+        nativeReasoning = appendNativeReasoning(nativeReasoning, event.reasoning);
         break;
       case "tool_request":
         toolRequests.push(event.request);
@@ -1647,6 +1780,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
   return {
     text: textParts.join(""),
     reasoning: reasoningParts.join("") || undefined,
+    ...(nativeReasoning ? { nativeReasoning } : {}),
     toolRequests,
     ...(usage ? { usage } : {}),
     ...(stopReason ? { stopReason } : {}),
