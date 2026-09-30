@@ -8,6 +8,12 @@ import {
   type ChildObservation,
 } from "./child-host.js";
 import {
+  isLiveContextSyncUp,
+  peerEnginesWithContext,
+  reconcileLiveContextSync,
+  startLiveContextSync,
+} from "./context-live.js";
+import {
   callPeerEngine,
   isPeerEngineReachable,
   listEngineSummaries,
@@ -241,15 +247,17 @@ async function processChild(entry: PendingObservation): Promise<void> {
 
 const CONTEXT_SYNC_TIMEOUT_MS = 60_000;
 const CONTEXT_SYNC_INTERVAL_MS = 60_000;
+/** While writes reach the other side live, the periodic sync is only a safety net for a missed change. */
+const CONTEXT_SYNC_SAFETY_NET_MS = 5 * 60_000;
 const contextSyncAttemptAt = new Map<string, number>();
 
-async function runPeerContextSync(projectId: string, engineId: string): Promise<void> {
+async function runPeerContextSync(projectId: string, engineId: string, options?: { fresh?: boolean }): Promise<void> {
   contextSyncAttemptAt.set(`${projectId}:${engineId}`, Date.now());
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { syncProjectContextWithPeer } = await import("./context-sync.js");
     await Promise.race([
-      syncProjectContextWithPeer(projectId, engineId),
+      syncProjectContextWithPeer(projectId, engineId, options),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, CONTEXT_SYNC_TIMEOUT_MS);
       }),
@@ -272,7 +280,8 @@ async function runPeerContextSync(projectId: string, engineId: string): Promise<
  * it was last told (periodic syncs during the turn included).
  */
 async function syncPeerContext(projectId: string, engineId: string): Promise<string | null> {
-  await runPeerContextSync(projectId, engineId);
+  // A live sync already running may have listed the peer before the agent's last write.
+  await runPeerContextSync(projectId, engineId, { fresh: true });
   const { describeContextSync, takeUnreportedContextSync } = await import("./context-sync.js");
   const engines = await listEngineSummaries();
   return describeContextSync(
@@ -281,20 +290,19 @@ async function syncPeerContext(projectId: string, engineId: string): Promise<str
   );
 }
 
-/** Keeps peers' copies of the context current (notes.md, docs) while their agents work. */
+/**
+ * The periodic sync of peers' copies of the context: every minute when live
+ * sync is not up for a Project and peer, else as a rare safety net.
+ */
 async function syncPeerContextsDue(records: readonly ProjectRecord[]): Promise<void> {
   const { contextSyncedAt } = await import("./context-sync.js");
   const now = Date.now();
   for (const record of records) {
-    const engines = new Set(
-      record.children
-        .filter((child) => child.deletedAt == null && child.archivedAt == null && child.engineId !== PROJECT_HOME_ENGINE_ID)
-        .map((child) => child.engineId)
-    );
-    for (const engineId of engines) {
+    for (const engineId of peerEnginesWithContext(record)) {
       const key = `${record.id}:${engineId}`;
       const last = Math.max(contextSyncedAt(record.id, engineId), contextSyncAttemptAt.get(key) ?? 0);
-      if (isPeerEngineReachable(engineId) && now - last >= CONTEXT_SYNC_INTERVAL_MS) {
+      const interval = isLiveContextSyncUp(record.id, engineId) ? CONTEXT_SYNC_SAFETY_NET_MS : CONTEXT_SYNC_INTERVAL_MS;
+      if (isPeerEngineReachable(engineId) && now - last >= interval) {
         void runPeerContextSync(record.id, engineId);
       }
     }
@@ -502,6 +510,7 @@ export async function pollProjectPeerChildren(options?: { force?: boolean }): Pr
     }
   }
   await Promise.all(polls);
+  await reconcileLiveContextSync(records);
   await syncPeerContextsDue(records);
 }
 
@@ -619,10 +628,12 @@ export function startProjectWatcher(): () => void {
   }, PEER_HEARTBEAT_MS);
   pollTimer.unref?.();
   heartbeatTimer.unref?.();
+  const stopLiveSync = startLiveContextSync();
   stopWatching = () => {
     unsubscribe();
     clearInterval(pollTimer);
     clearInterval(heartbeatTimer);
+    stopLiveSync();
     stopWatching = null;
   };
   void kickProjectWatcher().catch((error) => {
