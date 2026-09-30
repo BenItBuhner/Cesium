@@ -6,7 +6,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import type { ProjectEngineSummary, ProjectSnapshot } from "@cesium/core/projects";
 import type { AgentStoredEvent } from "../src/lib/agents/types.js";
-import { startFakeChatModel, text, toolCall, waitFor } from "./helpers/fake-chat-model.js";
+import { messageText, startFakeChatModel, text, toolCall, waitFor } from "./helpers/fake-chat-model.js";
 import { mintPeerToken, revokePeerToken, startPeerEngine } from "./helpers/peer-engine.js";
 
 const HOME_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-live-home-"));
@@ -205,6 +205,13 @@ test("the home's writes reach a peer agent's copy of the context within moments"
   assert.equal(agent.status, 201, JSON.stringify(agent.json));
   mirror = path.join(PEER_DATA_DIR, "projects-mirror", homeToken.id, project.id, "context");
   await waitFor("the scout's first turn to be reported", async () => childNamed("scout"), (child) => child.turnsCompleted >= 1, 60_000);
+  const brief = requestsFor("scout")[0]!.messages.map(messageText).join("\n");
+  assert.ok(
+    brief.includes(
+      `- Folder: ${mirror}. It is this machine's copy of the Project context on engine home-engine. What you save there reaches that engine within moments`
+    ),
+    brief
+  );
   await liveUp(project.id);
   const requestsBefore = requestsFor("scout").length;
 

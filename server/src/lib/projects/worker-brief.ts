@@ -67,7 +67,7 @@ function contextLines(brief: WorkerBriefInput): string[] {
   const dir = brief.contextDir;
   return [
     brief.contextIsMirror
-      ? `- Folder: ${dir}. It is this machine's copy of the Project context on engine ${brief.contextEngine}: what you write there is copied back after each of your turns.`
+      ? `- Folder: ${dir}. It is this machine's copy of the Project context on engine ${brief.contextEngine}. What you save there reaches that engine within moments, and its changes (notes.md, new docs) show up here the same way.`
       : `- Folder: ${dir}`,
     "- It is not part of any repository, and nothing in it is committed.",
     `- ${path.join(dir, "notes.md")} is the coordinator's live status board. Read it first; don't edit it.`,
