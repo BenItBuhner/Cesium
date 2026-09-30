@@ -226,6 +226,12 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         verificationEvidence: { type: "array" },
         progressPercent: { type: "integer", minimum: 0, maximum: 100 },
         headline: { type: "string" },
+        tokenBudget: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Optional token ceiling for the whole Goal (input plus output, as the provider reports it). The Goal stops as budget_limited when it is used up; 0 removes the ceiling.",
+        },
       },
       additionalProperties: false,
     },
@@ -239,6 +245,16 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
       properties: {
         reason: { type: "string" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "goal_resume",
+    description:
+      "Resume a paused Goal so work on it continues. Use when the user asks to resume, or when the reason for the pause no longer applies.",
+    parameters: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },

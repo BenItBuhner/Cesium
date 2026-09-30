@@ -1685,6 +1685,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       updateConversation: (patch) => this.callbacks.updateConversation(patch),
       appendEvents: (events) => this.callbacks.appendEvents(events),
       readSnapshot: () => this.callbacks.readSnapshot(),
+      readEvents: () => this.readHistoryEvents(),
       extraRoots: this.projectContextRoots(),
       readOnlyRoot: this.toolOutputDir(),
       turnSupportsImages: this.turnSupportsImages,
@@ -2698,11 +2699,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
       conversationId: this.callbacks.conversation.id,
     }).catch(() => null);
     if (goal && !["complete", "cancelled"].includes(goal.status)) {
+      const tokensUsed = goal.tokensUsed + usage.inputTokens + usage.outputTokens;
+      const exhausted =
+        goal.tokenBudget != null &&
+        tokensUsed >= goal.tokenBudget &&
+        (goal.status === "active" || goal.status === "planning");
       await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
-        patch: { tokensUsed: goal.tokensUsed + usage.inputTokens + usage.outputTokens },
+        patch: { tokensUsed, ...(exhausted ? { status: "budget_limited" as const } : {}) },
       }).catch(() => undefined);
+      if (exhausted) {
+        this.endTurnAfterTools = true;
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text: `The Goal used its token budget (${tokensUsed.toLocaleString("en-US")} of ${goal.tokenBudget!.toLocaleString("en-US")} tokens), so it stopped as budget_limited. Raise the budget with goal_set, or resume it, to continue.`,
+          },
+        ]);
+      }
     }
   }
 

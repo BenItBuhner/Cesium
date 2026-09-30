@@ -13,6 +13,7 @@ import {
 } from "../../goal-store.js";
 import { asNumber } from "../../json-coerce.js";
 import { asString } from "../cesium-coerce.js";
+import { GOAL_VERIFIER_MAX_REJECTIONS, verifyGoalCompletion } from "../../goal-continuation.js";
 import type { CesiumToolContext } from "./types.js";
 
 export async function goalGetTool(ctx: CesiumToolContext): Promise<string> {
@@ -71,6 +72,23 @@ export async function goalSetTool(
       workspace: ctx.workspace,
       conversationId: ctx.conversationId,
       verificationEvidence: args.verificationEvidence,
+    });
+  }
+
+  const tokenBudget = asNumber(args.tokenBudget);
+  if (tokenBudget != null) {
+    if (!Number.isInteger(tokenBudget) || tokenBudget < 0) {
+      throw new Error("goal_set.tokenBudget must be a non-negative integer.");
+    }
+    goal = await updateGoal({
+      workspace: ctx.workspace,
+      conversationId: ctx.conversationId,
+      patch: {
+        tokenBudget: tokenBudget === 0 ? null : tokenBudget,
+        ...(goal.status === "budget_limited" && (tokenBudget === 0 || tokenBudget > goal.tokensUsed)
+          ? { status: "active" as const }
+          : {}),
+      },
     });
   }
 
@@ -167,12 +185,39 @@ export async function goalSummarizeTool(
   return `Goal summarized.\n\n${formatGoalForModel(goal)}`;
 }
 
+/** Verifier rejections per Goal since its last completion attempt passed. */
+const verifierRejections = new Map<string, number>();
+
 export async function goalCompleteTool(ctx: CesiumToolContext): Promise<string> {
+  const current = await readGoalForConversation({
+    workspace: ctx.workspace,
+    conversationId: ctx.conversationId,
+  });
+  const findings = current ? verifyGoalCompletion(current, await ctx.readEvents()) : [];
+  const rejections = current ? (verifierRejections.get(current.goalId) ?? 0) : 0;
+  if (current && findings.length > 0 && rejections < GOAL_VERIFIER_MAX_REJECTIONS) {
+    verifierRejections.set(current.goalId, rejections + 1);
+    throw new Error(
+      [
+        `The Goal is not verified yet (check ${rejections + 1} of ${GOAL_VERIFIER_MAX_REJECTIONS}):`,
+        ...findings.map((finding) => `- ${finding}`),
+        "Fix these, then call goal_complete again.",
+      ].join("\n")
+    );
+  }
   const goal = await completeGoal({
     workspace: ctx.workspace,
     conversationId: ctx.conversationId,
   });
-  return `Goal complete.\n\n${formatGoalForModel(goal)}`;
+  verifierRejections.delete(goal.goalId);
+  return findings.length > 0
+    ? [
+        `Goal complete, with checks still unmet after ${GOAL_VERIFIER_MAX_REJECTIONS} attempts:`,
+        ...findings.map((finding) => `- ${finding}`),
+        "",
+        formatGoalForModel(goal),
+      ].join("\n")
+    : `Goal complete.\n\n${formatGoalForModel(goal)}`;
 }
 
 export async function goalBlockTool(
