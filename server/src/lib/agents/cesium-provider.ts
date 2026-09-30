@@ -324,9 +324,11 @@ import {
   asOrchestrationAssignmentStatuses,
   asOrchestrationWaitFor,
 } from "./cesium/cesium-orchestration-args.js";
+import { appendNativeReasoning } from "./cesium/cesium-types.js";
 import type {
   CesiumAdapterResult,
   CesiumHistoryMessage,
+  CesiumNativeReasoning,
   CesiumToolRequest,
 } from "./cesium/cesium-types.js";
 
@@ -724,6 +726,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private toolResultShapes = new Map<string, { modelBudget?: number; spillPath?: string }>();
   /** The model response whose tool calls are running; batches tool calls for pruning. */
   private currentResponseId: string | null = null;
+  /** Native reasoning of the current batch, stored on its first recorded call. */
+  private batchNativeReasoning: CesiumNativeReasoning | undefined;
   /** Provider-reported usage of the current assistant message: its last response and the running sum. */
   private messageUsage: { last?: AgentModelUsage; total?: AgentTokenUsage; responses: number } = {
     responses: 0,
@@ -1497,7 +1501,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
             name: request.name,
             arguments: JSON.stringify(request.arguments),
           })),
+          ...(result.nativeReasoning ? { nativeReasoning: result.nativeReasoning } : {}),
         });
+        this.batchNativeReasoning = result.nativeReasoning;
         if (result.usage) {
           usageAnchor = {
             tokens: contextTokensAfterResponse(result.usage),
@@ -2086,6 +2092,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   ): Promise<CesiumAdapterResult> {
     const textParts: string[] = [];
     const reasoningParts: string[] = [];
+    let nativeReasoning: CesiumAdapterResult["nativeReasoning"];
     const toolRequests: CesiumToolRequest[] = [];
     const rawFrames = new CesiumRawFrameLog();
     let heldText = "";
@@ -2115,6 +2122,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           reasoningParts.push(event.text);
           await handlers.onReasoningDelta?.(event.text);
           break;
+        case "native_reasoning":
+          nativeReasoning = appendNativeReasoning(nativeReasoning, event.reasoning);
+          break;
         case "tool_request":
           toolRequests.push(event.request);
           progress.emittedToolCall = true;
@@ -2132,6 +2142,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return {
       text: textParts.join(""),
       reasoning: reasoningParts.join("") || undefined,
+      ...(nativeReasoning ? { nativeReasoning } : {}),
       toolRequests,
       ...(usage ? { usage } : {}),
       ...(stopReason ? { stopReason } : {}),
@@ -3333,10 +3344,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginId: mcpServerForTool?.pluginId,
       pluginName: mcpServerForTool?.displayName,
       pluginIconUrl: mcpServerForTool?.iconUrl,
-      raw: this.currentResponseId
-        ? { ...effectiveRequest, responseId: this.currentResponseId }
-        : effectiveRequest,
+      raw: {
+        ...effectiveRequest,
+        ...(this.currentResponseId ? { responseId: this.currentResponseId } : {}),
+        ...(this.batchNativeReasoning ? { nativeReasoning: this.batchNativeReasoning } : {}),
+      },
     };
+    this.batchNativeReasoning = undefined;
     await this.callbacks.appendEvents([callEvent]);
     try {
       if (rejection) {
