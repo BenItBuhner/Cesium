@@ -188,7 +188,14 @@ import {
   orchestrationUpdateIssueTool,
   resolveCurrentOrchestrationBoard,
 } from "./cesium/tools/orchestration-tools.js";
-import { planToolResultPruning } from "./cesium/cesium-context-pruning.js";
+import {
+  CESIUM_PRUNE_SUMMARY_MAX_CHARS,
+  PRUNE_SUMMARY_SYSTEM_PROMPT,
+  buildPruneSummaryPrompt,
+  parsePruneSummaries,
+  planToolResultPruning,
+  prunedResultsForSummary,
+} from "./cesium/cesium-context-pruning.js";
 import {
   COMPACTION_SUMMARY_SYSTEM_PROMPT,
   buildCompactionSummaryPrompt,
@@ -308,6 +315,7 @@ import {
   normalizeEventsToHistory,
   previousUserMessageCreatedAt,
   prunedToolCallIds,
+  prunedToolSummaries,
   selectHistoryWindow,
 } from "./cesium/cesium-history.js";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
@@ -324,9 +332,11 @@ import {
   asOrchestrationAssignmentStatuses,
   asOrchestrationWaitFor,
 } from "./cesium/cesium-orchestration-args.js";
+import { appendNativeReasoning } from "./cesium/cesium-types.js";
 import type {
   CesiumAdapterResult,
   CesiumHistoryMessage,
+  CesiumNativeReasoning,
   CesiumToolRequest,
 } from "./cesium/cesium-types.js";
 
@@ -724,6 +734,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private toolResultShapes = new Map<string, { modelBudget?: number; spillPath?: string }>();
   /** The model response whose tool calls are running; batches tool calls for pruning. */
   private currentResponseId: string | null = null;
+  /** Native reasoning of the current batch, stored on its first recorded call. */
+  private batchNativeReasoning: CesiumNativeReasoning | undefined;
   /** Provider-reported usage of the current assistant message: its last response and the running sum. */
   private messageUsage: { last?: AgentModelUsage; total?: AgentTokenUsage; responses: number } = {
     responses: 0,
@@ -1497,7 +1509,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
             name: request.name,
             arguments: JSON.stringify(request.arguments),
           })),
+          ...(result.nativeReasoning ? { nativeReasoning: result.nativeReasoning } : {}),
         });
+        this.batchNativeReasoning = result.nativeReasoning;
         if (result.usage) {
           usageAnchor = {
             tokens: contextTokensAfterResponse(result.usage),
@@ -2087,6 +2101,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   ): Promise<CesiumAdapterResult> {
     const textParts: string[] = [];
     const reasoningParts: string[] = [];
+    let nativeReasoning: CesiumAdapterResult["nativeReasoning"];
     const toolRequests: CesiumToolRequest[] = [];
     const rawFrames = new CesiumRawFrameLog();
     let heldText = "";
@@ -2116,6 +2131,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           reasoningParts.push(event.text);
           await handlers.onReasoningDelta?.(event.text);
           break;
+        case "native_reasoning":
+          nativeReasoning = appendNativeReasoning(nativeReasoning, event.reasoning);
+          break;
         case "tool_request":
           toolRequests.push(event.request);
           progress.emittedToolCall = true;
@@ -2133,6 +2151,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return {
       text: textParts.join(""),
       reasoning: reasoningParts.join("") || undefined,
+      ...(nativeReasoning ? { nativeReasoning } : {}),
       toolRequests,
       ...(usage ? { usage } : {}),
       ...(stopReason ? { stopReason } : {}),
@@ -2798,7 +2817,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ...(window.summary
         ? [{ role: "user" as const, content: `[Compressed earlier conversation]\n${window.summary.summary}` }]
         : []),
-      ...normalizeEventsToHistory(visible, CESIUM_SYSTEM_PROMPT, prunedToolCallIds(window)).slice(1),
+      ...normalizeEventsToHistory(
+        visible,
+        CESIUM_SYSTEM_PROMPT,
+        prunedToolCallIds(window),
+        prunedToolSummaries(window)
+      ).slice(1),
     ];
   }
 
@@ -2814,6 +2838,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       windowEvents: window.events,
       alreadyPruned: prunedToolCallIds(window),
       excessTokens: contextTokens - contextWindow * CONTEXT_PRUNE_TARGET_RATIO,
+      stubExtraChars: CESIUM_PRUNE_SUMMARY_MAX_CHARS,
     });
     if (plan.toolCallIds.length === 0) {
       return false;
@@ -2822,6 +2847,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       "running",
       `Pruning ${plan.toolCallIds.length} older tool output${plan.toolCallIds.length === 1 ? "" : "s"} to free context…`
     );
+    const prunedSummaries = await this.summarizePrunedResults(window.events, plan.toolCallIds, contextWindow);
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2834,6 +2860,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ).length,
         compressedTurnCount: 0,
         prunedToolCallIds: plan.toolCallIds,
+        ...(prunedSummaries ? { prunedSummaries } : {}),
         estimatedTokensBefore: contextTokens,
         estimatedTokensAfter: Math.max(0, contextTokens - plan.freedTokens),
         generation: window.summary?.generation ?? 0,
@@ -2887,6 +2914,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const scale = estimated > 0 ? Math.max(1, estimatedTokensBefore / estimated) : 1;
     const target = contextWindow * HISTORY_COMPACTION_TARGET_RATIO;
     const pruned = prunedToolCallIds(window);
+    const prunedSummaries = prunedToolSummaries(window);
     let retainedTokens = 0;
     let splitSeq = visibleUsers.at(-1)?.seq ?? Number.POSITIVE_INFINITY;
     let retainedUsers = 0;
@@ -2895,7 +2923,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const turnEnd = visibleUsers[index + 1]?.seq ?? Number.POSITIVE_INFINITY;
       const turnEvents = window.events.filter((event) => event.seq >= turnStart && event.seq < turnEnd);
       const turnTokens = Math.ceil(
-        estimateHistoryTokens(normalizeEventsToHistory(turnEvents, CESIUM_SYSTEM_PROMPT, pruned).slice(1)) * scale
+        estimateHistoryTokens(
+          normalizeEventsToHistory(turnEvents, CESIUM_SYSTEM_PROMPT, pruned, prunedSummaries).slice(1)
+        ) * scale
       );
       // Forced means the provider refused a request these estimates said would
       // fit, so only the newest turn stays verbatim.
@@ -2916,6 +2946,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       windowEvents: retainedWindow,
       alreadyPruned: pruned,
       excessTokens: retainedTokens - target,
+      stubExtraChars: CESIUM_PRUNE_SUMMARY_MAX_CHARS,
     });
     const compacts = window.events.some(
       (event) => event.seq < splitSeq && event.kind === "user_message" && !event.hidden
@@ -2934,11 +2965,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
           events: window.events.filter((event) => event.seq < splitSeq),
           previousSummary: window.summary?.summary,
           pruned,
+          prunedSummaries,
           todos: latestPlan && latestPlan.seq < splitSeq ? latestTodoEntries(sorted) : null,
           modelId,
           contextWindow,
         })
       : null;
+    const newPrunedSummaries =
+      prune.toolCallIds.length > 0
+        ? await this.summarizePrunedResults(retainedWindow, prune.toolCallIds, contextWindow)
+        : null;
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2959,6 +2995,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             }
           : {}),
         ...(prune.toolCallIds.length > 0 ? { prunedToolCallIds: prune.toolCallIds } : {}),
+        ...(newPrunedSummaries ? { prunedSummaries: newPrunedSummaries } : {}),
         estimatedTokensBefore,
         estimatedTokensAfter: Math.max(0, retainedTokens - prune.freedTokens),
         generation: (window.summary?.generation ?? 0) + (compacts ? 1 : 0),
@@ -2966,6 +3003,70 @@ class CesiumSessionHandle implements AgentSessionHandle {
       },
     ]);
     return true;
+  }
+
+  /**
+   * One model call that condenses the results a boundary is about to stub,
+   * keyed by tool call id. Null when the call fails or says nothing usable;
+   * the stubs then carry no summary.
+   */
+  private async summarizePrunedResults(
+    windowEvents: AgentStoredEvent[],
+    toolCallIds: string[],
+    contextWindow: number
+  ): Promise<Record<string, string> | null> {
+    const results = prunedResultsForSummary(windowEvents, toolCallIds);
+    if (results.length === 0) {
+      return null;
+    }
+    const modelId = optionValue(
+      this.configOptions,
+      "model",
+      this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
+    );
+    try {
+      const auth = await resolveCesiumAuth({
+        modelId,
+        configuredApiKind:
+          providerPart(modelId) === "openai"
+            ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
+            : undefined,
+      });
+      const result = await withTimeout(
+        runAdapter({
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          oauth: auth.oauth,
+          modelId,
+          tools: [],
+          messages: [
+            { role: "system", content: PRUNE_SUMMARY_SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: buildPruneSummaryPrompt(
+                results,
+                Math.floor(contextWindow * 0.3 * CESIUM_HEADROOM_CHARS_PER_TOKEN)
+              ),
+            },
+          ],
+          signal: this.turnAbort.signal,
+        }),
+        COMPACTION_SUMMARY_TIMEOUT_MS
+      );
+      const summaries = parsePruneSummaries(result.text, toolCallIds);
+      return Object.keys(summaries).length > 0 ? summaries : null;
+    } catch (error) {
+      if (this.cancelled) {
+        throw new CesiumTurnCancelledError();
+      }
+      console.warn(
+        "[cesium-agent] pruned-output summary call failed, keeping plain stubs:",
+        error instanceof Error ? error.message : String(error)
+      );
+      return null;
+    }
   }
 
   /**
@@ -2977,6 +3078,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     events: AgentStoredEvent[];
     previousSummary?: string;
     pruned: ReadonlySet<string>;
+    prunedSummaries: ReadonlyMap<string, string>;
     todos: AgentPlanEntry[] | null;
     modelId: string;
     contextWindow: number;
@@ -2993,7 +3095,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             : undefined,
       });
       const transcript = transcriptForSummary(
-        normalizeEventsToHistory(input.events, CESIUM_SYSTEM_PROMPT, input.pruned)
+        normalizeEventsToHistory(input.events, CESIUM_SYSTEM_PROMPT, input.pruned, input.prunedSummaries)
       );
       const result = await withTimeout(
         runAdapter({
@@ -3351,10 +3453,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginId: mcpServerForTool?.pluginId,
       pluginName: mcpServerForTool?.displayName,
       pluginIconUrl: mcpServerForTool?.iconUrl,
-      raw: this.currentResponseId
-        ? { ...effectiveRequest, responseId: this.currentResponseId }
-        : effectiveRequest,
+      raw: {
+        ...effectiveRequest,
+        ...(this.currentResponseId ? { responseId: this.currentResponseId } : {}),
+        ...(this.batchNativeReasoning ? { nativeReasoning: this.batchNativeReasoning } : {}),
+      },
     };
+    this.batchNativeReasoning = undefined;
     await this.callbacks.appendEvents([callEvent]);
     try {
       if (rejection) {

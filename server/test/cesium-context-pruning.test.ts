@@ -42,6 +42,8 @@ const scripted: Responder[] = [];
 const agentRequests: ChatRequest[] = [];
 const summaryRequests: ChatRequest[] = [];
 let summaryMode: "ok" | "fail" = "ok";
+const pruneSummaryRequests: ChatRequest[] = [];
+let pruneSummaryReply: string = "Pruning Test";
 const MODEL_SUMMARY = [
   "## Objective",
   "Read one.txt and keep a todo list about it.",
@@ -63,6 +65,12 @@ const modelServer = createServer((req, res) => {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatRequest;
     if (!Array.isArray(body.tools) || body.tools.length === 0) {
       const system = typeof body.messages[0]?.content === "string" ? body.messages[0].content : "";
+      if (system.startsWith("You condense")) {
+        pruneSummaryRequests.push(body);
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ choices: [{ message: { content: pruneSummaryReply } }] }));
+        return;
+      }
       if (system.startsWith("You summarize")) {
         summaryRequests.push(body);
         if (summaryMode === "fail") {
@@ -172,17 +180,26 @@ async function waitForIdle(workspaceId: string, conversationId: string, turns: n
   throw new Error("Timed out waiting for the turn to finish.");
 }
 
-test("tool results shrink with the headroom and old ones are pruned once, at a boundary later requests extend", async () => {
+const ONE_SUMMARY = "one.txt has 600 lines, 'one line 0000' through 'one line 0599', each padded with x.";
+
+for (const summaries of [false, true]) {
+test(`tool results shrink with the headroom and old ones are pruned once, at a boundary later requests extend (${summaries ? "with" : "without"} summaries)`, async () => {
+  const firstRequest = agentRequests.length;
+  const firstPruneSummary = pruneSummaryRequests.length;
+  pruneSummaryReply = summaries
+    ? `Here you go:\n\`\`\`json\n${JSON.stringify({ call_one_s: ONE_SUMMARY, call_two_s: "not pruned" })}\n\`\`\``
+    : "Pruning Test";
   const workspace = await ensureWorkspaceRegistered(WORKSPACE_ROOT, "pruning");
   const conversation = await agentRuntimeManager.createConversation(workspace, {
     backendId: "cesium-agent",
     modelId: MODEL_ID,
     modelName: "Tiny",
   });
+  const id = (name: string) => (summaries ? `${name}_s` : name);
   scripted.push(
-    readTurn("call_one", "one.txt", 4_000),
-    readTurn("call_two", "two.txt", 9_000),
-    readTurn("call_three", "three.txt", 17_500),
+    readTurn(id("call_one"), "one.txt", 4_000),
+    readTurn(id("call_two"), "two.txt", 9_000),
+    readTurn(id("call_three"), "three.txt", 17_500),
     textTurn("Read all three.", 12_000)
   );
   await agentRuntimeManager.promptConversation(workspace, conversation.id, "Read one, two and three.");
@@ -191,8 +208,9 @@ test("tool results shrink with the headroom and old ones are pruned once, at a b
   await agentRuntimeManager.promptConversation(workspace, conversation.id, "Did you read them?");
   const snapshot = await waitForIdle(workspace.id, conversation.id, 2);
 
-  assert.equal(agentRequests.length, 5);
-  const [r1, r2, r3, r4, r5] = agentRequests.map((request) => request.messages);
+  const requests = agentRequests.slice(firstRequest);
+  assert.equal(requests.length, 5);
+  const [r1, r2, r3, r4, r5] = requests.map((request) => request.messages);
   const extends_ = (current: ChatMessage[], previous: ChatMessage[]) =>
     assert.deepEqual(current.slice(0, previous.length), previous);
   extends_(r2!, r1!);
@@ -204,16 +222,16 @@ test("tool results shrink with the headroom and old ones are pruned once, at a b
     (event): event is Extract<AgentStoredEvent, { kind: "tool_call_update" }> =>
       event.kind === "tool_call_update" && event.status === "completed"
   );
-  const budgetOf = (id: string) =>
-    (updates.find((event) => event.toolCallId === id)?.raw as { modelBudget?: number } | undefined)?.modelBudget;
-  assert.equal(budgetOf("call_one"), 12_000, "a result over the cap keeps the per-result budget");
-  assert.ok((budgetOf("call_two") ?? 0) < 12_000, "less headroom, smaller budget");
-  assert.equal(budgetOf("call_three"), 2_000, "a nearly full window still leaves the floor");
-  const spillPath = (updates.find((event) => event.toolCallId === "call_one")?.raw as { spillPath?: string }).spillPath!;
-  assert.match(messageText(toolResult(r2!, "call_one")), new RegExp(`saved at ${spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  const budgetOf = (callId: string) =>
+    (updates.find((event) => event.toolCallId === callId)?.raw as { modelBudget?: number } | undefined)?.modelBudget;
+  assert.equal(budgetOf(id("call_one")), 12_000, "a result over the cap keeps the per-result budget");
+  assert.ok((budgetOf(id("call_two")) ?? 0) < 12_000, "less headroom, smaller budget");
+  assert.equal(budgetOf(id("call_three")), 2_000, "a nearly full window still leaves the floor");
+  const spillPath = (updates.find((event) => event.toolCallId === id("call_one"))?.raw as { spillPath?: string }).spillPath!;
+  assert.match(messageText(toolResult(r2!, id("call_one"))), new RegExp(`saved at ${spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.equal(
     await fs.readFile(spillPath, "utf8"),
-    updates.find((event) => event.toolCallId === "call_one")?.detail,
+    updates.find((event) => event.toolCallId === id("call_one"))?.detail,
     "the full output is kept for read_file"
   );
 
@@ -221,17 +239,32 @@ test("tool results shrink with the headroom and old ones are pruned once, at a b
     (event): event is Extract<AgentStoredEvent, { kind: "compression_summary" }> =>
       event.kind === "compression_summary" && Boolean(event.prunedToolCallIds)
   );
-  assert.deepEqual(boundary?.prunedToolCallIds, ["call_one"], "only results outside the newest two batches");
+  assert.deepEqual(boundary?.prunedToolCallIds, [id("call_one")], "only results outside the newest two batches");
+  if (summaries) {
+    assert.equal(pruneSummaryRequests.length - firstPruneSummary, 1, "one summary call per boundary");
+    const asked = messageText(pruneSummaryRequests.at(-1)!.messages[1]);
+    assert.match(asked, new RegExp(`### ${id("call_one")}\\nTool: read_file`));
+    assert.doesNotMatch(asked, /### call_two_s/, "only the pruned results are summarized");
+    assert.deepEqual(boundary?.prunedSummaries, { [id("call_one")]: ONE_SUMMARY }, "ids not pruned are dropped");
+  } else {
+    assert.equal(boundary?.prunedSummaries, undefined, "an unusable reply leaves plain stubs");
+  }
 
-  const prunedIndex = r3!.findIndex((message) => message.role === "tool" && message.tool_call_id === "call_one");
+  const prunedIndex = r3!.findIndex((message) => message.role === "tool" && message.tool_call_id === id("call_one"));
   assert.deepEqual(r4!.slice(0, prunedIndex), r3!.slice(0, prunedIndex), "the boundary keeps everything before the pruned result");
-  assert.match(messageText(r4![prunedIndex]), /^\[read_file output \(\d+ chars\) pruned to free context\. It is saved at /);
+  assert.match(
+    messageText(r4![prunedIndex]),
+    summaries
+      ? new RegExp(`^\\[read_file output \\(\\d+ chars\\) pruned to free context\\. What it showed: ${ONE_SUMMARY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} It is saved at `)
+      : /^\[read_file output \(\d+ chars\) pruned to free context\. It is saved at /
+  );
   assert.deepEqual(r4!.slice(prunedIndex + 1, r3!.length), r3!.slice(prunedIndex + 1), "and everything after it");
   assert.ok(r4!.length > r3!.length);
 
   extends_(r5!, r4!);
   assert.equal(messageText(r5!.at(-1)).endsWith("Did you read them?"), true);
 });
+}
 
 for (const mode of ["ok", "fail"] as const) {
   test(`compaction keeps the todo list and later requests extend it (summary call ${mode === "ok" ? "succeeds" : "fails"})`, async () => {
@@ -283,3 +316,18 @@ for (const mode of ["ok", "fail"] as const) {
     assert.deepEqual(requests[5]!.slice(0, compactedRequest.length), compactedRequest, "the next turn extends the compacted request");
   });
 }
+
+test("pruned-output summaries parse from a fenced reply, keep asked ids only and stay one capped line", async () => {
+  const { parsePruneSummaries, CESIUM_PRUNE_SUMMARY_MAX_CHARS } = await import(
+    "../src/lib/agents/cesium/cesium-context-pruning.js"
+  );
+  const long = "word ".repeat(200);
+  const reply = `Sure.\n\`\`\`json\n${JSON.stringify({ a: "line one\n  line two", b: long, c: "unasked", d: 4 })}\n\`\`\``;
+  const parsed = parsePruneSummaries(reply, ["a", "b", "d", "missing"]);
+  assert.deepEqual(Object.keys(parsed), ["a", "b"]);
+  assert.equal(parsed.a, "line one line two");
+  assert.equal(parsed.b!.length, CESIUM_PRUNE_SUMMARY_MAX_CHARS);
+  assert.ok(parsed.b!.endsWith("…"));
+  assert.deepEqual(parsePruneSummaries("no json here", ["a"]), {});
+  assert.deepEqual(parsePruneSummaries("{not json}", ["a"]), {});
+});
