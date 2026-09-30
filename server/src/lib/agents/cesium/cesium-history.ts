@@ -10,6 +10,7 @@ export {
   normalizeEventsToHistory,
   prunedToolCallIds,
   prunedToolResultStub,
+  prunedToolSummaries,
   repairOpenAiMessageSequence,
   reportedContextTokens,
   satisfyOpenAiToolProtocol,
