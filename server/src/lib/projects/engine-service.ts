@@ -72,7 +72,7 @@ export async function revokeProjectPeerToken(tokenId: string): Promise<void> {
   }
   // No home can reach the Project context copies kept for this token any more.
   try {
-    await closeMirrorFeed(tokenId);
+    await closeMirrorFeed(tokenId).catch(() => undefined);
     const mirrors = getPeerMirrorsDir(tokenId);
     await fs.rm(mirrors, { recursive: true, force: true });
     forgetContextHashes(mirrors);
