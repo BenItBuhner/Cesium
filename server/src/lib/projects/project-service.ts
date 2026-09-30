@@ -689,7 +689,7 @@ export function resolveProjectChild(
 export async function syncContextToPeer(projectId: string, engineId: string): Promise<boolean> {
   try {
     const { syncProjectContextWithPeer } = await import("./context-sync.js");
-    await syncProjectContextWithPeer(projectId, engineId);
+    await syncProjectContextWithPeer(projectId, engineId, { fresh: true });
     return true;
   } catch (error) {
     console.warn(

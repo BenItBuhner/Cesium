@@ -19,9 +19,16 @@ import {
 import { chooseChildModel, requireRunnableChildModel } from "../lib/projects/child-model.js";
 import { ProjectContextError } from "../lib/projects/context-store.js";
 import {
+  dropMirrorFeedProject,
+  expectOwnMirrorWrite,
+  waitForMirrorChanges,
+} from "../lib/projects/context-feed.js";
+import {
+  CONTEXT_FILE_ABSENT,
   CONTEXT_SYNC_FILE_MAX_BYTES,
   contextFileIn,
   contextManifest,
+  currentSha256,
   deleteContextFileIn,
   forgetContextHashes,
   writeContextBytesIn,
@@ -32,7 +39,7 @@ import type { WorkerBriefInput } from "../lib/projects/worker-brief.js";
 import { homeEngineLabel } from "../lib/projects/engine-registry.js";
 import { ProjectError } from "../lib/projects/errors.js";
 import { isProjectsEnabled, ProjectsDisabledError } from "../lib/projects/feature-flag.js";
-import type { PeerInfo, PeerWorkspaceInfo } from "../lib/projects/peer-client.js";
+import type { PeerContextChanges, PeerInfo, PeerWorkspaceInfo } from "../lib/projects/peer-client.js";
 import { verifyPeerToken } from "../lib/projects/peer-tokens.js";
 import {
   clampTranscriptTurns,
@@ -409,6 +416,13 @@ function contextError(error: unknown): never {
   throw error;
 }
 
+/** With `ifMatch`, the home's write or delete only lands on the version it listed. */
+async function assertUnchangedSinceListed(absolute: string, relative: string, ifMatch: string | undefined): Promise<void> {
+  if (ifMatch && ((await currentSha256(absolute)) ?? CONTEXT_FILE_ABSENT) !== ifMatch) {
+    throw new ProjectError(`${relative} changed here since the home listed it.`, 409, "context_changed");
+  }
+}
+
 projectPeerRoutes.get(
   `${CONTEXT_PATH}/manifest`,
   guarded(async (c) => {
@@ -443,6 +457,11 @@ projectPeerRoutes.put(
     }
     const bytes = new Uint8Array(await c.req.arrayBuffer());
     const mtime = Number(c.req.query("mtime"));
+    const { absolute, relative } = await contextFileIn(root, c.req.query("path") ?? "").catch(contextError);
+    await assertUnchangedSinceListed(absolute, relative, c.req.query("ifMatch"));
+    if (Number.isFinite(mtime)) {
+      expectOwnMirrorWrite(c.get("peerToken").id, absolute, { size: bytes.byteLength, mtimeMs: mtime });
+    }
     await writeContextBytesIn(root, c.req.query("path") ?? "", bytes, Number.isFinite(mtime) ? mtime : null).catch(
       contextError
     );
@@ -453,7 +472,11 @@ projectPeerRoutes.put(
 projectPeerRoutes.delete(
   `${CONTEXT_PATH}/file`,
   guarded(async (c) => {
-    await deleteContextFileIn(mirrorRoot(c), c.req.query("path") ?? "").catch(contextError);
+    const root = mirrorRoot(c);
+    const { absolute, relative } = await contextFileIn(root, c.req.query("path") ?? "").catch(contextError);
+    await assertUnchangedSinceListed(absolute, relative, c.req.query("ifMatch"));
+    expectOwnMirrorWrite(c.get("peerToken").id, absolute, "absent");
+    await deleteContextFileIn(root, c.req.query("path") ?? "").catch(contextError);
     return c.json({ ok: true });
   })
 );
@@ -463,9 +486,33 @@ projectPeerRoutes.delete(
   CONTEXT_PATH,
   guarded(async (c) => {
     const root = mirrorRoot(c);
+    dropMirrorFeedProject(c.get("peerToken").id, c.req.param("projectId") ?? "");
     await fs.rm(path.dirname(root), { recursive: true, force: true });
     forgetContextHashes(root);
     return c.json({ ok: true });
+  })
+);
+
+/**
+ * Answers when a context mirror this token holds changes (an agent here wrote
+ * to it) after the home's cursor, or empty after `wait` ms. The home keeps
+ * one of these open to sync those Projects right away.
+ */
+projectPeerRoutes.get(
+  "/api/projects/peer/context-changes",
+  guarded(async (c) => {
+    const cursor = Number(c.req.query("cursor"));
+    const wait = Number(c.req.query("wait"));
+    const changes = await waitForMirrorChanges(c.get("peerToken").id, {
+      feed: c.req.query("feed") || null,
+      cursor: Number.isFinite(cursor) ? cursor : -1,
+      waitMs: Number.isFinite(wait) ? wait : 0,
+      signal: c.req.raw.signal,
+    });
+    if (!changes) {
+      return c.json({ error: "Missing or revoked peer token.", code: "peer_token_invalid" }, 401);
+    }
+    return c.json(changes satisfies PeerContextChanges);
   })
 );
 
