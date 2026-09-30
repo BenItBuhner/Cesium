@@ -16,6 +16,7 @@ import type {
   AgentConversationSnapshotHead,
   AgentContextTranscript,
   AgentContextUsageSnapshot,
+  AgentGoalSummary,
   AgentImportResult,
   AgentImportSessionSummary,
   AgentImportSourceInfo,
@@ -1183,6 +1184,17 @@ export async function fetchAgentContextUsage(
 ): Promise<{ usage: AgentContextUsageSnapshot }> {
   return request(
     `/api/agents/conversations/${encodeURIComponent(conversationId)}/context-usage`,
+    options?.signal ? { signal: options.signal } : undefined
+  );
+}
+
+/** The conversation's Goal as the chat shows it; null when it has none. */
+export async function fetchAgentConversationGoal(
+  conversationId: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ goal: AgentGoalSummary | null }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/goal`,
     options?.signal ? { signal: options.signal } : undefined
   );
 }

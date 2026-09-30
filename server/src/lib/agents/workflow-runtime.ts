@@ -403,6 +403,8 @@ export async function executeWorkflowRun(input: {
       try {
         const result = await input.spawnAgent({
           prompt: promptText,
+          runId: run.runId,
+          agentId: begin.agentId,
           label: begin.finalLabel,
           phase: phaseName,
           schema,

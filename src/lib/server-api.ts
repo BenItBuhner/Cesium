@@ -74,6 +74,7 @@ export {
   executeInstalledExtensionCommand,
   fetchAgentContextTranscript,
   fetchAgentContextUsage,
+  fetchAgentConversationGoal,
   fetchAgentConversationSnapshot,
   fetchAgentToolResult,
   fetchAgentDeploymentHints,

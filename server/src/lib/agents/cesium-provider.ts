@@ -4250,7 +4250,63 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
+  /** Runs one workflow agent() call behind a subagent-style card in the chat. */
   private async spawnWorkflowAgent(request: WorkflowAgentSpawnRequest): Promise<{
+    value: unknown;
+    tokensUsed?: number;
+  }> {
+    const subagentId = `workflow-${request.runId ?? "run"}-${request.agentId ?? randomUUID().slice(0, 12)}`;
+    const title = `Workflow agent: ${request.label ?? "agent"}`;
+    const meta = request.phase ? `Phase: ${request.phase}` : undefined;
+    const transcript: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        createdAt: Date.now(),
+        kind: "user_message",
+        messageId: randomUUID(),
+        content: request.prompt,
+      },
+    ];
+    const card = (status: "running" | "completed" | "failed", recentActivity: string) =>
+      this.callbacks
+        .appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "subagent",
+            subagentId,
+            title,
+            ...(meta ? { meta } : {}),
+            status,
+            transcript: [...transcript],
+            recentActivity: recentActivity.slice(0, 240),
+          },
+        ])
+        .catch(() => undefined);
+    await card("running", request.prompt);
+    try {
+      const result = await this.runWorkflowAgent(request);
+      const text = typeof result.value === "string" ? result.value : safeJson(result.value);
+      transcript.push({
+        seq: 2,
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        createdAt: Date.now(),
+        kind: "assistant_message_chunk",
+        messageId: randomUUID(),
+        text,
+      });
+      await card("completed", text);
+      return result;
+    } catch (error) {
+      await card("failed", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  private async runWorkflowAgent(request: WorkflowAgentSpawnRequest): Promise<{
     value: unknown;
     tokensUsed?: number;
   }> {

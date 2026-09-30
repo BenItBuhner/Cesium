@@ -43,6 +43,8 @@ import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
   extractComposerUserMessageHistory,
+  goalProgressFromRecord,
+  goalRecordRefreshKey,
   latestGoalProgressStatus,
   NO_MODEL_PLACEHOLDER,
   projectAgentEventsToChatMessages,
@@ -57,6 +59,8 @@ import {
   updateComposerDraftDefault,
   updateComposerDraftMode,
 } from "@/lib/chat-draft-defaults";
+import { useConversationGoal } from "@/hooks/useConversationGoal";
+import { useOrchestrationBoardAutoOpen } from "@/hooks/useOrchestrationBoardAutoOpen";
 import { useComposerDefaults } from "@/hooks/useComposerDefaults";
 import { useOpenSideChat } from "@/hooks/useOpenSideChat";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
@@ -168,6 +172,7 @@ export function AgentCenterPane() {
     selectedConversationId,
     setStableConversationView,
     setSelectedConversationId,
+    setRightPaneOpen,
     stableConversationView,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
@@ -177,6 +182,12 @@ export function AgentCenterPane() {
     ? conversationsById[selectedConversationId] ?? null
     : null;
   const selectedConversationEvents = useConversationEvents(selectedConversationId);
+  const openRightPane = useCallback(() => setRightPaneOpen(true), [setRightPaneOpen]);
+  useOrchestrationBoardAutoOpen({
+    conversationId: selectedConversationId,
+    events: selectedConversationEvents,
+    openRightPane,
+  });
   const activeBackend = useMemo(
     () => backends.find((backend) => backend.id === conversation?.config.backendId) ?? null,
     [backends, conversation?.config.backendId]
@@ -251,9 +262,21 @@ export function AgentCenterPane() {
     () => computeContextUsageRefreshGeneration(deferredThreadEvents),
     [deferredThreadEvents]
   );
-  const goalProgress = useMemo(
-    () => latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+  const goalRecordKey = useMemo(
+    () => goalRecordRefreshKey(deferredThreadEvents, conversation?.status),
     [conversation?.status, deferredThreadEvents]
+  );
+  const goalRecord = useConversationGoal({
+    conversationId: conversation?.id,
+    refreshKey: goalRecordKey,
+    enabled: conversation?.config.backendId === "cesium-agent",
+  });
+  const goalProgress = useMemo(
+    () =>
+      goalRecord
+        ? goalProgressFromRecord(goalRecord, deferredThreadEvents, conversation?.status)
+        : latestGoalProgressStatus(deferredThreadEvents, conversation?.status),
+    [conversation?.status, deferredThreadEvents, goalRecord]
   );
 
   const coordinatorProjectId =

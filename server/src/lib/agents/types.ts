@@ -810,6 +810,28 @@ export type AgentTokenUsage = {
 
 export type AgentModelUsage = AgentTokenUsage & { modelId: string };
 
+/** What the chat shows of a conversation's Goal, read from the Goal record. */
+export type AgentGoalSummary = {
+  objective: string;
+  status: string;
+  /** The Goal's own progress, or the share of completed todos when it has none. */
+  progressPercent: number;
+  headline: string | null;
+  todosCompleted: number;
+  todosTotal: number;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  snapshots: Array<{
+    id: string;
+    createdAt: number;
+    progressPercent: number;
+    summary: string;
+    headline: string | null;
+  }>;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
 export type AgentContextUsageSnapshot = {
   supported: boolean;
   limitTokens: number;

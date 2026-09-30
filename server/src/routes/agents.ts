@@ -28,6 +28,8 @@ import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
 import { expireElapsedSettle } from "../lib/agents/conversation-normalize.js";
 import { maybeAutoSyncImportedConversation } from "../lib/agents/import/importer.js";
 import { readConversationEvents, readConversationRecord } from "../lib/agents/session-store.js";
+import { readGoalForConversation } from "../lib/agents/goal-store.js";
+import { goalSummaryForChat } from "../lib/agents/goal-types.js";
 import {
   type CesiumToolResultBlobRef,
   readToolResultBlob,
@@ -282,6 +284,14 @@ agentRoutes.get("/api/agents/conversations/:conversationId/context-usage", async
     return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
   }
   return c.json({ usage });
+});
+
+agentRoutes.get("/api/agents/conversations/:conversationId/goal", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  c.header("Cache-Control", "no-store, max-age=0");
+  const goal = await readGoalForConversation({ workspace, conversationId });
+  return c.json({ goal: goal ? goalSummaryForChat(goal) : null });
 });
 
 agentRoutes.get("/api/agents/conversations/:conversationId/context-transcript", async (c) => {
