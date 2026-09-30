@@ -29,6 +29,16 @@ export type PeerInfo = {
   workspaces: PeerWorkspaceInfo[];
 };
 
+/** Which of the caller's context mirrors changed after its cursor. */
+export type PeerContextChanges = {
+  /** The peer's change feed; a new id (the peer restarted) means "sync everything". */
+  feed: string;
+  cursor: number;
+  projects: string[];
+  /** The caller's cursor is unknown to the peer: sync every Project. */
+  reset: boolean;
+};
+
 export type PeerCreateChildBody = Omit<ChildCreateInput, "peerTokenId" | "placement"> & {
   placement: Exclude<ChildCreateInput["placement"], { kind: "root" }>;
 };
@@ -80,14 +90,17 @@ function childPath(ref: ChildRef, suffix = ""): string {
 }
 
 const TRANSFER_TIMEOUT_MS = 120_000;
+/** How much longer than its wait a request for context changes may take before it counts as unanswered. */
+const CONTEXT_CHANGES_SLACK_MS = 15_000;
 
 async function peerFetch(
   peer: PeerConnection,
   method: string,
   pathname: string,
-  init: { body?: BodyInit; contentType?: string; accept: string },
+  init: { body?: BodyInit; contentType?: string; accept: string; signal?: AbortSignal },
   timeoutMs: number
 ): Promise<Response> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   let response: Response;
   try {
     response = await fetch(`${peer.baseUrl}${pathname}`, {
@@ -98,7 +111,7 @@ async function peerFetch(
         ...(init.contentType ? { "content-type": init.contentType } : {}),
       },
       ...(init.body === undefined ? {} : { body: init.body }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     });
   } catch (error) {
     const reason =
@@ -138,7 +151,8 @@ export async function peerRequest<T>(
   method: string,
   pathname: string,
   body?: unknown,
-  timeoutMs = DEFAULT_TIMEOUT_MS
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<T> {
   const response = await peerFetch(
     peer,
@@ -147,6 +161,7 @@ export async function peerRequest<T>(
     {
       accept: "application/json",
       ...(body === undefined ? {} : { body: JSON.stringify(body), contentType: "application/json" }),
+      ...(signal ? { signal } : {}),
     },
     timeoutMs
   );
@@ -271,21 +286,52 @@ export class PeerClient {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  async writeContextFile(projectId: string, filePath: string, bytes: Uint8Array, mtimeMs: number): Promise<void> {
+  /** With `ifMatch` (the hash the home listed, or "absent"), the peer refuses with 409 if its file changed since. */
+  async writeContextFile(
+    projectId: string,
+    filePath: string,
+    bytes: Uint8Array,
+    mtimeMs: number,
+    ifMatch?: string
+  ): Promise<void> {
+    const match = ifMatch ? `&ifMatch=${encodeURIComponent(ifMatch)}` : "";
     await peerFetch(
       this.peer,
       "PUT",
-      contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}&mtime=${Math.round(mtimeMs)}`),
+      contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}&mtime=${Math.round(mtimeMs)}${match}`),
       { body: new Uint8Array(bytes), contentType: "application/octet-stream", accept: "application/json" },
       TRANSFER_TIMEOUT_MS
     );
   }
 
-  async deleteContextFile(projectId: string, filePath: string): Promise<void> {
-    await peerRequest(this.peer, "DELETE", contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}`));
+  async deleteContextFile(projectId: string, filePath: string, ifMatch?: string): Promise<void> {
+    const match = ifMatch ? `&ifMatch=${encodeURIComponent(ifMatch)}` : "";
+    await peerRequest(this.peer, "DELETE", contextPath(projectId, `/file?path=${encodeURIComponent(filePath)}${match}`));
   }
 
   async deleteContextMirror(projectId: string): Promise<void> {
     await peerRequest(this.peer, "DELETE", contextPath(projectId, ""));
+  }
+
+  /**
+   * Waits up to `waitMs` for a change to this token's context mirrors after
+   * `cursor`; the peer answers as soon as one of its agents writes there.
+   */
+  contextChanges(
+    input: { feed: string | null; cursor: number; waitMs: number },
+    signal?: AbortSignal
+  ): Promise<PeerContextChanges> {
+    const query = new URLSearchParams({ cursor: String(input.cursor), wait: String(input.waitMs) });
+    if (input.feed) {
+      query.set("feed", input.feed);
+    }
+    return peerRequest<PeerContextChanges>(
+      this.peer,
+      "GET",
+      `/api/projects/peer/context-changes?${query}`,
+      undefined,
+      input.waitMs + CONTEXT_CHANGES_SLACK_MS,
+      signal
+    );
   }
 }

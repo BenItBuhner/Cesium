@@ -25,6 +25,26 @@ export class ProjectContextError extends Error {
   }
 }
 
+const writeListeners = new Set<(projectId: string) => void>();
+
+/** Calls `listener` after the context routes or tools write or delete a file in a Project's context. */
+export function onProjectContextWrite(listener: (projectId: string) => void): () => void {
+  writeListeners.add(listener);
+  return () => {
+    writeListeners.delete(listener);
+  };
+}
+
+function contextWritten(projectId: string): void {
+  for (const listener of writeListeners) {
+    try {
+      listener(projectId);
+    } catch (error) {
+      console.warn("[projects] a context write listener failed:", error instanceof Error ? error.message : error);
+    }
+  }
+}
+
 /**
  * Validates a context-relative path and returns its absolute location. Hidden
  * segments are refused: engine-managed mirrors (`.cesium/…`) live beside the
@@ -270,6 +290,7 @@ export async function writeContextUpload(
   }
   await assertTotalFits(projectId, relative, bytes.byteLength);
   await atomicWrite(absolute, bytes);
+  contextWritten(projectId);
   const stat = await fs.stat(absolute);
   return {
     path: relative,
@@ -308,6 +329,7 @@ export async function writeContextFile(
   }
   await assertTotalFits(projectId, relative, nextBytes);
   await atomicWrite(absolute, next);
+  contextWritten(projectId);
   const stat = await fs.stat(absolute);
   return {
     path: relative,
@@ -325,6 +347,7 @@ export async function deleteContextFile(projectId: string, relativePath: string)
     throw new ProjectContextError(`No context file at ${relative}.`);
   }
   await fs.unlink(absolute);
+  contextWritten(projectId);
 }
 
 export function initialNotesMarkdown(projectName: string): string {

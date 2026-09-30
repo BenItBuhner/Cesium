@@ -75,14 +75,29 @@ export async function startPeerEngine(input: {
   return { url, login, process: child, output, stop: () => child.kill("SIGTERM") };
 }
 
-/** Logs in on the peer, mints a peer token there, and returns its secret and id. */
-export async function mintPeerToken(peer: PeerEngine, label: string): Promise<{ secret: string; id: string }> {
+async function peerSession(peer: PeerEngine): Promise<string> {
   const login = await fetch(`${peer.url}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(peer.login),
   });
-  const { token: session } = (await login.json()) as { token: string };
+  return ((await login.json()) as { token: string }).token;
+}
+
+/** Logs in on the peer and revokes one of its peer tokens there. */
+export async function revokePeerToken(peer: PeerEngine, tokenId: string): Promise<void> {
+  const response = await fetch(`${peer.url}/api/projects/peer-tokens/${encodeURIComponent(tokenId)}`, {
+    method: "DELETE",
+    headers: { "x-opencursor-session-token": await peerSession(peer) },
+  });
+  if (!response.ok) {
+    throw new Error(`Revoking peer token ${tokenId} failed: HTTP ${response.status} ${await response.text()}`);
+  }
+}
+
+/** Logs in on the peer, mints a peer token there, and returns its secret and id. */
+export async function mintPeerToken(peer: PeerEngine, label: string): Promise<{ secret: string; id: string }> {
+  const session = await peerSession(peer);
   const minted = await fetch(`${peer.url}/api/projects/peer-tokens`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-opencursor-session-token": session },
