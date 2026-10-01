@@ -101,6 +101,7 @@ type PublicAccessManagerDeps = {
   heartbeatIntervalMs?: number;
   healthIntervalMs?: number;
   restartDelayMs?: number;
+  healthRetryDelayMs?: number;
   registerSignals?: boolean;
 };
 
@@ -121,12 +122,19 @@ const CONFIG_FILE = path.join(DATA_DIR, "profile", "public-access.json");
  */
 export const DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 const MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5_000;
+/**
+ * Earlier installers hard-wrote 15 s, then 30 s, into server.env and every
+ * update carries the stored value forward; treat both as the old defaults
+ * they were rather than as a deliberate choice of a 20-60x busier heartbeat.
+ */
+const LEGACY_DEFAULT_RENDEZVOUS_INTERVALS = new Set(["15", "30"]);
+const MAX_TUNNEL_RESTART_DELAY_MS = 60_000;
 
 export function defaultRendezvousHeartbeatIntervalMs(
   env: NodeJS.ProcessEnv = process.env
 ): number {
   const raw = env.CESIUM_RENDEZVOUS_INTERVAL?.trim();
-  if (!raw || !/^\d+$/.test(raw)) {
+  if (!raw || !/^\d+$/.test(raw) || LEGACY_DEFAULT_RENDEZVOUS_INTERVALS.has(raw)) {
     return DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS;
   }
   return Math.max(MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, Number(raw) * 1000);
@@ -196,6 +204,36 @@ function normalizeRendezvousBaseUrl(value: unknown, fieldName: string): string {
   url.hash = "";
   url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/+$/, "");
+}
+
+/**
+ * The account site's `/api/rendezvous` was the original registry and is now
+ * only a legacy shim over the same Convex records. Engines installed back then
+ * still carry it in server.env / public-access.json, so publishing there ties
+ * discovery to the site staying up. Those values resolve to the Convex
+ * registry instead; any other (self-hosted) registry is used as configured.
+ */
+const LEGACY_HOSTED_REGISTRY_ORIGINS = new Set([
+  "https://cesium.techlitnow.com",
+  "https://www.cesium.techlitnow.com",
+]);
+const DEFAULT_CLOUD_RENDEZVOUS_BASE_URL =
+  "https://insightful-wolverine-140.convex.site/rendezvous";
+
+export function resolveRendezvousBaseUrl(
+  config: Pick<PublicAccessConfig, "rendezvousBaseUrl" | "webAppUrl">,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const configured = (
+    config.rendezvousBaseUrl ?? new URL("/api/rendezvous", config.webAppUrl).toString()
+  ).replace(/\/+$/, "");
+  if (!LEGACY_HOSTED_REGISTRY_ORIGINS.has(new URL(configured).origin)) {
+    return configured;
+  }
+  const cloudDefault = env.CESIUM_DEFAULT_RENDEZVOUS_URL?.trim();
+  return cloudDefault
+    ? normalizeRendezvousBaseUrl(cloudDefault, "CESIUM_DEFAULT_RENDEZVOUS_URL")
+    : DEFAULT_CLOUD_RENDEZVOUS_BASE_URL;
 }
 
 function normalizePublicBaseUrl(value: unknown, fieldName: string): string {
@@ -370,6 +408,7 @@ export class PublicAccessManager {
   private rendezvousFailures = 0;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private restartFailures = 0;
   private runtimeAuthOwnedByManager = false;
   private signalsRegistered = false;
   private readonly initialEnvAuthUsername = process.env.OPENCURSOR_AUTH_USERNAME?.trim() || null;
@@ -806,10 +845,34 @@ export class PublicAccessManager {
         this.scheduleRestart();
       }
     });
-    const url = await this.waitForTunnelUrl(selected);
-    await this.requireHealthy(url);
+    const url = await this.waitForHealthyTunnelUrl(selected, await this.waitForTunnelUrl(selected));
     this.currentPublicUrl = url;
     await this.writePublicUrlFile(url);
+  }
+
+  /**
+   * A freshly assigned localhost.run / trycloudflare hostname commonly answers
+   * 503 for several seconds before it routes. Keep probing (following any newer
+   * assignment) until the startup deadline instead of failing the whole start.
+   */
+  private async waitForHealthyTunnelUrl(
+    provider: PublicAccessProvider,
+    firstUrl: string
+  ): Promise<string> {
+    const deadline = this.now() + this.tunnelStartupTimeoutMs;
+    let url = firstUrl;
+    for (;;) {
+      try {
+        await this.requireHealthy(url);
+        return url;
+      } catch (error) {
+        if (this.now() >= deadline || !this.child) {
+          throw error;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.healthRetryDelayMs));
+      url = extractLatestUrl(this.tunnelLog, provider) ?? url;
+    }
   }
 
   private appendTunnelLog(chunk: string): void {
@@ -1020,6 +1083,7 @@ export class PublicAccessManager {
 
   private startTimers(): void {
     this.rendezvousFailures = 0;
+    this.restartFailures = 0;
     this.scheduleRendezvousHeartbeat(this.heartbeatIntervalMs);
     this.healthTimer = setInterval(() => {
       void this.checkPublicHealth();
@@ -1083,13 +1147,21 @@ export class PublicAccessManager {
 
   private scheduleRestart(): void {
     if (this.restartTimer || !this.config?.enabled) return;
+    const delay = Math.min(
+      MAX_TUNNEL_RESTART_DELAY_MS,
+      this.restartDelayMs * 2 ** Math.min(this.restartFailures, 10)
+    );
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       if (!this.config?.enabled) return;
       void this.startExposure(this.config).catch((error) => {
         this.lastTunnelError = error instanceof Error ? error.message : String(error);
+        // A failed restart must not leave the engine parked on a dead URL
+        // with no health monitor; keep trying with backoff.
+        this.restartFailures += 1;
+        this.scheduleRestart();
       });
-    }, this.restartDelayMs);
+    }, delay);
     this.restartTimer.unref?.();
   }
 
@@ -1120,10 +1192,8 @@ export class PublicAccessManager {
   private async publishRendezvous(): Promise<void> {
     if (!this.config?.enabled || !this.currentPublicUrl || !this.activeProvider) return;
     const config = this.config;
-    const base =
-      config.rendezvousBaseUrl ??
-      new URL("/api/rendezvous", config.webAppUrl).toString().replace(/\/+$/, "");
-    const endpoint = new URL(`${base.replace(/\/+$/, "")}/${encodeURIComponent(config.serverId)}`);
+    const base = resolveRendezvousBaseUrl(config);
+    const endpoint = new URL(`${base}/${encodeURIComponent(config.serverId)}`);
     const response = await this.fetch(endpoint.toString(), {
       method: "PUT",
       headers: {
@@ -1188,9 +1258,7 @@ export class PublicAccessManager {
   }
 
   private buildConnectUrl(config: PublicAccessConfig, publicUrl: string): string {
-    const registryBaseUrl =
-      config.rendezvousBaseUrl ??
-      new URL("/api/rendezvous", config.webAppUrl).toString();
+    const registryBaseUrl = resolveRendezvousBaseUrl(config);
     const payload = {
       version: 1,
       serverId: config.serverId,
@@ -1237,9 +1305,7 @@ export class PublicAccessManager {
         lastError: this.lastTunnelError,
       },
       rendezvous: {
-        registryOrigin: config
-          ? new URL(config.rendezvousBaseUrl ?? config.webAppUrl).origin
-          : null,
+        registryOrigin: config ? new URL(resolveRendezvousBaseUrl(config)).origin : null,
         lastPublishedAt: this.lastPublishedAt,
         lastError: this.lastRendezvousError,
       },
@@ -1363,6 +1429,10 @@ export class PublicAccessManager {
 
   private get restartDelayMs(): number {
     return this.deps.restartDelayMs ?? 2000;
+  }
+
+  private get healthRetryDelayMs(): number {
+    return this.deps.healthRetryDelayMs ?? 1000;
   }
 }
 

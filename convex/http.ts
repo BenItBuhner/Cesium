@@ -10,7 +10,7 @@ const RECORD_TTL_SECONDS = 15 * 60;
 
 function corsHeaders(): HeadersInit {
   return {
-    "Access-Control-Allow-Headers": "authorization, content-type",
+    "Access-Control-Allow-Headers": "authorization, content-type, x-cesium-rendezvous-version",
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store, max-age=0",
