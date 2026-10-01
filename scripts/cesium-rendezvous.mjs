@@ -13,6 +13,25 @@ function requiredEnv(name, pattern) {
   return value;
 }
 
+// The account site's /api/rendezvous is a legacy shim over the Convex
+// registry; old installs still name it, so they publish to Convex directly.
+const LEGACY_HOSTED_REGISTRY_ORIGINS = new Set([
+  "https://cesium.techlitnow.com",
+  "https://www.cesium.techlitnow.com",
+]);
+const DEFAULT_CLOUD_RENDEZVOUS_URL =
+  "https://insightful-wolverine-140.convex.site/rendezvous";
+
+function registryEndpoint() {
+  const configured = new URL(requiredEnv("CESIUM_RENDEZVOUS_URL"));
+  if (!LEGACY_HOSTED_REGISTRY_ORIGINS.has(configured.origin)) {
+    return configured;
+  }
+  return new URL(
+    process.env.CESIUM_DEFAULT_RENDEZVOUS_URL?.trim() || DEFAULT_CLOUD_RENDEZVOUS_URL
+  );
+}
+
 function registryConfig() {
   const serverId = requiredEnv("CESIUM_SERVER_ID", /^[A-Za-z0-9_-]{24,80}$/);
   const readSecret = requiredEnv(
@@ -23,7 +42,7 @@ function registryConfig() {
     "CESIUM_RENDEZVOUS_WRITE_SECRET",
     /^[A-Za-z0-9_-]{32,128}$/
   );
-  const endpoint = new URL(requiredEnv("CESIUM_RENDEZVOUS_URL"));
+  const endpoint = registryEndpoint();
   if (
     endpoint.protocol !== "https:" &&
     !(

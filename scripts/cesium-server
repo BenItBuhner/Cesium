@@ -530,9 +530,11 @@ rendezvous_is_ready() {
   ((now - published_at < 75))
 }
 
+# The fragment carries the current URL as well as the rendezvous identity, so
+# the link works before the first heartbeat lands (or while the registry is
+# unreachable) and follows tunnel rotations once it does.
 stable_connect_url() {
   [[ -n "${CESIUM_WEB_URL:-}" && -n "${CESIUM_RENDEZVOUS_URL:-}" ]] || return 1
-  rendezvous_is_ready || return 1
   local remote fragment
   remote="$(public_url)" || return 1
   fragment="$("$BUN_BIN" "$RENDEZVOUS_HELPER" connect-fragment "$remote")" || return 1
@@ -627,6 +629,8 @@ print_legacy_connection_details() {
       printf 'Connect: %s/agent?serverUrl=%s\n' \
         "${CESIUM_WEB_URL%/}" "$(encoded_public_url "$remote")"
     fi
+    # The apps read the link locally, so this works when the site is down.
+    printf 'Or paste the Connect link into the Cesium app: server picker > Connect a device.\n'
   fi
   if [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" ]]; then
     printf 'Username: %s\n' "$OPENCURSOR_AUTH_USERNAME"
@@ -944,13 +948,36 @@ wait_for_managed_ready() {
   return 1
 }
 
+# Copy the installer from the latest upstream commit (GitHub) into the run
+# directory. Running the copy already in the checkout would apply this
+# update's installer changes only on the next update.
+fetch_latest_installer() {
+  local branch="${CESIUM_REPO_BRANCH:-main}"
+  local target="$RUN_DIR/install-cesium-server.sh"
+  git -C "$SOURCE_DIR" fetch --quiet origin "$branch" >/dev/null 2>&1 || return 1
+  git -C "$SOURCE_DIR" show "FETCH_HEAD:scripts/install-cesium-server.sh" \
+    >"$target.tmp" 2>/dev/null || {
+    rm -f "$target.tmp"
+    return 1
+  }
+  chmod 700 "$target.tmp"
+  mv "$target.tmp" "$target"
+  printf '%s' "$target"
+}
+
 update_install() {
-  stop_managed_service
-  if [[ ! -x "$SOURCE_DIR/scripts/install-cesium-server.sh" ]]; then
+  local installer
+  if ! installer="$(fetch_latest_installer)"; then
+    printf 'Could not fetch the latest installer; using the one in %s.\n' "$SOURCE_DIR" >&2
+    installer="$SOURCE_DIR/scripts/install-cesium-server.sh"
+  fi
+  if [[ ! -f "$installer" ]]; then
     printf 'Installer is missing from %s.\n' "$SOURCE_DIR" >&2
     exit 1
   fi
+  stop_managed_service
   CESIUM_HOME="$CESIUM_HOME" \
+    CESIUM_REPO_BRANCH="${CESIUM_REPO_BRANCH:-main}" \
     CESIUM_WEB_URL="${CESIUM_WEB_URL:-}" \
     CESIUM_PORT="${PORT:-9100}" \
     CESIUM_STATE_DIR="${OPENCURSOR_DATA_DIR:-$CESIUM_HOME/state}" \
@@ -968,7 +995,7 @@ update_install() {
     CESIUM_TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-auto}" \
     CESIUM_TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}" \
     CESIUM_PUBLIC_URL="${CESIUM_PUBLIC_URL:-}" \
-    exec "$SOURCE_DIR/scripts/install-cesium-server.sh"
+    exec bash "$installer"
 }
 
 main() {

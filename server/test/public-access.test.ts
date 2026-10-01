@@ -27,6 +27,7 @@ const {
   createPublicAccessManagerForTests,
   defaultRendezvousHeartbeatIntervalMs,
   publicAccessManager,
+  resolveRendezvousBaseUrl,
 } = await import("../src/lib/public-access-manager.js");
 const { createCesiumApp } = await import("../src/app.js");
 const { assertBrowserProxyHostAllowed } = await import("../src/lib/browser-proxy-allowlist.js");
@@ -288,6 +289,64 @@ test("engine publishes directly to a configured Convex rendezvous endpoint", asy
   };
   assert.equal(decoded.registryBaseUrl, "https://deployment.convex.site");
   await manager.disable();
+});
+
+for (const legacy of [
+  { name: "the old account-site registry", rendezvousBaseUrl: "https://cesium.techlitnow.com/api/rendezvous" },
+  { name: "the account-site web URL fallback", rendezvousBaseUrl: undefined },
+]) {
+  test(`engines configured with ${legacy.name} publish to the Convex registry`, async () => {
+    const requests: FetchRequest[] = [];
+    const manager = makeManager({ fetch: makeFetch(requests) });
+    const now = Date.now();
+    manager.replaceConfigForTests({
+      schemaVersion: 1,
+      enabled: false,
+      webAppUrl: "https://cesium.techlitnow.com",
+      ...(legacy.rendezvousBaseUrl ? { rendezvousBaseUrl: legacy.rendezvousBaseUrl } : {}),
+      provider: "auto",
+      serverId: "server_1234567890abcdefghijklmnop",
+      rendezvousReadSecret: "read_secret_1234567890abcdefghijklmnopqrstuv",
+      rendezvousWriteSecret: "write_secret_1234567890abcdefghijklmnopqrstu",
+      managedAuthUsername: null,
+      managedAuthPassword: null,
+      credentialsManagerGenerated: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const result = await manager.enable();
+    assert.equal(
+      requests[0]?.url,
+      "https://insightful-wolverine-140.convex.site/rendezvous/server_1234567890abcdefghijklmnop"
+    );
+    const fragment = result.status.connectUrl?.split("cesiumConnect=")[1] ?? "";
+    const decoded = JSON.parse(Buffer.from(fragment, "base64url").toString("utf8")) as {
+      registryBaseUrl: string;
+    };
+    assert.equal(decoded.registryBaseUrl, "https://insightful-wolverine-140.convex.site");
+    assert.equal(
+      result.status.rendezvous.registryOrigin,
+      "https://insightful-wolverine-140.convex.site"
+    );
+    await manager.disable();
+  });
+}
+
+test("a self-hosted registry is used as configured", () => {
+  assert.equal(
+    resolveRendezvousBaseUrl({
+      webAppUrl: "https://cesium.example",
+      rendezvousBaseUrl: undefined,
+    }),
+    "https://cesium.example/api/rendezvous"
+  );
+  assert.equal(
+    resolveRendezvousBaseUrl(
+      { webAppUrl: "https://cesium.techlitnow.com", rendezvousBaseUrl: undefined },
+      { CESIUM_DEFAULT_RENDEZVOUS_URL: "https://staging.convex.site/rendezvous/" }
+    ),
+    "https://staging.convex.site/rendezvous"
+  );
 });
 
 test("dynamic CORS origin is allowed only while public access is enabled", async () => {
