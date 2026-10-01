@@ -36,6 +36,10 @@ assert_equal() {
     "an already migrated registry is unchanged"
   assert_equal "" "$(migrate_legacy_rendezvous_url "" "$site" "$convex")" \
     "an empty registry stays empty"
+  assert_equal "300" "$(migrate_legacy_rendezvous_interval 15)" "the 15 s legacy heartbeat moves to 5 min"
+  assert_equal "300" "$(migrate_legacy_rendezvous_interval 30)" "the 30 s legacy heartbeat moves to 5 min"
+  assert_equal "300" "$(migrate_legacy_rendezvous_interval "")" "an unset heartbeat defaults to 5 min"
+  assert_equal "600" "$(migrate_legacy_rendezvous_interval 600)" "a custom heartbeat is kept"
 )
 
 # `cesium-server update` must run the installer from the latest upstream
