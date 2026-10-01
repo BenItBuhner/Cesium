@@ -3,6 +3,7 @@ import type { OrchestrationAssignmentPermissionPolicy, OrchestrationAssignmentRe
 import { openWorkLedgerBoard, syncLedgerPlanFiles, workLedgerItems } from "../../work-ledger.js";
 import { appendTodoPlanEvent, ledgerScope } from "./plan-tools.js";
 import { generateTranscriptFromEvents } from "../../event-log-read.js";
+import { markChildReported } from "../../child-reports.js";
 import { asNumber } from "../../json-coerce.js";
 import type { AgentBackendId, AgentConversationStatus } from "../../types.js";
 import { asRecord, asString, asStringArray, safeJson } from "../cesium-coerce.js";
@@ -282,6 +283,8 @@ export async function orchestrationAssignAgentTool(
     config: { ...child.config, permissionPolicy },
     lastKnownConversationStatus: child.status,
   };
+  // The child's whole first turn is news for the head, even if it ends before the assignment is saved.
+  await markChildReported(child.id, 0, { quiet: false });
   await upsertOrchestrationAssignment(
     current.board.id,
     assignment,
@@ -411,6 +414,7 @@ export async function orchestrationControlAgentTool(
       );
       nextAssignmentStatus = "cancelled";
       childConversationStatus = conversation.status;
+      await markChildReported(conversation.id, conversation.lastEventSeq, { quiet: true });
       message = `Stopped child agent ${assignment.conversationId}${
         reason ? `: ${reason}` : "."
       }`;

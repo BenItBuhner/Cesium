@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { publish, subscribeSync } from "../../cache/pubsub.js";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import {
@@ -20,6 +21,19 @@ type PersistedWorkflowRunsFile = {
   schemaVersion: 1;
   runs: WorkflowRunRecord[];
 };
+
+const WORKFLOW_STORE_EVENTS_CHANNEL = "opencursor:workflow:store-events";
+
+export type WorkflowStoreEvent = {
+  workspaceId: string;
+  runId: string;
+  conversationId: string;
+  status: WorkflowRunStatus;
+};
+
+export function subscribeWorkflowStoreEvents(handler: (event: WorkflowStoreEvent) => void): () => void {
+  return subscribeSync<WorkflowStoreEvent>(WORKFLOW_STORE_EVENTS_CHANNEL, handler);
+}
 
 function getWorkflowRunsFile(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "workflow-runs.json");
@@ -155,6 +169,12 @@ export async function upsertWorkflowRun(record: WorkflowRunRecord): Promise<Work
   // Keep the newest 100 runs.
   runs.sort((a, b) => b.updatedAt - a.updatedAt);
   await writeRunsFile(record.workspaceId, runs.slice(0, 100));
+  await publish(WORKFLOW_STORE_EVENTS_CHANNEL, {
+    workspaceId: next.workspaceId,
+    runId: next.runId,
+    conversationId: next.conversationId,
+    status: next.status,
+  } satisfies WorkflowStoreEvent);
   return next;
 }
 

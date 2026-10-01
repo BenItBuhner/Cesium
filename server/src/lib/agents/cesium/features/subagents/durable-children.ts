@@ -18,7 +18,10 @@ import {
   listWorkspaceConversationRecords,
   readConversationRecord,
   readRecentConversationEvents,
+  subscribeAgentStoreEvents,
 } from "../../../session-store.js";
+import { childReport, markChildReported } from "../../../child-reports.js";
+import { conversationWake, type StoreWake } from "../../../store-wakes.js";
 import type { AgentConversationRecord, AgentStoredEvent } from "../../../types.js";
 import { asString } from "../../cesium-coerce.js";
 import { resolveWaitAgentTimeoutMs } from "../limits.js";
@@ -42,6 +45,8 @@ export type DurableSubagentsOptions = {
   /** The parent's conversation as text, for a forked child: everything, or the newest `turns` turns. */
   parentTranscript: (turns: number | "all") => Promise<string>;
   isCancelled: () => boolean;
+  /** Aborts when the parent's turn is stopped, so a wait ends at once. */
+  cancelSignal?: () => AbortSignal | undefined;
 };
 
 type ChildRef = {
@@ -56,8 +61,8 @@ type ChildRef = {
 
 type ChildState = "running" | "needs_attention" | "completed" | "errored" | "interrupted";
 
-const WAIT_POLL_MS = 500;
-const WATCH_POLL_MS = 1500;
+/** A card re-emits on every state change, and at most this often while the child only makes progress. */
+const CARD_PROGRESS_MIN_MS = 1000;
 /** Recent messages (with their tool calls) a card and a wait summary look at. */
 const CARD_RECENT_MESSAGES = 8;
 const FORK_TRANSCRIPT_MAX_CHARS = 60_000;
@@ -81,7 +86,7 @@ export function spawnDepthOf(agentPath: string): number {
   return Math.max(0, agentPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).length - 1);
 }
 
-function childState(record: AgentConversationRecord): ChildState {
+export function childState(record: AgentConversationRecord): ChildState {
   switch (record.status) {
     case "idle":
       return (record.queuedPrompts?.length ?? 0) > 0 ? "running" : "completed";
@@ -98,12 +103,26 @@ function childState(record: AgentConversationRecord): ChildState {
   }
 }
 
+/**
+ * Whether a child has news for its parent: events past what the parent was
+ * told, other than the tail of a stop the parent caused itself.
+ */
+export async function childHasNews(record: AgentConversationRecord): Promise<boolean> {
+  const report = await childReport(record);
+  if (record.lastEventSeq <= report.reportedSeq) return false;
+  if (report.quiet && childState(record) === "interrupted") {
+    await markChildReported(record.id, record.lastEventSeq);
+    return false;
+  }
+  return true;
+}
+
 function cardStatus(state: ChildState): "running" | "completed" | "failed" {
   return state === "completed" ? "completed" : state === "running" || state === "needs_attention" ? "running" : "failed";
 }
 
 /** The child's newest reply: the text of its last finished assistant message. */
-function lastReply(events: AgentStoredEvent[]): string {
+export function lastReply(events: AgentStoredEvent[]): string {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   let text = "";
   let current = "";
@@ -179,10 +198,10 @@ async function readMailbox(childConversationId: string): Promise<Array<{ from: s
 
 export class DurableSubagents {
   private children: Map<string, ChildRef> | null = null;
-  /** Child conversation id -> its lastEventSeq the parent has already been told about. */
-  private readonly seen = new Map<string, number>();
-  private readonly watchers = new Map<string, ReturnType<typeof setInterval>>();
+  /** Child conversation id -> stops its card watcher. */
+  private readonly watchers = new Map<string, () => void>();
   private disposed = false;
+  private readonly disposeAbort = new AbortController();
 
   constructor(private readonly options: DurableSubagentsOptions) {}
 
@@ -201,7 +220,7 @@ export class DurableSubagents {
         title: record.title.replace(/^Subagent: /, ""),
         modelId: record.config.modelId,
       });
-      this.seen.set(record.id, record.lastEventSeq);
+      await childReport(record);
     }
     this.children = children;
     return children;
@@ -344,7 +363,7 @@ export class DurableSubagents {
   private async startTurn(child: ChildRef, text: string): Promise<void> {
     const runtime = await agentRuntime();
     const before = await readConversationRecord(this.options.workspace.id, child.conversationId);
-    this.seen.set(child.conversationId, before?.lastEventSeq ?? 0);
+    await markChildReported(child.conversationId, before?.lastEventSeq ?? 0, { quiet: false });
     await runtime.promptConversation(this.options.workspace, child.conversationId, text);
     await this.emitCard(child);
     this.watch(child);
@@ -398,10 +417,17 @@ export class DurableSubagents {
     const target = asString(args.target);
     if (!target) throw new Error("interrupt_agent.target is required.");
     const child = await this.resolveChild(target);
+    const record = await this.stopChild(child);
+    return JSON.stringify({ ok: true, target: child.path, status: childState(record) });
+  }
+
+  /** Stops a child on the parent's behalf; the stop is not reported back to the parent. */
+  private async stopChild(child: ChildRef): Promise<AgentConversationRecord> {
     const runtime = await agentRuntime();
     const record = await runtime.cancelConversation(this.options.workspace, child.conversationId);
+    await markChildReported(child.conversationId, record.lastEventSeq, { quiet: true });
     await this.emitCard(child);
-    return JSON.stringify({ ok: true, target: child.path, status: childState(record) });
+    return record;
   }
 
   /** Children whose turn ended (or that need attention) since the parent last heard. */
@@ -411,7 +437,7 @@ export class DurableSubagents {
     for (const child of children) {
       const record = await readConversationRecord(this.options.workspace.id, child.conversationId);
       if (!record || childState(record) === "running") continue;
-      if (record.lastEventSeq > (this.seen.get(child.conversationId) ?? -1)) {
+      if (await childHasNews(record)) {
         updates.push({ child, record });
       }
     }
@@ -430,12 +456,25 @@ export class DurableSubagents {
 
   async waitForChildren(timeoutMs: number, target?: string): Promise<string> {
     const deadline = Date.now() + timeoutMs;
+    const watched = target ? [await this.resolveChild(target)] : [...(await this.loadChildren()).values()];
+    const wake = conversationWake(
+      watched.map((child) => child.conversationId),
+      (record) => childState(record) !== "running"
+    );
+    try {
+      return await this.waitForUpdates(wake, deadline, target);
+    } finally {
+      wake.close();
+    }
+  }
+
+  private async waitForUpdates(wake: StoreWake, deadline: number, target?: string): Promise<string> {
     for (;;) {
       const updates = await this.updates(target);
       if (updates.length > 0) {
         const agents = await Promise.all(
           updates.map(async ({ child, record }) => {
-            this.seen.set(child.conversationId, record.lastEventSeq);
+            await markChildReported(child.conversationId, record.lastEventSeq);
             const events = await readRecentConversationEvents(this.options.workspace.id, child.conversationId, CARD_RECENT_MESSAGES).catch(
               () => [] as AgentStoredEvent[]
             );
@@ -456,10 +495,13 @@ export class DurableSubagents {
           agents,
         });
       }
-      if (Date.now() >= deadline || this.options.isCancelled() || this.disposed) {
+      if (this.options.isCancelled() || this.disposed) {
         return JSON.stringify({ message: "Wait timed out.", timed_out: true });
       }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now()))));
+      const outcome = await wake.next(deadline, this.options.cancelSignal?.(), this.disposeAbort.signal);
+      if (outcome !== "event") {
+        return JSON.stringify({ message: "Wait timed out.", timed_out: true });
+      }
     }
   }
 
@@ -519,56 +561,98 @@ export class DurableSubagents {
       fork: null,
       cardId: input.cardId,
     });
-    const runtime = await agentRuntime();
-    for (;;) {
-      if (this.disposed) {
-        return { status: "failed", text: `The parent session ended; ${child.path} keeps running as conversation ${child.conversationId}.`, child };
+    const settled = (record: AgentConversationRecord) => {
+      const state = childState(record);
+      return state !== "running" && state !== "needs_attention";
+    };
+    const wake = conversationWake([child.conversationId], settled);
+    try {
+      for (;;) {
+        if (this.disposed) {
+          return { status: "failed", text: `The parent session ended; ${child.path} keeps running as conversation ${child.conversationId}.`, child };
+        }
+        if (this.options.isCancelled()) {
+          await this.stopChild(child).catch(() => undefined);
+          return { status: "failed", text: "Stopped with the parent turn.", child };
+        }
+        const record = await readConversationRecord(this.options.workspace.id, child.conversationId);
+        if (!record || settled(record)) {
+          const state = record ? childState(record) : "errored";
+          if (record) await markChildReported(child.conversationId, record.lastEventSeq);
+          const events = await readRecentConversationEvents(this.options.workspace.id, child.conversationId, CARD_RECENT_MESSAGES);
+          await this.emitCard(child);
+          const reply = lastReply(events);
+          return state === "completed"
+            ? { status: "completed", text: reply || "Subagent completed without visible text.", child }
+            : { status: "failed", text: record?.lastError ?? (reply || `Subagent ${state}.`), child };
+        }
+        await wake.next(Number.POSITIVE_INFINITY, this.options.cancelSignal?.(), this.disposeAbort.signal);
       }
-      if (this.options.isCancelled()) {
-        await runtime.cancelConversation(this.options.workspace, child.conversationId).catch(() => undefined);
-        await this.emitCard(child);
-        return { status: "failed", text: "Stopped with the parent turn.", child };
-      }
-      const record = await readConversationRecord(this.options.workspace.id, child.conversationId);
-      const state = record ? childState(record) : "errored";
-      if (record && state !== "running" && state !== "needs_attention") {
-        this.seen.set(child.conversationId, record.lastEventSeq);
-        const events = await readRecentConversationEvents(this.options.workspace.id, child.conversationId, CARD_RECENT_MESSAGES);
-        await this.emitCard(child);
-        const reply = lastReply(events);
-        return state === "completed"
-          ? { status: "completed", text: reply || "Subagent completed without visible text.", child }
-          : { status: "failed", text: record.lastError ?? (reply || `Subagent ${state}.`), child };
-      }
-      await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+    } finally {
+      wake.close();
     }
   }
 
-  /** Re-emits the child's card while it works, and once more when it stops. */
+  /**
+   * Keeps the child's card current: re-emitted at once when its state
+   * changes, at most every CARD_PROGRESS_MIN_MS while it only makes progress,
+   * and a last time when it stops.
+   */
   private watch(child: ChildRef): void {
     if (this.watchers.has(child.conversationId) || this.disposed) return;
     let lastKey = "";
-    const timer = setInterval(() => {
-      void (async () => {
-        const record = await readConversationRecord(this.options.workspace.id, child.conversationId).catch(() => null);
-        if (!record || this.disposed) {
-          clearInterval(timer);
-          this.watchers.delete(child.conversationId);
-          return;
+    let lastState: ChildState | null = null;
+    let lastEmitAt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let running: Promise<void> | null = null;
+    let rerun = false;
+    const stop = () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+      timer = null;
+      this.watchers.delete(child.conversationId);
+    };
+    const refresh = async (): Promise<void> => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      const record = await readConversationRecord(this.options.workspace.id, child.conversationId).catch(() => null);
+      if (!record || this.disposed) {
+        stop();
+        return;
+      }
+      const key = `${record.status}:${record.lastEventSeq}`;
+      if (key !== lastKey) {
+        lastKey = key;
+        lastState = childState(record);
+        lastEmitAt = Date.now();
+        await this.emitCard(child, record);
+      }
+      if (childState(record) !== "running" && childState(record) !== "needs_attention") stop();
+    };
+    const run = () => {
+      if (running) {
+        rerun = true;
+        return;
+      }
+      running = refresh().finally(() => {
+        running = null;
+        if (rerun && this.watchers.has(child.conversationId)) {
+          rerun = false;
+          run();
         }
-        const key = `${record.status}:${record.lastEventSeq}`;
-        if (key !== lastKey) {
-          lastKey = key;
-          await this.emitCard(child, record);
-        }
-        if (childState(record) !== "running" && childState(record) !== "needs_attention") {
-          clearInterval(timer);
-          this.watchers.delete(child.conversationId);
-        }
-      })();
-    }, WATCH_POLL_MS);
-    timer.unref?.();
-    this.watchers.set(child.conversationId, timer);
+      });
+    };
+    const unsubscribe = subscribeAgentStoreEvents((event) => {
+      if (event.type !== "conversation" || event.conversation.id !== child.conversationId) return;
+      if (childState(event.conversation) !== lastState) {
+        run();
+      } else if (!timer) {
+        timer = setTimeout(run, Math.max(0, CARD_PROGRESS_MIN_MS - (Date.now() - lastEmitAt)));
+        timer.unref?.();
+      }
+    });
+    this.watchers.set(child.conversationId, stop);
+    run();
   }
 
   private async emitCard(child: ChildRef, known?: AgentConversationRecord): Promise<void> {
@@ -605,7 +689,8 @@ export class DurableSubagents {
 
   dispose(): void {
     this.disposed = true;
-    for (const timer of this.watchers.values()) clearInterval(timer);
+    this.disposeAbort.abort();
+    for (const stop of [...this.watchers.values()]) stop();
     this.watchers.clear();
   }
 }

@@ -63,6 +63,7 @@ import {
   latestUserMessageId,
   type GoalContinuationState,
 } from "./goal-continuation.js";
+import { CHILD_UPDATE_COALESCE_PREFIX } from "./child-reports.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -463,11 +464,21 @@ export class AgentRuntimeManager {
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
   private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
   private readonly goalContinuations = new Map<string, GoalContinuationState>();
+  /** Child update turns since the user last wrote, and whether the cap notice was shown. */
+  private readonly childUpdateWakes = new Map<string, { count: number; capNoticed: boolean }>();
 
   constructor(options: AgentRuntimeManagerOptions = {}) {
     this.backends = options.backends ?? AGENT_BACKENDS;
     this.createProviderFn = options.createProvider ?? createAgentProvider;
     this.listBackendsFn = options.listBackends ?? listAgentBackendsWithCache;
+  }
+
+  childUpdateWakeState(conversationId: string): { count: number; capNoticed: boolean } {
+    return this.childUpdateWakes.get(conversationId) ?? { count: 0, capNoticed: false };
+  }
+
+  noteChildUpdateCap(conversationId: string): void {
+    this.childUpdateWakes.set(conversationId, { ...this.childUpdateWakeState(conversationId), capNoticed: true });
   }
 
   /**
@@ -1643,8 +1654,15 @@ export class AgentRuntimeManager {
     },
     outcomeSink?: { value?: "queued" | "started" }
   ): Promise<AgentConversationSnapshotHead> {
-    if (!options?.goalContinuation) {
+    // Goal continuations and child update turns are both automatic: neither
+    // resets the other's count, so alternating them cannot loop forever.
+    const childUpdate = options?.coalesceKey?.startsWith(CHILD_UPDATE_COALESCE_PREFIX) === true;
+    if (childUpdate) {
+      const wakes = this.childUpdateWakeState(conversationId);
+      this.childUpdateWakes.set(conversationId, { ...wakes, count: wakes.count + 1 });
+    } else if (!options?.goalContinuation) {
       this.goalContinuations.delete(conversationId);
+      this.childUpdateWakes.delete(conversationId);
     }
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {

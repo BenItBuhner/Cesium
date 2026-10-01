@@ -42,6 +42,8 @@ import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-br
 
 import { asNumber } from "./json-coerce.js";
 import { readConversationEventsIncremental, readConversationRecord } from "./session-store.js";
+import { markChildReported } from "./child-reports.js";
+import { boardWake, workflowWake } from "./store-wakes.js";
 import {
   deltaPayloadFor,
   resolveSideChatDelta,
@@ -261,7 +263,6 @@ import {
   ORCHESTRATION_WAIT_HEARTBEAT_MS,
   TERMINAL_OUTPUT_CAP,
   WAIT_HEARTBEAT_MS,
-  WAIT_POLL_MS,
 } from "./cesium/cesium-prompt.js";
 import {
   applyToolRevision,
@@ -718,6 +719,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private carriedPermissionGrants = new Set<string>();
   /** Aborts the turn's in-flight provider requests; replaced at every prompt. */
   private turnAbort = new AbortController();
+  /** Ends a running `wait` at once on cancel, interrupt or dispose; replaced at every prompt. */
+  private waitAbort = new AbortController();
   private pausePhase: CesiumPausePhase = "none";
   private resumeWaiter: (() => void) | null = null;
   private resumeAck: (() => void) | null = null;
@@ -1043,6 +1046,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.interrupting = false;
     this.carriedPermissionGrants = new Set();
     this.turnAbort = new AbortController();
+    this.waitAbort = new AbortController();
     this.pausePhase = "none";
     this.resumeWaiter = null;
     this.releaseResumeAck();
@@ -2204,6 +2208,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   async cancel(): Promise<void> {
     this.cancelled = true;
     this.turnAbort.abort(new CesiumTurnCancelledError());
+    this.waitAbort.abort();
     this.acceptingSteers = false;
     this.pendingSteers = [];
     this.pausePhase = "none";
@@ -2254,6 +2259,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     this.pendingQuestions.clear();
     this.killTerminalRuns();
+    this.waitAbort.abort();
   }
 
   private async emitConversationStatus(
@@ -2435,6 +2441,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.turnAbort.abort(new CesiumTurnCancelledError());
+    this.waitAbort.abort();
     this.pausePhase = "none";
     this.resumeWaiter?.();
     this.resumeWaiter = null;
@@ -2532,6 +2539,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           return generateTranscriptFromEvents(from === undefined ? events : events.filter((event) => event.seq >= from));
         },
         isCancelled: () => this.cancelled,
+        cancelSignal: () => this.waitAbort.signal,
       });
     }
     return this.subagents;
@@ -4028,12 +4036,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const parsed = parseWaitToolArgs(args, this.harness.settings.limits.waitMaxSeconds);
     let elapsedMs = 0;
     let statusElapsedMs = 0;
+    const signal = this.waitAbort.signal;
     while (elapsedMs < parsed.durationMs) {
-      if (this.cancelled || this.disposed) {
+      if (this.cancelled || this.disposed || signal.aborted) {
         throw new Error("Wait interrupted.");
       }
-      const chunkMs = Math.min(WAIT_POLL_MS, parsed.durationMs - elapsedMs);
-      await sleepMs(chunkMs);
+      const chunkMs = Math.min(WAIT_HEARTBEAT_MS - statusElapsedMs, parsed.durationMs - elapsedMs);
+      await sleepMs(chunkMs, signal);
+      if (signal.aborted) {
+        throw new Error("Wait interrupted.");
+      }
       elapsedMs += chunkMs;
       statusElapsedMs += chunkMs;
       if (statusElapsedMs >= WAIT_HEARTBEAT_MS || elapsedMs >= parsed.durationMs) {
@@ -4127,13 +4139,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async toolOrchestrationWait(args: Record<string, unknown>): Promise<string> {
     const timeoutMs = Math.max(1000, Math.floor(asNumber(args.timeoutMs) ?? ORCHESTRATION_WAIT_DEFAULT_MS));
-    const pollMs = Math.max(
-      1000,
-      Math.min(
-        ORCHESTRATION_WAIT_HEARTBEAT_MS,
-        Math.floor(asNumber(args.pollMs) ?? 5000)
-      )
-    );
     const waitFor = asOrchestrationWaitFor(args.waitFor);
     const reason = asString(args.reason) ?? "No reason provided.";
     const issueId = asString(args.issueId);
@@ -4307,43 +4312,73 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }
     };
 
-    let elapsedMs = 0;
-    let statusElapsedMs = 0;
+    // Children whose finished turn a matching wait reports are not news to an update turn later.
+    const markReported = async (matched: ReturnType<typeof evaluate>, current: OrchestrationBoardSnapshot) => {
+      const reported =
+        waitFor === "all_issue_assignments_finished"
+          ? current.assignments.filter((candidate) => candidate.issueId === issueId)
+          : waitFor === "assignment_finished" || waitFor === "any_assignment_finished"
+            ? matched.assignment
+              ? [matched.assignment]
+              : []
+            : [];
+      for (const assignment of reported) {
+        const child = await readConversationRecord(this.callbacks.workspace.id, assignment.conversationId).catch(() => null);
+        if (child) await markChildReported(child.id, child.lastEventSeq);
+      }
+    };
+
+    const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    let nextHeartbeatAt = startedAt + ORCHESTRATION_WAIT_HEARTBEAT_MS;
     let snapshot = initialSnapshot;
-    while (elapsedMs < timeoutMs) {
-      if (this.cancelled || this.disposed) {
-        throw new Error("Orchestration wait interrupted.");
+    let latest: OrchestrationBoardSnapshot | null = null;
+    const wake = boardWake(initialSnapshot.board.id, (saved) => {
+      latest = saved;
+    });
+    try {
+      for (;;) {
+        if (this.cancelled || this.disposed) {
+          throw new Error("Orchestration wait interrupted.");
+        }
+        const immediate = evaluate(snapshot);
+        if (immediate.matched) {
+          await markReported(immediate, snapshot);
+          return safeJson({
+            conditionMet: true,
+            waitedMs: Date.now() - startedAt,
+            waitFor,
+            reason,
+            issue: immediate.issue ?? null,
+            assignment: immediate.assignment ?? null,
+            matchedEvents: immediate.matchedEvents.slice(-10),
+            boardUpdatedAt: snapshot.board.updatedAt,
+          });
+        }
+        if (Date.now() >= deadline) break;
+        const outcome = await wake.next(Math.min(deadline, nextHeartbeatAt), this.waitAbort.signal);
+        if (outcome === "aborted") {
+          throw new Error("Orchestration wait interrupted.");
+        }
+        if (outcome === "event") {
+          snapshot = latest ?? (await resolveCurrentOrchestrationBoard(this.toolContext()));
+          latest = null;
+        }
+        if (Date.now() >= nextHeartbeatAt || Date.now() >= deadline) {
+          nextHeartbeatAt = Date.now() + ORCHESTRATION_WAIT_HEARTBEAT_MS;
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "status",
+              status: "running",
+              detail: `Waiting for ${waitFor} (${Math.round((Date.now() - startedAt) / 1000)}s / ${Math.round(timeoutMs / 1000)}s): ${reason}`,
+            },
+          ]);
+        }
       }
-      const immediate = evaluate(snapshot);
-      if (immediate.matched) {
-        return safeJson({
-          conditionMet: true,
-          waitedMs: elapsedMs,
-          waitFor,
-          reason,
-          issue: immediate.issue ?? null,
-          assignment: immediate.assignment ?? null,
-          matchedEvents: immediate.matchedEvents.slice(-10),
-          boardUpdatedAt: snapshot.board.updatedAt,
-        });
-      }
-      const chunkMs = Math.min(pollMs, timeoutMs - elapsedMs);
-      await new Promise((resolve) => setTimeout(resolve, chunkMs));
-      elapsedMs += chunkMs;
-      statusElapsedMs += chunkMs;
-      snapshot = await resolveCurrentOrchestrationBoard(this.toolContext());
-      if (statusElapsedMs >= ORCHESTRATION_WAIT_HEARTBEAT_MS || elapsedMs >= timeoutMs) {
-        statusElapsedMs = 0;
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "status",
-            status: "running",
-            detail: `Waiting for ${waitFor} (${Math.round(elapsedMs / 1000)}s / ${Math.round(timeoutMs / 1000)}s): ${reason}`,
-          },
-        ]);
-      }
+    } finally {
+      wake.close();
     }
     const final = evaluate(snapshot);
     return safeJson({
@@ -4649,28 +4684,38 @@ class CesiumSessionHandle implements AgentSessionHandle {
       Math.max(asNumber(args.timeoutMs) ?? 120_000, 1_000),
       600_000
     );
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-      const run = runId
-        ? await readWorkflowRun({
-            workspaceId: this.callbacks.workspace.id,
-            runId,
-          })
-        : await readLatestWorkflowRunForConversation({
-            workspaceId: this.callbacks.workspace.id,
-            conversationId: this.callbacks.conversation.id,
-          });
-      if (!run) {
-        throw new Error("No workflow run found to await.");
+    const deadline = Date.now() + timeoutMs;
+    const workspaceId = this.callbacks.workspace.id;
+    const conversationId = this.callbacks.conversation.id;
+    const wake = workflowWake(
+      (event) =>
+        event.workspaceId === workspaceId &&
+        (runId ? event.runId === runId : event.conversationId === conversationId) &&
+        (event.status === "completed" || event.status === "failed" || event.status === "cancelled")
+    );
+    try {
+      for (;;) {
+        const run = runId
+          ? await readWorkflowRun({ workspaceId, runId })
+          : await readLatestWorkflowRunForConversation({ workspaceId, conversationId });
+        if (!run) {
+          throw new Error("No workflow run found to await.");
+        }
+        if (
+          run.status === "completed" ||
+          run.status === "failed" ||
+          run.status === "cancelled"
+        ) {
+          return this.summarizeWorkflowRun(run);
+        }
+        const outcome = await wake.next(deadline, this.waitAbort.signal);
+        if (outcome === "aborted") {
+          throw new Error("Workflow wait interrupted.");
+        }
+        if (outcome === "timeout") break;
       }
-      if (
-        run.status === "completed" ||
-        run.status === "failed" ||
-        run.status === "cancelled"
-      ) {
-        return this.summarizeWorkflowRun(run);
-      }
-      await sleepMs(500);
+    } finally {
+      wake.close();
     }
     throw new Error(`Timed out waiting for workflow run${runId ? ` ${runId}` : ""}.`);
   }
