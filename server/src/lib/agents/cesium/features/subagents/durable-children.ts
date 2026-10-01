@@ -104,11 +104,18 @@ export function childState(record: AgentConversationRecord): ChildState {
   }
 }
 
+const NEWS_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
+  "user_message",
+  "assistant_message_end",
+  "permission_request",
+  "question",
+]);
+
 /**
- * Whether a child has news for its parent: a turn that started or ended past
- * what the parent was told. Events without a turn (cards of the child's own
- * children, status lines) and the tail of a stop the parent caused are not
- * news; they are marked reported quietly.
+ * Whether a child has news for its parent: a turn that started or ended, or a
+ * new request for a human, past what the parent was told. Other events (cards
+ * of the child's own children, status lines) and the tail of a stop the
+ * parent caused are not news; they are marked reported quietly.
  */
 export async function childHasNews(record: AgentConversationRecord): Promise<boolean> {
   const report = await childReport(record);
@@ -121,8 +128,7 @@ export async function childHasNews(record: AgentConversationRecord): Promise<boo
   const since = await readConversationEventsSince(record.workspaceId, record.id, report.reportedSeq).catch(
     () => [] as AgentStoredEvent[]
   );
-  const hadTurn = since.some((event) => event.kind === "user_message" || event.kind === "assistant_message_end");
-  return hadTurn ? true : quiet();
+  return since.some((event) => NEWS_EVENT_KINDS.has(event.kind)) ? true : quiet();
 }
 
 function cardStatus(state: ChildState): "running" | "completed" | "failed" {

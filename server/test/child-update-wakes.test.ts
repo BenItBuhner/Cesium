@@ -87,12 +87,12 @@ const MODEL_ID = "wakehost/kimi-k3";
 const [
   { ensureWorkspaceRegistered },
   { agentRuntimeManager },
-  { readConversationSnapshot, readConversationEvents, listWorkspaceConversationRecords, updateConversationRecord },
+  { readConversationSnapshot, readConversationEvents, listWorkspaceConversationRecords, updateConversationRecord, appendConversationEvents },
   { patchCesiumAgentSettings },
-  { DurableSubagents },
+  { DurableSubagents, childHasNews },
   { defaultHarnessSettings },
   { startChildUpdateWakeListener, composeChildUpdateNotice, assignmentStatusFor },
-  { CHILD_UPDATE_COALESCE_PREFIX, CHILD_UPDATE_WAKE_MAX },
+  { CHILD_UPDATE_COALESCE_PREFIX, CHILD_UPDATE_WAKE_MAX, markChildReported },
   { StoreWake },
   ledger,
   orchestration,
@@ -265,6 +265,29 @@ test("the update turn folds newer updates per agent and names the right transcri
   assert.equal(assignmentStatusFor({ status: "idle", queuedPrompts: [], lastEventSeq: 4 }), "completed");
   assert.equal(assignmentStatusFor({ status: "idle", queuedPrompts: [], lastEventSeq: 0 }), null);
   assert.equal(assignmentStatusFor({ status: "awaiting_permission", queuedPrompts: [], lastEventSeq: 4 }), "waiting");
+});
+
+test("only a turn or a request for a human is news; other child events are reported quietly", async () => {
+  const child = await newParent();
+  await markChildReported(child.id, child.lastEventSeq);
+  await appendConversationEvents(workspace.id, child.id, [
+    { eventId: "status-1", conversationId: child.id, kind: "status", status: "running", detail: "Working" },
+  ]);
+  const afterStatus = (await readConversationSnapshot(workspace.id, child.id))!.conversation;
+  assert.equal(await childHasNews(afterStatus), false, "a status line is not news");
+  assert.equal(await childHasNews(afterStatus), false, "and it was marked reported");
+  await appendConversationEvents(workspace.id, child.id, [
+    {
+      eventId: "permission-1",
+      conversationId: child.id,
+      kind: "permission_request",
+      requestId: "r1",
+      title: "Run the tests",
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    },
+  ]);
+  const afterRequest = (await readConversationSnapshot(workspace.id, child.id))!.conversation;
+  assert.equal(await childHasNews(afterRequest), true, "a second request for a human is news even without a turn end");
 });
 
 test("wait until=agents returns on the child's turn end, and what it reported never wakes the parent again", async () => {
