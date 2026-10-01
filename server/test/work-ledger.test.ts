@@ -170,12 +170,12 @@ test("an older conversation's todo list, Goal items and board issues import once
   assert.deepEqual(
     goal.todos.map((item) => [item.id, item.content, item.status, item.milestoneId ?? null, item.evidence ?? null]),
     [
-      ["todo-1", "Fix the release script", "in_progress", null, null],
-      ["todo-2", "Write the parser", "completed", "milestone-1", null],
+      ["todo-1", "Write the parser", "completed", "milestone-1", null],
+      ["todo-2", "Document the CLI", "pending", null, null],
       ["todo-3", "Add parser tests", "pending", null, "tests/parser.test.ts"],
-      ["todo-4", "Document the CLI", "pending", null, null],
+      ["todo-4", "Fix the release script", "in_progress", null, null],
     ],
-    "the board issue keeps its place, Goal ids clash with it and move up, the todo list merges by text (furthest status wins)"
+    "the todo list keeps its ids, the Goal merges by text (furthest status wins, its milestone link and evidence carry over) and moves clashing ids up, and the unkeyed board issue comes last"
   );
 
   const imported = await orchestration.readOrchestrationBoardSnapshot(board.board.id);

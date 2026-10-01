@@ -188,6 +188,7 @@ export function mergeIntoLedger(items: WorkLedgerItem[], incoming: IncomingItem[
         match.status = item.status;
       }
       match.evidence = match.evidence ?? item.evidence ?? null;
+      match.parentKey = match.parentKey ?? item.parentKey ?? null;
       if (item.key) renamed.set(item.key, match.key);
       continue;
     }
@@ -252,9 +253,10 @@ function hasLegacyWork(sources: LegacySources): boolean {
 }
 
 /**
- * Brings a board up to the ledger: keys any issue that has none (in board
- * order), then imports the Goal's milestones and todos and the conversation's
- * older todo list, each once.
+ * Brings a board up to the ledger, importing each older source once: the
+ * conversation's todo list first and then the Goal's milestones and todos,
+ * so the ids the model saw keep winning, and last any board issue without a
+ * key, which gets the next free one.
  */
 function importIntoSnapshot(
   snapshot: OrchestrationBoardSnapshot,
@@ -263,16 +265,13 @@ function importIntoSnapshot(
 ): OrchestrationBoardSnapshot {
   const now = Date.now();
   const state = ledgerState(snapshot);
-  const used = new Set(snapshot.issues.flatMap((issue) => (issue.ledger ? [issue.ledger.key] : [])));
-  let order = snapshot.issues.reduce((max, issue) => Math.max(max, issue.ledger?.order ?? -1), -1);
-  const issues = snapshot.issues.map((issue) => {
-    if (issue.ledger) return issue;
-    const key = nextWorkItemKey(used, "todo");
-    used.add(key);
-    order += 1;
-    return { ...issue, ledger: { key, kind: "task" as const, order } };
-  });
-  const items = workLedgerItems({ ...snapshot, issues });
+  const items = workLedgerItems(snapshot);
+  if (sources.todoPlan) {
+    mergeIntoLedger(
+      items,
+      sources.todoPlan.map((entry) => ({ key: entry.id, kind: "task" as const, title: entry.content, status: entry.status }))
+    );
+  }
   if (sources.goal) {
     const goal = sources.goal;
     const milestoneKeys = mergeIntoLedger(
@@ -298,12 +297,17 @@ function importIntoSnapshot(
       }))
     );
   }
-  if (sources.todoPlan) {
-    mergeIntoLedger(
-      items,
-      sources.todoPlan.map((entry) => ({ key: entry.id, kind: "task" as const, title: entry.content, status: entry.status }))
-    );
-  }
+  const used = new Set(items.map((item) => item.key));
+  const issues = snapshot.issues.map((issue) => {
+    if (issue.ledger) return issue;
+    const key = nextWorkItemKey(used, "todo");
+    used.add(key);
+    items.push({
+      ...newLedgerItem({ key, kind: "task", title: issue.title, status: statusForColumn(issue.columnId), description: issue.description }),
+      issueId: issue.id,
+    });
+    return { ...issue, ledger: { key, kind: "task" as const, order: items.length - 1 } };
+  });
   const nextState: OrchestrationWorkLedgerState = {
     version: 1,
     importedTodoPlan: true,
