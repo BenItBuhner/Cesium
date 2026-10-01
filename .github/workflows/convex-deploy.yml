@@ -1,0 +1,84 @@
+name: Deploy Convex
+
+# Pushes convex/ (functions, schema, HTTP actions) to the production Convex
+# deployment straight from GitHub. Until this existed the only deployer was the
+# Vercel build (scripts/vercel-build.mjs), so a blocked or paused Vercel account
+# also froze the Convex backend that engines and apps talk to directly.
+#
+# Needs a repository secret CONVEX_DEPLOY_KEY holding a *production* deploy key
+# (Convex dashboard -> the production deployment -> Settings -> Deploy keys).
+# Without it the job only prints how to add one. Deploying the same commit
+# from here and from Vercel is idempotent.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "convex/**"
+      - ".github/workflows/convex-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: convex-deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy convex/ to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+
+    steps:
+      - name: Check the deploy key
+        id: key
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::notice title=Convex deploy skipped::Add a production deploy key as the CONVEX_DEPLOY_KEY repository secret, then re-run this workflow."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$CONVEX_DEPLOY_KEY" in
+            prod:*) echo "deploy=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error title=Wrong Convex key::CONVEX_DEPLOY_KEY must be a production deploy key (it starts with prod:)."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout
+        if: steps.key.outputs.deploy == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: steps.key.outputs.deploy == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        if: steps.key.outputs.deploy == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Deploy
+        if: steps.key.outputs.deploy == 'true'
+        run: npx convex deploy
+
+      - name: Check the rendezvous HTTP actions
+        if: steps.key.outputs.deploy == 'true'
+        run: |
+          status="$(curl -s -o /tmp/batch.json -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -H 'X-Cesium-Rendezvous-Version: 2' \
+            -d '{"serverIds":[]}' \
+            https://insightful-wolverine-140.convex.site/rendezvous/batch)"
+          cat /tmp/batch.json; echo
+          [ "$status" = "200" ] || { echo "::error::Rendezvous batch returned HTTP $status"; exit 1; }
