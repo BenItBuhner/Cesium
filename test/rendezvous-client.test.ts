@@ -11,6 +11,7 @@ import {
   resolveRendezvousEndpoint,
   resolveRendezvousEndpoints,
   RendezvousLookupError,
+  rendezvousLookupOrigin,
   type RendezvousLocator,
 } from "../packages/client/src/rendezvous.ts";
 
@@ -193,6 +194,41 @@ describe("rendezvous client protocol", () => {
     assert.equal(
       requestedUrl,
       `https://example.convex.site/rendezvous/${locator.serverId}`
+    );
+  });
+
+  test("reads account-site locators from the Convex registry", async () => {
+    const siteLocator = { ...locator, registryBaseUrl: "https://cesium.techlitnow.com" };
+    const otherLocator = {
+      ...locator,
+      serverId: "server_abcdefghijklmnopqrstuvwxyz12",
+      registryBaseUrl: "https://www.cesium.techlitnow.com",
+    };
+    const requests: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+      return Response.json(
+        String(input).endsWith("/batch")
+          ? { records: [null, null] }
+          : { error: "not found" },
+        { status: String(input).endsWith("/batch") ? 200 : 404 }
+      );
+    };
+    await resolveRendezvousEndpoint(siteLocator);
+    await resolveRendezvousEndpoints([siteLocator, otherLocator]);
+    assert.deepEqual(
+      requests.map((request) => request.url),
+      [
+        `https://insightful-wolverine-140.convex.site/rendezvous/${locator.serverId}`,
+        "https://insightful-wolverine-140.convex.site/rendezvous/batch",
+      ]
+    );
+    assert.deepEqual(requests[1]?.body, {
+      serverIds: [siteLocator.serverId, otherLocator.serverId],
+    });
+    assert.equal(
+      rendezvousLookupOrigin("https://self-hosted.example/api/rendezvous"),
+      "https://self-hosted.example"
     );
   });
 

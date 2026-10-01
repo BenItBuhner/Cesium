@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Component,
   createContext,
   useContext,
   useEffect,
@@ -644,22 +645,6 @@ function CloudBridge({
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, []);
-  const readRendezvousServerIds = () =>
-    [...new Set(
-      readStoredServerConnectionsState(getConfiguredServerBaseUrl())
-        .servers.flatMap((server) => (server.rendezvous ? [server.rendezvous.serverId] : []))
-    )].sort();
-  const [rendezvousServerIds, setRendezvousServerIds] = useState<string[]>(
-    readRendezvousServerIds
-  );
-  useEffect(
-    () =>
-      getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, () => {
-        setRendezvousServerIds(readRendezvousServerIds());
-      }),
-    []
-  );
-
   const convex = useConvex();
   // Client clock captured once after mount (queries must stay deterministic,
   // so the server never reads its own clock). Only used to filter expired
@@ -676,25 +661,6 @@ function CloudBridge({
     api.context.bootstrap,
     active ? bootstrapArgs : "skip"
   ) as CloudBootstrap | null | undefined;
-  const rendezvousRecords = useQuery(
-    api.rendezvous.getBatch,
-    active && pageVisible && rendezvousServerIds.length > 0
-      ? { serverIds: rendezvousServerIds }
-      : "skip"
-  ) as Array<EncryptedRendezvousRecord | null> | undefined;
-  useEffect(() => {
-    if (!active) {
-      publishCloudRendezvousSnapshot(null);
-      return;
-    }
-    if (rendezvousRecords) {
-      publishCloudRendezvousSnapshot({
-        serverIds: rendezvousServerIds,
-        records: rendezvousRecords,
-      });
-    }
-  }, [active, rendezvousRecords, rendezvousServerIds]);
-
   // Separate from bootstrap: catalogs carry whole rail listings and change
   // on every agent turn somewhere, so they must not re-fire the bootstrap
   // restore effects below.
@@ -1082,9 +1048,90 @@ function CloudBridge({
   return (
     <CloudContext.Provider value={value}>
       <PendingEngineConnectRedirect status={status} />
+      <CloudRendezvousBoundary>
+        <CloudRendezvousSubscription active={active && pageVisible} />
+      </CloudRendezvousBoundary>
       {children}
     </CloudContext.Provider>
   );
+}
+
+function readRendezvousServerIds(): string[] {
+  return [
+    ...new Set(
+      readStoredServerConnectionsState(getConfiguredServerBaseUrl()).servers.flatMap((server) =>
+        server.rendezvous ? [server.rendezvous.serverId] : []
+      )
+    ),
+  ].sort();
+}
+
+/**
+ * Reactive rendezvous records for every saved server. Clients without this
+ * snapshot resolve the same records over the registry's HTTP batch route.
+ */
+function CloudRendezvousSubscription({ active }: { active: boolean }) {
+  const [serverIds, setServerIds] = useState<string[]>(readRendezvousServerIds);
+  useEffect(
+    () =>
+      getClientPlatform().addEventListener(SERVER_CONNECTIONS_EVENT, () => {
+        setServerIds(readRendezvousServerIds());
+      }),
+    []
+  );
+  const records = useQuery(
+    api.rendezvous.getBatch,
+    active && serverIds.length > 0 ? { serverIds } : "skip"
+  ) as Array<EncryptedRendezvousRecord | null> | undefined;
+  useEffect(() => {
+    if (!active) {
+      publishCloudRendezvousSnapshot(null);
+      return;
+    }
+    if (records) {
+      publishCloudRendezvousSnapshot({ serverIds, records });
+    }
+  }, [active, records, serverIds]);
+  useEffect(() => () => publishCloudRendezvousSnapshot(null), []);
+  return null;
+}
+
+const RENDEZVOUS_SUBSCRIPTION_RETRY_MS = 15 * 60_000;
+
+/**
+ * A deployment that predates the rendezvous functions (or is mid-deploy)
+ * makes `useQuery` throw during render. That must not take the workbench
+ * down: drop the reactive snapshot, let the HTTP lookup take over, and try
+ * the subscription again later.
+ */
+class CloudRendezvousBoundary extends Component<
+  { children: ReactNode },
+  { failedAt: number | null }
+> {
+  state = { failedAt: null as number | null };
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  static getDerivedStateFromError(): { failedAt: number } {
+    return { failedAt: Date.now() };
+  }
+
+  componentDidCatch(error: unknown): void {
+    publishCloudRendezvousSnapshot(null);
+    console.warn("[cloud] rendezvous subscription unavailable; using HTTP lookups", error);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.setState({ failedAt: null });
+    }, RENDEZVOUS_SUBSCRIPTION_RETRY_MS);
+  }
+
+  componentWillUnmount(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+  }
+
+  render(): ReactNode {
+    return this.state.failedAt === null ? this.props.children : null;
+  }
 }
 
 const CLERK_READY_TIMEOUT_MS = 8_000;
