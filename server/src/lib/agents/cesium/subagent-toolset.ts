@@ -138,6 +138,10 @@ export type SubagentToolLoopToolStartEvent = {
 export type SubagentToolLoopResult = {
   text: string;
   toolCallCount: number;
+  /** Input plus output tokens the provider reported across the loop. */
+  tokensUsed: number;
+  /** The conversation as sent, ending with the final reply, so a caller can continue it. */
+  messages: CesiumHistoryMessage[];
 };
 
 /** Default minimum spacing between live subagent progress cards on the parent event stream. */
@@ -359,11 +363,18 @@ export async function runSubagentToolLoop(input: {
   const adapterImpl = input.runAdapterImpl ?? runAdapter;
   const messages: CesiumHistoryMessage[] = [...input.messages];
   let toolCallCount = 0;
+  let tokensUsed = 0;
   let lastResult: CesiumAdapterResult | null = null;
+  const done = (text: string): SubagentToolLoopResult => ({
+    text,
+    toolCallCount,
+    tokensUsed,
+    messages: text.trim() ? [...messages, { role: "assistant", content: text.trim() }] : messages,
+  });
 
   for (let iteration = 0; ; iteration += 1) {
     if (input.isAborted?.()) {
-      return { text: lastResult?.text ?? "", toolCallCount };
+      return done(lastResult?.text ?? "");
     }
     const result = await adapterImpl({
       apiKind: input.adapter.apiKind,
@@ -378,8 +389,9 @@ export async function runSubagentToolLoop(input: {
       tools,
     });
     lastResult = result;
+    tokensUsed += result.usage ? result.usage.inputTokens + result.usage.outputTokens : 0;
     if (result.toolRequests.length === 0 || !toolset) {
-      return { text: result.text, toolCallCount };
+      return done(result.text);
     }
     messages.push({
       role: "assistant",
@@ -392,7 +404,7 @@ export async function runSubagentToolLoop(input: {
     });
     for (const request of result.toolRequests) {
       if (input.isAborted?.()) {
-        return { text: result.text, toolCallCount };
+        return done(result.text);
       }
       let toolResult = "";
       let ok = true;

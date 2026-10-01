@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readCesiumPlanFile, writeCesiumPlanFile } from "../../cesium-plan-files.js";
 import type { AgentEventInput, AgentPlanEntry } from "../../types.js";
 import { asString } from "../cesium-coerce.js";
+import { workItemTextKey } from "../../work-items.js";
 import {
   CESIUM_TODO_PLAN_ID,
   applyTodoPatch,
@@ -20,9 +21,26 @@ import {
 } from "../../work-ledger.js";
 import type { CesiumToolContext } from "./types.js";
 
+/**
+ * A plan file is an export of the work ledger: its checklist is merged into
+ * the ledger (same-text tasks take the plan's boxes, new lines become tasks)
+ * and the plan's boxes follow the ledger from then on.
+ */
 export async function appendPlanFileEvents(
   ctx: CesiumToolContext,
   plan: Awaited<ReturnType<typeof readCesiumPlanFile>>, raw: unknown): Promise<void> {
+  const saved =
+    plan.entries.length > 0
+      ? await writeWorkLedger(ledgerScope(ctx), (items) => items, {
+          deleteMissing: false,
+          planFile: { path: plan.path, entries: plan.entries },
+        })
+      : [];
+  const byText = new Map(ledgerTasks(saved).map((item) => [workItemTextKey(item.title), item]));
+  const entries = plan.entries.map((entry) => {
+    const item = byText.get(workItemTextKey(entry.content));
+    return item ? { id: item.key, content: entry.content, status: item.status } : entry;
+  });
   const events: AgentEventInput[] = [
     {
       eventId: randomUUID(),
@@ -34,13 +52,13 @@ export async function appendPlanFileEvents(
       raw,
     },
   ];
-  if (plan.entries.length > 0) {
+  if (entries.length > 0) {
     events.push({
       eventId: randomUUID(),
       conversationId: ctx.conversationId,
       kind: "plan",
       planId: `plan-file:${plan.path}`,
-      entries: plan.entries,
+      entries,
       raw,
     });
   }

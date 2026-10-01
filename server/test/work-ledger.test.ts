@@ -184,6 +184,7 @@ test("an older conversation's todo list, Goal items and board issues import once
     version: 1,
     importedTodoPlan: true,
     importedGoalIds: [legacyGoal.goalId],
+    planFiles: [],
   });
   assert.equal(imported.issues.find((issue) => issue.id === "legacy-issue")?.columnId, "review", "an imported issue keeps its column");
   const stored = await storage.getGoalByConversation(workspace.id, conversation.id);
@@ -344,8 +345,35 @@ test("todo, Goal and board tools share the ledger and every request is a pure ap
   await agentRuntimeManager.promptConversation(workspace, conversation.id, "Start the code task on the board.");
   const snapshot = await waitForIdle(conversation.id, 3);
 
-  assert.equal(agentRequests.length >= 7, true);
-  const requests = agentRequests.slice(-7);
+  scripted.push(
+    toolTurn("call_plan", "create_plan", {
+      title: "Ship plan",
+      content: "# Ship plan\n\n- [ ] Write code\n- [ ] Write release notes\n",
+    }),
+    toolTurn("call_patch", "todo", { action: "patch", items: [{ id: "todo-2", status: "completed" }] }),
+    textTurn("Planned.")
+  );
+  await agentRuntimeManager.promptConversation(workspace, conversation.id, "Write a plan and finish the code.");
+  await waitForIdle(conversation.id, 4);
+  assert.equal(
+    await fs.readFile(path.join(WORKSPACE_ROOT, ".cesium/plans/ship-plan.plan.md"), "utf8"),
+    "# Ship plan\n\n- [x] Write code\n- [ ] Write release notes",
+    "the plan file is an export: its box for todo-2 follows the todo patch"
+  );
+  const finalTasks = ledger.ledgerTasks(await ledger.readWorkLedger({ workspace, conversationId: conversation.id }));
+  assert.deepEqual(
+    finalTasks.map((item) => [item.key, item.title]),
+    [
+      ["todo-1", "Read the spec"],
+      ["todo-2", "Write code"],
+      ["todo-3", "Ship it"],
+      ["todo-4", "Write release notes"],
+    ],
+    "plan lines join the ledger: the matching task keeps its key, the new line gets the next one"
+  );
+
+  assert.equal(agentRequests.length >= 10, true);
+  const requests = agentRequests.slice(-10);
   for (let index = 1; index < requests.length; index += 1) {
     assert.deepEqual(requests[index]!.tools, requests[index - 1]!.tools, `request ${index + 1} keeps the tool list`);
     assert.deepEqual(
@@ -354,7 +382,7 @@ test("todo, Goal and board tools share the ledger and every request is a pure ap
       `request ${index + 1} extends request ${index}`
     );
   }
-  const listResult = requests.at(-1)!.messages.filter((message) => message.role === "tool").at(-1);
+  const listResult = requests.at(-1)!.messages.find((message) => message.role === "tool" && message.tool_call_id === "call_list");
   assert.equal(
     messageText(listResult),
     "- [completed] todo-1: Read the spec\n- [in_progress] todo-2: Write code\n- [pending] todo-3: Ship it",
@@ -366,4 +394,45 @@ test("todo, Goal and board tools share the ledger and every request is a pure ap
     ["todo-1:completed", "todo-2:in_progress", "todo-3:pending"],
     "the chat's todo card follows board changes"
   );
+});
+
+test("plan checkboxes follow the ledger and leave other lines alone", async () => {
+  const { syncPlanCheckboxes } = await import("../src/lib/agents/cesium-plan-files.js");
+  const plan = "# Plan\n\n- [ ] Write code\n  * [x] Unknown step\n- [~] Ship it\nNotes stay.\n";
+  const statuses = new Map([["write code", "completed"], ["ship it", "blocked"]] as const);
+  assert.equal(
+    syncPlanCheckboxes(plan, (text) => statuses.get(text.toLowerCase())),
+    "# Plan\n\n- [x] Write code\n  * [x] Unknown step\n- [!] Ship it\nNotes stay.\n"
+  );
+});
+
+test("an older conversation's plan file imports into the ledger once and then follows it", async () => {
+  const conversation = await newConversation();
+  const planPath = ".cesium/plans/legacy.plan.md";
+  await fs.mkdir(path.join(WORKSPACE_ROOT, ".cesium", "plans"), { recursive: true });
+  await fs.writeFile(path.join(WORKSPACE_ROOT, planPath), "# Legacy\n\n- [x] Sketch the API\n- [ ] Build the API\n");
+  await appendConversationEvents(workspace.id, conversation.id, [
+    { eventId: randomUUID(), conversationId: conversation.id, kind: "plan_file", path: planPath, title: "Legacy", previewMode: "preview" },
+  ]);
+  const scope = { workspace, conversationId: conversation.id };
+  const items = await ledger.readWorkLedger(scope);
+  assert.deepEqual(
+    items.map((item) => [item.key, item.title, item.status]),
+    [
+      ["todo-1", "Sketch the API", "completed"],
+      ["todo-2", "Build the API", "pending"],
+    ]
+  );
+  const board = await orchestration.findOrchestrationBoardForHeadConversation(workspace.id, conversation.id);
+  assert.deepEqual(board?.board.settings.workLedger?.planFiles, [planPath]);
+
+  await ledger.writeWorkLedger(scope, (current) => current.map((item) => (item.key === "todo-2" ? { ...item, status: "in_progress" as const } : item)), { deleteMissing: false });
+  assert.equal(
+    await fs.readFile(path.join(WORKSPACE_ROOT, planPath), "utf8"),
+    "# Legacy\n\n- [x] Sketch the API\n- [~] Build the API\n",
+    "the plan's box follows the ledger"
+  );
+  const before = (await orchestration.findOrchestrationBoardForHeadConversation(workspace.id, conversation.id))!.issues.length;
+  await ledger.readWorkLedger(scope);
+  assert.equal((await orchestration.findOrchestrationBoardForHeadConversation(workspace.id, conversation.id))!.issues.length, before, "not imported twice");
 });
