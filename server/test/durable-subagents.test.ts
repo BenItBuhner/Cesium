@@ -228,6 +228,7 @@ test("spawned subagents are durable child conversations the parent waits on with
   const child = await childOf(parent.id, "/root/counter");
   assert.ok(child, "the child is a stored conversation with a subagent origin");
   assert.equal(child.origin?.kind === "subagent" ? child.origin.depth : null, 1);
+  assert.equal(child.title, "Subagent: counter", "a child keeps the name it was given");
   const parentRequests = requests.filter((entry) => entry.agent === "parent").slice(parentBefore).map((entry) => entry.body);
   assertPureAppend(parentRequests, "parent");
   const waitResult = JSON.parse(

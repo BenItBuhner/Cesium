@@ -1780,7 +1780,9 @@ export class AgentRuntimeManager {
     }
 
     const projectNamed =
-      record.origin?.kind === "project-orchestrator" || record.origin?.kind === "project-child";
+      record.origin?.kind === "project-orchestrator" ||
+      record.origin?.kind === "project-child" ||
+      record.origin?.kind === "subagent";
     if (
       !projectNamed &&
       (record.title === "New chat" ||
