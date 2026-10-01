@@ -43,7 +43,9 @@ import {
 import {
   RENDEZVOUS_REFRESH_DEGRADED_MS,
   nextServerRetryState,
+  rendezvousLookupFoundEngine,
   rendezvousServerJustWentOffline,
+  retryStateAfterServerWentOffline,
   shouldAttemptServer,
   type ServerRetryState,
 } from "../rendezvous-refresh";
@@ -570,7 +572,11 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           nextServerRetryState({
             previous: rendezvousRetryByServerRef.current.get(serverId),
             now,
-            reachable: Boolean(resolved.get(serverId)),
+            reachable: rendezvousLookupFoundEngine({
+              resolvedBaseUrl: resolved.get(serverId)?.baseUrl,
+              currentBaseUrl: server.baseUrl,
+              currentHealth: serverStatusRef.current[server.id]?.health,
+            }),
           })
         );
       }
@@ -737,7 +743,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     // A tunnel-backed engine dropping offline is the usual first sign of a
     // rotated public URL: look the new endpoint up right away instead of
     // waiting for the slow registry cadence.
-    const rotated = servers.some(
+    const rotated = servers.filter(
       (server) =>
         server.rendezvous &&
         rendezvousServerJustWentOffline(
@@ -745,7 +751,18 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
           next[server.id]?.health
         )
     );
-    if (rotated) {
+    if (rotated.length > 0) {
+      for (const server of rotated) {
+        const serverId = server.rendezvous!.serverId;
+        const retry = retryStateAfterServerWentOffline(
+          rendezvousRetryByServerRef.current.get(serverId)
+        );
+        if (retry) {
+          rendezvousRetryByServerRef.current.set(serverId, retry);
+        } else {
+          rendezvousRetryByServerRef.current.delete(serverId);
+        }
+      }
       void refreshRendezvousEndpoints();
     }
     setServerStatusById((current) => {
