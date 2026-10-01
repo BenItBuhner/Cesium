@@ -408,6 +408,7 @@ export async function orchestrationControlAgentTool(
       break;
     }
     case "stop": {
+      await markChildReported(assignment.conversationId, 0, { quiet: true });
       const conversation = await agentRuntimeManager.cancelConversation(
         ctx.workspace,
         assignment.conversationId

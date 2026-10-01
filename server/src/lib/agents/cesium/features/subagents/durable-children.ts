@@ -16,6 +16,7 @@ import { asNumber } from "../../../json-coerce.js";
 import {
   appendConversationEvents,
   listWorkspaceConversationRecords,
+  readConversationEventsSince,
   readConversationRecord,
   readRecentConversationEvents,
   subscribeAgentStoreEvents,
@@ -104,17 +105,24 @@ export function childState(record: AgentConversationRecord): ChildState {
 }
 
 /**
- * Whether a child has news for its parent: events past what the parent was
- * told, other than the tail of a stop the parent caused itself.
+ * Whether a child has news for its parent: a turn that started or ended past
+ * what the parent was told. Events without a turn (cards of the child's own
+ * children, status lines) and the tail of a stop the parent caused are not
+ * news; they are marked reported quietly.
  */
 export async function childHasNews(record: AgentConversationRecord): Promise<boolean> {
   const report = await childReport(record);
   if (record.lastEventSeq <= report.reportedSeq) return false;
-  if (report.quiet && childState(record) === "interrupted") {
+  const quiet = async () => {
     await markChildReported(record.id, record.lastEventSeq);
     return false;
-  }
-  return true;
+  };
+  if (report.quiet && childState(record) === "interrupted") return quiet();
+  const since = await readConversationEventsSince(record.workspaceId, record.id, report.reportedSeq).catch(
+    () => [] as AgentStoredEvent[]
+  );
+  const hadTurn = since.some((event) => event.kind === "user_message" || event.kind === "assistant_message_end");
+  return hadTurn ? true : quiet();
 }
 
 function cardStatus(state: ChildState): "running" | "completed" | "failed" {
@@ -424,6 +432,8 @@ export class DurableSubagents {
   /** Stops a child on the parent's behalf; the stop is not reported back to the parent. */
   private async stopChild(child: ChildRef): Promise<AgentConversationRecord> {
     const runtime = await agentRuntime();
+    // Quiet before the cancel lands, so no update can announce the stop in between.
+    await markChildReported(child.conversationId, 0, { quiet: true });
     const record = await runtime.cancelConversation(this.options.workspace, child.conversationId);
     await markChildReported(child.conversationId, record.lastEventSeq, { quiet: true });
     await this.emitCard(child);
