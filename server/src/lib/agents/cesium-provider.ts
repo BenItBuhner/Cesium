@@ -4400,23 +4400,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const subagentId = `workflow-${request.runId ?? "run"}-${request.agentId ?? randomUUID().slice(0, 12)}`;
     const title = `Workflow agent: ${request.label ?? "agent"}`;
     const meta = request.phase ? `Phase: ${request.phase}` : undefined;
+    const conversationId = this.callbacks.conversation.id;
     const transcript: AgentStoredEvent[] = [
       {
         seq: 1,
         eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
+        conversationId,
         createdAt: Date.now(),
         kind: "user_message",
         messageId: randomUUID(),
         content: request.prompt,
       },
     ];
+    let finished = false;
     const card = (status: "running" | "completed" | "failed", recentActivity: string) =>
       this.callbacks
         .appendEvents([
           {
             eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
+            conversationId,
             kind: "subagent",
             subagentId,
             title,
@@ -4426,29 +4428,58 @@ class CesiumSessionHandle implements AgentSessionHandle {
             recentActivity: recentActivity.slice(0, 240),
           },
         ])
+        .then(() => undefined)
         .catch(() => undefined);
+    const progress = createSubagentProgressBroadcaster({
+      emit: () =>
+        finished
+          ? Promise.resolve()
+          : card("running", latestSubagentTranscriptActivity(transcript) ?? request.prompt),
+    });
     await card("running", request.prompt);
     try {
-      const result = await this.runWorkflowAgent(request);
+      const result = await this.runWorkflowAgent(request, {
+        onToolCallStart: (event) => {
+          pushRunningSubagentToolRow({ transcript, conversationId, toolCallId: event.toolCallId, name: event.name, arguments: event.arguments });
+          progress.notify();
+        },
+        onToolCall: (event) => {
+          settleSubagentToolRow({ transcript, conversationId, toolCallId: event.toolCallId, name: event.name, result: event.result, ok: event.ok });
+          progress.notify();
+        },
+      });
       const text = typeof result.value === "string" ? result.value : safeJson(result.value);
       transcript.push({
-        seq: 2,
+        seq: transcript.length + 1,
         eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
+        conversationId,
         createdAt: Date.now(),
         kind: "assistant_message_chunk",
         messageId: randomUUID(),
         text,
       });
+      finished = true;
+      progress.stop();
       await card("completed", text);
       return result;
     } catch (error) {
+      finished = true;
+      progress.stop();
       await card("failed", error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
 
-  private async runWorkflowAgent(request: WorkflowAgentSpawnRequest): Promise<{
+  /**
+   * A workflow agent works like a subagent: the parent's workspace tools, under
+   * the same permission rules, in its own tool loop. With a schema its final
+   * reply must be JSON; an invalid reply gets one correction round that
+   * continues the same conversation.
+   */
+  private async runWorkflowAgent(
+    request: WorkflowAgentSpawnRequest,
+    hooks: Pick<Parameters<typeof runSubagentToolLoop>[0], "onToolCallStart" | "onToolCall">
+  ): Promise<{
     value: unknown;
     tokensUsed?: number;
   }> {
@@ -4463,48 +4494,44 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
           : undefined,
     });
+    const toolset = this.buildSubagentToolset(null);
+    const toolGuidance = subagentToolsetGuidance(toolset);
     const schemaHint = request.schema
-      ? `\n\nYou MUST respond with ONLY valid JSON matching this JSON Schema (no markdown fences):\n${JSON.stringify(request.schema, null, 2)}`
-      : "\n\nYour final text response is returned verbatim to the orchestration script as the agent() result. Prefer concise structured text.";
+      ? `When you are done, reply with ONLY valid JSON matching this JSON Schema (no markdown fences):\n${JSON.stringify(request.schema, null, 2)}`
+      : "Your final text reply is returned verbatim to the orchestration script as the agent() result. Prefer concise structured text.";
     const system = [
       this.activeSystemPrompt,
-      "You are a subagent spawned by a Cesium Workflow orchestration script.",
-      "Complete the assigned task. Do not spawn additional workflows or subagents.",
+      "You are a subagent spawned by a Cesium Workflow orchestration script. Complete the assigned task with your tools. Do not spawn workflows or subagents.",
+      toolGuidance,
       schemaHint,
-    ].join("\n\n");
-
-    let lastError: string | null = null;
+    ].filter(Boolean).join("\n\n");
+    const adapter = {
+      apiKind: auth.apiKind,
+      apiKey: auth.apiKey,
+      baseUrl: auth.baseUrl,
+      providerId: auth.providerId,
+      oauth: auth.oauth,
+      modelId,
+    };
+    let messages: CesiumHistoryMessage[] = [
+      { role: "system", content: system },
+      { role: "user", content: request.prompt },
+    ];
     let tokensUsed = 0;
+    let lastError: string | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = await runAdapter({
-        apiKind: auth.apiKind,
-        apiKey: auth.apiKey,
-        baseUrl: auth.baseUrl,
-        providerId: auth.providerId,
-        oauth: auth.oauth,
-        modelId,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content:
-              attempt === 0
-                ? request.prompt
-                : `${request.prompt}\n\nPrevious response failed validation: ${lastError}\nReturn corrected output only.`,
-          },
-        ],
+      const result = await runSubagentToolLoop({
+        adapter,
+        messages,
+        toolset,
+        isAborted: () => this.disposed,
+        ...hooks,
       });
-      tokensUsed += result.usage ? result.usage.inputTokens + result.usage.outputTokens : 0;
+      tokensUsed += result.tokensUsed;
       const text = result.text.trim();
       if (!request.schema) {
         return {
-          value:
-            text ||
-            (result.toolRequests.length > 0
-              ? `Workflow agent requested unsupported tools: ${result.toolRequests
-                  .map((tool) => tool.name)
-                  .join(", ")}`
-              : ""),
+          value: text || (result.toolCallCount > 0 ? `Workflow agent made ${result.toolCallCount} tool call(s) but returned no final text.` : ""),
           ...(tokensUsed > 0 ? { tokensUsed } : {}),
         };
       }
@@ -4513,6 +4540,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         return { value: JSON.parse(jsonText) as unknown, ...(tokensUsed > 0 ? { tokensUsed } : {}) };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
+        messages = [
+          ...result.messages,
+          { role: "user", content: `That reply is not valid JSON for the schema: ${lastError}. Reply with the corrected JSON only.` },
+        ];
       }
     }
     throw new Error(lastError ?? "Workflow agent failed schema validation.");

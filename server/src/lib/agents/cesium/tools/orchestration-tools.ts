@@ -1,6 +1,6 @@
 import { addOrchestrationComment, createOrchestrationIssue, deleteOrchestrationIssue, readOrchestrationBoardSnapshot, upsertOrchestrationAssignment, upsertOrchestrationIssue } from "../../../orchestration/store.js";
 import type { OrchestrationAssignmentPermissionPolicy, OrchestrationAssignmentRecord, OrchestrationAssignmentStatus, OrchestrationBoardSnapshot } from "../../../orchestration/types.js";
-import { openWorkLedgerBoard, workLedgerItems } from "../../work-ledger.js";
+import { openWorkLedgerBoard, syncLedgerPlanFiles, workLedgerItems } from "../../work-ledger.js";
 import { appendTodoPlanEvent, ledgerScope } from "./plan-tools.js";
 import { generateTranscriptFromEvents } from "../../event-log-read.js";
 import { asNumber } from "../../json-coerce.js";
@@ -35,6 +35,7 @@ function resolveIssueId(snapshot: OrchestrationBoardSnapshot, issueId: string | 
 /** Ledger tasks changed through the board show up in the chat's todo list too. */
 async function showLedgerTasks(ctx: CesiumToolContext, snapshot: OrchestrationBoardSnapshot, raw: unknown) {
   await appendTodoPlanEvent(ctx, workLedgerItems(snapshot), raw);
+  await syncLedgerPlanFiles(ledgerScope(ctx), snapshot);
 }
 
 export async function resolveOrchestrationBoardFromArgs(
