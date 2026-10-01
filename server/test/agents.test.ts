@@ -1380,6 +1380,51 @@ test("failed resume falls back to transcript-seeded fresh session", async () => 
     recovered.events.some((event) => event.kind === "chat_fork"),
     "expected chat_fork marker so future prompts can reuse transcript fallback"
   );
+  const seeded = recovered.events.find(
+    (event) => event.kind === "assistant_message_chunk" && event.text.includes("<recovered_conversation>")
+  );
+  const recoveredBlock = /<recovered_conversation>([\s\S]*?)<\/recovered_conversation>/.exec(
+    seeded?.kind === "assistant_message_chunk" ? seeded.text : ""
+  )?.[1];
+  assert.ok(recoveredBlock?.includes("remember this detail"), "earlier turns are recovered");
+  assert.ok(
+    !recoveredBlock?.includes("continue after resume failure"),
+    "the turn being started is not recovered as its own context"
+  );
+});
+
+test("a first turn in a fresh provider session is sent as itself, not as recovered context", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+  await waitFor(
+    "creation warmup",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => Boolean(value.conversation.providerSessionId)
+  );
+  // As in a server process that exited before the creation warmup saved a session.
+  await testRuntimeManager.disposeRuntime(conversation.id);
+  await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+    ...current,
+    providerSessionId: null,
+  }));
+
+  await testRuntimeManager.promptConversation(workspace, conversation.id, "first words here");
+  const done = await waitFor(
+    "first turn in a fresh session",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some((event) => event.kind === "assistant_message_chunk" && event.text.startsWith("Handling:"))
+  );
+  const reply = done.events.find(
+    (event) => event.kind === "assistant_message_chunk" && event.text.startsWith("Handling:")
+  );
+  assert.equal(reply?.kind === "assistant_message_chunk" ? reply.text : null, "Handling: first words here ");
 });
 
 test("unsupported backends fall back to cesium defaults when legacy conversations are read", async () => {
