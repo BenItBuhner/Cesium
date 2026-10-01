@@ -120,4 +120,25 @@ describe("installed rendezvous helper", () => {
       label: "Home server",
     });
   });
+
+  test("routes the old account-site registry to the cloud registry", async () => {
+    lastRequest = null;
+    const env = {
+      ...helperEnv(),
+      CESIUM_RENDEZVOUS_URL: "https://cesium.techlitnow.com/api/rendezvous",
+      CESIUM_DEFAULT_RENDEZVOUS_URL: `${registryBaseUrl}/rendezvous`,
+    };
+    await run(
+      process.execPath,
+      ["scripts/cesium-rendezvous.mjs", "publish", "https://rotated-tunnel.example"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(lastRequest?.url, `/rendezvous/${SERVER_ID}`);
+    const { stdout } = await run(
+      process.execPath,
+      ["scripts/cesium-rendezvous.mjs", "connect-fragment", "https://first-tunnel.example"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(decodeRendezvousBootstrap(stdout).registryBaseUrl, registryBaseUrl);
+  });
 });
