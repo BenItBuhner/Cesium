@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { CESIUM_TOOL_REVISION } from "./cesium/cesium-tools.js";
 import { normalizeConversationRecord } from "./conversation-normalize.js";
 import {
   appendConversationEvents,
@@ -690,6 +691,7 @@ export class AgentRuntimeManager {
         modelId: input.modelId ?? defaultModel.modelId,
         modelName: input.modelName ?? defaultModel.modelName,
         ...(input.executionTarget === "cloud" ? { executionTarget: "cloud" as const } : {}),
+        ...(backendId === "cesium-agent" ? { toolRevision: input.toolRevision ?? CESIUM_TOOL_REVISION } : {}),
       },
       providerSessionId: null,
       configOptions: [],

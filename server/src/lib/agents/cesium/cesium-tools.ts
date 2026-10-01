@@ -1286,3 +1286,76 @@ export function createCesiumToolRequest(
     arguments: normalizeCesiumToolRequestArguments(name, args),
   };
 }
+
+/**
+ * The tool set revision new conversations start with. A conversation keeps
+ * the revision it started with for good, so its tool block (the head of
+ * every request) never changes under it.
+ *
+ * - 1: the original set, with separate `wait`, `orchestration_wait`,
+ *   `workflow_await` and `wait_agent` tools.
+ * - 2: one `wait` for time, agents, issues, workflows and the board.
+ */
+export const CESIUM_TOOL_REVISION = 2;
+
+export function conversationToolRevision(config: { toolRevision?: number } | null | undefined): number {
+  const revision = config?.toolRevision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision >= 1 ? revision : 1;
+}
+
+/** Waits that revision 2's `wait` replaces. */
+export const CESIUM_REVISION_2_REPLACED_WAITS = new Set(["orchestration_wait", "workflow_await", "wait_agent"]);
+
+export const CESIUM_SHARED_WAIT_TOOL: CesiumToolDefinition = {
+  name: "wait",
+  description:
+    "Wait instead of polling. until=time (the default) pauses for `seconds`. until=agents returns when a subagent or an assigned board agent finishes a turn or needs attention (`target` narrows it to one agent path, task name or conversation id). until=issue returns when the board issue `target` (an id or a ledger key such as todo-3) meets `condition`. until=workflow returns when the workflow run `target` (default: the latest) ends. until=board returns on any board change. For anything but time, `seconds` is the timeout. Cancel stops any wait early.",
+  parameters: {
+    type: "object",
+    properties: {
+      until: { type: "string", enum: ["time", "agents", "issue", "workflow", "board"] },
+      seconds: {
+        type: "number",
+        description:
+          "Pause length for until=time (fractions allowed, capped at 24 hours); timeout for the others (default 120).",
+      },
+      target: { type: "string", description: "Agent, issue or workflow run to wait on." },
+      condition: {
+        type: "string",
+        enum: ["done", "updated", "commented", "agents_finished"],
+        description: "For until=issue (default done).",
+      },
+      reason: { type: "string", description: "Short reason shown while waiting." },
+    },
+    additionalProperties: false,
+  },
+};
+
+/** Revision 2 wording for subagents, which run as durable child conversations. */
+const REVISION_2_DESCRIPTIONS: Record<string, string> = {
+  subagent:
+    "Run a subagent as its own child conversation and wait for its final reply. The child is a full agent with your workspace tools (files, terminal, MCP, browser), keeps its history, and survives a restart; its card shows its progress, and read_subagent_transcript reads it later.",
+  spawn_agent:
+    "Spawn a subagent as its own child conversation, addressed by a canonical path (e.g. /root/explore_auth). Returns immediately; the child works in the background with your workspace tools (files, terminal, MCP, browser, plus these collaboration tools within the spawn depth limit) and keeps its history across turns and restarts. Use wait with until=agents for its updates, followup_task to give it more work, and send_message to queue context for its next task. Screenshots and recordings it captures are saved under artifacts/browser/.",
+};
+
+/** The tool list for a conversation's revision; the input is the revision 1 list. */
+export function applyToolRevision(tools: CesiumToolDefinition[], revision: number): CesiumToolDefinition[] {
+  if (revision < 2) {
+    return tools;
+  }
+  return tools
+    .filter((tool) => !CESIUM_REVISION_2_REPLACED_WAITS.has(tool.name))
+    .map((tool) =>
+      tool.name === "wait"
+        ? CESIUM_SHARED_WAIT_TOOL
+        : REVISION_2_DESCRIPTIONS[tool.name]
+          ? { ...tool, description: REVISION_2_DESCRIPTIONS[tool.name]! }
+          : tool
+    );
+}
+
+/** A feature reminder as a revision's tools name things: revision 2 has no `wait_agent`. */
+export function reminderForToolRevision(reminder: string, revision: number): string {
+  return revision < 2 ? reminder : reminder.replace(/\bwait_agent\b/g, "wait (until=agents)");
+}

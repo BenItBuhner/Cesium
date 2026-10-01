@@ -19,14 +19,7 @@ export {
   createSubagentsV2Tools,
   createSubagentsV2Module,
 } from "./v2-tools.js";
-export { SubagentsV2Runtime } from "./v2-runtime.js";
-export type {
-  SubagentsV2Agent,
-  SubagentsV2AgentStatus,
-  SubagentsV2MailboxMessage,
-  SubagentsV2SpawnResult,
-  SubagentsV2WaitResult,
-} from "./v2-runtime.js";
+export { DurableSubagents } from "./durable-children.js";
 
 export const SUBAGENTS_FEATURE_DEFINITION: CesiumFeatureDefinition = {
   id: "subagents",
