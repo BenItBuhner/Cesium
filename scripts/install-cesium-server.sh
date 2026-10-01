@@ -114,6 +114,15 @@ migrate_legacy_rendezvous_url() {
   esac
 }
 
+# Earlier installers wrote a 15 s, then 30 s, heartbeat into server.env, and an
+# update re-reads it, so those old defaults move to the current 5 minutes.
+migrate_legacy_rendezvous_interval() {
+  case "${1:-}" in
+    "" | 15 | 30) printf '300' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 if [[ "${CESIUM_INSTALLER_SOURCE_ONLY:-0}" == "1" ]]; then
   # `return` only succeeds when sourced; a direct run with the flag set exits.
   # shellcheck disable=SC2317
@@ -537,7 +546,8 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_RENDEZVOUS_READ_SECRET "$RENDEZVOUS_READ_SECRET"
   write_env_value CESIUM_RENDEZVOUS_WRITE_SECRET "$RENDEZVOUS_WRITE_SECRET"
   write_env_value CESIUM_RENDEZVOUS_REQUIRED "$RENDEZVOUS_REQUIRED"
-  write_env_value CESIUM_RENDEZVOUS_INTERVAL "${CESIUM_RENDEZVOUS_INTERVAL:-300}"
+  write_env_value CESIUM_RENDEZVOUS_INTERVAL \
+    "$(migrate_legacy_rendezvous_interval "${CESIUM_RENDEZVOUS_INTERVAL:-}")"
   write_env_value CESIUM_SERVICE_MANAGER "$SERVICE_MANAGER"
   write_env_value CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS "1"
   write_env_value CESIUM_TUNNEL_ENABLED "$TUNNEL_ENABLED"

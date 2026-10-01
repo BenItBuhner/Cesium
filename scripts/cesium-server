@@ -818,6 +818,8 @@ supervise() {
   # a five-minute keepalive survives two missed beats without wasting quota.
   local interval="${CESIUM_RENDEZVOUS_INTERVAL:-300}"
   [[ "$interval" =~ ^[0-9]+$ ]] || interval=300
+  # 15 and 30 are the old installer defaults that updates carry forward.
+  [[ "$interval" != "15" && "$interval" != "30" ]] || interval=300
   ((interval >= 5)) || interval=5
 
   while true; do

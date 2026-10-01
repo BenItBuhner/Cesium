@@ -122,13 +122,19 @@ const CONFIG_FILE = path.join(DATA_DIR, "profile", "public-access.json");
  */
 export const DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 const MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS = 5_000;
+/**
+ * Earlier installers hard-wrote 15 s, then 30 s, into server.env and every
+ * update carries the stored value forward; treat both as the old defaults
+ * they were rather than as a deliberate choice of a 20-60x busier heartbeat.
+ */
+const LEGACY_DEFAULT_RENDEZVOUS_INTERVALS = new Set(["15", "30"]);
 const MAX_TUNNEL_RESTART_DELAY_MS = 60_000;
 
 export function defaultRendezvousHeartbeatIntervalMs(
   env: NodeJS.ProcessEnv = process.env
 ): number {
   const raw = env.CESIUM_RENDEZVOUS_INTERVAL?.trim();
-  if (!raw || !/^\d+$/.test(raw)) {
+  if (!raw || !/^\d+$/.test(raw) || LEGACY_DEFAULT_RENDEZVOUS_INTERVALS.has(raw)) {
     return DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS;
   }
   return Math.max(MIN_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, Number(raw) * 1000);

@@ -540,7 +540,10 @@ test("rendezvous heartbeat defaults to 5 min and honours CESIUM_RENDEZVOUS_INTER
   assert.equal(DEFAULT_RENDEZVOUS_HEARTBEAT_INTERVAL_MS, 5 * 60_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({}), 5 * 60_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "45" }), 45_000);
-  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: " 15 " }), 15_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: " 20 " }), 20_000);
+  // 15 and 30 are what older installers wrote by default; updates carry them forward.
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "15" }), 5 * 60_000);
+  assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "30" }), 5 * 60_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "1" }), 5_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "soon" }), 5 * 60_000);
   assert.equal(defaultRendezvousHeartbeatIntervalMs({ CESIUM_RENDEZVOUS_INTERVAL: "" }), 5 * 60_000);
