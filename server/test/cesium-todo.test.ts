@@ -27,10 +27,15 @@ await fs.mkdir(TEST_DATA_DIR, { recursive: true });
 const [
   { todoTool },
   { applyTodoPatch, parseTodoItems, todoEntriesFromReplace },
+  { ensureWorkspaceRegistered },
 ] = await Promise.all([
   import("../src/lib/agents/cesium/tools/plan-tools.js"),
   import("../src/lib/agents/cesium/cesium-todo.js"),
+  import("../src/lib/workspace-registry.js"),
 ]);
+const TODO_WORKSPACE_ROOT = path.join(TEST_DATA_DIR, "standalone-chats", "todo");
+await fs.mkdir(TODO_WORKSPACE_ROOT, { recursive: true });
+const TODO_WORKSPACE = await ensureWorkspaceRegistered(TODO_WORKSPACE_ROOT, "todo");
 
 after(async () => {
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true });
@@ -110,9 +115,11 @@ async function startTodoSession(): Promise<{
 }> {
   const conversationId = `cesium-todo-${Math.random().toString(36).slice(2, 8)}`;
   const stored: AgentStoredEvent[] = [];
-  const ctx: CesiumToolContext = {
-    workspace: { id: "ws-todo", root: TEST_DATA_DIR, name: "todo", createdAt: 1 },
+  const ctx = {
+    workspace: TODO_WORKSPACE,
     conversationId,
+    conversation: { id: conversationId, title: "Todo test" },
+    readEvents: async () => [...stored],
     appendEvents: async (events: AgentEventInput[]) => {
       for (const event of events) {
         stored.push({
@@ -128,7 +135,7 @@ async function startTodoSession(): Promise<{
     turnSupportsImages: false,
     attachImage: () => undefined,
     refineTitle: () => undefined,
-  };
+  } as unknown as CesiumToolContext;
   const handle: TodoToolHandle = { toolTodo: (args) => todoTool(ctx, args), dispose: async () => undefined };
   return {
     handle,
@@ -171,7 +178,10 @@ test("todo tool 'patch' updates one item without wiping the rest of the list", a
     );
 
     const listed = await handle.toolTodo({ action: "list" });
-    assert.equal(listed, "completed: Read the code\ncompleted: Write tests\npending: Run the suite");
+    assert.equal(
+      listed,
+      "- [completed] todo-1: Read the code\n- [completed] todo-2: Write tests\n- [pending] todo-3: Run the suite"
+    );
   } finally {
     await handle.dispose();
   }

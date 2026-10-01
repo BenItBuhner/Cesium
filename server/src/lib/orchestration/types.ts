@@ -48,6 +48,23 @@ export type OrchestrationActor =
   | { type: "child_agent"; conversationId: string }
   | { type: "system" };
 
+/** An issue's place in its conversation's work ledger: the key todos and Goals use, and what kind of item it is. */
+export type OrchestrationIssueLedger = {
+  key: string;
+  kind: "task" | "milestone";
+  parentKey?: string | null;
+  evidence?: string | null;
+  /** Position in the ledger's list order, which columns do not change. */
+  order?: number;
+};
+
+/** What the board has imported into its work ledger from older stores, so nothing is imported twice. */
+export type OrchestrationWorkLedgerState = {
+  version: 1;
+  importedTodoPlan: boolean;
+  importedGoalIds: string[];
+};
+
 export type OrchestrationBoardSettings = {
   allowedBackendIds: AgentBackendId[];
   defaultChildBackendId: AgentBackendId | null;
@@ -56,6 +73,7 @@ export type OrchestrationBoardSettings = {
   maxConcurrentAgents: number | null;
   userQuestionTimeoutMs: number;
   mcpEnabled: boolean;
+  workLedger?: OrchestrationWorkLedgerState;
 };
 
 export type OrchestrationBoardRecord = {
@@ -93,6 +111,7 @@ export type OrchestrationIssueRecord = {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+  ledger?: OrchestrationIssueLedger;
 };
 
 export type OrchestrationAssignmentRecord = {

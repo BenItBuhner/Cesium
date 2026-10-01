@@ -3,6 +3,14 @@ import { getStorage } from "../../storage/runtime.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import { assignWorkItemIds, normalizeWorkItemStatus } from "./work-items.js";
 import {
+  ledgerMilestones,
+  ledgerTasks,
+  newLedgerItem,
+  readWorkLedger,
+  writeWorkLedger,
+  type WorkLedgerItem,
+} from "./work-ledger.js";
+import {
   GOAL_SNAPSHOT_LIMIT,
   goalLatestSnapshotFreshness,
   goalRemainingSummary,
@@ -153,12 +161,39 @@ export function createGoalRecord(input: {
   };
 }
 
-export async function readGoalForConversation(input: {
-  workspace: WorkspaceRecord;
-  conversationId: string;
-}): Promise<GoalRecord | null> {
+/** A Goal's milestones and todos are the ledger's milestones and tasks. */
+export function goalWithLedger(goal: GoalRecord, items: WorkLedgerItem[]): GoalRecord {
+  return {
+    ...goal,
+    milestones: ledgerMilestones(items).map((item) => ({
+      id: item.key,
+      title: item.title,
+      ...(item.description ? { description: item.description } : {}),
+      status: item.status,
+      ...(item.evidence ? { evidence: item.evidence } : {}),
+      updatedAt: item.updatedAt,
+    })),
+    todos: ledgerTasks(items).map((item) => ({
+      id: item.key,
+      content: item.title,
+      status: item.status,
+      ...(item.parentKey ? { milestoneId: item.parentKey } : {}),
+      ...(item.evidence ? { evidence: item.evidence } : {}),
+      updatedAt: item.updatedAt,
+    })),
+  };
+}
+
+type GoalScope = { workspace: WorkspaceRecord; conversationId: string };
+
+async function withLedger(scope: GoalScope, goal: GoalRecord): Promise<GoalRecord> {
+  return goalWithLedger(goal, await readWorkLedger(scope));
+}
+
+export async function readGoalForConversation(input: GoalScope): Promise<GoalRecord | null> {
   const storage = await getStorage();
-  return storage.getGoalByConversation(input.workspace.id, input.conversationId);
+  const goal = await storage.getGoalByConversation(input.workspace.id, input.conversationId);
+  return goal ? withLedger(input, goal) : null;
 }
 
 export async function ensureGoalForConversation(input: {
@@ -173,28 +208,84 @@ export async function ensureGoalForConversation(input: {
     input.conversationId
   );
   if (existing && !TERMINAL_STATUSES.includes(existing.status)) {
-    return existing;
+    return withLedger(input, existing);
   }
   const record = createGoalRecord(input);
   await storage.upsertGoal(record);
-  return record;
+  return withLedger(input, record);
 }
 
+/** Saves `patch` to the Goal record. Milestones and todos live in the ledger and are never patched here. */
 export async function updateGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   patch: GoalPatch;
 }): Promise<GoalRecord> {
+  const { milestones: _milestones, todos: _todos, ...patch } = input.patch;
   const storage = await getStorage();
   const updated = await storage.updateGoal(
     input.workspace.id,
     input.conversationId,
-    input.patch
+    patch
   );
   if (!updated) {
     throw new Error("No Goal exists for this conversation.");
   }
-  return updated;
+  return withLedger(input, updated);
+}
+
+/**
+ * Replaces the ledger's milestones and/or tasks with the lists a Goal tool
+ * sent, keeping ids by text as before. A todo whose milestone this write
+ * removes loses the link; items an agent is assigned to are never deleted.
+ */
+async function writeGoalItems(
+  scope: GoalScope,
+  milestoneValues: unknown[] | undefined,
+  todoValues: unknown[] | undefined
+): Promise<void> {
+  if (!milestoneValues && !todoValues) {
+    return;
+  }
+  await writeWorkLedger(scope, (current) => {
+    const view = goalWithLedger({ milestones: [], todos: [] } as unknown as GoalRecord, current);
+    const byKey = new Map(current.map((item) => [item.key, item]));
+    const milestones = milestoneValues
+      ? normalizeMilestones(milestoneValues, view.milestones).map((milestone) => {
+          const existing = byKey.get(milestone.id);
+          const fields = {
+            title: milestone.title,
+            status: milestone.status,
+            description: milestone.description ?? "",
+            evidence: milestone.evidence ?? null,
+          };
+          return existing?.kind === "milestone"
+            ? { ...existing, ...fields }
+            : newLedgerItem({ key: milestone.id, kind: "milestone", ...fields });
+        })
+      : ledgerMilestones(current);
+    const keptMilestones = new Set(milestones.map((item) => item.key));
+    const removedMilestones = new Set(
+      ledgerMilestones(current).flatMap((item) => (keptMilestones.has(item.key) ? [] : [item.key]))
+    );
+    const tasks = (
+      todoValues
+        ? normalizeTodos(todoValues, view.todos).map((todo) => {
+            const existing = byKey.get(todo.id);
+            const fields = {
+              title: todo.content,
+              status: todo.status,
+              parentKey: todo.milestoneId ?? null,
+              evidence: todo.evidence ?? null,
+            };
+            return existing?.kind === "task"
+              ? { ...existing, ...fields }
+              : newLedgerItem({ key: todo.id, kind: "task", ...fields });
+          })
+        : ledgerTasks(current)
+    ).map((task) => (task.parentKey && removedMilestones.has(task.parentKey) ? { ...task, parentKey: null } : task));
+    return [...milestones, ...tasks];
+  });
 }
 
 export async function updateGoalPlan(input: {
@@ -208,19 +299,12 @@ export async function updateGoalPlan(input: {
   if (!current) {
     throw new Error("No Goal exists for this conversation.");
   }
-  const milestones = input.milestones
-    ? normalizeMilestones(input.milestones, current.milestones)
-    : current.milestones;
-  const todos = input.todos
-    ? normalizeTodos(input.todos, current.todos)
-    : current.todos;
+  await writeGoalItems(input, input.milestones, input.todos);
   return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
       planSummary: input.planSummary ?? current.planSummary,
-      milestones,
-      todos,
       phase: "executing",
       status: "active",
     },
@@ -331,14 +415,11 @@ export async function updateGoalProgress(input: {
   if (!current) {
     throw new Error("No Goal exists for this conversation.");
   }
+  await writeGoalItems(input, input.milestones, input.todos);
   return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
-      milestones: input.milestones
-        ? normalizeMilestones(input.milestones, current.milestones)
-        : current.milestones,
-      todos: input.todos ? normalizeTodos(input.todos, current.todos) : current.todos,
       verificationEvidence: input.verificationEvidence
         ? normalizeVerification(input.verificationEvidence)
         : current.verificationEvidence,

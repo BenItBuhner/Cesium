@@ -227,9 +227,21 @@ function IssueCard({
           <h4 className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
             {issue.title}
           </h4>
+          {issue.ledger ? (
+            <p className="mt-[2px] font-mono text-[10px] text-[var(--text-disabled)]">
+              {issue.ledger.kind === "milestone" ? "Milestone " : ""}
+              {issue.ledger.key}
+              {issue.ledger.parentKey ? ` · ${issue.ledger.parentKey}` : ""}
+            </p>
+          ) : null}
           {issue.description ? (
             <p className="mt-[4px] line-clamp-3 font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
               {issue.description}
+            </p>
+          ) : null}
+          {issue.ledger?.evidence ? (
+            <p className="mt-[4px] line-clamp-2 font-sans text-[11px] leading-snug text-[var(--text-secondary)]">
+              Evidence: {issue.ledger.evidence}
             </p>
           ) : null}
         </div>

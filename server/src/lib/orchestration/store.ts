@@ -5,6 +5,7 @@ import { getStorage } from "../../storage/runtime.js";
 import { RAIL_ALL_FIRST_PAGE_CACHE_KEY } from "../agents/cache-keys.js";
 import type { AgentBackendId } from "../agents/types.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
+import { nextWorkItemKey } from "../agents/work-items.js";
 import {
   createDefaultOrchestrationBoardSettings,
   type OrchestrationActor,
@@ -327,6 +328,8 @@ export async function createOrchestrationIssue(input: {
     const maxSort = snapshot.issues
       .filter((issue) => issue.columnId === columnId)
       .reduce((max, issue) => Math.max(max, issue.sortOrder), 0);
+    const ledgerKeys = new Set(snapshot.issues.flatMap((issue) => (issue.ledger ? [issue.ledger.key] : [])));
+    const ledgerOrder = snapshot.issues.reduce((max, issue) => Math.max(max, issue.ledger?.order ?? -1), -1) + 1;
     const issue: OrchestrationIssueRecord = {
       schemaVersion: 1,
       id: randomUUID(),
@@ -343,6 +346,7 @@ export async function createOrchestrationIssue(input: {
       createdAt: now,
       updatedAt: now,
       completedAt: null,
+      ledger: { key: nextWorkItemKey(ledgerKeys, "todo"), kind: "task", order: ledgerOrder },
     };
     return {
       ...snapshot,
