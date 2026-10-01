@@ -102,8 +102,25 @@ function normalizeRegistryBaseUrl(value: string): string {
   return url.origin;
 }
 
-function registryRecordUrl(registryBaseUrl: string, serverId: string): string {
+/**
+ * Locators saved before discovery moved to Convex name the account site's
+ * `/api/rendezvous`, a legacy shim over the same Convex records. Reading the
+ * records from Convex directly keeps those servers discoverable whether or not
+ * the site is up.
+ */
+const LEGACY_HOSTED_REGISTRY_ORIGINS = new Set([
+  "https://cesium.techlitnow.com",
+  "https://www.cesium.techlitnow.com",
+]);
+export const CLOUD_RENDEZVOUS_REGISTRY_ORIGIN = "https://insightful-wolverine-140.convex.site";
+
+export function rendezvousLookupOrigin(registryBaseUrl: string): string {
   const origin = normalizeRegistryBaseUrl(registryBaseUrl);
+  return LEGACY_HOSTED_REGISTRY_ORIGINS.has(origin) ? CLOUD_RENDEZVOUS_REGISTRY_ORIGIN : origin;
+}
+
+function registryRecordUrl(registryBaseUrl: string, serverId: string): string {
+  const origin = rendezvousLookupOrigin(registryBaseUrl);
   const hostname = new URL(origin).hostname;
   const path = hostname.endsWith(".convex.site")
     ? `/rendezvous/${encodeURIComponent(serverId)}`
@@ -112,7 +129,7 @@ function registryRecordUrl(registryBaseUrl: string, serverId: string): string {
 }
 
 function registryBatchUrl(registryBaseUrl: string): string {
-  const origin = normalizeRegistryBaseUrl(registryBaseUrl);
+  const origin = rendezvousLookupOrigin(registryBaseUrl);
   const hostname = new URL(origin).hostname;
   return new URL(
     hostname.endsWith(".convex.site") ? "/rendezvous/batch" : "/api/rendezvous",
@@ -360,7 +377,7 @@ export async function resolveRendezvousEndpoints(
   const results = new Map<string, ResolvedRendezvousEndpoint | null>();
   const groups = new Map<string, RendezvousLocator[]>();
   for (const locator of locators.slice(0, MAX_BATCH_SIZE)) {
-    const origin = normalizeRegistryBaseUrl(locator.registryBaseUrl);
+    const origin = rendezvousLookupOrigin(locator.registryBaseUrl);
     const group = groups.get(origin) ?? [];
     if (!group.some((candidate) => candidate.serverId === locator.serverId)) {
       group.push(locator);
