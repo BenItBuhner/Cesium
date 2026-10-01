@@ -12,6 +12,7 @@ import {
 import {
   buildEngineConnectUrl,
   parseEngineConnectInput,
+  resolveEngineConnectBaseUrl,
 } from "@/lib/cloud/engine-pairing";
 import {
   assertEngineConnectionAllowed,
@@ -80,9 +81,12 @@ export function DeviceConnectPanel({
       window.location.assign(target);
       return;
     }
-    const baseUrl = parsed.baseUrl;
     const rendezvous = parsed.rendezvous ?? null;
+    const baseUrl = await resolveEngineConnectBaseUrl(parsed);
     try {
+      if (parsed.sessionToken) {
+        setStoredSessionToken(parsed.sessionToken, null, baseUrl);
+      }
       await checkEngineHealth(baseUrl);
       const auth = await getEngineAuthStatus(baseUrl);
       assertEngineConnectionAllowed({
