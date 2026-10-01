@@ -22,13 +22,11 @@ const [
   { AGENT_BACKENDS },
   { createCesiumAgentProvider },
   { findPersistedSubagentTranscript },
-  { SubagentsV2Runtime },
   { defaultHarnessSettings },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/cesium-provider.js"),
   import("../src/lib/agents/cesium/subagent-toolset.js"),
-  import("../src/lib/agents/cesium/features/subagents/v2-runtime.js"),
   import("../src/lib/agents/cesium/features/limits.js"),
 ]);
 
@@ -160,26 +158,4 @@ test("read_subagent_transcript falls back to the persisted card after the runtim
   } finally {
     await handle.dispose();
   }
-});
-
-test("Subagents V2 read_subagent_transcript uses the persisted transcript for unknown agents", async () => {
-  const persisted = transcriptFor("v2child");
-  const runtime = new SubagentsV2Runtime({
-    conversationId: "conv-v2-restart",
-    limits: defaultHarnessSettings().limits,
-    defaultModelId: "unittestprov/missing-model-for-unit-test",
-    appendEvents: async () => {},
-    readPersistedTranscript: async (subagentId) =>
-      subagentId === "/root/explore_auth" ? persisted : null,
-  });
-  const result = await runtime.readTranscript({ subagentId: "/root/explore_auth" });
-  assert.ok(
-    result.includes("RESULT_v2child"),
-    `expected the persisted transcript, got: ${result.slice(0, 120)}`
-  );
-  assert.ok(
-    (await runtime.readTranscript({ subagentId: "/root/never" })).startsWith(
-      "No collaborative subagent transcript found for /root/never"
-    )
-  );
 });

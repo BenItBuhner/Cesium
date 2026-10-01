@@ -216,6 +216,12 @@ export type AgentConversationConfig = {
    * display title current via `conversation_title`. Off by default.
    */
   titleFollow?: boolean;
+  /**
+   * Revision of the Cesium tool set this conversation was started with. Its
+   * tool block never changes, so every request stays a pure append; absent
+   * means revision 1 (conversations started before revisions existed).
+   */
+  toolRevision?: number;
 };
 
 export type AgentToolLocation = {
@@ -568,6 +574,16 @@ export type AgentQueuedChatPrompt = {
  * local CLI storage with their native session identity preserved.
  */
 export type AgentConversationOrigin =
+  | {
+      kind: "subagent";
+      /** The conversation whose agent spawned this child. */
+      parentConversationId: string;
+      /** Canonical agent path, e.g. /root/explore_auth. */
+      path: string;
+      taskName: string;
+      /** 1 for a child of a top-level conversation. */
+      depth: number;
+    }
   | {
       kind: "cloud";
       providerId: "linear" | "github" | "slack" | "manual";

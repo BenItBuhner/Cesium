@@ -73,7 +73,7 @@ export {
 } from "./limits.js";
 
 export {
-  SubagentsV2Runtime,
+  DurableSubagents,
   createSubagentsV1Module,
   createSubagentsV2Module,
   isSubagentsV1ToolName,

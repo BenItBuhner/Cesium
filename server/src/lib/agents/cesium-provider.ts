@@ -264,6 +264,9 @@ import {
   WAIT_POLL_MS,
 } from "./cesium/cesium-prompt.js";
 import {
+  applyToolRevision,
+  conversationToolRevision,
+  reminderForToolRevision,
   cesiumPermissionToolKey,
   normalizeCallMcpToolArgs,
   normalizeCesiumToolName,
@@ -281,11 +284,12 @@ import {
   harnessFeatureReminder,
   isSubagentsV2ToolName,
   loadCesiumHarnessPluginModulesFromEnv,
-  SubagentsV2Runtime,
   type CesiumHarnessTurnOutcome,
   type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
+import { DurableSubagents } from "./cesium/features/subagents/durable-children.js";
+import { generateTranscriptFromEvents } from "./event-log-read.js";
 import {
   createSubagentProgressBroadcaster,
   createSubagentToolset,
@@ -436,6 +440,8 @@ function pruneTriggerTokens(contextWindow: number): number {
   return Math.min(contextWindow * CONTEXT_PRUNE_TRIGGER_RATIO, shrinkStartsAt);
 }
 
+/** Timeout of the shared `wait` for anything but time, when `seconds` is omitted. */
+const SHARED_WAIT_DEFAULT_SECONDS = 120;
 const COMPACTION_SUMMARY_TIMEOUT_MS = 120_000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -745,7 +751,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private harnessSignature = "";
   private pluginRuntime: CesiumHarnessPluginRuntime | null = null;
-  private subagentsV2: SubagentsV2Runtime | null = null;
+  private subagents: DurableSubagents | null = null;
   /**
    * Model access roster (enabled models + user notes) advertised to the
    * primary agent and subagents; refreshed with the harness each turn.
@@ -919,9 +925,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ),
       ];
     }
-    const tools = this.isReadOnlyHelper()
-      ? this.harness.tools.filter((tool) => READ_ONLY_HELPER_TOOLS.has(tool.name))
-      : this.harness.tools;
+    const tools = applyToolRevision(
+      this.isReadOnlyHelper()
+        ? this.harness.tools.filter((tool) => READ_ONLY_HELPER_TOOLS.has(tool.name))
+        : this.harness.tools,
+      conversationToolRevision(this.callbacks.conversation.config)
+    );
     if (!this.modelRosterText) {
       return tools;
     }
@@ -1262,7 +1271,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
                 sideChatTurn.parent?.title ?? sideChatTurn.origin.parentTitle ?? "Primary chat",
             }
           : null,
-        harnessFeatures: harnessFeatureReminder(this.harness),
+        harnessFeatures: reminderForToolRevision(
+          harnessFeatureReminder(this.harness),
+          conversationToolRevision(this.callbacks.conversation.config)
+        ),
       };
       const contextSections = buildCesiumContextSections(reminderInput);
       const contextSectionHashes = hashCesiumReminderSections(contextSections);
@@ -2428,8 +2440,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.resumeWaiter = null;
     this.releaseResumeAck();
     this.endSideChatTurn();
-    this.subagentsV2?.dispose();
-    this.subagentsV2 = null;
+    this.subagents?.dispose();
+    this.subagents = null;
     await this.pluginRuntime?.dispose();
     this.pluginRuntime = null;
     for (const permission of this.pendingPermissions.values()) {
@@ -2495,57 +2507,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.activeSystemPrompt =
       (await this.pluginRuntime?.transformSystemPrompt(this.baseSystemPrompt())) ??
       this.baseSystemPrompt();
-    if (this.harness.subagentsVersion === 2) {
-      const runtime = this.ensureSubagentsV2();
-      runtime.updateLimits(this.harness.settings.limits);
-    } else if (this.subagentsV2) {
-      this.subagentsV2.dispose();
-      this.subagentsV2 = null;
-    }
   }
 
-  private ensureSubagentsV2(): SubagentsV2Runtime {
-    if (this.harness.subagentsVersion !== 2) {
-      throw new Error(
-        "Subagents V2 tools require harness.features.subagents.version = 2. Enable Subagents V2 in Settings → Agents → Cesium Agent."
-      );
-    }
-    if (!this.subagentsV2) {
-      const modelId =
-        resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions) ||
-        this.callbacks.conversation.config.modelId ||
-        "openai/gpt-5.1";
-      this.subagentsV2 = new SubagentsV2Runtime({
+  /** Children of this conversation, as durable child conversations (both subagent versions). */
+  private ensureSubagents(): DurableSubagents {
+    if (!this.subagents) {
+      const origin = this.callbacks.conversation.origin;
+      this.subagents = new DurableSubagents({
+        workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
-        limits: this.harness.settings.limits,
-        defaultModelId: modelId,
-        // Children inherit the parent's live model (mid-conversation switches
-        // included) and overrides must clear the user's Model access filter.
+        parentPath: origin?.kind === "subagent" ? origin.path : "/root",
+        limits: () => this.harness.settings.limits,
+        // Children inherit the parent's live model; overrides must clear Model access.
         resolveDefaultModelId: () => this.currentModelId(),
         resolveSpawnModel: (requested, defaultModelId) =>
           resolveCesiumSpawnModelId({ requested, defaultModelId }),
-        modelRoster: () => this.modelRosterText,
-        defaultApiKind: optionValue(
-          this.configOptions,
-          "api_kind",
-          "openai-responses"
-        ) as CesiumProviderKind,
         appendEvents: async (events) => {
           await this.callbacks.appendEvents(events as Parameters<typeof this.callbacks.appendEvents>[0]);
         },
-        getParentHistory: async () => {
-          const snapshot = await this.callbacks.readSnapshot();
-          return normalizeEventsToHistory(await hydrateToolResultBlobs(snapshot?.events ?? [])).filter(
-            (message) => message.role !== "system"
-          );
+        parentTranscript: async (turns) => {
+          const events = await hydrateToolResultBlobs(await this.readHistoryEvents());
+          const users = events.filter((event) => event.kind === "user_message" && !event.hidden);
+          const from = turns === "all" ? undefined : users.at(-Math.max(1, turns))?.seq;
+          return generateTranscriptFromEvents(from === undefined ? events : events.filter((event) => event.seq >= from));
         },
-        isCancelled: () => this.cancelled || this.disposed,
-        toolsetForAgent: (agentPath) => this.buildSubagentToolset(agentPath),
-        readPersistedTranscript: (subagentId) =>
-          this.readPersistedSubagentTranscript(subagentId),
+        isCancelled: () => this.cancelled,
       });
     }
-    return this.subagentsV2;
+    return this.subagents;
   }
 
   /**
@@ -2642,27 +2631,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
       default:
         break;
     }
-    if (agentPath != null && this.harness.subagentsVersion === 2) {
-      const runtime = this.ensureSubagentsV2();
-      switch (name) {
-        case "spawn_agent":
-          return await runtime.spawnAgent(args, agentPath);
-        case "send_message":
-          return await runtime.sendMessage(args, agentPath);
-        case "followup_task":
-          return await runtime.followupTask(args, agentPath);
-        case "wait_agent":
-          return await runtime.waitAgent(args, agentPath);
-        case "interrupt_agent":
-          return await runtime.interruptAgent(args, agentPath);
-        case "list_agents":
-          return JSON.stringify(runtime.listAgents(asString(args.path_prefix)));
-        case "read_subagent_transcript":
-          return await runtime.readTranscript(args, agentPath);
-        default:
-          break;
-      }
-    }
     throw new Error(`Tool ${name} is not available to subagents.`);
   }
 
@@ -2673,20 +2641,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!isSubagentsV2ToolName(name) && name !== "list_agents") {
       throw new Error(`Unknown Subagents V2 tool: ${name}`);
     }
-    const runtime = this.ensureSubagentsV2();
+    if (this.harness.subagentsVersion !== 2) {
+      throw new Error(
+        "Subagents V2 tools require harness.features.subagents.version = 2. Enable Subagents V2 in Settings → Agents → Cesium Agent."
+      );
+    }
+    const subagents = this.ensureSubagents();
     switch (name) {
       case "spawn_agent":
-        return runtime.spawnAgent(args);
+        return subagents.spawnAgent(args);
       case "send_message":
-        return runtime.sendMessage(args);
+        return subagents.sendMessage(args);
       case "followup_task":
-        return runtime.followupTask(args);
+        return subagents.followupTask(args);
       case "wait_agent":
-        return runtime.waitAgent(args);
+        return subagents.waitAgent(args);
       case "interrupt_agent":
-        return runtime.interruptAgent(args);
+        return subagents.interruptAgent(args);
       case "list_agents":
-        return JSON.stringify({ agents: runtime.listAgents(asString(args.path_prefix) ?? asString(args.pathPrefix)) });
+        return JSON.stringify({ agents: await subagents.listAgents(asString(args.path_prefix) ?? asString(args.pathPrefix)) });
       default:
         throw new Error(`Unknown Subagents V2 tool: ${name}`);
     }
@@ -3561,7 +3534,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolTerminalKill(request.arguments);
           break;
         case "wait":
-          result = await this.toolWait(request.arguments);
+          result = await this.toolSharedWait(request.arguments);
           break;
         case "todo":
           result = await todoTool(this.toolContext(), request.arguments);
@@ -3629,10 +3602,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolSubagent(request.arguments, request.id);
           break;
         case "read_subagent_transcript":
-          result =
-            this.harness.subagentsVersion === 2
-              ? await this.ensureSubagentsV2().readTranscript(request.arguments)
-              : await this.toolReadSubagentTranscript(request.arguments);
+          result = await this.toolReadAnySubagentTranscript(request.arguments);
           break;
         case "spawn_agent":
         case "send_message":
@@ -4086,6 +4056,73 @@ class CesiumSessionHandle implements AgentSessionHandle {
       capped: parsed.capped,
       maxSeconds: this.harness.settings.limits.waitMaxSeconds,
     });
+  }
+
+  /**
+   * The one `wait`: time by default, or until agents, a board issue, a
+   * workflow run or any board change. Revision 1 conversations only send the
+   * timed form, which behaves exactly as before.
+   */
+  private async toolSharedWait(args: Record<string, unknown>): Promise<string> {
+    const until = asString(args.until) ?? "time";
+    if (until === "time") {
+      return this.toolWait(args);
+    }
+    const seconds = asNumber(args.seconds) ?? SHARED_WAIT_DEFAULT_SECONDS;
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      throw new Error("wait.seconds must be a positive number.");
+    }
+    const timeoutMs = Math.round(Math.min(seconds, this.harness.settings.limits.waitMaxSeconds) * 1000);
+    const target = asString(args.target)?.trim() || undefined;
+    const reason = asString(args.reason);
+    switch (until) {
+      case "agents":
+        return this.waitForAgents(timeoutMs, target, reason);
+      case "issue": {
+        if (!target) throw new Error("wait until=issue needs target: an issue id or ledger key.");
+        const board = await findOrchestrationBoardForHeadConversation(this.callbacks.workspace.id, this.callbacks.conversation.id);
+        const issueId =
+          board?.issues.find((issue) => issue.id === target || issue.ledger?.key === target)?.id ?? target;
+        const condition = asString(args.condition) ?? "done";
+        const waitFor =
+          condition === "updated"
+            ? "issue_update"
+            : condition === "commented"
+              ? "issue_comment"
+              : condition === "agents_finished"
+                ? "all_issue_assignments_finished"
+                : "issue_done";
+        return this.toolOrchestrationWait({ waitFor, issueId, timeoutMs, ...(reason ? { reason } : {}) });
+      }
+      case "workflow":
+        return this.toolWorkflowAwait({ ...(target ? { runId: target } : {}), timeoutMs: Math.max(1000, Math.min(timeoutMs, 600_000)) });
+      case "board":
+        return this.toolOrchestrationWait({ waitFor: "board_update", timeoutMs, ...(reason ? { reason } : {}) });
+      default:
+        throw new Error(`wait.until must be time, agents, issue, workflow or board (got ${until}).`);
+    }
+  }
+
+  /** Subagent children first; otherwise agents assigned on this conversation's board. */
+  private async waitForAgents(timeoutMs: number, target: string | undefined, reason: string | undefined): Promise<string> {
+    const subagents = this.ensureSubagents();
+    if (await subagents.hasChildren()) {
+      const isChild = target ? await subagents.resolveChild(target).then(() => true, () => false) : true;
+      if (isChild) {
+        return subagents.waitForChildren(timeoutMs, target);
+      }
+    }
+    const board = await findOrchestrationBoardForHeadConversation(this.callbacks.workspace.id, this.callbacks.conversation.id);
+    if (board && board.assignments.length > 0) {
+      return this.toolOrchestrationWait({
+        ...(target
+          ? { waitFor: "assignment_finished", ...(board.assignments.some((assignment) => assignment.id === target) ? { assignmentId: target } : { conversationId: target }) }
+          : { waitFor: "any_assignment_finished" }),
+        timeoutMs,
+        ...(reason ? { reason } : {}),
+      });
+    }
+    return safeJson({ timed_out: false, message: "No subagents or assigned agents to wait for." });
   }
 
   private async toolOrchestrationWait(args: Record<string, unknown>): Promise<string> {
@@ -4638,167 +4675,30 @@ class CesiumSessionHandle implements AgentSessionHandle {
     throw new Error(`Timed out waiting for workflow run${runId ? ` ${runId}` : ""}.`);
   }
 
+  /** The blocking `subagent` tool: a durable child conversation run to the end of its turn. */
   private async toolSubagent(args: Record<string, unknown>, toolCallId: string): Promise<string> {
     const instructions = asString(args.instructions);
     if (!instructions) throw new Error("subagent.instructions is required.");
-    // Reuse the spawning tool call id so the projected tool card and the dedicated
-    // subagent events merge into a single card instead of duplicating.
-    const subagentId = toolCallId || randomUUID();
-    const title = asString(args.title) ?? "Cesium subagent";
-    // Same inherit-by-default + Model access validation as spawn_agent (V2).
-    const modelId = await resolveCesiumSpawnModelId({
-      requested: asString(args.modelId),
-      defaultModelId: resolvedModelId(
-        this.callbacks.conversation.config.modelId,
-        this.configOptions
-      ),
+    const result = await this.ensureSubagents().runToCompletion({
+      title: asString(args.title) ?? "Cesium subagent",
+      message: instructions,
+      requestedModelId: asString(args.modelId),
+      cardId: toolCallId || undefined,
     });
-    // Transcript events need distinct seqs: projection dedupes stored events by seq.
-    const transcript: AgentStoredEvent[] = [
-      {
-        seq: 1,
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        createdAt: Date.now(),
-        kind: "user_message",
-        messageId: randomUUID(),
-        content: instructions,
-      },
-    ];
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "subagent",
-        subagentId,
-        title,
-        status: "running",
-        transcript: [...transcript],
-        recentActivity: instructions.slice(0, 240),
-        raw: args,
-      },
-    ]);
-    // Live progress: re-emit the running card (with the growing transcript) on
-    // the parent event stream so an open subagent tab updates in real time
-    // instead of freezing on "Working" until the terminal card lands.
-    let finished = false;
-    const progress = createSubagentProgressBroadcaster({
-      emit: () => {
-        if (finished) {
-          return Promise.resolve();
-        }
-        return this.callbacks
-          .appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "subagent",
-              subagentId,
-              title,
-              status: "running",
-              transcript: [...transcript],
-              recentActivity:
-                latestSubagentTranscriptActivity(transcript) ?? instructions.slice(0, 240),
-              raw: args,
-            },
-          ])
-          .then(() => undefined);
-      },
-    });
-    let status: "completed" | "failed" = "completed";
-    let resultText = "";
-    try {
-      const subagentProviderId = providerPart(modelId);
-      const auth = await resolveCesiumAuth({
-        modelId,
-        configuredApiKind:
-          subagentProviderId === "openai"
-            ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
-            : undefined,
-      });
-      const toolset = this.buildSubagentToolset(null);
-      const toolGuidance = subagentToolsetGuidance(toolset);
-      const result = await runSubagentToolLoop({
-        adapter: {
-          apiKind: auth.apiKind,
-          apiKey: auth.apiKey,
-          baseUrl: auth.baseUrl,
-          providerId: auth.providerId,
-          oauth: auth.oauth,
-          modelId,
-        },
-        messages: [
-          {
-            role: "system",
-            content:
-              `${this.activeSystemPrompt}\n\nYou are a child subagent. Do not spawn additional subagents.` +
-              (toolGuidance ? `\n\n${toolGuidance}` : ""),
-          },
-          { role: "user", content: instructions },
-        ],
-        toolset,
-        isAborted: () => this.cancelled || this.disposed,
-        onToolCallStart: (event) => {
-          pushRunningSubagentToolRow({
-            transcript,
-            conversationId: this.callbacks.conversation.id,
-            toolCallId: event.toolCallId,
-            name: event.name,
-            arguments: event.arguments,
-          });
-          progress.notify();
-        },
-        onToolCall: (event) => {
-          settleSubagentToolRow({
-            transcript,
-            conversationId: this.callbacks.conversation.id,
-            toolCallId: event.toolCallId,
-            name: event.name,
-            result: event.result,
-            ok: event.ok,
-          });
-          progress.notify();
-        },
-      });
-      resultText =
-        result.text.trim() ||
-        (result.toolCallCount > 0
-          ? `Subagent made ${result.toolCallCount} tool call(s) but returned no final text.`
-          : "Subagent completed without visible text.");
-    } catch (error) {
-      status = "failed";
-      resultText = error instanceof Error ? error.message : String(error);
-    }
-    // Stop live progress before the terminal card so a stale running card can
-    // never land after (and re-open) the settled state.
-    finished = true;
-    progress.stop();
-    transcript.push(
-      {
-        seq: transcript.length + 1,
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        createdAt: Date.now(),
-        kind: "assistant_message_chunk",
-        messageId: randomUUID(),
-        text: resultText,
+    return `Subagent ${result.child.path} ${result.status}: ${result.text}`;
+  }
+
+  /** A durable child's transcript, or a card persisted by subagents from before children were durable. */
+  private async toolReadAnySubagentTranscript(args: Record<string, unknown>): Promise<string> {
+    const id = asString(args.subagentId) ?? asString(args.target);
+    if (id) {
+      const subagents = this.ensureSubagents();
+      const known = await subagents.resolveChild(id).then(() => true, () => false);
+      if (known) {
+        return subagents.readTranscript(args);
       }
-    );
-    this.subagentTranscripts.set(subagentId, transcript);
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "subagent",
-        subagentId,
-        title,
-        status,
-        transcript: [...transcript],
-        recentActivity: resultText.slice(0, 240),
-        raw: args,
-      },
-    ]);
-    return `Subagent ${subagentId} ${status}: ${resultText}`;
+    }
+    return this.toolReadSubagentTranscript(args);
   }
 
   /**
