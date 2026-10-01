@@ -105,3 +105,35 @@ export function rendezvousServerJustWentOffline(
 ): boolean {
   return (next === "offline" || next === "degraded") && !(previous === "offline" || previous === "degraded");
 }
+
+/**
+ * A successful lookup schedules the next one on the slow healthy cadence. An
+ * engine that just dropped offline has most likely rotated its tunnel URL, so
+ * that wait is dropped and it is looked up straight away; error backoff (and
+ * the dead-server cutoff) is kept.
+ */
+export function retryStateAfterServerWentOffline(
+  state: ServerRetryState | undefined
+): ServerRetryState | undefined {
+  return state && state.failures > 0 ? state : undefined;
+}
+
+/**
+ * Whether a lookup found the engine. A record that still names the URL the
+ * client already sees offline has not caught up with the engine's newest
+ * publish yet, so it is retried on the fast cadence rather than in five
+ * minutes.
+ */
+export function rendezvousLookupFoundEngine(input: {
+  resolvedBaseUrl: string | null | undefined;
+  currentBaseUrl: string;
+  currentHealth: RendezvousRefreshHealth | undefined;
+}): boolean {
+  if (!input.resolvedBaseUrl) {
+    return false;
+  }
+  return !(
+    input.resolvedBaseUrl === input.currentBaseUrl &&
+    (input.currentHealth === "offline" || input.currentHealth === "degraded")
+  );
+}
