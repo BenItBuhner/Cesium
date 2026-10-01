@@ -527,7 +527,9 @@ rendezvous_is_ready() {
   current_url="$(public_url)" || return 1
   [[ "$published_url" == "$current_url" ]] || return 1
   now="$(date +%s)"
-  ((now - published_at < 75))
+  # Heartbeats land every CESIUM_RENDEZVOUS_INTERVAL (5 min by default) and a
+  # record stays valid for 15 minutes, so it is current until then.
+  ((now - published_at < 900))
 }
 
 # The fragment carries the current URL as well as the rendezvous identity, so

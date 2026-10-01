@@ -125,6 +125,81 @@ after(async () => {
   delete process.env.ALLOWED_ORIGINS;
 });
 
+function healthyResponse(): Response {
+  return Response.json({ ok: true, instanceId: process.env.CESIUM_INSTANCE_ID });
+}
+
+function managerWithTunnels(options: {
+  tunnelUrls: Array<string | null>;
+  health: (href: string) => Response;
+  children?: FakeChild[];
+}) {
+  let spawned = 0;
+  return createPublicAccessManagerForTests({
+    configFilePath: path.join(TEST_DATA_DIR, `${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
+    runDir: path.join(TEST_DATA_DIR, "run"),
+    fetch: (async (url: string | URL | Request) => {
+      const href = url instanceof Request ? url.url : String(url);
+      return href.endsWith("/health") ? options.health(href) : Response.json({ ok: true });
+    }) as typeof fetch,
+    spawn: () => {
+      const child = new FakeChild();
+      options.children?.push(child);
+      const url = options.tunnelUrls[Math.min(spawned, options.tunnelUrls.length - 1)];
+      spawned += 1;
+      if (url) {
+        queueMicrotask(() => child.stderr.write(`Connect to ${url} with this tunnel\n`));
+      }
+      return child;
+    },
+    findExecutable: async (name) => (name === "ssh" ? "/usr/bin/ssh" : null),
+    tunnelStartupTimeoutMs: 300,
+    heartbeatIntervalMs: 60_000,
+    healthIntervalMs: 60_000,
+    restartDelayMs: 10,
+    healthRetryDelayMs: 10,
+  });
+}
+
+test("a new tunnel hostname that answers 503 at first still comes up", async () => {
+  let probes = 0;
+  const manager = managerWithTunnels({
+    tunnelUrls: ["https://warming-up.lhr.life"],
+    health: () => {
+      probes += 1;
+      return probes <= 3 ? new Response("no tunnel here :(", { status: 503 }) : healthyResponse();
+    },
+  });
+  const result = await manager.enable({ webAppUrl: "https://web.example" });
+  assert.equal(result.status.publicUrl, "https://warming-up.lhr.life");
+  assert.equal(result.status.tunnel.running, true);
+  assert.ok(probes >= 4);
+  await manager.disable();
+});
+
+test("a failed tunnel restart keeps retrying until a tunnel comes up", async () => {
+  const children: FakeChild[] = [];
+  const manager = managerWithTunnels({
+    tunnelUrls: ["https://first.lhr.life", null, null, "https://recovered.lhr.life"],
+    health: (href) =>
+      href.startsWith("https://first.lhr.life") && children.length > 1
+        ? new Response("no tunnel here :(", { status: 503 })
+        : healthyResponse(),
+    children,
+  });
+  const result = await manager.enable({ webAppUrl: "https://web.example" });
+  assert.equal(result.status.publicUrl, "https://first.lhr.life");
+  children[0]!.killed = true;
+  children[0]!.emit("exit", 255, null);
+  const deadline = Date.now() + 5000;
+  while ((await manager.getStatus()).publicUrl !== "https://recovered.lhr.life") {
+    assert.ok(Date.now() < deadline, "the engine never recovered a working tunnel");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(children.length, 4);
+  await manager.disable();
+});
+
 test("public access rejects invalid web and custom URLs", async () => {
   const manager = makeManager();
   await assert.rejects(
