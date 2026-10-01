@@ -46,9 +46,13 @@ export function DeviceConnectPanel({
   const showManualByDefault = shouldOfferManualServerConnect(cloud);
   const showManual = showManualByDefault || fallbackOpen;
 
-  const finalize = (baseUrl: string, rendezvous?: RendezvousLocator | null) => {
+  const finalize = (
+    baseUrl: string,
+    rendezvous?: RendezvousLocator | null,
+    engineLabel?: string
+  ) => {
     const saved = saveServer({
-      label: name.trim() || undefined,
+      label: name.trim() || engineLabel || undefined,
       baseUrl,
       ...(rendezvous ? { rendezvous } : {}),
     });
@@ -102,7 +106,7 @@ export function DeviceConnectPanel({
         setPhase("needs-auth");
         return;
       }
-      finalize(baseUrl, rendezvous);
+      finalize(baseUrl, rendezvous, parsed.label);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not reach the engine.";
       setError(
