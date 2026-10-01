@@ -120,3 +120,39 @@ export async function readCesiumPlanFile(input: {
     entries: parsePlanEntriesFromMarkdown(content),
   };
 }
+
+const CHECKBOX_FOR_STATUS: Record<AgentPlanEntry["status"], string> = {
+  pending: " ",
+  in_progress: "~",
+  blocked: "!",
+  completed: "x",
+};
+
+/**
+ * The plan's checklist with each box set from `statusFor(text)`, which returns
+ * the work ledger's status for a line's text or undefined to leave the line
+ * alone. Everything else in the file is unchanged.
+ */
+export function syncPlanCheckboxes(
+  content: string,
+  statusFor: (text: string) => AgentPlanEntry["status"] | undefined
+): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      const match = /^(\s*[-*]\s+\[)( |x|X|!|~|-)(\]\s+)(.+?)(\s*\r?)$/.exec(line);
+      if (!match) return line;
+      const status = statusFor(match[4]!.trim());
+      return status ? `${match[1]}${CHECKBOX_FOR_STATUS[status]}${match[3]}${match[4]}${match[5]}` : line;
+    })
+    .join("\n");
+}
+
+/** Absolute path of a plan file inside the workspace, or null when the path is not a plan file. */
+export function planFileAbsolutePath(workspaceRoot: string, relativePath: string): string | null {
+  try {
+    return path.join(workspaceRoot, normalizePlanRelativePath(relativePath));
+  } catch {
+    return null;
+  }
+}

@@ -49,6 +49,8 @@ export type OrchestrationWorkLedgerState = {
   version: 1;
   importedTodoPlan: boolean;
   importedGoalIds: string[];
+  /** Plan files whose checklists are in the ledger; their checkboxes follow it. Absent until older plan files were imported. */
+  planFiles?: string[];
 };
 
 export type OrchestrationBoardSettings = {

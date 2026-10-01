@@ -6,6 +6,7 @@
  * those are imported the first time the ledger is opened.
  */
 import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
 import { getStorage } from "../../storage/runtime.js";
 import {
   createOrchestrationBoard,
@@ -24,6 +25,7 @@ import type {
 } from "../orchestration/types.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import { CESIUM_TODO_PLAN_ID } from "./cesium/cesium-todo.js";
+import { parsePlanEntriesFromMarkdown, planFileAbsolutePath, syncPlanCheckboxes } from "./cesium-plan-files.js";
 import type { GoalRecord } from "./goal-types.js";
 import { readConversationEvents } from "./session-store.js";
 import type { AgentPlanEntry, AgentStoredEvent } from "./types.js";
@@ -225,10 +227,21 @@ function ledgerState(snapshot: OrchestrationBoardSnapshot): OrchestrationWorkLed
   return snapshot.board.settings.workLedger ?? { version: 1, importedTodoPlan: false, importedGoalIds: [] };
 }
 
+type PlanFileEntries = { path: string; entries: AgentPlanEntry[] };
+
 type LegacySources = {
   todoPlan: AgentPlanEntry[] | null;
   goal: GoalRecord | null;
+  /** Plan files the conversation wrote before plan files were ledger exports; null once imported. */
+  planFiles: PlanFileEntries[] | null;
 };
+
+async function readPlanFileEntries(workspaceRoot: string, relativePath: string): Promise<AgentPlanEntry[]> {
+  const absolute = planFileAbsolutePath(workspaceRoot, relativePath);
+  if (!absolute) return [];
+  const content = await fs.readFile(absolute, "utf8").catch(() => "");
+  return parsePlanEntriesFromMarkdown(content);
+}
 
 async function readLegacySources(
   scope: WorkLedgerScope,
@@ -239,24 +252,46 @@ async function readLegacySources(
   const goalPending =
     goal && !(state?.importedGoalIds ?? []).includes(goal.goalId) && (goal.todos.length > 0 || goal.milestones.length > 0);
   let todoPlan: AgentPlanEntry[] | null = null;
-  if (!state?.importedTodoPlan) {
-    const events = await (scope.readEvents?.() ??
-      readConversationEvents(scope.workspace.id, scope.conversationId));
-    const entries = legacyTodoPlanEntries([...events].sort((a, b) => a.seq - b.seq));
-    todoPlan = entries.length > 0 ? entries : null;
+  let planFiles: PlanFileEntries[] | null = null;
+  if (!state?.importedTodoPlan || !state.planFiles) {
+    const events = [
+      ...(await (scope.readEvents?.() ?? readConversationEvents(scope.workspace.id, scope.conversationId))),
+    ].sort((a, b) => a.seq - b.seq);
+    if (!state?.importedTodoPlan) {
+      const entries = legacyTodoPlanEntries(events);
+      todoPlan = entries.length > 0 ? entries : null;
+    }
+    if (!state?.planFiles) {
+      const paths = [...new Set(events.flatMap((event) => (event.kind === "plan_file" ? [event.path] : [])))];
+      planFiles = await Promise.all(
+        paths.map(async (path) => ({ path, entries: await readPlanFileEntries(scope.workspace.root, path) }))
+      );
+    }
   }
-  return { todoPlan, goal: goalPending ? goal : null };
+  return { todoPlan, goal: goalPending ? goal : null, planFiles };
 }
 
 function hasLegacyWork(sources: LegacySources): boolean {
-  return Boolean(sources.todoPlan || sources.goal);
+  return Boolean(sources.todoPlan || sources.goal || sources.planFiles?.some((plan) => plan.entries.length > 0));
+}
+
+/** A plan's checklist merged into the ledger: same-text tasks take the plan's box, the rest are added. */
+function mergePlanEntries(items: WorkLedgerItem[], entries: AgentPlanEntry[]): void {
+  for (const entry of entries) {
+    const match = items.find((item) => item.kind === "task" && workItemTextKey(item.title) === workItemTextKey(entry.content));
+    if (match) {
+      match.status = entry.status;
+      continue;
+    }
+    mergeIntoLedger(items, [{ kind: "task", title: entry.content, status: entry.status }]);
+  }
 }
 
 /**
  * Brings a board up to the ledger, importing each older source once: the
- * conversation's todo list first and then the Goal's milestones and todos,
- * so the ids the model saw keep winning, and last any board issue without a
- * key, which gets the next free one.
+ * conversation's todo list first, then the Goal's milestones and todos, then
+ * the checklists of plan files it wrote, so the ids the model saw keep
+ * winning, and last any board issue without a key, which gets the next free one.
  */
 function importIntoSnapshot(
   snapshot: OrchestrationBoardSnapshot,
@@ -297,6 +332,12 @@ function importIntoSnapshot(
       }))
     );
   }
+  for (const plan of sources.planFiles ?? []) {
+    mergeIntoLedger(
+      items,
+      plan.entries.map((entry) => ({ kind: "task" as const, title: entry.content, status: entry.status }))
+    );
+  }
   const used = new Set(items.map((item) => item.key));
   const issues = snapshot.issues.map((issue) => {
     if (issue.ledger) return issue;
@@ -312,6 +353,7 @@ function importIntoSnapshot(
     version: 1,
     importedTodoPlan: true,
     importedGoalIds: sources.goal ? [...state.importedGoalIds, sources.goal.goalId] : state.importedGoalIds,
+    planFiles: [...new Set([...(state.planFiles ?? []), ...(sources.planFiles ?? []).map((plan) => plan.path)])],
   };
   return applyLedgerItems(
     {
@@ -473,7 +515,11 @@ const DEFAULT_ACTOR = (scope: WorkLedgerScope): OrchestrationActor =>
   scope.actor ?? { type: "head_agent", conversationId: scope.conversationId };
 
 function needsImport(snapshot: OrchestrationBoardSnapshot, sources: LegacySources): boolean {
-  return hasLegacyWork(sources) || snapshot.issues.some((issue) => !issue.ledger) || !snapshot.board.settings.workLedger;
+  return (
+    hasLegacyWork(sources) ||
+    snapshot.issues.some((issue) => !issue.ledger) ||
+    !snapshot.board.settings.workLedger?.planFiles
+  );
 }
 
 async function importIfNeeded(
@@ -535,22 +581,69 @@ export async function readWorkLedger(scope: WorkLedgerScope): Promise<WorkLedger
  * items and returns the full new list; with `deleteMissing` (a replace),
  * unlisted unassigned items are deleted.
  */
+/**
+ * Rewrites the checkboxes of the board's plan files from the ledger, so each
+ * plan reads as an export of it. Lines whose text matches no task stay as
+ * written.
+ */
+export async function syncLedgerPlanFiles(
+  scope: WorkLedgerScope,
+  snapshot: OrchestrationBoardSnapshot
+): Promise<void> {
+  const paths = snapshot.board.settings.workLedger?.planFiles ?? [];
+  if (paths.length === 0) return;
+  const statusByText = new Map(
+    ledgerTasks(workLedgerItems(snapshot)).map((item) => [workItemTextKey(item.title), item.status])
+  );
+  await Promise.all(
+    paths.map(async (relativePath) => {
+      const absolute = planFileAbsolutePath(scope.workspace.root, relativePath);
+      if (!absolute) return;
+      const content = await fs.readFile(absolute, "utf8").catch(() => null);
+      if (content == null) return;
+      const next = syncPlanCheckboxes(content, (text) => statusByText.get(workItemTextKey(text)));
+      if (next !== content) {
+        await fs.writeFile(absolute, next, "utf8");
+      }
+    })
+  );
+}
+
+/**
+ * Applies `edit` to the ledger and saves the result. `edit` gets a copy of the
+ * items and returns the full new list; with `deleteMissing` (a replace),
+ * unlisted unassigned items are deleted. With `planFile`, that plan's
+ * checklist is merged in first and the plan is recorded as an export.
+ */
 export async function writeWorkLedger(
   scope: WorkLedgerScope,
   edit: (items: WorkLedgerItem[]) => WorkLedgerItem[],
-  options: { deleteMissing: boolean } = { deleteMissing: true }
+  options: { deleteMissing: boolean; planFile?: PlanFileEntries } = { deleteMissing: true }
 ): Promise<WorkLedgerItem[]> {
   const board = await openWorkLedgerBoard(scope, { create: true });
   if (!board) {
     throw new Error("The work ledger could not be opened.");
   }
-  const saved = await mutateOrchestrationBoardSnapshot(board.board.id, (current) =>
-    applyLedgerItems(
-      current,
-      edit(workLedgerItems(current).map((item) => ({ ...item }))),
-      DEFAULT_ACTOR(scope),
-      options
-    )
-  );
+  const saved = await mutateOrchestrationBoardSnapshot(board.board.id, (current) => {
+    const items = workLedgerItems(current).map((item) => ({ ...item }));
+    if (options.planFile) {
+      mergePlanEntries(items, options.planFile.entries);
+    }
+    const state = ledgerState(current);
+    const withPlan: OrchestrationBoardSnapshot = options.planFile
+      ? {
+          ...current,
+          board: {
+            ...current.board,
+            settings: {
+              ...current.board.settings,
+              workLedger: { ...state, planFiles: [...new Set([...(state.planFiles ?? []), options.planFile.path])] },
+            },
+          },
+        }
+      : current;
+    return applyLedgerItems(withPlan, edit(items), DEFAULT_ACTOR(scope), options);
+  });
+  await syncLedgerPlanFiles(scope, saved);
   return workLedgerItems(saved);
 }
