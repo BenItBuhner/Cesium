@@ -226,11 +226,11 @@ test("todos, Goal todos and board issues are the same items", async () => {
   assert.deepEqual(
     partial.todos.map((todo) => [todo.id, todo.status]),
     [
-      ["todo-2", "in_progress"],
       ["todo-1", "pending"],
+      ["todo-2", "in_progress"],
       ["todo-3", "pending"],
     ],
-    "a Goal update that lists some todos updates those and deletes nothing from the shared ledger"
+    "a Goal update that lists some todos updates those in place and deletes nothing from the shared ledger"
   );
 
   await orchestration.upsertOrchestrationIssue(board.board.id, { id: build!.id, columnId: "done" });

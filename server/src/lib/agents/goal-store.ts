@@ -235,10 +235,25 @@ export async function updateGoal(input: {
 }
 
 /**
+ * `current` with `listed` merged in: a list naming every current item sets the
+ * order; otherwise items keep their places and new ones go last.
+ */
+function mergeInOrder(current: WorkLedgerItem[], listed: WorkLedgerItem[]): WorkLedgerItem[] {
+  const listedByKey = new Map(listed.map((item) => [item.key, item]));
+  if (current.length > 0 && current.every((item) => listedByKey.has(item.key))) {
+    return listed;
+  }
+  const currentKeys = new Set(current.map((item) => item.key));
+  return [
+    ...current.map((item) => listedByKey.get(item.key) ?? item),
+    ...listed.filter((item) => !currentKeys.has(item.key)),
+  ];
+}
+
+/**
  * Records the milestones and/or todos a Goal tool sent. The ledger is shared
  * with the todo list and the board, so this never deletes: listed items are
- * updated or added (ids kept by text as before) and come first in the order
- * given, and every other item stays after them.
+ * updated or added (ids kept by text as before) and every other item stays.
  */
 async function writeGoalItems(
   scope: GoalScope,
@@ -281,13 +296,9 @@ async function writeGoalItems(
               : newLedgerItem({ key: todo.id, kind: "task", ...fields });
           })
         : [];
-      const listed = new Set([...listedMilestones, ...listedTasks].map((item) => item.key));
-      const rest = current.filter((item) => !listed.has(item.key));
       return [
-        ...listedMilestones,
-        ...ledgerMilestones(rest),
-        ...listedTasks,
-        ...ledgerTasks(rest),
+        ...mergeInOrder(ledgerMilestones(current), listedMilestones),
+        ...mergeInOrder(ledgerTasks(current), listedTasks),
       ];
     },
     { deleteMissing: false }
