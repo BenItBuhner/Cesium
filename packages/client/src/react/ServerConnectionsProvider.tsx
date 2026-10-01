@@ -519,6 +519,12 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
             return current;
           }
           migrateStoredAuthServerBaseUrl(existing.baseUrl, endpoint.baseUrl);
+          // Probe backoff earned while the old URL was down says nothing about
+          // the new one; without this a rotated engine is not health-checked
+          // (and its next drop not noticed) until that backoff expires.
+          if (serverProbeRetryByIdRef.current.delete(existing.id)) {
+            writeRetryStates(SERVER_PROBE_RETRY_STORAGE_KEY, serverProbeRetryByIdRef.current);
+          }
           const next = updateRendezvousServerEndpoint(current, {
             serverId,
             baseUrl: endpoint.baseUrl,
