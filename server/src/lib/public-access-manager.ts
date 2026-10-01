@@ -198,6 +198,36 @@ function normalizeRendezvousBaseUrl(value: unknown, fieldName: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
+/**
+ * The account site's `/api/rendezvous` was the original registry and is now
+ * only a legacy shim over the same Convex records. Engines installed back then
+ * still carry it in server.env / public-access.json, so publishing there ties
+ * discovery to the site staying up. Those values resolve to the Convex
+ * registry instead; any other (self-hosted) registry is used as configured.
+ */
+const LEGACY_HOSTED_REGISTRY_ORIGINS = new Set([
+  "https://cesium.techlitnow.com",
+  "https://www.cesium.techlitnow.com",
+]);
+const DEFAULT_CLOUD_RENDEZVOUS_BASE_URL =
+  "https://insightful-wolverine-140.convex.site/rendezvous";
+
+export function resolveRendezvousBaseUrl(
+  config: Pick<PublicAccessConfig, "rendezvousBaseUrl" | "webAppUrl">,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const configured = (
+    config.rendezvousBaseUrl ?? new URL("/api/rendezvous", config.webAppUrl).toString()
+  ).replace(/\/+$/, "");
+  if (!LEGACY_HOSTED_REGISTRY_ORIGINS.has(new URL(configured).origin)) {
+    return configured;
+  }
+  const cloudDefault = env.CESIUM_DEFAULT_RENDEZVOUS_URL?.trim();
+  return cloudDefault
+    ? normalizeRendezvousBaseUrl(cloudDefault, "CESIUM_DEFAULT_RENDEZVOUS_URL")
+    : DEFAULT_CLOUD_RENDEZVOUS_BASE_URL;
+}
+
 function normalizePublicBaseUrl(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new PublicAccessError(`${fieldName} is required.`);
@@ -1120,10 +1150,8 @@ export class PublicAccessManager {
   private async publishRendezvous(): Promise<void> {
     if (!this.config?.enabled || !this.currentPublicUrl || !this.activeProvider) return;
     const config = this.config;
-    const base =
-      config.rendezvousBaseUrl ??
-      new URL("/api/rendezvous", config.webAppUrl).toString().replace(/\/+$/, "");
-    const endpoint = new URL(`${base.replace(/\/+$/, "")}/${encodeURIComponent(config.serverId)}`);
+    const base = resolveRendezvousBaseUrl(config);
+    const endpoint = new URL(`${base}/${encodeURIComponent(config.serverId)}`);
     const response = await this.fetch(endpoint.toString(), {
       method: "PUT",
       headers: {
@@ -1188,9 +1216,7 @@ export class PublicAccessManager {
   }
 
   private buildConnectUrl(config: PublicAccessConfig, publicUrl: string): string {
-    const registryBaseUrl =
-      config.rendezvousBaseUrl ??
-      new URL("/api/rendezvous", config.webAppUrl).toString();
+    const registryBaseUrl = resolveRendezvousBaseUrl(config);
     const payload = {
       version: 1,
       serverId: config.serverId,
@@ -1237,9 +1263,7 @@ export class PublicAccessManager {
         lastError: this.lastTunnelError,
       },
       rendezvous: {
-        registryOrigin: config
-          ? new URL(config.rendezvousBaseUrl ?? config.webAppUrl).origin
-          : null,
+        registryOrigin: config ? new URL(resolveRendezvousBaseUrl(config)).origin : null,
         lastPublishedAt: this.lastPublishedAt,
         lastError: this.lastRendezvousError,
       },

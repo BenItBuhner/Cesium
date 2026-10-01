@@ -204,6 +204,13 @@ stable_output="$(stable_connect_url)"
   printf 'FAIL: stable connection URL did not use a fragment identity\n%s\n' "$stable_output" >&2
   exit 1
 }
+rm -f "$RENDEZVOUS_STATUS_FILE"
+unpublished_output="$(print_legacy_connection_details "https://current-second.lhr.life")"
+[[ "$unpublished_output" == *"Connect: https://cesium-test.vercel.app/agent#cesiumConnect="* &&
+  "$unpublished_output" == *"Connect a device"* ]] || {
+  printf 'FAIL: the fragment link must not wait for a registry heartbeat\n%s\n' "$unpublished_output" >&2
+  exit 1
+}
 
 printf '%s\n' \
   'Assigned remote URL https://newest-unhealthy.lhr.life after rotation' >>"$TUNNEL_LOG"
