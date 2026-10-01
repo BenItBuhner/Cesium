@@ -235,9 +235,10 @@ export async function updateGoal(input: {
 }
 
 /**
- * Replaces the ledger's milestones and/or tasks with the lists a Goal tool
- * sent, keeping ids by text as before. A todo whose milestone this write
- * removes loses the link; items an agent is assigned to are never deleted.
+ * Records the milestones and/or todos a Goal tool sent. The ledger is shared
+ * with the todo list and the board, so this never deletes: listed items are
+ * updated or added (ids kept by text as before) and come first in the order
+ * given, and every other item stays after them.
  */
 async function writeGoalItems(
   scope: GoalScope,
@@ -247,45 +248,50 @@ async function writeGoalItems(
   if (!milestoneValues && !todoValues) {
     return;
   }
-  await writeWorkLedger(scope, (current) => {
-    const view = goalWithLedger({ milestones: [], todos: [] } as unknown as GoalRecord, current);
-    const byKey = new Map(current.map((item) => [item.key, item]));
-    const milestones = milestoneValues
-      ? normalizeMilestones(milestoneValues, view.milestones).map((milestone) => {
-          const existing = byKey.get(milestone.id);
-          const fields = {
-            title: milestone.title,
-            status: milestone.status,
-            description: milestone.description ?? "",
-            evidence: milestone.evidence ?? null,
-          };
-          return existing?.kind === "milestone"
-            ? { ...existing, ...fields }
-            : newLedgerItem({ key: milestone.id, kind: "milestone", ...fields });
-        })
-      : ledgerMilestones(current);
-    const keptMilestones = new Set(milestones.map((item) => item.key));
-    const removedMilestones = new Set(
-      ledgerMilestones(current).flatMap((item) => (keptMilestones.has(item.key) ? [] : [item.key]))
-    );
-    const tasks = (
-      todoValues
+  await writeWorkLedger(
+    scope,
+    (current) => {
+      const view = goalWithLedger({ milestones: [], todos: [] } as unknown as GoalRecord, current);
+      const byKey = new Map(current.map((item) => [item.key, item]));
+      const listedMilestones = milestoneValues
+        ? normalizeMilestones(milestoneValues, view.milestones).map((milestone) => {
+            const existing = byKey.get(milestone.id);
+            const fields = {
+              title: milestone.title,
+              status: milestone.status,
+              description: milestone.description ?? "",
+              evidence: milestone.evidence ?? null,
+            };
+            return existing?.kind === "milestone"
+              ? { ...existing, ...fields }
+              : newLedgerItem({ key: milestone.id, kind: "milestone", ...fields });
+          })
+        : [];
+      const listedTasks = todoValues
         ? normalizeTodos(todoValues, view.todos).map((todo) => {
             const existing = byKey.get(todo.id);
             const fields = {
               title: todo.content,
               status: todo.status,
-              parentKey: todo.milestoneId ?? null,
+              parentKey: todo.milestoneId ?? existing?.parentKey ?? null,
               evidence: todo.evidence ?? null,
             };
             return existing?.kind === "task"
               ? { ...existing, ...fields }
               : newLedgerItem({ key: todo.id, kind: "task", ...fields });
           })
-        : ledgerTasks(current)
-    ).map((task) => (task.parentKey && removedMilestones.has(task.parentKey) ? { ...task, parentKey: null } : task));
-    return [...milestones, ...tasks];
-  });
+        : [];
+      const listed = new Set([...listedMilestones, ...listedTasks].map((item) => item.key));
+      const rest = current.filter((item) => !listed.has(item.key));
+      return [
+        ...listedMilestones,
+        ...ledgerMilestones(rest),
+        ...listedTasks,
+        ...ledgerTasks(rest),
+      ];
+    },
+    { deleteMissing: false }
+  );
 }
 
 export async function updateGoalPlan(input: {

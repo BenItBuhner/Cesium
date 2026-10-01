@@ -218,6 +218,21 @@ test("todos, Goal todos and board issues are the same items", async () => {
   assert.equal(build?.title, "Build");
   assert.equal(build?.ledger?.parentKey, "milestone-1");
 
+  await ledger.writeWorkLedger(scope, (items) => [
+    ...items,
+    ledger.newLedgerItem({ key: "todo-3", kind: "task", title: "Fix the release script" }),
+  ]);
+  const partial = await goals.updateGoalProgress({ ...scope, todos: [{ id: "todo-2", content: "Test", status: "in_progress" }] });
+  assert.deepEqual(
+    partial.todos.map((todo) => [todo.id, todo.status]),
+    [
+      ["todo-2", "in_progress"],
+      ["todo-1", "pending"],
+      ["todo-3", "pending"],
+    ],
+    "a Goal update that lists some todos updates those and deletes nothing from the shared ledger"
+  );
+
   await orchestration.upsertOrchestrationIssue(board.board.id, { id: build!.id, columnId: "done" });
   const goal = await goals.readGoalForConversation(scope);
   assert.equal(goal?.todos.find((todo) => todo.id === "todo-1")?.status, "completed", "moving the issue completes the Goal todo");
