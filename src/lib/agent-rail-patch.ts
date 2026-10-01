@@ -70,6 +70,9 @@ function originMergeKey(
   if (origin.kind === "project-child") {
     return `project-child:${origin.projectId}:${origin.childId}`;
   }
+  if (origin.kind === "subagent") {
+    return `subagent:${origin.parentConversationId}:${origin.path}`;
+  }
   return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 

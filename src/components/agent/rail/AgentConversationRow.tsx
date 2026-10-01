@@ -303,7 +303,9 @@ export const AgentConversationRow = memo(function AgentConversationRow({
               ? "Project orchestrator"
               : origin.kind === "project-child"
                 ? `Project agent${origin.homeLabel ? ` · managed from ${origin.homeLabel}` : ""}`
-                : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
+                : origin.kind === "subagent"
+                  ? `Subagent ${origin.path}`
+                  : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
     : undefined;
 
   const handleContextMenu = onContextMenu
