@@ -94,6 +94,26 @@ install_server_dependencies() {
   return 1
 }
 
+# Engines installed before discovery moved to Convex stored the account site's
+# /api/rendezvous as their registry, and every update carries the stored value
+# forward. Rewrite it to the Convex registry so an update stops tying engine
+# discovery to the site; any other registry is kept as configured.
+migrate_legacy_rendezvous_url() {
+  local url="$1"
+  local default_web_url="${2%/}"
+  local default_rendezvous_url="$3"
+  case "${url%/}" in
+    "$default_web_url/api/rendezvous" | \
+      https://cesium.techlitnow.com/api/rendezvous | \
+      https://www.cesium.techlitnow.com/api/rendezvous)
+      printf '%s' "$default_rendezvous_url"
+      ;;
+    *)
+      printf '%s' "$url"
+      ;;
+  esac
+}
+
 if [[ "${CESIUM_INSTALLER_SOURCE_ONLY:-0}" == "1" ]]; then
   # `return` only succeeds when sourced; a direct run with the flag set exits.
   # shellcheck disable=SC2317
@@ -158,6 +178,8 @@ SERVER_LABEL="${SERVER_LABEL:-$(hostname 2>/dev/null || printf 'Cesium server')}
 RENDEZVOUS_READ_SECRET="${CESIUM_RENDEZVOUS_READ_SECRET:-$(existing_env_value CESIUM_RENDEZVOUS_READ_SECRET)}"
 RENDEZVOUS_WRITE_SECRET="${CESIUM_RENDEZVOUS_WRITE_SECRET:-$(existing_env_value CESIUM_RENDEZVOUS_WRITE_SECRET)}"
 RENDEZVOUS_URL="${CESIUM_RENDEZVOUS_URL:-$(existing_env_value CESIUM_RENDEZVOUS_URL)}"
+RENDEZVOUS_URL="$(migrate_legacy_rendezvous_url "$RENDEZVOUS_URL" \
+  "$DEFAULT_PRODUCTION_WEB_URL" "$DEFAULT_PRODUCTION_RENDEZVOUS_URL")"
 RENDEZVOUS_REQUIRED="${CESIUM_RENDEZVOUS_REQUIRED:-$(existing_env_value CESIUM_RENDEZVOUS_REQUIRED)}"
 SERVICE_MANAGER="${CESIUM_SERVICE_MANAGER:-$(existing_env_value CESIUM_SERVICE_MANAGER)}"
 SERVICE_MANAGER="${SERVICE_MANAGER:-auto}"
