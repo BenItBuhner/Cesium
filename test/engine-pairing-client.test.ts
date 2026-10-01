@@ -16,6 +16,7 @@ import {
   openEngineCredential,
   parseEngineAuthSecretKind,
   parseEngineConnectInput,
+  resolveEngineConnectBaseUrl,
   sealEngineCredential,
   setPendingEngineConnect,
 } from "../src/lib/cloud/engine-pairing.ts";
@@ -248,7 +249,59 @@ describe("engine pairing: pasted input", () => {
       assert.equal(parsed.baseUrl, "https://bennett-box.lhr.life:9443");
       assert.equal(parsed.rendezvous?.serverId, SERVER_ID);
       assert.equal(parsed.label, "bennett-box");
+      assert.equal(parsed.sessionToken, undefined);
     }
+    const signed = parseEngineConnectInput(
+      `https://cesium.techlitnow.com/agent#cesiumConnect=${fragment}&cesiumSession=v1.token`
+    );
+    assert.equal(signed.kind === "engine-url" ? signed.sessionToken : null, "v1.token");
+  });
+
+  test("a pasted link follows the registry to the engine's current URL", async () => {
+    const locator = {
+      version: 1 as const,
+      serverId: SERVER_ID,
+      secret: "s".repeat(43),
+      registryBaseUrl: "https://registry.example",
+    };
+    const resolved = (baseUrl: string) => async () => ({
+      baseUrl,
+      issuedAt: 1,
+      recordUpdatedAt: 1,
+      recordExpiresAt: 2,
+    });
+    assert.equal(
+      await resolveEngineConnectBaseUrl(
+        { baseUrl: "https://stale.lhr.life", rendezvous: locator },
+        resolved("https://rotated.lhr.life")
+      ),
+      "https://rotated.lhr.life"
+    );
+    assert.equal(
+      await resolveEngineConnectBaseUrl(
+        { baseUrl: "https://stale.lhr.life", rendezvous: locator },
+        async () => null
+      ),
+      "https://stale.lhr.life"
+    );
+    assert.equal(
+      await resolveEngineConnectBaseUrl(
+        { baseUrl: "https://stale.lhr.life", rendezvous: locator },
+        async () => {
+          throw new Error("registry down");
+        }
+      ),
+      "https://stale.lhr.life"
+    );
+    let called = false;
+    assert.equal(
+      await resolveEngineConnectBaseUrl({ baseUrl: "https://bare.example" }, async () => {
+        called = true;
+        return null;
+      }),
+      "https://bare.example"
+    );
+    assert.equal(called, false);
   });
 });
 
