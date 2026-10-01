@@ -6,7 +6,9 @@ import {
   RENDEZVOUS_DEAD_SERVER_CUTOFF_MS,
   isRendezvousServerReachable,
   nextServerRetryState,
+  rendezvousLookupFoundEngine,
   rendezvousServerJustWentOffline,
+  retryStateAfterServerWentOffline,
   shouldAttemptServer,
   shouldRefreshRendezvous,
 } from "../packages/client/src/rendezvous-refresh.ts";
@@ -126,5 +128,43 @@ describe("rendezvous refresh cadence", () => {
     assert.equal(isRendezvousServerReachable("degraded"), false);
     assert.equal(isRendezvousServerReachable("unknown"), false);
     assert.equal(isRendezvousServerReachable(undefined), false);
+  });
+
+  test("an engine that just went offline is looked up now, not on the healthy cadence", () => {
+    const now = 1_000_000;
+    const healthy = nextServerRetryState({ now, reachable: true });
+    assert.equal(shouldAttemptServer(healthy, now + 30_000), false);
+    const afterDrop = retryStateAfterServerWentOffline(healthy);
+    assert.equal(shouldAttemptServer(afterDrop, now + 30_000), true);
+    const failing = nextServerRetryState({ now, reachable: false });
+    assert.equal(retryStateAfterServerWentOffline(failing), failing);
+    assert.equal(retryStateAfterServerWentOffline(undefined), undefined);
+  });
+
+  test("a record that still names the URL seen offline is retried on the fast cadence", () => {
+    const stale = { resolvedBaseUrl: "https://old.lhr.life", currentBaseUrl: "https://old.lhr.life" };
+    assert.equal(rendezvousLookupFoundEngine({ ...stale, currentHealth: "offline" }), false);
+    assert.equal(rendezvousLookupFoundEngine({ ...stale, currentHealth: "degraded" }), false);
+    assert.equal(rendezvousLookupFoundEngine({ ...stale, currentHealth: "online" }), true);
+    assert.equal(rendezvousLookupFoundEngine({ ...stale, currentHealth: undefined }), true);
+    assert.equal(
+      rendezvousLookupFoundEngine({
+        resolvedBaseUrl: "https://new.lhr.life",
+        currentBaseUrl: "https://old.lhr.life",
+        currentHealth: "offline",
+      }),
+      true
+    );
+    assert.equal(
+      rendezvousLookupFoundEngine({
+        resolvedBaseUrl: null,
+        currentBaseUrl: "https://old.lhr.life",
+        currentHealth: "online",
+      }),
+      false
+    );
+    const now = 1_000_000;
+    const retry = nextServerRetryState({ now, reachable: false });
+    assert.equal(retry.nextAttemptAt, now + RENDEZVOUS_REFRESH_DEGRADED_MS);
   });
 });
