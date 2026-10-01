@@ -4,7 +4,9 @@ import {
   clientKeyValueStore,
   normalizeRendezvousLocator,
   openCredential,
+  parseConnectSessionHash,
   parseRendezvousBootstrapHash,
+  resolveRendezvousEndpoint,
   parseServerUrlSearchParam,
   sealCredential,
   type RendezvousLocator,
@@ -264,7 +266,14 @@ export function getPendingEngineConnect(now = Date.now()): string | null {
 /* ------------------------------------------------------------------------ */
 
 export type EngineConnectInput =
-  | { kind: "engine-url"; baseUrl: string; rendezvous?: RendezvousLocator; label?: string }
+  | {
+      kind: "engine-url";
+      baseUrl: string;
+      rendezvous?: RendezvousLocator;
+      label?: string;
+      /** Session the engine minted into its printed connect link. */
+      sessionToken?: string;
+    }
   | { kind: "pairing-link"; code: string; url: string }
   | { kind: "invalid"; message: string };
 
@@ -300,6 +309,7 @@ export function parseEngineConnectInput(raw: string): EngineConnectInput {
   }
   const bootstrap = parseRendezvousBootstrapHash(url.hash);
   if (bootstrap) {
+    const sessionToken = parseConnectSessionHash(url.hash);
     if (!bootstrap.initialBaseUrl) {
       return {
         kind: "invalid",
@@ -316,10 +326,38 @@ export function parseEngineConnectInput(raw: string): EngineConnectInput {
         registryBaseUrl: bootstrap.registryBaseUrl,
       },
       ...(bootstrap.label ? { label: bootstrap.label } : {}),
+      ...(sessionToken ? { sessionToken } : {}),
     };
   }
   url.hash = "";
   url.username = "";
   url.password = "";
   return { kind: "engine-url", baseUrl: url.toString().replace(/\/+$/, "") };
+}
+
+const CONNECT_RESOLVE_TIMEOUT_MS = 8_000;
+
+/**
+ * Tunnel hostnames rotate (localhost.run often within minutes), so the URL
+ * baked into a connect link can be stale by the time it is pasted. Ask the
+ * link's registry for the engine's current URL first and fall back to the
+ * link's own URL when the registry has nothing or cannot be reached.
+ */
+export async function resolveEngineConnectBaseUrl(
+  input: { baseUrl: string; rendezvous?: RendezvousLocator },
+  resolve: typeof resolveRendezvousEndpoint = resolveRendezvousEndpoint
+): Promise<string> {
+  if (!input.rendezvous) {
+    return input.baseUrl;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CONNECT_RESOLVE_TIMEOUT_MS);
+  try {
+    const current = await resolve(input.rendezvous, { signal: controller.signal });
+    return current?.baseUrl ?? input.baseUrl;
+  } catch {
+    return input.baseUrl;
+  } finally {
+    clearTimeout(timer);
+  }
 }
