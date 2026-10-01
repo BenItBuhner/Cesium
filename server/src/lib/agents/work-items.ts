@@ -78,3 +78,12 @@ export function assignWorkItemIds(
     return id;
   });
 }
+
+/** The lowest `${prefix}-N` not in `used`. */
+export function nextWorkItemKey(used: ReadonlySet<string>, prefix: string): string {
+  let counter = 1;
+  while (used.has(`${prefix}-${counter}`)) {
+    counter += 1;
+  }
+  return `${prefix}-${counter}`;
+}

@@ -15,6 +15,15 @@ import { asNumber } from "../../json-coerce.js";
 import { asString } from "../cesium-coerce.js";
 import { GOAL_VERIFIER_MAX_REJECTIONS, verifyGoalCompletion } from "../../goal-continuation.js";
 import type { CesiumToolContext } from "./types.js";
+import { readWorkLedger } from "../../work-ledger.js";
+import { appendTodoPlanEvent, ledgerScope } from "./plan-tools.js";
+
+/** Goal todos are ledger tasks, so a Goal tool that changes them refreshes the chat's todo list. */
+async function showGoalItems(ctx: CesiumToolContext, args: Record<string, unknown>): Promise<void> {
+  if (Array.isArray(args.todos) || Array.isArray(args.milestones)) {
+    await appendTodoPlanEvent(ctx, await readWorkLedger(ledgerScope(ctx)), args);
+  }
+}
 
 export async function goalGetTool(ctx: CesiumToolContext): Promise<string> {
   const goal = await readGoalForConversation({
@@ -129,6 +138,7 @@ export async function goalSetTool(
     });
   }
 
+  await showGoalItems(ctx, args);
   return `Goal set.\n\n${formatGoalForModel(goal)}`;
 }
 
@@ -146,6 +156,7 @@ export async function goalUpdatePlanTool(
     milestones: Array.isArray(args.milestones) ? args.milestones : [],
     todos: Array.isArray(args.todos) ? args.todos : [],
   });
+  await showGoalItems(ctx, args);
   return `Goal plan recorded.\n\n${formatGoalForModel(goal)}`;
 }
 
@@ -161,6 +172,7 @@ export async function goalUpdateProgressTool(
       ? args.verificationEvidence
       : undefined,
   });
+  await showGoalItems(ctx, args);
   return `Goal progress updated.\n\n${formatGoalForModel(goal)}`;
 }
 

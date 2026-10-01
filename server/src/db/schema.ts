@@ -226,6 +226,8 @@ export const orchestrationIssues = pgTable(
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
     completedAt: bigint("completed_at", { mode: "number" }),
+    /** Work-ledger key, kind, parent milestone and evidence; null for issues created before the ledger. */
+    ledger: jsonb("ledger"),
   },
   (table) => [
     index("orchestration_issues_board_column_sort_idx").on(

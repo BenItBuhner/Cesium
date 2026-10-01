@@ -188,6 +188,7 @@ function rowToOrchestrationIssue(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     completedAt: row.completedAt,
+    ...(row.ledger ? { ledger: row.ledger as OrchestrationIssueRecord["ledger"] } : {}),
   };
 }
 
@@ -1362,6 +1363,7 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
             createdAt: issue.createdAt,
             updatedAt: issue.updatedAt,
             completedAt: issue.completedAt,
+            ledger: (issue.ledger ?? null) as Record<string, unknown> | null,
           }))
         );
       }

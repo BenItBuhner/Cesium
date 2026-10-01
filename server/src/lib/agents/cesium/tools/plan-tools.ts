@@ -5,10 +5,19 @@ import { asString } from "../cesium-coerce.js";
 import {
   CESIUM_TODO_PLAN_ID,
   applyTodoPatch,
-  latestTodoEntries,
   parseTodoItems,
   todoEntriesFromReplace,
 } from "../cesium-todo.js";
+import {
+  ledgerMilestones,
+  ledgerPlanEntries,
+  ledgerTasks,
+  newLedgerItem,
+  readWorkLedger,
+  writeWorkLedger,
+  type WorkLedgerItem,
+  type WorkLedgerScope,
+} from "../../work-ledger.js";
 import type { CesiumToolContext } from "./types.js";
 
 export async function appendPlanFileEvents(
@@ -103,38 +112,89 @@ export async function finalizePlanTool(
   return `Finalized plan ${plan.path} for review.`;
 }
 
-export async function todoTool(
+/** The ledger as the current conversation's agent sees and changes it. */
+export function ledgerScope(ctx: CesiumToolContext): WorkLedgerScope {
+  return {
+    workspace: ctx.workspace,
+    conversationId: ctx.conversationId,
+    title: ctx.conversation.title || "Work",
+    readEvents: () => ctx.readEvents(),
+  };
+}
+
+/** Shows the ledger's tasks as the chat's todo list. Written inside the tool call, so history never replays it. */
+export async function appendTodoPlanEvent(
   ctx: CesiumToolContext,
-  args: Record<string, unknown>): Promise<string> {
-  const action = asString(args.action) ?? "list";
-  const items = Array.isArray(args.items) ? args.items : [];
-  if (action === "list") {
-    const snapshot = await ctx.readSnapshot();
-    const latest = latestTodoEntries(snapshot?.events ?? []);
-    return latest
-      ? latest.map((entry) => `${entry.status}: ${entry.content}`).join("\n")
-      : "No todos yet.";
-  }
-  const parsedItems = parseTodoItems(items);
-  let entries: AgentPlanEntry[];
-  if (action === "patch") {
-    const snapshot = await ctx.readSnapshot();
-    entries = applyTodoPatch(latestTodoEntries(snapshot?.events ?? []) ?? [], parsedItems);
-  } else {
-    const snapshot = await ctx.readSnapshot();
-    entries = todoEntriesFromReplace(parsedItems, latestTodoEntries(snapshot?.events ?? []) ?? []);
-  }
+  items: WorkLedgerItem[],
+  raw: unknown
+): Promise<void> {
   await ctx.appendEvents([
     {
       eventId: randomUUID(),
       conversationId: ctx.conversationId,
       kind: "plan",
       planId: CESIUM_TODO_PLAN_ID,
-      entries,
-      raw: args,
+      entries: ledgerPlanEntries(items),
+      raw,
     },
   ]);
-  return action === "patch"
-    ? `Patched ${parsedItems.length} todo item${parsedItems.length === 1 ? "" : "s"}; the list now has ${entries.length}.`
-    : `Stored ${entries.length} todo item${entries.length === 1 ? "" : "s"}.`;
+}
+
+export function formatTodoList(items: WorkLedgerItem[]): string {
+  const tasks = ledgerTasks(items);
+  return tasks.length > 0
+    ? tasks.map((item) => `- [${item.status}] ${item.key}: ${item.title}`).join("\n")
+    : "No todos yet.";
+}
+
+/** Tasks in `next` with their ledger fields carried over from `current`, in `entries` order. */
+function tasksFromEntries(entries: AgentPlanEntry[], current: WorkLedgerItem[]): WorkLedgerItem[] {
+  const byKey = new Map(current.map((item) => [item.key, item]));
+  return entries.map((entry) => {
+    const existing = byKey.get(entry.id);
+    return existing && existing.kind === "task"
+      ? { ...existing, title: entry.content, status: entry.status }
+      : newLedgerItem({ key: entry.id, kind: "task", title: entry.content, status: entry.status });
+  });
+}
+
+export async function todoTool(
+  ctx: CesiumToolContext,
+  args: Record<string, unknown>): Promise<string> {
+  const action = asString(args.action) ?? "list";
+  const items = Array.isArray(args.items) ? args.items : [];
+  const scope = ledgerScope(ctx);
+  if (action === "list") {
+    return formatTodoList(await readWorkLedger(scope));
+  }
+  const parsedItems = parseTodoItems(items);
+  let keptAssigned = 0;
+  const saved = await writeWorkLedger(
+    scope,
+    (current) => {
+      const tasks = ledgerTasks(current);
+      const asEntries = ledgerPlanEntries(tasks);
+      const entries =
+        action === "patch"
+          ? applyTodoPatch(asEntries, parsedItems)
+          : todoEntriesFromReplace(parsedItems, asEntries);
+      const listed = new Set(entries.map((entry) => entry.id));
+      keptAssigned = action === "patch" ? 0 : tasks.filter((task) => task.assigned && !listed.has(task.key)).length;
+      return [...ledgerMilestones(current), ...tasksFromEntries(entries, current)];
+    },
+    { deleteMissing: action !== "patch" }
+  );
+  await appendTodoPlanEvent(ctx, saved, args);
+  const taskCount = ledgerTasks(saved).length;
+  const summary =
+    action === "patch"
+      ? `Patched ${parsedItems.length} todo item${parsedItems.length === 1 ? "" : "s"}; the list now has ${taskCount}.`
+      : `Stored ${taskCount} todo item${taskCount === 1 ? "" : "s"}.`;
+  return [
+    summary,
+    keptAssigned > 0
+      ? `Kept ${keptAssigned} item${keptAssigned === 1 ? "" : "s"} you left out because an agent is assigned to ${keptAssigned === 1 ? "it" : "them"}.`
+      : null,
+    formatTodoList(saved),
+  ].filter(Boolean).join("\n");
 }

@@ -1,5 +1,7 @@
-import { addOrchestrationComment, createOrchestrationIssue, deleteOrchestrationIssue, readOrchestrationBoardSnapshot, resolveOrCreateOrchestrationBoardForHeadConversation, upsertOrchestrationAssignment, upsertOrchestrationIssue } from "../../../orchestration/store.js";
-import type { OrchestrationAssignmentPermissionPolicy, OrchestrationAssignmentRecord, OrchestrationAssignmentStatus } from "../../../orchestration/types.js";
+import { addOrchestrationComment, createOrchestrationIssue, deleteOrchestrationIssue, readOrchestrationBoardSnapshot, upsertOrchestrationAssignment, upsertOrchestrationIssue } from "../../../orchestration/store.js";
+import type { OrchestrationAssignmentPermissionPolicy, OrchestrationAssignmentRecord, OrchestrationAssignmentStatus, OrchestrationBoardSnapshot } from "../../../orchestration/types.js";
+import { openWorkLedgerBoard, workLedgerItems } from "../../work-ledger.js";
+import { appendTodoPlanEvent, ledgerScope } from "./plan-tools.js";
 import { generateTranscriptFromEvents } from "../../event-log-read.js";
 import { asNumber } from "../../json-coerce.js";
 import type { AgentBackendId, AgentConversationStatus } from "../../types.js";
@@ -8,13 +10,31 @@ import { asOrchestrationColumnId, asOrchestrationControlAction, asOrchestrationP
 import { randomUUID } from "node:crypto";
 import type { CesiumToolContext } from "./types.js";
 
+/** The conversation's board, which is also its work ledger. */
 export async function resolveCurrentOrchestrationBoard(ctx: CesiumToolContext) {
-  return resolveOrCreateOrchestrationBoardForHeadConversation({
-    workspace: ctx.workspace,
-    conversationId: ctx.conversationId,
-    title: ctx.conversation.title || "Orchestration",
-    allowedBackendIds: ["cesium-agent"],
-  });
+  const snapshot = await openWorkLedgerBoard(
+    { ...ledgerScope(ctx), title: ctx.conversation.title || "Orchestration" },
+    { create: true, reuseUnlinkedBoard: true }
+  );
+  if (!snapshot) {
+    throw new Error("No orchestration board is linked to this head conversation.");
+  }
+  return snapshot;
+}
+
+/** The issue an `issueId` argument names: its id, or its ledger key such as todo-2. */
+function resolveIssueId(snapshot: OrchestrationBoardSnapshot, issueId: string | undefined): string | undefined {
+  if (!issueId) return undefined;
+  return (
+    snapshot.issues.find((issue) => issue.id === issueId)?.id ??
+    snapshot.issues.find((issue) => issue.ledger?.key === issueId)?.id ??
+    issueId
+  );
+}
+
+/** Ledger tasks changed through the board show up in the chat's todo list too. */
+async function showLedgerTasks(ctx: CesiumToolContext, snapshot: OrchestrationBoardSnapshot, raw: unknown) {
+  await appendTodoPlanEvent(ctx, workLedgerItems(snapshot), raw);
 }
 
 export async function resolveOrchestrationBoardFromArgs(
@@ -75,6 +95,9 @@ export async function orchestrationCreateIssueTool(
     actor: { type: "head_agent", conversationId: ctx.conversationId },
   });
   const issue = snapshot.issues[snapshot.issues.length - 1];
+  if (snapshot.board.headConversationId === ctx.conversationId) {
+    await showLedgerTasks(ctx, snapshot, args);
+  }
   return safeJson({ issue, boardId: snapshot.board.id });
 }
 
@@ -83,7 +106,7 @@ export async function orchestrationUpdateIssueTool(
   args: Record<string, unknown>
 ): Promise<string> {
   const current = await resolveOrchestrationBoardFromArgs(ctx, args);
-  const issueId = asString(args.issueId);
+  const issueId = resolveIssueId(current, asString(args.issueId));
   if (!issueId) {
     throw new Error("orchestration_update_issue.issueId is required.");
   }
@@ -119,6 +142,9 @@ export async function orchestrationUpdateIssueTool(
     },
     { type: "head_agent", conversationId: ctx.conversationId }
   );
+  if (snapshot.board.headConversationId === ctx.conversationId) {
+    await showLedgerTasks(ctx, snapshot, args);
+  }
   return safeJson({
     issue: snapshot.issues.find((issue) => issue.id === issueId),
     boardId: snapshot.board.id,
@@ -130,7 +156,7 @@ export async function orchestrationCommentIssueTool(
   args: Record<string, unknown>
 ): Promise<string> {
   const current = await resolveOrchestrationBoardFromArgs(ctx, args);
-  const issueId = asString(args.issueId);
+  const issueId = resolveIssueId(current, asString(args.issueId));
   const message = asString(args.message);
   if (!issueId || !message) {
     throw new Error("orchestration_comment_issue requires issueId and message.");
@@ -148,7 +174,7 @@ export async function orchestrationDeleteIssueTool(
   ctx: CesiumToolContext,
   args: Record<string, unknown>): Promise<string> {
   const current = await resolveOrchestrationBoardFromArgs(ctx, args);
-  const issueId = asString(args.issueId);
+  const issueId = resolveIssueId(current, asString(args.issueId));
   if (!issueId) {
     throw new Error("orchestration_delete_issue.issueId is required.");
   }
@@ -173,6 +199,9 @@ export async function orchestrationDeleteIssueTool(
     issueId,
     { type: "head_agent", conversationId: ctx.conversationId }
   );
+  if (snapshot.board.headConversationId === ctx.conversationId) {
+    await showLedgerTasks(ctx, snapshot, args);
+  }
   return safeJson({
     boardId: snapshot.board.id,
     deletedIssue: issue,
@@ -186,7 +215,7 @@ export async function orchestrationAssignAgentTool(
   args: Record<string, unknown>
 ): Promise<string> {
   const current = await resolveOrchestrationBoardFromArgs(ctx, args);
-  const issueId = asString(args.issueId);
+  const issueId = resolveIssueId(current, asString(args.issueId));
   const instructions = asString(args.instructions);
   if (!issueId || !instructions) {
     throw new Error("orchestration_assign_agent requires issueId and instructions.");
