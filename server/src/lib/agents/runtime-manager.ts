@@ -76,6 +76,7 @@ import {
   AgentRequestNotLiveError,
   continuesInterruptedTurns,
   markTurnInterrupted,
+  rebuildsHistoryFromLog,
 } from "./turn-interruption.js";
 import {
   analyzeCesiumTurnTail,
@@ -1950,7 +1951,9 @@ export class AgentRuntimeManager {
 
     this.trackTurn(workspace.id, updatedRecord.config.backendId, conversationId, async () => {
       try {
-        const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        const runtime = await this.ensureRuntime(workspace, updatedRecord, {
+          currentUserMessageId: userMessageId,
+        });
         if (this.shuttingDown) {
           return;
         }
@@ -2089,7 +2092,9 @@ export class AgentRuntimeManager {
 
     this.trackTurn(workspace.id, updatedRecord.config.backendId, conversationId, async () => {
       try {
-        const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        const runtime = await this.ensureRuntime(workspace, updatedRecord, {
+          currentUserMessageId: lastUser.messageId,
+        });
         if (this.shuttingDown) {
           return;
         }
@@ -2985,12 +2990,14 @@ export class AgentRuntimeManager {
     }
   }
 
+  /** `currentUserMessageId`: the message of the turn this runtime is being started for, if any. */
   private async ensureRuntime(
     workspace: WorkspaceRecord,
-    record: AgentConversationRecord
+    record: AgentConversationRecord,
+    options?: { currentUserMessageId?: string }
   ): Promise<ActiveRuntime> {
     return this.withConversationQueue(this.runtimeEnsureQueues, record.id, () =>
-      this.ensureRuntimeImpl(workspace, record)
+      this.ensureRuntimeImpl(workspace, record, options)
     );
   }
 
@@ -3022,14 +3029,24 @@ export class AgentRuntimeManager {
 
   private async ensureRuntimeImpl(
     workspace: WorkspaceRecord,
-    record: AgentConversationRecord
+    record: AgentConversationRecord,
+    options?: { currentUserMessageId?: string }
   ): Promise<ActiveRuntime> {
     const buildRecoveryTranscript = async (): Promise<string> => {
-      if (record.lastEventSeq <= 0) {
+      // A backend that rebuilds every request from the log loses nothing with
+      // a fresh session; a seed would only add an unstored copy of its history.
+      if (record.lastEventSeq <= 0 || rebuildsHistoryFromLog(record.config.backendId)) {
         return "";
       }
       const recentEvents = await readRecentConversationEvents(workspace.id, record.id);
-      return generateTranscriptFromEvents(recentEvents).trim();
+      // Only earlier turns are context to recover; the turn being started sends its own message.
+      const current = options?.currentUserMessageId
+        ? recentEvents.find(
+            (event) => event.kind === "user_message" && event.messageId === options.currentUserMessageId
+          )
+        : undefined;
+      const earlier = current ? recentEvents.filter((event) => event.seq < current.seq) : recentEvents;
+      return generateTranscriptFromEvents(earlier).trim();
     };
 
     const latest = await this.resolveConversationRecordForRuntime(workspace, record);

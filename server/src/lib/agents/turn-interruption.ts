@@ -22,9 +22,14 @@ export class AgentRequestNotLiveError extends Error {
   }
 }
 
+/** Cesium rebuilds every request from the conversation log, so a fresh provider session loses nothing. */
+export function rebuildsHistoryFromLog(backendId: string): boolean {
+  return backendId === "cesium-agent";
+}
+
 /** Cesium rebuilds every turn from the log, so its interrupted turns can be continued in place. */
 export function continuesInterruptedTurns(backendId: string): boolean {
-  return backendId === "cesium-agent";
+  return rebuildsHistoryFromLog(backendId);
 }
 
 export function interruptionStatusDetail(reason: string, backendId: string): string {
