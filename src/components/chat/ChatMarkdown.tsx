@@ -8,13 +8,15 @@ import {
   type ProjectContextEmbed,
 } from "@cesium/core";
 import { matchArtifactEmbedLine } from "@/lib/artifact-embed";
+import { shouldRenderInThreadViz } from "@/lib/in-thread-viz";
 import { ProjectContextEmbedView, ProjectContextInlineLink } from "@/components/projects/ProjectContextMedia";
 import { ArtifactCard } from "./ArtifactCard";
+import { InThreadVizCard } from "./InThreadVizCard";
 
 type MarkdownBlock =
   | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
   | { type: "paragraph"; text: string }
-  | { type: "code"; language?: string; content: string }
+  | { type: "code"; language?: string; content: string; closed: boolean }
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "hr" }
   | { type: "table"; headers: string[]; rows: string[][] }
@@ -102,13 +104,16 @@ function parseMarkdown(source: string): MarkdownBlock[] {
         codeLines.push(lines[index] ?? "");
         index += 1;
       }
-      if (index < lines.length) {
+      let closed = false;
+      if (index < lines.length && lines[index]?.startsWith("```")) {
+        closed = true;
         index += 1;
       }
       blocks.push({
         type: "code",
         language,
         content: codeLines.join("\n"),
+        closed,
       });
       continue;
     }
@@ -391,7 +396,10 @@ function markdownBlocksEqual(a: MarkdownBlock, b: MarkdownBlock): boolean {
       return b.type === "paragraph" && a.text === b.text;
     case "code":
       return (
-        b.type === "code" && a.language === b.language && a.content === b.content
+        b.type === "code" &&
+        a.language === b.language &&
+        a.content === b.content &&
+        a.closed === b.closed
       );
     case "list":
       return (
@@ -445,7 +453,17 @@ const MarkdownBlockView = memo(
             {renderInlineWithBreaks(block.text)}
           </p>
         );
-      case "code":
+      case "code": {
+        const vizKind = shouldRenderInThreadViz(block.closed, block.language);
+        if (vizKind) {
+          return (
+            <InThreadVizCard
+              kind={vizKind}
+              language={block.language}
+              content={block.content}
+            />
+          );
+        }
         return (
           <div className="overflow-hidden rounded-[10px] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_78%,black_22%)]">
             {block.language ? (
@@ -458,6 +476,7 @@ const MarkdownBlockView = memo(
             </pre>
           </div>
         );
+      }
       case "list":
         if (block.ordered) {
           return (
