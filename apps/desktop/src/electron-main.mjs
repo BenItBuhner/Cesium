@@ -1036,6 +1036,11 @@ ipcMain.handle("cesium:set-taskbar-goal-progress", (event, input) => {
   if (!win || win.isDestroyed()) {
     return false;
   }
+  // Taskbar/dock progress is Windows and macOS only. Electron 44 dropped the
+  // Unity launcher integration, so setProgressBar is a no-op on Linux.
+  if (process.platform === "linux") {
+    return false;
+  }
   const progress = normalizeTaskbarGoalProgress(input);
   try {
     if (!progress.active) {
