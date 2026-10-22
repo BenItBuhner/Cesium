@@ -115,6 +115,13 @@ const nextConfig: NextConfig = {
    * not support TS 7 yet.
    */
   typescript: { ignoreBuildErrors: true },
+  /**
+   * esbuild-wasm only runs in the browser (packages/browser-machine), but its
+   * Node entry is still pulled into the SSR graph. Next 16.4's Turbopack tries
+   * to resolve the binary that entry spawns and fails the build, so keep the
+   * package out of the server bundle and load it from node_modules instead.
+   */
+  serverExternalPackages: ["esbuild-wasm"],
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
   poweredByHeader: false,
