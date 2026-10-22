@@ -21,9 +21,9 @@
     "@xterm/xterm": "^6.0.0",
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
-    "next": "16.3.4",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "next": "16.4.1",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
     "react-resizable-panels": "^4.7.3"
   },
   "devDependencies": {
@@ -33,7 +33,7 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.4.1",
     "tailwindcss": "^4",
     "typescript": "5.9.3",
     "webpack": "^5.105.4"

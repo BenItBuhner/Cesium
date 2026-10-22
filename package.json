@@ -55,10 +55,10 @@
     "libsodium-wrappers": "^0.8.4",
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
-    "next": "16.3.4",
+    "next": "16.4.1",
     "onnxruntime-web": "^1.23.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
     "react-resizable-panels": "^4.7.3"
   },
   "overrides": {
@@ -85,7 +85,7 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.4.1",
     "lightningcss": "1.30.1",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
