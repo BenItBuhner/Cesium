@@ -210,11 +210,11 @@ function ensureTray() {
 function applyBadge(runs) {
   const needsInput = runs.filter((run) => run.active && run.needsInput).length;
   try {
+    // Dock badge is macOS only. Electron 44 removed the Unity launcher
+    // integration, so `app.setBadgeCount` no longer does anything on Linux;
+    // the tray menu and attention signals still surface blocked runs there.
     if (process.platform === "darwin") {
       app.dock?.setBadge(needsInput > 0 ? String(needsInput) : "");
-    } else if (process.platform === "linux") {
-      // Requires a launcher with badge support (Unity/KDE); harmless elsewhere.
-      app.setBadgeCount(needsInput);
     }
   } catch {
     /* ignore */
