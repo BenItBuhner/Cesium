@@ -21,6 +21,8 @@ export const ARTIFACTS_MCP_INSTRUCTIONS = `Use artifact tools to create rich, pe
 
 Embedding: after artifact_create or artifact_update, place the returned embed tag (for example [[artifact:sales-chart-a1b2c3]]) on its own line in your reply. The tag renders as a live interactive preview inline in the conversation, and the user can expand it or open it as a dedicated editor tab.
 
+Ephemeral in-thread canvases (no artifact_create): a closed markdown fence in your reply also renders live in the thread. Use \`\`\`html (or \`\`\`html Title) for a sandboxed page, and \`\`\`chart (or \`\`\`chart Title) with a Chart.js v4 JSON config. Prefer fences for a one-off widget; use artifact tools when the visual should persist, update in place, or open as an editor tab.
+
 Kinds:
 - chart: pass a Chart.js v4 config (type, data, options). It renders responsively and fills whatever viewport it is shown in - do not hardcode pixel sizes.
 - html: pass a complete HTML document (or a fragment; fragments are wrapped). Inline <script> and <style> are allowed. Always include responsive styles - the artifact renders inside an inline card (~360px tall), an editor tab, or a full window.
