@@ -39,7 +39,7 @@
     "@types/react": "^19",
     "detox": "latest",
     "jest": "^29.7.0",
-    "postcss": "^8.5.21",
+    "postcss": "^8.5.23",
     "tsx": "^4.21.0",
     "typescript": "^5"
   }

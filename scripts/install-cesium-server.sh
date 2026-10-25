@@ -300,21 +300,33 @@ esac
 mkdir -p "$CESIUM_HOME" "$RUNTIME_DIR/bin" "$BIN_DIR" "$USER_BIN_DIR" \
   "$STATE_DIR" "$CESIUM_HOME/logs" "$CESIUM_HOME/run"
 
+# Bun releases before 1.4.4 are inside the October 2026 runtime advisory range.
+BUN_MIN_VERSION=1.4.4
+
+bun_version_at_least() {
+  local bin="$1"
+  local floor="$2"
+  local ver
+  ver="$("$bin" --version 2>/dev/null | awk 'NR==1 { print $1 }' | sed 's/^v//')"
+  [[ -n "$ver" ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$floor" "$ver" | sort -V | head -n1)" == "$floor" ]]
+}
+
 install_bun() {
   local target="$RUNTIME_DIR/bin/bun"
-  if [[ -x "$target" ]]; then
+  if [[ -x "$target" ]] && bun_version_at_least "$target" "$BUN_MIN_VERSION"; then
     return 0
   fi
-  if command -v bun >/dev/null 2>&1; then
+  if command -v bun >/dev/null 2>&1 && bun_version_at_least "$(command -v bun)" "$BUN_MIN_VERSION"; then
     cp "$(command -v bun)" "$target"
     chmod 700 "$target"
     return 0
   fi
 
-  printf 'Installing Bun runtime into %s...\n' "$RUNTIME_DIR"
-  curl -fsSL https://bun.sh/install | env BUN_INSTALL="$RUNTIME_DIR" bash
-  if [[ ! -x "$target" ]]; then
-    printf 'Bun installation did not produce %s.\n' "$target" >&2
+  printf 'Installing Bun %s into %s...\n' "$BUN_MIN_VERSION" "$RUNTIME_DIR"
+  curl -fsSL https://bun.sh/install | env BUN_INSTALL="$RUNTIME_DIR" bash -s "bun-v${BUN_MIN_VERSION}"
+  if [[ ! -x "$target" ]] || ! bun_version_at_least "$target" "$BUN_MIN_VERSION"; then
+    printf 'Bun installation did not produce %s >= %s.\n' "$target" "$BUN_MIN_VERSION" >&2
     exit 1
   fi
 }
